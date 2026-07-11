@@ -1,15 +1,11 @@
-export * from './types';
+/**
+ * `@core` barrel.
+ *
+ * Intentionally minimal: the app imports core modules by their full path
+ * (`@core/scene/SceneGraph`, `@core/commands/CommandSystem`, …), which keeps
+ * dependencies explicit and tree-shakeable. This barrel only re-exports the
+ * symbols actually consumed via the bare `@core` specifier. Add an entry here
+ * only when a new bare-`@core` consumer appears.
+ */
+
 export { default as SceneGraph } from './scene/SceneGraph';
-export { EventBus, getEventBus, setEventBus } from './events/EventBus';
-export { TimelineEngine } from './timeline/TimelineEngine';
-export { AssetService } from './assets/AssetService';
-export { serializeProject, parseProject, ProjectSerializer } from './persistence/ProjectSerializer';
-export { projectService } from './persistence/ProjectService';
-export * from './events/EventTypes';
-export * from './commands/Command';
-export * from './commands/CommandSystem';
-export * from './commands/HistoryService';
-export * from './commands/ShortcutManager';
-export * from './commands/undoService';
-export * from './services/ServiceContainer';
-export * from './application/Application';
