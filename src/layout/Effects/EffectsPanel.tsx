@@ -22,6 +22,8 @@ import {
 import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
 import { MATTE_OPTIONS, getNodeMatte, setNodeMatte } from '@core/effects/matte';
 import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
+import { getNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
 import {
   getNodeMask,
   addMaskPath,
@@ -44,6 +46,7 @@ const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
 export function EffectsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   useSceneRevision((s) => s.rev);
+  const mb = useMotionBlurStore();
 
   if (!primary || !defaultSceneGraph.getNode(primary)) {
     return <EmptyState icon="settings" message="Select a layer to add visual effects." />;
@@ -79,6 +82,7 @@ export function EffectsPanel(): JSX.Element {
   const { w: maskW, h: maskH } = SIZE[layerKind];
   const masks = getNodeMask(primary).paths;
   const isAdjustment = getNodeAdjustment(primary);
+  const motionBlur = getNodeMotionBlur(primary);
 
   return (
     <div className={styles.root}>
@@ -121,6 +125,37 @@ export function EffectsPanel(): JSX.Element {
           {isAdjustment ? 'On' : 'Off'}
         </button>
       </div>
+
+      <div className={styles.blendRow}>
+        <span className={styles.blendLabel}>Motion blur</span>
+        <button
+          type="button"
+          className={motionBlur ? styles.invertOn : styles.blendTrigger}
+          aria-pressed={motionBlur}
+          onClick={() => setNodeMotionBlur(primary, !motionBlur)}
+        >
+          {motionBlur ? 'On' : 'Off'}
+        </button>
+      </div>
+
+      {motionBlur && (
+        <div className={styles.maskControls}>
+          <label className={styles.blendLabel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={mb.enabled} onChange={(e) => mb.setEnabled(e.currentTarget.checked)} />
+            Comp enabled
+          </label>
+          <label className={styles.maskField}>
+            <span>Shutter°</span>
+            <ValueField value={mb.shutterAngle} min={0} max={360} precision={0} unit="°"
+              onChange={mb.setShutterAngle} aria-label="Shutter angle" />
+          </label>
+          <label className={styles.maskField}>
+            <span>Samples</span>
+            <ValueField value={mb.samples} min={2} max={32} precision={0}
+              onChange={mb.setSamples} aria-label="Motion blur samples" />
+          </label>
+        </div>
+      )}
 
       <div className={styles.addRow}>
         {EFFECT_DEFS.map((d) => (

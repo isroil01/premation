@@ -169,6 +169,21 @@ export class Canvas2DBackend implements RenderBackend {
         if (layer.visible && layer.filter) this.applyAdjustment(ctx, layer.filter, offX, offY, devW, devH);
         continue;
       }
+      // Motion blur: accumulate the layer at each sub-frame transform, each at
+      // a fraction of its opacity, approximating the shutter-interval average.
+      if (layer.motionSamples && layer.motionSamples.length > 1) {
+        if (!layer.visible) continue;
+        const n = layer.motionSamples.length;
+        for (const s of layer.motionSamples) {
+          this.drawComposited(ctx, {
+            ...layer,
+            x: s.x, y: s.y, rotation: s.rotation, scaleX: s.scaleX, scaleY: s.scaleY,
+            opacity: s.opacity / n,
+            motionSamples: undefined,
+          });
+        }
+        continue;
+      }
       if (layer.matte && i > 0) {
         this.drawMatted(ctx, layers[i - 1]!, layer, offX, offY, scale, cw, ch);
         continue;

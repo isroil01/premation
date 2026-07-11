@@ -11,6 +11,8 @@ import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMask } from '@core/effects/mask';
 import { readNodeMatte } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
+import { readNodeMotionBlur, motionBlurSampleTimes, type MotionBlurConfig } from '@core/effects/motionBlur';
+import type { MotionSample } from './RenderBackend';
 import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 
@@ -88,6 +90,7 @@ export function buildSnapshot(
   focus?: SnapshotFocus,
   overlays?: import('./RenderBackend').RenderOverlays,
   view?: import('./RenderBackend').RenderView,
+  motionBlur?: MotionBlurConfig,
 ): RenderSnapshot {
   const values = anim.evaluateScene(t);
   const layers: RenderLayer[] = [];
@@ -114,7 +117,7 @@ export function buildSnapshot(
     const baseOpacity = a?.has('opacity') ? (a.get('opacity') as number) / 100 : base.opacity;
     const filter = effectsToFilter(readNodeEffects(node)) || undefined;
 
-    layers.push({
+    const layer: RenderLayer = {
       id: node.id,
       kind: layerKind,
       blend: readNodeBlend(node),
@@ -135,11 +138,51 @@ export function buildSnapshot(
       text: base.text,
       fontSize: base.fontSize,
       filter,
-    });
+    };
+
+    // Motion blur: sub-frame transform samples for a moving, opted-in layer.
+    if (motionBlur?.enabled && readNodeMotionBlur(node) && moves(anim, node.id)) {
+      const samples = sampleMotion(anim, node.id, base, ghost, t, motionBlur);
+      if (samples.length > 1) layer.motionSamples = samples;
+    }
+
+    layers.push(layer);
   }
 
   resolveMatteSources(layers);
   return { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG, layers, overlays, view };
+}
+
+/** True when a node animates a transform property (so motion blur has motion). */
+function moves(anim: AnimationEngine, nodeId: string): boolean {
+  return (['x', 'y', 'rotation', 'scale', 'scaleX', 'scaleY'] as const).some((p) =>
+    anim.isAnimated(nodeId, p),
+  );
+}
+
+/** Sample a layer's transform at each sub-frame time across the shutter. */
+function sampleMotion(
+  anim: AnimationEngine,
+  nodeId: string,
+  base: ReturnType<typeof readBase>,
+  ghost: boolean,
+  t: number,
+  cfg: MotionBlurConfig,
+): MotionSample[] {
+  const times = motionBlurSampleTimes(t, cfg.fps, cfg.shutterAngle, cfg.samples);
+  const g = ghost ? GHOST_OPACITY : 1;
+  return times.map((ti) => {
+    const sc = anim.sample(nodeId, 'scale', ti);
+    const op = anim.sample(nodeId, 'opacity', ti);
+    return {
+      x: anim.sample(nodeId, 'x', ti) ?? base.x,
+      y: anim.sample(nodeId, 'y', ti) ?? base.y,
+      rotation: anim.sample(nodeId, 'rotation', ti) ?? base.rotation,
+      scaleX: sc ?? anim.sample(nodeId, 'scaleX', ti) ?? base.scaleX,
+      scaleY: sc ?? anim.sample(nodeId, 'scaleY', ti) ?? base.scaleY,
+      opacity: (op !== undefined ? op / 100 : base.opacity) * g,
+    };
+  });
 }
 
 /**

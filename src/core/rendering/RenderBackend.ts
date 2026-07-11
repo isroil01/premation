@@ -14,6 +14,16 @@ import type { MatteType } from '@core/effects/matte';
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
+/** One sub-frame transform sample used for motion-blur accumulation. */
+export interface MotionSample {
+  x: number;
+  y: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  opacity: number;
+}
+
 export interface RenderLayer {
   id: string;
   kind: LayerKind;
@@ -28,6 +38,9 @@ export interface RenderLayer {
   /** Adjustment layer: its `filter` applies to everything beneath, and it draws
    *  no content of its own. */
   isAdjustment?: boolean;
+  /** Sub-frame transform samples for motion blur (accumulated by the backend).
+   *  Present only when motion blur is on and the layer actually moves. */
+  motionSamples?: ReadonlyArray<MotionSample>;
   /** Center position in composition space. */
   x: number;
   y: number;

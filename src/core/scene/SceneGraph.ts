@@ -264,6 +264,11 @@ export class SceneGraph {
     this.setFx(nodeId, 'isAdjustment', on);
   }
 
+  /** Toggle per-layer motion blur on its `fx` component. */
+  setMotionBlur(nodeId: ID, on: unknown): void {
+    this.setFx(nodeId, 'motionBlur', on);
+  }
+
   /** Write a single key onto the node's `fx` component (created on demand). */
   private setFx(nodeId: ID, key: string, value: unknown): void {
     const e = this.engine(nodeId);

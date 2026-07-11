@@ -19,6 +19,9 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
+
+const MOTION_BLUR_FPS = 60;
 
 export function useViewportRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
@@ -43,11 +46,20 @@ export function useViewportRenderer(
   const overlaysRef = useRef({ rulers, grid, safeArea });
   overlaysRef.current = { rulers, grid, safeArea };
 
+  const mbEnabled = useMotionBlurStore((s) => s.enabled);
+  const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
+  const mbSamples = useMotionBlurStore((s) => s.samples);
+  const motionBlurRef = useRef({ enabled: mbEnabled, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS });
+  motionBlurRef.current = { enabled: mbEnabled, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS };
+
   const render = useCallback(() => {
     const b = backendRef.current;
     if (!b) return;
     b.renderFrame(
-      buildSnapshot(defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current, overlaysRef.current),
+      buildSnapshot(
+        defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
+        overlaysRef.current, undefined, motionBlurRef.current,
+      ),
     );
     // The rendered frame is now cached (feeds the timeline cache bar).
     renderCache.mark(timeRef.current);
@@ -87,5 +99,5 @@ export function useViewportRenderer(
   // Re-render on scene change, playhead move, focus change, or guide toggle.
   useEffect(() => {
     render();
-  }, [sceneRev, time, focusKey, rulers, grid, safeArea, render]);
+  }, [sceneRev, time, focusKey, rulers, grid, safeArea, mbEnabled, mbShutter, mbSamples, render]);
 }

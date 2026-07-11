@@ -23,8 +23,12 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useUIStore } from '@stores/uiStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+
+/** Comp frame rate used for motion-blur sub-frame sampling (matches timeline). */
+const MOTION_BLUR_FPS = 60;
 
 export interface UseWorkspaceArgs {
   contentCanvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -52,6 +56,12 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
   const overlaysRef = useRef({ rulers, grid, safeArea });
   overlaysRef.current = { rulers, grid, safeArea };
 
+  const mbEnabled = useMotionBlurStore((s) => s.enabled);
+  const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
+  const mbSamples = useMotionBlurStore((s) => s.samples);
+  const motionBlurRef = useRef({ enabled: mbEnabled, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS });
+  motionBlurRef.current = { enabled: mbEnabled, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS };
+
   // ── Backend attach + size + render loop (once) ─────────────────────
   useEffect(() => {
     const controller = getWorkspaceController();
@@ -75,6 +85,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
           focusRef.current,
           overlaysRef.current,
           controller.getView(),
+          motionBlurRef.current,
         ),
       );
       renderCache.mark(timeRef.current);
@@ -127,7 +138,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
   // ── Re-render on scene / playhead / guide changes ──────────────────
   useEffect(() => {
     getWorkspaceController().requestRender();
-  }, [sceneRev, time, focusKey, rulers, grid, safeArea]);
+  }, [sceneRev, time, focusKey, rulers, grid, safeArea, mbEnabled, mbShutter, mbSamples]);
 
   // ── Tool bar → engine tool ─────────────────────────────────────────
   useEffect(() => {
