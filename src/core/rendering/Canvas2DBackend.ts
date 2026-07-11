@@ -31,6 +31,19 @@ function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
 }
 
+/** Rewrite a canvas's alpha channel from its luminance (for luma track mattes),
+ *  scaled by the existing alpha; `invert` uses the inverse luminance. */
+function lumaToAlpha(ctx: CanvasRenderingContext2D, w: number, h: number, invert: boolean): void {
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!;
+    const a = invert ? 255 - lum : lum;
+    d[i + 3] = (a * d[i + 3]!) / 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 export class Canvas2DBackend implements RenderBackend {
   readonly kind = 'canvas2d';
   private canvas: HTMLCanvasElement | null = null;
@@ -101,26 +114,7 @@ export class Canvas2DBackend implements RenderBackend {
     ctx.rect(0, 0, snapshot.width, snapshot.height);
     ctx.clip();
 
-    for (const layer of snapshot.layers) {
-      if (!layer.visible) continue;
-      ctx.save();
-      ctx.globalAlpha = clamp01(layer.opacity);
-      // Compositing mode against the layers already drawn.
-      if (layer.blend && layer.blend !== 'normal') {
-        ctx.globalCompositeOperation = blendToComposite(layer.blend);
-      }
-      // Per-layer visual effects (blur / glow / color) via the 2D filter.
-      if (layer.filter) ctx.filter = layer.filter;
-      ctx.translate(layer.x, layer.y);
-      ctx.rotate((layer.rotation * Math.PI) / 180);
-      ctx.scale(layer.scaleX || 1, layer.scaleY || 1);
-      // Vector mask: clip to the path(s) in the layer's local space.
-      if (layer.mask && layer.mask.paths.length > 0) {
-        ctx.clip(buildMaskPath(layer.mask, layer.width, layer.height), 'evenodd');
-      }
-      this.drawLayer(ctx, layer);
-      ctx.restore();
-    }
+    this.drawLayers(ctx, snapshot.layers, offX, offY, scale, cw, ch);
 
     ctx.restore(); // comp clip
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -132,6 +126,123 @@ export class Canvas2DBackend implements RenderBackend {
 
     // Guide overlays (grid, safe areas, rulers) in device space.
     if (snapshot.overlays) this.drawOverlays(ctx, snapshot, offX, offY, devW, devH);
+  }
+
+  // ── Layer compositing (with track mattes) ───────────────────────
+  private scratchA: HTMLCanvasElement | null = null;
+  private scratchB: HTMLCanvasElement | null = null;
+
+  private scratch(which: 'A' | 'B', w: number, h: number): HTMLCanvasElement {
+    let c = which === 'A' ? this.scratchA : this.scratchB;
+    if (!c) {
+      c = document.createElement('canvas');
+      if (which === 'A') this.scratchA = c;
+      else this.scratchB = c;
+    }
+    if (c.width !== w) c.width = w;
+    if (c.height !== h) c.height = h;
+    return c;
+  }
+
+  /**
+   * Draw the layer list, resolving track mattes: a matted layer is composited
+   * against the layer directly above it (its matte source), which is otherwise
+   * not drawn on its own.
+   */
+  private drawLayers(
+    ctx: CanvasRenderingContext2D,
+    layers: ReadonlyArray<RenderLayer>,
+    offX: number,
+    offY: number,
+    scale: number,
+    cw: number,
+    ch: number,
+  ): void {
+    for (let i = 0; i < layers.length; i++) {
+      const layer = layers[i]!;
+      if (layer.isMatteSource) continue; // drawn only as another layer's matte
+      if (layer.matte && i > 0) {
+        this.drawMatted(ctx, layers[i - 1]!, layer, offX, offY, scale, cw, ch);
+        continue;
+      }
+      if (!layer.visible) continue;
+      this.drawComposited(ctx, layer);
+    }
+  }
+
+  /** Draw one layer with its transform, opacity, blend, filter and mask, in the
+   *  current (composition-space) transform. */
+  private drawComposited(ctx: CanvasRenderingContext2D, layer: RenderLayer, useBlend = true): void {
+    ctx.save();
+    ctx.globalAlpha = clamp01(layer.opacity);
+    if (useBlend && layer.blend && layer.blend !== 'normal') {
+      ctx.globalCompositeOperation = blendToComposite(layer.blend);
+    }
+    if (layer.filter) ctx.filter = layer.filter;
+    ctx.translate(layer.x, layer.y);
+    ctx.rotate((layer.rotation * Math.PI) / 180);
+    ctx.scale(layer.scaleX || 1, layer.scaleY || 1);
+    if (layer.mask && layer.mask.paths.length > 0) {
+      ctx.clip(buildMaskPath(layer.mask, layer.width, layer.height), 'evenodd');
+    }
+    this.drawLayer(ctx, layer);
+    ctx.restore();
+  }
+
+  /** Composite `matted` through `source` as a track matte via offscreen buffers. */
+  private drawMatted(
+    ctx: CanvasRenderingContext2D,
+    source: RenderLayer,
+    matted: RenderLayer,
+    offX: number,
+    offY: number,
+    scale: number,
+    cw: number,
+    ch: number,
+  ): void {
+    if (!matted.visible) return;
+
+    const applyComp = (c: CanvasRenderingContext2D): void => {
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, cw, ch);
+      c.translate(offX, offY);
+      c.scale(scale, scale);
+    };
+
+    // A: the matted layer.
+    const a = this.scratch('A', cw, ch);
+    const ac = a.getContext('2d');
+    // B: the matte source (drawn neutrally — its own blend doesn't apply here).
+    const b = this.scratch('B', cw, ch);
+    const bc = b.getContext('2d');
+    if (!ac || !bc) return;
+
+    applyComp(ac);
+    this.drawComposited(ac, { ...matted, matte: undefined }, false);
+    applyComp(bc);
+    this.drawComposited(bc, { ...source, blend: undefined }, false);
+
+    const type = matted.matte!;
+    if (type === 'luma' || type === 'luma-inv') {
+      lumaToAlpha(bc, cw, ch, type === 'luma-inv');
+    }
+
+    // Keep the matted pixels where the (possibly luma-converted) source has
+    // alpha; invert for the '-inv' alpha matte.
+    ac.setTransform(1, 0, 0, 1, 0, 0);
+    ac.globalCompositeOperation = type === 'alpha-inv' ? 'destination-out' : 'destination-in';
+    ac.drawImage(b, 0, 0);
+    ac.globalCompositeOperation = 'source-over';
+
+    // Blit the matted result to the main surface at device identity (the comp
+    // clip on `ctx` is still active). Honor the matted layer's blend mode.
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (matted.blend && matted.blend !== 'normal') {
+      ctx.globalCompositeOperation = blendToComposite(matted.blend);
+    }
+    ctx.drawImage(a, 0, 0);
+    ctx.restore();
   }
 
   private drawOverlays(

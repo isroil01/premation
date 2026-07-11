@@ -9,6 +9,7 @@ import { flattenScene, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeEffects, effectsToFilter } from '@core/effects/effects';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMask } from '@core/effects/mask';
+import { readNodeMatte } from '@core/effects/matte';
 import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 
@@ -117,6 +118,7 @@ export function buildSnapshot(
       kind: layerKind,
       blend: readNodeBlend(node),
       mask: readNodeMask(node),
+      matte: readNodeMatte(node),
       x: a?.get('x') ?? base.x,
       y: a?.get('y') ?? base.y,
       rotation: a?.get('rotation') ?? base.rotation,
@@ -134,7 +136,19 @@ export function buildSnapshot(
     });
   }
 
+  resolveMatteSources(layers);
   return { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG, layers, overlays, view };
+}
+
+/**
+ * Mark each matted layer's source: the layer directly above it in the list
+ * (its predecessor) becomes the matte source and is drawn only as the matte,
+ * never on its own. Mutates the layers in place.
+ */
+export function resolveMatteSources(layers: RenderLayer[]): void {
+  for (let i = 1; i < layers.length; i++) {
+    if (layers[i]!.matte) layers[i - 1]!.isMatteSource = true;
+  }
 }
 
 export { COMP_WIDTH, COMP_HEIGHT };

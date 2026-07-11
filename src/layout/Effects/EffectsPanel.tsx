@@ -20,6 +20,7 @@ import {
   removeEffect,
 } from '@core/effects/effects';
 import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
+import { MATTE_OPTIONS, getNodeMatte, setNodeMatte } from '@core/effects/matte';
 import {
   getNodeMask,
   addMaskPath,
@@ -60,6 +61,16 @@ export function EffectsPanel(): JSX.Element {
     onSelect: () => setNodeBlend(primary, b.mode),
   }));
 
+  const matte = getNodeMatte(primary);
+  const matteLabel = MATTE_OPTIONS.find((m) => m.value === matte)?.label ?? 'No matte';
+  const matteItems: DropdownItem[] = MATTE_OPTIONS.map((m) => ({
+    type: 'item',
+    id: m.value,
+    label: m.label,
+    icon: m.value === matte ? 'check' : undefined,
+    onSelect: () => setNodeMatte(primary, m.value),
+  }));
+
   // Mask presets are built at the layer's rendered size (matches buildSnapshot).
   const node = defaultSceneGraph.getNode(primary);
   const kind = node ? readNodeKind(node) : 'shape';
@@ -80,6 +91,20 @@ export function EffectsPanel(): JSX.Element {
             </button>
           }
           items={blendItems}
+        />
+      </div>
+
+      <div className={styles.blendRow}>
+        <span className={styles.blendLabel}>Track matte</span>
+        <Dropdown
+          placement="bottom-end"
+          trigger={
+            <button type="button" className={styles.blendTrigger}>
+              {matteLabel}
+              <Icon name="chevron-down" size={12} />
+            </button>
+          }
+          items={matteItems}
         />
       </div>
 

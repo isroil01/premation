@@ -36,6 +36,14 @@ describe('snapshotToFrameScene', () => {
     expect(scene.renderables.map((r) => r.id)).toEqual(['n2']);
   });
 
+  test('drops consumed matte-source layers on the GPU path', () => {
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'src', isMatteSource: true }),
+      layer({ id: 'matted', matte: 'alpha' }),
+    ]));
+    expect(scene.renderables.map((r) => r.id)).toEqual(['matted']);
+  });
+
   test('maps kinds and assigns texture keys for textured kinds', () => {
     const scene = snapshotToFrameScene(snapshot([
       layer({ id: 's', kind: 'shape' }),

@@ -10,6 +10,7 @@
 
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import type { LayerMask } from '@core/effects/mask';
+import type { MatteType } from '@core/effects/matte';
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
@@ -20,6 +21,10 @@ export interface RenderLayer {
   blend?: LayerBlendMode;
   /** Vector mask clipping the layer (local space). Omitted when unmasked. */
   mask?: LayerMask;
+  /** Track matte: the layer above defines this layer's alpha. */
+  matte?: MatteType;
+  /** True when the layer above consumes this layer as its matte source. */
+  isMatteSource?: boolean;
   /** Center position in composition space. */
   x: number;
   y: number;

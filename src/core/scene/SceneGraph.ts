@@ -254,6 +254,11 @@ export class SceneGraph {
     this.setFx(nodeId, 'mask', mask);
   }
 
+  /** Store the layer's track-matte type on its `fx` component (undefined clears). */
+  setMatte(nodeId: ID, matte: unknown): void {
+    this.setFx(nodeId, 'matte', matte);
+  }
+
   /** Write a single key onto the node's `fx` component (created on demand). */
   private setFx(nodeId: ID, key: string, value: unknown): void {
     const e = this.engine(nodeId);
