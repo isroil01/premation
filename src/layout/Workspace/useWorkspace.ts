@@ -13,7 +13,8 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { Canvas2DBackend } from '@core/rendering/Canvas2DBackend';
+import { createRenderBackend } from '@core/rendering/createRenderBackend';
+import type { RenderBackend } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
 import type { WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, type PointerInput, type WheelInput } from '@motion/workspace';
@@ -38,7 +39,7 @@ export interface UseWorkspaceArgs {
 export function useWorkspace(args: UseWorkspaceArgs): void {
   const { contentCanvasRef, overlayCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
 
-  const backendRef = useRef<Canvas2DBackend | null>(null);
+  const backendRef = useRef<RenderBackend | null>(null);
   const dprRef = useRef(1);
   const timeRef = useRef(time);
   timeRef.current = time;
@@ -59,7 +60,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     const stage = stageRef.current;
     if (!content || !overlay || !stage) return;
 
-    const backend = new Canvas2DBackend();
+    const backend = createRenderBackend();
     backend.attach(content);
     backendRef.current = backend;
 

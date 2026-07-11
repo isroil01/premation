@@ -1,3 +1,4 @@
+/// <reference path="./webgpu.d.ts" />
 /**
  * WebGPU backend (primary). Maps the backend-independent descriptors to WebGPU
  * objects. Native GPU objects are carried on `handle.native`. This file is the

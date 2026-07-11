@@ -11,7 +11,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { Canvas2DBackend } from '@core/rendering/Canvas2DBackend';
+import { createRenderBackend } from '@core/rendering/createRenderBackend';
+import type { RenderBackend } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
 import renderCache from '@core/rendering/renderCache';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -29,7 +30,7 @@ export function useViewportRenderer(
   /** Signal that changes whenever `focus` changes, to force a re-render. */
   focusKey?: string,
 ): void {
-  const backendRef = useRef<Canvas2DBackend | null>(null);
+  const backendRef = useRef<RenderBackend | null>(null);
   const timeRef = useRef(time);
   timeRef.current = time;
   const focusRef = useRef(focus);
@@ -58,7 +59,7 @@ export function useViewportRenderer(
     const container = containerRef.current;
     if (!canvas || !container) return;
 
-    const backend = new Canvas2DBackend();
+    const backend = createRenderBackend();
     backend.attach(canvas);
     backendRef.current = backend;
 
