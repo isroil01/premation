@@ -11,16 +11,16 @@ import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { useActiveWorkspace } from '@stores/workspaceStore';
 import { useSceneRevision } from '@stores/sceneStore';
-import defaultAnimation from '@core/animation/AnimationEngine';
-import { sampleTrack } from '@core/animation/interpolate';
 import {
+  defaultAnimation,
+  sampleTrack,
   compileExpression,
   suggestExpression,
   tokenizeExpression,
   matchBracket,
   EXPRESSION_API,
   type TokenKind,
-} from '@core/animation/expressions';
+} from '@motion/animation';
 import styles from './ExpressionEditor.module.css';
 
 const TOKEN_CLASS: Record<TokenKind, string | undefined> = {

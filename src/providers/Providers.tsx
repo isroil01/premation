@@ -42,6 +42,7 @@ import { asThemeId, asCommandId } from '@app-types/common';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
+import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { ProjectCommands } from '@layout/Menu';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
@@ -301,6 +302,12 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         project.setDocumentIO(sceneProjectIO);
         getEventBus().on('ProjectLoaded', () => bumpScene());
         getEventBus().on('ProjectUnloaded', () => bumpScene());
+        // Bind the (framework-independent) animation engine's change sink onto
+        // the app EventBus so its mutations surface as 'AnimationChanged'. Must
+        // run before any engine emit (seeding below) reaches its listeners.
+        defaultAnimation.setChangeListener((nodeId) =>
+          getEventBus().emit('AnimationChanged', { nodeId }),
+        );
         // Keyframe edits refresh the timeline tracks + inspector + viewport,
         // and invalidate the render cache (cached frames are now stale).
         getEventBus().on('AnimationChanged', () => { renderCache.invalidate(); bumpScene(); });

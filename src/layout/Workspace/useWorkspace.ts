@@ -19,7 +19,7 @@ import type { WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import defaultAnimation from '@core/animation/AnimationEngine';
+import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useUIStore } from '@stores/uiStore';

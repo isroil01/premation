@@ -7,7 +7,7 @@ import type SceneGraph from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
 import { flattenScene, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeEffects, effectsToFilter } from '@core/effects/effects';
-import type { AnimationEngine } from '@core/animation/AnimationEngine';
+import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 
 const COMP_WIDTH = 1920;

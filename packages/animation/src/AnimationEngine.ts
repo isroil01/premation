@@ -10,12 +10,28 @@
 import type { PropPath, PropertyTrack, SceneValueSnapshot, EasingKind, BezierHandles, Keyframe } from './types';
 import { sampleTrack, upsertKeyframe } from './interpolate';
 import { compileExpression, type CompiledExpression } from './expressions';
-import { getEventBus } from '@core/events/EventBus';
+
+/**
+ * Notified whenever a node's animation changes. `'*'` means "all nodes"
+ * (e.g. after a wholesale restore). The app binds this to its EventBus at boot;
+ * keeping it injectable is what lets this engine stay framework-independent.
+ */
+export type AnimationChangeListener = (nodeId: string) => void;
 
 export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
   /** Per-property expressions that override the sampled value each frame. */
   private expressions = new Map<string, Map<PropPath, CompiledExpression>>();
+  /** Change sink — no-op until the host binds one via setChangeListener(). */
+  private notifyChange: AnimationChangeListener = () => {};
+
+  /**
+   * Bind the change sink (the app maps this onto its EventBus 'AnimationChanged'
+   * so the render cache, timeline, inspector and history stay in sync).
+   */
+  setChangeListener(listener: AnimationChangeListener): void {
+    this.notifyChange = listener;
+  }
 
   /** All property tracks for a node. */
   tracksFor(nodeId: string): PropertyTrack[] {
@@ -37,7 +53,7 @@ export class AnimationEngine {
     const track = byProp.get(prop) ?? { nodeId, prop, keyframes: [] };
     track.keyframes = upsertKeyframe(track.keyframes, { t, value, easing });
     byProp.set(prop, track);
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   removeKeyframe(nodeId: string, prop: PropPath, t: number): void {
@@ -45,7 +61,7 @@ export class AnimationEngine {
     if (!track) return;
     track.keyframes = track.keyframes.filter((k) => k.t !== t);
     if (track.keyframes.length === 0) this.tracks.get(nodeId)?.delete(prop);
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   /** Move a keyframe from `fromT` to `toT` (preserving its value/easing). */
@@ -56,7 +72,7 @@ export class AnimationEngine {
     if (!track || !kf) return;
     const without = track.keyframes.filter((k) => k.t !== fromT);
     track.keyframes = upsertKeyframe(without, { ...kf, t: toT });
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   /** Set the easing on the segment that starts at keyframe `t`. */
@@ -66,7 +82,7 @@ export class AnimationEngine {
     kf.easing = easing;
     // Seed default handles when switching to a custom bezier curve.
     if (easing === 'bezier' && !kf.bezier) kf.bezier = [0.25, 0.1, 0.25, 1];
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   /** Replace the keyframe at `oldT` with new time/value/easing/bezier. */
@@ -86,7 +102,7 @@ export class AnimationEngine {
       bezier: patch.bezier ?? kf.bezier,
     };
     track.keyframes = upsertKeyframe(track.keyframes.filter((k) => k.t !== oldT), next);
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   /** Remove all keyframes for a property (turn animation off). */
@@ -94,7 +110,7 @@ export class AnimationEngine {
     const byProp = this.tracks.get(nodeId);
     if (!byProp?.delete(prop)) return;
     if (byProp.size === 0) this.tracks.delete(nodeId);
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   isAnimated(nodeId: string, prop: PropPath): boolean {
@@ -123,7 +139,7 @@ export class AnimationEngine {
     if (!keyframes || keyframes.length === 0) {
       const byProp = this.tracks.get(nodeId);
       if (byProp?.delete(prop) && byProp.size === 0) this.tracks.delete(nodeId);
-      getEventBus().emit('AnimationChanged', { nodeId });
+      this.notifyChange(nodeId);
       return;
     }
     let byProp = this.tracks.get(nodeId);
@@ -132,7 +148,7 @@ export class AnimationEngine {
       this.tracks.set(nodeId, byProp);
     }
     byProp.set(prop, { nodeId, prop, keyframes: keyframes.map((k) => ({ ...k })) });
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   /**
@@ -177,14 +193,14 @@ export class AnimationEngine {
     let byProp = this.expressions.get(nodeId);
     if (!byProp) { byProp = new Map(); this.expressions.set(nodeId, byProp); }
     byProp.set(prop, compileExpression(src));
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   removeExpression(nodeId: string, prop: PropPath): void {
     const byProp = this.expressions.get(nodeId);
     if (!byProp?.delete(prop)) return;
     if (byProp.size === 0) this.expressions.delete(nodeId);
-    getEventBus().emit('AnimationChanged', { nodeId });
+    this.notifyChange(nodeId);
   }
 
   getExpressionSrc(nodeId: string, prop: PropPath): string | undefined {
@@ -264,7 +280,7 @@ export class AnimationEngine {
       }
       if (byProp.size) this.expressions.set(nodeId, byProp);
     }
-    getEventBus().emit('AnimationChanged', { nodeId: '*' });
+    this.notifyChange('*');
   }
 }
 

@@ -16,10 +16,8 @@ import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
-import defaultAnimation from '@core/animation/AnimationEngine';
+import { defaultAnimation, sampleTrack, type EasingKind, type PropertyTrack } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
-import { sampleTrack } from '@core/animation/interpolate';
-import type { EasingKind, PropertyTrack } from '@core/animation/types';
 import { ExpressionEditor } from './ExpressionEditor';
 import styles from './MotionEditorPanel.module.css';
 

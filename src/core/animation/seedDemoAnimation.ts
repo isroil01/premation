@@ -3,7 +3,7 @@
  * content — replaced once keyframe authoring UI exists. Idempotent.
  */
 
-import defaultAnimation from './AnimationEngine';
+import { defaultAnimation } from '@motion/animation';
 
 let seeded = false;
 

@@ -15,7 +15,7 @@ import { Canvas2DBackend } from '@core/rendering/Canvas2DBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
 import renderCache from '@core/rendering/renderCache';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import defaultAnimation from '@core/animation/AnimationEngine';
+import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
 

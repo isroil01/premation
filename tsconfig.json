@@ -61,7 +61,8 @@
       "@assets/*": ["./src/assets/*"],
       "@motion/scene": ["./packages/scene/src/index.ts"],
       "@motion/workspace": ["./packages/workspace/src/index.ts"],
-      "@motion/timeline": ["./packages/timeline/src/index.ts"]
+      "@motion/timeline": ["./packages/timeline/src/index.ts"],
+      "@motion/animation": ["./packages/animation/src/index.ts"]
     }
   },
   "include": ["src", "src/**/*.ts", "src/**/*.tsx"],

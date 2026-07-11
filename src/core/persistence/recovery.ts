@@ -9,7 +9,7 @@
 
 import { getSettingsManager } from '@core/services/coreServices';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import defaultAnimation, { type AnimSnapshot } from '@core/animation/AnimationEngine';
+import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
 import type { ProjectFile } from '@core/types';
 
 const KEY = 'recovery';

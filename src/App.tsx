@@ -31,8 +31,7 @@ import { getSidebarRenderers, getInspectorRenderers } from '@layout/EditorLayout
 import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineCacheRange, TimelineClip } from '@layout/Timeline';
 import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import defaultAnimation from '@core/animation/AnimationEngine';
-import { makeKeyframeId, parseKeyframeId } from '@core/animation/keyframeId';
+import { defaultAnimation, makeKeyframeId, parseKeyframeId } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { flattenScene, readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
 import renderCache from '@core/rendering/renderCache';

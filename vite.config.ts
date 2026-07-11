@@ -23,6 +23,7 @@ export default defineConfig({
       '@motion/scene': path.resolve(__dirname, 'packages/scene/src/index.ts'),
       '@motion/workspace': path.resolve(__dirname, 'packages/workspace/src/index.ts'),
       '@motion/timeline': path.resolve(__dirname, 'packages/timeline/src/index.ts'),
+      '@motion/animation': path.resolve(__dirname, 'packages/animation/src/index.ts'),
     },
   },
   build: {

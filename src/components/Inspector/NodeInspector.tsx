@@ -1,7 +1,7 @@
 import { InspectorRow } from './Inspector';
 import { propertyRegistry } from '@core/inspector/PropertyRegistry';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import defaultAnimation from '@core/animation/AnimationEngine';
+import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useActiveWorkspace } from '@stores/workspaceStore';

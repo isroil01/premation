@@ -7,9 +7,8 @@
 
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import defaultAnimation from '@core/animation/AnimationEngine';
+import { defaultAnimation, type AnimationEngine } from '@motion/animation';
 import type SceneGraph from '@core/scene/SceneGraph';
-import type { AnimationEngine } from '@core/animation/AnimationEngine';
 import type { CommandId } from '@app-types/common';
 
 /** A registered visual effect a plugin contributes. */

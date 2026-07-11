@@ -11,7 +11,7 @@
 
 import { create } from 'zustand';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import defaultAnimation, { type AnimSnapshot } from '@core/animation/AnimationEngine';
+import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
 import type { ProjectFile } from '@core/types';
 import { bumpScene } from './sceneStore';
 

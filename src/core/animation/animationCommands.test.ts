@@ -1,4 +1,4 @@
-import { AnimationEngine } from './AnimationEngine';
+import { AnimationEngine } from '@motion/animation';
 import {
   AnimEditCommand,
   beginAnimEdit,

@@ -9,6 +9,7 @@ module.exports = {
     '\\.(css|less|scss|sass)$': '<rootDir>/jest.styleMock.cjs',
     // Path aliases — keep in sync with tsconfig.json "paths".
     '^@motion/scene$': '<rootDir>/packages/scene/src/index.ts',
+    '^@motion/animation$': '<rootDir>/packages/animation/src/index.ts',
     '^@core(.*)$': '<rootDir>/src/core$1',
     '^@components(.*)$': '<rootDir>/src/components$1',
     '^@layout(.*)$': '<rootDir>/src/layout$1',

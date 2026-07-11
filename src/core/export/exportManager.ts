@@ -12,7 +12,7 @@
 import { Canvas2DBackend } from '@core/rendering/Canvas2DBackend';
 import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT } from '@core/rendering/buildSnapshot';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import defaultAnimation from '@core/animation/AnimationEngine';
+import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 

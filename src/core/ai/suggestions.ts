@@ -11,7 +11,7 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import defaultAnimation from '@core/animation/AnimationEngine';
+import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import type { IconName } from '@components/Icon';

@@ -1,0 +1,14 @@
+{
+  "name": "@motion/animation",
+  "version": "1.0.0",
+  "description": "Framework-independent Animation Engine (keyframe tracks, interpolation, expressions) for the AI-native motion editor.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest --config jest.config.cjs"
+  },
+  "license": "MIT"
+}
