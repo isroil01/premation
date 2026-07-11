@@ -249,6 +249,11 @@ export class SceneGraph {
     this.setFx(nodeId, 'blendMode', mode);
   }
 
+  /** Store the layer's vector mask on its `fx` component (undefined clears it). */
+  setMask(nodeId: ID, mask: unknown): void {
+    this.setFx(nodeId, 'mask', mask);
+  }
+
   /** Write a single key onto the node's `fx` component (created on demand). */
   private setFx(nodeId: ID, key: string, value: unknown): void {
     const e = this.engine(nodeId);

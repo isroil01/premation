@@ -9,6 +9,23 @@
 
 import type { RenderBackend, RenderSnapshot, RenderLayer } from './RenderBackend';
 import { blendToComposite } from '@core/effects/blendMode';
+import { maskSegments, type LayerMask } from '@core/effects/mask';
+
+/** Build a clip path (layer-local space) from a layer's vector mask. Inverted
+ *  masks clip to the OUTSIDE by adding the layer rect and relying on even-odd. */
+function buildMaskPath(mask: LayerMask, width: number, height: number): Path2D {
+  const p = new Path2D();
+  const inverted = mask.paths.some((m) => m.inverted);
+  if (inverted) p.rect(-width / 2, -height / 2, width, height);
+  for (const path of mask.paths) {
+    const segs = maskSegments(path);
+    if (segs.length === 0) continue;
+    p.moveTo(segs[0]!.x0, segs[0]!.y0);
+    for (const s of segs) p.bezierCurveTo(s.cx1, s.cy1, s.cx2, s.cy2, s.x1, s.y1);
+    p.closePath();
+  }
+  return p;
+}
 
 function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
@@ -97,6 +114,10 @@ export class Canvas2DBackend implements RenderBackend {
       ctx.translate(layer.x, layer.y);
       ctx.rotate((layer.rotation * Math.PI) / 180);
       ctx.scale(layer.scaleX || 1, layer.scaleY || 1);
+      // Vector mask: clip to the path(s) in the layer's local space.
+      if (layer.mask && layer.mask.paths.length > 0) {
+        ctx.clip(buildMaskPath(layer.mask, layer.width, layer.height), 'evenodd');
+      }
       this.drawLayer(ctx, layer);
       ctx.restore();
     }

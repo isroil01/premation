@@ -9,6 +9,7 @@
  */
 
 import type { LayerBlendMode } from '@core/effects/blendMode';
+import type { LayerMask } from '@core/effects/mask';
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
@@ -17,6 +18,8 @@ export interface RenderLayer {
   kind: LayerKind;
   /** Compositing mode against the layers beneath (defaults to 'normal'). */
   blend?: LayerBlendMode;
+  /** Vector mask clipping the layer (local space). Omitted when unmasked. */
+  mask?: LayerMask;
   /** Center position in composition space. */
   x: number;
   y: number;

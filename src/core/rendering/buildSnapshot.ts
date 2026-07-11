@@ -8,6 +8,7 @@ import type { SceneNode } from '@core/types';
 import { flattenScene, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeEffects, effectsToFilter } from '@core/effects/effects';
 import { readNodeBlend } from '@core/effects/blendMode';
+import { readNodeMask } from '@core/effects/mask';
 import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 
@@ -115,6 +116,7 @@ export function buildSnapshot(
       id: node.id,
       kind: layerKind,
       blend: readNodeBlend(node),
+      mask: readNodeMask(node),
       x: a?.get('x') ?? base.x,
       y: a?.get('y') ?? base.y,
       rotation: a?.get('rotation') ?? base.rotation,

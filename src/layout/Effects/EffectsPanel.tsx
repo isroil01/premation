@@ -20,7 +20,24 @@ import {
   removeEffect,
 } from '@core/effects/effects';
 import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
+import {
+  getNodeMask,
+  addMaskPath,
+  updateMaskPath,
+  removeMaskPath,
+  rectangleMask,
+  ellipseMask,
+  type MaskMode,
+} from '@core/effects/mask';
+import { SIZE } from '@core/rendering/buildSnapshot';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import styles from './EffectsPanel.module.css';
+
+const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
+  { mode: 'add', label: 'Add' },
+  { mode: 'subtract', label: 'Subtract' },
+  { mode: 'intersect', label: 'Intersect' },
+];
 
 export function EffectsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
@@ -42,6 +59,13 @@ export function EffectsPanel(): JSX.Element {
     icon: b.mode === blend ? 'check' : undefined,
     onSelect: () => setNodeBlend(primary, b.mode),
   }));
+
+  // Mask presets are built at the layer's rendered size (matches buildSnapshot).
+  const node = defaultSceneGraph.getNode(primary);
+  const kind = node ? readNodeKind(node) : 'shape';
+  const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
+  const { w: maskW, h: maskH } = SIZE[layerKind];
+  const masks = getNodeMask(primary).paths;
 
   return (
     <div className={styles.root}>
@@ -99,6 +123,71 @@ export function EffectsPanel(): JSX.Element {
               </div>
             );
           })}
+        </div>
+      )}
+
+      <div className={styles.sectionTitle}>Masks</div>
+      <div className={styles.addRow}>
+        <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, rectangleMask(maskW, maskH))}>
+          <Icon name="plus" size={11} /> Rectangle
+        </button>
+        <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, ellipseMask(maskW, maskH))}>
+          <Icon name="plus" size={11} /> Ellipse
+        </button>
+      </div>
+
+      {masks.length > 0 && (
+        <div className={styles.list}>
+          {masks.map((m, i) => (
+            <div key={m.id} className={styles.item}>
+              <div className={styles.itemHead}>
+                <span className={styles.itemLabel}>Mask {i + 1}</span>
+                <Dropdown
+                  placement="bottom-end"
+                  trigger={
+                    <button type="button" className={styles.blendTrigger}>
+                      {MASK_MODES.find((x) => x.mode === m.mode)?.label ?? 'Add'}
+                      <Icon name="chevron-down" size={12} />
+                    </button>
+                  }
+                  items={MASK_MODES.map((x) => ({
+                    type: 'item',
+                    id: x.mode,
+                    label: x.label,
+                    icon: x.mode === m.mode ? 'check' : undefined,
+                    onSelect: () => updateMaskPath(primary, m.id, { mode: x.mode }),
+                  }))}
+                />
+                <button
+                  type="button"
+                  className={styles.remove}
+                  aria-label={`Remove Mask ${i + 1}`}
+                  onClick={() => removeMaskPath(primary, m.id)}
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </div>
+              <div className={styles.maskControls}>
+                <label className={styles.maskField}>
+                  <span>Feather</span>
+                  <ValueField value={m.feather} min={0} max={200} precision={0} unit="px"
+                    onChange={(v) => updateMaskPath(primary, m.id, { feather: v })} aria-label="Mask feather" />
+                </label>
+                <label className={styles.maskField}>
+                  <span>Opacity</span>
+                  <ValueField value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
+                    onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 })} aria-label="Mask opacity" />
+                </label>
+                <button
+                  type="button"
+                  className={m.inverted ? styles.invertOn : styles.addChip}
+                  onClick={() => updateMaskPath(primary, m.id, { inverted: !m.inverted })}
+                >
+                  Invert
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
