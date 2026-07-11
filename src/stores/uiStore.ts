@@ -1,0 +1,114 @@
+/**
+ * UI store — ephemeral, non-persisted UI state.
+ *
+ * Holds things that don't belong in the panel or preference stores: focus,
+ * hover, transient modals, tooltips, drag state. Anything a single user
+ * action would set then immediately unset.
+ */
+
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
+import { subscribeWithSelector } from 'zustand/middleware';
+import type { Disposable } from '@app-types/common';
+
+export type Tool = 'select' | 'move' | 'rotate' | 'scale' | 'pen' | 'text' | 'shape';
+
+interface UIState {
+  /** Active tool in the toolbar. */
+  activeTool: Tool;
+  /** Whether the user is currently dragging. */
+  isDragging: boolean;
+  /** ID of the panel currently focused (for keyboard routing). */
+  focusedPanelId: string | null;
+  /** Cursor override applied to the workspace. */
+  cursor: 'default' | 'crosshair' | 'grab' | 'grabbing' | 'move' | 'text' | 'none';
+  /** Generic "toast"-style notifications. */
+  notifications: ReadonlyArray<Notification>;
+  /** Mouse position in screen coords, updated by the app shell. */
+  pointer: { x: number; y: number };
+}
+
+export interface Notification {
+  id: string;
+  level: 'info' | 'success' | 'warning' | 'error';
+  message: string;
+  /** Auto-dismiss after this many ms. 0 means manual dismiss only. */
+  durationMs: number;
+  createdAt: number;
+}
+
+interface UIActions {
+  setActiveTool(tool: Tool): void;
+  setDragging(isDragging: boolean): void;
+  setFocusedPanel(id: string | null): void;
+  setCursor(cursor: UIState['cursor']): void;
+  setPointer(x: number, y: number): void;
+  notify(notification: Omit<Notification, 'id' | 'createdAt'>): string;
+  dismissNotification(id: string): void;
+}
+
+export type UIStore = UIState & UIActions;
+
+export const useUIStore = create<UIStore>()(
+  subscribeWithSelector(
+    immer((set) => ({
+      activeTool: 'select',
+      isDragging: false,
+      focusedPanelId: null,
+      cursor: 'default',
+      notifications: [],
+      pointer: { x: 0, y: 0 },
+
+      setActiveTool: (tool) =>
+        set((s) => {
+          s.activeTool = tool;
+        }),
+      setDragging: (isDragging) =>
+        set((s) => {
+          s.isDragging = isDragging;
+        }),
+      setFocusedPanel: (id) =>
+        set((s) => {
+          s.focusedPanelId = id;
+        }),
+      setCursor: (cursor) =>
+        set((s) => {
+          s.cursor = cursor;
+        }),
+      setPointer: (x, y) =>
+        set((s) => {
+          s.pointer.x = x;
+          s.pointer.y = y;
+        }),
+      notify: (n) => {
+        const id = `n_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        set((s) => {
+          s.notifications.push({
+            ...n,
+            id,
+            createdAt: Date.now(),
+          });
+        });
+        if (n.durationMs > 0) {
+          window.setTimeout(() => {
+            useUIStore.getState().dismissNotification(id);
+          }, n.durationMs);
+        }
+        return id;
+      },
+      dismissNotification: (id) =>
+        set((s) => {
+          s.notifications = s.notifications.filter((n) => n.id !== id);
+        }),
+    })),
+  ),
+);
+
+/** Subscribe to a slice without React — for engines. */
+export function subscribeUI(
+  selector: (s: UIState) => unknown,
+  listener: () => void,
+): Disposable {
+  const unsub = useUIStore.subscribe(selector, listener);
+  return { dispose: unsub };
+}

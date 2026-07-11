@@ -1,0 +1,78 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
+}
+
+.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-xs);
+  background: var(--color-slate-950);
+  border: 1px solid var(--color-border);
+  flex: none;
+  transition: var(--motion-hover-transition);
+}
+
+.root:hover:not(.disabled) .box {
+  border-color: var(--color-primary-subtle);
+  background: var(--color-surface-2);
+}
+
+.root:has(.input:focus-visible) .box {
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: inherit;
+  margin: 0;
+  z-index: 2;
+}
+
+.root[data-state="checked"] .box,
+.root[data-state="indeterminate"] .box {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.root[data-state="checked"]:hover:not(.disabled) .box,
+.root[data-state="indeterminate"]:hover:not(.disabled) .box {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.indicator {
+  color: var(--color-primary-foreground);
+  /* Standard ease-out, not spring: the project reserves spring for
+     direct-manipulation feedback (drag/snap/scrub), never chrome like this. */
+  animation: check-scale var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.label {
+  display: inline-block;
+  line-height: 1.2;
+  font-weight: var(--font-weight-medium);
+}
+
+@keyframes check-scale {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}

@@ -1,0 +1,141 @@
+.root {
+  --btn-bg:          linear-gradient(180deg, var(--color-surface-2) 0%, var(--color-surface-1) 100%);
+  --btn-bg-hover:    linear-gradient(180deg, var(--color-surface-3) 0%, var(--color-surface-2) 100%);
+  --btn-bg-active:   var(--color-active);
+  --btn-fg:          var(--color-text-primary);
+  --btn-border:      var(--color-border);
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-5);
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border: 1px solid var(--btn-border);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+  position: relative;
+  user-select: none;
+}
+
+.root:hover:not(:disabled) {
+  background: var(--btn-bg-hover);
+  border-color: var(--color-border-strong);
+}
+
+.root:active:not(:disabled) {
+  background: var(--btn-bg-active);
+}
+
+.root:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.root:focus-visible {
+  border-color: var(--color-primary);
+}
+
+.root[data-variant="primary"] {
+  /* Fill stays between primary and primary-active so white labels keep
+     AA (≥4.57:1) across the whole button, not just the darker edge. */
+  --btn-bg:        linear-gradient(180deg, var(--color-primary) 0%, var(--color-primary-active) 100%);
+  --btn-bg-hover:  linear-gradient(180deg, var(--color-primary) 0%, var(--color-primary) 100%);
+  --btn-bg-active: var(--color-primary-active);
+  --btn-fg:        var(--color-primary-foreground);
+  --btn-border:    rgba(0, 0, 0, 0.25);
+}
+
+.root[data-variant="primary"]:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.root[data-variant="secondary"] {
+  /* Default — uses default tokens */
+}
+
+.root[data-variant="ghost"] {
+  --btn-bg:        transparent;
+  --btn-bg-hover:  var(--color-hover);
+  --btn-bg-active: var(--color-active);
+  --btn-border:    transparent;
+}
+
+.root[data-variant="tertiary"] {
+  --btn-bg:        linear-gradient(180deg, var(--color-surface-1) 0%, var(--color-surface-0) 100%);
+  --btn-bg-hover:  linear-gradient(180deg, var(--color-surface-2) 0%, var(--color-surface-1) 100%);
+  --btn-bg-active: var(--color-active);
+}
+
+.root[data-variant="danger"] {
+  --btn-bg:        linear-gradient(180deg, color-mix(in srgb, var(--color-danger) 90%, white) 0%, var(--color-danger) 100%);
+  --btn-bg-hover:  linear-gradient(180deg, color-mix(in srgb, var(--color-danger) 95%, white) 0%, color-mix(in srgb, var(--color-danger) 90%, white) 100%);
+  --btn-bg-active: color-mix(in srgb, var(--color-danger) 76%, black);
+  --btn-fg:        var(--color-slate-0);
+  --btn-border:    rgba(0, 0, 0, 0.25);
+}
+
+.root[data-variant="success"] {
+  --btn-bg:        linear-gradient(180deg, color-mix(in srgb, var(--color-success) 90%, white) 0%, var(--color-success) 100%);
+  --btn-bg-hover:  linear-gradient(180deg, color-mix(in srgb, var(--color-success) 95%, white) 0%, color-mix(in srgb, var(--color-success) 90%, white) 100%);
+  --btn-bg-active: color-mix(in srgb, var(--color-success) 76%, black);
+  --btn-fg:        var(--color-slate-0);
+  --btn-border:    rgba(0, 0, 0, 0.2);
+}
+
+.root[data-variant="warning"] {
+  --btn-bg:        linear-gradient(180deg, color-mix(in srgb, var(--color-warning) 90%, white) 0%, var(--color-warning) 100%);
+  --btn-bg-hover:  linear-gradient(180deg, color-mix(in srgb, var(--color-warning) 95%, white) 0%, color-mix(in srgb, var(--color-warning) 90%, white) 100%);
+  --btn-bg-active: color-mix(in srgb, var(--color-warning) 76%, black);
+  --btn-fg:        var(--color-slate-1000);
+  --btn-border:    rgba(0, 0, 0, 0.15);
+}
+
+.root[data-size="xs"] { height: 20px; padding: 0 var(--space-3); font-size: var(--font-size-xs); border-radius: var(--radius-xs); }
+.root[data-size="sm"] { height: 24px; padding: 0 var(--space-4); font-size: var(--font-size-sm); border-radius: var(--radius-xs); }
+.root[data-size="md"] { height: 30px; padding: 0 var(--space-5); font-size: var(--font-size-md); border-radius: var(--radius-sm); }
+.root[data-size="lg"] { height: 36px; padding: 0 var(--space-6); font-size: var(--font-size-lg); border-radius: var(--radius-md); }
+.root[data-size="xl"] { height: 44px; padding: 0 var(--space-7); font-size: var(--font-size-xl); border-radius: var(--radius-lg); }
+
+.fullWidth {
+  width: 100%;
+}
+
+.label {
+  display: inline-block;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* opacity (not visibility) keeps the label in the accessible name while the
+   spinner overlays it; aria-busy on the button announces the loading state. */
+.loading .label {
+  opacity: 0;
+}
+
+.spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: spin 720ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

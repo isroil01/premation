@@ -1,0 +1,101 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-panel);
+  flex: none;
+}
+
+/* Panel-toolbar buttons read as real buttons (bordered, on a raised step) —
+   not floating glyphs. Scoped so it only affects this toolbar row. */
+.toolbar > :global(button) {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.toolbar > :global(button:hover:not(:disabled)) {
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+}
+
+.search {
+  flex: 1;
+}
+
+.searchRow {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-panel);
+  flex: none;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--space-2) var(--space-2);
+  overflow: auto;
+}
+
+.empty {
+  padding: var(--space-8) var(--space-6);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.rowAction {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+[role='treeitem']:hover .rowAction {
+  opacity: 1;
+}
+
+.rowAction[data-on] {
+  opacity: 1;
+  color: var(--color-text-secondary);
+}
+
+.rowAction:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-5);
+  height: 24px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  border-top: 1px solid var(--color-divider);
+  background: var(--color-panel-header);
+  flex: none;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.xy {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  width: 100%;
+}

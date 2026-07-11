@@ -1,0 +1,85 @@
+.root {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.horizontal {
+  flex-direction: row;
+}
+
+.vertical {
+  flex-direction: column;
+}
+
+.pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.first {
+  flex: none;
+}
+
+.last {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.splitter {
+  flex: none;
+  background: var(--color-splitter);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  position: relative;
+}
+
+.splitterH {
+  width: 1px;
+  cursor: col-resize;
+  margin: 0;
+}
+
+.splitterV {
+  height: 1px;
+  cursor: row-resize;
+  margin: 0;
+}
+
+/* Hit target — 8px transparent overlay centered on the splitter. */
+.splitterH::after,
+.splitterV::after {
+  content: '';
+  position: absolute;
+  background: transparent;
+}
+
+.splitterH::after {
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+}
+
+.splitterV::after {
+  left: 0;
+  right: 0;
+  top: -4px;
+  bottom: -4px;
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--color-splitter-hover);
+  outline: none;
+}
+
+/* When collapsed, the splitter becomes a thin visible line. */
+.root[data-collapsed] .splitterH { width: 1px; }
+.root[data-collapsed] .splitterV { height: 1px; }

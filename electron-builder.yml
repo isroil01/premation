@@ -1,0 +1,31 @@
+# electron-builder packaging config → produces installable desktop binaries.
+# Build with:  npm run dist   (installer)   |   npm run pack   (unpacked, fast)
+appId: com.motioneditor.app
+productName: Motion Editor
+copyright: © Motion Editor
+
+directories:
+  output: release
+  buildResources: build
+
+# The renderer bundle + compiled main/preload + manifest are all that ship.
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+
+win:
+  target: nsis
+  artifactName: ${productName}-${version}-setup.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  target: dmg
+  category: public.app-category.graphics-design
+
+linux:
+  target: AppImage
+  category: Graphics

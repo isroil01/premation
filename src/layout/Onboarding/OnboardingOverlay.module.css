@@ -1,0 +1,114 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-index-modal);
+  display: grid;
+  place-items: center;
+  background: var(--color-overlay-scrim);
+  animation: onb-in var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.card {
+  width: min(440px, 92vw);
+  padding: var(--space-8);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--shadow-lg);
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-panel);
+  background: var(--color-ai-subtle);
+  color: var(--color-ai-primary);
+  margin-bottom: var(--space-5);
+}
+
+.title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-section);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-3);
+}
+
+.body {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+  margin-bottom: var(--space-5);
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-ai-light);
+  background: var(--color-ai-subtle);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-6);
+}
+
+.ae {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-6);
+  cursor: pointer;
+}
+
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.dotOn {
+  background: var(--color-primary);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.skip {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  background: none;
+}
+
+.skip:hover { color: var(--color-text-secondary); }
+
+.nav {
+  display: flex;
+  gap: var(--space-3);
+}
+
+@keyframes onb-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim { animation: none; }
+}

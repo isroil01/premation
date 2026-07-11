@@ -1,0 +1,80 @@
+.bar {
+  position: absolute;
+  top: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 30px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-md);
+  animation: focus-bar-in var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.focusIcon {
+  color: var(--color-selection);
+  margin-right: var(--space-2);
+  flex: none;
+}
+
+.crumbWrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sep {
+  color: var(--color-text-muted);
+  margin: 0 1px;
+}
+
+.crumb {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.crumb:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.crumbCurrent {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+  cursor: default;
+}
+
+.exit {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.exit:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+@keyframes focus-bar-in {
+  from { opacity: 0; transform: translate(-50%, -4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar { animation: none; }
+}

@@ -1,0 +1,104 @@
+.field {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-4);
+  /* recessed style — sits darker than the panel ground */
+  background: var(--color-slate-950);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-primary);
+  cursor: ew-resize;
+  user-select: none;
+  transition: var(--motion-hover-transition);
+}
+
+.field:hover:not(.disabled):not(.editing) {
+  border-color: var(--color-primary-subtle);
+  background: var(--color-surface-2);
+  color: var(--color-primary-hover);
+}
+
+/* Keyboard focus on the resting spinbutton — border shift to match the
+   dragging/editing states; the global soft ring lands on top. */
+.field:focus-visible {
+  border-color: var(--color-primary);
+}
+
+/* Value + input use JetBrains Mono w/ tabular-nums so scrubbing never jitters. */
+.value,
+.input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-caption); /* 12px minimum */
+  font-weight: var(--font-weight-medium);
+  letter-spacing: -0.01em;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1;
+}
+
+.value {
+  pointer-events: none; /* clicks land on .field for scrub/edit routing */
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.unit {
+  margin-left: 2px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-tiny);
+  font-weight: var(--font-weight-regular);
+}
+
+.input {
+  background: transparent;
+  border: none;
+  outline: none;
+  height: 100%;
+  padding: 0;
+  color: var(--color-text-primary);
+}
+
+.editing {
+  cursor: text;
+  border-color: var(--color-primary);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+}
+
+.dragging {
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
+  color: var(--color-primary-hover);
+}
+
+.invalid {
+  animation: value-shake var(--motion-duration-base) var(--motion-ease-standard);
+  border-color: var(--color-danger);
+}
+
+.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--color-surface-0) !important;
+  color: var(--color-text-disabled) !important;
+  border-color: transparent !important;
+}
+
+@keyframes value-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .invalid { animation: none; }
+}

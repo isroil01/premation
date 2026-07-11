@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-11T00:00:00Z",
+  "title": "Design System: Motion Editor",
+  "extensions": {
+    "colorMeta": {
+      "signal-blue": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "canonical": "#3170e6",
+        "tonalRamp": ["#0d1a33", "#123056", "#1a4488", "#255ac0", "#2660cc", "#3170e6", "#4d88f5", "#a9c8ff"]
+      },
+      "playhead-coral": {
+        "role": "tertiary",
+        "displayName": "Playhead Coral",
+        "canonical": "#ff6b45",
+        "tonalRamp": ["#3a160d", "#5c2213", "#8a331d", "#c04a2b", "#e85d3a", "#ff6b45", "#ff9070", "#ffbfac"]
+      },
+      "ai-violet": {
+        "role": "tertiary",
+        "displayName": "AI Violet",
+        "canonical": "#8b5cf6",
+        "tonalRamp": ["#1c1233", "#2c1c52", "#412a7d", "#5a3cad", "#734bd6", "#8b5cf6", "#9d6ef8", "#c4b5fd"]
+      },
+      "surface-0": {
+        "role": "neutral",
+        "displayName": "Surface 0 (App Frame)",
+        "canonical": "#0b0d12",
+        "tonalRamp": ["#050608", "#0b0d12", "#14171e", "#1e222c", "#1f242e", "#313a47", "#475364", "#707b8d"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#f5f7fb",
+        "tonalRamp": ["#707b8d", "#94a0b2", "#b3bdcd", "#d5dbe5", "#ebedf2", "#f5f6f9", "#f5f7fb", "#ffffff"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Largest moments only — onboarding/welcome, never working chrome." },
+      "label": { "displayName": "Label", "purpose": "The workhorse size: buttons, control labels, list rows (13px/500)." },
+      "mono": { "displayName": "Mono Numeric", "purpose": "Every ticking number — timecodes, coords, FPS — with tabular-nums." }
+    },
+    "shadows": [
+      { "name": "none", "value": "none", "purpose": "System is flat by doctrine. Depth is surface value + one hairline, never a shadow." }
+    ],
+    "motion": [
+      { "name": "duration-fast", "value": "120ms", "purpose": "Hovers and toggles." },
+      { "name": "duration-base", "value": "160ms", "purpose": "Panels, popovers, cards." },
+      { "name": "duration-slow", "value": "220ms", "purpose": "Modals, mode transitions, Focus Mode." },
+      { "name": "ease-standard", "value": "cubic-bezier(0.2, 0, 0, 1)", "purpose": "Default ease-out for UI chrome." },
+      { "name": "ease-spring", "value": "cubic-bezier(0.34, 1.56, 0.64, 1)", "purpose": "Direct-manipulation feedback only (drag/snap/scrub) — never panel chrome." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action — one per context. Signal Blue gradient, white text.",
+      "html": "<button class=\"ds-btn-primary\">Apply</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 12px; border: 1px solid rgba(0,0,0,0.25); border-radius: 4px; background: linear-gradient(180deg, #4d88f5 0%, #3170e6 100%); color: #fff; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: filter 120ms cubic-bezier(0.2,0,0,1); } .ds-btn-primary:hover { filter: brightness(1.05); } .ds-btn-primary:active { background: #2660cc; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The resting look of most buttons — subtle value-stepped gradient with a hairline.",
+      "html": "<button class=\"ds-btn-secondary\">Export</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 12px; border: 1px solid rgba(255,255,255,0.06); border-radius: 4px; background: linear-gradient(180deg, #1e222c 0%, #14171e 100%); color: #f5f7fb; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: background 120ms cubic-bezier(0.2,0,0,1), border-color 120ms cubic-bezier(0.2,0,0,1); } .ds-btn-secondary:hover { background: linear-gradient(180deg, #1f242e 0%, #1e222c 100%); border-color: rgba(255,255,255,0.16); } .ds-btn-secondary:focus-visible { outline: none; border-color: #3170e6; box-shadow: 0 0 0 2px rgba(49,112,230,0.6); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Borderless control for toolbars and dense clusters; fills on hover.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0 12px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #f5f7fb; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: background 120ms cubic-bezier(0.2,0,0,1); } .ds-btn-ghost:hover { background: rgba(255,255,255,0.04); } .ds-btn-ghost:active { background: rgba(255,255,255,0.08); }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Recessed dark well sunk below the panel plane; border shifts to Signal Blue on focus.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Duration</span><span class=\"ds-field-well\"><input class=\"ds-field-input\" value=\"00:04:12\" /></span></label>",
+      "css": ".ds-field { display: inline-flex; flex-direction: column; gap: 4px; } .ds-field-label { font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #94a0b2; } .ds-field-well { display: inline-flex; align-items: center; height: 28px; padding: 0 6px; background: #0b0d12; border: 1px solid rgba(255,255,255,0.05); border-radius: 3px; transition: border-color 120ms cubic-bezier(0.2,0,0,1); } .ds-field-well:focus-within { border-color: #3170e6; } .ds-field-input { background: transparent; border: none; outline: none; color: #f5f7fb; font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 13px; font-variant-numeric: tabular-nums; width: 100%; }"
+    },
+    {
+      "name": "Timeline Track Header",
+      "kind": "custom",
+      "refersTo": "timeline",
+      "description": "Signature row: category-hued icon chip, layer name, and always-visible switch column — calm at rest.",
+      "html": "<div class=\"ds-track\"><span class=\"ds-track-idx\">1</span><span class=\"ds-track-icon\">◆</span><span class=\"ds-track-name\">Hero Text</span><span class=\"ds-track-actions\"><button class=\"ds-track-act\">◉</button><button class=\"ds-track-act ds-on\">○</button></span></div>",
+      "css": ".ds-track { display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 4px 0 6px; background: #14171e; border-bottom: 1px solid rgba(255,255,255,0.06); position: relative; } .ds-track::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #6aa9ff; opacity: 0.85; } .ds-track-idx { width: 16px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #707b8d; text-align: right; opacity: 0.6; } .ds-track-icon { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; color: #6aa9ff; background: rgba(106,169,255,0.08); border: 1px solid rgba(106,169,255,0.15); font-size: 11px; } .ds-track-name { flex: 1; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13px; font-weight: 500; color: #f5f7fb; } .ds-track-actions { display: flex; gap: 2px; } .ds-track-act { width: 20px; height: 20px; display: grid; place-items: center; border: none; border-radius: 3px; background: transparent; color: #707b8d; opacity: 0.5; cursor: pointer; } .ds-track-act:hover { opacity: 1; background: rgba(255,255,255,0.04); color: #f5f7fb; } .ds-track-act.ds-on { opacity: 1; color: #10b981; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Control Surface",
+    "overview": "Motion Editor is a color-grading desk after dark: a dense, information-rich instrument built for a professional who will sit in front of it for hours. Surfaces are near-black and calm on purpose so the work being composited is the brightest thing on screen. Depth is stepped in value, not drawn with shadows, and one deliberate azure marks anything selected or actionable. It rejects the playful consumer app and the cluttered legacy pro tool alike: complexity is disclosed progressively, calm by default, detail on demand.",
+    "keyCharacteristics": [
+      "Near-black, value-stepped surfaces; depth without shadow.",
+      "One azure accent for selection and primary action — nothing decorative.",
+      "Two reserved hues: coral for the playhead, violet for AI. Never anything else.",
+      "Machined, recessed controls on an exact size and 4px spacing grid.",
+      "Density that is earned and progressively revealed, never overwhelming."
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "A single accent, Signal Blue, carries both selection and primary action. Never add a second accent to distinguish them.", "section": "colors" },
+      { "name": "The Reserved Hue Rule", "body": "Coral belongs to the playhead, violet to AI. Both are forbidden anywhere else; their meaning depends on their exclusivity.", "section": "colors" },
+      { "name": "The Icon-Paired Rule", "body": "A layer-category hue never appears without its icon shape. Shape is the primary signal, color the secondary.", "section": "colors" },
+      { "name": "The Tabular Rule", "body": "Every ticking number is set in JetBrains Mono with tabular-nums so digits never shift width.", "section": "typography" },
+      { "name": "The Flat-By-Value Rule", "body": "Elevation is a value step, never a shadow. A raised element is lighter; a recessed one is darker. box-shadow for depth is prohibited.", "section": "elevation" },
+      { "name": "The One-Hairline Rule", "body": "Borders appear only where two regions meet, and never doubled.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do carry depth with surface value and one hairline — a nearer thing is a lighter step, never a shadowed one.",
+      "Do keep Signal Blue for selection, primary action, and focus only; if it's decorative, it's wrong.",
+      "Do hold coral to the playhead and violet to AI, always.",
+      "Do pair every layer-category hue with its icon shape; color is never the sole signal.",
+      "Do set every ticking number in mono with tabular-nums so digits don't jitter.",
+      "Do reveal complexity progressively — calm by default, detail on demand, like the timeline.",
+      "Do use the exact size/spacing grid (control heights 20–44px, 4px spacing base)."
+    ],
+    "donts": [
+      "Don't drift toward a playful consumer app (Canva-style): no bubbly shapes, sticker-bright multicolor, or template energy.",
+      "Don't become a cluttered legacy pro tool: no walls of tiny buttons or nested toolbars; density must be earned and disclosed.",
+      "Don't add a box-shadow to separate surfaces — step the value or add a hairline instead.",
+      "Don't introduce a second accent hue, or use coral/violet for anything but their reserved jobs.",
+      "Don't nest a card inside a card. Group with spacing and a hairline.",
+      "Don't use border-left/right >1px as a colored stripe, gradient text, or decorative glassmorphism.",
+      "Don't ship the app-wide button focus-ring suppression; restore a soft Signal-Blue focus ring on interactive controls.",
+      "Don't run body text on Ink Muted or place gray text on a colored fill."
+    ]
+  }
+}

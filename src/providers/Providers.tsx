@@ -1,0 +1,479 @@
+/**
+ * UI Provider — application-level wrapper that:
+ *   1. Applies persisted preferences to the document.
+ *   2. Boots the Application core (services DI, EventBus, CommandSystem, ShortcutManager).
+ *   3. Registers built-in + project commands and default panels.
+ *   4. Wires the ThemeManager and ProjectManager into the UI.
+ *   5. Mounts the global overlay hosts (modals, context menus, notifications).
+ */
+
+import { useEffect, useState, type ReactNode } from 'react';
+import { Application } from '@core/application/Application';
+import {
+  applyPreferencesToDocument,
+  usePreferenceStore,
+} from '@stores/preferenceStore';
+import { useLayoutStore } from '@stores/layoutStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useUIStore } from '@stores/uiStore';
+import { bumpScene } from '@stores/sceneStore';
+import { openModal } from '@stores/modalStore';
+import { useHistoryStore } from '@stores/historyStore';
+import { Button } from '@components/Button';
+import { TooltipProvider } from '@components/Tooltip';
+import { getAutosaveController } from '@core/persistence/AutosaveController';
+import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
+import renderCache from '@core/rendering/renderCache';
+import pluginHost from '@core/plugins/PluginHost';
+import { openPluginsModal } from '@layout/Plugins/PluginsModal';
+import { openExportDialog } from '@layout/Export/ExportDialog';
+import { usePresentationStore } from '@stores/presentationStore';
+import { useGuidesStore } from '@stores/guidesStore';
+import { getCommandRegistry, BuiltinCommands, type Command } from '@core/commands/Command';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { getShortcutManager } from '@core/commands/ShortcutManager';
+import { getEventBus } from '@core/events/EventBus';
+import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager } from '@core/services/coreServices';
+import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
+import { useOnboardingStore } from '@stores/onboardingStore';
+import { sceneProjectIO } from '@core/scene/sceneProjectIO';
+import { asThemeId, asCommandId } from '@app-types/common';
+import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
+import { seedDefaultScene } from '@core/scene/seedDefaultScene';
+import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { ProjectCommands } from '@layout/Menu';
+import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
+import { CommandPalette } from '@layout/CommandPalette';
+import { PresentationMode } from '@layout/Presentation/PresentationMode';
+import { openPalette } from '@stores/commandPaletteStore';
+
+interface ProvidersProps {
+  children: ReactNode;
+}
+
+function notify(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info'): void {
+  useUIStore.getState().notify({ level, message, durationMs: 2600 });
+}
+
+function buildBuiltinCommands(): ReadonlyArray<Command> {
+  return [
+    {
+      // The palette owns the Cmd/Ctrl+K key itself (so it fires even while a
+      // field is focused); this command is for menus/discoverability. No
+      // shortcut here on purpose — binding it would double-fire with the
+      // palette's own listener.
+      id: asCommandId('view.commandPalette'),
+      label: 'Command Palette',
+      icon: 'search',
+      enabled: () => true,
+      execute: () => openPalette(),
+    },
+    {
+      id: BuiltinCommands.ToggleLeftSidebar,
+      label: 'Toggle Left Sidebar',
+      icon: 'panel-left',
+      enabled: () => true,
+      execute: () => useLayoutStore.getState().toggleRegion('leftSidebar'),
+    },
+    {
+      id: BuiltinCommands.ToggleRightInspector,
+      label: 'Toggle Inspector',
+      icon: 'panel-right',
+      enabled: () => true,
+      execute: () => useLayoutStore.getState().toggleRegion('rightInspector'),
+    },
+    {
+      id: BuiltinCommands.ToggleTimeline,
+      label: 'Toggle Timeline',
+      icon: 'panel-bottom',
+      enabled: () => true,
+      execute: () => useLayoutStore.getState().toggleRegion('bottomTimeline'),
+    },
+    {
+      id: BuiltinCommands.FocusWorkspace,
+      label: 'Focus Workspace',
+      icon: 'crosshair',
+      shortcut: { key: '`' },
+      enabled: () => true,
+      execute: () => {
+        document.querySelector<HTMLElement>('[data-workspace-viewport]')?.focus();
+      },
+    },
+    {
+      id: BuiltinCommands.ResetLayout,
+      label: 'Reset Layout',
+      icon: 'layout',
+      enabled: () => true,
+      execute: () => useLayoutStore.getState().resetLayout(),
+    },
+    {
+      id: BuiltinCommands.SwitchTheme,
+      label: 'Switch Theme',
+      icon: 'theme',
+      shortcut: { key: 'k', meta: true, shift: true },
+      enabled: () => true,
+      execute: () => getThemeManager().toggle(),
+    },
+    {
+      id: BuiltinCommands.SelectAll,
+      label: 'Select All',
+      icon: 'select-all',
+      shortcut: { key: 'a', meta: true },
+      enabled: () => true,
+      execute: () => {
+        const ids: string[] = [];
+        defaultSceneGraph.traverse((n) => ids.push(n.id));
+        useSelectionStore.getState().set(ids);
+      },
+    },
+    {
+      id: BuiltinCommands.Deselect,
+      label: 'Deselect',
+      icon: 'deselect',
+      shortcut: { key: 'Escape' },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => useSelectionStore.getState().clear(),
+    },
+  ];
+}
+
+function buildProjectCommands(): ReadonlyArray<Command> {
+  return [
+    {
+      id: asCommandId(ProjectCommands.New),
+      label: 'New Project',
+      shortcut: { key: 'n', meta: true },
+      enabled: () => true,
+      execute: () => {
+        getProjectManager().newProject('Untitled');
+        bumpScene();
+        notify('New project created', 'success');
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.Open),
+      label: 'Open Project…',
+      shortcut: { key: 'o', meta: true },
+      enabled: () => true,
+      execute: async () => {
+        const ref = await getProjectManager().open();
+        if (ref) {
+          bumpScene();
+          notify(`Opened “${ref.name}”`, 'success');
+        } else {
+          notify('Open cancelled', 'info');
+        }
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.Save),
+      label: 'Save',
+      shortcut: { key: 's', meta: true },
+      enabled: () => true,
+      execute: async () => {
+        const ok = await getProjectManager().save();
+        // An explicit save clears the unsaved indicator + recovery snapshot.
+        const ws = useWorkspaceStore.getState();
+        if (ws.activeId) ws.actions.markDirty(ws.activeId, false);
+        clearRecovery();
+        notify(ok ? 'Project saved' : 'Saved', 'success');
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.SaveAs),
+      label: 'Save As…',
+      shortcut: { key: 's', meta: true, shift: true },
+      enabled: () => true,
+      execute: async () => {
+        const ok = await getProjectManager().saveAs('Untitled');
+        notify(ok ? 'Project saved' : 'Save cancelled', ok ? 'success' : 'info');
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.Close),
+      label: 'Close Project',
+      enabled: () => true,
+      execute: () => {
+        getProjectManager().close();
+        bumpScene();
+        notify('Project closed', 'info');
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.About),
+      label: 'About Motion Editor',
+      enabled: () => true,
+      execute: () => {
+        openModal({
+          title: 'Motion Editor',
+          size: 'sm',
+          render: () => (
+            <div style={{ color: 'var(--color-text-secondary)', lineHeight: 1.6, fontSize: 'var(--font-size-md)' }}>
+              Professional AI-native motion design application.
+              <br />
+              Version 0.1.0 — frontend foundation.
+            </div>
+          ),
+        });
+      },
+    },
+  ];
+}
+
+export function Providers({ children }: ProvidersProps): JSX.Element {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await applyPreferencesToDocument();
+
+      const selection = {
+        get: () => useSelectionStore.getState().ids,
+        set: (ids: ReadonlyArray<string>) => useSelectionStore.getState().set(ids),
+        clear: () => useSelectionStore.getState().clear(),
+      };
+      const panels = {
+        open: (id: string) => useLayoutStore.getState().openPanel(id),
+        close: (id: string) => useLayoutStore.getState().closePanel(id),
+        toggle: (id: string) => useLayoutStore.getState().togglePanel(id),
+        isOpen: (id: string) => {
+          const p = useLayoutStore.getState().panels[id];
+          return !!p && useLayoutStore.getState().panelOrder[p.region].includes(id);
+        },
+      };
+      const workspace = {
+        setActive: (id: string) => useWorkspaceStore.getState().actions.setActive(id),
+        getActive: () => useWorkspaceStore.getState().activeId ?? '',
+      };
+
+      Application.boot({
+        getState: () => ({
+          ui: useUIStore.getState(),
+          layout: useLayoutStore.getState(),
+          selection: useSelectionStore.getState(),
+          workspace: useWorkspaceStore.getState(),
+          preferences: usePreferenceStore.getState(),
+        }),
+        selection,
+        panels,
+        workspace,
+      });
+
+      // Core services are registered inside Application.boot; track the rest of
+      // the boot sequence as a loading task so the UI can reflect it.
+      const bootTask = getLoadingManager().begin('boot', 'Starting editor…');
+      try {
+        // Register built-in + project commands AFTER boot so the registry exists.
+        const registry = getCommandRegistry();
+        for (const cmd of buildBuiltinCommands()) registry.register(cmd);
+
+        const cs = getCommandSystem();
+        registry.register({
+          id: BuiltinCommands.Undo,
+          label: 'Undo',
+          shortcut: { key: 'z', meta: true },
+          enabled: () => cs.canUndo(),
+          execute: () => cs.undo(),
+        });
+        registry.register({
+          id: BuiltinCommands.Redo,
+          label: 'Redo',
+          shortcut: { key: 'z', meta: true, shift: true },
+          enabled: () => cs.canRedo(),
+          execute: () => cs.redo(),
+        });
+
+        for (const cmd of buildProjectCommands()) registry.register(cmd);
+
+        getShortcutManager().rehydrateFromRegistry();
+
+        // Theme: ThemeManager is the single authority. Mirror the resolved theme
+        // into the preference store so existing UI reading it stays correct.
+        const theme = getThemeManager();
+        theme.subscribe((t) => usePreferenceStore.getState().set('theme', asThemeId(t)));
+        theme.apply();
+
+        // Project: bridge to the scene document and refresh scene UI on load.
+        const project = getProjectManager();
+        project.setDocumentIO(sceneProjectIO);
+        getEventBus().on('ProjectLoaded', () => bumpScene());
+        getEventBus().on('ProjectUnloaded', () => bumpScene());
+        // Keyframe edits refresh the timeline tracks + inspector + viewport,
+        // and invalidate the render cache (cached frames are now stale).
+        getEventBus().on('AnimationChanged', () => { renderCache.invalidate(); bumpScene(); });
+
+        // Native (Electron) menu items dispatch through the same CommandSystem.
+        window.motionEditor?.onMenuCommand?.((id) => {
+          void getCommandSystem().execute(asCommandId(id));
+        });
+
+        // Plugin host + UI commands (searchable in the Command Palette).
+        try {
+          pluginHost.configure({
+            getSelection: () => useSelectionStore.getState().ids,
+            notify: (m) => notify(m, 'success'),
+          });
+          const registry = getCommandRegistry();
+          registry.register({
+            id: asCommandId('file.export'), label: 'Export…', icon: 'arrow-up',
+            enabled: () => true, execute: () => openExportDialog(10, 30),
+          });
+          registry.register({
+            id: asCommandId('view.presentation'), label: 'Present (Preview)', icon: 'eye',
+            enabled: () => true, execute: () => usePresentationStore.getState().enter(),
+          });
+          registry.register({
+            id: asCommandId('view.plugins'), label: 'Plugins…', icon: 'settings',
+            enabled: () => true, execute: () => openPluginsModal(),
+          });
+          registry.register({
+            id: asCommandId('help.tour'), label: 'Take a Tour', icon: 'sparkles',
+            enabled: () => true, execute: () => useOnboardingStore.getState().start(),
+          });
+          registry.register({
+            id: asCommandId('view.safeAreas'), label: 'Toggle Safe Areas', icon: 'crosshair',
+            enabled: () => true, execute: () => useGuidesStore.getState().toggleSafeArea(),
+          });
+          registry.register({
+            id: asCommandId('view.grid'), label: 'Toggle Grid', icon: 'layout',
+            enabled: () => true, execute: () => useGuidesStore.getState().toggleGrid(),
+          });
+          registry.register({
+            id: asCommandId('view.rulers'), label: 'Toggle Rulers', icon: 'layout',
+            enabled: () => true, execute: () => useGuidesStore.getState().toggleRulers(),
+          });
+          getShortcutManager().rehydrateFromRegistry();
+        } catch { /* ignore */ }
+
+        // First-run onboarding tour (once, persisted in settings).
+        try {
+          if (!getSettingsManager().get<boolean>('onboarding.seen', false)) {
+            useOnboardingStore.getState().start();
+          }
+        } catch { /* ignore */ }
+
+        // Default property editors + starter scene content.
+        try { registerDefaultEditors(); } catch { /* ignore */ }
+        try { seedDefaultScene(); } catch { /* ignore */ }
+        try { seedDemoAnimation(); } catch { /* ignore */ }
+
+        // History: initial "Open" state, then a debounced snapshot after edits.
+        try {
+          useHistoryStore.getState().reset();
+          useHistoryStore.getState().record('Open', true);
+          let recordTimer: ReturnType<typeof setTimeout> | undefined;
+          const scheduleRecord = (): void => {
+            if (useHistoryStore.getState().restoring) return;
+            clearTimeout(recordTimer);
+            recordTimer = setTimeout(() => {
+              if (useHistoryStore.getState().restoring) return;
+              useHistoryStore.getState().record();
+            }, 700);
+          };
+          getEventBus().on('AnimationChanged', scheduleRecord);
+          getEventBus().on('NodeUpdated', scheduleRecord);
+        } catch { /* ignore */ }
+
+        // Dirty tracking + autosave (crash recovery). Edits mark the active
+        // document dirty (amber dot); autosave persists a recovery snapshot
+        // every 60s while dirty, never clearing the unsaved indicator.
+        try {
+          const markDirty = (): void => {
+            const s = useWorkspaceStore.getState();
+            if (s.activeId && !s.workspaces[s.activeId]?.dirty) s.actions.markDirty(s.activeId, true);
+          };
+          getEventBus().on('AnimationChanged', markDirty);
+          getEventBus().on('NodeUpdated', markDirty);
+          getAutosaveController().start({
+            intervalMs: 60_000,
+            now: () => Date.now(),
+            getTime: () => {
+              const s = useWorkspaceStore.getState();
+              return (s.activeId ? s.workspaces[s.activeId]?.time : 0) ?? 0;
+            },
+            isDirty: () => {
+              const s = useWorkspaceStore.getState();
+              return !!(s.activeId && s.workspaces[s.activeId]?.dirty);
+            },
+          });
+        } catch { /* ignore */ }
+
+        // Crash recovery: offer to restore the previous unsaved session.
+        try {
+          const rec = readRecovery();
+          if (rec) {
+            const mins = Math.max(1, Math.round((Date.now() - rec.savedAt) / 60_000));
+            openModal({
+              // Fixed id so StrictMode's double-invoke can't stack duplicates.
+              id: 'recovery-modal',
+              title: 'Recover unsaved work?',
+              size: 'sm',
+              render: () => (
+                <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-md)', lineHeight: 1.6 }}>
+                  Motion Editor found unsaved changes from your last session
+                  (about {mins} min ago). Restore them, or discard and start fresh.
+                </div>
+              ),
+              footer: (close) => (
+                <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'flex-end' }}>
+                  <Button variant="ghost" size="sm" onClick={() => { clearRecovery(); close(); }}>Discard</Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      const t = restoreRecovery(rec);
+                      useWorkspaceStore.getState().actions.setTime(t, Math.round(t * 60));
+                      bumpScene();
+                      useHistoryStore.getState().record('Recovered', true);
+                      const s = useWorkspaceStore.getState();
+                      if (s.activeId) s.actions.markDirty(s.activeId, true);
+                      notify('Session recovered', 'success');
+                      close();
+                    }}
+                  >
+                    Restore
+                  </Button>
+                </div>
+              ),
+            });
+          }
+        } catch { /* ignore */ }
+      } finally {
+        bootTask.end();
+      }
+
+      if (!cancelled) setReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!ready) {
+    return (
+      <div
+        style={{
+          height: '100%',
+          display: 'grid',
+          placeItems: 'center',
+          color: 'var(--color-text-muted)',
+        }}
+      >
+        Loading editor…
+      </div>
+    );
+  }
+
+  return (
+    <TooltipProvider>
+      {children}
+      <CommandPalette />
+      <PresentationMode />
+      <OnboardingOverlay onDone={() => getSettingsManager().set('onboarding.seen', true)} />
+      <ModalHost />
+      <ContextMenuHost />
+      <NotificationHost />
+    </TooltipProvider>
+  );
+}

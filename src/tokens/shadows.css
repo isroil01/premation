@@ -1,0 +1,25 @@
+/**
+ * Elevation system. Use semantic shadow tokens; never compose shadows inline.
+ */
+
+:root {
+  /* Spec elevation — very subtle, never exaggerated:
+     Small 0 2px 8px .20 · Medium 0 8px 24px .28 · Large 0 16px 48px .40 */
+  --shadow-none: none;
+  --shadow-xs: none;
+  --shadow-sm: none;   /* Small */
+  --shadow-md: none;  /* Medium */
+  --shadow-lg: none; /* Large */
+  --shadow-xl: none;
+  
+  /* Panels are flat and separated by borders, not elevation (AE-style). */
+  --shadow-panel:       none;
+  --shadow-popover:     none;
+  --shadow-modal:       none;
+  --shadow-floating:    none;
+
+  /* The focus ring is an accessibility affordance, not decorative elevation,
+     so it is the one "shadow" that is NOT none. Theme-aware via --color-focus-ring. */
+  --shadow-focus-ring:  0 0 0 2px var(--color-focus-ring);
+  --shadow-inset-border: none;
+}

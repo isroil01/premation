@@ -1,0 +1,92 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: 32px;
+  padding: 0 var(--space-5);
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-divider);
+  flex: none;
+  user-select: none;
+}
+
+.compact .header {
+  height: 30px;
+  padding: 0 var(--space-4);
+}
+
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  flex: 1;
+}
+
+.icon {
+  color: var(--color-text-tertiary);
+  flex: none;
+}
+
+.title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-uppercase);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact .title {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.noScroll {
+  overflow: visible;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 24px;
+  padding: 0 var(--space-5);
+  background: var(--color-panel-header);
+  border-top: 1px solid var(--color-divider);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  flex: none;
+}

@@ -1,0 +1,128 @@
+/**
+ * CommandSystem — the only sanctioned entry point for executing commands.
+ *
+ * Responsibilities:
+ *   1. Resolve a Command by id or shortcut.
+ *   2. Build a CommandContext with current state + services.
+ *   3. Execute the command, capturing it on the undo stack if undoable.
+ *   4. Emit feedback on the event bus.
+ *
+ * This is the layer that knows about Application. Commands themselves never do.
+ */
+
+import { getCommandRegistry, chordKey } from './Command';
+import type {
+  Command,
+  CommandContext,
+  CommandServices,
+} from './Command';
+import { HistoryService } from './HistoryService';
+import type { CommandId } from '@app-types/common';
+
+export interface CommandSystemOptions {
+  /** Provider of the live read-only state snapshot. */
+  getState: () => Readonly<Record<string, unknown>>;
+  /** Provider of named services. Engines register their services here. */
+  services: CommandServices;
+}
+
+export class CommandSystem {
+  private readonly history: HistoryService;
+  private readonly opts: CommandSystemOptions;
+
+  constructor(opts: CommandSystemOptions) {
+    this.opts = opts;
+    this.history = new HistoryService();
+    // Wire built-in undo/redo services to the registry's history.
+    this.attachBuiltinHistory();
+  }
+
+  /** Expose the history service so the UI can render undo/redo state. */
+  getHistory(): HistoryService {
+    return this.history;
+  }
+
+  async execute(id: CommandId): Promise<void> {
+    const cmd = getCommandRegistry().get(id);
+    if (!cmd) {
+      // eslint-disable-next-line no-console
+      console.warn(`[CommandSystem] unknown command: ${id}`);
+      return;
+    }
+    if (cmd.enabled && !cmd.enabled()) return;
+
+    const ctx = this.buildContext(cmd);
+    await cmd.execute(ctx);
+    if (cmd.undo) this.history.push(cmd);
+  }
+
+  /** Execute a command bypassing the enabled check (used by scripts / tests). */
+  async forceExecute(id: CommandId): Promise<void> {
+    const cmd = getCommandRegistry().get(id);
+    if (!cmd) return;
+    const ctx = this.buildContext(cmd);
+    await cmd.execute(ctx);
+    if (cmd.undo) this.history.push(cmd);
+  }
+
+  async executeByShortcut(chord: import('@app-types/common').KeyChord): Promise<boolean> {
+    const cmd = getCommandRegistry().findByShortcut(chord);
+    if (!cmd) return false;
+    await this.execute(cmd.id);
+    return true;
+  }
+
+  canUndo(): boolean { return this.history.canUndo(); }
+  canRedo(): boolean { return this.history.canRedo(); }
+  undo(): void { this.history.undo(); }
+  redo(): void { this.history.redo(); }
+
+  private buildContext(_cmd: Command): CommandContext {
+    const state = this.opts.getState();
+    const services: CommandServices = {
+      ...this.opts.services,
+      get: (name) => this.opts.services.get(name),
+    };
+    return { state, services };
+  }
+
+  /**
+   * Provide the history service to the rest of the system so the UndoService
+   * facade inside CommandServices is actually wired to this CommandSystem.
+   */
+  private attachBuiltinHistory(): void {
+    const services = this.opts.services as CommandServices & {
+      __undo?: (cmd: Command) => void;
+    };
+    services.__undo = (cmd) => this.history.push(cmd);
+  }
+}
+
+/** Stringify a chord for debug logging. */
+export function describeChord(chord: import('@app-types/common').KeyChord): string {
+  return chordKey(chord);
+}
+
+/** Default Application-wide instance. */
+let commandSystemInstance: CommandSystem | null = null;
+
+export function getCommandSystem(): CommandSystem {
+  if (!commandSystemInstance) {
+    throw new Error('CommandSystem not initialized — call setCommandSystem() at boot.');
+  }
+  return commandSystemInstance;
+}
+
+export function setCommandSystem(cs: CommandSystem): void {
+  commandSystemInstance = cs;
+}
+
+// ── Default key-chord utilities ────────────────────────────────────
+export const isMeta = (e: KeyboardEvent): boolean => e.metaKey || e.ctrlKey;
+export const chordFromEvent = (e: KeyboardEvent): import('@app-types/common').KeyChord => ({
+  key: e.key,
+  ctrl:  e.ctrlKey,
+  meta:  e.metaKey,
+  alt:   e.altKey,
+  shift: e.shiftKey,
+});

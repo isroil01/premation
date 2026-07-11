@@ -1,0 +1,234 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-divider);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.fx {
+  color: var(--color-text-tertiary);
+}
+
+.remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.remove:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+/* The editor is a transparent-text textarea layered over a highlighted mirror.
+   Both MUST share identical box metrics so glyphs line up exactly. */
+.codeWrap {
+  position: relative;
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-xs);
+  background: var(--color-slate-950);
+  transition: var(--motion-hover-transition);
+}
+
+.codeWrap:hover:not(:focus-within) {
+  background: var(--color-surface-2);
+  border-color: var(--color-field-border-hover);
+}
+
+.codeWrap:focus-within {
+  border-color: var(--color-primary);
+  background: var(--color-slate-950);
+}
+
+.editor,
+.highlight {
+  margin: 0;
+  padding: var(--space-3);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-normal);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  tab-size: 2;
+}
+
+.editor {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  resize: vertical;
+  background: transparent;
+  border: none;
+  outline: none;
+  /* Text is transparent; only the caret shows. The mirror provides color. */
+  color: transparent;
+  caret-color: var(--color-text-primary);
+}
+
+.editor::placeholder {
+  color: var(--color-text-muted);
+}
+
+.highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--color-text-primary);
+}
+
+/* Token colors — calm, distinct, spec palette. */
+.tNum { color: var(--color-warning); }
+.tStr { color: var(--color-success); }
+.tApi { color: var(--color-primary); font-weight: var(--font-weight-medium); }
+.tIdent { color: var(--color-text-primary); }
+.tOp { color: var(--color-text-tertiary); }
+.tParen { color: var(--color-text-secondary); }
+
+/* Matching bracket pair highlight. */
+.tMatch {
+  color: var(--color-text-primary);
+  background: var(--color-active);
+  border-radius: 2px;
+}
+
+.status {
+  min-height: 16px;
+  font-size: var(--font-size-xs);
+}
+
+.value {
+  font-family: var(--font-family-mono);
+  color: var(--color-success);
+}
+
+.at {
+  color: var(--color-text-muted);
+}
+
+.error {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-danger);
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.api {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.apiChip {
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--color-slate-950);
+  border: 1px solid var(--color-field-border);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+}
+
+.apiChip:hover {
+  color: var(--color-primary-hover);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-2);
+}
+
+.assist {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-xs);
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid var(--color-ai-subtle);
+  transition: var(--motion-hover-transition);
+}
+
+.assist:focus-within {
+  border-color: var(--color-ai-primary);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.assistIcon {
+  color: var(--color-ai-primary);
+  flex: none;
+  margin-left: var(--space-1);
+}
+
+.assistInput {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.assistInput::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.assistBtn {
+  flex: none;
+  padding: 0 var(--space-4);
+  height: 22px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-xs);
+  background: linear-gradient(180deg, var(--color-ai-hover) 0%, var(--color-ai-primary) 100%);
+  color: var(--color-text-on-accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.assistBtn:hover:not(.assistBtnOff) {
+  filter: brightness(1.05);
+}
+
+.assistBtn:active:not(.assistBtnOff) {
+  background: var(--color-ai-primary);
+}
+
+.assistBtnOff {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

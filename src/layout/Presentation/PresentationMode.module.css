@@ -1,0 +1,94 @@
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-index-modal);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-workspace);
+  animation: present-in var(--motion-duration-slow) var(--motion-ease-standard);
+}
+
+.close {
+  position: absolute;
+  top: var(--space-6);
+  right: var(--space-6);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.close:hover { color: var(--color-text-primary); background: var(--color-surface-3); }
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-12);
+}
+
+.canvas {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  height: 64px;
+  padding: 0 12vw;
+  flex: none;
+}
+
+.play {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+}
+
+.scrub {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-3);
+  overflow: hidden;
+}
+
+.scrubFill {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 80ms linear;
+}
+
+.time {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  flex: none;
+}
+
+@keyframes present-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root { animation: none; }
+}

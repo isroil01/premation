@@ -1,0 +1,141 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-panel);
+  border-top: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 40px;
+  padding: 0 var(--space-4);
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+  user-select: none;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The one circle in the app — the signature control. */
+button.play {
+  border-radius: var(--radius-full);
+  width: 32px;
+  height: 32px;
+}
+
+/* AE-style leading timecode — the timeline panel's identity. */
+.timecode {
+  padding-right: var(--space-4);
+  border-right: 1px solid var(--color-border-subtle);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.timecodeTotal {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Zoom cluster — sits on the same transport row, pushed to the right. */
+.zoom {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.zoomLabel {
+  min-width: 46px;
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: center;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.zoomLabel:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-subtle);
+}
+
+.zoomLabel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Row-height cycle — icon + current preset key (S/M/L). */
+.rowHeightBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.rowHeightBtn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-subtle);
+}
+
+.rowHeightKey {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Hairline separating the row-height control from the zoom cluster. */
+.zoomDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 var(--space-1);
+  background: var(--color-border-subtle);
+}
+
+.body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  padding: 8px 8px 10px;
+}

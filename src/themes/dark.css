@@ -1,0 +1,89 @@
+/**
+ * DARK THEME — Motion Studio ("premium black").
+ * True neutral-black surfaces (zero blue tint), MONOCHROME chrome: selection +
+ * primary are white-on-black. Colour is reserved for meaning only — violet for
+ * AI, coral for the playhead/temporal family, category hues, status.
+ * Elevation = surface value steps; hairlines only at region seams.
+ */
+
+[data-theme="dark"],
+:root:not([data-theme]) {
+  /* ── Surfaces (elevation by value, not borders) ───────────────── */
+  --color-background:        var(--color-slate-950);
+  --color-surface-0:         var(--color-slate-950);  /* app frame            */
+  --color-surface-1:         var(--color-slate-900);  /* panels               */
+  --color-surface-2:         var(--color-slate-850);  /* controls / raised    */
+  --color-surface-3:         var(--color-slate-800);  /* hover step           */
+  --color-surface-raised:    var(--color-slate-850);  /* popovers / overlays  */
+  --color-panel:             var(--color-slate-900);
+  --color-panel-header:      var(--color-slate-900);
+  --color-toolbar:           var(--color-slate-950);
+  --color-statusbar:         var(--color-slate-950);
+  --color-titlebar:          var(--color-slate-950);
+  --color-workspace:         var(--color-slate-1000); /* canvas void          */
+
+  /* ── Borders & dividers ───────────────────────────────────────── */
+  /* Rule: `border` only where two REGIONS meet. Inside panels use
+     `border-subtle` hairlines sparingly — rows separate by hover/spacing. */
+  /* Alpha seams (decoupled from surface-3) so region edges actually read. */
+  --color-border:            rgba(255, 255, 255, 0.10);
+  --color-border-strong:     rgba(255, 255, 255, 0.18);
+  --color-border-subtle:     rgba(255, 255, 255, 0.07);
+  --color-divider:           rgba(255, 255, 255, 0.07);
+  /* Recessed-field hairline (Input/Switch/ValueField/etc. inset wells) —
+     one step lighter than border-subtle since these sit on the darkest well. */
+  --color-field-border:       var(--color-white-a05);
+  --color-field-border-hover: var(--color-white-a15);
+  --color-splitter:          var(--color-slate-950);
+  --color-splitter-hover:    var(--color-selection);
+
+  /* ── Text ─────────────────────────────────────────────────────── */
+  /* Neutral off-whites (zero blue). AA-checked on surface-1 (#171718). */
+  --color-text-primary:      #f4f4f5;
+  --color-text-secondary:    #c8c8ca;
+  --color-text-tertiary:     #949497;  /* AA floor — never below 13px text */
+  --color-text-muted:        #6d6d70;  /* decorative / icons only, never body */
+  --color-text-inverse:      var(--color-slate-950);
+  --color-text-on-accent:    #ffffff;
+  --color-text-disabled:     var(--color-slate-600);
+
+  /* ── Interactive states ───────────────────────────────────────── */
+  --color-hover:             rgba(255, 255, 255, 0.04);
+  --color-active:            rgba(255, 255, 255, 0.08);
+  --color-selected:          var(--color-selection);
+  --color-selected-hover:    var(--color-selection-hover);
+  --color-pressed:           rgba(255, 255, 255, 0.08);
+  --color-drop-target:       rgba(255, 255, 255, 0.10);
+
+  /* ── Selection (MONOCHROME — a lifted neutral + a crisp white edge.
+     No chromatic accent; colour is reserved for meaning, not chrome) ── */
+  --color-selection:         #f2f2f3;
+  --color-selection-hover:   #ffffff;
+
+  /* ── Primary === selection. White fill, black text (21:1 premium). ── */
+  --color-primary:           #f2f2f3;
+  --color-primary-hover:     #ffffff;
+  --color-primary-active:    #dcdcde;
+  --color-primary-subtle:    rgba(255, 255, 255, 0.12);  /* selection tint */
+  --color-primary-foreground: #0a0a0a;                    /* black on white */
+
+  --color-accent:            #f2f2f3;
+  --color-accent-subtle:     rgba(255, 255, 255, 0.12);
+
+  /* ── Modified / unsaved (the ONLY chrome amber) ───────────────── */
+  --color-modified:          var(--color-amber-500);
+
+  /* ── Status (semantic only — never interactive chrome) ────────── */
+  --color-success:           #10b981;
+  --color-warning:           #f5b84b;
+  --color-danger:            #f43f5e;
+  --color-info:              #9a9a9e;
+
+  /* ── Focus / accessibility (white ring on black) ──────────────── */
+  --color-focus-ring:        rgba(255, 255, 255, 0.55);
+
+  /* ── Overlays ─────────────────────────────────────────────────── */
+  --color-overlay-scrim:     rgba(4, 6, 9, 0.7);
+  --color-overlay-hover:     rgba(255, 255, 255, 0.04);
+  --color-overlay-active:    rgba(255, 255, 255, 0.08);
+}

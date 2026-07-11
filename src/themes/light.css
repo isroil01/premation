@@ -1,0 +1,81 @@
+/**
+ * LIGHT THEME — secondary theme (spec v2.1 "pro pass").
+ * Re-derived from the same azure accent identity as dark: one blue for
+ * selection + primary, violet AI-only, coral playhead-only. Primary uses
+ * azure-600 so white-on-accent text keeps AA contrast on light grounds.
+ */
+
+[data-theme="light"] {
+  /* ── Surfaces (light → elevated) ───────────────────────────── */
+  --color-background:        var(--color-slate-50);
+  --color-surface-0:         var(--color-slate-0);
+  --color-surface-1:         var(--color-slate-50);
+  --color-surface-2:         var(--color-slate-100);
+  --color-surface-3:         var(--color-slate-200);
+  --color-surface-raised:    var(--color-slate-0);
+  --color-panel:             var(--color-slate-50);
+  --color-panel-header:      var(--color-slate-50);
+  --color-toolbar:           var(--color-slate-50);
+  --color-statusbar:         var(--color-slate-100);
+  --color-titlebar:          var(--color-slate-0);
+  --color-workspace:         var(--color-slate-200);
+
+  /* ── Borders & dividers ────────────────────────────────────── */
+  --color-border:            var(--color-black-a08);
+  --color-border-strong:     var(--color-black-a16);
+  --color-border-subtle:     var(--color-black-a04);
+  --color-divider:           var(--color-black-a08);
+  --color-field-border:       var(--color-black-a05);
+  --color-field-border-hover: var(--color-black-a15);
+  --color-splitter:          var(--color-slate-200);
+  --color-splitter-hover:    var(--color-selection);
+
+  /* ── Text ──────────────────────────────────────────────────── */
+  --color-text-primary:      var(--color-slate-900);
+  --color-text-secondary:    var(--color-slate-700);
+  --color-text-tertiary:     var(--color-slate-500);
+  --color-text-muted:        var(--color-slate-400);
+  --color-text-inverse:      var(--color-slate-0);
+  --color-text-on-accent:    var(--color-slate-0);
+  --color-text-disabled:     var(--color-slate-300);
+
+  /* ── Interactive states ────────────────────────────────────── */
+  --color-hover:             var(--color-black-a04);
+  --color-active:            var(--color-black-a08);
+  --color-selected:          var(--color-selection);
+  --color-selected-hover:    var(--color-selection-hover);
+  --color-pressed:           var(--color-black-a16);
+  --color-drop-target:       rgba(59, 118, 224, 0.12);
+
+  /* ── Selection (azure — never purple, never amber) ─────────── */
+  --color-selection:         var(--color-azure-600);
+  --color-selection-hover:   var(--color-azure-500);
+
+  /* ── Brand / primary === selection ─────────────────────────── */
+  --color-primary:           var(--color-azure-600);
+  --color-primary-hover:     var(--color-azure-500);
+  --color-primary-active:    var(--color-azure-700);
+  --color-primary-subtle:    rgba(59, 118, 224, 0.12);
+  --color-primary-foreground: var(--color-slate-0);
+
+  /* ── Accent === primary (single accent identity) ───────────── */
+  --color-accent:            var(--color-azure-600);
+  --color-accent-subtle:     rgba(59, 118, 224, 0.12);
+
+  /* ── Modified / unsaved (the ONLY chrome amber) ────────────── */
+  --color-modified:          var(--color-amber-600);
+
+  /* ── Status (semantic only) ────────────────────────────────── */
+  --color-success:           #1f9e6d;
+  --color-warning:           var(--color-amber-600);
+  --color-danger:            #d63d4e;
+  --color-info:              var(--color-azure-600);
+
+  /* ── Focus / accessibility ─────────────────────────────────── */
+  --color-focus-ring:        rgba(59, 118, 224, 0.5);
+
+  /* ── Overlays ──────────────────────────────────────────────── */
+  --color-overlay-scrim:     rgba(15, 20, 30, 0.4);
+  --color-overlay-hover:     var(--color-black-a04);
+  --color-overlay-active:    var(--color-black-a08);
+}

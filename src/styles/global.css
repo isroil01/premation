@@ -1,0 +1,169 @@
+/**
+ * Global styles. Resets, root element, app shell.
+ * This file is the ONLY place global CSS lives.
+ * All component styles must live in *.module.css files.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+@import "../tokens/colors.css";
+@import "../tokens/spacing.css";
+@import "../tokens/typography.css";
+@import "../tokens/radius.css";
+@import "../tokens/shadows.css";
+@import "../tokens/motion.css";
+@import "../tokens/zindex.css";
+
+@import "../themes/dark.css";
+@import "../themes/light.css";
+
+/* Domain tokens depend on theme + primitive vars, so import last. */
+@import "../tokens/domain.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+html {
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-primary);
+  background-color: var(--color-background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  user-select: none;
+  cursor: default;
+  background: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  user-select: text;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+:focus {
+  outline: none;
+}
+
+/* No hard offset outline anywhere — interactive components define their own
+   soft ring; this is the calm fallback for everything else (keyboard only). */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+/* Custom scrollbar — slim overlay style, one look everywhere (spec v2.1) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  border: 1.5px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Disable text selection on UI chrome (not on input/textarea) */
+[data-no-select] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Numbers, coordinates, FPS, timecodes never jitter in width while ticking. */
+[data-numeric],
+input[type="number"],
+.mono {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Respect prefers-reduced-motion system-wide: all non-essential UI
+   animation collapses to instant transitions (spec accessibility rule). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Text controls indicate focus with their own border shift, so they opt out of
+   the generic ring. Buttons deliberately do NOT reset here: they fall back to
+   the soft :focus-visible ring above, so keyboard users always see focus.
+   (Plain :focus stays ringless via the `:focus { outline: none }` rule, so a
+   mouse click never draws a ring — only keyboard focus does.) */
+input:focus,
+textarea:focus,
+select:focus,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}

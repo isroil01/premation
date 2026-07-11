@@ -1,0 +1,81 @@
+/* IconButton — Premium, flat style icons */
+
+.root {
+  --ib-bg:        transparent;
+  --ib-bg-hover:  var(--color-surface-3);
+  --ib-bg-active: var(--color-primary-subtle);
+  --ib-fg:        var(--color-text-secondary);
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--ib-bg);
+  color: var(--ib-fg);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+}
+
+.root:hover:not(:disabled) {
+  background: var(--ib-bg-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-subtle);
+}
+
+.root:active:not(:disabled) {
+  background: var(--ib-bg-active);
+}
+
+.root:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.root:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* Toggled/active state — accent tint, accent glyph. */
+.root[data-active] {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  border-color: var(--color-border-strong);
+}
+
+.root[data-active]:hover:not(:disabled) {
+  background: var(--color-active);
+  color: var(--color-primary-hover);
+  border-color: var(--color-border-strong);
+}
+
+.root[data-variant="primary"] {
+  --ib-bg:        linear-gradient(180deg, var(--color-primary-hover) 0%, var(--color-primary) 100%);
+  --ib-bg-hover:  linear-gradient(180deg, var(--color-primary-hover) 0%, var(--color-primary-hover) 100%);
+  --ib-bg-active: var(--color-primary-active);
+  --ib-fg:        var(--color-primary-foreground);
+  border-color:   rgba(0, 0, 0, 0.25);
+}
+
+.root[data-variant="primary"]:hover:not(:disabled) {
+  color: var(--color-primary-foreground);
+  filter: brightness(1.05);
+}
+
+.root[data-variant="danger"] {
+  --ib-bg-hover:  rgba(244, 63, 94, 0.12);
+  --ib-fg:        var(--color-danger);
+}
+
+.root[data-variant="danger"]:hover:not(:disabled) {
+  border-color: rgba(244, 63, 94, 0.2);
+}
+
+.root[data-size="xs"] { width: 20px; height: 20px; border-radius: var(--radius-xs); }
+.root[data-size="sm"] { width: 24px; height: 24px; border-radius: var(--radius-xs); }
+.root[data-size="md"] { width: 28px; height: 28px; }
+.root[data-size="lg"] { width: 32px; height: 32px; border-radius: var(--radius-md); }
+.root[data-size="xl"] { width: 40px; height: 40px; border-radius: var(--radius-md); }

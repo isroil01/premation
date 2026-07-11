@@ -1,0 +1,29 @@
+.root {
+  position: relative;
+  width: 100%;
+  overflow: auto;
+  contain: strict;
+}
+
+.header,
+.footer {
+  position: sticky;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  background: var(--color-panel-header);
+}
+
+.header { top: 0; }
+.footer { bottom: 0; }
+
+.window {
+  position: absolute;
+  inset: 0 0 auto 0;
+  will-change: transform;
+}
+
+.row {
+  display: block;
+  contain: layout style;
+}

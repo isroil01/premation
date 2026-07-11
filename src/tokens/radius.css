@@ -1,0 +1,23 @@
+/**
+ * Border radius scale.
+ */
+
+:root {
+  /* Spec radii: Small 8 (controls) · Medium 12 (panels/cards) ·
+     Large 16 (large surfaces) · Dialogs 20 */
+  --radius-none: 0;
+  --radius-xs:   3px;
+  --radius-sm:   4px;   /* Precise controls (inputs/icons) */
+  --radius-md:   5px;   /* Buttons and standard fields */
+  --radius-lg:   6px;   /* Panel headers/small lists */
+  --radius-xl:   8px;   /* Panels / dropdown lists */
+  --radius-2xl:  12px;  /* Cards / small modals */
+  --radius-3xl:  16px;  /* Main dialogs */
+  --radius-full: 9999px;
+
+  /* Semantic aliases (spec role names) */
+  --radius-control: 5px;
+  --radius-panel:   8px;
+  --radius-surface: 12px;
+  --radius-dialog:  16px;
+}

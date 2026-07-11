@@ -1,0 +1,577 @@
+/* Timeline — refined After Effects–style renderer.
+   Design goals: calm dark surface, ONE hairline per row (no doubled borders),
+   crisp playhead that floats above rows, single-line track labels with a type
+   icon, and a proper major/minor ruler tick hierarchy. */
+
+.root {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  /* Constrain the single row to the container height (min 0) so the lanes get
+     a bounded box and scroll INTERNALLY instead of growing with content. */
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-timeline-bg, var(--color-surface-0));
+  overflow: hidden;
+  user-select: none;
+}
+
+.headerCol {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-surface-1);
+  border-right: 1px solid var(--color-border);
+  flex: none;
+  z-index: 2;
+}
+
+.trackHeaderScroller {
+  overflow: hidden;
+  /* Reserve the same height the lanes lose to their horizontal scrollbar, so
+     the last row's bottom border lines up on both columns. */
+  padding-bottom: var(--timeline-hscroll, 10px);
+}
+
+.lanes {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  background: transparent;
+  /* Always reserve the vertical scrollbar gutter → the right edge stays clean
+     and rows don't reflow when content starts/stops overflowing. Scrollbar
+     styling comes from the unified global rule. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.lanesInner {
+  position: relative;
+  contain: layout style;
+}
+
+/* ── Ruler ─────────────────────────────────────────────────────── */
+.ruler {
+  position: relative;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel-header);
+  flex: none;
+  overflow: hidden;
+}
+
+.rulerSpacer {
+  width: 100%;
+  height: 100%;
+}
+
+/* Minor tick: short mark rising from the baseline. Major: full-height. */
+.tick {
+  position: absolute;
+  bottom: 0;
+  height: 6px;
+  width: 1px;
+  background: var(--color-border-subtle);
+  pointer-events: none;
+}
+
+.tickMajor {
+  top: 0;
+  height: auto;
+  background: var(--color-border-strong);
+}
+
+.tickLabel {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Lanes / rows ──────────────────────────────────────────────── */
+/* Exactly one hairline per row lives on the background lane; the content
+   rows (.laneRow) are transparent so lines never double up. */
+.lane {
+  border-bottom: 1px solid var(--color-timeline-grid);
+  background: transparent;
+  pointer-events: none;
+}
+
+.laneAlt {
+  background: var(--color-timeline-zebra);
+}
+
+.laneRow {
+  position: relative;
+  width: 100%;
+}
+
+.clip {
+  position: absolute;
+  top: 3px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  box-shadow: var(--shadow-xs);
+  transition: filter var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.clip:hover {
+  filter: brightness(1.12);
+}
+
+.clipLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* Clip trim handles — the leftmost/rightmost strip of a clip. */
+.clipHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.clipHandle[data-edge='start'] {
+  left: 0;
+}
+
+.clipHandle[data-edge='end'] {
+  right: 0;
+}
+
+/* Animation duration bar — a neutral, quiet summary spanning first→last
+   keyframe. Category color is reserved for actual clips (the thing the user
+   added), not this auto-derived span indicator. */
+.animBlock {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  height: auto;
+  border-radius: 3px;
+  background: var(--color-active);
+  border: 1px solid var(--color-border-strong);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ── Cache bar ─────────────────────────────────────────────────── */
+.cacheBar {
+  position: absolute;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.cacheSegment {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--color-cache-cached);
+  border-radius: var(--radius-xs);
+}
+
+/* ── Work area (in/out region) ─────────────────────────────────── */
+.workAreaBar {
+  position: absolute;
+  z-index: 3;
+  pointer-events: auto;
+  cursor: grab;
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-left: 2px solid var(--color-primary);
+  border-right: 2px solid var(--color-primary);
+  box-sizing: border-box;
+}
+
+.workAreaBar:active {
+  cursor: grabbing;
+}
+
+/* Edge handles — widen the hit target for trimming in/out. */
+.workAreaHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.workAreaHandle[data-edge='in'] {
+  left: -4px;
+}
+
+.workAreaHandle[data-edge='out'] {
+  right: -4px;
+}
+
+.workAreaTint {
+  position: absolute;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
+  box-sizing: border-box;
+}
+
+/* ── Keyframes ─────────────────────────────────────────────────── */
+.keyframe {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  background: var(--color-timeline-keyframe);
+  border: 1.5px solid var(--color-timeline-keyframe-stroke);
+  border-radius: 1px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  pointer-events: auto;
+  cursor: ew-resize;
+  z-index: 2;
+  transition: var(--motion-hover-transition);
+}
+
+/* Transparent hit padding — the diamond stays small and precise-looking,
+   but there's a forgiving target around it for grabbing. */
+.keyframe::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.keyframe:hover {
+  background: var(--color-primary);
+  border-color: var(--color-timeline-keyframe-stroke-active);
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.2);
+}
+
+.keyframeDragging {
+  background: var(--color-primary);
+  border-color: var(--color-timeline-keyframe-stroke-active);
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.25);
+  z-index: 4;
+}
+
+/* ── Markers ───────────────────────────────────────────────────── */
+.marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  color: var(--color-temporal);
+  pointer-events: none;
+}
+
+/* Only the flag at the top is interactive — its title tooltip works while the
+   full-height guide stays click-through so it never blocks lane interaction.
+   Centered on the marker line (fixes the prior left-edge offset). */
+.markerFlag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateX(-50%);
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  cursor: default;
+}
+
+/* ── Playhead ──────────────────────────────────────────────────── */
+.playhead {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  background: var(--color-timeline-playhead);
+  pointer-events: auto;
+  cursor: ew-resize;
+  z-index: 3;
+  will-change: transform;
+}
+
+/* Invisible widened grab zone — the 1px line stays hairline-crisp but the
+   draggable/scrubbable target is comfortable to hit. */
+.playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 11px;
+  transform: translateX(-50%);
+}
+
+/* Rounded diamond-grabber playhead head */
+.playheadHead {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  background: var(--color-timeline-playhead);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  transform: translate(-50%, -5px) rotate(45deg);
+  transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Keyboard focus lands on the grabber, not a full-height glowing bar. */
+.playhead:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.playhead:focus-visible .playheadHead {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+/* ── Track header (single line: chevron · icon · name · actions) ─ */
+.trackHeader {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  cursor: pointer;
+  background: transparent;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The category hue is carried by the track's icon chip (Icon-Paired Rule);
+   no standing colored left stripe (side-stripe ban). The selection bar
+   (.trackHeaderSelected::after) is the only left-edge accent. */
+
+.trackHeader:hover {
+  background: var(--color-hover);
+}
+
+/* Selection = background tint; the left edge stays the track's color label. */
+.trackHeaderSelected {
+  background: var(--color-primary-subtle);
+}
+
+.trackHeaderSelected::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2.5px;
+  background: var(--color-primary);
+}
+
+/* Layer number column (AE-style) — quiet mono, fixed width for alignment. */
+.trackIndex {
+  flex: none;
+  width: 16px;
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  text-align: right;
+  user-select: none;
+  opacity: 0.6;
+}
+
+/* Column heads for the switch columns — sit in the ruler strip, right-aligned
+   over the eye/lock columns below. */
+.colHeads {
+  position: absolute;
+  right: var(--space-2);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.colHead {
+  width: 20px;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+/* Category icon chip — the hue lives on `color`; the chip tint derives. */
+.trackIcon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  flex: none;
+}
+
+.trackName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.01em;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trackHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+/* Switch columns — ALWAYS visible in fixed 20px columns (AE convention:
+   the switch grid is part of the table, not a hover reveal). */
+.trackAction {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: var(--motion-hover-transition);
+}
+
+.trackAction:hover {
+  opacity: 1;
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.trackAction[data-on] {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+/* Semantic active-state colors, keyed off data-kind — robust against label
+   wording (the old aria-label substring rules silently shadowed each other). */
+.trackAction[data-kind="lock"][data-on] {
+  color: var(--color-warning);
+}
+
+.trackAction[data-kind="solo"][data-on] {
+  color: var(--color-success);
+}
+
+/* A hidden track's eye is a de-emphasis, not an accent — stay muted. */
+.trackAction[data-kind="visible"][data-on] {
+  color: var(--color-text-muted);
+  opacity: 0.8;
+}
+
+/* Hidden track — dim the row. */
+.trackHeader[data-hidden] .trackName,
+.trackHeader[data-hidden] .trackIcon {
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+/* Ghosted — outside the current Focus Mode context. */
+.trackHeader[data-ghost] {
+  opacity: 0.4;
+}
+
+/* ── Layer minimap (auto-appears when layers exceed one screen) ─── */
+.minimap {
+  position: absolute;
+  right: 0;
+  width: 12px;
+  z-index: 4;
+  background: color-mix(in srgb, var(--color-surface-0) 70%, transparent);
+  border-left: 1px solid var(--color-border);
+  cursor: pointer;
+}
+
+.minimapRow {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.minimapWindow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ── Disclosure chevron ────────────────────────────────────────── */
+.disclosure {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex: none;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.disclosure:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.disclosureHidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ── Property sub-row header ────────────────────────────────────── */
+.propHeader {
+  display: flex;
+  align-items: center;
+  /* Indent past index + chevron + icon chip so it reads as a child row. */
+  padding-left: calc(var(--space-3) + 16px + var(--space-2) + 16px + var(--space-2) + 18px + var(--space-2));
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-0);
+}
+
+.propName {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lanePropBg {
+  background: var(--color-surface-0);
+}
+
+.lanePropBg.laneAlt {
+  background: var(--color-surface-0);
+}

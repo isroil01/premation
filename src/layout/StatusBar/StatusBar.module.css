@@ -1,0 +1,25 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: var(--space-statusbar-height);
+  padding: 0 var(--space-5);
+  background: var(--color-statusbar);
+  border-top: 1px solid var(--color-divider);
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.left { flex: 0 1 auto; }
+.center { flex: 1 1 auto; justify-content: center; }
+.right { flex: 0 1 auto; }

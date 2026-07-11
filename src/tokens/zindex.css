@@ -1,0 +1,17 @@
+/**
+ * z-index layering. Centralized so panels/modals/popovers never collide.
+ */
+
+:root {
+  --z-index-base:        0;
+  --z-index-panel:       10;
+  --z-index-sticky:      100;
+  --z-index-overlay:     500;
+  --z-index-dropdown:    1000;
+  --z-index-popover:     1100;
+  --z-index-tooltip:     1200;
+  --z-index-modal:       1300;
+  --z-index-notification: 1400;
+  --z-index-floating-window: 1500;
+  --z-index-drag-ghost:  9999;
+}

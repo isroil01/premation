@@ -1,0 +1,113 @@
+.wrap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fullWidth {
+  display: flex;
+  width: 100%;
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 28px;
+  padding: 0 var(--space-3);
+  /* recessed style */
+  background: var(--color-slate-950);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-primary);
+  transition: var(--motion-hover-transition);
+}
+
+.field:hover:not(.disabled):not(:focus-within) {
+  border-color: var(--color-field-border-hover);
+  background: var(--color-surface-2);
+}
+
+.field:focus-within {
+  border-color: var(--color-primary);
+  background: var(--color-slate-950);
+}
+
+.field.size-xs { height: 20px; padding: 0 var(--space-3); font-size: var(--font-size-xs); border-radius: var(--radius-xs); }
+.field.size-sm { height: 24px; padding: 0 var(--space-4); font-size: var(--font-size-sm); border-radius: var(--radius-xs); }
+.field.size-md { height: 28px; padding: 0 var(--space-4); font-size: var(--font-size-md); border-radius: var(--radius-xs); }
+.field.size-lg { height: 36px; padding: 0 var(--space-5); font-size: var(--font-size-lg); border-radius: var(--radius-sm); }
+
+.input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font: inherit;
+  height: 100%;
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.input:disabled {
+  cursor: not-allowed;
+  color: var(--color-text-disabled);
+}
+
+.adornment {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
+  flex: none;
+}
+
+.clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+  border: none;
+}
+
+.clear:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.help {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.error {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+}
+
+.invalid .field {
+  border-color: var(--color-danger);
+}

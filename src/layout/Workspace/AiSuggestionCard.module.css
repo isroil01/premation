@@ -1,0 +1,128 @@
+.card {
+  position: absolute;
+  top: var(--space-6);
+  left: var(--space-6);
+  z-index: 5;
+  width: 216px;
+  padding: var(--space-3);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  /* Purple is reserved for AI — a subtle violet glow marks this as AI. */
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--color-ai-subtle);
+  border-radius: var(--radius-md);
+  /* Fade in once at motion-base, then sit still (no looping attention motion). */
+  animation: ai-card-in var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sparkle {
+  color: var(--color-ai-primary);
+  flex: none;
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.chips {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Compact 28px suggestion rows — quiet until hovered (spec v2.1). */
+.chip {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: transparent;
+  border: none;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chip:hover {
+  background: var(--color-ai-subtle);
+}
+
+.chipApply {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--space-3);
+  height: 100%;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chipIcon {
+  color: var(--color-ai-primary);
+  flex: none;
+}
+
+.chipDismiss {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  align-self: stretch;
+  flex: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chip:hover .chipDismiss,
+.chip:focus-within .chipDismiss {
+  opacity: 1;
+}
+
+.chipDismiss:hover {
+  color: var(--color-text-primary);
+}
+
+@keyframes ai-card-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card { animation: none; }
+}

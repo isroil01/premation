@@ -1,0 +1,117 @@
+.menu {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: var(--space-2);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  animation: menuIn var(--motion-duration-fast) var(--motion-ease-emphasized);
+}
+
+@keyframes menuIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.subMenuWrapper,
+.contextWrapper {
+  position: absolute;
+  z-index: var(--z-index-dropdown);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 28px;
+  padding: 0 var(--space-4);
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  text-align: left;
+  white-space: nowrap;
+  transition: var(--motion-hover-transition);
+}
+
+.item:hover:not(:disabled),
+.item:focus-visible {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.item:disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+}
+
+.subOpen {
+  background: var(--color-hover);
+}
+
+.danger {
+  color: var(--color-danger);
+}
+
+.danger:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.15);
+}
+
+.itemIcon,
+.itemIconSpacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+  color: var(--color-text-secondary);
+}
+
+.itemIconSpacer {
+  color: transparent;
+}
+
+.itemLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--font-weight-medium);
+}
+
+.itemShortcut {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  margin-left: var(--space-6);
+  opacity: 0.8;
+}
+
+.itemChevron {
+  color: var(--color-text-tertiary);
+  flex: none;
+}
+
+.separator {
+  height: 1px;
+  background: var(--color-divider);
+  margin: var(--space-2) 0;
+}
+
+.label {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-uppercase);
+}
+
+.disabled {
+  opacity: 0.4;
+}

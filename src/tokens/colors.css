@@ -1,0 +1,87 @@
+/**
+ * Primitive color tokens.
+ * These are the ONLY raw color literals in the system.
+ * All other colors must be composed from these via the semantic layer in themes/.
+ */
+
+:root {
+  /* ── Slate (neutrals) ─────────────────────────────────────────── */
+  --color-slate-0:   #ffffff;
+  --color-slate-50:  #f5f6f9;
+  --color-slate-100: #ebedf2;
+  --color-slate-200: #d5dbe5;
+  --color-slate-300: #b3bdcd;
+  --color-slate-400: #8b98a9;
+  --color-slate-500: #647285;
+  --color-slate-600: #475364;
+  --color-slate-700: #3a3a3d;
+  /* Premium neutral-black ladder — TRUE neutral (zero blue tint), decisive
+     steps. 0b → 17 → 21 → 2b: panels clearly lift off the frame. */
+  --color-slate-800: #2b2b2e;   /* surface-3 · hover step        */
+  --color-slate-850: #212123;   /* surface-2 · raised controls   */
+  --color-slate-900: #171718;   /* surface-1 · panels            */
+  --color-slate-950: #0b0b0c;   /* surface-0 · frame + wells     */
+  --color-slate-1000:#000000;   /* workspace · the true-black void */
+
+  /* ── Brand blue (Motion Studio selection ramp — spec-exact) ───── */
+  --color-blue-300: #93c5fd;  /* focus ring */
+  --color-blue-400: #60a5fa;  /* selection hover */
+  --color-blue-500: #3b82f6;  /* selection */
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+
+  /* ── AI violet (reserved exclusively for AI) ──────────────────── */
+  --color-violet-300: #c4b5fd;  /* AI light */
+  --color-violet-400: #9d6ef8;  /* AI hover */
+  --color-violet-500: #8b5cf6;  /* AI primary */
+
+  /* ── Azure (accent v2.1 — selection + primary, spec "pro pass") ─ */
+  --color-azure-400: #6ba1ff;  /* hover */
+  --color-azure-500: #4d8dff;  /* accent */
+  --color-azure-600: #3b76e0;  /* pressed / light-theme primary */
+  --color-azure-700: #2f5fc0;  /* light-theme pressed */
+
+  /* ── Coral (reserved exclusively for the playhead) ───────────── */
+  --color-coral-500: #ff6b45;
+
+  /* ── Semantic accents ─────────────────────────────────────────── */
+  --color-cyan-500:   #28c7d7;
+  --color-sky-500:    #0ea5e9;  /* info */
+  --color-amber-400:  #fbbf24;
+  --color-amber-500:  #f5b84b;
+  --color-amber-600:  #d97706;
+  --color-green-500:  #34c98e;
+  --color-red-500:    #ef5a6a;
+  --color-pink-500:   #ec4899;
+  --color-orange-500: #ff6b45;  /* timeline playhead (== coral) */
+
+  /* ── Layer category hues (desaturated so chrome stays quiet;
+        colorblind-safe; always paired w/ icon) ──────────────────── */
+  --color-layer-text:   #6aa9ff;
+  --color-layer-shape:  #3fbfae;
+  --color-layer-image:  #e8a33d;
+  --color-layer-video:  #e85d75;  /* rose — shifted off pure red */
+  --color-layer-audio:  #4bcb9e;  /* mint — avoids red/green collision */
+  --color-layer-camera: #e8935c;
+  --color-layer-light:  #e3c04c;
+  --color-layer-null:   #8e9aad;
+  --color-layer-3d:     #d47ae8;  /* magenta — purple stays AI-only */
+
+  /* ── Transparent overlays ─────────────────────────────────────── */
+  --color-black-a04: rgba(0, 0, 0, 0.04);
+  --color-black-a05: rgba(0, 0, 0, 0.05);
+  --color-black-a08: rgba(0, 0, 0, 0.08);
+  --color-black-a15: rgba(0, 0, 0, 0.15);
+  --color-black-a16: rgba(0, 0, 0, 0.16);
+  --color-black-a24: rgba(0, 0, 0, 0.24);
+  --color-black-a40: rgba(0, 0, 0, 0.40);
+  --color-black-a64: rgba(0, 0, 0, 0.64);
+
+  --color-white-a04: rgba(255, 255, 255, 0.04);
+  --color-white-a05: rgba(255, 255, 255, 0.05);
+  --color-white-a08: rgba(255, 255, 255, 0.08);
+  --color-white-a15: rgba(255, 255, 255, 0.15);
+  --color-white-a16: rgba(255, 255, 255, 0.16);
+  --color-white-a24: rgba(255, 255, 255, 0.24);
+  --color-white-a40: rgba(255, 255, 255, 0.40);
+}

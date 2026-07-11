@@ -1,0 +1,33 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.group,
+.groupActive {
+  height: 26px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.group:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.groupActive {
+  background: var(--color-active);
+  color: var(--color-text-primary);
+}
+
+.dropdown {
+  position: fixed;
+  z-index: var(--z-index-dropdown);
+  min-width: 220px;
+}

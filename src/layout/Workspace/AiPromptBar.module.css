@@ -1,0 +1,122 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+  width: min(560px, 60vw);
+}
+
+.spark {
+  color: var(--color-primary);
+  font-size: var(--font-size-md);
+  flex: none;
+}
+
+/* ── Prompt bar ────────────────────────────────────────────────── */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 38px;
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-strong);
+  /* Solid floating chrome — flat by doctrine, no glass blur. */
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.send {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  cursor: pointer;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.send:disabled {
+  background: var(--color-surface-3);
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.send:not(:disabled):hover {
+  background: var(--color-primary-hover);
+}
+
+/* ── Expanded chat panel ───────────────────────────────────────── */
+.panel {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel-header);
+}
+
+.title {
+  flex: 1 1 auto;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.collapse {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.collapse:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.messages {
+  min-height: 160px;
+  max-height: 40vh;
+  overflow: auto;
+  padding: var(--space-6);
+}
+
+.empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  text-align: center;
+  margin: auto;
+}
