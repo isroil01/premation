@@ -25,6 +25,9 @@ export interface RenderLayer {
   matte?: MatteType;
   /** True when the layer above consumes this layer as its matte source. */
   isMatteSource?: boolean;
+  /** Adjustment layer: its `filter` applies to everything beneath, and it draws
+   *  no content of its own. */
+  isAdjustment?: boolean;
   /** Center position in composition space. */
   x: number;
   y: number;

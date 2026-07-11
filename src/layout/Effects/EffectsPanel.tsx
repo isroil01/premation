@@ -21,6 +21,7 @@ import {
 } from '@core/effects/effects';
 import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
 import { MATTE_OPTIONS, getNodeMatte, setNodeMatte } from '@core/effects/matte';
+import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
 import {
   getNodeMask,
   addMaskPath,
@@ -77,6 +78,7 @@ export function EffectsPanel(): JSX.Element {
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
   const { w: maskW, h: maskH } = SIZE[layerKind];
   const masks = getNodeMask(primary).paths;
+  const isAdjustment = getNodeAdjustment(primary);
 
   return (
     <div className={styles.root}>
@@ -106,6 +108,18 @@ export function EffectsPanel(): JSX.Element {
           }
           items={matteItems}
         />
+      </div>
+
+      <div className={styles.blendRow}>
+        <span className={styles.blendLabel}>Adjustment layer</span>
+        <button
+          type="button"
+          className={isAdjustment ? styles.invertOn : styles.blendTrigger}
+          aria-pressed={isAdjustment}
+          onClick={() => setNodeAdjustment(primary, !isAdjustment)}
+        >
+          {isAdjustment ? 'On' : 'Off'}
+        </button>
       </div>
 
       <div className={styles.addRow}>

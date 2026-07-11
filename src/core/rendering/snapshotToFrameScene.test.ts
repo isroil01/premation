@@ -44,6 +44,14 @@ describe('snapshotToFrameScene', () => {
     expect(scene.renderables.map((r) => r.id)).toEqual(['matted']);
   });
 
+  test('drops adjustment layers on the GPU path', () => {
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'below' }),
+      layer({ id: 'adj', isAdjustment: true }),
+    ]));
+    expect(scene.renderables.map((r) => r.id)).toEqual(['below']);
+  });
+
   test('maps kinds and assigns texture keys for textured kinds', () => {
     const scene = snapshotToFrameScene(snapshot([
       layer({ id: 's', kind: 'shape' }),

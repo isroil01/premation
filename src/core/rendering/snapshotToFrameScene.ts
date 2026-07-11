@@ -71,9 +71,10 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   const renderables: Renderable[] = [];
   for (const layer of snapshot.layers) {
     if (!layer.visible) continue;
-    // Track mattes are composited by Canvas2D only for now; on the GPU path we
-    // at least drop the consumed matte source so it isn't drawn as a stray quad.
-    if (layer.isMatteSource) continue;
+    // Track mattes + adjustment layers are composited by Canvas2D only for now;
+    // on the GPU path drop the consumed matte source and the (content-less)
+    // adjustment layer so neither is drawn as a stray quad.
+    if (layer.isMatteSource || layer.isAdjustment) continue;
     renderables.push(layerToRenderable(layer));
   }
   return {

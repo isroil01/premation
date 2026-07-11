@@ -259,6 +259,11 @@ export class SceneGraph {
     this.setFx(nodeId, 'matte', matte);
   }
 
+  /** Mark the layer as an adjustment layer on its `fx` component. */
+  setAdjustment(nodeId: ID, on: unknown): void {
+    this.setFx(nodeId, 'isAdjustment', on);
+  }
+
   /** Write a single key onto the node's `fx` component (created on demand). */
   private setFx(nodeId: ID, key: string, value: unknown): void {
     const e = this.engine(nodeId);

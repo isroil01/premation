@@ -10,6 +10,7 @@ import { readNodeEffects, effectsToFilter } from '@core/effects/effects';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMask } from '@core/effects/mask';
 import { readNodeMatte } from '@core/effects/matte';
+import { readNodeAdjustment } from '@core/effects/adjustment';
 import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 
@@ -119,6 +120,7 @@ export function buildSnapshot(
       blend: readNodeBlend(node),
       mask: readNodeMask(node),
       matte: readNodeMatte(node),
+      isAdjustment: readNodeAdjustment(node) || undefined,
       x: a?.get('x') ?? base.x,
       y: a?.get('y') ?? base.y,
       rotation: a?.get('rotation') ?? base.rotation,

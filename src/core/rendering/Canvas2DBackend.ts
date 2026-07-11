@@ -114,7 +114,7 @@ export class Canvas2DBackend implements RenderBackend {
     ctx.rect(0, 0, snapshot.width, snapshot.height);
     ctx.clip();
 
-    this.drawLayers(ctx, snapshot.layers, offX, offY, scale, cw, ch);
+    this.drawLayers(ctx, snapshot.layers, offX, offY, scale, cw, ch, devW, devH);
 
     ctx.restore(); // comp clip
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -157,10 +157,18 @@ export class Canvas2DBackend implements RenderBackend {
     scale: number,
     cw: number,
     ch: number,
+    devW: number,
+    devH: number,
   ): void {
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i]!;
       if (layer.isMatteSource) continue; // drawn only as another layer's matte
+      // Adjustment layer: apply its filter to everything drawn beneath; it
+      // contributes no content of its own.
+      if (layer.isAdjustment) {
+        if (layer.visible && layer.filter) this.applyAdjustment(ctx, layer.filter, offX, offY, devW, devH);
+        continue;
+      }
       if (layer.matte && i > 0) {
         this.drawMatted(ctx, layers[i - 1]!, layer, offX, offY, scale, cw, ch);
         continue;
@@ -168,6 +176,40 @@ export class Canvas2DBackend implements RenderBackend {
       if (!layer.visible) continue;
       this.drawComposited(ctx, layer);
     }
+  }
+
+  /** Re-composite the composition region drawn so far through a CSS filter (the
+   *  adjustment layer's effect stack), affecting everything beneath it. */
+  private applyAdjustment(
+    ctx: CanvasRenderingContext2D,
+    filter: string,
+    offX: number,
+    offY: number,
+    devW: number,
+    devH: number,
+  ): void {
+    const x = Math.round(offX);
+    const y = Math.round(offY);
+    const w = Math.max(1, Math.round(devW));
+    const h = Math.max(1, Math.round(devH));
+    let region: ImageData;
+    try {
+      region = ctx.getImageData(x, y, w, h);
+    } catch {
+      return; // e.g. a tainted canvas — skip rather than throw into the frame
+    }
+    const off = document.createElement('canvas');
+    off.width = w;
+    off.height = h;
+    const oc = off.getContext('2d');
+    if (!oc) return;
+    oc.putImageData(region, 0, 0);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(x, y, w, h);
+    ctx.filter = filter;
+    ctx.drawImage(off, x, y);
+    ctx.restore();
   }
 
   /** Draw one layer with its transform, opacity, blend, filter and mask, in the
