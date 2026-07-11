@@ -60,6 +60,18 @@ describe('snapshotToFrameScene', () => {
     expect(r!.blend).toBe('normal');
   });
 
+  test('maps the layer blend mode onto the renderable', () => {
+    const [r] = snapshotToFrameScene(snapshot([layer({ blend: 'multiply' })])).renderables;
+    expect(r!.blend).toBe('multiply');
+  });
+
+  test('defaults blend to normal when the layer omits it', () => {
+    const bare = layer();
+    delete (bare as { blend?: unknown }).blend;
+    const [r] = snapshotToFrameScene(snapshot([bare])).renderables;
+    expect(r!.blend).toBe('normal');
+  });
+
   describe('center-pivot model matrix', () => {
     test('unit-quad centre maps to the layer centre', () => {
       const r = layerToRenderable(layer({ x: 100, y: 200, width: 220, height: 220 }));

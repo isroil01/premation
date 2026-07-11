@@ -8,11 +8,15 @@
  * the same port with no changes above this line.
  */
 
+import type { LayerBlendMode } from '@core/effects/blendMode';
+
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
 export interface RenderLayer {
   id: string;
   kind: LayerKind;
+  /** Compositing mode against the layers beneath (defaults to 'normal'). */
+  blend?: LayerBlendMode;
   /** Center position in composition space. */
   x: number;
   y: number;

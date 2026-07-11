@@ -7,6 +7,7 @@ import type SceneGraph from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
 import { flattenScene, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeEffects, effectsToFilter } from '@core/effects/effects';
+import { readNodeBlend } from '@core/effects/blendMode';
 import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 
@@ -113,6 +114,7 @@ export function buildSnapshot(
     layers.push({
       id: node.id,
       kind: layerKind,
+      blend: readNodeBlend(node),
       x: a?.get('x') ?? base.x,
       y: a?.get('y') ?? base.y,
       rotation: a?.get('rotation') ?? base.rotation,

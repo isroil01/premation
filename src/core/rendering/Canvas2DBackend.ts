@@ -8,6 +8,7 @@
  */
 
 import type { RenderBackend, RenderSnapshot, RenderLayer } from './RenderBackend';
+import { blendToComposite } from '@core/effects/blendMode';
 
 function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
@@ -87,6 +88,10 @@ export class Canvas2DBackend implements RenderBackend {
       if (!layer.visible) continue;
       ctx.save();
       ctx.globalAlpha = clamp01(layer.opacity);
+      // Compositing mode against the layers already drawn.
+      if (layer.blend && layer.blend !== 'normal') {
+        ctx.globalCompositeOperation = blendToComposite(layer.blend);
+      }
       // Per-layer visual effects (blur / glow / color) via the 2D filter.
       if (layer.filter) ctx.filter = layer.filter;
       ctx.translate(layer.x, layer.y);

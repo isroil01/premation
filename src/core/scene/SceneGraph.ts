@@ -241,6 +241,16 @@ export class SceneGraph {
 
   /** Store the effect stack (fx) on the node's `fx` component (created on demand). */
   setEffects(nodeId: ID, effects: unknown[]): void {
+    this.setFx(nodeId, 'effects', effects);
+  }
+
+  /** Store the layer's blend mode on its `fx` component. */
+  setBlendMode(nodeId: ID, mode: string): void {
+    this.setFx(nodeId, 'blendMode', mode);
+  }
+
+  /** Write a single key onto the node's `fx` component (created on demand). */
+  private setFx(nodeId: ID, key: string, value: unknown): void {
     const e = this.engine(nodeId);
     if (!e) return;
     let fx = e.getComponent<DataComponent>('fx');
@@ -248,7 +258,7 @@ export class SceneGraph {
       fx = new DataComponent('fx', { [CID]: `${nodeId}_fx` });
       e.addComponent(fx);
     }
-    fx.set('effects', effects);
+    fx.set(key, value);
   }
 
   // Compute world transforms (naive additive; retained for API parity).

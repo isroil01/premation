@@ -8,6 +8,38 @@
   overflow-y: auto;
 }
 
+.blendRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.blendLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.blendTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  min-width: 96px;
+  justify-content: space-between;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.blendTrigger:hover {
+  border-color: var(--color-border-strong);
+}
+
 .addRow {
   display: flex;
   flex-wrap: wrap;

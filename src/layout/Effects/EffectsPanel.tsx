@@ -8,6 +8,7 @@
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
+import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -18,6 +19,7 @@ import {
   updateEffect,
   removeEffect,
 } from '@core/effects/effects';
+import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
 import styles from './EffectsPanel.module.css';
 
 export function EffectsPanel(): JSX.Element {
@@ -31,8 +33,32 @@ export function EffectsPanel(): JSX.Element {
   const effects = getNodeEffects(primary);
   const defByType = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
 
+  const blend = getNodeBlend(primary);
+  const blendLabel = BLEND_MODES.find((b) => b.mode === blend)?.label ?? 'Normal';
+  const blendItems: DropdownItem[] = BLEND_MODES.map((b) => ({
+    type: 'item',
+    id: b.mode,
+    label: b.label,
+    icon: b.mode === blend ? 'check' : undefined,
+    onSelect: () => setNodeBlend(primary, b.mode),
+  }));
+
   return (
     <div className={styles.root}>
+      <div className={styles.blendRow}>
+        <span className={styles.blendLabel}>Blend</span>
+        <Dropdown
+          placement="bottom-end"
+          trigger={
+            <button type="button" className={styles.blendTrigger}>
+              {blendLabel}
+              <Icon name="chevron-down" size={12} />
+            </button>
+          }
+          items={blendItems}
+        />
+      </div>
+
       <div className={styles.addRow}>
         {EFFECT_DEFS.map((d) => (
           <button key={d.type} type="button" className={styles.addChip} onClick={() => addEffect(primary, d.type)}>

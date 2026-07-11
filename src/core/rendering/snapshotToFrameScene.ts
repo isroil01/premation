@@ -59,7 +59,7 @@ export function layerToRenderable(layer: RenderLayer): Renderable {
     modelMatrix: model,
     bounds: boundsOf(model),
     opacity: layer.opacity,
-    blend: 'normal',
+    blend: layer.blend ?? 'normal',
     color: Color.fromHex(layer.fill),
     // Texture-backed kinds resolve via the provider (white-texel until Prompt 7).
     ...(kind === 'image' || kind === 'video' ? { textureKey: `asset:${layer.id}` } : {}),
