@@ -33,6 +33,7 @@ import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import defaultAnimation from '@core/animation/AnimationEngine';
 import { makeKeyframeId, parseKeyframeId } from '@core/animation/keyframeId';
+import { runAnimEdit } from '@core/animation/animationCommands';
 import { flattenScene, readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
 import renderCache from '@core/rendering/renderCache';
 import { openPalette } from '@stores/commandPaletteStore';
@@ -316,7 +317,12 @@ function EditorShell(): JSX.Element {
   };
   const handleKeyframeMove = (kfId: string, time: number): void => {
     const ref = parseKeyframeId(kfId);
-    if (ref) defaultAnimation.moveKeyframe(ref.nodeId, ref.prop, ref.t, time);
+    // The timeline commits once on release, so one move = one undoable command.
+    if (ref) {
+      runAnimEdit('Move keyframe', () =>
+        defaultAnimation.moveKeyframe(ref.nodeId, ref.prop, ref.t, time),
+      );
+    }
   };
   const handleKeyframeContextMenu = (kfId: string, x: number, y: number): void => {
     const ref = parseKeyframeId(kfId);
@@ -326,7 +332,10 @@ function EditorShell(): JSX.Element {
         id: 'delete',
         label: 'Delete keyframe',
         danger: true,
-        onSelect: () => defaultAnimation.removeKeyframe(ref.nodeId, ref.prop, ref.t),
+        onSelect: () =>
+          runAnimEdit('Delete keyframe', () =>
+            defaultAnimation.removeKeyframe(ref.nodeId, ref.prop, ref.t),
+          ),
       },
     ]);
   };

@@ -2,6 +2,7 @@ import { InspectorRow } from './Inspector';
 import { propertyRegistry } from '@core/inspector/PropertyRegistry';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import defaultAnimation from '@core/animation/AnimationEngine';
+import { runAnimEdit } from '@core/animation/animationCommands';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useActiveWorkspace } from '@stores/workspaceStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -42,15 +43,28 @@ function PropertyRow({
 
   const onChange = (v: unknown): void => {
     if (animated && typeof v === 'number') {
-      defaultAnimation.setKeyframe(nodeId, propName, time, v);
+      // Reversible keyframe edit. A scrub fires onChange many times for the same
+      // (node, prop, time); the merge key collapses them into one undo step.
+      runAnimEdit(
+        `Set ${propName}`,
+        () => defaultAnimation.setKeyframe(nodeId, propName, time, v),
+        `set:${nodeId}:${propName}:${time}`,
+      );
     } else {
       setBaseVal(v);
     }
   };
 
   const toggleAnim = (): void => {
-    if (animated) defaultAnimation.removeTrack(nodeId, propName);
-    else if (numeric) defaultAnimation.setKeyframe(nodeId, propName, time, Number(baseVal));
+    if (animated) {
+      runAnimEdit(`Remove ${propName} animation`, () =>
+        defaultAnimation.removeTrack(nodeId, propName),
+      );
+    } else if (numeric) {
+      runAnimEdit(`Animate ${propName}`, () =>
+        defaultAnimation.setKeyframe(nodeId, propName, time, Number(baseVal)),
+      );
+    }
   };
 
   return (

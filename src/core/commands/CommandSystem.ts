@@ -32,7 +32,9 @@ export class CommandSystem {
 
   constructor(opts: CommandSystemOptions) {
     this.opts = opts;
-    this.history = new HistoryService();
+    // Give history a context builder so undo()/redo() can re-run commands with
+    // the same services execute() saw (buildContext reads this.opts, set above).
+    this.history = new HistoryService(500, (cmd) => this.buildContext(cmd));
     // Wire built-in undo/redo services to the registry's history.
     this.attachBuiltinHistory();
   }

@@ -7,16 +7,26 @@
  */
 
 import { getEventBus } from '@core/events/EventBus';
-import type { Command } from './Command';
+import type { Command, CommandContext } from './Command';
+
+/** Builds the context a command's execute()/undo() runs with during undo/redo. */
+export type ContextBuilder = (command: Command) => CommandContext;
 
 export class HistoryService {
   private readonly undoStack: Command[] = [];
   private readonly redoStack: Command[] = [];
   private readonly capacity: number;
+  private readonly buildContext?: ContextBuilder;
   private suspended = 0;
 
-  constructor(capacity = 500) {
+  constructor(capacity = 500, buildContext?: ContextBuilder) {
     this.capacity = capacity;
+    this.buildContext = buildContext;
+  }
+
+  /** Top of the undo stack without popping (used to coalesce edits). */
+  peek(): Command | undefined {
+    return this.undoStack[this.undoStack.length - 1];
   }
 
   /** Push a command onto the undo stack. */
@@ -77,14 +87,18 @@ export class HistoryService {
     try { fn(); } finally { this.suspended--; }
   }
 
-  private ctxFor(_command: Command): never {
-    // Real context is built by Application and passed in via execute().
-    // HistoryService only re-executes commands; the context is supplied by
-    // the caller of undo()/redo() through the CommandSystem entry point.
-    throw new Error(
-      'HistoryService.ctxFor should not be called directly — ' +
-      'use CommandSystem.execute() which builds the context.',
-    );
+  private ctxFor(command: Command): CommandContext {
+    // CommandSystem injects a context builder at construction so undo()/redo()
+    // can re-run commands with the same services execute() saw. Commands whose
+    // execute()/undo() are self-contained (e.g. keyframe edits that close over
+    // their engine) ignore the context, but it must still be well-formed.
+    if (!this.buildContext) {
+      throw new Error(
+        'HistoryService has no context builder — construct it via CommandSystem ' +
+        'so undo()/redo() can build a CommandContext.',
+      );
+    }
+    return this.buildContext(command);
   }
 
   private emit(): void {

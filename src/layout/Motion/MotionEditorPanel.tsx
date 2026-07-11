@@ -17,6 +17,7 @@ import { EmptyState } from '@components/EmptyState';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultAnimation from '@core/animation/AnimationEngine';
+import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { sampleTrack } from '@core/animation/interpolate';
 import type { EasingKind, PropertyTrack } from '@core/animation/types';
 import { ExpressionEditor } from './ExpressionEditor';
@@ -81,7 +82,7 @@ export function MotionEditorPanel(): JSX.Element {
 
   const [selT, setSelT] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const drag = useRef<{ oldT: number } | null>(null);
+  const drag = useRef<{ oldT: number; tx: ReturnType<typeof beginAnimEdit> } | null>(null);
 
   const bounds = useMemo(() => (track ? computeBounds(track) : null), [track, rev]);
 
@@ -108,7 +109,9 @@ export function MotionEditorPanel(): JSX.Element {
   const onPointGrab = (t: number, e: ReactPointerEvent<SVGCircleElement>): void => {
     e.stopPropagation();
     setSelT(t);
-    drag.current = { oldT: t };
+    // Capture the track state at grab; the pointer moves mutate live and we
+    // record a single reversible command on release.
+    drag.current = { oldT: t, tx: beginAnimEdit() };
     const onMove = (ev: PointerEvent): void => {
       const d = drag.current;
       if (!d || !svgRef.current || !bounds || !prop || !primary) return;
@@ -123,16 +126,22 @@ export function MotionEditorPanel(): JSX.Element {
       setSelT(clampedT);
     };
     const onUp = (): void => {
+      const d = drag.current;
       drag.current = null;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      if (d) recordAnimEdit(d.tx.commit('Edit keyframe'));
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };
 
   const setEasing = (kind: EasingKind): void => {
-    if (primary && prop && selectedKf) defaultAnimation.setEasing(primary, prop, selectedKf.t, kind);
+    if (primary && prop && selectedKf) {
+      runAnimEdit(`Easing: ${kind}`, () =>
+        defaultAnimation.setEasing(primary, prop, selectedKf.t, kind),
+      );
+    }
   };
 
   // ── Bezier handle drag (custom easing) ──────────────────────────
@@ -148,6 +157,7 @@ export function MotionEditorPanel(): JSX.Element {
     if (!a || !b || !prop || !primary) return;
     const dt = b.t - a.t;
     const dv = b.value - a.value;
+    const tx = beginAnimEdit();
     const onMove = (ev: PointerEvent): void => {
       if (!svgRef.current) return;
       const rect = svgRef.current.getBoundingClientRect();
@@ -165,6 +175,7 @@ export function MotionEditorPanel(): JSX.Element {
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      recordAnimEdit(tx.commit('Adjust easing curve'));
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -259,7 +270,13 @@ export function MotionEditorPanel(): JSX.Element {
               <ValueField
                 value={selectedKf.value}
                 precision={2}
-                onChange={(v) => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { value: v })}
+                onChange={(v) =>
+                  runAnimEdit(
+                    'Set keyframe value',
+                    () => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { value: v }),
+                    `kf-value:${primary}:${prop}:${selectedKf.t}`,
+                  )
+                }
                 aria-label="keyframe value"
               />
             </label>
@@ -270,7 +287,16 @@ export function MotionEditorPanel(): JSX.Element {
                 precision={2}
                 unit="s"
                 min={0}
-                onChange={(t) => { defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { t }); setSelT(t); }}
+                onChange={(t) => {
+                  // Time drifts as the field scrubs, so key the merge on the
+                  // track (not t) to keep the scrub one undo step.
+                  runAnimEdit(
+                    'Set keyframe time',
+                    () => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { t }),
+                    `kf-time:${primary}:${prop}`,
+                  );
+                  setSelT(t);
+                }}
                 aria-label="keyframe time"
               />
             </label>

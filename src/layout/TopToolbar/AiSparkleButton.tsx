@@ -14,6 +14,7 @@ import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/workspaceStore';
 import { useAiSuggestionStore, type SuggestionMode } from '@stores/aiSuggestionStore';
 import { useContextualSuggestions } from '@layout/ai/useSuggestions';
+import { applySuggestion } from '@core/ai/suggestions';
 import styles from './AiSparkleButton.module.css';
 
 const MODES: { value: SuggestionMode; label: string }[] = [
@@ -76,7 +77,7 @@ export function AiSparkleButton(): JSX.Element {
                 className={styles.item}
                 title={s.description}
                 onClick={() => {
-                  s.apply(nodeId, time);
+                  applySuggestion(s, nodeId, time);
                   notify({ level: 'info', message: `Applied “${s.label}” — fully editable in the timeline`, durationMs: 2600 });
                 }}
               >

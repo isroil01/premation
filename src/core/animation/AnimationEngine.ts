@@ -101,6 +101,40 @@ export class AnimationEngine {
     return (this.tracks.get(nodeId)?.get(prop)?.keyframes.length ?? 0) > 0;
   }
 
+  // ── Atomic track capture/restore ────────────────────────────────
+  // These give the command layer a precise before/after handle on a single
+  // (nodeId, prop) track — the basis for typed, reversible keyframe commands
+  // (as opposed to the coarse whole-document history snapshot). They return /
+  // accept deep copies so callers can hold the state across an undo/redo.
+
+  /** Deep copy of a track's keyframes, or `null` when the track is absent. */
+  getTrackKeyframes(nodeId: string, prop: PropPath): Keyframe[] | null {
+    const track = this.tracks.get(nodeId)?.get(prop);
+    if (!track) return null;
+    return track.keyframes.map((k) => ({ ...k }));
+  }
+
+  /**
+   * Replace a track's keyframes wholesale (deep-copied in). Passing `null` or an
+   * empty array removes the track. Emits `AnimationChanged` like the other
+   * mutators so the UI, render cache and history observers stay in sync.
+   */
+  setTrackKeyframes(nodeId: string, prop: PropPath, keyframes: Keyframe[] | null): void {
+    if (!keyframes || keyframes.length === 0) {
+      const byProp = this.tracks.get(nodeId);
+      if (byProp?.delete(prop) && byProp.size === 0) this.tracks.delete(nodeId);
+      getEventBus().emit('AnimationChanged', { nodeId });
+      return;
+    }
+    let byProp = this.tracks.get(nodeId);
+    if (!byProp) {
+      byProp = new Map();
+      this.tracks.set(nodeId, byProp);
+    }
+    byProp.set(prop, { nodeId, prop, keyframes: keyframes.map((k) => ({ ...k })) });
+    getEventBus().emit('AnimationChanged', { nodeId });
+  }
+
   /**
    * Sample one property at time `t`. If the property has a valid expression it
    * overrides the keyframed value (the keyframed value is passed in as `value`).

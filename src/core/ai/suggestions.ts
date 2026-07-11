@@ -12,6 +12,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import defaultAnimation from '@core/animation/AnimationEngine';
+import { runAnimEdit } from '@core/animation/animationCommands';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import type { IconName } from '@components/Icon';
 
@@ -122,4 +123,14 @@ const BY_KIND: Record<SceneKind, string[]> = {
 
 export function suggestionsForKind(kind: SceneKind): AiSuggestion[] {
   return (BY_KIND[kind] ?? []).map((k) => ACTIONS[k]).filter((a): a is AiSuggestion => !!a);
+}
+
+/**
+ * Apply a suggestion as a single, undoable transaction. The preset authors
+ * several keyframes across props; wrapping the whole `apply` in one command
+ * means one Cmd+Z reverses the entire suggestion (spec: AI output stays
+ * editable AND reversible).
+ */
+export function applySuggestion(suggestion: AiSuggestion, nodeId: string, atTime: number): void {
+  runAnimEdit(`AI: ${suggestion.label}`, () => suggestion.apply(nodeId, atTime));
 }
