@@ -24,7 +24,7 @@
 import { useCallback, useRef, type ReactNode, type KeyboardEvent } from 'react';
 import { cn } from '@utils/cn';
 import { keyFrom } from '@motion/workspace';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';

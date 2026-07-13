@@ -49,6 +49,8 @@ export interface CreateNodePayload {
   bounds: Rect;
   /** Optional bezier path points in LOCAL space (pen tool). */
   points?: BezierPoint[];
+  /** Optional ID of the node to mask (if drawing a mask). */
+  maskTargetId?: NodeId;
 }
 
 export interface DeleteNodesPayload {
@@ -73,8 +75,8 @@ export const commands = {
       payload: { id, rotation, pivot } satisfies RotateNodePayload,
     };
   },
-  createNode(kind: string, bounds: Rect, points?: BezierPoint[]): WorkspaceCommand {
-    const payload: CreateNodePayload = points ? { kind, bounds, points } : { kind, bounds };
+  createNode(kind: string, bounds: Rect, points?: BezierPoint[], maskTargetId?: NodeId): WorkspaceCommand {
+    const payload: CreateNodePayload = points ? { kind, bounds, points, maskTargetId } : { kind, bounds, maskTargetId };
     return { type: WorkspaceCommandType.CreateNode, payload };
   },
   deleteNodes(ids: readonly NodeId[]): WorkspaceCommand {

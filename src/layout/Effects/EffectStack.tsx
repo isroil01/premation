@@ -12,7 +12,7 @@ import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
 import { useSceneRevision } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import {

@@ -7,9 +7,9 @@
  * assistant alike.
  */
 
-const BASE_URL: string =
-  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_MOTION_API_URL ||
-  'http://localhost:4000/api';
+import { API_URL } from './env';
+
+const BASE_URL: string = API_URL || 'http://localhost:4000/api';
 
 const TOKEN_KEY = 'motion-editor.auth-token';
 
@@ -122,7 +122,7 @@ export interface AiEditResult {
 
 export interface RenderJobDto {
   id: string;
-  format: 'webm' | 'png' | 'json' | 'lottie';
+  format: 'webm' | 'png' | 'json' | 'lottie' | 'mp4';
   status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
   progress: number;
   projectId: string | null;
@@ -186,10 +186,20 @@ export const api = {
 
   // render
   createRender: (payload: {
-    format: 'webm' | 'png' | 'json' | 'lottie';
+    format: 'webm' | 'png' | 'json' | 'lottie' | 'mp4';
     projectId?: string;
     document?: unknown;
+    fps?: number;
+    duration?: number;
+    width?: number;
+    height?: number;
+    transparent?: boolean;
   }) => request<RenderJobDto>('/render', { method: 'POST', body: JSON.stringify(payload) }),
+  uploadRenderFrames: (id: string, file: Blob, ext: string) => {
+    const form = new FormData();
+    form.append('file', file, `frames.${ext}`);
+    return request<{ success: boolean; resultUrl: string }>(`/render/${id}/frames`, { method: 'POST', body: form });
+  },
   getRender: (id: string) => request<RenderJobDto>(`/render/${id}`),
   listRenders: () => request<RenderJobDto[]>('/render'),
 };

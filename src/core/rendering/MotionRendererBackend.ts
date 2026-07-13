@@ -154,33 +154,11 @@ export class MotionRendererBackend implements RenderBackend {
 
     // Feed image asset sources for this frame (keyed to match snapshotToFrameScene's
     // `asset:<id>` or `path:<id>` textureKey), and forget layers that left the scene.
-    if (this.textures) {
+      if (this.textures) {
       const activeKeys = new Set<string>();
       for (const layer of snapshot.layers) {
-        const hasMatte = !!layer.matte;
-        const hasMask = !!(layer.mask && layer.mask.paths.length > 0);
-        if (hasMatte) {
-          const idx = snapshot.layers.indexOf(layer);
-          const matteSource = idx > 0 ? snapshot.layers[idx - 1] : undefined;
-          if (matteSource) {
-            const key = `matte:${layer.id}`;
-            activeKeys.add(key);
-            this.textures.setMattedLayer(key, layer, matteSource);
-            if (layer.kind === 'image' && layer.src) {
-              this.textures.setImage(`asset:${layer.id}`, layer.src);
-            }
-            if (matteSource.kind === 'image' && matteSource.src) {
-              this.textures.setImage(`asset:${matteSource.id}`, matteSource.src);
-            }
-          }
-        } else if (hasMask) {
-          const key = `masked:${layer.id}`;
-          activeKeys.add(key);
-          this.textures.setMaskedLayer(key, layer);
-          if (layer.kind === 'image' && layer.src) {
-            this.textures.setImage(`asset:${layer.id}`, layer.src);
-          }
-        } else if (layer.kind === 'image' && layer.src) {
+        // 1. Base layer rasterization
+        if (layer.kind === 'image' && layer.src) {
           const key = `asset:${layer.id}`;
           activeKeys.add(key);
           this.textures.setImage(key, layer.src);
@@ -202,6 +180,19 @@ export class MotionRendererBackend implements RenderBackend {
           const key = `path:${layer.id}`;
           activeKeys.add(key);
           this.textures.setPath(key, layer);
+        }
+
+        // 2. Auxiliary alpha textures (masks/mattes)
+        const hasMask = !!(layer.mask && layer.mask.paths.length > 0);
+        if (hasMask) {
+          const key = `mask:${layer.id}`;
+          activeKeys.add(key);
+          this.textures.setMask(key, layer);
+        }
+        
+        const hasMatte = !!layer.matte;
+        if (hasMatte) {
+          // Mattes will be implemented similarly via setMatte(key, matteSource, consumer)
         }
       }
       this.textures.retain(activeKeys);

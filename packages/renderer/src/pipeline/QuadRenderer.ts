@@ -59,9 +59,10 @@ export class QuadRenderer {
         const entries: import('../gpu/types').BindGroupResource[] = [{ binding: 0, buffer: ub }];
         if (item.texture) entries.push({ binding: 1, texture: item.texture });
         if (item.sampler) entries.push({ binding: 2, sampler: item.sampler });
+        if (item.maskTexture) entries.push({ binding: 3, texture: item.maskTexture });
 
         const bg = this.resources.bindGroup(
-          `bindgroup:${batch.material.shader}:${item.texture?.id ?? 0}:${idx}`,
+          `bindgroup:${batch.material.shader}:${item.texture?.id ?? 0}:${item.maskTexture?.id ?? 0}:${idx}`,
           { pipeline, entries },
         );
         encoder.setBindGroup(0, bg);

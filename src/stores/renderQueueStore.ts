@@ -9,6 +9,7 @@
 
 import { create } from 'zustand';
 import { renderSequenceZip, renderWebMBlob, downloadBlob, type ExportOptions } from '@core/export/exportManager';
+import { api } from '@core/api/client';
 
 export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
 
@@ -30,6 +31,7 @@ export interface RenderJob {
   height: number;
   fps: number;
   durationSec: number;
+  transparent: boolean;
 }
 
 interface RenderQueueState {
@@ -64,14 +66,41 @@ async function renderJobBlob(
     fps: job.fps,
     duration: job.durationSec,
     time: 0,
+    comp: { width: job.width, height: job.height, transparent: job.transparent, background: '#101014' },
   };
   switch (job.format) {
     case 'png-sequence':
       return { blob: await renderSequenceZip(opts, 'png', onProgress, signal), ext: 'zip' };
     case 'jpg-sequence':
       return { blob: await renderSequenceZip(opts, 'jpg', onProgress, signal), ext: 'zip' };
+    case 'mp4': {
+      const renderJob = await api.createRender({
+        format: 'mp4',
+        width: opts.width,
+        height: opts.height,
+        fps: opts.fps,
+        duration: opts.duration,
+        transparent: job.transparent,
+      });
+      const frameExt = job.transparent ? 'png' : 'jpg';
+      const zipBlob = await renderSequenceZip(opts, frameExt, (f) => onProgress(f * 0.5), signal);
+      if (signal.aborted) throw new Error('Aborted');
+      onProgress(0.5);
+      await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
+      while (true) {
+        if (signal.aborted) throw new Error('Aborted');
+        const status = await api.getRender(renderJob.id);
+        if (status.status === 'completed' && status.resultUrl) {
+          onProgress(1.0);
+          const res = await fetch(status.resultUrl);
+          return { blob: await res.blob(), ext: 'mp4' };
+        }
+        if (status.status === 'failed') throw new Error(status.error || 'Backend render failed');
+        onProgress(0.5 + status.progress * 0.45);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
     case 'webm':
-    case 'mp4': // no in-browser H.264 muxer yet → deliver WebM (documented)
     case 'gif': // no GIF encoder yet → deliver WebM
     default:
       return { blob: await renderWebMBlob(opts, onProgress, signal), ext: 'webm' };

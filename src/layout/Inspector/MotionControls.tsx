@@ -8,7 +8,7 @@
  */
 
 import { Switch } from '@components/Switch';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isAutoOriented, setAutoOriented } from '@core/scene/autoOrient';
 import { hasPositionAnimation } from '@core/motion/motionPath';
@@ -22,19 +22,35 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
 
   const on = isAutoOriented(node);
   const animated = hasPositionAnimation(nodeId);
+  const transformComp = node.components.find((c) => c.type === 'Transform');
+  const separated = transformComp?.props.separateDimensions === true;
 
   return (
-    <div className={styles.row}>
-      <span className={styles.label}>
-        Auto-Orient
-        {!animated && <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>}
-      </span>
-      <Switch
-        checked={on}
-        onChange={(e) => setAutoOriented(nodeId, e.currentTarget.checked)}
-        aria-label="Auto-orient along motion path"
-      />
-    </div>
+    <>
+      <div className={styles.row}>
+        <span className={styles.label}>
+          Auto-Orient
+          {!animated && <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>}
+        </span>
+        <Switch
+          checked={on}
+          onChange={(e) => setAutoOriented(nodeId, e.currentTarget.checked)}
+          aria-label="Auto-orient along motion path"
+        />
+      </div>
+      <div className={styles.row}>
+        <span className={styles.label}>Separate Dimensions</span>
+        <Switch
+          checked={separated}
+          onChange={(e) => {
+            const val = e.currentTarget.checked;
+            defaultSceneGraph.updateTransform(nodeId, { separateDimensions: val });
+            bumpScene();
+          }}
+          aria-label="Separate position into X and Y tracks"
+        />
+      </div>
+    </>
   );
 }
 

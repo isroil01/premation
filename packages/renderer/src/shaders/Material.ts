@@ -44,6 +44,18 @@ export const TEXTURED_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Built-in material: masked textured quad. Uniform + texture + sampler + mask texture. */
+export const MASKED_TEXTURED_MATERIAL: MaterialDescriptor = {
+  shader: 'masked-textured',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
 /** Built-in material: blur pass. Uniform + texture + sampler. */
 export const BLUR_MATERIAL: MaterialDescriptor = {
   shader: 'blur',

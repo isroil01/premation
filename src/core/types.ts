@@ -13,6 +13,7 @@ export interface Transform {
   position: { x: number; y: number; z?: number };
   rotation: number; // degrees
   scale: { x: number; y: number };
+  separateDimensions?: boolean;
 }
 
 // Component attached to a SceneNode (renderable, behavior, etc.)

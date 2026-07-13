@@ -61,6 +61,8 @@ export interface Renderable {
   clip?: boolean;
   /** Id of a renderable used as an alpha mask. */
   maskId?: string;
+  /** Texture key for a pre-rasterized alpha mask. */
+  maskTextureKey?: string;
 }
 
 export interface CompositionInfo {

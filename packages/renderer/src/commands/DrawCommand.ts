@@ -19,6 +19,7 @@ export interface DrawItem {
   /** Optional bound texture + sampler (textured materials). */
   texture?: TextureHandle;
   sampler?: SamplerHandle;
+  maskTexture?: TextureHandle;
 }
 
 export interface CommandBatch {

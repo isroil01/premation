@@ -12,5 +12,5 @@ export {
   DEFAULT_PREFERENCES,
 } from './preferenceStore';
 export type { Preferences, PreferenceStore, PreferenceBackend } from './preferenceStore';
-export { useWorkspaceStore, useActiveWorkspace } from './workspaceStore';
-export type { WorkspaceInfo } from './workspaceStore';
+export { useProjectStore as useWorkspaceStore, useActiveTab as useActiveWorkspace } from './projectStore';
+export type { TabInfo as WorkspaceInfo } from './projectStore';

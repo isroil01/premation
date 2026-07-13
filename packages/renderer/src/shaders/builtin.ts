@@ -178,6 +178,76 @@ void main() {
   },
 };
 
+const MASKED_TEXTURED: ShaderSource = {
+  name: 'masked-textured',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var maskTex : texture_2d<f32>;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let maskAlpha = textureSample(maskTex, smp, uv).a;
+  let a = c.a * maskAlpha;
+  return vec4<f32>(graded * a, a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+uniform sampler2D uTex;
+uniform sampler2D uMaskTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  float maskAlpha = texture(uMaskTex, vUv).a;
+  float a = c.a * maskAlpha;
+  frag = vec4(graded * a, a);
+}
+`,
+  },
+};
+
 const BLUR: ShaderSource = {
   name: 'blur',
   wgsl: /* wgsl */ `
@@ -266,4 +336,4 @@ void main() {
   },
 };
 
-export const BUILTIN_SHADERS: readonly ShaderSource[] = [SOLID, TEXTURED, BLUR];
+export const BUILTIN_SHADERS: readonly ShaderSource[] = [SOLID, TEXTURED, MASKED_TEXTURED, BLUR];

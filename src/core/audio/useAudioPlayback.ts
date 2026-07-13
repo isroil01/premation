@@ -8,7 +8,7 @@
  */
 
 import { useEffect, type ReactElement } from 'react';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { audioEngine } from './AudioEngine';
 import { readAudioLayers } from './audioScene';

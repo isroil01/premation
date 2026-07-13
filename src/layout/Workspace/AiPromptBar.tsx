@@ -15,7 +15,7 @@ import { api } from '@core/api/client';
 import { captureDocument } from '@core/api/cloudDocument';
 import { applyAiOps } from '@core/ai/applyOps';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import styles from './AiPromptBar.module.css';
 
 interface ChatMessage {

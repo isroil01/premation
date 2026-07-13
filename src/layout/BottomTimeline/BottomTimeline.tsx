@@ -14,7 +14,7 @@ import { IconButton } from '@components/IconButton';
 import { Timeline, type TimelineProps } from '@layout/Timeline';
 import { GraphEditor } from '@layout/Timeline/GraphEditor';
 import { cn } from '@utils/cn';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';

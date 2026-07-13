@@ -11,7 +11,7 @@ import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { cn } from '@utils/cn';
 import { useSceneRevision } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';

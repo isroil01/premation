@@ -15,7 +15,7 @@
 
 import { Icon } from '@components/Icon';
 import { useUIStore } from '@stores/uiStore';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { useAiSuggestionStore } from '@stores/aiSuggestionStore';
 import { useContextualSuggestions } from '@layout/ai/useSuggestions';
 import { applySuggestion } from '@core/ai/suggestions';

@@ -1309,7 +1309,13 @@ function Keyframes({
         return (
           <div
             key={kf.id}
-            className={cn(styles.keyframe, dragging && styles.keyframeDragging, selected && styles.keyframeSelected)}
+            className={cn(
+              styles.keyframe,
+              dragging && styles.keyframeDragging,
+              selected && styles.keyframeSelected,
+              kf.roving && styles.keyframeRoving,
+              kf.isHold && styles.keyframeHold
+            )}
             style={{ left: `${time * pps}px` }}
             onPointerDown={(e) => onKeyframeDown(kf, e)}
             onContextMenu={(e) => {

@@ -8,7 +8,7 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle } from '.
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL } from '../../shaders/Material';
 import { packSolid, packTextured, type SolidShape, type ColorTransform } from '../../pipeline/uniforms';
 
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
@@ -76,5 +76,29 @@ export function emitTextured(
     uniforms: packTextured(mvp, uvRect, tint, opacity, color),
     texture,
     sampler,
+  });
+}
+
+/** Queue a masked textured quad. Batches per texture + mask + blend. */
+export function emitMaskedTextured(
+  cmds: CommandBuffer,
+  mvp: Mat3,
+  tint: Color,
+  opacity: number,
+  blend: BlendMode,
+  texture: TextureHandle,
+  sampler: SamplerHandle,
+  maskTexture: TextureHandle,
+  uvRect: Rect = FULL_UV,
+  color?: ColorTransform,
+): void {
+  cmds.add({
+    batchKey: `tex_mask|${texture.id}|${maskTexture.id}|${blend}`,
+    material: MASKED_TEXTURED_MATERIAL,
+    blend,
+    uniforms: packTextured(mvp, uvRect, tint, opacity, color),
+    texture,
+    sampler,
+    maskTexture,
   });
 }

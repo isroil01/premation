@@ -3,7 +3,7 @@ import { Rect } from '../../core/math/geometry';
 import type { RenderableSdf } from '../../scene/FrameScene';
 import type { SolidShape } from '../../pipeline/uniforms';
 import { RenderPass, SURFACE, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, emitSolid, emitTextured, modelFromRect, mvpFor, writeAttachment } from './passUtils';
+import { beginViewportPass, emitSolid, emitTextured, emitMaskedTextured, modelFromRect, mvpFor, writeAttachment } from './passUtils';
 import { BLUR_MATERIAL } from '../../shaders/Material';
 import { packBlur } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
@@ -51,7 +51,27 @@ export class CompositionPass extends RenderPass {
 
       if (!hasEffects) {
         // Direct to surface
-        if (isSolid && r.color) {
+        if (r.maskTextureKey) {
+          const maskTex = services.textures.get(r.maskTextureKey);
+          if (maskTex) {
+            let tex = isTextured && r.textureKey ? services.textures.get(r.textureKey) : undefined;
+            if (isSolid && !tex) tex = services.textures.get('texture:white'); // Or placeholder
+            if (tex) {
+              emitMaskedTextured(
+                mainCmds,
+                mvpFor(viewport, r.modelMatrix),
+                r.color ?? Color.white(),
+                r.opacity,
+                r.blend,
+                tex.texture,
+                services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' }),
+                maskTex.texture,
+                r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 },
+                r.colorMatrix
+              );
+            }
+          }
+        } else if (isSolid && r.color) {
           emitSolid(mainCmds, mvpFor(viewport, r.modelMatrix), r.color, r.opacity, r.blend, toSolidShape(r.sdf));
         } else if (isTextured && r.textureKey) {
           const tex = services.textures.get(r.textureKey);
@@ -77,7 +97,27 @@ export class CompositionPass extends RenderPass {
 
       // 1. Draw layer to LAYER_TARGET
       const layerCmds = new CommandBuffer();
-      if (isSolid && r.color) {
+      if (r.maskTextureKey) {
+        const maskTex = services.textures.get(r.maskTextureKey);
+        if (maskTex) {
+          let tex = isTextured && r.textureKey ? services.textures.get(r.textureKey) : undefined;
+          if (isSolid && !tex) tex = services.textures.get('texture:white'); // Or placeholder
+          if (tex) {
+            emitMaskedTextured(
+              layerCmds,
+              mvpFor(viewport, r.modelMatrix),
+              r.color ?? Color.white(),
+              1,
+              'normal',
+              tex.texture,
+              services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' }),
+              maskTex.texture,
+              r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 },
+              r.colorMatrix
+            );
+          }
+        }
+      } else if (isSolid && r.color) {
         emitSolid(layerCmds, mvpFor(viewport, r.modelMatrix), r.color, 1, 'normal', toSolidShape(r.sdf));
       } else if (isTextured && r.textureKey) {
         const tex = services.textures.get(r.textureKey);

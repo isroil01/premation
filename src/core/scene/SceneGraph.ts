@@ -224,6 +224,19 @@ export class SceneGraph {
     if (t.scaleY !== undefined) target.set('scaleY', t.scaleY);
   }
 
+  setSeparateDimensions(nodeId: ID, separateDimensions: boolean): void {
+    const e = this.engine(nodeId);
+    if (!e) return;
+    for (const c of e.componentList()) {
+      if (c.type === ENGINE_TRANSFORM) continue;
+      const dc = c as DataComponent;
+      if (typeof dc.data.x === 'number') {
+        dc.set('separateDimensions', separateDimensions);
+        break;
+      }
+    }
+  }
+
   removeNode(id: ID): void {
     const e = this.engine(id);
     if (!e) return;

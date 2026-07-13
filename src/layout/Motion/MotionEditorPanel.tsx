@@ -33,7 +33,8 @@ const EASINGS: { kind: EasingKind; label: string }[] = [
   { kind: 'easeOut', label: 'Ease Out' },
   { kind: 'easeInOut', label: 'In-Out' },
   { kind: 'ease', label: 'Smooth' },
-  { kind: 'step', label: 'Hold' },
+  { kind: 'step', label: 'Step' },
+  { kind: 'hold', label: 'Hold' },
   { kind: 'bezier', label: 'Custom' },
 ];
 
@@ -45,6 +46,7 @@ const EASE_PREVIEW: Record<EasingKind, string> = {
   easeInOut: 'M2,14 C10,14 14,2 22,2',
   ease: 'M2,14 C8,13 12,3 22,2',
   step: 'M2,14 L12,14 L12,2 L22,2',
+  hold: 'M2,14 L12,14 L12,2 L22,2',
   bezier: 'M2,14 C8,2 16,14 22,2',
 };
 

@@ -1,0 +1,136 @@
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.dialog {
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  font-family: sans-serif;
+  color: #cccccc;
+}
+
+.header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #3c3c3c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.closeBtn:hover {
+  background: #3c3c3c;
+  color: #fff;
+}
+
+.body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fieldRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldRow label {
+  font-size: 11px;
+  color: #aaa;
+}
+
+.fieldRow select, .fieldRow input[type="number"] {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #ccc;
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.multiInput {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.multiInput input {
+  width: 60px;
+}
+
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #ccc;
+  cursor: pointer;
+}
+
+.footer {
+  padding: 12px 16px;
+  border-top: 1px solid #3c3c3c;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cancelBtn, .okBtn {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.cancelBtn {
+  background: transparent;
+  color: #ccc;
+  border-color: #3c3c3c;
+}
+
+.cancelBtn:hover {
+  background: #333;
+}
+
+.okBtn {
+  background: #0e639c;
+  color: #fff;
+}
+
+.okBtn:hover {
+  background: #1177bb;
+}

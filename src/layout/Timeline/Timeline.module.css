@@ -278,6 +278,22 @@
   transition: var(--motion-hover-transition);
 }
 
+.keyframeRoving {
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.keyframeRoving:hover {
+  transform: translate(-50%, -50%) scale(1.2);
+}
+
+.keyframeHold {
+  transform: translate(-50%, -50%) rotate(0deg); /* Square */
+  border-radius: 0;
+}
+.keyframeHold:hover {
+  transform: translate(-50%, -50%) rotate(0deg) scale(1.2);
+}
+
 /* Transparent hit padding — the diamond stays small and precise-looking,
    but there's a forgiving target around it for grabbing. */
 .keyframe::before {
@@ -299,11 +315,27 @@
   z-index: 4;
 }
 
+.keyframeRoving.keyframeDragging {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+.keyframeHold.keyframeDragging {
+  transform: translate(-50%, -50%) rotate(0deg) scale(1.25);
+}
+
 .keyframeSelected {
   background: var(--color-primary);
   border-color: var(--color-primary);
   transform: translate(-50%, -50%) rotate(45deg) scale(1.15);
   box-shadow: 0 0 0 2px rgba(41, 136, 255, 0.35);
+}
+
+.keyframeRoving.keyframeSelected {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.keyframeHold.keyframeSelected {
+  transform: translate(-50%, -50%) rotate(0deg) scale(1.15);
 }
 
 /* ── Markers ───────────────────────────────────────────────────── */

@@ -15,7 +15,7 @@ import {
 } from '@stores/preferenceStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openModal } from '@stores/modalStore';

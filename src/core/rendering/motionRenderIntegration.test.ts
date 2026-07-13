@@ -147,7 +147,11 @@ describe('GPU renderer integration — real image texture via AppTextureProvider
     let provider!: AppTextureProvider;
     const renderer = new Renderer({
       backend,
-      textures: (resources) => (provider = new AppTextureProvider(resources, async () => fakeBitmap())),
+      textures: (resources) => {
+        const loader = async () => fakeBitmap();
+        provider = new AppTextureProvider(resources, { loader });
+        return provider;
+      },
     });
     await renderer.initialize();
     const vp = renderer.createViewport({ width: 800, height: 600, devicePixelRatio: 1 });
@@ -202,7 +206,7 @@ describe('GPU renderer integration — real image texture via AppTextureProvider
     let provider!: AppTextureProvider;
     const renderer = new Renderer({
       backend,
-      textures: (resources) => (provider = new AppTextureProvider(resources, undefined, () => video)),
+      textures: (resources) => (provider = new AppTextureProvider(resources, { videoFactory: () => video as any })),
     });
     await renderer.initialize();
     const vp = renderer.createViewport({ width: 800, height: 600, devicePixelRatio: 1 });

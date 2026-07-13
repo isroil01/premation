@@ -19,7 +19,7 @@ import { AiSparkleButton } from '@layout/TopToolbar/AiSparkleButton';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { usePresentationStore } from '@stores/presentationStore';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio } from '@core/scene/sceneInsert';
 import { useAssetStore } from '@stores/assetStore';

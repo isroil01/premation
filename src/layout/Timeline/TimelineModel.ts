@@ -32,6 +32,8 @@ export interface TimelineKeyframeRef {
   id: KeyId;
   nodeId: NodeId;
   time: number;
+  roving?: boolean;
+  isHold?: boolean;
 }
 
 /**

@@ -33,7 +33,7 @@ import {
   hasMaskAnim,
   type MaskMode,
 } from '@core/effects/mask';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { FillStrokeControls } from './FillStrokeControls';

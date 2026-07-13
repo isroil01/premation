@@ -11,7 +11,7 @@ import { Icon } from '@components/Icon';
 import { Popover } from '@components/Popover';
 import { cn } from '@utils/cn';
 import { useUIStore } from '@stores/uiStore';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { useAiSuggestionStore, type SuggestionMode } from '@stores/aiSuggestionStore';
 import { useContextualSuggestions } from '@layout/ai/useSuggestions';
 import { applySuggestion } from '@core/ai/suggestions';

@@ -10,7 +10,7 @@ import { ValueField } from '@components/ValueField';
 import { Switch } from '@components/Switch';
 import { Slider } from '@components/Slider';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { audioComponent, isAudioNode } from '@core/audio/audioScene';

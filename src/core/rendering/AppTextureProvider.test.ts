@@ -28,7 +28,7 @@ function setup(
   const backend = new NullBackend();
   const resources = new ResourceManager(backend);
   resources.beginFrame(1);
-  const provider = new AppTextureProvider(resources, loader, videoFactory);
+  const provider = new AppTextureProvider(resources, { loader, videoFactory });
   return { provider, backend };
 }
 

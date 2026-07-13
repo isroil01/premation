@@ -150,14 +150,13 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   const opacity = (parentOpacity !== undefined ? parentOpacity * layer.opacity : layer.opacity);
   
   const isCustomPath = layer.kind === 'shape' && layer.primitive === 'path';
-  const hasMask = !!(layer.mask && layer.mask.paths.length > 0);
-  const hasMatte = !!layer.matte;
-  const kind = (isCustomPath || hasMask || hasMatte) ? 'image' : KIND_MAP[layer.kind];
+  // Note: hasMask/hasMatte no longer force 'image' for CPU rasterization
+  const kind = isCustomPath ? 'image' : KIND_MAP[layer.kind];
 
   // Textured kinds sample a texture that already carries their colour (photo, or
   // text rasterized in its own fill), so they must not be multiplied by a fill.
   // Only shapes use their solid/representative colour.
-  const textured = kind === 'image' || kind === 'video' || kind === 'text' || hasMask || hasMatte;
+  const textured = kind === 'image' || kind === 'video' || kind === 'text';
   return {
     id: layer.id,
     kind,
@@ -167,11 +166,10 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     blend: layerBlendToGpu(layer.blend),
     color: textured ? Color.white() : gradedSolidColor(layer),
     // Texture-backed kinds resolve via the provider
-    ...(hasMatte ? { textureKey: `matte:${layer.id}` } :
-        hasMask ? { textureKey: `masked:${layer.id}` } :
-        isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
-    ...(!hasMatte && !hasMask && !isCustomPath && (kind === 'image' || kind === 'video') ? { textureKey: `asset:${layer.id}` } : {}),
+    ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
+    ...(!isCustomPath && (kind === 'image' || kind === 'video') ? { textureKey: `asset:${layer.id}` } : {}),
     ...(kind === 'text' ? { textureKey: `text:${layer.id}` } : {}),
+    ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
     ...(textured ? { colorMatrix: texturedColorMatrix(layer) } : { sdf: sdfFor(layer) }),
     effects: extractSpatialEffects(layer),
   };

@@ -23,7 +23,7 @@ import { Icon, type IconName } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { useCommandPaletteStore } from '@stores/commandPaletteStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { getCommandRegistry } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';

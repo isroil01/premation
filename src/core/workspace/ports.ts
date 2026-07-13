@@ -168,9 +168,20 @@ function createNode(payload: CreateNodePayload): void {
   const ellipse =
     payload.kind === 'Ellipse' ||
     (kind === 'shape' && Math.abs(payload.bounds.width - payload.bounds.height) < 8 && payload.bounds.width > 0);
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? ('comp_root' as ID);
+  
   const node = makeNodeAt(kind, payload.kind, cx, cy, ellipse, payload.points);
-  defaultSceneGraph.addChild(rootId, node);
+  
+  if (payload.maskTargetId) {
+    const parentId = payload.maskTargetId as string;
+    // Add Mask component so it's recognized as a mask instead of a normal shape
+    node.components.push({ id: `${node.id}_mask`, type: 'mask', props: { mode: 'alpha', inverted: false, feather: 0 } });
+    node.name = 'Mask';
+    defaultSceneGraph.addChild(parentId, node);
+  } else {
+    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? ('comp_root' as ID);
+    defaultSceneGraph.addChild(rootId, node);
+  }
+  
   useSelectionStore.getState().set([node.id]);
   bumpScene();
 }

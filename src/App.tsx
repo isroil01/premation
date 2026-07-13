@@ -21,7 +21,7 @@ import { useUIStore } from '@stores/uiStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { applyEasingToKeyframes, type EasingPreset } from '@core/animation/keyframeAssistants';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -37,7 +37,7 @@ import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, makeKeyframeId, parseKeyframeId } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { flattenScene, readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
+import { readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
 import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
 import { reparentNode, reorderNode } from '@core/scene/parenting';
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
@@ -73,7 +73,7 @@ function EditorShell(): JSX.Element {
   const addSelected = useSelectionStore((s) => s.add);
   const sceneRev = useSceneRevision((s) => s.rev);
   const active = useActiveWorkspace();
-  const focusEnter = useFocusStore((s) => s.enter);
+
   const focusIsolate = useFocusStore((s) => s.isolate);
   const { activeSet } = useFocusContext();
 
@@ -101,20 +101,44 @@ function EditorShell(): JSX.Element {
     void sceneRev;
     void clipRev;
     const controller = getTimelineController();
-    return flattenScene(defaultSceneGraph).map((node) => {
+    const compId = active?.compositionId || 'scene-root';
+    return defaultSceneGraph.getChildren(compId).map((node) => {
       const kind = readNodeKind(node);
       // Per-property sub-tracks (revealed when the layer is expanded).
-      const properties: TimelinePropertyTrack[] = defaultAnimation
+      let properties: TimelinePropertyTrack[] = defaultAnimation
         .tracksFor(node.id)
         .map((track) => ({
           prop: track.prop,
-          label: track.prop,
+          label: track.prop === 'x' ? 'Position X' : track.prop === 'y' ? 'Position Y' : track.prop === 'z' ? 'Position Z' : track.prop,
           keyframes: track.keyframes.map((kf) => ({
             id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
             time: kf.t,
+            roving: kf.roving,
+            isHold: kf.easing === 'hold',
           })),
         }));
+        
+      const separated = node.components.find((c) => c.type === 'Transform')?.props.separateDimensions === true;
+      if (!separated) {
+        const posProps = properties.filter(p => p.prop === 'x' || p.prop === 'y' || p.prop === 'z');
+        if (posProps.length > 0) {
+          properties = properties.filter(p => p.prop !== 'x' && p.prop !== 'y' && p.prop !== 'z');
+          const mergedKfs = new Map<number, TimelineKeyframeRef>();
+          for (const pt of posProps) {
+            for (const kf of pt.keyframes) {
+              if (!mergedKfs.has(kf.time)) {
+                mergedKfs.set(kf.time, { ...kf, id: makeKeyframeId(node.id, 'Position', kf.time) as KeyId });
+              }
+            }
+          }
+          properties.unshift({
+            prop: 'Position', // Special pseudo-property
+            label: 'Position',
+            keyframes: Array.from(mergedKfs.values()).sort((a, b) => a.time - b.time),
+          });
+        }
+      }
       // Flat union of all keyframes (collapsed summary row).
       const keyframes: TimelineKeyframeRef[] = properties.flatMap((p) => p.keyframes);
       // Clip bars for this node = its Timeline Engine layers (seconds).
@@ -183,7 +207,7 @@ function EditorShell(): JSX.Element {
     return () => {
       for (const s of subs) s.dispose();
     };
-  }, []);
+  }, [active?.compositionId]);
 
   // Track visibility / lock toggles → scene node state.
   const toggleTrackVisible = (trackId: string): void => {
@@ -364,13 +388,12 @@ function EditorShell(): JSX.Element {
     bumpScene();
   };
 
-  // Double-clicking a track enters Focus Mode: a group/precomp is entered in
-  // place (parent ghosts around it); a leaf layer is isolated.
   const handleTrackActivate = (trackId: string): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node) return;
     if (readNodeKind(node) === 'group') {
-      focusEnter(trackId);
+      const ws = useProjectStore.getState();
+      ws.actions.openTab(trackId);
     } else {
       focusIsolate(trackId);
       setSelected([trackId]);
@@ -394,9 +417,16 @@ function EditorShell(): JSX.Element {
     const ref = parseKeyframeId(kfId);
     // The timeline commits once on release, so one move = one undoable command.
     if (ref) {
-      runAnimEdit('Move keyframe', () =>
-        defaultAnimation.moveKeyframe(ref.nodeId, ref.prop, ref.t, time),
-      );
+      const props = ref.prop === 'Position' ? ['x', 'y', 'z'] : [ref.prop];
+      if (time < 0) {
+        runAnimEdit('Delete keyframe', () => {
+          for (const p of props) defaultAnimation.removeKeyframe(ref.nodeId, p, ref.t);
+        });
+      } else {
+        runAnimEdit('Move keyframe', () => {
+          for (const p of props) defaultAnimation.moveKeyframe(ref.nodeId, p, ref.t, time);
+        });
+      }
     }
   };
   // Timeline easing pills (Linear/Ease/EaseIn/EaseOut/Hold). Apply to the
@@ -424,15 +454,52 @@ function EditorShell(): JSX.Element {
   const handleKeyframeContextMenu = (kfId: string, x: number, y: number): void => {
     const ref = parseKeyframeId(kfId);
     if (!ref) return;
+
+    // Check if current keyframe has hold or roving
+    // If it's a grouped 'Position' property, we check 'x' as the representative.
+    const checkProp = ref.prop === 'Position' ? 'x' : ref.prop;
+    const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, checkProp);
+    const currentKf = kfs?.find((k) => Math.abs(k.t - ref.t) < 0.001);
+    const isHold = currentKf?.easing === 'hold';
+    const isRoving = currentKf?.roving === true;
+
+    const props = ref.prop === 'Position' ? ['x', 'y', 'z'] : [ref.prop];
+
     openContextMenu(x, y, [
+      {
+        id: 'toggle-hold',
+        label: isHold ? 'Disable Hold (Stepped)' : 'Enable Hold (Stepped)',
+        onSelect: () => {
+          runAnimEdit(isHold ? 'Disable hold keyframe' : 'Enable hold keyframe', () => {
+            for (const p of props) {
+              if (defaultAnimation.isAnimated(ref.nodeId, p)) {
+                defaultAnimation.updateKeyframe(ref.nodeId, p, ref.t, { easing: isHold ? 'linear' : 'hold' });
+              }
+            }
+          });
+        }
+      },
+      {
+        id: 'toggle-roving',
+        label: isRoving ? 'Disable Roving' : 'Enable Roving (Rove Across Time)',
+        onSelect: () => {
+          runAnimEdit(isRoving ? 'Disable roving keyframe' : 'Enable roving keyframe', () => {
+            for (const p of props) {
+              if (defaultAnimation.isAnimated(ref.nodeId, p)) {
+                defaultAnimation.setRoving(ref.nodeId, p, ref.t, !isRoving);
+              }
+            }
+          });
+        }
+      },
       {
         id: 'delete',
         label: 'Delete keyframe',
         danger: true,
         onSelect: () =>
-          runAnimEdit('Delete keyframe', () =>
-            defaultAnimation.removeKeyframe(ref.nodeId, ref.prop, ref.t),
-          ),
+          runAnimEdit('Delete keyframe', () => {
+            for (const p of props) defaultAnimation.removeKeyframe(ref.nodeId, p, ref.t);
+          }),
       },
     ]);
   };

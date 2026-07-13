@@ -12,24 +12,12 @@
  * until the user edits the comp.
  */
 
-import { create } from 'zustand';
-import { getSettingsManager } from '@core/services/coreServices';
+import { useProjectStore, type CompositionSettings } from './projectStore';
 
-/** The editable comp settings that flow into the render pipeline. */
-export interface CompositionSettings {
-  name: string;
-  width: number;
-  height: number;
-  fps: number;
-  durationSeconds: number;
-  /** Comp background colour (hex). Ignored for compositing when `transparent`. */
-  background: string;
-  /** When true the comp has no background fill (checkerboard preview, alpha export). */
-  transparent: boolean;
-}
+export type { CompositionSettings };
 
-/** Previous hardcoded values — see buildSnapshot.COMP_* and TimelineController. */
 export const DEFAULT_COMPOSITION: CompositionSettings = {
+  id: 'comp_default',
   name: 'Composition 1',
   width: 1920,
   height: 1080,
@@ -39,16 +27,11 @@ export const DEFAULT_COMPOSITION: CompositionSettings = {
   transparent: false,
 };
 
-const SETTINGS_KEY = 'composition';
-
 interface CompositionStore extends CompositionSettings {
-  /** Patch one or more fields at once (used by the Composition Settings dialog). */
   update: (patch: Partial<CompositionSettings>) => void;
   setBackground: (hex: string) => void;
   setTransparent: (v: boolean) => void;
-  /** The comp-shaped slice fed to buildSnapshot. */
   comp: () => CompositionSettings;
-  /** Stable string that changes whenever a render-affecting field changes. */
   key: () => string;
 }
 
@@ -56,7 +39,6 @@ function clampInt(v: number, min: number, max: number, fallback: number): number
   return Number.isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : fallback;
 }
 
-/** Sanitise a partial patch (sizes/fps/duration must stay positive + sane). */
 function sanitize(patch: Partial<CompositionSettings>): Partial<CompositionSettings> {
   const out: Partial<CompositionSettings> = { ...patch };
   if (patch.width !== undefined) out.width = clampInt(patch.width, 1, 16384, DEFAULT_COMPOSITION.width);
@@ -70,60 +52,54 @@ function sanitize(patch: Partial<CompositionSettings>): Partial<CompositionSetti
   return out;
 }
 
-/** Persist the current settings (best-effort; ignores boot-order/quota issues). */
-function persist(settings: CompositionSettings): void {
-  try {
-    getSettingsManager().set<CompositionSettings>(SETTINGS_KEY, settings);
-  } catch {
-    /* coreServices not booted yet (module init) — hydrate() reconciles later */
-  }
+export interface CompositionStoreFn {
+  <T>(selector: (state: CompositionStore) => T): T;
+  (): CompositionStore;
+  getState: () => CompositionStore;
+  setState: (patch: any) => void;
 }
 
-export const useCompositionStore = create<CompositionStore>((set, get) => ({
-  ...DEFAULT_COMPOSITION,
+export const useCompositionStore = function <T>(selector?: (state: CompositionStore) => T): T | CompositionStore {
+  const activeTabId = useProjectStore(s => s.activeTabId);
+  const tab = activeTabId ? useProjectStore(s => s.tabs[activeTabId]) : null;
+  const compId = tab?.compositionId;
+  const compData = useProjectStore(s => (compId ? s.comps[compId] : undefined)) ?? DEFAULT_COMPOSITION;
+  const updateComp = useProjectStore(s => s.actions.updateComp);
 
-  update: (patch) => {
-    const next = sanitize(patch);
-    set(next);
-    persist(get().comp());
-  },
-  setBackground: (hex) => {
-    set({ background: hex });
-    persist(get().comp());
-  },
-  setTransparent: (v) => {
-    set({ transparent: v });
-    persist(get().comp());
-  },
+  const state: CompositionStore = {
+    ...compData,
+    update: (patch) => { if (compId) updateComp(compId, sanitize(patch)); },
+    setBackground: (hex) => { if (compId) updateComp(compId, { background: hex }); },
+    setTransparent: (v) => { if (compId) updateComp(compId, { transparent: v }); },
+    comp: () => compData,
+    key: () => `${compData.width}x${compData.height}:${compData.fps}:${compData.durationSeconds}:${compData.background}:${compData.transparent ? 1 : 0}`
+  };
 
-  comp: () => {
-    const s = get();
+  return selector ? selector(state) : state;
+} as CompositionStoreFn;
+
+Object.assign(useCompositionStore, {
+  getState: (): CompositionStore => {
+    const s = useProjectStore.getState();
+    const activeTabId = s.activeTabId;
+    const tab = activeTabId ? s.tabs[activeTabId] : null;
+    const compId = tab?.compositionId;
+    const compData = (compId ? s.comps[compId] : undefined) ?? DEFAULT_COMPOSITION;
+
     return {
-      name: s.name,
-      width: s.width,
-      height: s.height,
-      fps: s.fps,
-      durationSeconds: s.durationSeconds,
-      background: s.background,
-      transparent: s.transparent,
+      ...compData,
+      update: (patch) => { if (compId) s.actions.updateComp(compId, sanitize(patch)); },
+      setBackground: (hex) => { if (compId) s.actions.updateComp(compId, { background: hex }); },
+      setTransparent: (v) => { if (compId) s.actions.updateComp(compId, { transparent: v }); },
+      comp: () => compData,
+      key: () => `${compData.width}x${compData.height}:${compData.fps}:${compData.durationSeconds}:${compData.background}:${compData.transparent ? 1 : 0}`
     };
   },
+  setState: (patch: Partial<CompositionSettings>) => {
+    useCompositionStore.getState().update(patch);
+  }
+});
 
-  key: () => {
-    const s = get();
-    return `${s.width}x${s.height}:${s.fps}:${s.durationSeconds}:${s.background}:${s.transparent ? 1 : 0}`;
-  },
-}));
-
-/** Load persisted comp settings after coreServices boot (called from Providers). */
 export function hydrateComposition(): void {
-  let stored: Partial<CompositionSettings> | null = null;
-  try {
-    stored = getSettingsManager().get<Partial<CompositionSettings> | null>(SETTINGS_KEY, null);
-  } catch {
-    stored = null;
-  }
-  if (stored) {
-    useCompositionStore.setState({ ...DEFAULT_COMPOSITION, ...sanitize(stored) });
-  }
+  // Persistence is now managed by project serialization
 }

@@ -9,7 +9,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import {
   defaultAnimation,

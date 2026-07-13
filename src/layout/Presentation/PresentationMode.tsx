@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '@components/Icon';
 import { usePresentationStore } from '@stores/presentationStore';
-import { useWorkspaceStore, useActiveWorkspace } from '@stores/workspaceStore';
+import { useWorkspaceStore, useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useViewportRenderer } from '@layout/Workspace/useViewportRenderer';

@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { Icon } from '@components/Icon';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQueueStore, type OutputFormat, type RenderJob } from '@stores/renderQueueStore';
+import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
 import styles from './RenderQueuePanel.module.css';
 
 const FORMAT_OPTIONS: ReadonlyArray<{ value: OutputFormat; label: string }> = [
@@ -54,19 +55,25 @@ export function RenderQueuePanel(): JSX.Element {
   const { jobs, isRunning, addJob, removeJob, startAll, pauseAll, clearFinished } =
     useRenderQueueStore();
 
-  const [format, setFormat] = useState<OutputFormat>('webm');
+  const [showDialog, setShowDialog] = useState(false);
 
-  const handleAddJob = () => {
+  const handleAddJob = (settings: OutputSettings) => {
+    setShowDialog(false);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const ext = format === 'png-sequence' || format === 'jpg-sequence' ? 'zip' : format === 'mp4' || format === 'gif' ? 'webm' : format;
+    const ext = settings.format === 'png-sequence' || settings.format === 'jpg-sequence' ? 'zip' : settings.format === 'mp4' || settings.format === 'gif' ? 'webm' : settings.format;
+    
+    // Actually we are rendering mp4 on the backend, so the extension should be mp4
+    const finalExt = settings.format === 'mp4' ? 'mp4' : ext;
+
     addJob({
       compositionName: compName ?? 'Comp 1',
-      outputPath: `${compName ?? 'output'}_${ts}.${ext}`,
-      format,
-      width: compW,
-      height: compH,
-      fps: compFps,
-      durationSec: compDur,
+      outputPath: `${compName ?? 'output'}_${ts}.${finalExt}`,
+      format: settings.format,
+      width: settings.width,
+      height: settings.height,
+      fps: settings.fps,
+      durationSec: settings.durationSec,
+      transparent: settings.transparent,
     });
   };
 
@@ -75,27 +82,19 @@ export function RenderQueuePanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
+      {showDialog && (
+        <OutputModuleDialog 
+          initialWidth={compW}
+          initialHeight={compH}
+          initialFps={compFps}
+          initialDuration={compDur}
+          onConfirm={handleAddJob}
+          onCancel={() => setShowDialog(false)}
+        />
+      )}
       {/* ── Toolbar ──────────────────────────────────────────────── */}
       <div className={styles.toolbar}>
-        {/* Format picker */}
-        <select
-          value={format}
-          onChange={(e) => setFormat(e.target.value as OutputFormat)}
-          style={{
-            background: '#2e2e2e',
-            border: '1px solid #3a3a3a',
-            color: '#c8c8c8',
-            fontSize: 11,
-            padding: '3px 6px',
-            cursor: 'pointer',
-          }}
-        >
-          {FORMAT_OPTIONS.map((f) => (
-            <option key={f.value} value={f.value}>{f.label}</option>
-          ))}
-        </select>
-
-        <button type="button" className={styles.toolbarBtn} onClick={handleAddJob} title="Add current composition to queue">
+        <button type="button" className={styles.toolbarBtn} onClick={() => setShowDialog(true)} title="Add current composition to queue">
           <Icon name="plus" size={12} /> Add Comp
         </button>
 

@@ -115,9 +115,22 @@ export function GraphEditor({
       if (!kfs || kfs.length === 0) continue;
 
       let minV = Infinity, maxV = -Infinity;
-      for (const kf of kfs) { minV = Math.min(minV, kf.value); maxV = Math.max(maxV, kf.value); }
+      const getVal = (t: number) => {
+        if (mode === 'speed') {
+          const dt = 0.005;
+          const v1 = defaultAnimation.sample(nodeId, prop, Math.max(0, t - dt)) ?? 0;
+          const v2 = defaultAnimation.sample(nodeId, prop, Math.min(duration, t + dt)) ?? 0;
+          return (v2 - v1) / (2 * dt);
+        }
+        return defaultAnimation.sample(nodeId, prop, t);
+      };
+
+      if (mode === 'value') {
+        for (const kf of kfs) { minV = Math.min(minV, kf.value); maxV = Math.max(maxV, kf.value); }
+      }
+      
       for (let i = 0; i <= SAMPLES; i++) {
-        const v = defaultAnimation.sample(nodeId, prop, (i / SAMPLES) * duration);
+        const v = getVal((i / SAMPLES) * duration);
         if (v !== undefined) { minV = Math.min(minV, v); maxV = Math.max(maxV, v); }
       }
       if (maxV === minV) { minV -= 1; maxV += 1; }
@@ -127,24 +140,27 @@ export function GraphEditor({
       const pts: string[] = [];
       for (let i = 0; i <= SAMPLES; i++) {
         const tSec = (i / SAMPLES) * duration;
-        const v = defaultAnimation.sample(nodeId, prop, tSec) ?? minV;
+        const v = getVal(tSec) ?? minV;
         pts.push(`${tSec * pps},${valueToY(v, minV, maxV, INNER_H)}`);
       }
 
-      const keyframes: KfPoint[] = kfs.map((kf) => ({
-        nodeId, prop,
-        t: kf.t, value: kf.value,
-        y: valueToY(kf.value, minV, maxV, INNER_H),
-        minV, maxV,
-        easing: kf.easing,
-        bezier: kf.bezier,
-      }));
+      const keyframes: KfPoint[] = kfs.map((kf) => {
+        const val = getVal(kf.t) ?? kf.value;
+        return {
+          nodeId, prop,
+          t: kf.t, value: val,
+          y: valueToY(val, minV, maxV, INNER_H),
+          minV, maxV,
+          easing: kf.easing,
+          bezier: kf.bezier,
+        };
+      });
 
       paths.push({ color, d: `M${pts.join('L')}`, keyframes, prop, nodeId, minV, maxV });
     }
     return paths;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allTracks, duration, pps, INNER_H, rev]);
+  }, [allTracks, duration, pps, INNER_H, rev, mode]);
 
   // ── Drag state ────────────────────────────────────────────────
   const dragRef = useRef<{
@@ -227,11 +243,11 @@ export function GraphEditor({
 
       if (d.kind === 'kf') {
         const newT = clamp(d.origT + dx / pps, 0, duration);
-        const newV = clamp(
+        const newV = mode === 'value' ? clamp(
           yToValue(d.startY + dy, d.minV, d.maxV, INNER_H),
           d.minV,
           d.maxV,
-        );
+        ) : d.origValue;
         defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.origT, { t: newT, value: newV });
         dragRef.current!.origT = newT;
         dragRef.current!.startX = x;

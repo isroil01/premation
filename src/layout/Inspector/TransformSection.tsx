@@ -6,7 +6,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { Icon } from '@components/Icon';
 import styles from './TransformSection.module.css';
 
@@ -97,12 +97,99 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
 
   const isCamera = node.components.some((c) => c.props.__kind === 'camera' || c.id.startsWith('camera'));
 
+    const renderGroupedVectorProp = () => {
+      const animatedX = defaultAnimation.isAnimated(nodeId, 'x');
+      const animatedY = defaultAnimation.isAnimated(nodeId, 'y');
+      const animatedZ = isCamera && defaultAnimation.isAnimated(nodeId, 'z');
+      const animated = animatedX || animatedY || animatedZ;
+
+      const displayX = animatedX ? defaultAnimation.sample(nodeId, 'x', time) ?? xVal : xVal;
+      const displayY = animatedY ? defaultAnimation.sample(nodeId, 'y', time) ?? yVal : yVal;
+      const displayZ = animatedZ ? defaultAnimation.sample(nodeId, 'z', time) ?? zVal : zVal;
+
+      const toggleAnim = () => {
+        if (animated) {
+          runAnimEdit(`Remove Position animation`, () => {
+            defaultAnimation.removeTrack(nodeId, 'x');
+            defaultAnimation.removeTrack(nodeId, 'y');
+            if (isCamera) defaultAnimation.removeTrack(nodeId, 'z');
+          });
+        } else {
+          runAnimEdit(`Animate Position`, () => {
+            defaultAnimation.setKeyframe(nodeId, 'x', time, Number(xVal ?? 0));
+            defaultAnimation.setKeyframe(nodeId, 'y', time, Number(yVal ?? 0));
+            if (isCamera) defaultAnimation.setKeyframe(nodeId, 'z', time, Number(zVal ?? 0));
+          });
+        }
+      };
+
+      return (
+        <InspectorRow label="Position" align="center" key="Position">
+          <div className={styles.control}>
+            <button
+              type="button"
+              className={`${styles.stopwatch} ${animated ? styles.stopwatchOn : ''}`}
+              onClick={toggleAnim}
+              title={animated ? 'Remove animation' : 'Animate'}
+            >
+              <Icon name="keyframe" size={11} />
+            </button>
+            <div className={styles.field} style={{ display: 'flex', gap: '4px' }}>
+              <ValueField 
+                value={Number(displayX ?? 0)} 
+                unit="px" 
+                onChange={(v) => {
+                  if (animated && typeof v === 'number') {
+                    runAnimEdit('Set Position X', () => defaultAnimation.setKeyframe(nodeId, 'x', time, v), `set:${nodeId}:x:${time}`);
+                  } else {
+                    setXVal(v);
+                    defaultSceneGraph.setLocalTransform(nodeId, { x: v as number, y: (yVal as number) ?? 0, rotation: (rotVal as number) ?? 0 });
+                  }
+                }} 
+              />
+              <ValueField 
+                value={Number(displayY ?? 0)} 
+                unit="px" 
+                onChange={(v) => {
+                  if (animated && typeof v === 'number') {
+                    runAnimEdit('Set Position Y', () => defaultAnimation.setKeyframe(nodeId, 'y', time, v), `set:${nodeId}:y:${time}`);
+                  } else {
+                    setYVal(v);
+                    defaultSceneGraph.setLocalTransform(nodeId, { x: (xVal as number) ?? 0, y: v as number, rotation: (rotVal as number) ?? 0 });
+                  }
+                }} 
+              />
+              {isCamera && (
+                <ValueField 
+                  value={Number(displayZ ?? 0)} 
+                  unit="px" 
+                  onChange={(v) => {
+                    if (animated && typeof v === 'number') {
+                      runAnimEdit('Set Position Z', () => defaultAnimation.setKeyframe(nodeId, 'z', time, v), `set:${nodeId}:z:${time}`);
+                    } else {
+                      setZVal(v);
+                    }
+                  }} 
+                />
+              )}
+            </div>
+          </div>
+        </InspectorRow>
+      );
+    };
+
   return (
     <div className={styles.section}>
       <h4 className={styles.title}>Transform</h4>
-      {renderAnimProp('Position X', 'x', xVal ?? 0, setXVal, 'px')}
-      {renderAnimProp('Position Y', 'y', yVal ?? 0, setYVal, 'px')}
-      {isCamera && renderAnimProp('Position Z', 'z', zVal ?? 0, setZVal, 'px')}
+      {tComp.props.separateDimensions ? (
+        <>
+          {renderAnimProp('Position X', 'x', xVal ?? 0, setXVal, 'px')}
+          {renderAnimProp('Position Y', 'y', yVal ?? 0, setYVal, 'px')}
+          {isCamera && renderAnimProp('Position Z', 'z', zVal ?? 0, setZVal, 'px')}
+        </>
+      ) : (
+        renderGroupedVectorProp()
+      )}
       {renderAnimProp('Rotation', 'rotation', rotVal ?? 0, setRotVal, '°')}
       {renderAnimProp('Scale X', 'scaleX', scaleXVal ?? 1, setScaleXVal, 'x')}
       {renderAnimProp('Scale Y', 'scaleY', scaleYVal ?? 1, setScaleYVal, 'x')}

@@ -16,10 +16,10 @@
  */
 
 import { Timeline, frameRate, framesToSeconds, secondsToFrames, type Layer } from '@motion/timeline';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene } from '@core/scene/sceneDerive';
+
 
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
@@ -52,44 +52,71 @@ class TimelineCommandAdapter implements IUndoableCommand {
 }
 
 export class TimelineController {
-  readonly timeline: Timeline;
-  private readonly compositionTrackId: string;
+  private registries = new Map<string, Timeline>();
+  private compositionTrackIds = new Map<string, string>();
+
+  get timeline(): Timeline {
+    const ws = useWorkspaceStore.getState();
+    const activeId = ws.activeId;
+    const tab = activeId ? ws.workspaces[activeId] : null;
+    const compId = tab?.compositionId || 'comp_default';
+    if (!this.registries.has(compId)) {
+      this.initTimeline(compId);
+    }
+    return this.registries.get(compId)!;
+  }
+
+  private get compositionTrackId(): string {
+    const ws = useWorkspaceStore.getState();
+    const activeId = ws.activeId;
+    const tab = activeId ? ws.workspaces[activeId] : null;
+    const compId = tab?.compositionId || 'comp_default';
+    return this.compositionTrackIds.get(compId)!;
+  }
 
   constructor() {
-    // Initialise time facts from the composition settings (single source of
-    // truth for fps + duration); the store defaults if nothing is persisted.
-    const comp = useCompositionStore.getState();
-    this.timeline = Timeline.create({
+    // Initial timeline will be created lazily when accessed
+  }
+
+  private initTimeline(compId: string) {
+    const compSettings = useCompositionStore.getState();
+    const timeline = Timeline.create({
       name: 'Composition',
-      frameRate: frameRate(comp.fps),
-      duration: Math.max(1, Math.round(comp.durationSeconds * comp.fps)),
+      frameRate: frameRate(compSettings.fps),
+      duration: Math.max(1, Math.round(compSettings.durationSeconds * compSettings.fps)),
       historyOptions: {
         onPush: (cmd) => {
           getCommandSystem().getHistory().push(new TimelineCommandAdapter(cmd));
         }
       }
     });
-    // Loop the whole composition during playback (matches the app's prior clock).
-    this.timeline.setRange('loop', { start: 0, duration: this.timeline.duration });
-    // One track holds a layer per scene node.
-    const track = this.timeline.addTrack({ name: 'Composition', kind: 'group' });
-    this.compositionTrackId = track.id;
-    // Initial zoom so pixels-per-second matches the app's default (~80px/s).
-    this.timeline.setZoom(80 / comp.fps);
 
-    // Engine → store mirror (seconds). The store never re-enters the engine, so
-    // no reentrancy guard is needed.
-    this.timeline.events.on('CurrentTimeChanged', ({ frame, seconds }) => {
-      useWorkspaceStore.getState().actions.setTime(seconds, Math.round(frame));
-    });
-    // Reflect engine play-state (e.g. auto-pause at the end) into the store.
-    this.timeline.events.on('PlayStateChanged', ({ playing }) => {
+    timeline.setRange('loop', { start: 0, duration: timeline.duration });
+    const track = timeline.addTrack({ name: 'Composition', kind: 'group' });
+    this.compositionTrackIds.set(compId, track.id);
+    timeline.setZoom(80 / compSettings.fps);
+
+    timeline.events.on('CurrentTimeChanged', ({ frame, seconds }) => {
+      // Only mirror to the store if this is the active comp's timeline!
       const ws = useWorkspaceStore.getState();
-      const active = ws.activeId ? ws.workspaces[ws.activeId] : null;
-      if (active && active.playing !== playing) ws.actions.setPlaying(playing);
+      const activeId = ws.activeId;
+      const tab = activeId ? ws.workspaces[activeId] : null;
+      if (tab?.compositionId === compId) {
+        ws.actions.setTime(seconds, Math.round(frame));
+      }
     });
 
-    this.syncFromScene();
+    timeline.events.on('PlayStateChanged', ({ playing }) => {
+      const ws = useWorkspaceStore.getState();
+      const activeId = ws.activeId;
+      const tab = activeId ? ws.workspaces[activeId] : null;
+      if (tab?.compositionId === compId && tab.playing !== playing) {
+        ws.actions.setPlaying(playing);
+      }
+    });
+
+    this.registries.set(compId, timeline);
+    this.syncFromScene(compId);
   }
 
   // ── Time facts ───────────────────────────────────────────────────
@@ -312,10 +339,21 @@ export class TimelineController {
    * the composition track, spanning the whole comp. Structural mirror — not
    * undoable, so it runs with history suppressed.
    */
-  syncFromScene(): void {
-    const track = this.timeline.getTrack(this.compositionTrackId);
+  syncFromScene(compId?: string): void {
+    const ws = useWorkspaceStore.getState();
+    const activeId = ws.activeId;
+    const tab = activeId ? ws.workspaces[activeId] : null;
+    const targetCompId = compId || tab?.compositionId || 'scene-root';
+
+    const timeline = this.registries.get(targetCompId);
+    if (!timeline) return;
+    const trackId = this.compositionTrackIds.get(targetCompId);
+    if (!trackId) return;
+    const track = timeline.getTrack(trackId);
     if (!track) return;
-    const nodes = flattenScene(defaultSceneGraph).filter((n) => n.parent !== null); // skip comp root
+
+    // Only sync immediate children of the target composition group/root!
+    const nodes = defaultSceneGraph.getChildren(targetCompId);
     const wantIds = new Set(nodes.map((n) => n.id as string));
     // A node may back MULTIPLE clips (after a split), so group by sourceId.
     const bySource = new Map<string, Layer[]>();
@@ -326,7 +364,7 @@ export class TimelineController {
       bySource.set(layer.sourceId, arr);
     }
 
-    this.timeline.history.silently(() => {
+    timeline.history.silently(() => {
       // Add one clip for new nodes; refresh props on existing clips (don't touch
       // geometry — that's user-edited).
       for (const node of nodes) {
@@ -339,18 +377,18 @@ export class TimelineController {
             layer.locked = node.locked === true;
           }
         } else {
-          this.timeline.addLayer(this.compositionTrackId, {
+          timeline.addLayer(trackId, {
             name: node.name ?? nodeId,
             sourceId: nodeId,
             enabled: node.visible !== false,
             locked: node.locked === true,
-            clip: { start: 0, duration: this.timeline.duration },
+            clip: { start: 0, duration: timeline.duration },
           });
         }
       }
       // Remove clips whose source node is gone.
       for (const [sourceId, layers] of bySource) {
-        if (!wantIds.has(sourceId)) for (const l of layers) this.timeline.removeLayer(l.id);
+        if (!wantIds.has(sourceId)) for (const l of layers) timeline.removeLayer(l.id);
       }
     });
   }

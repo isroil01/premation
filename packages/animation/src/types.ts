@@ -17,7 +17,8 @@ export type EasingKind =
   | 'easeIn'
   | 'easeOut'
   | 'easeInOut'
-  | 'bezier';
+  | 'bezier'
+  | 'hold';
 
 /** Cubic-bezier control points [x1, y1, x2, y2] (x in 0..1, y may overshoot). */
 export type BezierHandles = [number, number, number, number];

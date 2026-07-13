@@ -34,6 +34,9 @@ export interface TransformData {
   scaleZ?: number;
   /** Depth anchor. */
   anchorZ?: number;
+  
+  /** Whether the UI should display Position X/Y as separate tracks. */
+  separateDimensions?: boolean;
 }
 
 function defaults(): TransformData {
@@ -49,6 +52,7 @@ function defaults(): TransformData {
     rotationY: 0,
     scaleZ: 1,
     anchorZ: 0,
+    separateDimensions: false,
   };
 }
 
@@ -68,6 +72,7 @@ export class TransformComponent implements Component {
   rotationY: number;
   scaleZ: number;
   anchorZ: number;
+  separateDimensions: boolean;
 
   private readonly _local: Matrix2D = identity();
   private readonly _world: Matrix2D = identity();
@@ -92,6 +97,7 @@ export class TransformComponent implements Component {
     this.rotationY = d.rotationY ?? 0;
     this.scaleZ = d.scaleZ ?? 1;
     this.anchorZ = d.anchorZ ?? 0;
+    this.separateDimensions = d.separateDimensions ?? false;
   }
 
   // ── Mutators (mark dirty so matrices recompute) ─────────────────
@@ -106,6 +112,7 @@ export class TransformComponent implements Component {
   setRotationY(deg: number): void { this.rotationY = deg; this.markDirty(); }
   setScaleZ(z: number): void { this.scaleZ = z; this.markDirty(); }
   setAnchorZ(z: number): void { this.anchorZ = z; this.markDirty(); }
+  setSeparateDimensions(v: boolean): void { this.separateDimensions = v; this.markDirty(); }
 
   /**
    * True when any 3D field departs from its 2D default. Pure-2D nodes stay on
@@ -195,6 +202,7 @@ export class TransformComponent implements Component {
       rotationY: this.rotationY,
       scaleZ: this.scaleZ,
       anchorZ: this.anchorZ,
+      separateDimensions: this.separateDimensions,
     });
   }
 
@@ -214,6 +222,9 @@ export class TransformComponent implements Component {
       data.rotationY = this.rotationY;
       data.scaleZ = this.scaleZ;
       data.anchorZ = this.anchorZ;
+    }
+    if (this.separateDimensions) {
+      data.separateDimensions = true;
     }
     return { type: this.type, data };
   }

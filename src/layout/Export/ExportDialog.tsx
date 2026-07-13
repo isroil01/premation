@@ -8,7 +8,7 @@ import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { cn } from '@utils/cn';
 import { openModal } from '@stores/modalStore';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useRenderQueueStore, type OutputFormat } from '@stores/renderQueueStore';
@@ -59,6 +59,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
       height,
       fps,
       durationSec: duration,
+      transparent: false,
     });
     useLayoutStore.getState().openPanel('renderQueue');
     notify({ level: 'success', message: 'Added to Render Queue (F6)', durationMs: 2600 });

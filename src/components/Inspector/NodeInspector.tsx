@@ -4,7 +4,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
-import { useActiveWorkspace } from '@stores/workspaceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';

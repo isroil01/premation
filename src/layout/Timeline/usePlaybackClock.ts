@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 
 export function usePlaybackClock(): void {

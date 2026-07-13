@@ -417,7 +417,10 @@ export class PenTool implements Tool {
         inX: p.inX - cx, inY: p.inY - cy,
         outX: p.outX - cx, outY: p.outY - cy,
       }));
-      ctx.execute(commands.createNode('Path', bounds, localPoints));
+      // If exactly one node is selected, create this path as a mask for it
+      const selection = ctx.selectionIds();
+      const maskTargetId = selection.length === 1 ? selection[0] : undefined;
+      ctx.execute(commands.createNode('Path', bounds, localPoints, maskTargetId));
     }
     this.points = [];
     ctx.requestRender();

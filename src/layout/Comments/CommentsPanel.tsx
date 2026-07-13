@@ -10,7 +10,7 @@ import { EmptyState } from '@components/EmptyState';
 import { ReviewBar } from './ReviewBar';
 import { useCommentsStore } from '@stores/commentsStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import styles from './CommentsPanel.module.css';
 

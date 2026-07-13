@@ -33,14 +33,8 @@ interface PathEntry {
   texture: TextureHandle;
 }
 
-interface MaskedEntry {
-  kind: 'masked';
-  signature: string;
-  texture: TextureHandle;
-}
-
-interface MattedEntry {
-  kind: 'matted';
+interface MaskEntry {
+  kind: 'mask';
   signature: string;
   texture: TextureHandle;
 }
@@ -116,18 +110,20 @@ export class AppTextureProvider implements TextureProvider {
   private readonly textEntries = new Map<string, TextEntry>();
   private readonly videoEntries = new Map<string, VideoEntry>();
   private readonly pathEntries = new Map<string, PathEntry>();
-  private readonly maskedEntries = new Map<string, MaskedEntry>();
-  private readonly mattedEntries = new Map<string, MattedEntry>();
+  private readonly maskEntries = new Map<string, MaskEntry>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
+  private hasInitWhite = false;
 
   constructor(
     private readonly resources: ResourceManager,
-    loader: ImageLoader = defaultLoader,
-    videoFactory: VideoFactory = defaultVideoFactory,
+    opts: {
+      loader?: ImageLoader;
+      videoFactory?: VideoFactory;
+    } = {},
   ) {
-    this.loader = loader;
-    this.videoFactory = videoFactory;
+    this.loader = opts.loader ?? defaultLoader;
+    this.videoFactory = opts.videoFactory ?? defaultVideoFactory;
   }
 
   /**
@@ -227,11 +223,8 @@ export class AppTextureProvider implements TextureProvider {
     for (const key of this.pathEntries.keys()) {
       if (!activeKeys.has(key)) this.pathEntries.delete(key);
     }
-    for (const key of this.maskedEntries.keys()) {
-      if (!activeKeys.has(key)) this.maskedEntries.delete(key);
-    }
-    for (const key of this.mattedEntries.keys()) {
-      if (!activeKeys.has(key)) this.mattedEntries.delete(key);
+    for (const key of this.maskEntries.keys()) {
+      if (!activeKeys.has(key)) this.maskEntries.delete(key);
     }
   }
 
@@ -264,6 +257,11 @@ export class AppTextureProvider implements TextureProvider {
       { label: 'white', width: 1, height: 1, format: 'rgba8unorm' },
       true,
     );
+    if (!this.hasInitWhite) {
+      const data = new Uint8Array([255, 255, 255, 255]);
+      this.resources.writeTexture(texture, { type: 'buffer', data, width: 1, height: 1 });
+      this.hasInitWhite = true;
+    }
     return { texture, sampler: this.sampler(), ready: true };
   }
 
@@ -276,13 +274,9 @@ export class AppTextureProvider implements TextureProvider {
   }
 
   get(key: string): ResolvedTexture | null {
-    const matted = this.mattedEntries.get(key);
-    if (matted) {
-      return { texture: matted.texture, sampler: this.sampler(), ready: true };
-    }
-    const masked = this.maskedEntries.get(key);
-    if (masked) {
-      return { texture: masked.texture, sampler: this.sampler(), ready: true };
+    const mask = this.maskEntries.get(key);
+    if (mask) {
+      return { texture: mask.texture, sampler: this.sampler(), ready: true };
     }
     const path = this.pathEntries.get(key);
     if (path) {
@@ -305,309 +299,52 @@ export class AppTextureProvider implements TextureProvider {
     return this.placeholder();
   }
 
-  /**
-   * Register/refresh the masked layer behind a renderable key.
-   * Rasterizes synchronously and uploads the generated masked texture to the GPU.
-   */
-  setMaskedLayer(key: string, layer: RenderLayer): void {
-    const ptsSig = layer.mask?.paths ? layer.mask.paths.map(path => 
-      path.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') + `|inv:${path.inverted}`
-    ).join('||') : '';
+  setMask(key: string, layer: RenderLayer): void {
+    if (!layer.mask || layer.mask.paths.length === 0) return;
     
-    const baseSig = `${layer.width}x${layer.height}|${layer.kind}|${layer.fill}|${layer.text ?? ''}|${layer.fontSize ?? 0}|${layer.src ?? ''}`;
-    const signature = `${baseSig}||mask:${ptsSig}`;
+    const ptsSig = layer.mask.paths.map(path => 
+      path.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') + `|inv:${path.inverted}`
+    ).join('||');
+    const signature = `${layer.width}x${layer.height}|mask:${ptsSig}`;
 
-    const existing = this.maskedEntries.get(key);
+    const existing = this.maskEntries.get(key);
     if (existing && existing.signature === signature) return;
 
-    const canvas = this.rasterizeMaskedLayer(layer);
-    const tex = this.resources.texture(
-      `masked:${key}:${signature}`,
-      { label: `masked:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm' },
-      /* pinned */ true,
-    );
-    this.resources.writeTexture(tex, { type: 'canvas', canvas });
-    this.maskedEntries.set(key, { kind: 'masked', signature, texture: tex });
-  }
-
-  private rasterizeMaskedLayer(layer: RenderLayer): HTMLCanvasElement {
     const w = Math.max(1, Math.round(layer.width * TEXT_SUPERSAMPLE));
     const h = Math.max(1, Math.round(layer.height * TEXT_SUPERSAMPLE));
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return canvas;
+    if (!ctx) return;
 
     ctx.scale(TEXT_SUPERSAMPLE, TEXT_SUPERSAMPLE);
     ctx.translate(layer.width / 2, layer.height / 2);
 
-    // Apply vector mask clip paths
-    if (layer.mask && layer.mask.paths.length > 0) {
-      const p = new Path2D();
-      const inverted = layer.mask.paths.some((m) => m.inverted);
-      if (inverted) p.rect(-layer.width / 2, -layer.height / 2, layer.width, layer.height);
+    ctx.fillStyle = 'white';
+    const p = new Path2D();
+    const inverted = layer.mask.paths.some((m) => m.inverted);
+    if (inverted) p.rect(-layer.width / 2, -layer.height / 2, layer.width, layer.height);
 
-      for (const path of layer.mask.paths) {
-        const segs = maskSegments(path);
-        if (segs.length === 0) continue;
-        p.moveTo(segs[0]!.x0, segs[0]!.y0);
-        for (const s of segs) p.bezierCurveTo(s.cx1, s.cy1, s.cx2, s.cy2, s.x1, s.y1);
-        p.closePath();
-      }
-      ctx.clip(p, 'evenodd');
+    for (const path of layer.mask.paths) {
+      const segs = maskSegments(path);
+      if (segs.length === 0) continue;
+      p.moveTo(segs[0]!.x0, segs[0]!.y0);
+      for (const s of segs) p.bezierCurveTo(s.cx1, s.cy1, s.cx2, s.cy2, s.x1, s.y1);
+      p.closePath();
     }
+    ctx.fill(p, 'evenodd');
 
-    // Draw base layer contents (centered local space)
-    if (layer.kind === 'shape') {
-      ctx.beginPath();
-      if (layer.primitive === 'ellipse') {
-        ctx.ellipse(0, 0, layer.width / 2, layer.height / 2, 0, 0, Math.PI * 2);
-      } else if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 0) {
-        const pts = layer.pathPoints;
-        ctx.moveTo(pts[0]!.x, pts[0]!.y);
-        for (let i = 0; i < pts.length; i++) {
-          const curr = pts[i]!;
-          const next = pts[(i + 1) % pts.length]!;
-          ctx.bezierCurveTo(curr.outX, curr.outY, next.inX, next.inY, next.x, next.y);
-        }
-        ctx.closePath();
-      } else {
-        ctx.roundRect(-layer.width / 2, -layer.height / 2, layer.width, layer.height, 12);
-      }
-      ctx.fillStyle = layer.fill;
-      ctx.fill();
-
-      // Stroke if present
-      if (layer.stroke && layer.stroke.width > 0) {
-        ctx.lineWidth = layer.stroke.width;
-        ctx.strokeStyle = layer.stroke.color;
-        ctx.lineCap = layer.stroke.cap || 'butt';
-        ctx.lineJoin = layer.stroke.join || 'miter';
-        if (layer.stroke.dash && layer.stroke.dash.length > 0) {
-          ctx.setLineDash(layer.stroke.dash);
-        }
-
-        if (layer.stroke.align === 'inside') {
-          ctx.save();
-          ctx.clip();
-          ctx.lineWidth = layer.stroke.width * 2;
-          ctx.stroke();
-          ctx.restore();
-        } else if (layer.stroke.align === 'outside') {
-          ctx.save();
-          const outClip = new Path2D();
-          outClip.rect(-layer.width, -layer.height, layer.width * 2, layer.height * 2);
-          if (layer.primitive === 'ellipse') {
-            outClip.ellipse(0, 0, layer.width / 2, layer.height / 2, 0, 0, Math.PI * 2);
-          } else if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 0) {
-            const pts = layer.pathPoints;
-            outClip.moveTo(pts[0]!.x, pts[0]!.y);
-            for (let i = 0; i < pts.length; i++) {
-              const curr = pts[i]!;
-              const next = pts[(i + 1) % pts.length]!;
-              outClip.bezierCurveTo(curr.outX, curr.outY, next.inX, next.inY, next.x, next.y);
-            }
-            outClip.closePath();
-          } else {
-            outClip.roundRect(-layer.width / 2, -layer.height / 2, layer.width, layer.height, 12);
-          }
-          ctx.clip(outClip, 'evenodd');
-          ctx.lineWidth = layer.stroke.width * 2;
-          ctx.stroke();
-          ctx.restore();
-        } else {
-          ctx.stroke();
-        }
-      }
-    } else if (layer.kind === 'text') {
-      ctx.font = `600 ${layer.fontSize || 48}px Inter, system-ui, sans-serif`;
-      ctx.textBaseline = 'middle';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = layer.fill;
-      ctx.fillText(layer.text || 'Text', 0, 0);
-    } else if (layer.kind === 'image' && layer.src) {
-      const imgEntry = this.entries.get(`asset:${layer.id}`);
-      if (imgEntry && imgEntry.ready && imgEntry.bitmap) {
-        ctx.drawImage(imgEntry.bitmap, -layer.width / 2, -layer.height / 2, layer.width, layer.height);
-      }
-    }
-
-    return canvas;
-  }
-
-  /**
-   * Register/refresh the track matte consumer layer behind a renderable key.
-   * Rasterizes consumer and matte source synchronously, performing composite operations.
-   */
-  setMattedLayer(key: string, layer: RenderLayer, source: RenderLayer): void {
-    const layerPts = layer.pathPoints ? layer.pathPoints.map(p => `${p.x},${p.y}`).join('|') : '';
-    const sourcePts = source.pathPoints ? source.pathPoints.map(p => `${p.x},${p.y}`).join('|') : '';
-    const layerSig = `${layer.width}x${layer.height}|${layer.kind}|${layer.fill}|${layer.text ?? ''}|${layerPts}`;
-    const sourceSig = `${source.width}x${source.height}|${source.kind}|${source.fill}|${source.text ?? ''}|${sourcePts}`;
-    const transformSig = `c:${layer.x},${layer.y},${layer.scaleX},${layer.scaleY},${layer.rotation}|s:${source.x},${source.y},${source.scaleX},${source.scaleY},${source.rotation}`;
-    const signature = `${layerSig}||${sourceSig}||${transformSig}||matte:${layer.matte}`;
-
-    const existing = this.mattedEntries.get(key);
-    if (existing && existing.signature === signature) return;
-
-    const canvas = this.rasterizeMattedLayer(layer, source);
     const tex = this.resources.texture(
-      `matte:${key}:${signature}`,
-      { label: `matte:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm' },
+      `mask:${key}:${signature}`,
+      { label: `mask:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm' },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
-    this.mattedEntries.set(key, { kind: 'matted', signature, texture: tex });
+    this.maskEntries.set(key, { kind: 'mask', signature, texture: tex });
   }
 
-  private rasterizeMattedLayer(consumer: RenderLayer, source: RenderLayer): HTMLCanvasElement {
-    const theta = (consumer.rotation || 0) * Math.PI / 180;
-    const cos = Math.abs(Math.cos(theta));
-    const sin = Math.abs(Math.sin(theta));
-    const sx = Math.abs(consumer.scaleX ?? 1);
-    const sy = Math.abs(consumer.scaleY ?? 1);
-    const sw = consumer.width * sx;
-    const sh = consumer.height * sy;
-    
-    const bboxW = sw * cos + sh * sin;
-    const bboxH = sw * sin + sh * cos;
 
-    const minX = consumer.x - bboxW / 2;
-    const minY = consumer.y - bboxH / 2;
-    const maxX = consumer.x + bboxW / 2;
-    const maxY = consumer.y + bboxH / 2;
-
-    const cw = Math.max(1, Math.round(maxX - minX));
-    const ch = Math.max(1, Math.round(maxY - minY));
-
-    const w = Math.max(1, Math.round(cw * TEXT_SUPERSAMPLE));
-    const h = Math.max(1, Math.round(ch * TEXT_SUPERSAMPLE));
-
-    const canvasA = document.createElement('canvas');
-    canvasA.width = w;
-    canvasA.height = h;
-    const ctxA = canvasA.getContext('2d');
-
-    const canvasB = document.createElement('canvas');
-    canvasB.width = w;
-    canvasB.height = h;
-    const ctxB = canvasB.getContext('2d');
-
-    if (!ctxA || !ctxB) return canvasA;
-
-    const setupCtx = (ctx: CanvasRenderingContext2D) => {
-      ctx.scale(TEXT_SUPERSAMPLE, TEXT_SUPERSAMPLE);
-      ctx.translate(-minX, -minY);
-    };
-
-    setupCtx(ctxA);
-    this.drawLayerToCtx(ctxA, consumer);
-
-    setupCtx(ctxB);
-    this.drawLayerToCtx(ctxB, source);
-
-    const type = consumer.matte!;
-    if (type === 'luma' || type === 'luma-inv') {
-      const imgData = ctxB.getImageData(0, 0, w, h);
-      const data = imgData.data;
-      const invert = type === 'luma-inv';
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i]!;
-        const g = data[i + 1]!;
-        const b = data[i + 2]!;
-        const a = data[i + 3]! / 255;
-        const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-        const targetAlpha = invert ? (1 - luma * a) : (luma * a);
-        data[i + 3] = Math.round(targetAlpha * 255);
-      }
-      ctxB.putImageData(imgData, 0, 0);
-    }
-
-    ctxA.setTransform(1, 0, 0, 1, 0, 0);
-    ctxA.globalCompositeOperation = type === 'alpha-inv' || type === 'luma-inv' ? 'destination-out' : 'destination-in';
-    ctxA.drawImage(canvasB, 0, 0);
-
-    return canvasA;
-  }
-
-  private drawLayerToCtx(ctx: CanvasRenderingContext2D, layer: RenderLayer): void {
-    ctx.save();
-    ctx.translate(layer.x, layer.y);
-    ctx.rotate((layer.rotation || 0) * Math.PI / 180);
-    ctx.scale(layer.scaleX ?? 1, layer.scaleY ?? 1);
-    
-    if (layer.kind === 'shape') {
-      ctx.beginPath();
-      if (layer.primitive === 'ellipse') {
-        ctx.ellipse(0, 0, layer.width / 2, layer.height / 2, 0, 0, Math.PI * 2);
-      } else if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 0) {
-        const pts = layer.pathPoints;
-        ctx.moveTo(pts[0]!.x, pts[0]!.y);
-        for (let i = 0; i < pts.length; i++) {
-          const curr = pts[i]!;
-          const next = pts[(i + 1) % pts.length]!;
-          ctx.bezierCurveTo(curr.outX, curr.outY, next.inX, next.inY, next.x, next.y);
-        }
-        ctx.closePath();
-      } else {
-        ctx.roundRect(-layer.width / 2, -layer.height / 2, layer.width, layer.height, 12);
-      }
-      ctx.fillStyle = layer.fill;
-      ctx.fill();
-
-      if (layer.stroke && layer.stroke.width > 0) {
-        ctx.lineWidth = layer.stroke.width;
-        ctx.strokeStyle = layer.stroke.color;
-        ctx.lineCap = layer.stroke.cap || 'butt';
-        ctx.lineJoin = layer.stroke.join || 'miter';
-        if (layer.stroke.dash && layer.stroke.dash.length > 0) ctx.setLineDash(layer.stroke.dash);
-        if (layer.stroke.align === 'inside') {
-          ctx.save();
-          ctx.clip();
-          ctx.lineWidth = layer.stroke.width * 2;
-          ctx.stroke();
-          ctx.restore();
-        } else if (layer.stroke.align === 'outside') {
-          ctx.save();
-          const outClip = new Path2D();
-          outClip.rect(-layer.width, -layer.height, layer.width * 2, layer.height * 2);
-          if (layer.primitive === 'ellipse') {
-            outClip.ellipse(0, 0, layer.width / 2, layer.height / 2, 0, 0, Math.PI * 2);
-          } else if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 0) {
-            const pts = layer.pathPoints;
-            outClip.moveTo(pts[0]!.x, pts[0]!.y);
-            for (let i = 0; i < pts.length; i++) {
-              const curr = pts[i]!;
-              const next = pts[(i + 1) % pts.length]!;
-              outClip.bezierCurveTo(curr.outX, curr.outY, next.inX, next.inY, next.x, next.y);
-            }
-            outClip.closePath();
-          } else {
-            outClip.roundRect(-layer.width / 2, -layer.height / 2, layer.width, layer.height, 12);
-          }
-          ctx.clip(outClip, 'evenodd');
-          ctx.lineWidth = layer.stroke.width * 2;
-          ctx.stroke();
-          ctx.restore();
-        } else {
-          ctx.stroke();
-        }
-      }
-    } else if (layer.kind === 'text') {
-      ctx.font = `600 ${layer.fontSize || 48}px Inter, system-ui, sans-serif`;
-      ctx.textBaseline = 'middle';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = layer.fill;
-      ctx.fillText(layer.text || 'Text', 0, 0);
-    } else if (layer.kind === 'image' && layer.src) {
-      const imgEntry = this.entries.get(`asset:${layer.id}`);
-      if (imgEntry && imgEntry.ready && imgEntry.bitmap) {
-        ctx.drawImage(imgEntry.bitmap, -layer.width / 2, -layer.height / 2, layer.width, layer.height);
-      }
-    }
-    ctx.restore();
-  }
 }
 
 /** Rasterize a text layer to a canvas matching Canvas2DBackend's text rendering
