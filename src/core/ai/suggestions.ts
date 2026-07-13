@@ -119,6 +119,11 @@ const BY_KIND: Record<SceneKind, string[]> = {
   video: ['reveal', 'float'],
   text: ['headline', 'reveal', 'float'],
   group: ['reveal'],
+  null: [],
+  audio: [],
+  camera: [],
+  light: [],
+  adjustment: [],
 };
 
 export function suggestionsForKind(kind: SceneKind): AiSuggestion[] {

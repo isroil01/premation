@@ -10,13 +10,15 @@
  */
 
 import { Canvas2DBackend } from '@core/rendering/Canvas2DBackend';
-import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT } from '@core/rendering/buildSnapshot';
+import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, type SnapshotComp } from '@core/rendering/buildSnapshot';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { renderOffline, frameCount, type OfflineRenderParams } from './offlineRenderer';
+import { createStoreZip, type ZipEntry } from './zip';
 
-export type ExportFormat = 'webm' | 'png' | 'json' | 'lottie';
+export type ExportFormat = 'webm' | 'png' | 'png-sequence' | 'jpg-sequence' | 'json' | 'lottie';
 
 export interface ExportOptions {
   format: ExportFormat;
@@ -26,10 +28,22 @@ export interface ExportOptions {
   duration: number;
   /** Current playhead time (for the single-frame PNG). */
   time: number;
+  /** Comp size + background (defaults to 1920×1080 near-black when omitted).
+   *  `transparent` yields real alpha in the exported PNG/WebM. */
+  comp?: SnapshotComp;
   onProgress?: (fraction: number) => void;
 }
 
+/** buildSnapshot with the export comp settings (bg colour + transparency),
+ *  no preview chrome, no camera view — pure comp render. */
+function exportSnapshot(opts: ExportOptions, time: number): ReturnType<typeof buildSnapshot> {
+  return buildSnapshot(defaultSceneGraph, defaultAnimation, time, undefined, undefined, undefined, undefined, opts.comp);
+}
+
 /** Trigger a browser download for a blob. */
+export function downloadBlob(blob: Blob, filename: string): void {
+  download(blob, filename);
+}
 function download(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -51,9 +65,47 @@ function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; backend:
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** Offline-render params derived from the export options. */
+function offlineParams(opts: ExportOptions): OfflineRenderParams {
+  return { width: opts.width, height: opts.height, fps: opts.fps, durationSec: opts.duration, comp: opts.comp };
+}
+
+/** Encode a canvas frame to raw bytes (png/jpeg). */
+async function frameBytes(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Uint8Array> {
+  const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, type, quality));
+  if (!blob) return new Uint8Array(0);
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/**
+ * Deterministic image-sequence export: render every frame offline and pack the
+ * PNG/JPEG stills into one STORE zip. Reproducible — identical bytes each run.
+ */
+export async function renderSequenceZip(
+  opts: ExportOptions,
+  ext: 'png' | 'jpg',
+  onProgress?: (f: number) => void,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const type = ext === 'png' ? 'image/png' : 'image/jpeg';
+  const total = frameCount(opts.duration, opts.fps);
+  const pad = String(total).length;
+  const entries: ZipEntry[] = [];
+  await renderOffline(
+    offlineParams(opts),
+    async (canvas, frame, count) => {
+      const name = `frame_${String(frame).padStart(pad, '0')}.${ext}`;
+      entries.push({ name, data: await frameBytes(canvas, type, 0.92) });
+      onProgress?.((frame + 1) / count);
+    },
+    signal,
+  );
+  return createStoreZip(entries);
+}
+
 async function exportPNG(opts: ExportOptions): Promise<void> {
   const { canvas, backend } = makeCanvas(opts.width, opts.height);
-  backend.renderFrame(buildSnapshot(defaultSceneGraph, defaultAnimation, opts.time));
+  backend.renderFrame(exportSnapshot(opts, opts.time));
   opts.onProgress?.(1);
   const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
   backend.dispose();
@@ -71,34 +123,63 @@ function exportJSON(opts: ExportOptions): void {
   download(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }), 'motion-project.json');
 }
 
-/** Encode a real WebM video by rendering each frame into a captured stream. */
-async function exportWebM(opts: ExportOptions): Promise<void> {
-  const { canvas, backend } = makeCanvas(opts.width, opts.height);
-  const stream = canvas.captureStream(0);
-  const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-    ? 'video/webm;codecs=vp9'
-    : 'video/webm';
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  const stopped = new Promise<void>((res) => { rec.onstop = () => res(); });
-  rec.start();
+/**
+ * Encode a WebM by feeding the DETERMINISTICALLY rendered frames into a
+ * captured stream. The content is fixed-timestep (frame time = i/fps), so the
+ * frames are reproducible; the MediaRecorder container is paced by wall-clock.
+ * Returns the encoded blob.
+ */
+export async function renderWebMBlob(
+  opts: ExportOptions,
+  onProgress?: (f: number) => void,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  // The captured canvas must persist for the whole recording, so drive
+  // MediaRecorder on a dedicated canvas that we render each offline frame onto.
+  const rec: { canvas: HTMLCanvasElement; track: CanvasCaptureMediaStreamTrack; recorder: MediaRecorder; chunks: Blob[] } =
+    (() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = opts.width;
+      canvas.height = opts.height;
+      const stream = canvas.captureStream(0);
+      const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
+      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      return { canvas, track, recorder, chunks };
+    })();
+  const ctx = rec.canvas.getContext('2d')!;
+  const stopped = new Promise<void>((res) => { rec.recorder.onstop = () => res(); });
+  rec.recorder.start();
 
-  const total = Math.max(1, Math.ceil(opts.duration * opts.fps));
-  for (let i = 0; i < total; i++) {
-    const t = i / opts.fps;
-    backend.renderFrame(buildSnapshot(defaultSceneGraph, defaultAnimation, t));
-    track.requestFrame();
-    opts.onProgress?.(i / total);
-    // Give MediaRecorder wall-clock time to sample the requested frame.
-    await sleep(Math.max(16, 1000 / opts.fps));
-  }
-  rec.stop();
+  await renderOffline(
+    offlineParams(opts),
+    async (frameCanvas, frame, count) => {
+      ctx.clearRect(0, 0, opts.width, opts.height);
+      ctx.drawImage(frameCanvas, 0, 0);
+      rec.track.requestFrame();
+      onProgress?.((frame + 1) / count);
+      await sleep(Math.max(16, 1000 / opts.fps));
+    },
+    signal,
+  );
+
+  rec.recorder.stop();
   await stopped;
-  backend.dispose();
+  return new Blob(rec.chunks, { type: 'video/webm' });
+}
+
+async function exportWebM(opts: ExportOptions): Promise<void> {
+  const blob = await renderWebMBlob(opts, opts.onProgress);
   opts.onProgress?.(1);
-  download(new Blob(chunks, { type: 'video/webm' }), 'motion-export.webm');
+  download(blob, 'motion-export.webm');
+}
+
+async function exportSequence(opts: ExportOptions, ext: 'png' | 'jpg'): Promise<void> {
+  const blob = await renderSequenceZip(opts, ext, opts.onProgress);
+  opts.onProgress?.(1);
+  download(blob, `motion-${ext}-sequence.zip`);
 }
 
 /** Build a minimal but valid Lottie JSON from the scene's transform tracks. */
@@ -142,6 +223,8 @@ function exportLottie(opts: ExportOptions): void {
 export async function runExport(opts: ExportOptions): Promise<void> {
   switch (opts.format) {
     case 'png': return exportPNG(opts);
+    case 'png-sequence': return exportSequence(opts, 'png');
+    case 'jpg-sequence': return exportSequence(opts, 'jpg');
     case 'json': return exportJSON(opts);
     case 'lottie': return exportLottie(opts);
     case 'webm': return exportWebM(opts);
@@ -149,7 +232,8 @@ export async function runExport(opts: ExportOptions): Promise<void> {
 }
 
 export const EXPORT_PRESETS: { format: ExportFormat; label: string; ext: string; hint: string }[] = [
-  { format: 'webm', label: 'Video', ext: 'webm', hint: 'WebM video of the full composition' },
+  { format: 'webm', label: 'Video', ext: 'webm', hint: 'WebM video, deterministic frame-by-frame render' },
+  { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames in a zip (deterministic)' },
   { format: 'png', label: 'Still frame', ext: 'png', hint: 'Current frame as a PNG image' },
   { format: 'lottie', label: 'Lottie', ext: 'json', hint: 'Editable Lottie animation for web/mobile' },
   { format: 'json', label: 'Project', ext: 'json', hint: 'Re-openable Motion project file' },

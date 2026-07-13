@@ -1,0 +1,107 @@
+/**
+ * Deterministic offline renderer (Prompt 9). Replaces realtime MediaRecorder
+ * sampling (which drops frames and is non-reproducible) with a fixed-timestep
+ * loop: every frame's time is `index / fps` exactly, so the same project always
+ * renders byte-identical frames regardless of machine speed.
+ *
+ * The loop renders each frame into an offscreen Canvas2D backend and hands the
+ * canvas to a sink (`onFrame`) — PNG-sequence zipping, MediaRecorder feeding,
+ * etc. It yields between frames so the UI stays responsive and supports
+ * cancellation via an AbortSignal.
+ *
+ * The frame-timing maths is pure and unit-tested; the render loop needs a DOM
+ * canvas so it runs in the browser / render worker, not under jsdom.
+ */
+
+import { createRenderBackend, type BackendChoice } from '@core/rendering/createRenderBackend';
+import { buildSnapshot, type SnapshotComp } from '@core/rendering/buildSnapshot';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { defaultAnimation } from '@motion/animation';
+
+export interface OfflineRenderParams {
+  width: number;
+  height: number;
+  fps: number;
+  durationSec: number;
+  /** Comp size + background/transparency; defaults handled by buildSnapshot. */
+  comp?: SnapshotComp;
+  /** Optional inclusive frame range (defaults to the whole duration). */
+  startFrame?: number;
+  endFrame?: number;
+  /** Preferred rendering backend choice (defaults to resolveBackendChoice()). */
+  backendChoice?: BackendChoice;
+}
+
+// ── Pure frame timing (deterministic, tested) ────────────────────────
+
+/** Total frames for a duration at a frame rate (at least 1). */
+export function frameCount(durationSec: number, fps: number): number {
+  return Math.max(1, Math.round(durationSec * fps));
+}
+
+/** Exact time (seconds) of frame `index` — the fixed timestep. */
+export function frameTimeAt(index: number, fps: number): number {
+  return index / fps;
+}
+
+/** Every frame time across the duration (fixed timestep). */
+export function frameTimes(durationSec: number, fps: number): number[] {
+  const n = frameCount(durationSec, fps);
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(i / fps);
+  return out;
+}
+
+/** Resolve an inclusive [start,end] frame range within the duration. */
+export function resolveRange(params: OfflineRenderParams): { start: number; end: number } {
+  const total = frameCount(params.durationSec, params.fps);
+  const start = Math.max(0, params.startFrame ?? 0);
+  const end = Math.min(total - 1, params.endFrame ?? total - 1);
+  return { start, end: Math.max(start, end) };
+}
+
+// ── The render loop ──────────────────────────────────────────────────
+
+export type FrameSink = (
+  canvas: HTMLCanvasElement,
+  frame: number,
+  total: number,
+) => void | Promise<void>;
+
+/**
+ * Render each frame deterministically into an offscreen canvas and pass it to
+ * `onFrame`. Returns the number of frames rendered. Aborts cleanly if the
+ * signal fires (throws AbortError).
+ */
+export async function renderOffline(
+  params: OfflineRenderParams,
+  onFrame: FrameSink,
+  signal?: AbortSignal,
+): Promise<number> {
+  const canvas = document.createElement('canvas');
+  const backend = createRenderBackend(params.backendChoice);
+  backend.attach(canvas);
+  backend.resize(params.width, params.height, 1);
+
+  if (backend.readyPromise) {
+    await backend.readyPromise;
+  }
+
+  const { start, end } = resolveRange(params);
+  const total = end - start + 1;
+  try {
+    for (let i = start; i <= end; i++) {
+      if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
+      const t = frameTimeAt(i, params.fps);
+      backend.renderFrame(
+        buildSnapshot(defaultSceneGraph, defaultAnimation, t, undefined, undefined, undefined, undefined, params.comp),
+      );
+      await onFrame(canvas, i - start, total);
+      // Yield so progress paints and cancellation can interrupt.
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+  } finally {
+    backend.dispose();
+  }
+  return total;
+}

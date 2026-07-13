@@ -23,7 +23,7 @@ export interface OpenOptions {
 }
 
 export interface FileAdapter {
-  readonly kind: 'browser' | 'electron';
+  readonly kind: 'browser' | 'electron' | 'api';
   open(opts?: OpenOptions): Promise<StoredFile | null>;
   read(path: string): Promise<string | null>;
   write(path: string, contents: string): Promise<void>;
@@ -37,6 +37,7 @@ const FS_PREFIX = 'motion-editor.fs:';
 /** localStorage-backed virtual filesystem + File System Access API when present. */
 export class BrowserFileAdapter implements FileAdapter {
   readonly kind = 'browser' as const;
+  private handles = new Map<string, any>();
 
   async open(opts?: OpenOptions): Promise<StoredFile | null> {
     const picker = (window as unknown as { showOpenFilePicker?: unknown }).showOpenFilePicker;
@@ -50,6 +51,7 @@ export class BrowserFileAdapter implements FileAdapter {
         if (!handle) return null;
         const file = await handle.getFile();
         const contents = await file.text();
+        this.handles.set(file.name, handle);
         return { path: file.name, name: file.name, contents };
       } catch {
         return null; // user cancelled / unsupported
@@ -59,6 +61,15 @@ export class BrowserFileAdapter implements FileAdapter {
   }
 
   async read(path: string): Promise<string | null> {
+    const handle = this.handles.get(path);
+    if (handle && typeof handle.getFile === 'function') {
+      try {
+        const file = await handle.getFile();
+        return await file.text();
+      } catch (err) {
+        console.error('Failed to read from file handle:', err);
+      }
+    }
     try {
       return localStorage.getItem(FS_PREFIX + path);
     } catch {
@@ -67,15 +78,49 @@ export class BrowserFileAdapter implements FileAdapter {
   }
 
   async write(path: string, contents: string): Promise<void> {
+    const handle = this.handles.get(path);
+    if (handle && typeof handle.createWritable === 'function') {
+      try {
+        const writable = await handle.createWritable();
+        await writable.write(contents);
+        await writable.close();
+        return;
+      } catch (err) {
+        console.error('Failed to write to file handle:', err);
+      }
+    }
     try {
       localStorage.setItem(FS_PREFIX + path, contents);
+      if (typeof document !== 'undefined') {
+        const blob = new Blob([contents], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = path;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
     } catch {
       /* ignore quota */
     }
   }
 
   async chooseSavePath(defaultName: string): Promise<string | null> {
-    // Virtual FS: the default name is the path. A future dialog can override.
+    const picker = (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+    if (typeof picker === 'function') {
+      try {
+        const handle = await (picker as (o?: unknown) => Promise<any>)({
+          suggestedName: defaultName,
+          types: [{ description: 'Project', accept: { 'application/json': ['.motion', '.json'] } }],
+        });
+        if (!handle) return null;
+        this.handles.set(handle.name, handle);
+        return handle.name;
+      } catch {
+        return null; // user cancelled / unsupported
+      }
+    }
+    // Virtual FS fallback
     return defaultName;
   }
 

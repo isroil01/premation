@@ -27,6 +27,15 @@ export interface MotionEditorApi {
     read?(path: string): Promise<string | null>;
     write?(path: string, contents: string): Promise<void>;
   };
+  window?: {
+    minimize?(): Promise<void>;
+    maximize?(): Promise<void>;
+    close?(): Promise<void>;
+  };
+  app?: {
+    quit?(): Promise<void>;
+    version?(): Promise<string>;
+  };
   /** Subscribe to native menu command ids. Returns an unsubscribe fn. */
   onMenuCommand?(handler: (commandId: string) => void): () => void;
 }
@@ -34,6 +43,7 @@ export interface MotionEditorApi {
 declare global {
   interface Window {
     motionEditor?: MotionEditorApi;
+    electronAPI?: MotionEditorApi;
   }
 }
 
