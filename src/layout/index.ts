@@ -1,7 +1,7 @@
 export { AiSparkleButton } from './TopToolbar';
 export { StatusBar } from './StatusBar';
 export type { StatusBarProps } from './StatusBar';
-export { WorkspaceViewport, ViewportZoomControls } from './Workspace';
+export { WorkspaceViewport } from './Workspace';
 export type { WorkspaceViewportProps } from './Workspace';
 export { LeftSidebar } from './LeftSidebar';
 export type { LeftSidebarProps } from './LeftSidebar';

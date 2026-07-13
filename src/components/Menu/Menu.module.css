@@ -1,11 +1,11 @@
 .menu {
   display: inline-flex;
   flex-direction: column;
-  min-width: 200px;
-  padding: var(--space-2);
+  min-width: 180px;
+  padding: 2px 0;
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0;
   animation: menuIn var(--motion-duration-fast) var(--motion-ease-emphasized);
 }
 
@@ -23,26 +23,33 @@
 .item {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  height: 28px;
+  gap: var(--space-3);
+  height: 24px;
   padding: 0 var(--space-4);
   border: none;
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   cursor: pointer;
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   text-align: left;
   white-space: nowrap;
-  transition: var(--motion-hover-transition);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .item:hover:not(:disabled),
 .item:focus-visible {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
   outline: none;
+}
+
+.item:hover:not(:disabled) .itemIcon,
+.item:hover:not(:disabled) .itemChevron,
+.item:hover:not(:disabled) .itemShortcut {
+  color: var(--color-primary-foreground);
+  opacity: 1;
 }
 
 .item:disabled {

@@ -66,7 +66,7 @@ export function positionPopover(
         break;
     }
     if (top >= 0 && left >= 0 && top + pr.height <= vh && left + pr.width <= vw) {
-      return { top: top + window.scrollY, left: left + window.scrollX, placement: p as Placement };
+      return { top, left, placement: p as Placement };
     }
   }
   // Fallback — requested placement, may overflow.
@@ -100,5 +100,5 @@ export function positionPopover(
       else top = tr.top + tr.height / 2 - pr.height / 2;
       break;
   }
-  return { top: top + window.scrollY, left: left + window.scrollX, placement: fallback as Placement };
+  return { top, left, placement: fallback as Placement };
 }

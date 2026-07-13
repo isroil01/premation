@@ -1,33 +1,35 @@
 .field {
   display: inline-flex;
   align-items: center;
-  width: 100%;
-  min-width: 0;
-  height: 24px;
-  padding: 0 var(--space-4);
-  /* recessed style — sits darker than the panel ground */
-  background: var(--color-slate-950);
-  border: 1px solid var(--color-field-border);
-  border-radius: var(--radius-xs);
-  color: var(--color-text-primary);
+  width: auto;
+  min-width: 32px;
+  height: 20px;
+  padding: 0 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  color: var(--color-primary);
   cursor: ew-resize;
   user-select: none;
   transition: var(--motion-hover-transition);
+  text-decoration: none;
 }
 
 .field:hover:not(.disabled):not(.editing) {
-  border-color: var(--color-primary-subtle);
-  background: var(--color-surface-2);
+  border-color: transparent;
+  background: transparent;
   color: var(--color-primary-hover);
+  text-decoration: underline;
+  text-decoration-style: dashed;
 }
 
-/* Keyboard focus on the resting spinbutton — border shift to match the
-   dragging/editing states; the global soft ring lands on top. */
+/* Keyboard focus on the resting spinbutton */
 .field:focus-visible {
   border-color: var(--color-primary);
+  background: var(--color-surface-2);
 }
 
-/* Value + input use JetBrains Mono w/ tabular-nums so scrubbing never jitters. */
+/* Value + input use IBM Plex Mono w/ tabular-nums so scrubbing never jitters. */
 .value,
 .input {
   flex: 1;
@@ -42,6 +44,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1;
+  text-align: left;
 }
 
 .value {
@@ -53,7 +56,7 @@
 
 .unit {
   margin-left: 2px;
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
   font-size: var(--font-size-tiny);
   font-weight: var(--font-weight-regular);
 }
@@ -70,14 +73,18 @@
 .editing {
   cursor: text;
   border-color: var(--color-primary);
-  background: var(--color-surface-0);
+  background: #161616;
   color: var(--color-text-primary);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-control);
 }
 
 .dragging {
-  border-color: var(--color-primary);
-  background: var(--color-surface-2);
+  border-color: transparent;
+  background: transparent;
   color: var(--color-primary-hover);
+  text-decoration: underline;
+  text-decoration-style: solid;
 }
 
 .invalid {

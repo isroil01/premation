@@ -15,7 +15,7 @@ describe('resizeBounds', () => {
   });
 
   it('clamps to a minimum size without flipping', () => {
-    const r = resizeBounds(box, 'e', { x: -50, y: 0 }, 4);
+    const r = resizeBounds(box, 'e', { x: -50, y: 0 }, false, 4);
     expect(r.width).toBe(4);
     expect(r.x).toBe(0);
   });

@@ -13,10 +13,13 @@
  *   - Push timeline data: pass a `model` prop to <BottomTimeline />.
  */
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Providers } from '@providers/Providers';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useUIStore } from '@stores/uiStore';
+import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { applyEasingToKeyframes, type EasingPreset } from '@core/animation/keyframeAssistants';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/workspaceStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
@@ -24,6 +27,7 @@ import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { Icon } from '@components/Icon';
 import { EditorLayout } from '@layout/EditorLayout';
+import { TitleBar } from '@layout/TitleBar/TitleBar';
 import { StatusBar } from '@layout/StatusBar';
 import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
@@ -34,8 +38,13 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, makeKeyframeId, parseKeyframeId } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { flattenScene, readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
+import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
+import { reparentNode, reorderNode } from '@core/scene/parenting';
+import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
 import renderCache from '@core/rendering/renderCache';
 import { openPalette } from '@stores/commandPaletteStore';
+import { AccountButton } from '@layout/Auth/AccountButton';
+import { useAuthStore } from '@stores/authStore';
 import { FpsMeter } from '@layout/StatusBar/FpsMeter';
 import { useFocusStore } from '@stores/focusStore';
 import { useFocusContext } from '@layout/focus/useFocusContext';
@@ -70,13 +79,16 @@ function EditorShell(): JSX.Element {
 
   // Register the default panels exactly once.
   useEffect(() => {
-    registerPanel({ id: 'scene',      title: 'Scene',      icon: 'layers',  region: 'leftSidebar',    weight: 2, closable: true });
-    registerPanel({ id: 'assets',     title: 'Assets',     icon: 'folder',  region: 'leftSidebar',    weight: 1, closable: true });
-    registerPanel({ id: 'properties', title: 'Properties', icon: 'settings', region: 'rightInspector',  weight: 3, closable: true });
-    registerPanel({ id: 'motion',     title: 'Motion',     icon: 'keyframe', region: 'rightInspector',  weight: 3, closable: true });
-    registerPanel({ id: 'effects',    title: 'Effects',    icon: 'sparkles', region: 'rightInspector',  weight: 2, closable: true });
-    registerPanel({ id: 'comments',   title: 'Comments',   icon: 'marker',   region: 'rightInspector',  weight: 1, closable: true });
-    registerPanel({ id: 'history',    title: 'History',    icon: 'undo',     region: 'rightInspector',  weight: 0, closable: true });
+    registerPanel({ id: 'scene',       title: 'Scene',        icon: 'layers',    region: 'leftSidebar',   weight: 2, closable: true });
+    registerPanel({ id: 'assets',      title: 'Assets',       icon: 'folder',    region: 'leftSidebar',   weight: 1, closable: true });
+    registerPanel({ id: 'libraries',   title: 'Libraries',    icon: 'shape',     region: 'leftSidebar',   weight: 1, closable: false });
+    registerPanel({ id: 'properties',  title: 'Properties',   icon: 'settings',  region: 'rightInspector', weight: 3, closable: true });
+    registerPanel({ id: 'motion',      title: 'Motion',       icon: 'keyframe',  region: 'rightInspector', weight: 3, closable: true });
+    registerPanel({ id: 'effects',     title: 'Effects',      icon: 'sparkles',  region: 'rightInspector', weight: 2, closable: true });
+    registerPanel({ id: 'effectControls', title: 'Effect Controls', icon: 'keyframe', region: 'rightInspector', weight: 2, closable: true });
+    registerPanel({ id: 'comments',    title: 'Comments',     icon: 'marker',    region: 'rightInspector', weight: 1, closable: true });
+    registerPanel({ id: 'history',     title: 'History',      icon: 'undo',      region: 'rightInspector', weight: 0, closable: true });
+    registerPanel({ id: 'renderQueue', title: 'Render Queue', icon: 'layers',    region: 'rightInspector', weight: 0, closable: true });
   }, [registerPanel]);
 
   // Bumped when the engine's layers/clips change (add/remove/move/trim/split),
@@ -124,6 +136,12 @@ function EditorShell(): JSX.Element {
         muted: node.visible === false,
         locked: node.locked === true,
         solo: node.solo === true,
+        blendMode: getNodeBlend(node.id),
+        parent: node.parent ?? null,
+        threeD: is3DEnabled(node),
+        motionBlur: (node as any).motionBlur === true,
+        fxEnabled: (node as any).fxEnabled !== false,
+        adjustment: (node as any).adjustment === true,
         keyframes,
         properties,
         clips,
@@ -137,6 +155,11 @@ function EditorShell(): JSX.Element {
     void sceneRev;
     getTimelineController().syncFromScene();
   }, [sceneRev]);
+
+  // Validate any stored backend session once on boot (loads cloud assets).
+  useEffect(() => {
+    void useAuthStore.getState().hydrate();
+  }, []);
 
   // Re-read engine markers + work area when they change (add/remove, in/out).
   const [markerRev, setMarkerRev] = useState(0);
@@ -204,28 +227,67 @@ function EditorShell(): JSX.Element {
     setExpandedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   }, []);
 
+  // Latest tracks, read by the reveal shortcuts without re-binding the listener.
+  const tracksRef = useRef(tracks);
+  tracksRef.current = tracks;
+  // Timestamp of the last bare `U` press, for double-tap (UU) detection.
+  const lastUPressRef = useRef(0);
+
   useEffect(() => {
-    // AE reveal shortcuts: U = all animated, P = position, S = scale,
-    // R = rotation, T = opacity (transparency). Filters the revealed sub-rows.
-    const REVEAL: Record<string, ReadonlyArray<string> | null> = {
-      u: null,
+    // AE reveal shortcuts, filtering which property sub-rows show:
+    //   U   → toggle *animated* properties on the selected layers
+    //   UU  → toggle *animated* properties across ALL layers (reveal/hide all)
+    //   P/S/R/T → position / scale / rotation / opacity on the selection
+    // (True AE `UU` = "all modified incl. non-keyframed" awaits a modified-prop
+    //  source; today the model surfaces animated props only.)
+    const REVEAL: Record<string, ReadonlyArray<string>> = {
       p: ['x', 'y'],
       s: ['scale', 'scaleX', 'scaleY'],
       r: ['rotation'],
       t: ['opacity'],
     };
+    const DOUBLE_TAP_MS = 350;
+    const animatedTrackIds = (): string[] =>
+      tracksRef.current.filter((t) => (t.properties?.length ?? 0) > 0).map((t) => t.id);
+
     const onKey = (e: KeyboardEvent): void => {
-      const filter = REVEAL[e.key.toLowerCase()];
-      if (filter === undefined) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'u' && REVEAL[key] === undefined) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+
+      if (key === 'u') {
+        e.preventDefault();
+        const now = e.timeStamp || performance.now();
+        const isDoubleTap = now - lastUPressRef.current < DOUBLE_TAP_MS;
+        lastUPressRef.current = isDoubleTap ? 0 : now;
+        setRevealFilter(null); // U reveals all animated props (no sub-filter)
+
+        if (isDoubleTap) {
+          // UU — reveal every animated layer, or hide all if already shown.
+          const all = animatedTrackIds();
+          setExpandedIds((cur) => (all.length > 0 && all.every((id) => cur.includes(id)) ? [] : all));
+          return;
+        }
+        // Single U — toggle the selected layers.
+        const sel = useSelectionStore.getState().ids;
+        if (sel.length === 0) return;
+        setExpandedIds((cur) => {
+          const revealed = sel.every((id) => cur.includes(id));
+          const set = new Set(cur);
+          if (revealed) for (const id of sel) set.delete(id); // collapse
+          else for (const id of sel) set.add(id); // reveal
+          return [...set];
+        });
+        return;
+      }
+
+      // P / S / R / T — expand the selection and switch which props are shown.
       const sel = useSelectionStore.getState().ids;
       if (sel.length === 0) return;
       e.preventDefault();
-      // Reveal keys expand the selection and switch which props are shown.
-      // (Collapse via the disclosure chevron or Esc.)
-      setRevealFilter(filter);
+      setRevealFilter(REVEAL[key]!);
       setExpandedIds((cur) => {
         const set = new Set(cur);
         for (const id of sel) set.add(id);
@@ -294,6 +356,14 @@ function EditorShell(): JSX.Element {
     else setSelected([trackId]);
   };
 
+  // Rename a scene node — committed when user confirms via Enter or blur.
+  const handleTrackRename = (trackId: string, newName: string): void => {
+    const node = defaultSceneGraph.getNode(trackId);
+    if (!node) return;
+    node.name = newName;
+    bumpScene();
+  };
+
   // Double-clicking a track enters Focus Mode: a group/precomp is entered in
   // place (parent ghosts around it); a leaf layer is isolated.
   const handleTrackActivate = (trackId: string): void => {
@@ -306,6 +376,12 @@ function EditorShell(): JSX.Element {
       setSelected([trackId]);
     }
   };
+
+  // Drag a track row to a new position (AE-style layer reorder).
+  const handleTrackReorder = useCallback((fromId: string, toIndex: number): void => {
+    reorderNode(fromId, toIndex);
+    bumpScene();
+  }, []);
 
   // ── Keyframe editing (timeline reports intents; the engine does the work) ──
   const handleKeyframeSeek = (kfId: string): void => {
@@ -322,6 +398,28 @@ function EditorShell(): JSX.Element {
         defaultAnimation.moveKeyframe(ref.nodeId, ref.prop, ref.t, time),
       );
     }
+  };
+  // Timeline easing pills (Linear/Ease/EaseIn/EaseOut/Hold). Apply to the
+  // currently selected keyframes; if none are selected, fall back to every
+  // keyframe on the selected layers so the pill always has a visible effect.
+  const handleSetEasing = (preset: EasingPreset): void => {
+    let kfIds = [...useKeyframeSelectionStore.getState().ids];
+    if (kfIds.length === 0) {
+      kfIds = selectedIds.flatMap((nodeId) =>
+        defaultAnimation
+          .tracksFor(nodeId)
+          .flatMap((track) => track.keyframes.map((kf) => makeKeyframeId(nodeId, track.prop, kf.t))),
+      );
+    }
+    if (kfIds.length === 0) {
+      useUIStore.getState().notify({
+        level: 'info',
+        message: 'Select a layer (or keyframes) first, then choose an easing.',
+        durationMs: 3000,
+      });
+      return;
+    }
+    applyEasingToKeyframes(kfIds, preset);
   };
   const handleKeyframeContextMenu = (kfId: string, x: number, y: number): void => {
     const ref = parseKeyframeId(kfId);
@@ -355,95 +453,127 @@ function EditorShell(): JSX.Element {
   };
 
   return (
-    <EditorLayout
-      topNav={<TopNav />}
-      statusBar={
-        <StatusBar
-          left={
-            <>
-              <span style={{ color: 'var(--color-success)' }}>●</span>
-              <span>Ready</span>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>{defaultSceneGraph.size} layers</span>
-              {selectionCount > 0 ? (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
+      <TitleBar />
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <EditorLayout
+          topNav={<TopNav />}
+          statusBar={
+            <StatusBar
+              left={
                 <>
+                  <span style={{ color: 'var(--color-success)' }}>●</span>
+                  <span>Ready</span>
                   <span style={{ opacity: 0.4 }}>·</span>
-                  <span>{selectionCount} selected</span>
+                  <span>{defaultSceneGraph.size} layers</span>
+                  {selectionCount > 0 ? (
+                    <>
+                      <span style={{ opacity: 0.4 }}>·</span>
+                      <span>{selectionCount} selected</span>
+                    </>
+                  ) : null}
                 </>
-              ) : null}
-            </>
+              }
+              center={
+                <span style={{ fontFamily: 'var(--font-family-mono)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  {active?.title ?? 'Untitled'}
+                  {active?.dirty ? (
+                    // Unsaved changes — small amber dot (VS Code convention).
+                    <span
+                      aria-label="Unsaved changes"
+                      title="Unsaved changes"
+                      style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-modified)' }}
+                    />
+                  ) : null}
+                </span>
+              }
+              right={
+                <>
+                  <FpsMeter />
+                  <span style={{ opacity: 0.4 }}>·</span>
+                  <span style={{ fontFamily: 'var(--font-family-mono)', fontVariantNumeric: 'tabular-nums' }}>
+                    {formatClock(active?.time ?? 0)}
+                  </span>
+                  <span style={{ opacity: 0.4 }}>·</span>
+                  <button
+                    type="button"
+                    onClick={() => openPalette()}
+                    title="Search commands, layers, timecode…"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '2px 8px', borderRadius: 'var(--radius-full)',
+                      background: 'var(--color-surface-2)', border: '1px solid var(--color-border)',
+                      color: 'var(--color-text-secondary)', cursor: 'pointer', font: 'inherit',
+                    }}
+                  >
+                    <Icon name="search" size={11} />
+                    Search
+                    <kbd style={{
+                      fontFamily: 'var(--font-family-mono)', fontSize: 10,
+                      padding: '0 4px', borderRadius: 3, background: 'var(--color-surface-3)',
+                      color: 'var(--color-text-tertiary)',
+                    }}>⌘K</kbd>
+                  </button>
+                  <span style={{ opacity: 0.4 }}>·</span>
+                  <AccountButton />
+                </>
+              }
+            />
           }
-          center={
-            <span style={{ fontFamily: 'var(--font-family-mono)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-              {active?.title ?? 'Untitled'}
-              {active?.dirty ? (
-                // Unsaved changes — small amber dot (VS Code convention).
-                <span
-                  aria-label="Unsaved changes"
-                  title="Unsaved changes"
-                  style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-modified)' }}
-                />
-              ) : null}
-            </span>
+          timeline={
+            <BottomTimeline
+              model={timelineModel}
+              onScrub={handleScrub}
+              onSetEasing={handleSetEasing}
+              onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
+              onClipMove={handleClipMove}
+              onClipTrim={handleClipTrim}
+              onClipContextMenu={handleClipContextMenu}
+              onScroll={(px) => getTimelineController().setScrollPixels(px)}
+              onZoom={handleZoom}
+              onTrackSelect={handleTrackSelect}
+              onTrackToggleVisible={toggleTrackVisible}
+              onTrackToggleLock={toggleTrackLock}
+              onTrackToggleSolo={toggleTrackSolo}
+              onTrackBlendModeChange={(trackId, mode) => {
+                setNodeBlend(trackId, mode);
+                bumpScene();
+              }}
+              onTrackParentChange={(trackId, parentId) => {
+                reparentNode(trackId, parentId);
+                bumpScene();
+              }}
+              onTrackToggleFlag={(trackId, flag) => {
+                const n = defaultSceneGraph.getNode(trackId);
+                if (!n) return;
+                if (flag === 'threeD') {
+                  // Unified with the inspector's 3D Layer switch — one source of
+                  // truth (the layer's z/rotationX/rotationY props).
+                  set3DEnabled(trackId, !is3DEnabled(n));
+                } else if (flag === 'fxEnabled') {
+                  (n as any).fxEnabled = (n as any).fxEnabled === false ? true : false;
+                } else {
+                  (n as any)[flag] = !(n as any)[flag];
+                }
+                bumpScene();
+              }}
+              onKeyframeSeek={handleKeyframeSeek}
+              onKeyframeMove={handleKeyframeMove}
+              onKeyframeContextMenu={handleKeyframeContextMenu}
+              selectedTrackIds={selectedIds}
+              expandedTrackIds={expandedIds}
+              revealProps={revealFilter}
+              onTrackToggleExpand={toggleExpand}
+              onTrackActivate={handleTrackActivate}
+              onTrackRename={handleTrackRename}
+              onTrackReorder={handleTrackReorder}
+            />
           }
-          right={
-            <>
-              <FpsMeter />
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span style={{ fontFamily: 'var(--font-family-mono)', fontVariantNumeric: 'tabular-nums' }}>
-                {formatClock(active?.time ?? 0)}
-              </span>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <button
-                type="button"
-                onClick={() => openPalette()}
-                title="Search commands, layers, timecode…"
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '2px 8px', borderRadius: 'var(--radius-full)',
-                  background: 'var(--color-surface-2)', border: '1px solid var(--color-border)',
-                  color: 'var(--color-text-secondary)', cursor: 'pointer', font: 'inherit',
-                }}
-              >
-                <Icon name="search" size={11} />
-                Search
-                <kbd style={{
-                  fontFamily: 'var(--font-family-mono)', fontSize: 10,
-                  padding: '0 4px', borderRadius: 3, background: 'var(--color-surface-3)',
-                  color: 'var(--color-text-tertiary)',
-                }}>⌘K</kbd>
-              </button>
-            </>
-          }
+          sidebarRenderers={getSidebarRenderers()}
+          inspectorRenderers={getInspectorRenderers()}
         />
-      }
-      timeline={
-        <BottomTimeline
-          model={timelineModel}
-          onScrub={handleScrub}
-          onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
-          onClipMove={handleClipMove}
-          onClipTrim={handleClipTrim}
-          onClipContextMenu={handleClipContextMenu}
-          onScroll={(px) => getTimelineController().setScrollPixels(px)}
-          onZoom={handleZoom}
-          onTrackSelect={handleTrackSelect}
-          onTrackToggleVisible={toggleTrackVisible}
-          onTrackToggleLock={toggleTrackLock}
-          onTrackToggleSolo={toggleTrackSolo}
-          onKeyframeSeek={handleKeyframeSeek}
-          onKeyframeMove={handleKeyframeMove}
-          onKeyframeContextMenu={handleKeyframeContextMenu}
-          selectedTrackIds={selectedIds}
-          expandedTrackIds={expandedIds}
-          revealProps={revealFilter}
-          onTrackToggleExpand={toggleExpand}
-          onTrackActivate={handleTrackActivate}
-        />
-      }
-      sidebarRenderers={getSidebarRenderers()}
-      inspectorRenderers={getInspectorRenderers()}
-    />
+      </div>
+    </div>
   );
 }
 

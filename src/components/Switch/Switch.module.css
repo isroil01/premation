@@ -6,6 +6,7 @@
   user-select: none;
   font-size: var(--font-size-md);
   color: var(--color-text-primary);
+  flex-shrink: 0;
 }
 
 .disabled {
@@ -18,8 +19,8 @@
   display: inline-block;
   width: 24px;
   height: 12px;
-  border-radius: var(--radius-full);
-  background: var(--color-slate-950);
+  border-radius: 2px;
+  background: var(--color-surface-0);
   border: 1px solid var(--color-field-border);
   flex: none;
   transition: var(--motion-hover-transition);
@@ -51,7 +52,7 @@
   left: 1px;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: 1px;
   background: var(--color-text-secondary);
   transition: var(--motion-hover-transition);
 }

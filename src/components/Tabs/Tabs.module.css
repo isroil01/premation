@@ -44,7 +44,7 @@
   background: transparent;
   color: var(--color-text-tertiary);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   cursor: pointer;
   font: inherit;
   font-weight: var(--font-weight-medium);
@@ -76,7 +76,7 @@
   background: var(--color-surface-0);
   border: 1px solid var(--color-border);
   border-bottom: none;
-  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  border-radius: 0;
   margin-right: -1px;
 }
 
@@ -95,7 +95,7 @@
 
 /* ── Pill Variant ────────────────────────────────────────────── */
 .pill .tab {
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   color: var(--color-text-secondary);
 }
 
@@ -104,7 +104,7 @@
 .pill .selected {
   background: var(--color-surface-3);
   color: var(--color-text-primary);
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--color-border-strong);
 }
 
 .pill.sm .selected {
@@ -125,14 +125,22 @@
 
 /* ── Vertical Tabs ───────────────────────────────────────────── */
 .vertical .tab {
-  border-left: 2px solid transparent;
-  border-radius: 0;
-  justify-content: flex-start;
+  height: 28px !important;
+  width: 28px !important;
+  border-left: none;
+  border-radius: 4px;
+  justify-content: center;
+  align-items: center;
+  padding: 0 !important;
+  margin: 3px auto !important;
+  box-sizing: border-box;
+  display: flex;
 }
 
 .vertical .selected {
-  border-left-color: var(--color-primary);
-  background: var(--color-hover);
+  background: var(--color-surface-3, #2e2e2e) !important;
+  color: var(--color-primary, #38bdf8) !important;
+  border: 1px solid var(--color-border) !important;
 }
 
 .icon {

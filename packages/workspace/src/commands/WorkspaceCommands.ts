@@ -8,6 +8,7 @@
 import type { Vec2 } from '../math/Vec2';
 import type { Rect } from '../math/Rect';
 import type { NodeId, WorkspaceCommand } from '../ports';
+import type { BezierPoint } from '../math/BezierPoint';
 
 export const WorkspaceCommandType = {
   MoveNodes: 'workspace.moveNodes',
@@ -15,6 +16,7 @@ export const WorkspaceCommandType = {
   RotateNode: 'workspace.rotateNode',
   CreateNode: 'workspace.createNode',
   DeleteNodes: 'workspace.deleteNodes',
+  UpdateNodePath: 'workspace.updateNodePath',
 } as const;
 
 export type WorkspaceCommandTypeName =
@@ -45,12 +47,17 @@ export interface CreateNodePayload {
   kind: string;
   /** Initial world-space bounds. */
   bounds: Rect;
-  /** Optional path points in world space (pen tool). */
-  points?: Vec2[];
+  /** Optional bezier path points in LOCAL space (pen tool). */
+  points?: BezierPoint[];
 }
 
 export interface DeleteNodesPayload {
   ids: readonly NodeId[];
+}
+
+export interface UpdateNodePathPayload {
+  id: NodeId;
+  points: BezierPoint[];
 }
 
 export const commands = {
@@ -66,11 +73,14 @@ export const commands = {
       payload: { id, rotation, pivot } satisfies RotateNodePayload,
     };
   },
-  createNode(kind: string, bounds: Rect, points?: Vec2[]): WorkspaceCommand {
+  createNode(kind: string, bounds: Rect, points?: BezierPoint[]): WorkspaceCommand {
     const payload: CreateNodePayload = points ? { kind, bounds, points } : { kind, bounds };
     return { type: WorkspaceCommandType.CreateNode, payload };
   },
   deleteNodes(ids: readonly NodeId[]): WorkspaceCommand {
     return { type: WorkspaceCommandType.DeleteNodes, payload: { ids } satisfies DeleteNodesPayload };
+  },
+  updateNodePath(id: NodeId, points: BezierPoint[]): WorkspaceCommand {
+    return { type: WorkspaceCommandType.UpdateNodePath, payload: { id, points } satisfies UpdateNodePathPayload };
   },
 };

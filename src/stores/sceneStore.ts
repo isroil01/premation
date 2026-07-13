@@ -15,7 +15,12 @@ interface SceneRevisionState {
 
 export const useSceneRevision = create<SceneRevisionState>((set) => ({
   rev: 0,
-  bump: () => set((s) => ({ rev: s.rev + 1 })),
+  bump: () => {
+    set((s) => ({ rev: s.rev + 1 }));
+    import('@core/events/EventBus').then(({ getEventBus }) => {
+      getEventBus().emit('SceneGraphChanged', undefined);
+    });
+  },
 }));
 
 /** Non-hook helper to bump the revision from anywhere. */

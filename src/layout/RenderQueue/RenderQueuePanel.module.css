@@ -1,0 +1,255 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #1a1a1a;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 12px;
+  color: #c8c8c8;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #222222;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+.toolbarBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #2e2e2e;
+  border: 1px solid #3a3a3a;
+  color: #c8c8c8;
+  font-size: 11px;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  user-select: none;
+  transition: background 0.1s;
+}
+.toolbarBtn:hover {
+  background: #3a3a3a;
+  color: #fff;
+}
+.toolbarBtnPrimary {
+  composes: toolbarBtn;
+  background: #2988ff;
+  border-color: #1a6de0;
+  color: #fff;
+}
+.toolbarBtnPrimary:hover {
+  background: #3a98ff;
+}
+.toolbarBtnDanger {
+  composes: toolbarBtn;
+  background: transparent;
+  border-color: #3a3a3a;
+  color: #ff6b6b;
+}
+.toolbarBtnDanger:hover {
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.spacer { flex: 1; }
+
+.statusBadge {
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #2a2a2a;
+  border: 1px solid #383838;
+  color: #888;
+}
+.statusBadgeRunning {
+  composes: statusBadge;
+  background: rgba(41, 136, 255, 0.15);
+  border-color: #2988ff;
+  color: #2988ff;
+}
+
+/* ── Job Cards ─────────────────────────────────────────────────────── */
+.jobList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #151515;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 140px;
+  color: #555;
+  font-size: 11px;
+  text-align: center;
+  padding: 20px;
+}
+.emptyIcon { opacity: 0.25; }
+
+.jobCard {
+  background: #1e1e1e;
+  border: 1px solid #2d2d2d;
+  border-radius: 4px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.jobCard:hover {
+  border-color: #3d3d3d;
+  background: #222222;
+}
+
+.jobCardRendering {
+  composes: jobCard;
+  border-color: rgba(41, 136, 255, 0.4);
+  background: rgba(41, 136, 255, 0.04);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cardHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.jobIndex {
+  color: #555;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.compName {
+  color: #e0e0e0;
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.cardHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.formatBadge {
+  font-size: 9px;
+  color: #888;
+  background: #2a2a2a;
+  padding: 1px 4px;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+}
+.removeBtn:hover {
+  background: rgba(255, 107, 107, 0.1);
+  color: #ff6b6b;
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.outputPath {
+  color: #666;
+  font-size: 10px;
+  word-break: break-all;
+  line-height: 1.2;
+}
+
+.statusProgressRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Status chip ─────────────────────────────────────────────────── */
+.statusChip {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+.statusQueued   { color: #888;    border-color: #383838; background: #262626; }
+.statusRendering{ color: #2988ff; border-color: rgba(41,136,255,0.3); background: rgba(41,136,255,0.06); }
+.statusDone     { color: #4cdf8e; border-color: rgba(76,223,142,0.3); background: rgba(76,223,142,0.05); }
+.statusFailed   { color: #ff6b6b; border-color: rgba(255,107,107,0.3); background: rgba(255,107,107,0.05); }
+.statusSkipped  { color: #666;    border-color: #333; }
+
+/* ── Progress bar ────────────────────────────────────────────────── */
+.progressCell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #666;
+}
+
+.progressBar {
+  height: 4px;
+  background: #2a2a2a;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progressFill {
+  height: 100%;
+  background: #2988ff;
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────── */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #1a1a1a;
+  border-top: 1px solid #282828;
+  font-size: 10px;
+  color: #555;
+  flex-shrink: 0;
+}
+

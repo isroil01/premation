@@ -1,2 +1,2 @@
-export { WorkspaceViewport, ViewportZoomControls } from './Workspace';
+export { WorkspaceViewport } from './Workspace';
 export type { WorkspaceViewportProps } from './Workspace';

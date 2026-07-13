@@ -1,21 +1,21 @@
 .root {
-  --btn-bg:          linear-gradient(180deg, var(--color-surface-2) 0%, var(--color-surface-1) 100%);
-  --btn-bg-hover:    linear-gradient(180deg, var(--color-surface-3) 0%, var(--color-surface-2) 100%);
+  --btn-bg:          var(--color-surface-2);
+  --btn-bg-hover:    var(--color-surface-3);
   --btn-bg-active:   var(--color-active);
   --btn-fg:          var(--color-text-primary);
-  --btn-border:      var(--color-border);
+  --btn-border:      var(--color-border-strong);
 
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
   padding: 0 var(--space-5);
-  height: 30px;
-  border-radius: var(--radius-sm);
+  height: 28px;
+  border-radius: 0;
   background: var(--btn-bg);
   color: var(--btn-fg);
   border: 1px solid var(--btn-border);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   line-height: 1;
   white-space: nowrap;
@@ -44,13 +44,11 @@
 }
 
 .root[data-variant="primary"] {
-  /* Fill stays between primary and primary-active so white labels keep
-     AA (≥4.57:1) across the whole button, not just the darker edge. */
-  --btn-bg:        linear-gradient(180deg, var(--color-primary) 0%, var(--color-primary-active) 100%);
-  --btn-bg-hover:  linear-gradient(180deg, var(--color-primary) 0%, var(--color-primary) 100%);
+  --btn-bg:        var(--color-primary);
+  --btn-bg-hover:  var(--color-primary-hover);
   --btn-bg-active: var(--color-primary-active);
   --btn-fg:        var(--color-primary-foreground);
-  --btn-border:    rgba(0, 0, 0, 0.25);
+  --btn-border:    rgba(0, 0, 0, 0.3);
 }
 
 .root[data-variant="primary"]:hover:not(:disabled) {
@@ -69,8 +67,8 @@
 }
 
 .root[data-variant="tertiary"] {
-  --btn-bg:        linear-gradient(180deg, var(--color-surface-1) 0%, var(--color-surface-0) 100%);
-  --btn-bg-hover:  linear-gradient(180deg, var(--color-surface-2) 0%, var(--color-surface-1) 100%);
+  --btn-bg:        var(--color-surface-1);
+  --btn-bg-hover:  var(--color-surface-2);
   --btn-bg-active: var(--color-active);
 }
 
@@ -98,11 +96,11 @@
   --btn-border:    rgba(0, 0, 0, 0.15);
 }
 
-.root[data-size="xs"] { height: 20px; padding: 0 var(--space-3); font-size: var(--font-size-xs); border-radius: var(--radius-xs); }
-.root[data-size="sm"] { height: 24px; padding: 0 var(--space-4); font-size: var(--font-size-sm); border-radius: var(--radius-xs); }
-.root[data-size="md"] { height: 30px; padding: 0 var(--space-5); font-size: var(--font-size-md); border-radius: var(--radius-sm); }
-.root[data-size="lg"] { height: 36px; padding: 0 var(--space-6); font-size: var(--font-size-lg); border-radius: var(--radius-md); }
-.root[data-size="xl"] { height: 44px; padding: 0 var(--space-7); font-size: var(--font-size-xl); border-radius: var(--radius-lg); }
+.root[data-size="xs"] { height: 18px; padding: 0 var(--space-3); font-size: var(--font-size-xs); border-radius: 0; }
+.root[data-size="sm"] { height: 22px; padding: 0 var(--space-4); font-size: var(--font-size-sm); border-radius: 0; }
+.root[data-size="md"] { height: 28px; padding: 0 var(--space-5); font-size: var(--font-size-sm); border-radius: 0; }
+.root[data-size="lg"] { height: 34px; padding: 0 var(--space-6); font-size: var(--font-size-md); border-radius: 0; }
+.root[data-size="xl"] { height: 42px; padding: 0 var(--space-7); font-size: var(--font-size-lg); border-radius: 0; }
 
 .fullWidth {
   width: 100%;

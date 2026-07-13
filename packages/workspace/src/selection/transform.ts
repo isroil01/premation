@@ -17,7 +17,7 @@ import type { HandleId } from './handles';
  * holding the opposite edge/corner fixed. `rotate` handles return the input
  * unchanged (they don't resize).
  */
-export function resizeBounds(orig: Rect, handle: HandleId, pointer: Vec2, minSize = 4): Rect {
+export function resizeBounds(orig: Rect, handle: HandleId, pointer: Vec2, center: boolean = false, minSize = 4): Rect {
   let left = orig.x;
   let right = orig.x + orig.width;
   let top = orig.y;
@@ -28,10 +28,39 @@ export function resizeBounds(orig: Rect, handle: HandleId, pointer: Vec2, minSiz
   const movesTop = handle === 'n' || handle === 'nw' || handle === 'ne';
   const movesBottom = handle === 's' || handle === 'sw' || handle === 'se';
 
-  if (movesLeft) left = Math.min(pointer.x, right - minSize);
-  if (movesRight) right = Math.max(pointer.x, left + minSize);
-  if (movesTop) top = Math.min(pointer.y, bottom - minSize);
-  if (movesBottom) bottom = Math.max(pointer.y, top + minSize);
+  if (center) {
+    const cx = orig.x + orig.width / 2;
+    const cy = orig.y + orig.height / 2;
+    if (movesLeft) {
+      const dx = pointer.x - orig.x;
+      left = orig.x + dx;
+      right = orig.x + orig.width - dx;
+      if (right - left < minSize) { left = cx - minSize / 2; right = cx + minSize / 2; }
+    }
+    if (movesRight) {
+      const dx = pointer.x - (orig.x + orig.width);
+      right = orig.x + orig.width + dx;
+      left = orig.x - dx;
+      if (right - left < minSize) { left = cx - minSize / 2; right = cx + minSize / 2; }
+    }
+    if (movesTop) {
+      const dy = pointer.y - orig.y;
+      top = orig.y + dy;
+      bottom = orig.y + orig.height - dy;
+      if (bottom - top < minSize) { top = cy - minSize / 2; bottom = cy + minSize / 2; }
+    }
+    if (movesBottom) {
+      const dy = pointer.y - (orig.y + orig.height);
+      bottom = orig.y + orig.height + dy;
+      top = orig.y - dy;
+      if (bottom - top < minSize) { top = cy - minSize / 2; bottom = cy + minSize / 2; }
+    }
+  } else {
+    if (movesLeft) left = Math.min(pointer.x, right - minSize);
+    if (movesRight) right = Math.max(pointer.x, left + minSize);
+    if (movesTop) top = Math.min(pointer.y, bottom - minSize);
+    if (movesBottom) bottom = Math.max(pointer.y, top + minSize);
+  }
 
   return { x: left, y: top, width: right - left, height: bottom - top };
 }

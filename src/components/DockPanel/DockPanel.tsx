@@ -4,11 +4,6 @@
  * Reads the layout store for the ordered list of panel ids in this region
  * and renders a Tabs strip + the active panel's content. Tabs can be closed
  * (removing from the region) and reordered (future).
- *
- * Architecture is intentionally simple: today this is "tabs over a stack."
- * The full docking system (drag-to-dock, floating windows, multi-region
- * graphs) can be built on top of the same shape by enhancing the
- * layoutStore, without changing the panel component contract.
  */
 
 import { useMemo, type ReactNode } from 'react';
@@ -17,17 +12,12 @@ import { Tabs } from '@components/Tabs';
 import type { RegionId } from '@stores/layoutStore';
 import type { IconName } from '@components/Icon';
 import { Icon } from '@components/Icon';
+import { cn } from '@utils/cn';
 import styles from './DockPanel.module.css';
 
 export interface DockPanelProps {
   region: RegionId;
-  /**
-   * Map of panel id → content renderer. Engine plugins pass renderers in
-   * for the panel ids they register. The DockPanel itself never knows
-   * what's inside.
-   */
   renderers: Record<string, (() => ReactNode) | (() => JSX.Element)>;
-  /** Optional header extra (e.g. "Add panel" dropdown). */
   headerExtras?: ReactNode;
   className?: string;
 }
@@ -63,43 +53,60 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
   if (items.length === 0) return null;
 
   const activeRenderer = activeId ? renderers[activeId] : undefined;
+  const isRightInspector = region === 'rightInspector';
+  const isLeftSidebar = region === 'leftSidebar';
+
+  // Check if this sidebar is collapsed (collapsed means we don't render content pane)
+  const isCollapsed = className?.includes('collapsed-view') || false;
+
+  const tabsElement = (
+    <div className={styles.tabsCol}>
+      <div className={styles.extras}>
+        <button
+          type="button"
+          className={styles.collapse}
+          aria-label="Collapse panel"
+          title="Collapse panel"
+          onClick={() => toggleRegion(region)}
+        >
+          <Icon name={collapseIcon} size={14} />
+        </button>
+        {headerExtras}
+      </div>
+      <div className={styles.tabsScroll}>
+        <Tabs
+          value={activeId ?? items[0]!.id}
+          onChange={(id) => openPanel(id)}
+          items={items.map((i) => ({
+            id: i.id,
+            label: '', // Always hide labels on sidebars to save space
+            icon: i.icon ? <Icon name={i.icon} size={14} /> : undefined,
+            closable: false, // Force false so close icons do not show
+            onClose: () => closePanel(i.id),
+          }))}
+          size="sm"
+          variant="default"
+          orientation="vertical"
+        />
+      </div>
+    </div>
+  );
+
+  if (isCollapsed) {
+    return (
+      <div className={cn(styles.root, isRightInspector ? styles.rightInspectorRoot : styles.leftSidebarRoot, className)}>
+        {tabsElement}
+      </div>
+    );
+  }
 
   return (
-    <div className={className ? `${styles.root} ${className}` : styles.root}>
-      <div className={styles.tabsRow}>
-        <div className={styles.tabsScroll}>
-          <Tabs
-            value={activeId ?? items[0]!.id}
-            // Activate via the store action (immer set) so React re-renders —
-            // a direct `activePanelByRegion[region] = id` mutation never did.
-            onChange={(id) => openPanel(id)}
-            items={items.map((i) => ({
-              id: i.id,
-              label: i.label,
-              icon: i.icon ? <Icon name={i.icon} size={14} /> : undefined,
-              closable: i.closable,
-              onClose: () => closePanel(i.id),
-            }))}
-            size="sm"
-            variant="default"
-          />
-        </div>
-        <div className={styles.extras}>
-          {headerExtras}
-          <button
-            type="button"
-            className={styles.collapse}
-            aria-label="Collapse panel"
-            title="Collapse panel"
-            onClick={() => toggleRegion(region)}
-          >
-            <Icon name={collapseIcon} size={14} />
-          </button>
-        </div>
-      </div>
+    <div className={cn(styles.root, isRightInspector ? styles.rightInspectorRoot : isLeftSidebar ? styles.leftSidebarRoot : '', className)}>
+      {isLeftSidebar && tabsElement}
       <div className={styles.content}>
         {activeRenderer ? activeRenderer() : null}
       </div>
+      {isRightInspector && tabsElement}
     </div>
   );
 }

@@ -20,6 +20,7 @@ import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useCompositionStore } from '@stores/compositionStore';
 
 const MOTION_BLUR_FPS = 60;
 
@@ -39,10 +40,10 @@ export function useViewportRenderer(
   const focusRef = useRef(focus);
   focusRef.current = focus;
 
-  // Guide overlays — subscribe so the consuming component re-renders on toggle.
   const rulers = useGuidesStore((s) => s.rulers);
   const grid = useGuidesStore((s) => s.grid);
   const safeArea = useGuidesStore((s) => s.safeArea);
+  const camera3dMode = useGuidesStore((s) => s.camera3dMode);
   const overlaysRef = useRef({ rulers, grid, safeArea });
   overlaysRef.current = { rulers, grid, safeArea };
 
@@ -52,13 +53,19 @@ export function useViewportRenderer(
   const motionBlurRef = useRef({ enabled: mbEnabled, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS });
   motionBlurRef.current = { enabled: mbEnabled, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS };
 
+  // Composition settings (size + background) drive the snapshot; `compKey`
+  // changes whenever a render-affecting field does, re-triggering the render.
+  const compKey = useCompositionStore((s) => s.key());
+  const compRef = useRef(useCompositionStore.getState().comp());
+  compRef.current = useCompositionStore.getState().comp();
+
   const render = useCallback(() => {
     const b = backendRef.current;
     if (!b) return;
     b.renderFrame(
       buildSnapshot(
         defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
-        overlaysRef.current, undefined, motionBlurRef.current,
+        overlaysRef.current, undefined, motionBlurRef.current, { ...compRef.current, camera3dMode },
       ),
     );
     // The rendered frame is now cached (feeds the timeline cache bar).
@@ -73,6 +80,7 @@ export function useViewportRenderer(
 
     const backend = createRenderBackend();
     backend.attach(canvas);
+    backend.setPreviewChrome?.(true);
     backendRef.current = backend;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -99,5 +107,5 @@ export function useViewportRenderer(
   // Re-render on scene change, playhead move, focus change, or guide toggle.
   useEffect(() => {
     render();
-  }, [sceneRev, time, focusKey, rulers, grid, safeArea, mbEnabled, mbShutter, mbSamples, render]);
+  }, [sceneRev, time, focusKey, rulers, grid, safeArea, mbEnabled, mbShutter, mbSamples, compKey, render]);
 }

@@ -63,11 +63,21 @@ export function Popover({
     const trigger = triggerRef.current;
     const pop = popRef.current;
     if (!trigger || !pop) return;
-    setCoords(positionPopover(trigger, pop, placement, offset));
-    const onScroll = (): void => setCoords(positionPopover(trigger, pop, placement, offset));
+    
+    let rafId: number;
+    const updatePosition = () => {
+      setCoords(positionPopover(trigger, pop, placement, offset));
+    };
+
+    updatePosition();
+    // Schedule on next frame to catch any rendering height/width updates
+    rafId = requestAnimationFrame(updatePosition);
+
+    const onScroll = (): void => updatePosition();
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
     return () => {
+      cancelAnimationFrame(rafId);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onScroll);
     };

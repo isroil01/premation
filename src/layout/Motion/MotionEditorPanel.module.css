@@ -16,10 +16,67 @@
   line-height: var(--line-height-normal);
 }
 
+.topRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .props {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+/* Value / Speed graph toggle (segmented). */
+.modeToggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.modeChip {
+  padding: 4px var(--space-3);
+  background: var(--color-surface-0);
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.modeChip + .modeChip { border-left: 1px solid var(--color-border); }
+.modeChipOn {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary-hover);
+}
+
+/* Easy Ease / Roving quick actions. */
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.actionChip {
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.actionChip:hover:not(:disabled) { border-color: var(--color-border-strong); color: var(--color-text-primary); }
+.actionChip:disabled { opacity: 0.4; cursor: default; }
+.actionChipOn {
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
+  color: var(--color-primary-hover);
+}
+
+/* Roving keyframe marker — a diamond ring accent. */
+.pointRoving {
+  stroke-dasharray: 2 2;
 }
 
 .propChip {

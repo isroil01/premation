@@ -43,5 +43,14 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // Proxy API calls to the motion-back backend so the browser talks same-origin
+    // (avoids CORS in dev and works inside sandboxed preview browsers). The client
+    // uses VITE_MOTION_API_URL="/api" (see .env.local) to hit this path.
+    proxy: {
+      '/api': {
+        target: process.env.MOTION_API_TARGET || 'http://localhost:4000',
+        changeOrigin: true,
+      },
+    },
   },
 });

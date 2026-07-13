@@ -63,6 +63,9 @@ interface LayoutActions {
   setRegionSize(region: RegionId, size: number): void;
   toggleRegion(region: RegionId): void;
   setCollapsed(region: RegionId, collapsed: boolean): void;
+  /** Apply a saved workspace layout (region sizes + collapsed states). Each
+   *  region patch is partial — min/max come from the current region. */
+  applyRegions(regions: Partial<Record<RegionId, Partial<RegionState>>>): void;
   resetLayout(): void;
 }
 
@@ -167,6 +170,18 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     setCollapsed: (region, collapsed) =>
       set((s) => {
         s.regions[region].collapsed = collapsed;
+      }),
+
+    applyRegions: (regions) =>
+      set((s) => {
+        for (const key of Object.keys(regions) as RegionId[]) {
+          const patch = regions[key];
+          const r = s.regions[key];
+          if (!patch || !r) continue;
+          if (typeof patch.collapsed === 'boolean') r.collapsed = patch.collapsed;
+          if (typeof patch.size === 'number') r.size = clamp(patch.size, r.minSize, r.maxSize);
+        }
+        getEventBus().emit('LayoutChanged', undefined);
       }),
 
     resetLayout: () =>

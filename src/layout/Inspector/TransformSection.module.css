@@ -1,0 +1,49 @@
+.section {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+}
+
+.title {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0 0 8px 0;
+  letter-spacing: 0.5px;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.stopwatch {
+  background: none;
+  border: none;
+  padding: 2px;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stopwatch:hover {
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.stopwatchOn {
+  color: #38bdf8;
+}
+
+.stopwatchSpacer {
+  width: 15px;
+}
+
+.field {
+  flex: 1;
+}

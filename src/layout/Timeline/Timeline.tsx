@@ -37,11 +37,15 @@ import type {
   TimelinePropertyTrack,
   TimelineClip,
 } from './TimelineModel';
+import { Dropdown } from '@components/Dropdown';
+import { BLEND_MODES, type LayerBlendMode } from '@core/effects/blendMode';
+import { eligibleParents, parentOfNode } from '@core/scene/parenting';
+import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import styles from './Timeline.module.css';
 
 const RULER_HEIGHT_DEFAULT = 26;
 const TRACK_HEIGHT_DEFAULT = 30;
-const TRACK_HEADER_WIDTH_DEFAULT = 220;
+const TRACK_HEADER_WIDTH_DEFAULT = 460;
 const CACHE_BAR_HEIGHT = 4;
 
 /** A virtualized row is either a track summary row or a property sub-row. */
@@ -74,9 +78,16 @@ export interface TimelineProps {
   onTrackToggleVisible?: (trackId: string) => void;
   onTrackToggleLock?: (trackId: string) => void;
   onTrackToggleSolo?: (trackId: string) => void;
+  onTrackBlendModeChange?: (trackId: string, mode: LayerBlendMode) => void;
+  onTrackParentChange?: (trackId: string, parentId: string | null) => void;
+  onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
+  /** Rename a layer (confirmed on blur/Enter). */
+  onTrackRename?: (trackId: string, newName: string) => void;
   onKeyframeSeek?: (keyframeId: string) => void;
   onKeyframeMove?: (keyframeId: string, time: number) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
+  /** Called when user drags a track row to a new position. toIndex is 0-based. */
+  onTrackReorder?: (fromId: string, toIndex: number) => void;
   className?: string;
 }
 
@@ -98,9 +109,14 @@ export function Timeline({
   onTrackToggleVisible,
   onTrackToggleLock,
   onTrackToggleSolo,
+  onTrackBlendModeChange,
+  onTrackParentChange,
+  onTrackToggleFlag,
+  onTrackRename,
   onKeyframeSeek,
   onKeyframeMove,
   onKeyframeContextMenu,
+  onTrackReorder,
   className,
 }: TimelineProps): JSX.Element {
   const rulerHeight = model.rulerHeight ?? RULER_HEIGHT_DEFAULT;
@@ -358,39 +374,29 @@ export function Timeline({
     [model.frameRate, model.currentTime, totalSeconds, onScrub],
   );
 
-  // ── Keyframe drag ──────────────────────────────────────────────
-  // Drag state is a synchronous ref (so a fast click's pointerdown→pointerup
-  // works without waiting for a render); React state only drives the visual
-  // preview. Nothing mutates the model until release (single commit).
-  const activeKf = useRef<{ id: string; time: number; moved: boolean } | null>(null);
-  const kfStartX = useRef(0);
-  const [kfPreview, setKfPreview] = useState<{ id: string; time: number } | null>(null);
-
-  const onKeyframeDown = useCallback((kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    kfStartX.current = e.clientX;
-    activeKf.current = { id: kf.id, time: kf.time, moved: false };
-    setKfPreview(null);
-  }, []);
+  // ── Track row reorder ──────────────────────────────────────────────────────
+  const rowDrag = useRef<{ id: string; startY: number; currentIndex: number } | null>(null);
+  const [rowDragOver, setRowDragOver] = useState<number | null>(null);
 
   useEffect(() => {
     const onMove = (e: PointerEvent): void => {
-      const d = activeKf.current;
-      if (!d || !lanesRef.current) return;
-      if (!d.moved && Math.abs(e.clientX - kfStartX.current) < 3) return;
-      const rect = lanesRef.current.getBoundingClientRect();
-      const time = clamp((e.clientX - rect.left + scrollLeft) / pps, 0, totalSeconds);
-      d.moved = true;
-      d.time = time;
-      setKfPreview({ id: d.id, time });
+      const d = rowDrag.current;
+      if (!d || !headerRef.current) return;
+      const rect = headerRef.current.getBoundingClientRect();
+      const relY = e.clientY - rect.top + (headerRef.current.scrollTop ?? 0);
+      const idx = Math.max(0, Math.min(rows.length, Math.round(relY / trackHeight)));
+      setRowDragOver(idx);
     };
     const onUp = (): void => {
-      const d = activeKf.current;
+      const d = rowDrag.current;
       if (!d) return;
-      activeKf.current = null;
-      setKfPreview(null);
-      if (d.moved) onKeyframeMove?.(d.id, d.time);
-      else onKeyframeSeek?.(d.id);
+      const idx = rowDragOver;
+      rowDrag.current = null;
+      setRowDragOver(null);
+      document.body.style.userSelect = '';
+      if (idx !== null && idx !== d.currentIndex && idx !== d.currentIndex + 1) {
+        onTrackReorder?.(d.id, idx);
+      }
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -398,7 +404,117 @@ export function Timeline({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [pps, scrollLeft, totalSeconds, onKeyframeMove, onKeyframeSeek]);
+  }, [rows.length, trackHeight, rowDragOver, onTrackReorder]);
+
+  // ── Multi-keyframe selection ────────────────────────────────────────────────
+  const [selectedKfIds, setSelectedKfIds] = useState<Set<string>>(new Set());
+  // Mirror the selection into a store so sibling surfaces (the timeline easing
+  // pills in BottomTimeline) can act on the same keyframes.
+  const syncKfSelection = useKeyframeSelectionStore((s) => s.set);
+  useEffect(() => {
+    syncKfSelection(selectedKfIds);
+  }, [selectedKfIds, syncKfSelection]);
+  const activeKf = useRef<{ ids: string[]; times: Map<string, number>; startX: number; moved: boolean } | null>(null);
+  const [kfPreview, setKfPreview] = useState<Map<string, number>>(new Map());
+
+  // Build a lookup from keyframe id → time across all visible tracks
+  const kfTimeById = useMemo<Map<string, number>>(() => {
+    const m = new Map<string, number>();
+    for (const track of model.tracks) {
+      for (const kf of track.keyframes ?? []) m.set(kf.id, kf.time);
+      for (const prop of track.properties ?? []) {
+        for (const kf of prop.keyframes) m.set(kf.id, kf.time);
+      }
+    }
+    return m;
+  }, [model.tracks]);
+
+  const onKeyframeDown = useCallback((kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    setSelectedKfIds(prev => {
+      const next = new Set(prev);
+      if (e.shiftKey) {
+        if (next.has(kf.id)) next.delete(kf.id);
+        else next.add(kf.id);
+      } else {
+        if (!next.has(kf.id)) { next.clear(); next.add(kf.id); }
+      }
+      return next;
+    });
+    // Build times map from ALL currently-selected keyframes (after state update)
+    // We read via kfTimeById which is computed from the model
+    setTimeout(() => {
+      const sel = selectedKfIds;
+      const ids = new Set(sel);
+      if (!ids.has(kf.id)) ids.add(kf.id);
+      const times = new Map<string, number>();
+      for (const id of ids) {
+        const t = id === kf.id ? kf.time : (kfTimeById.get(id) ?? 0);
+        times.set(id, t);
+      }
+      activeKf.current = { ids: [...ids], times, startX: e.clientX, moved: false };
+    }, 0);
+    setKfPreview(new Map());
+  }, [selectedKfIds, kfTimeById]);
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      const d = activeKf.current;
+      if (!d || !lanesRef.current) return;
+      const dx = e.clientX - d.startX;
+      if (!d.moved && Math.abs(dx) < 3) return;
+      d.moved = true;
+      const dtSec = dx / pps;
+      const newPreview = new Map<string, number>();
+      for (const [id, origTime] of d.times) {
+        newPreview.set(id, Math.max(0, origTime + dtSec));
+      }
+      setKfPreview(newPreview);
+    };
+    const onUp = (): void => {
+      const d = activeKf.current;
+      if (!d) return;
+      activeKf.current = null;
+      if (d.moved) {
+        // Commit moves for all dragged keyframes
+        for (const [id, origTime] of d.times) {
+          const dtSec = (kfPreview.get(id) ?? origTime) - origTime;
+          onKeyframeMove?.(id, Math.max(0, origTime + dtSec));
+        }
+      } else {
+        // Click without move → seek
+        const singleId = d.ids[0];
+        if (singleId) onKeyframeSeek?.(singleId);
+      }
+      setKfPreview(new Map());
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [pps, scrollLeft, totalSeconds, onKeyframeMove, onKeyframeSeek, kfPreview]);
+
+  // ── Keyframe selection keyboard shortcuts ──────────────────────
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedKfIds.size > 0) {
+          selectedKfIds.forEach(id => onKeyframeMove?.(id, -1)); // -1 signals delete
+          setSelectedKfIds(new Set());
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        // Select all keyframes across all tracks
+        const allIds = new Set<string>();
+        model.tracks.forEach(t => t.keyframes?.forEach(kf => allIds.add(kf.id)));
+        setSelectedKfIds(allIds);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedKfIds, model.tracks, onKeyframeMove]);
 
   // ── Ruler ticks ────────────────────────────────────────────────
   const ticks = useMemo(
@@ -418,11 +534,13 @@ export function Timeline({
     <div ref={containerRef} className={cn(styles.root, className)} onWheel={onWheel}>
       <div className={styles.headerCol} style={{ width: headerWidth, height: '100%' }}>
         <div className={styles.ruler} style={{ height: rulerHeight }}>
-          {/* Column heads for the switch columns (AE muscle memory). */}
+          {/* Column heads for the switches and modes (AE layout). */}
           <div className={styles.colHeads} aria-hidden>
-            <span className={styles.colHead}><Icon name="eye" size={11} /></span>
-            <span className={styles.colHead}><Icon name="circle" size={10} /></span>
-            <span className={styles.colHead}><Icon name="lock" size={11} /></span>
+            <span className={styles.colHeadLayer}>Layer Name</span>
+            <span className={styles.colHeadMode}>Mode</span>
+            <span className={styles.colHeadParent}>Parent & Link</span>
+            <span className={styles.colHeadAeSwitches}>F/M/A/3D</span>
+            <span className={styles.colHeadSwitches}>Switches</span>
           </div>
         </div>
         <div
@@ -455,6 +573,14 @@ export function Timeline({
                     onToggleVisible={() => onTrackToggleVisible?.(row.track.id)}
                     onToggleLock={() => onTrackToggleLock?.(row.track.id)}
                     onToggleSolo={() => onTrackToggleSolo?.(row.track.id)}
+                    onBlendModeChange={(mode) => onTrackBlendModeChange?.(row.track.id, mode)}
+                    onParentChange={(parentId) => onTrackParentChange?.(row.track.id, parentId)}
+                    onToggleFlag={(flag) => onTrackToggleFlag?.(row.track.id, flag)}
+                    onRename={(name) => onTrackRename?.(row.track.id, name)}
+                    onReorderStart={(e) => {
+                      rowDrag.current = { id: row.track.id, startY: e.clientY, currentIndex: realIndex };
+                      document.body.style.userSelect = 'none';
+                    }}
                     style={rowStyle}
                   />
                 );
@@ -467,6 +593,14 @@ export function Timeline({
                 />
               );
             })}
+            {/* Drop indicator — horizontal line showing insertion target during row drag */}
+            {rowDragOver !== null && (
+              <div
+                className={styles.dropIndicator}
+                style={{ top: rowDragOver * trackHeight }}
+                aria-hidden
+              />
+            )}
           </div>
         </div>
       </div>
@@ -563,6 +697,7 @@ export function Timeline({
                     trackHeight={trackHeight}
                     top={top}
                     kfPreview={kfPreview}
+                    selectedKfIds={selectedKfIds}
                     onKeyframeDown={onKeyframeDown}
                     onKeyframeContextMenu={onKeyframeContextMenu}
                     clipPreview={clipPreview}
@@ -577,6 +712,7 @@ export function Timeline({
                     keyframes={row.prop.keyframes}
                     pps={pps}
                     kfPreview={kfPreview}
+                    selectedKfIds={selectedKfIds}
                     onKeyframeDown={onKeyframeDown}
                     onKeyframeContextMenu={onKeyframeContextMenu}
                   />
@@ -752,6 +888,11 @@ function TrackHeader({
   onToggleVisible,
   onToggleLock,
   onToggleSolo,
+  onBlendModeChange,
+  onParentChange,
+  onToggleFlag,
+  onRename,
+  onReorderStart,
   style,
 }: {
   track: TimelineTrack;
@@ -765,11 +906,57 @@ function TrackHeader({
   onToggleVisible: () => void;
   onToggleLock: () => void;
   onToggleSolo: () => void;
+  onBlendModeChange?: (mode: LayerBlendMode) => void;
+  onParentChange?: (parentId: string | null) => void;
+  onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
+  onRename?: (newName: string) => void;
+  onReorderStart?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   style: CSSProperties;
 }): JSX.Element {
   const hidden = track.muted === true;
   const locked = track.locked === true;
   const solo = track.solo === true;
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(track.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const startRename = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    setDraft(track.name);
+    setEditing(true);
+    setTimeout(() => { inputRef.current?.select(); }, 10);
+  };
+  const commitRename = (): void => {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== track.name) onRename?.(trimmed);
+  };
+
+  const currentParent = parentOfNode(track.id);
+  const parentOptions = eligibleParents(track.id);
+  const currentParentName = currentParent
+    ? parentOptions.find((o) => o.id === currentParent)?.name ?? 'Parent'
+    : 'None';
+
+  const parentItems = [
+    {
+      type: 'item' as const,
+      id: '__none__',
+      label: 'None',
+      icon: currentParent === null ? ('check' as const) : undefined,
+      onSelect: () => onParentChange?.(null),
+    },
+    ...(parentOptions.length ? [{ type: 'separator' as const }] : []),
+    ...parentOptions.map((o) => ({
+      type: 'item' as const,
+      id: o.id,
+      label: o.name,
+      icon: o.id === currentParent ? ('check' as const) : undefined,
+      onSelect: () => onParentChange?.(o.id),
+    })),
+  ];
+
   return (
     <div
       className={cn(styles.trackHeader, selected && styles.trackHeaderSelected)}
@@ -794,28 +981,133 @@ function TrackHeader({
       aria-label={track.name}
       title="Enter to select · F2 to focus"
     >
-      <span className={styles.trackIndex}>{index}</span>
-      <button
-        type="button"
-        className={cn(styles.disclosure, !hasProps && styles.disclosureHidden)}
-        aria-label={expanded ? 'Collapse properties' : 'Reveal animated properties'}
-        aria-expanded={expanded}
-        title={expanded ? 'Collapse' : 'Reveal animated properties (U)'}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (hasProps) onToggleExpand();
-        }}
-      >
-        <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
-      </button>
-      <span
-        className={styles.trackIcon}
-        style={{ color: track.color ?? 'var(--color-accent)' }}
-        title={track.kind}
-      >
-        <Icon name={(track.icon as IconName) ?? 'layers'} size={14} />
-      </span>
-      <span className={styles.trackName} title={track.name}>{track.name}</span>
+      <div className={styles.layerInfoCol}>
+        <div
+          className={styles.dragHandle}
+          title="Drag to reorder"
+          onPointerDown={onReorderStart}
+        >
+          <Icon name="grip-vertical" size={11} />
+        </div>
+        <span className={styles.trackIndex}>{index}</span>
+        <button
+          type="button"
+          className={cn(styles.disclosure, !hasProps && styles.disclosureHidden)}
+          aria-label={expanded ? 'Collapse properties' : 'Reveal animated properties'}
+          aria-expanded={expanded}
+          title={expanded ? 'Collapse' : 'Reveal animated properties (U)'}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (hasProps) onToggleExpand();
+          }}
+        >
+          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
+        </button>
+        <span
+          className={styles.trackIcon}
+          style={{ color: track.color ?? 'var(--color-accent)' }}
+          title={track.kind}
+        >
+          <Icon name={(track.icon as IconName) ?? 'layers'} size={14} />
+        </span>
+        {editing ? (
+          <input
+            ref={inputRef}
+            className={styles.trackNameInput}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+              if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            autoFocus
+          />
+        ) : (
+          <span
+            className={styles.trackName}
+            title={`${track.name} — double-click to rename`}
+            onDoubleClick={startRename}
+          >
+            {track.name}
+          </span>
+        )}
+      </div>
+
+      <div className={styles.modeCol} onClick={(e) => e.stopPropagation()}>
+        <Dropdown
+          placement="bottom-start"
+          trigger={
+            <button type="button" className={styles.timelineSelectTrigger} aria-label="Layer Blend Mode">
+              {BLEND_MODES.find((b) => b.mode === track.blendMode)?.label ?? 'Normal'}
+            </button>
+          }
+          items={BLEND_MODES.map((b) => ({
+            type: 'item',
+            id: b.mode,
+            label: b.label,
+            icon: b.mode === track.blendMode ? ('check' as const) : undefined,
+            onSelect: () => onBlendModeChange?.(b.mode as LayerBlendMode),
+          }))}
+        />
+      </div>
+
+      <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
+        <Dropdown
+          placement="bottom-start"
+          trigger={
+            <button type="button" className={styles.timelineSelectTrigger} aria-label="Parent Layer">
+              {currentParentName}
+            </button>
+          }
+          items={parentItems}
+        />
+      </div>
+
+      <div className={styles.aeSwitchesCol}>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="fx"
+          data-on={track.fxEnabled !== false || undefined}
+          title="Toggle Effects (fx)"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
+        >
+          <span className={styles.fxText}>fx</span>
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="motionBlur"
+          data-on={track.motionBlur || undefined}
+          title="Toggle Motion Blur"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
+        >
+          <Icon name="refresh" size={10} />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="adjustment"
+          data-on={track.adjustment || undefined}
+          title="Toggle Adjustment Layer"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
+        >
+          <Icon name="adjustment" size={10} />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="threeD"
+          data-on={track.threeD || undefined}
+          title="Toggle 3D Layer"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
+        >
+          <Icon name="3d" size={11} />
+        </button>
+      </div>
+
       <div className={styles.trackHeaderActions}>
         <button
           type="button"
@@ -872,6 +1164,7 @@ function TrackContent({
   trackHeight,
   top,
   kfPreview,
+  selectedKfIds,
   onKeyframeDown,
   onKeyframeContextMenu,
   clipPreview,
@@ -884,7 +1177,8 @@ function TrackContent({
   pps: number;
   trackHeight: number;
   top: number;
-  kfPreview: { id: string; time: number } | null;
+  kfPreview: Map<string, number>;
+  selectedKfIds: Set<string>;
   onKeyframeDown: (kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
   clipPreview: { id: string; start: number; duration: number } | null;
@@ -961,6 +1255,7 @@ function TrackContent({
           keyframes={track.keyframes ?? []}
           pps={pps}
           kfPreview={kfPreview}
+          selectedKfIds={selectedKfIds}
           onKeyframeDown={onKeyframeDown}
           onKeyframeContextMenu={onKeyframeContextMenu}
         />
@@ -994,31 +1289,34 @@ function Keyframes({
   keyframes,
   pps,
   kfPreview,
+  selectedKfIds,
   onKeyframeDown,
   onKeyframeContextMenu,
 }: {
   keyframes: ReadonlyArray<TimelineKeyframeRef>;
   pps: number;
-  kfPreview: { id: string; time: number } | null;
+  kfPreview: Map<string, number>;
+  selectedKfIds: Set<string>;
   onKeyframeDown: (kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
 }): JSX.Element {
   return (
     <>
       {keyframes.map((kf) => {
-        const dragging = kfPreview?.id === kf.id;
-        const time = dragging ? kfPreview.time : kf.time;
+        const dragging = kfPreview.has(kf.id);
+        const selected = selectedKfIds.has(kf.id);
+        const time = dragging ? kfPreview.get(kf.id)! : kf.time;
         return (
           <div
             key={kf.id}
-            className={cn(styles.keyframe, dragging && styles.keyframeDragging)}
+            className={cn(styles.keyframe, dragging && styles.keyframeDragging, selected && styles.keyframeSelected)}
             style={{ left: `${time * pps}px` }}
             onPointerDown={(e) => onKeyframeDown(kf, e)}
             onContextMenu={(e) => {
               e.preventDefault();
               onKeyframeContextMenu?.(kf.id, e.clientX, e.clientY);
             }}
-            title={`${time.toFixed(2)}s — drag to move, right‑click to delete`}
+            title={`${time.toFixed(2)}s — drag to move, Shift+click to multi-select, right-click to delete`}
           />
         );
       })}

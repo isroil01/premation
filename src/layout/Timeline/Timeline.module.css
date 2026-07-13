@@ -41,11 +41,28 @@
   min-height: 0;
   overflow: auto;
   background: transparent;
-  /* Always reserve the vertical scrollbar gutter → the right edge stays clean
-     and rows don't reflow when content starts/stops overflowing. Scrollbar
-     styling comes from the unified global rule. */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+  scrollbar-color: #3a3a3a #1a1a1a;
+}
+
+/* Flat AE-style scrollbars in the timeline lanes */
+.lanes::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.lanes::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+.lanes::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 0;
+}
+.lanes::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+.lanes::-webkit-scrollbar-corner {
+  background: #1a1a1a;
 }
 
 .lanesInner {
@@ -116,19 +133,30 @@
 .clip {
   position: absolute;
   top: 3px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-strong);
+  border-radius: 0;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
   overflow: hidden;
   cursor: pointer;
   display: flex;
   align-items: center;
-  padding: 0 var(--space-2);
-  box-shadow: var(--shadow-xs);
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + 3px);
   transition: filter var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+/* AE-style left-edge label strip on every clip */
+.clip::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: currentColor;
+  opacity: 0.8;
+}
+
 .clip:hover {
-  filter: brightness(1.12);
+  filter: brightness(1.18);
 }
 
 .clipLabel {
@@ -158,17 +186,17 @@
   right: 0;
 }
 
-/* Animation duration bar — a neutral, quiet summary spanning first→last
-   keyframe. Category color is reserved for actual clips (the thing the user
-   added), not this auto-derived span indicator. */
+/* Animation duration bar — AE uses a flat tinted bar, no border. */
 .animBlock {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  top: 5px;
+  bottom: 5px;
   height: auto;
-  border-radius: 3px;
-  background: var(--color-active);
-  border: 1px solid var(--color-border-strong);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
   pointer-events: none;
   z-index: 1;
 }
@@ -271,6 +299,13 @@
   z-index: 4;
 }
 
+.keyframeSelected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.15);
+  box-shadow: 0 0 0 2px rgba(41, 136, 255, 0.35);
+}
+
 /* ── Markers ───────────────────────────────────────────────────── */
 .marker {
   position: absolute;
@@ -348,7 +383,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-2) 0 var(--space-3);
+  padding: 0 var(--space-2);
   border-bottom: 1px solid var(--color-border-subtle);
   cursor: pointer;
   background: transparent;
@@ -378,6 +413,14 @@
   background: var(--color-primary);
 }
 
+.layerInfoCol {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
 /* Layer number column (AE-style) — quiet mono, fixed width for alignment. */
 .trackIndex {
   flex: none;
@@ -385,30 +428,124 @@
   font-family: var(--font-family-mono);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
   text-align: right;
   user-select: none;
   opacity: 0.6;
+}
+
+.modeCol {
+  width: 75px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.parentCol {
+  width: 80px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.aeSwitchesCol {
+  width: 90px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.fxText {
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  font-style: italic;
+  font-family: var(--font-family-sans);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.timelineSelectTrigger {
+  background: transparent;
+  border: none;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  text-align: left;
+}
+
+.timelineSelectTrigger:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
 }
 
 /* Column heads for the switch columns — sit in the ruler strip, right-aligned
    over the eye/lock columns below. */
 .colHeads {
   position: absolute;
-  right: var(--space-2);
+  left: 0;
+  right: 0;
   top: 0;
   bottom: 0;
   display: flex;
   align-items: center;
-  gap: 0;
+  padding: 0 var(--space-2);
 }
 
-.colHead {
-  width: 20px;
-  display: grid;
-  place-items: center;
-  color: var(--color-text-muted);
-  opacity: 0.7;
+.colHeadLayer {
+  flex: 1;
+  text-align: left;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+  padding-left: 20px;
+}
+
+.colHeadMode {
+  width: 75px;
+  flex: none;
+  text-align: left;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.colHeadParent {
+  width: 80px;
+  flex: none;
+  text-align: left;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.colHeadAeSwitches {
+  width: 90px;
+  flex: none;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.colHeadSwitches {
+  width: 65px;
+  flex: none;
+  text-align: right;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+  padding-right: 6px;
 }
 
 /* Category icon chip — the hue lives on `color`; the chip tint derives. */
@@ -433,12 +570,35 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: default;
+}
+
+/* Inline rename input — appears on double-click, styled to look like the span */
+.trackNameInput {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  font-family: inherit;
+  letter-spacing: 0.01em;
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  outline: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  height: 18px;
 }
 
 .trackHeaderActions {
+  width: 65px;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  justify-content: flex-end;
+  gap: 2px;
   flex: none;
 }
 
@@ -474,13 +634,38 @@
 }
 
 .trackAction[data-kind="solo"][data-on] {
-  color: var(--color-success);
+  color: #ffd84d;
+  text-shadow: 0 0 6px rgba(255, 220, 50, 0.5);
 }
 
 /* A hidden track's eye is a de-emphasis, not an accent — stay muted. */
 .trackAction[data-kind="visible"][data-on] {
   color: var(--color-text-muted);
   opacity: 0.8;
+}
+
+/* FX button on = blue italic, off = desaturated. */
+.trackAction[data-kind="fx"][data-on] {
+  color: var(--color-primary);
+  opacity: 1;
+}
+
+/* Motion blur = cyan accent when on */
+.trackAction[data-kind="motionBlur"][data-on] {
+  color: #00cfff;
+  opacity: 1;
+}
+
+/* Adjustment layer = soft purple */
+.trackAction[data-kind="adjustment"][data-on] {
+  color: #b07fff;
+  opacity: 1;
+}
+
+/* 3D layer = gold */
+.trackAction[data-kind="threeD"][data-on] {
+  color: #ffc44d;
+  opacity: 1;
 }
 
 /* Hidden track — dim the row. */
@@ -574,4 +759,37 @@
 
 .lanePropBg.laneAlt {
   background: var(--color-surface-0);
+}
+
+/* ── Track row drag handle ─────────────────────────────────── */
+.dragHandle {
+  width: 14px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex: none;
+}
+
+.trackHeader:hover .dragHandle {
+  opacity: 0.6;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+  opacity: 1;
+}
+
+/* Drop-target insertion line shown between rows during drag */
+.dropIndicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-primary);
+  z-index: 10;
+  pointer-events: none;
 }

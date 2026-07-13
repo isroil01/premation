@@ -1,32 +1,59 @@
-.root {
-  position: relative;
+/* ── Root wrapper ────────────────────────────────────────────────── */
+.wrapper {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-workspace);
+  background: #161616;
+  overflow: hidden;
+}
+
+/* ── Viewport (canvas area, below the header bar) ───────────────── */
+.root {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-workspace, #1e1e1e);
   outline: none;
   overflow: hidden;
 }
 
 .root:focus-visible {
-  border-color: var(--color-primary);
+  outline: 1px solid var(--color-primary, #2988ff);
+  outline-offset: -1px;
 }
 
 /*
- * Composition stage = the infinite-canvas viewport. The Workspace engine's
- * camera pans/zooms within it; the Canvas2D backend draws the composition as a
- * floating framed page (shadow + hairline) wherever the camera places it. A
- * faint dot texture gives the void depth. Both canvases fill the stage; the
- * engine sizes them via ResizeObserver (useWorkspace).
+ * Composition stage — the infinite-canvas viewport.
+ * Uses a refined dot-grid on the dark void; the canvas engine paints the
+ * composition as a white-framed floating page with a soft shadow below.
  */
 .stage {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background-color: var(--color-workspace);
-  background-image: radial-gradient(var(--color-canvas-dot) 1px, transparent 1px);
-  background-size: 22px 22px;
+  background-color: #1a1a1a;
+  background-image:
+    radial-gradient(circle, #2a2a2a 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Transparent-mode: show checkerboard beneath the comp */
+.stageTransparent {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background-color: #1a1a1a;
+  background-image:
+    linear-gradient(45deg, #252525 25%, transparent 25%),
+    linear-gradient(-45deg, #252525 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #252525 75%),
+    linear-gradient(-45deg, transparent 75%, #252525 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
 }
 
 /* Scene content (below) + interaction overlay (above, receives input). */
@@ -48,25 +75,25 @@
   touch-action: none;
 }
 
-/* ── Corner overlays ───────────────────────────────────────────── */
+/* ── Corner overlays ───────────────────────────────────────────────── */
 .overlayTL,
 .overlayTR,
 .overlayBL,
 .overlayBR,
 .overlayBC {
   position: absolute;
-  z-index: var(--z-index-overlay);
+  z-index: var(--z-index-overlay, 50);
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-2, 4px);
   pointer-events: none;
 }
 
-.overlayTL { top: 16px; left: 16px; }
-.overlayTR { top: 16px; right: 16px; }
-.overlayBL { bottom: 16px; left: 16px; }
-.overlayBR { bottom: 16px; right: 16px; }
+.overlayTL { top: 10px; left: 10px; }
+.overlayTR { top: 10px; right: 10px; }
+.overlayBL { bottom: 10px; left: 10px; }
+.overlayBR { bottom: 10px; right: 10px; }
 .overlayBC {
-  bottom: 20px;
+  bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
   flex-direction: column;
@@ -81,31 +108,20 @@
   pointer-events: auto;
 }
 
-/* ── Zoom controls ─────────────────────────────────────────────── */
-.zoomBar {
+/* Zoom controls are in the ViewportHeader bar — not a floating overlay. */
+
+.infoBar {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
+  gap: 10px;
+  padding: 3px 8px;
+  background: rgba(18, 18, 18, 0.82);
+  border: 1px solid #2a2a2a;
+  backdrop-filter: blur(4px);
+  font-size: 10px;
+  font-family: 'Inter', system-ui, monospace;
+  color: #666;
+  letter-spacing: 0.04em;
 }
-
-.zoomLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  font-family: var(--font-family-mono);
-  min-width: 40px;
-  text-align: center;
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.zoomLabel:hover {
-  color: var(--color-text-primary);
-  background: var(--color-surface-3);
-}
+.infoBar span { white-space: nowrap; }
+.infoHighlight { color: #a0a0a0; }

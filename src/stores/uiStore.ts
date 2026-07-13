@@ -11,7 +11,18 @@ import { immer } from 'zustand/middleware/immer';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { Disposable } from '@app-types/common';
 
-export type Tool = 'select' | 'move' | 'rotate' | 'scale' | 'pen' | 'text' | 'shape';
+export type Tool =
+  | 'select'
+  | 'direct-select'
+  | 'hand'
+  | 'zoom'
+  | 'move'
+  | 'rotate'
+  | 'scale'
+  | 'pen'
+  | 'text'
+  | 'shape'
+  | 'ellipse';
 
 interface UIState {
   /** Active tool in the toolbar. */
@@ -26,6 +37,12 @@ interface UIState {
   notifications: ReadonlyArray<Notification>;
   /** Mouse position in screen coords, updated by the app shell. */
   pointer: { x: number; y: number };
+  /** Snap-to-grid / snap-to-object enabled. */
+  snap: boolean;
+  /** Show grid overlay in the workspace canvas. */
+  showGrid: boolean;
+  /** Show rulers along the workspace edges. */
+  showRulers: boolean;
 }
 
 export interface Notification {
@@ -45,6 +62,9 @@ interface UIActions {
   setPointer(x: number, y: number): void;
   notify(notification: Omit<Notification, 'id' | 'createdAt'>): string;
   dismissNotification(id: string): void;
+  toggleSnap(): void;
+  toggleGrid(): void;
+  toggleRulers(): void;
 }
 
 export type UIStore = UIState & UIActions;
@@ -58,6 +78,9 @@ export const useUIStore = create<UIStore>()(
       cursor: 'default',
       notifications: [],
       pointer: { x: 0, y: 0 },
+      snap: true,
+      showGrid: false,
+      showRulers: false,
 
       setActiveTool: (tool) =>
         set((s) => {
@@ -99,6 +122,18 @@ export const useUIStore = create<UIStore>()(
       dismissNotification: (id) =>
         set((s) => {
           s.notifications = s.notifications.filter((n) => n.id !== id);
+        }),
+      toggleSnap: () =>
+        set((s) => {
+          s.snap = !s.snap;
+        }),
+      toggleGrid: () =>
+        set((s) => {
+          s.showGrid = !s.showGrid;
+        }),
+      toggleRulers: () =>
+        set((s) => {
+          s.showRulers = !s.showRulers;
         }),
     })),
   ),

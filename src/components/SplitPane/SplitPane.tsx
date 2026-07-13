@@ -86,7 +86,7 @@ export function SplitPane({
   const startPos = useRef(0);
   const startSize = useRef(0);
 
-  const current = collapsed ? 0 : (size ?? internal);
+  const current = (size ?? internal);
   // When the fixed pane is the last one, dragging the splitter toward it
   // (increasing pointer coordinate) shrinks it, so invert the delta.
   const sign = primary === 'last' ? -1 : 1;

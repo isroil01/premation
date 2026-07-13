@@ -24,6 +24,12 @@ import {
   Info, TriangleAlert, CircleAlert, CircleCheck,
   GripVertical, GripHorizontal, ChevronsDownUp, ChevronsUpDown,
   Diamond, Rows3, Flag, Sparkles,
+  Box, Contrast, User,
+  Camera, Lightbulb,
+  AlignLeft, AlignCenter, AlignRight,
+  AlignStartVertical, AlignCenterVertical, AlignEndVertical,
+  AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
+  Magnet, Grid2x2, Ruler,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -46,6 +52,13 @@ export const ICON_NAMES = [
   'collapse', 'expand',
   'keyframe', 'track', 'marker',
   'sparkles',
+  '3d', 'adjustment', 'shy',
+  'camera', 'light',
+  'user',
+  'align-left', 'align-center', 'align-right',
+  'align-top', 'align-middle', 'align-bottom',
+  'distribute-horizontal', 'distribute-vertical',
+  'magnet', 'grid', 'ruler',
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -70,6 +83,13 @@ const MAP: Record<IconName, LucideIcon> = {
   collapse: ChevronsDownUp, expand: ChevronsUpDown,
   keyframe: Diamond, track: Rows3, marker: Flag,
   sparkles: Sparkles,
+  '3d': Box, adjustment: Contrast, shy: User,
+  camera: Camera, light: Lightbulb,
+  user: User,
+  'align-left': AlignLeft, 'align-center': AlignCenter, 'align-right': AlignRight,
+  'align-top': AlignStartVertical, 'align-middle': AlignCenterVertical, 'align-bottom': AlignEndVertical,
+  'distribute-horizontal': AlignHorizontalDistributeCenter, 'distribute-vertical': AlignVerticalDistributeCenter,
+  magnet: Magnet, grid: Grid2x2, ruler: Ruler,
 };
 
 interface IconProps {

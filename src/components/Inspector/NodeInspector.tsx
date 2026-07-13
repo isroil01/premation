@@ -101,7 +101,12 @@ export function NodeInspector({ nodeId }: { nodeId: string }): JSX.Element {
   return (
     <div>
       {node.components.map((comp) => {
-        const props = Object.keys(comp.props ?? {}).filter((p) => !p.startsWith('__'));
+        // Hidden (`__`) props and object-valued props are skipped — objects
+        // (fills, mask paths, effect stacks…) have dedicated editors and would
+        // otherwise render as "[object Object]".
+        const props = Object.keys(comp.props ?? {}).filter(
+          (p) => !p.startsWith('__') && (typeof comp.props[p] !== 'object' || comp.props[p] === null),
+        );
         if (props.length === 0) return null;
         return (
           <div key={comp.id} className={styles.group}>

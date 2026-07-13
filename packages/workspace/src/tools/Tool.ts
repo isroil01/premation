@@ -14,6 +14,7 @@ import type { Viewport } from '../viewport/Viewport';
 import type { CoordinateSystem } from '../coordinates/CoordinateSystem';
 import type { SelectionController } from '../selection/SelectionController';
 import type { HitTester } from '../hit/HitTester';
+import type { OverlayHandle } from '../ports';
 import type { CursorManager, CursorType } from '../cursor/CursorManager';
 import type { SnapEngine, SnapTarget, SnapResult, SnapLine } from '../snap/SnapEngine';
 import type { Grid } from '../grid/Grid';
@@ -112,6 +113,12 @@ export interface Tool {
 
   activate?(ctx: ToolContext): void;
   deactivate?(ctx: ToolContext): void;
+  
+  /** Optional: points of a path currently being built by the tool. */
+  readonly pendingPoints?: readonly Vec2[];
+
+  /** Optional: allow the tool to yield its own overlay handles. */
+  getHandles?(ctx: ToolContext): readonly OverlayHandle[];
 
   onPointerDown?(e: ToolPointerEvent, ctx: ToolContext): void;
   onPointerMove?(e: ToolPointerEvent, ctx: ToolContext): void;

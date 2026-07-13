@@ -86,6 +86,17 @@ export interface TimelineTrack {
   properties?: ReadonlyArray<TimelinePropertyTrack>;
   /** Optional custom header content (icons, etc.). */
   headerContent?: ReactNode;
+  /** Blend mode of the layer node. */
+  blendMode?: string;
+  /** Parent ID of the layer node. */
+  parent?: string | null;
+  /** Layout flags */
+  shy?: boolean;
+  collapse?: boolean;
+  fxEnabled?: boolean;
+  motionBlur?: boolean;
+  adjustment?: boolean;
+  threeD?: boolean;
 }
 
 export interface TimelineMarker {

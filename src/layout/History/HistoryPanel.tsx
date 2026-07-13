@@ -7,18 +7,36 @@
  * The camera button pins a named snapshot of the current state.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
 import { useHistoryStore } from '@stores/historyStore';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { getEventBus } from '@core/events/EventBus';
 import styles from './HistoryPanel.module.css';
 
 export function HistoryPanel(): JSX.Element {
-  const entries = useHistoryStore((s) => s.entries);
-  const index = useHistoryStore((s) => s.index);
-  const jumpTo = useHistoryStore((s) => s.jumpTo);
-  const rename = useHistoryStore((s) => s.rename);
+  const [entries, setEntries] = useState(() => getCommandSystem().getHistory().getEntries());
+  const [index, setIndex] = useState(() => getCommandSystem().getHistory().getIndex());
+  
+  useEffect(() => {
+    const bus = getEventBus();
+    const handleChanged = () => {
+      const history = getCommandSystem().getHistory();
+      setEntries(history.getEntries());
+      setIndex(history.getIndex());
+    };
+    const sub = bus.on('UndoStackChanged', handleChanged);
+    return () => sub.dispose();
+  }, []);
+
+  const jumpTo = (i: number) => getCommandSystem().getHistory().jumpTo(i);
+  
+  // The global stack doesn't have renaming right now, so we'll stub it.
+  const rename = (_i: number, _label: string) => {
+    console.warn("Renaming is not supported yet on the global stack.");
+  };
   const record = useHistoryStore((s) => s.record);
 
   const [editing, setEditing] = useState<number | null>(null);
@@ -54,7 +72,7 @@ export function HistoryPanel(): JSX.Element {
             const isFuture = i > index;
             return (
               <div
-                key={e.id}
+                key={i}
                 role="option"
                 aria-selected={isCurrent}
                 tabIndex={isCurrent ? 0 : -1}
@@ -76,9 +94,9 @@ export function HistoryPanel(): JSX.Element {
                 }}
               >
                 <Icon
-                  name={e.named ? 'marker' : 'keyframe'}
+                  name={(e as any).named ? 'marker' : 'keyframe'}
                   size={13}
-                  className={cn(styles.rowIcon, e.named && styles.rowIconNamed)}
+                  className={cn(styles.rowIcon, (e as any).named && styles.rowIconNamed)}
                 />
                 {editing === i ? (
                   <input

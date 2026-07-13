@@ -100,30 +100,37 @@ a:hover {
   box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
-/* Custom scrollbar — slim overlay style, one look everywhere (spec v2.1) */
+/* ── Custom scrollbar — flat AE dark style, consistent everywhere ── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: #1a1a1a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-full);
-  border: 1.5px solid transparent;
-  background-clip: padding-box;
+  background: #3a3a3a;
+  border-radius: 0;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
-  background-clip: padding-box;
+  background: #555;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: #2988ff;
 }
 
 ::-webkit-scrollbar-corner {
-  background: transparent;
+  background: #1a1a1a;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a #1a1a1a;
 }
 
 /* Disable text selection on UI chrome (not on input/textarea) */

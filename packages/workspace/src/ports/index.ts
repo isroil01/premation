@@ -12,6 +12,7 @@
 import type { Vec2 } from '../math/Vec2';
 import type { Mat2D } from '../math/Mat2D';
 import type { Rect } from '../math/Rect';
+import type { BezierPoint } from '../math/BezierPoint';
 
 /** Opaque node identifier — a string id owned by the Scene Graph. */
 export type NodeId = string;
@@ -37,6 +38,8 @@ export interface WorkspaceNode {
   readonly zIndex: number;
   /** Optional precise hit test in the node's *local* space (path/shape/mask). */
   readonly hitTestLocal?: (localPoint: Vec2) => boolean;
+  /** Bezier path points in LOCAL space (only for shapes with custom paths). */
+  readonly pathPoints?: readonly BezierPoint[];
 }
 
 /**
@@ -87,12 +90,15 @@ export interface WorkspaceOverlay {
   snapLines: readonly SnapLine[];
   guides: readonly OverlayGuide[];
   hoveredBounds: Rect | null;
+  /** Bezier path currently being drawn by a tool (e.g. PenTool). Screen-space. */
+  pendingPath?: readonly BezierPoint[];
 }
 
 export interface OverlayHandle {
   id: string;
   position: Vec2;
-  kind: 'resize' | 'rotate';
+  /** 'resize' | 'rotate' = bounding box handle, 'point' = vertex, 'tangent-in' | 'tangent-out' = bezier handle */
+  kind: 'resize' | 'rotate' | 'point' | 'tangent-in' | 'tangent-out';
 }
 
 export interface OverlayGuide {

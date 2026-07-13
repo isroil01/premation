@@ -566,9 +566,13 @@ export class Workspace implements InputSink {
     const selBounds = this.selectionController.selectionBounds();
     const selectionBounds = selBounds ? this.worldRectToScreen(selBounds) : null;
 
-    const handles: OverlayHandle[] = this.selectionController
-      .handles(this.camera.screenDistanceToWorld(24))
-      .map((h) => ({ id: h.id, position: this.worldToScreen(h.position), kind: h.kind }));
+    const activeTool = this.tools.activeTool;
+    const ctx = this.makeToolContext();
+    const handles: OverlayHandle[] = activeTool?.getHandles
+      ? activeTool.getHandles(ctx).map((h) => ({ id: h.id, position: this.worldToScreen(h.position), kind: h.kind }))
+      : this.selectionController
+          .handles(this.camera.screenDistanceToWorld(24))
+          .map((h) => ({ id: h.id, position: this.worldToScreen(h.position), kind: h.kind }));
 
     const marqueeWorld = this.selectionController.marqueeRect;
     const marquee = marqueeWorld ? this.worldRectToScreen(marqueeWorld) : null;
@@ -585,7 +589,17 @@ export class Workspace implements InputSink {
     const hoveredNode = this.hovered ? this.scene.getNode(this.hovered) : undefined;
     const hoveredBounds = hoveredNode ? this.worldRectToScreen(hoveredNode.worldBounds) : null;
 
-    return { selectionBounds, handles, marquee, snapLines, guides, hoveredBounds };
+    const pendingPathWorld = activeTool?.pendingPoints as import('./math/BezierPoint').BezierPoint[] | undefined;
+    const pendingPath = pendingPathWorld
+      ? pendingPathWorld.map((p) => {
+          const sp  = this.worldToScreen({ x: p.x,    y: p.y    });
+          const sIn = this.worldToScreen({ x: p.inX,  y: p.inY  });
+          const sOut= this.worldToScreen({ x: p.outX, y: p.outY });
+          return { x: sp.x, y: sp.y, inX: sIn.x, inY: sIn.y, outX: sOut.x, outY: sOut.y };
+        })
+      : undefined;
+
+    return { selectionBounds, handles, marquee, snapLines, guides, hoveredBounds, pendingPath };
   }
 
   private worldRectToScreen(worldRect: Rect): Rect {

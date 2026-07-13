@@ -20,6 +20,8 @@ export * as Rect from './math/Rect';
 export type { Vec2 } from './math/Vec2';
 export type { Mat2D } from './math/Mat2D';
 export type { Rect as RectType, Size } from './math';
+export type { BezierPoint } from './math/BezierPoint';
+export { corner as bezierCorner, smooth as bezierSmooth } from './math/BezierPoint';
 
 // ── Events ────────────────────────────────────────────────────────
 export { TypedEmitter, type Disposable, type Handler } from './events/Emitter';
@@ -98,6 +100,7 @@ export {
 export {
   ToolManager,
   SelectTool,
+  DirectSelectionTool,
   MoveTool,
   HandTool,
   ZoomTool,
@@ -125,6 +128,7 @@ export {
   type RotateNodePayload,
   type CreateNodePayload,
   type DeleteNodesPayload,
+  type UpdateNodePathPayload,
 } from './commands/WorkspaceCommands';
 
 // ── In-memory adapters (headless / tests) ─────────────────────────

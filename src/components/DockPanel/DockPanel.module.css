@@ -8,9 +8,23 @@
   background: var(--color-panel);
 }
 
+.rightInspectorRoot {
+  flex-direction: row !important;
+}
+
+.leftSidebarRoot {
+  flex-direction: row !important;
+}
+
+.leftSidebarRoot .tabsCol {
+  border-left: none;
+  border-right: 1px solid var(--color-border);
+  padding-left: 5px;
+}
+
+
 .tabsRow {
   display: flex;
-  /* Folder tabs sit ON the bottom border line. */
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-4);
@@ -21,8 +35,19 @@
   padding: var(--space-2) var(--space-3) 0;
 }
 
-/* Lets the tab strip shrink and scroll horizontally instead of clipping
-   past the panel edge when there are more tabs than fit. */
+/* Tabs column on the right side of the inspector panel */
+.tabsCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  background: var(--color-panel-header);
+  border-left: 1px solid var(--color-border);
+  flex: none;
+  width: 36px;
+  padding: var(--space-3) 4px;
+}
+
 .tabsScroll {
   flex: 1 1 auto;
   min-width: 0;
@@ -36,21 +61,18 @@
 
 .extras {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   flex: none;
-  /* Sit on the baseline with the tabs. */
-  align-self: center;
-  padding-bottom: var(--space-1);
 }
 
-/* Collapse-this-panel toggle (lives at the right end of the tab row). */
 .collapse {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   color: var(--color-text-muted);
   cursor: pointer;
   transition:

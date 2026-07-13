@@ -10,13 +10,14 @@
  * value/time inputs.
  */
 
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
+import { PresetsBar } from './PresetsBar';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
-import { defaultAnimation, sampleTrack, type EasingKind, type PropertyTrack } from '@motion/animation';
+import { defaultAnimation, sampleTrack, sampleSpeed, EASY_EASE_BEZIER, type EasingKind, type PropertyTrack } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { ExpressionEditor } from './ExpressionEditor';
 import styles from './MotionEditorPanel.module.css';
@@ -66,6 +67,26 @@ function computeBounds(track: PropertyTrack): Bounds {
   return { t0, t1: t1 > t0 ? t1 : t0 + 1, vmin: vmin - padV, vmax: vmax + padV };
 }
 
+/** Bounds for the SPEED graph — sample the derivative across the range. Always
+ *  includes 0 so a flat/positive/negative curve reads correctly against it. */
+function computeSpeedBounds(track: PropertyTrack): Bounds {
+  const kfs = track.keyframes;
+  const t0 = kfs[0]?.t ?? 0;
+  const t1raw = kfs[kfs.length - 1]?.t ?? t0 + 1;
+  const t1 = t1raw > t0 ? t1raw : t0 + 1;
+  let smin = 0;
+  let smax = 0;
+  for (let i = 0; i <= SAMPLES; i++) {
+    const t = t0 + (i / SAMPLES) * (t1 - t0);
+    const s = sampleSpeed(track, t);
+    smin = Math.min(smin, s);
+    smax = Math.max(smax, s);
+  }
+  if (smin === smax) { smin -= 1; smax += 1; }
+  const padV = (smax - smin) * 0.12 || 1;
+  return { t0, t1, vmin: smin - padV, vmax: smax + padV };
+}
+
 export function MotionEditorPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   // The engine mutates keyframes in place, so `track` keeps the same reference.
@@ -79,10 +100,19 @@ export function MotionEditorPanel(): JSX.Element {
   const track = tracks.find((t) => t.prop === prop) ?? null;
 
   const [selT, setSelT] = useState<number | null>(null);
+  const [graphMode, setGraphMode] = useState<'value' | 'speed'>('value');
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ oldT: number; tx: ReturnType<typeof beginAnimEdit> } | null>(null);
 
-  const bounds = useMemo(() => (track ? computeBounds(track) : null), [track, rev]);
+  const valueBounds = useMemo(() => (track ? computeBounds(track) : null), [track, rev]);
+  const speedBounds = useMemo(() => (track ? computeSpeedBounds(track) : null), [track, rev]);
+  const bounds = graphMode === 'speed' ? speedBounds : valueBounds;
+  // Sample the value or its speed depending on the active graph mode.
+  const sampleAt = (t: number): number =>
+    track ? (graphMode === 'speed' ? sampleSpeed(track, t) : sampleTrack(track, t) ?? 0) : 0;
+  /** Where a keyframe sits vertically in the current mode. */
+  const kfY = (k: { t: number; value: number }): number =>
+    graphMode === 'speed' ? sampleAt(k.t) : k.value;
 
   const xOf = (t: number): number =>
     bounds ? PAD + ((t - bounds.t0) / (bounds.t1 - bounds.t0)) * (VIEW_W - 2 * PAD) : 0;
@@ -95,11 +125,12 @@ export function MotionEditorPanel(): JSX.Element {
     const pts: string[] = [];
     for (let i = 0; i <= SAMPLES; i++) {
       const t = bounds.t0 + (i / SAMPLES) * (bounds.t1 - bounds.t0);
-      const v = sampleTrack(track, t) ?? 0;
+      const v = sampleAt(t);
       pts.push(`${i === 0 ? 'M' : 'L'}${xOf(t).toFixed(2)},${yOf(v).toFixed(2)}`);
     }
     return pts.join(' ');
-  }, [track, bounds, rev]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [track, bounds, rev, graphMode]);
 
   const selectedKf = track?.keyframes.find((k) => k.t === selT) ?? null;
 
@@ -107,6 +138,9 @@ export function MotionEditorPanel(): JSX.Element {
   const onPointGrab = (t: number, e: ReactPointerEvent<SVGCircleElement>): void => {
     e.stopPropagation();
     setSelT(t);
+    // The speed graph is a read-only view of the derivative — shape it via the
+    // easing / roving / influence controls, not by dragging the point.
+    if (graphMode === 'speed') return;
     // Capture the track state at grab; the pointer moves mutate live and we
     // record a single reversible command on release.
     drag.current = { oldT: t, tx: beginAnimEdit() };
@@ -142,10 +176,56 @@ export function MotionEditorPanel(): JSX.Element {
     }
   };
 
+  // Easy Ease (F9): a symmetric 33%-influence bezier on the selected keyframe.
+  const applyEasyEase = (): void => {
+    if (primary && prop && selectedKf) {
+      runAnimEdit('Easy ease', () =>
+        defaultAnimation.setBezier(primary, prop, selectedKf.t, EASY_EASE_BEZIER),
+      );
+    }
+  };
+
+  const toggleRoving = (): void => {
+    if (primary && prop && selectedKf) {
+      runAnimEdit('Toggle roving', () =>
+        defaultAnimation.setRoving(primary, prop, selectedKf.t, !selectedKf.roving),
+      );
+    }
+  };
+
+  // Set an ease handle's influence (%) — the horizontal reach of a bezier
+  // control point. `side` 'out' moves the start handle, 'in' the end handle.
+  const setInfluence = (side: 'out' | 'in', pct: number): void => {
+    if (!primary || !prop || !selectedKf) return;
+    const b = [...(selectedKf.bezier ?? DEFAULT_BEZIER)] as [number, number, number, number];
+    const f = Math.max(0, Math.min(1, pct / 100));
+    if (side === 'out') b[0] = f;
+    else b[2] = 1 - f;
+    runAnimEdit(
+      'Ease influence',
+      () => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { easing: 'bezier', bezier: b }),
+      `kf-influence:${primary}:${prop}:${selectedKf.t}:${side}`,
+    );
+  };
+
+  // F9 → Easy Ease the selected keyframe (After Effects parity).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'F9' && primary && prop && selectedKf) {
+        e.preventDefault();
+        runAnimEdit('Easy ease', () =>
+          defaultAnimation.setBezier(primary, prop, selectedKf.t, EASY_EASE_BEZIER),
+        );
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [primary, prop, selectedKf]);
+
   // ── Bezier handle drag (custom easing) ──────────────────────────
   const selIdx = track ? track.keyframes.findIndex((k) => k.t === selT) : -1;
   const segEnd = selIdx >= 0 && track ? track.keyframes[selIdx + 1] : undefined;
-  const showBezier = !!selectedKf && selectedKf.easing === 'bezier' && !!segEnd && !!bounds;
+  const showBezier = graphMode === 'value' && !!selectedKf && selectedKf.easing === 'bezier' && !!segEnd && !!bounds;
   const bez = selectedKf?.bezier ?? DEFAULT_BEZIER;
 
   const onHandleGrab = (which: 0 | 1, e: ReactPointerEvent<SVGCircleElement>): void => {
@@ -193,23 +273,51 @@ export function MotionEditorPanel(): JSX.Element {
     return <EmptyState icon="keyframe" message="Select a layer to edit its motion." />;
   }
   if (!prop) {
-    return <EmptyState icon="keyframe" message="No animation on this layer yet. Add a keyframe or an AI motion." />;
+    return (
+      <div className={styles.root}>
+        <PresetsBar />
+        <EmptyState icon="keyframe" message="No animation yet — apply a preset above, or add a keyframe." />
+      </div>
+    );
   }
 
   return (
     <div className={styles.root}>
-      {/* Property picker */}
-      <div className={styles.props}>
-        {propList.map((p) => (
+      <PresetsBar />
+      {/* Property picker + graph-mode toggle */}
+      <div className={styles.topRow}>
+        <div className={styles.props}>
+          {propList.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={cn(styles.propChip, p === prop && styles.propChipOn)}
+              onClick={() => { setProp(p); setSelT(null); }}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+        <div className={styles.modeToggle} role="radiogroup" aria-label="Graph mode">
           <button
-            key={p}
             type="button"
-            className={cn(styles.propChip, p === prop && styles.propChipOn)}
-            onClick={() => { setProp(p); setSelT(null); }}
+            role="radio"
+            aria-checked={graphMode === 'value'}
+            className={cn(styles.modeChip, graphMode === 'value' && styles.modeChipOn)}
+            onClick={() => setGraphMode('value')}
           >
-            {p}
+            Value
           </button>
-        ))}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={graphMode === 'speed'}
+            className={cn(styles.modeChip, graphMode === 'speed' && styles.modeChipOn)}
+            onClick={() => setGraphMode('speed')}
+          >
+            Speed
+          </button>
+        </div>
       </div>
 
       {track && bounds ? (
@@ -251,9 +359,9 @@ export function MotionEditorPanel(): JSX.Element {
           <circle
             key={k.t}
             cx={xOf(k.t)}
-            cy={yOf(k.value)}
+            cy={yOf(kfY(k))}
             r={k.t === selT ? 6 : 5}
-            className={cn(styles.point, k.t === selT && styles.pointSel)}
+            className={cn(styles.point, k.t === selT && styles.pointSel, k.roving && styles.pointRoving)}
             onPointerDown={(e) => onPointGrab(k.t, e)}
           />
         ))}
@@ -316,6 +424,47 @@ export function MotionEditorPanel(): JSX.Element {
               </button>
             ))}
           </div>
+
+          {/* Quick actions: Easy Ease (F9) + Roving toggle. */}
+          <div className={styles.actions}>
+            <button type="button" className={styles.actionChip} onClick={applyEasyEase} title="Easy Ease (F9)">
+              Easy Ease
+            </button>
+            <button
+              type="button"
+              className={cn(styles.actionChip, selectedKf.roving && styles.actionChipOn)}
+              aria-pressed={!!selectedKf.roving}
+              disabled={selIdx <= 0 || selIdx >= (track?.keyframes.length ?? 0) - 1}
+              onClick={toggleRoving}
+              title="Rove across time for constant speed"
+            >
+              Roving
+            </button>
+          </div>
+
+          {/* Bezier influence (%) — only for custom easing. */}
+          {selectedKf.easing === 'bezier' ? (
+            <div className={styles.numeric}>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Ease Out</span>
+                <ValueField
+                  value={Math.round((selectedKf.bezier?.[0] ?? DEFAULT_BEZIER[0]) * 100)}
+                  min={0} max={100} precision={0} unit="%"
+                  onChange={(v) => setInfluence('out', v)}
+                  aria-label="ease out influence"
+                />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Ease In</span>
+                <ValueField
+                  value={Math.round((1 - (selectedKf.bezier?.[2] ?? DEFAULT_BEZIER[2])) * 100)}
+                  min={0} max={100} precision={0} unit="%"
+                  onChange={(v) => setInfluence('in', v)}
+                  aria-label="ease in influence"
+                />
+              </label>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className={styles.hint}>Click a keyframe to shape its easing.</div>

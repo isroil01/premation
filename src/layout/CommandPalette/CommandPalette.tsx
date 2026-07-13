@@ -54,10 +54,15 @@ interface Item {
 
 const KIND_ICON: Record<SceneKind, IconName> = {
   group: 'layers',
+  null: 'crosshair',
   shape: 'shape',
   text: 'type',
   image: 'image',
   video: 'video',
+  audio: 'audio',
+  camera: 'camera',
+  light: 'light',
+  adjustment: 'adjustment',
 };
 
 function buildItems(query: string, closePalette: () => void): Item[] {

@@ -5,20 +5,17 @@
  * History / autosave / export.
  */
 
+import { useState } from 'react';
 import { Icon } from '@components/Icon';
+import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import {
-  EFFECT_DEFS,
-  getNodeEffects,
-  addEffect,
-  updateEffect,
-  removeEffect,
-} from '@core/effects/effects';
+import { EFFECT_DEFS, addEffect } from '@core/effects/effects';
+import { EffectStack } from './EffectStack';
 import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
 import { MATTE_OPTIONS, getNodeMatte, setNodeMatte } from '@core/effects/matte';
 import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
@@ -31,10 +28,18 @@ import {
   removeMaskPath,
   rectangleMask,
   ellipseMask,
+  keyframeMask,
+  clearMaskAnim,
+  hasMaskAnim,
   type MaskMode,
 } from '@core/effects/mask';
+import { useActiveWorkspace } from '@stores/workspaceStore';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { FillStrokeControls } from './FillStrokeControls';
+import { TrimPathControls } from './TrimPathControls';
+import { TimeControls } from './TimeControls';
+import { LayerStylesControls } from './LayerStylesControls';
 import styles from './EffectsPanel.module.css';
 
 const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
@@ -46,14 +51,16 @@ const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
 export function EffectsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   useSceneRevision((s) => s.rev);
+  const maskTime = useActiveWorkspace()?.time ?? 0;
   const mb = useMotionBlurStore();
+  const [effectQuery, setEffectQuery] = useState('');
 
   if (!primary || !defaultSceneGraph.getNode(primary)) {
     return <EmptyState icon="settings" message="Select a layer to add visual effects." />;
   }
 
-  const effects = getNodeEffects(primary);
-  const defByType = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
+  const q = effectQuery.trim().toLowerCase();
+  const browserDefs = q ? EFFECT_DEFS.filter((d) => d.label.toLowerCase().includes(q)) : EFFECT_DEFS;
 
   const blend = getNodeBlend(primary);
   const blendLabel = BLEND_MODES.find((b) => b.mode === blend)?.label ?? 'Normal';
@@ -86,6 +93,14 @@ export function EffectsPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
+      {(kind === 'shape' || kind === 'text') && <FillStrokeControls nodeId={primary} />}
+
+      {kind === 'shape' && <TrimPathControls nodeId={primary} />}
+
+      <TimeControls nodeId={primary} />
+
+      <LayerStylesControls nodeId={primary} />
+
       <div className={styles.blendRow}>
         <span className={styles.blendLabel}>Blend</span>
         <Dropdown
@@ -157,48 +172,28 @@ export function EffectsPanel(): JSX.Element {
         </div>
       )}
 
-      <div className={styles.addRow}>
-        {EFFECT_DEFS.map((d) => (
-          <button key={d.type} type="button" className={styles.addChip} onClick={() => addEffect(primary, d.type)}>
-            <Icon name="plus" size={11} /> {d.label}
-          </button>
-        ))}
+      {/* Effects browser — searchable list of effect types to add. */}
+      <div className={styles.sectionTitle}>Effects &amp; presets</div>
+      <div className={styles.browser}>
+        <Input
+          value={effectQuery}
+          placeholder="Search effects…"
+          size="sm"
+          fullWidth
+          leftIcon="search"
+          onChange={(e) => setEffectQuery(e.currentTarget.value)}
+        />
+        <div className={styles.addRow}>
+          {browserDefs.map((d) => (
+            <button key={d.type} type="button" className={styles.addChip} onClick={() => addEffect(primary, d.type)}>
+              <Icon name="plus" size={11} /> {d.label}
+            </button>
+          ))}
+          {browserDefs.length === 0 ? <span className={styles.hint}>No effects match “{effectQuery}”.</span> : null}
+        </div>
       </div>
 
-      {effects.length === 0 ? (
-        <EmptyState icon="sparkles" message="No effects — add one above to grade or blur this layer." />
-      ) : (
-        <div className={styles.list}>
-          {effects.map((e) => {
-            const def = defByType.get(e.type);
-            if (!def) return null;
-            return (
-              <div key={e.id} className={styles.item}>
-                <div className={styles.itemHead}>
-                  <span className={styles.itemLabel}>{def.label}</span>
-                  <button
-                    type="button"
-                    className={styles.remove}
-                    aria-label={`Remove ${def.label}`}
-                    onClick={() => removeEffect(primary, e.id)}
-                  >
-                    <Icon name="close" size={12} />
-                  </button>
-                </div>
-                <ValueField
-                  value={e.amount}
-                  min={def.min}
-                  max={def.max}
-                  unit={def.unit}
-                  precision={0}
-                  onChange={(v) => updateEffect(primary, e.id, v)}
-                  aria-label={`${def.label} amount`}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <EffectStack nodeId={primary} />
 
       <div className={styles.sectionTitle}>Masks</div>
       <div className={styles.addRow}>
@@ -208,6 +203,16 @@ export function EffectsPanel(): JSX.Element {
         <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, ellipseMask(maskW, maskH))}>
           <Icon name="plus" size={11} /> Ellipse
         </button>
+        {masks.length > 0 && (
+          <button
+            type="button"
+            className={styles.addChip}
+            title={node && hasMaskAnim(node) ? 'Remove mask animation' : 'Keyframe the mask shape at the playhead (animate the mask)'}
+            onClick={() => (node && hasMaskAnim(node) ? clearMaskAnim(primary) : keyframeMask(primary, maskTime))}
+          >
+            <Icon name="keyframe" size={11} /> {node && hasMaskAnim(node) ? 'Un-animate' : 'Keyframe shape'}
+          </button>
+        )}
       </div>
 
       {masks.length > 0 && (

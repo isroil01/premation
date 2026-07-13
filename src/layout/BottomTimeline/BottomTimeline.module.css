@@ -5,137 +5,306 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-panel);
-  border-top: 1px solid var(--color-border);
+  background: #1a1a1a;
+  border-top: 1px solid #252525;
   overflow: hidden;
 }
 
+/* ── Header / transport bar ──────────────────────────────────────── */
 .header {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  height: 40px;
-  padding: 0 var(--space-4);
-  background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-border);
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px;
+  background: #1e1e1e;
+  border-bottom: 1px solid #272727;
   flex: none;
   user-select: none;
 }
 
-.transport {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-/* The one circle in the app — the signature control. */
-button.play {
-  border-radius: var(--radius-full);
-  width: 32px;
-  height: 32px;
-}
-
-/* AE-style leading timecode — the timeline panel's identity. */
+/* ── Timecode ──────────────────────────────────────────────────────── */
 .timecode {
-  padding-right: var(--space-4);
-  border-right: 1px solid var(--color-border-subtle);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-medium);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.03em;
-  color: var(--color-text-primary);
   display: flex;
   align-items: baseline;
-  gap: var(--space-3);
+  gap: 4px;
+  padding: 2px 10px 2px 6px;
+  border-right: 1px solid #2a2a2a;
+  font-family: 'JetBrains Mono', 'Fira Mono', 'Courier New', monospace;
+  font-size: 15px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: #d4d4d4;
+  cursor: default;
+  white-space: nowrap;
 }
 
 .timecodeTotal {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
+  font-size: 10px;
+  color: #484848;
+  letter-spacing: 0.04em;
 }
 
-/* Zoom cluster — sits on the same transport row, pushed to the right. */
+/* ── Transport controls ────────────────────────────────────────────── */
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+/* Play button — the one circle. AE has it as the focal point */
+button.play {
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  background: #2988ff;
+  color: #fff;
+  border: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.12s;
+  flex-shrink: 0;
+}
+button.play:hover { background: #3a98ff; }
+
+/* ── Loop + quality toggles ────────────────────────────────────────── */
+.toggleGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-left: 1px solid #2a2a2a;
+  border-right: 1px solid #2a2a2a;
+}
+
+.toggleBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 7px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #666;
+  font-size: 10px;
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+  white-space: nowrap;
+}
+.toggleBtn:hover {
+  color: #c0c0c0;
+  background: #2a2a2a;
+  border-color: #363636;
+}
+.toggleBtnActive {
+  composes: toggleBtn;
+  color: #2988ff;
+  background: rgba(41, 136, 255, 0.12);
+  border-color: rgba(41, 136, 255, 0.3);
+}
+
+/* ── Graph Editor toggle ──────────────────────────────────────────── */
+.graphBtn,
+.graphBtnActive {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #777;
+  font-size: 11px;
+  font-family: 'Inter', system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.graphBtn:hover {
+  background: #2a2a2a;
+  color: #c0c0c0;
+  border-color: #363636;
+}
+
+.graphBtnActive {
+  background: rgba(41, 136, 255, 0.12);
+  border-color: rgba(41, 136, 255, 0.35);
+  color: #2988ff;
+}
+
+.graphBtnActive:hover {
+  background: rgba(41, 136, 255, 0.2);
+}
+
+/* ── Zoom cluster ─────────────────────────────────────────────────── */
 .zoom {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 2px;
 }
 
 .zoomLabel {
-  min-width: 46px;
-  height: 24px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
+  min-width: 44px;
+  height: 22px;
+  padding: 0 6px;
   border: 1px solid transparent;
   background: transparent;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-family: 'Inter', system-ui, monospace;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-secondary);
+  color: #777;
   cursor: pointer;
   text-align: center;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  letter-spacing: 0.02em;
 }
-
 .zoomLabel:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-subtle);
+  background: #2a2a2a;
+  color: #c0c0c0;
+  border-color: #363636;
 }
+.zoomLabel:disabled { opacity: 0.4; cursor: default; }
 
-.zoomLabel:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* Row-height cycle — icon + current preset key (S/M/L). */
+/* Row-height cycle */
 .rowHeightBtn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  height: 24px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
+  gap: 3px;
+  height: 22px;
+  padding: 0 6px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--color-text-secondary);
+  color: #666;
   cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+  font-size: 11px;
+  font-family: 'Inter', system-ui, sans-serif;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
-
 .rowHeightBtn:hover {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-subtle);
+  background: #2a2a2a;
+  color: #c0c0c0;
+  border-color: #363636;
 }
 
 .rowHeightKey {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
-/* Hairline separating the row-height control from the zoom cluster. */
+/* Hairline separators */
 .zoomDivider {
   width: 1px;
-  height: 16px;
-  margin: 0 var(--space-1);
-  background: var(--color-border-subtle);
+  height: 14px;
+  margin: 0 3px;
+  background: #2c2c2c;
+  flex-shrink: 0;
 }
 
+/* ── Body (tracks + graph editor) ──────────────────────────────────── */
 .body {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   position: relative;
-  padding: 8px 8px 10px;
+  padding: 6px 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* When the timeline region is collapsed, hide the track body — the header
+   stays fully visible since the SplitPane keeps a 38px minimum. */
+.bodyCollapsed {
+  display: none;
+}
+
+/* ── Keyframe interpolation toolbar ──────────────────────────────── */
+.interpGroup {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 6px;
+  border-left: 1px solid #2a2a2a;
+  border-right: 1px solid #2a2a2a;
+}
+.interpBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #666;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.interpBtn:hover {
+  color: #c0c0c0;
+  background: #2a2a2a;
+  border-color: #363636;
+}
+
+/* ── Timeline Tabs ──────────────────────────────────────────────── */
+.tabBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px;
+  background: #14171e; /* Surface 1 matching DESIGN.md */
+  border-bottom: 1px solid #1e222c; /* Surface 2 border */
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabBar::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #707b8d; /* Ink Muted */
+  font-size: 11px;
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.tab:hover {
+  color: #c6cdd9; /* Ink Secondary */
+}
+
+.tabActive {
+  color: #3170e6; /* Signal Blue */
+  border-bottom-color: #3170e6;
+  font-weight: 600;
+}
+
+.tabChevron {
+  color: #707b8d;
+  font-size: 10px;
+  flex-shrink: 0;
 }

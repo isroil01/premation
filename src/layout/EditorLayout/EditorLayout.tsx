@@ -72,15 +72,15 @@ export function EditorLayout({
           className={styles.split}
           direction="horizontal"
           defaultSize={left.size}
-          minSize={left.minSize}
+          minSize={36}
           maxSize={left.maxSize}
-          size={left.collapsed ? 0 : left.size}
+          size={left.collapsed ? 36 : left.size}
           collapsed={left.collapsed}
           storageKey="leftSidebar"
           onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
         >
           {/* Left sidebar spans the full height of the body. */}
-          <LeftSidebar renderers={sidebarRenderers} />
+          <LeftSidebar renderers={sidebarRenderers} className={left.collapsed ? 'sidebar-collapsed-view' : ''} />
 
           {/* Right area: [Workspace | Inspector] over a [timeline] dock that
               fills the right-area width. */}
@@ -89,9 +89,9 @@ export function EditorLayout({
             direction="vertical"
             primary="last"
             defaultSize={bottom.size}
-            minSize={bottom.minSize}
+            minSize={38}
             maxSize={bottom.maxSize}
-            size={bottom.collapsed ? 0 : bottom.size}
+            size={bottom.collapsed ? 38 : bottom.size}
             collapsed={bottom.collapsed}
             storageKey="bottomTimeline"
             onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
@@ -101,9 +101,9 @@ export function EditorLayout({
               direction="horizontal"
               primary="last"
               defaultSize={right.size}
-              minSize={right.minSize}
+              minSize={36}
               maxSize={right.maxSize}
-              size={right.collapsed ? 0 : right.size}
+              size={right.collapsed ? 36 : right.size}
               collapsed={right.collapsed}
               storageKey="rightInspector"
               onResizeEnd={(s) => setRightSize('rightInspector', s)}
@@ -111,9 +111,10 @@ export function EditorLayout({
               <div className={styles.workspacePane}>
                 <WorkspaceViewport {...(workspaceExtras ?? {})} />
               </div>
-              <RightInspector renderers={inspectorRenderers} header={inspectorHeader} />
+              <RightInspector renderers={inspectorRenderers} header={inspectorHeader} className={right.collapsed ? 'inspector-collapsed-view' : ''} />
             </SplitPane>
 
+            {/* Timeline pane: always at least 38px so the header remains visible when collapsed. */}
             <div className={styles.timelinePane}>{timeline}</div>
           </SplitPane>
         </SplitPane>

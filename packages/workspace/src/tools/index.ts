@@ -9,6 +9,7 @@ export type {
 export { ToolManager } from './ToolManager';
 export {
   SelectTool,
+  DirectSelectionTool,
   MoveTool,
   HandTool,
   ZoomTool,

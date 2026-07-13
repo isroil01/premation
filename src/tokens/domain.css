@@ -25,25 +25,23 @@
   --color-category-null:   var(--color-layer-null);
   --color-category-3d:     var(--color-layer-3d);
 
-  /* ── Temporal accent (warm "now/time" family — the cool selection's
-     counterpoint). Coral, promoted from playhead-only to: playhead,
-     current-time readouts, in/out markers, timeline markers, record. ── */
-  --color-temporal:          var(--color-coral-500);   /* #ff6b45 */
-  --color-temporal-strong:   #ff7a4d;
-  --color-temporal-subtle:   rgba(255, 107, 69, 0.14);
+  /* ── Temporal accent (After Effects blue/cyan interactive highlight) ── */
+  --color-temporal:          #2988ff;
+  --color-temporal-strong:   #4097ff;
+  --color-temporal-subtle:   rgba(41, 136, 255, 0.14);
 
   /* ── Timeline chrome ──────────────────────────────────────────── */
   /* Lanes sit on surface-0; header column on surface-1. The chrome is neutral
-     black; the ONLY colour is the warm temporal family (playhead + markers). */
-  --color-timeline-bg:       #0b0b0c;
-  --color-timeline-grid:     rgba(255, 255, 255, 0.04);
-  --color-timeline-zebra:    rgba(255, 255, 255, 0.015);
-  --color-timeline-playhead: var(--color-coral-500);  /* #ff6b45 */
-  --color-timeline-keyframe: #e9ecf2;
+     black; the ONLY colour is the signature blue temporal family (playhead + markers). */
+  --color-timeline-bg:       #1d1d1d;
+  --color-timeline-grid:     #161616;
+  --color-timeline-zebra:    rgba(255, 255, 255, 0.01);
+  --color-timeline-playhead: #2988ff;  /* #ff6b45 */
+  --color-timeline-keyframe: #cccccc;
   /* Keyframe outline: a dark edge at rest, a bright edge when hovered/dragged
      so the diamond pops against the lane. Overridden for the light theme. */
-  --color-timeline-keyframe-stroke:        var(--color-slate-900);
-  --color-timeline-keyframe-stroke-active: #ffffff;
+  --color-timeline-keyframe-stroke:        #161616;
+  --color-timeline-keyframe-stroke-active: #2988ff;
   --color-timeline-selected: var(--color-selection);
   --color-timeline-ai-marker: var(--color-ai-primary);
 

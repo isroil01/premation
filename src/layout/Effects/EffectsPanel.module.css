@@ -56,6 +56,25 @@
   margin-top: var(--space-2);
 }
 
+/* Gradient stop row: swatch + offset + remove. */
+.stopRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.stopRow > :first-child { flex: 1; min-width: 0; }
+
+.dashInput {
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
 .maskField {
   display: flex;
   flex-direction: column;
@@ -127,6 +146,50 @@
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
+  flex: 1;
+}
+
+/* Label of a disabled effect — dimmed. */
+.itemLabelOff {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+  flex: 1;
+  text-decoration: line-through;
+}
+
+.itemActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.eyeBtn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.eyeBtn:hover { color: var(--color-text-primary); background: var(--color-surface-2); }
+.eyeBtn[aria-pressed="false"] { color: var(--color-text-muted); }
+
+/* Searchable effects browser. */
+.browser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  padding: var(--space-1) 0;
 }
 
 .remove {
@@ -135,11 +198,44 @@
   width: 18px;
   height: 18px;
   border-radius: var(--radius-xs);
+  background: transparent;
+  border: none;
   color: var(--color-text-muted);
   cursor: pointer;
 }
 
-.remove:hover {
+.remove:hover:not(:disabled) {
   background: var(--color-hover);
   color: var(--color-text-primary);
+}
+.remove:disabled { opacity: 0.35; cursor: default; }
+
+.stopwatch,
+.stopwatchOn {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary, #666);
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.stopwatch:hover {
+  background: var(--color-hover);
+  color: var(--color-text-secondary);
+}
+
+.stopwatchOn {
+  color: var(--color-primary, #0088ff);
+}
+
+.stopwatchOn:hover {
+  background: var(--color-primary-subtle, rgba(0, 136, 255, 0.15));
 }

@@ -7,24 +7,43 @@
  * panel/dock architecture is wired correctly.
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, useRef, type ReactNode } from 'react';
 import { Panel } from '@components/Panel';
-import { Inspector } from '@components/Inspector';
 import { HistoryPanel } from '@layout/History/HistoryPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { CommentsPanel } from '@layout/Comments/CommentsPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
+import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
+import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
+import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { NodeInspector } from '@components/Inspector/NodeInspector';
+import { ParentControl } from '@layout/Inspector/ParentControl';
+import { MotionControls } from '@layout/Inspector/MotionControls';
+import { PrecompControl } from '@layout/Inspector/PrecompControl';
+import { AnchorControl } from '@layout/Inspector/AnchorControl';
+import { TextAnimatorControls } from '@layout/Inspector/TextAnimatorControls';
+import { AudioControls } from '@layout/Inspector/AudioControls';
+import { TransformSection } from '@layout/Inspector/TransformSection';
+import { AppearanceSection } from '@layout/Inspector/AppearanceSection';
+import { TextSection } from '@layout/Inspector/TextSection';
+import { MediaSection } from '@layout/Inspector/MediaSection';
+import { EffectsSection } from '@layout/Inspector/EffectsSection';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useFocusStore } from '@stores/focusStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { insertMedia } from '@core/scene/sceneInsert';
+import { getNodeFill, setNodeFill } from '@core/paint/fill';
+import { insertPrimitive } from '@core/scene/sceneInsert';
+import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
+import { useUIStore } from '@stores/uiStore';
 import type { SceneNode } from '@core/types';
 import styles from './DemoPanels.module.css';
 
@@ -36,10 +55,15 @@ interface SceneNodeData {
 
 const KIND_ICON: Record<SceneKind, IconName> = {
   group: 'layers',
+  null: 'crosshair',
   shape: 'shape',
   text: 'type',
   image: 'image',
   video: 'video',
+  audio: 'audio',
+  camera: 'camera',
+  light: 'light',
+  adjustment: 'adjustment',
 };
 
 function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
@@ -200,23 +224,55 @@ export function ScenePanel(): JSX.Element {
 
 // ── Assets (Left sidebar) ────────────────────────────────────────
 
-const SAMPLE_ASSETS: TreeNode<unknown>[] = [
-  { id: 'a_root', label: 'Library', icon: 'folder', children: [
-    { id: 'a_shapes', label: 'Shapes', icon: 'shape', children: [
-      { id: 'a_arrow', label: 'Arrow.svg', icon: 'arrow-right' },
-      { id: 'a_star', label: 'Star.svg', icon: 'shape' },
-    ]},
-    { id: 'a_textures', label: 'Textures', icon: 'image', children: [
-      { id: 'a_noise', label: 'Noise.png', icon: 'image' },
-      { id: 'a_grain', label: 'Grain.jpg', icon: 'image' },
-    ]},
-    { id: 'a_audio', label: 'Audio', icon: 'audio', children: [
-      { id: 'a_music', label: 'Music.mp3', icon: 'audio' },
-    ]},
-  ]},
-];
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + (sizes[i] ?? '');
+}
+
+const TYPE_ICON: Record<ImportedAsset['type'], IconName> = {
+  image: 'image',
+  video: 'video',
+  audio: 'audio',
+};
 
 export function AssetsPanel(): JSX.Element {
+  const assets = useAssetStore((s) => s.assets);
+  const addAsset = useAssetStore((s) => s.addAsset);
+  const removeAsset = useAssetStore((s) => s.removeAsset);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    for (let i = 0; i < e.target.files.length; i++) {
+      const file = e.target.files[i];
+      if (file) {
+        // Import into the library AND drop it straight onto the canvas, so the
+        // user sees their media immediately (no separate "Add to composition"
+        // step). It stays in the Assets panel for re-use.
+        const asset = await addAsset(file);
+        insertMedia(asset);
+      }
+    }
+    // Reset input
+    e.target.value = '';
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const addAssetToScene = (asset: ImportedAsset) => {
+    insertMedia(asset);
+  };
+
+  const filteredAssets = assets.filter((a) =>
+    a.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <Panel
       id="assets"
@@ -226,10 +282,74 @@ export function AssetsPanel(): JSX.Element {
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'assets' })}
     >
       <div className={styles.toolbar}>
-        <Input placeholder="Search assets…" size="sm" leftIcon="search" className={styles.search} />
+        <Input
+          placeholder="Search assets…"
+          size="sm"
+          leftIcon="search"
+          className={styles.search}
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <button type="button" className={styles.importBtn} onClick={handleImportClick} title="Import media files">
+          <Icon name="plus" size={13} /> Import
+        </button>
+        <input
+          type="file"
+          ref={fileInputRef}
+          className={styles.fileInput}
+          multiple
+          accept="image/*,video/*,audio/*"
+          onChange={handleFileChange}
+        />
       </div>
       <div className={styles.body}>
-        <TreeView nodes={SAMPLE_ASSETS} defaultExpandedIds={['a_root']} />
+        {filteredAssets.length === 0 ? (
+          <div className={styles.empty}>
+            <p style={{ margin: 0, color: '#666', fontSize: '11px' }}>
+              {searchQuery ? 'No matching assets found.' : 'No media assets imported yet. Click Import to add files.'}
+            </p>
+          </div>
+        ) : (
+          <div className={styles.assetList}>
+            {filteredAssets.map((asset) => (
+              <div key={asset.id} className={styles.assetItem} title={asset.name}>
+                <div className={styles.assetIcon}>
+                  <Icon name={TYPE_ICON[asset.type]} size={14} />
+                </div>
+                <div className={styles.assetInfo}>
+                  <span className={styles.assetName}>{asset.name}</span>
+                  <span className={styles.assetMeta}>
+                    {formatBytes(asset.size)}
+                    {asset.metadata?.width && asset.metadata?.height && (
+                      ` · ${asset.metadata.width}×${asset.metadata.height}`
+                    )}
+                  </span>
+                </div>
+                <div className={styles.assetActions}>
+                  <button
+                    type="button"
+                    className={styles.actionButtonAdd}
+                    title="Add to composition"
+                    onClick={() => addAssetToScene(asset)}
+                  >
+                    <Icon name="plus" size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.actionButtonRemove}
+                    title="Delete asset"
+                    onClick={() => removeAsset(asset.id)}
+                  >
+                    <Icon name="close" size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className={styles.footer}>
+        <span>{filteredAssets.length} items</span>
       </div>
     </Panel>
   );
@@ -257,18 +377,313 @@ export function PropertiesPanel(): JSX.Element {
 function InspectorContent({ nodeId }: { nodeId: string | null }): JSX.Element {
   if (!nodeId) {
     return (
-      <Inspector
-        groups={[]}
-        emptyMessage="Select a node to edit its properties."
-      />
+      <div style={{ padding: '16px 14px', color: '#8a8a90', fontSize: 12, lineHeight: 1.6 }}>
+        <div style={{ color: '#c8c8ce', fontWeight: 600, marginBottom: 8 }}>Nothing selected</div>
+        <p style={{ margin: '0 0 12px' }}>
+          Select a layer in the canvas or the Scene panel to edit its properties
+          (fill, font, transform, effects…).
+        </p>
+        <div style={{ color: '#c8c8ce', fontWeight: 600, margin: '4px 0 6px' }}>Give it motion</div>
+        <ol style={{ margin: 0, paddingLeft: 16 }}>
+          <li>Select a layer.</li>
+          <li>Click <strong style={{ color: '#e0e0e6' }}>Animate</strong> next to a property (Position, Scale, Opacity…) to set a first keyframe.</li>
+          <li>Move the playhead in the timeline, then change the value — a second keyframe is created.</li>
+          <li>Press <strong style={{ color: '#e0e0e6' }}>Play</strong> to preview.</li>
+        </ol>
+        <p style={{ margin: '12px 0 0', opacity: 0.8 }}>
+          Tip: with a layer selected, use the <strong style={{ color: '#e0e0e6' }}>Animate</strong> menu (top bar) or the
+          assistant (“Ask anything…”) for one-click motion presets.
+        </p>
+      </div>
     );
   }
 
-  // Render the node-specific editors for the selected node.
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return <div className={styles.empty}>No node data</div>;
+
+  const kind = readNodeKind(node);
+  const enterFocus = useFocusStore((s) => s.enter);
+
+  switch (kind) {
+    case 'shape':
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <AnchorControl nodeId={nodeId} />
+          <TransformSection nodeId={nodeId} />
+          <AppearanceSection nodeId={nodeId} />
+          <MotionControls nodeId={nodeId} />
+          <EffectsSection nodeId={nodeId} />
+        </div>
+      );
+    case 'text':
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <AnchorControl nodeId={nodeId} />
+          <TransformSection nodeId={nodeId} />
+          <TextSection nodeId={nodeId} />
+          <MotionControls nodeId={nodeId} />
+          <TextAnimatorControls nodeId={nodeId} />
+          <EffectsSection nodeId={nodeId} />
+        </div>
+      );
+    case 'image':
+    case 'video':
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <AnchorControl nodeId={nodeId} />
+          <TransformSection nodeId={nodeId} />
+          <MediaSection nodeId={nodeId} />
+          <MotionControls nodeId={nodeId} />
+          <EffectsSection nodeId={nodeId} />
+        </div>
+      );
+    case 'group': {
+      const childrenCount = defaultSceneGraph.getChildren(nodeId).length;
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <TransformSection nodeId={nodeId} />
+          <PrecompControl nodeId={nodeId} />
+          <div style={{ margin: '12px 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
+              Children Count: {childrenCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => enterFocus(nodeId)}
+              style={{
+                width: '100%',
+                background: '#28282c',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: '#fff',
+                fontSize: 11,
+                padding: '6px',
+                borderRadius: 3,
+                cursor: 'pointer'
+              }}
+            >
+              Enter Group (Focus Mode)
+            </button>
+          </div>
+          <MotionControls nodeId={nodeId} />
+          <EffectsSection nodeId={nodeId} />
+        </div>
+      );
+    }
+    case 'null':
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <AnchorControl nodeId={nodeId} />
+          <TransformSection nodeId={nodeId} />
+          <div style={{ margin: '10px 0', fontSize: 10, color: '#ffb703', background: 'rgba(255, 183, 3, 0.08)', padding: '6px 8px', borderRadius: 3, border: '1px solid rgba(255, 183, 3, 0.2)' }}>
+            <strong>Null Object:</strong> Invisible controller. Attach layers as children via Parent & Link.
+          </div>
+          <MotionControls nodeId={nodeId} />
+        </div>
+      );
+    case 'camera':
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <TransformSection nodeId={nodeId} />
+          <div style={{ margin: '10px 0', fontSize: 10, color: '#38bdf8', background: 'rgba(56, 189, 248, 0.08)', padding: '6px 8px', borderRadius: 3, border: '1px solid rgba(56, 189, 248, 0.2)' }}>
+            <strong>Camera:</strong> 3D viewport view controller. Adjust Position X/Y/Z to navigate.
+          </div>
+        </div>
+      );
+    case 'light':
+      return (
+        <div style={{ padding: 8 }}>
+          <TransformSection nodeId={nodeId} />
+          <div style={{ margin: '10px 0', fontSize: 10, color: '#f59e0b', background: 'rgba(245, 158, 11, 0.08)', padding: '6px 8px', borderRadius: 3, border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+            <strong>Light:</strong> Casts radial illumination onto layers beneath. Adjust radius and intensity in transform.
+          </div>
+        </div>
+      );
+    case 'audio':
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <AudioControls nodeId={nodeId} />
+        </div>
+      );
+    default:
+      return (
+        <div style={{ padding: 8 }}>
+          <ParentControl nodeId={nodeId} />
+          <AnchorControl nodeId={nodeId} />
+          <TransformSection nodeId={nodeId} />
+          <NodeInspector nodeId={nodeId} />
+        </div>
+      );
+  }
+}
+
+// ── Libraries (Left sidebar) ──────────────────────────────────────────────
+
+const SHAPE_PRESETS = [
+  { id: 'rect',    label: 'Rectangle', svg: <rect x="4" y="4" width="24" height="24" rx="3" fill="none" stroke="currentColor" strokeWidth="2" />, primitive: 'rect' },
+  { id: 'ellipse', label: 'Ellipse',   svg: <circle cx="16" cy="16" r="12" fill="none" stroke="currentColor" strokeWidth="2" />, primitive: 'ellipse' },
+  { id: 'line',    label: 'Line',      svg: <line x1="4" y1="28" x2="28" y2="4" fill="none" stroke="currentColor" strokeWidth="2" />, primitive: 'line' },
+  { id: 'star',    label: 'Star',      svg: <polygon points="16,2 20,11 30,12 22,19 24,29 16,24 8,29 10,19 2,12 12,11" fill="none" stroke="currentColor" strokeWidth="2" />, primitive: 'star' },
+  { id: 'polygon', label: 'Polygon',   svg: <polygon points="16,3 28,10 28,24 16,31 4,24 4,10" fill="none" stroke="currentColor" strokeWidth="2" />, primitive: 'polygon' },
+] as const;
+
+const TEXT_PRESETS = [
+  { id: 'title',    label: 'Title',    fontSize: 72,  weight: 700 },
+  { id: 'subtitle', label: 'Subtitle', fontSize: 48,  weight: 600 },
+  { id: 'body',     label: 'Body',     fontSize: 36,  weight: 400 },
+  { id: 'caption',  label: 'Caption',  fontSize: 24,  weight: 400 },
+  { id: 'label',    label: 'Label',    fontSize: 20,  weight: 500 },
+  { id: 'overline', label: 'Overline', fontSize: 14,  weight: 500 },
+  { id: 'quote',    label: 'Quote',    fontSize: 32,  weight: 300 },
+  { id: 'mono',     label: 'Monospace',fontSize: 36,  weight: 500 },
+  { id: 'button',   label: 'Button',   fontSize: 16,  weight: 600 },
+  { id: 'link',     label: 'Link',     fontSize: 18,  weight: 400 },
+] as const;
+
+const SWATCHES = [
+  '#ff2b7e', '#2b7eff', '#28c7d7', '#ffb703',
+  '#9b5de5', '#00f5d4', '#ff9f1c', '#e63946',
+  '#457b9d', '#1d3557', '#a8dadc', '#ffffff'
+];
+
+export function LibrariesPanel(): JSX.Element {
+  const [activeTab, setActiveTab] = useState<'shapes' | 'text' | 'colors' | 'motion'>('shapes');
+
+  const handleShapeInsert = (preset: typeof SHAPE_PRESETS[number]) => {
+    insertPrimitive('shape', preset.label);
+  };
+
+  const handleTextInsert = (preset: typeof TEXT_PRESETS[number]) => {
+    insertPrimitive('text', preset.label);
+  };
+
+  const handleColorClick = (color: string) => {
+    const sel = useSelectionStore.getState().ids;
+    if (sel.length === 0) {
+      useUIStore.getState().notify({ level: 'warning', message: 'Select a layer to apply color', durationMs: 2000 });
+      return;
+    }
+    for (const nodeId of sel) {
+      const current = getNodeFill(nodeId);
+      if (current && current.type === 'solid') {
+        setNodeFill(nodeId, { ...current, color });
+      } else {
+        setNodeFill(nodeId, { type: 'solid', color });
+      }
+    }
+    useUIStore.getState().notify({ level: 'success', message: 'Color swatch applied', durationMs: 1500 });
+  };
+
   return (
-    <div style={{ padding: 8 }}>
-      <NodeInspector nodeId={nodeId} />
-    </div>
+    <Panel
+      id="libraries"
+      title="Libraries"
+      icon="folder"
+      hideHeader
+      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'libraries' })}
+    >
+      <div className={styles.libTabs}>
+        {(['shapes', 'text', 'colors', 'motion'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={activeTab === t ? styles.libTabActive : styles.libTab}
+            onClick={() => setActiveTab(t)}
+          >
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      <div className={styles.libBody}>
+        {activeTab === 'shapes' && (
+          <div className={styles.libGrid}>
+            {SHAPE_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={styles.libChip}
+                title={`Insert ${p.label}`}
+                onClick={() => handleShapeInsert(p)}
+              >
+                <svg width="32" height="32" viewBox="0 0 32 32" style={{ color: '#bbb' }}>
+                  {p.svg}
+                </svg>
+                <span className={styles.libChipLabel}>{p.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {activeTab === 'text' && (
+          <div className={styles.libList}>
+            {TEXT_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={styles.libTextItem}
+                title={`Insert ${p.label} text layer`}
+                onClick={() => handleTextInsert(p)}
+              >
+                <span style={{ fontSize: Math.min(p.fontSize / 3, 20), fontWeight: p.weight }}>
+                  {p.label}
+                </span>
+                <span className={styles.libTextMeta}>{p.fontSize}px · w{p.weight}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {activeTab === 'colors' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, padding: 12 }}>
+            {SWATCHES.map((color) => (
+              <button
+                key={color}
+                type="button"
+                onClick={() => handleColorClick(color)}
+                style={{
+                  width: '100%',
+                  aspectRatio: '1',
+                  background: color,
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 4,
+                  cursor: 'pointer'
+                }}
+                title={color}
+              />
+            ))}
+          </div>
+        )}
+        {activeTab === 'motion' && (
+          <div className={styles.libList}>
+            {listPresets().map((preset) => (
+              <button
+                key={preset.name}
+                type="button"
+                className={styles.libMotionItem}
+                title={`Apply: ${preset.name}`}
+                onClick={() => {
+                  const sel = useSelectionStore.getState().ids;
+                  if (sel[0]) {
+                    applyPresetByName(sel[0], preset.name, 0);
+                    useUIStore.getState().notify({ level: 'success', message: `Applied "${preset.name}"`, durationMs: 2000 });
+                  } else {
+                    useUIStore.getState().notify({ level: 'warning', message: 'Select a layer first', durationMs: 2000 });
+                  }
+                }}
+              >
+                <Icon name="play" size={13} />
+                <span>{preset.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }
 
@@ -276,8 +691,9 @@ function InspectorContent({ nodeId }: { nodeId: string | null }): JSX.Element {
 
 export function getSidebarRenderers(): Record<string, () => ReactNode> {
   return {
-    scene: () => <ScenePanel />,
-    assets: () => <AssetsPanel />,
+    scene:     () => <ScenePanel />,
+    assets:    () => <AssetsPanel />,
+    libraries: () => <LibrariesPanel />,
   };
 }
 
@@ -286,7 +702,9 @@ export function getInspectorRenderers(): Record<string, () => ReactNode> {
     properties: () => <PropertiesPanel />,
     motion: () => <MotionEditorPanel />,
     effects: () => <EffectsPanel />,
+    effectControls: () => <EffectControlsPanel />,
     comments: () => <CommentsPanel />,
     history: () => <HistoryPanel />,
+    renderQueue: () => <RenderQueuePanel />,
   };
 }

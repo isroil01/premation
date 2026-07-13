@@ -12,7 +12,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 34px;
+  height: 30px;
   padding: 0 var(--space-2) 0 var(--space-3);
 }
 
@@ -45,12 +45,18 @@
   align-items: baseline;
   gap: var(--space-2);
   padding: 3px var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
+  border-radius: 0;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border);
   max-width: 320px;
   min-width: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
+
+.comp:hover { border-color: var(--color-border-strong); background: var(--color-surface-1); }
 
 .compIcon {
   color: var(--color-text-tertiary);
@@ -94,7 +100,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  height: 40px;
+  height: 36px;
   padding: 0 var(--space-3);
   border-top: 1px solid var(--color-border-subtle);
   background: var(--color-surface-1);
@@ -118,29 +124,42 @@
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   color: var(--color-text-secondary);
   border: 1px solid transparent;
   cursor: pointer;
   transition: var(--motion-hover-transition);
+  position: relative;
 }
 
 .tool:hover {
   background: var(--color-surface-3);
   color: var(--color-text-primary);
-  border-color: var(--color-border-subtle);
+  border-color: transparent;
 }
 
-/* Active tool — accent tint, glowing border */
+/* Active tool — blue bottom-edge line, white icon */
 .toolActive {
   width: 28px;
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   cursor: pointer;
   transition: var(--motion-hover-transition);
-  background: var(--color-primary-subtle);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid transparent;
+  position: relative;
+}
+
+.toolActive::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-primary);
+  border-radius: 0;
 }

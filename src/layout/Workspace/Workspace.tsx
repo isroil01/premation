@@ -1,24 +1,36 @@
 /**
  * Workspace / WorkspaceViewport — the central editor viewport.
  *
- * React owns only the DOM (a content canvas, an interaction overlay canvas, and
- * the stage). All interaction — camera pan/zoom, tool behavior, selection,
- * hit-testing, snapping — is handled by the framework-independent
- * `@motion/workspace` engine, driven through {@link useWorkspace}. This file is
- * pure wiring: mount the canvases, forward viewport-scoped keys, and expose the
- * zoom controls bound to the engine camera.
+ * Structure (AE-style):
+ *   ┌──────────────────────────────────────────────────────────┐
+ *   │ ViewportHeader  (comp name · W×H · FPS · BG · zoom)     │ ← 28px
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │                                                          │
+ *   │   Stage (dot-grid / checkerboard void)                   │
+ *   │     ┌──────────────────────────┐                        │
+ *   │     │  Composition canvas      │  ← framed with shadow  │
+ *   │     │  (canvas + overlay)      │                        │
+ *   │     └──────────────────────────┘                        │
+ *   │                                                          │
+ *   │  [TL overlay]              [TR overlay]                  │
+ *   │  [BL: info bar]            [BR: zoom controls]          │
+ *   │          [BC: AI prompt]                                 │
+ *   └──────────────────────────────────────────────────────────┘
+ *
+ * Interaction and rendering are handled by the framework-independent
+ * `@motion/workspace` engine via {@link useWorkspace}.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode, type KeyboardEvent } from 'react';
+import { useCallback, useRef, type ReactNode, type KeyboardEvent } from 'react';
 import { cn } from '@utils/cn';
-import { IconButton } from '@components/IconButton';
-import { Icon } from '@components/Icon';
 import { keyFrom } from '@motion/workspace';
 import { useActiveWorkspace } from '@stores/workspaceStore';
 import { useSceneRevision } from '@stores/sceneStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { AiPromptBar } from './AiPromptBar';
 import { AiSuggestionCard } from './AiSuggestionCard';
+import { ViewportHeader } from './ViewportHeader';
 import { FocusBreadcrumb } from '@layout/focus/FocusBreadcrumb';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { useWorkspace } from './useWorkspace';
@@ -32,17 +44,10 @@ export interface WorkspaceViewportProps {
   className?: string;
 }
 
-/** Keys the viewport handles directly (pan/nudge/delete); everything else
- *  falls through to global shortcuts and the tool bar. */
+/** Keys the viewport handles directly. */
 const VIEWPORT_KEYS = new Set([
-  'Space',
-  'Delete',
-  'Backspace',
-  'Escape',
-  'ArrowLeft',
-  'ArrowRight',
-  'ArrowUp',
-  'ArrowDown',
+  'Space', 'Delete', 'Backspace', 'Escape',
+  'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
 ]);
 
 export function WorkspaceViewport({
@@ -52,11 +57,15 @@ export function WorkspaceViewport({
   bottomRight,
   className,
 }: WorkspaceViewportProps): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
+  const time     = useActiveWorkspace()?.time ?? 0;
   const sceneRev = useSceneRevision((s) => s.rev);
+  const transparent = useCompositionStore((s) => s.transparent);
+  const compW    = useCompositionStore((s) => s.width);
+  const compH    = useCompositionStore((s) => s.height);
+  const compFps  = useCompositionStore((s) => s.fps);
 
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stageRef   = useRef<HTMLDivElement | null>(null);
+  const canvasRef  = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const { focus, focusKey } = useFocusContext();
 
@@ -93,7 +102,7 @@ export function WorkspaceViewport({
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = e.code === 'ArrowLeft' ? -step : e.code === 'ArrowRight' ? step : 0;
-        const dy = e.code === 'ArrowUp' ? -step : e.code === 'ArrowDown' ? step : 0;
+        const dy = e.code === 'ArrowUp'   ? -step : e.code === 'ArrowDown'  ? step : 0;
         controller.nudgeSelection(dx, dy);
         break;
       }
@@ -105,65 +114,61 @@ export function WorkspaceViewport({
   }, []);
 
   return (
-    <div
-      className={cn(styles.root, className)}
-      data-workspace-viewport=""
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      onKeyUp={onKeyUp}
-    >
-      <div className={styles.stage} ref={stageRef}>
-        <canvas ref={canvasRef} className={styles.canvas} />
-        <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
-      </div>
+    <div className={cn(styles.wrapper, className)}>
+      {/* AE-style composition panel header */}
+      <ViewportHeader />
 
-      <div className={styles.overlayTL}>{topLeft}</div>
-      <div className={styles.overlayTR}>{topRight}</div>
-      <div className={styles.overlayBL}>{bottomLeft}</div>
-      <div className={styles.overlayBR}>{bottomRight ?? <ViewportZoomControls />}</div>
-      <div className={styles.overlayBC}><AiPromptBar /></div>
-
-      <AiSuggestionCard />
-      <FocusBreadcrumb />
-    </div>
-  );
-}
-
-/** Zoom controls bound to the engine camera (live %, in/out, fit). */
-export function ViewportZoomControls(): JSX.Element {
-  const [percent, setPercent] = useState(() => getWorkspaceController().zoomPercent());
-
-  useEffect(() => {
-    const ws = getWorkspaceController().ws;
-    const sync = (): void => setPercent(getWorkspaceController().zoomPercent());
-    const subZoom = ws.events.on('ZoomChanged', sync);
-    const subView = ws.events.on('ViewportChanged', sync);
-    sync();
-    return () => {
-      subZoom.dispose();
-      subView.dispose();
-    };
-  }, []);
-
-  return (
-    <div className={styles.zoomBar}>
-      <IconButton aria-label="Zoom out" size="sm" onClick={() => getWorkspaceController().zoomOut()}>
-        <Icon name="zoom-out" size={14} />
-      </IconButton>
-      <button
-        type="button"
-        className={styles.zoomLabel}
-        title="Reset to 100%"
-        onClick={() => getWorkspaceController().setZoomPercent(100)}
+      {/* Canvas viewport */}
+      <div
+        className={styles.root}
+        data-workspace-viewport=""
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
       >
-        {percent}%
-      </button>
-      <IconButton aria-label="Zoom in" size="sm" onClick={() => getWorkspaceController().zoomIn()}>
-        <Icon name="zoom-in" size={14} />
-      </IconButton>
-      <IconButton aria-label="Fit composition" size="sm" onClick={() => getWorkspaceController().fitComposition()}>
-        <Icon name="fit" size={14} />
-      </IconButton>
+        <div
+          className={transparent ? styles.stageTransparent : styles.stage}
+          ref={stageRef}
+        >
+          <canvas ref={canvasRef}  className={styles.canvas}  />
+          <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
+        </div>
+
+        {/* Corner overlays */}
+        <div className={styles.overlayTL}>{topLeft}</div>
+        <div className={styles.overlayTR}>{topRight}</div>
+        <div className={styles.overlayBL}>
+          {bottomLeft ?? <ViewportInfoBar compW={compW} compH={compH} fps={compFps} transparent={transparent} />}
+        </div>
+        <div className={styles.overlayBR}>{bottomRight}</div>
+        <div className={styles.overlayBC}><AiPromptBar /></div>
+
+        <AiSuggestionCard />
+        <FocusBreadcrumb />
+      </div>
     </div>
   );
 }
+
+// ── Viewport info bar (bottom-left) ──────────────────────────────────
+function ViewportInfoBar({
+  compW,
+  compH,
+  fps,
+  transparent,
+}: {
+  compW: number;
+  compH: number;
+  fps: number;
+  transparent: boolean;
+}): JSX.Element {
+  return (
+    <div className={styles.infoBar}>
+      <span className={styles.infoHighlight}>{compW}<span style={{ color: '#444' }}>×</span>{compH}</span>
+      <span>{fps} fps</span>
+      {transparent && <span style={{ color: '#4cdf8e' }}>α</span>}
+    </div>
+  );
+}
+
+// ViewportZoomControls was removed — zoom lives in the ViewportHeader bar.

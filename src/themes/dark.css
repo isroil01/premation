@@ -9,43 +9,43 @@
 [data-theme="dark"],
 :root:not([data-theme]) {
   /* ── Surfaces (elevation by value, not borders) ───────────────── */
-  --color-background:        var(--color-slate-950);
-  --color-surface-0:         var(--color-slate-950);  /* app frame            */
-  --color-surface-1:         var(--color-slate-900);  /* panels               */
-  --color-surface-2:         var(--color-slate-850);  /* controls / raised    */
-  --color-surface-3:         var(--color-slate-800);  /* hover step           */
-  --color-surface-raised:    var(--color-slate-850);  /* popovers / overlays  */
-  --color-panel:             var(--color-slate-900);
-  --color-panel-header:      var(--color-slate-900);
-  --color-toolbar:           var(--color-slate-950);
-  --color-statusbar:         var(--color-slate-950);
-  --color-titlebar:          var(--color-slate-950);
-  --color-workspace:         var(--color-slate-1000); /* canvas void          */
+  --color-background:        #161616;
+  --color-surface-0:         #161616;  /* app frame            */
+  --color-surface-1:         #232323;  /* panels               */
+  --color-surface-2:         #161616;  /* controls / raised    */
+  --color-surface-3:         #333333;  /* hover step           */
+  --color-surface-raised:    #2d2d2d;  /* popovers / overlays  */
+  --color-panel:             #232323;
+  --color-panel-header:      #1d1d1d;
+  --color-toolbar:           #1d1d1d;
+  --color-statusbar:         #1d1d1d;
+  --color-titlebar:          #161616;
+  --color-workspace:         #181818; /* canvas void          */
 
   /* ── Borders & dividers ───────────────────────────────────────── */
   /* Rule: `border` only where two REGIONS meet. Inside panels use
      `border-subtle` hairlines sparingly — rows separate by hover/spacing. */
   /* Alpha seams (decoupled from surface-3) so region edges actually read. */
-  --color-border:            rgba(255, 255, 255, 0.10);
-  --color-border-strong:     rgba(255, 255, 255, 0.18);
-  --color-border-subtle:     rgba(255, 255, 255, 0.07);
-  --color-divider:           rgba(255, 255, 255, 0.07);
+  --color-border:            #161616;
+  --color-border-strong:     #333333;
+  --color-border-subtle:     #1a1a1a;
+  --color-divider:           #1a1a1a;
   /* Recessed-field hairline (Input/Switch/ValueField/etc. inset wells) —
      one step lighter than border-subtle since these sit on the darkest well. */
-  --color-field-border:       var(--color-white-a05);
-  --color-field-border-hover: var(--color-white-a15);
-  --color-splitter:          var(--color-slate-950);
+  --color-field-border:       rgba(255, 255, 255, 0.08);
+  --color-field-border-hover: rgba(255, 255, 255, 0.16);
+  --color-splitter:          #161616;
   --color-splitter-hover:    var(--color-selection);
 
   /* ── Text ─────────────────────────────────────────────────────── */
   /* Neutral off-whites (zero blue). AA-checked on surface-1 (#171718). */
-  --color-text-primary:      #f4f4f5;
-  --color-text-secondary:    #c8c8ca;
-  --color-text-tertiary:     #949497;  /* AA floor — never below 13px text */
-  --color-text-muted:        #6d6d70;  /* decorative / icons only, never body */
-  --color-text-inverse:      var(--color-slate-950);
+  --color-text-primary:      #e1e1e1;
+  --color-text-secondary:    #a6a6a6;
+  --color-text-tertiary:     #7e7e7e;  /* AA floor — never below 13px text */
+  --color-text-muted:        #5a5a5a;  /* decorative / icons only, never body */
+  --color-text-inverse:      #161616;
   --color-text-on-accent:    #ffffff;
-  --color-text-disabled:     var(--color-slate-600);
+  --color-text-disabled:     #444444;
 
   /* ── Interactive states ───────────────────────────────────────── */
   --color-hover:             rgba(255, 255, 255, 0.04);
@@ -55,20 +55,19 @@
   --color-pressed:           rgba(255, 255, 255, 0.08);
   --color-drop-target:       rgba(255, 255, 255, 0.10);
 
-  /* ── Selection (MONOCHROME — a lifted neutral + a crisp white edge.
-     No chromatic accent; colour is reserved for meaning, not chrome) ── */
-  --color-selection:         #f2f2f3;
-  --color-selection-hover:   #ffffff;
+  /* ── Selection (AE Royal Blue highlight) ───────────────────────── */
+  --color-selection:         #2988ff;
+  --color-selection-hover:   #4097ff;
 
-  /* ── Primary === selection. White fill, black text (21:1 premium). ── */
-  --color-primary:           #f2f2f3;
-  --color-primary-hover:     #ffffff;
-  --color-primary-active:    #dcdcde;
-  --color-primary-subtle:    rgba(255, 255, 255, 0.12);  /* selection tint */
-  --color-primary-foreground: #0a0a0a;                    /* black on white */
+  /* ── Primary === selection. Blue fill, white text. ─────────────── */
+  --color-primary:           #2988ff;
+  --color-primary-hover:     #4097ff;
+  --color-primary-active:    #1d75e0;
+  --color-primary-subtle:    rgba(41, 136, 255, 0.15);  /* selection tint */
+  --color-primary-foreground: #ffffff;                    /* white on blue */
 
-  --color-accent:            #f2f2f3;
-  --color-accent-subtle:     rgba(255, 255, 255, 0.12);
+  --color-accent:            #2988ff;
+  --color-accent-subtle:     rgba(41, 136, 255, 0.15);
 
   /* ── Modified / unsaved (the ONLY chrome amber) ───────────────── */
   --color-modified:          var(--color-amber-500);

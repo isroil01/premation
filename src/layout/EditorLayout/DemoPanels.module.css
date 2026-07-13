@@ -99,3 +99,232 @@
   gap: var(--space-2);
   width: 100%;
 }
+
+/* ── AssetsPanel Layout ─────────────────────────────────────────── */
+.assetList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 4px;
+}
+
+.assetItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
+  cursor: default;
+}
+
+.assetItem:hover {
+  background: var(--color-surface-2, #202020);
+  border-color: var(--color-border-subtle, #333);
+}
+
+.assetIcon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  background: var(--color-surface-1, #1a1a1a);
+}
+
+.assetInfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.assetName {
+  font-size: var(--font-size-sm, 12px);
+  color: var(--color-text-secondary, #ccc);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assetMeta {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #777);
+  font-family: var(--font-family-mono, monospace);
+  margin-top: 1px;
+}
+
+.assetActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.assetItem:hover .assetActions {
+  opacity: 1;
+}
+
+.actionButton {
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  transition: color 0.1s, background 0.1s;
+}
+
+.actionButton:hover {
+  color: #fff;
+  background: #333;
+}
+
+.actionButtonAdd {
+  composes: actionButton;
+}
+.actionButtonAdd:hover {
+  color: #2988ff;
+  background: rgba(41, 136, 255, 0.15);
+}
+
+.actionButtonRemove:hover {
+  color: #ff4d4d;
+  background: rgba(255, 77, 77, 0.15);
+}
+
+.fileInput {
+  display: none;
+}
+
+.importBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #2988ff !important;
+  color: #fff !important;
+  border: none !important;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.importBtn:hover {
+  background: #3a98ff !important;
+}
+
+/* ── Libraries panel ─────────────────────────────────────── */
+.libTabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1);
+  flex: none;
+}
+.libTab {
+  padding: 4px 10px;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.libTab:hover { color: var(--color-text-primary); background: var(--color-hover); }
+.libTabActive {
+  composes: libTab;
+  color: var(--color-text-primary);
+  background: var(--color-surface-0);
+  border-color: var(--color-border-subtle);
+  font-weight: 500;
+}
+.libBody {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px;
+  min-height: 0;
+}
+.libGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.libChip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 4px;
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.libChip:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+.libChipLabel {
+  font-size: 10px;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+.libList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.libTextItem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.libTextItem:hover { background: var(--color-surface-3); border-color: var(--color-border-strong); }
+.libTextMeta { font-size: 10px; color: var(--color-text-muted); font-family: var(--font-family-mono); }
+.libMotionItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.libMotionItem:hover {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+}
