@@ -14,7 +14,7 @@ import type { SceneNode, Transform } from '../types';
 import defaultSceneGraph from './DefaultSceneGraph';
 
 /** Scene node "kind" — mirrored into the tree for icon selection. */
-export type SceneKind = 'group' | 'shape' | 'text' | 'image' | 'video';
+export type SceneKind = 'group' | 'null' | 'shape' | 'text' | 'image' | 'video' | 'audio' | 'camera' | 'light' | 'adjustment';
 
 /** Stored on each node so the UI can pick an icon without guessing. */
 export const SCENE_KIND_PROP = '__kind';

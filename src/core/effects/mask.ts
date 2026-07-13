@@ -123,6 +123,89 @@ export function getNodeMask(nodeId: string): LayerMask {
   return (node && readNodeMask(node)) ?? { paths: [] };
 }
 
+// ── Animated mask paths (keyframeable mask shapes) ───────────────────
+
+export interface MaskKeyframe {
+  t: number;
+  mask: LayerMask;
+}
+
+const lerp = (a: number, b: number, f: number): number => a + (b - a) * f;
+
+function lerpPoint(p: MaskPoint, q: MaskPoint, f: number): MaskPoint {
+  return {
+    x: lerp(p.x, q.x, f), y: lerp(p.y, q.y, f),
+    inX: lerp(p.inX, q.inX, f), inY: lerp(p.inY, q.inY, f),
+    outX: lerp(p.outX, q.outX, f), outY: lerp(p.outY, q.outY, f),
+  };
+}
+
+/**
+ * Interpolate an animated mask at time `t`. Paths/points are paired by index and
+ * lerped; a path whose point count differs between keyframes snaps to the nearer
+ * keyframe (no vertex-count morph). Pure. Returns undefined for no keyframes.
+ */
+export function interpolateMask(kfs: ReadonlyArray<MaskKeyframe>, t: number): LayerMask | undefined {
+  if (kfs.length === 0) return undefined;
+  const s = [...kfs].sort((a, b) => a.t - b.t);
+  if (s.length === 1 || t <= s[0]!.t) return s[0]!.mask;
+  if (t >= s[s.length - 1]!.t) return s[s.length - 1]!.mask;
+  let a = s[0]!;
+  let b = s[s.length - 1]!;
+  for (let i = 0; i < s.length - 1; i++) {
+    if (t >= s[i]!.t && t <= s[i + 1]!.t) { a = s[i]!; b = s[i + 1]!; break; }
+  }
+  const f = (t - a.t) / ((b.t - a.t) || 1);
+  const paths = a.mask.paths.map((pa, i) => {
+    const pb = b.mask.paths[i];
+    if (!pb || pb.points.length !== pa.points.length) return f < 0.5 ? pa : (pb ?? pa);
+    return { ...pa, points: pa.points.map((pt, j) => lerpPoint(pt, pb.points[j]!, f)) };
+  });
+  return { paths };
+}
+
+/** Read the node's mask keyframes (empty when none). */
+export function readNodeMaskAnim(node: SceneNode): MaskKeyframe[] {
+  const fx = node.components.find((c) => c.type === 'fx');
+  const raw = (fx?.props as Record<string, unknown> | undefined)?.maskAnim;
+  return Array.isArray(raw) ? (raw as MaskKeyframe[]) : [];
+}
+
+/** True when the mask is animated. */
+export function hasMaskAnim(node: SceneNode): boolean {
+  return readNodeMaskAnim(node).length > 0;
+}
+
+/** The mask to render at time `t` — the interpolated animated shape when the
+ *  mask is keyframed, else the static mask. */
+export function readNodeMaskAt(node: SceneNode, t: number): LayerMask | undefined {
+  const anim = readNodeMaskAnim(node);
+  if (anim.length > 0) {
+    const m = interpolateMask(anim, t);
+    return m && m.paths.length > 0 ? m : undefined;
+  }
+  return readNodeMask(node);
+}
+
+/** Keyframe the layer's current mask shape at time `t` (replaces same-t kf). */
+export function keyframeMask(nodeId: string, t: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const mask = readNodeMaskAt(node, t) ?? readNodeMask(node);
+  if (!mask || mask.paths.length === 0) return;
+  const kfs = readNodeMaskAnim(node).filter((k) => Math.abs(k.t - t) > 1e-4);
+  kfs.push({ t, mask });
+  kfs.sort((a, b) => a.t - b.t);
+  defaultSceneGraph.setMaskAnim(nodeId, kfs);
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/** Remove all mask keyframes (mask reverts to its static shape). */
+export function clearMaskAnim(nodeId: string): void {
+  defaultSceneGraph.setMaskAnim(nodeId, undefined);
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
 function writeNodeMask(nodeId: string, mask: LayerMask): void {
   defaultSceneGraph.setMask(nodeId, mask.paths.length > 0 ? mask : undefined);
   getEventBus().emit('AnimationChanged', { nodeId });

@@ -6,10 +6,13 @@
  */
 
 // ── Types ─────────────────────────────────────────────────────────
-export type { Vec2, Size, Matrix2D, BlendMode, Metadata, Timestamp, NodeId } from './types';
+export type { Vec2, Vec3, Size, Matrix2D, Matrix4, BlendMode, Metadata, Timestamp, NodeId } from './types';
 
 // ── Math / utils ──────────────────────────────────────────────────
 export * as Matrix from './utils/matrix';
+export * as Matrix4Math from './utils/matrix4';
+export * as Project3D from './utils/project3d';
+export type { Camera3D, Projected } from './utils/project3d';
 export { uuid, newNodeId } from './utils/id';
 
 // ── Events ────────────────────────────────────────────────────────
@@ -72,7 +75,7 @@ export {
 
 // ── Systems ───────────────────────────────────────────────────────
 export { dfs, bfs, descendants, visit, countNodes, type Visitor } from './systems/traversal';
-export { updateWorldTransforms, computeWorldMatrix } from './systems/TransformSystem';
+export { updateWorldTransforms, computeWorldMatrix, computeWorldMatrix4 } from './systems/TransformSystem';
 
 // ── Interop (bridges for loose-props / id-graph consumers) ────────
 export {

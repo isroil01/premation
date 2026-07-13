@@ -27,10 +27,14 @@ const ENGINE_TRANSFORM = 'transform'; // the engine's mandatory (lowercase) Tran
 
 const KIND_TO_ENGINE_TYPE: Record<string, string> = {
   group: 'group',
+  null: 'group',
   shape: 'rectangle',
   text: 'text',
   image: 'image',
   video: 'video',
+  camera: 'group',
+  light: 'group',
+  adjustment: 'rectangle',
 };
 
 function kindOfPlain(node: SceneNode): string {
@@ -175,6 +179,51 @@ export class SceneGraph {
     if (ce) ce.custom.parentId = parentId;
   }
 
+  /** Relink `childId` under `newParentId` (or a root when null), keeping both
+   *  the old and new parents' child lists consistent. Transform is untouched —
+   *  callers that want "reparent without moving" compensate the local transform. */
+  setParent(childId: ID, newParentId: ID | null): void {
+    const ce = this.engine(childId);
+    if (!ce) return;
+    const oldParentId = ce.custom.parentId as ID | null;
+    if (oldParentId) {
+      const oe = this.engine(oldParentId);
+      if (oe && Array.isArray(oe.custom.childIds)) {
+        oe.custom.childIds = (oe.custom.childIds as ID[]).filter((c) => c !== childId);
+      }
+    }
+    ce.custom.parentId = newParentId ?? null;
+    if (newParentId) {
+      const pe = this.engine(newParentId);
+      if (pe) {
+        const kids = (pe.custom.childIds as ID[]) ?? (pe.custom.childIds = []);
+        if (!kids.includes(childId)) kids.push(childId);
+      }
+    }
+  }
+
+  /** Write a node's local transform onto the data component carrying x/y (the
+   *  Transform component); `node.transform` derives from it automatically. */
+  setLocalTransform(
+    nodeId: ID,
+    t: { x: number; y: number; rotation: number; scaleX?: number; scaleY?: number },
+  ): void {
+    const e = this.engine(nodeId);
+    if (!e) return;
+    let target: DataComponent | undefined;
+    for (const c of e.componentList()) {
+      if (c.type === ENGINE_TRANSFORM) continue;
+      const dc = c as DataComponent;
+      if (typeof dc.data.x === 'number') { target = dc; break; }
+    }
+    if (!target) return;
+    target.set('x', t.x);
+    target.set('y', t.y);
+    target.set('rotation', t.rotation);
+    if (t.scaleX !== undefined) target.set('scaleX', t.scaleX);
+    if (t.scaleY !== undefined) target.set('scaleY', t.scaleY);
+  }
+
   removeNode(id: ID): void {
     const e = this.engine(id);
     if (!e) return;
@@ -254,6 +303,11 @@ export class SceneGraph {
     this.setFx(nodeId, 'mask', mask);
   }
 
+  /** Store animated mask keyframes on its `fx` (undefined clears them). */
+  setMaskAnim(nodeId: ID, keyframes: unknown): void {
+    this.setFx(nodeId, 'maskAnim', keyframes);
+  }
+
   /** Store the layer's track-matte type on its `fx` component (undefined clears). */
   setMatte(nodeId: ID, matte: unknown): void {
     this.setFx(nodeId, 'matte', matte);
@@ -269,6 +323,56 @@ export class SceneGraph {
     this.setFx(nodeId, 'motionBlur', on);
   }
 
+  /** Toggle auto-orient (rotate along the motion path) on its `fx` component. */
+  setAutoOrient(nodeId: ID, on: unknown): void {
+    this.setFx(nodeId, 'autoOrient', on);
+  }
+
+  /** Store the layer's shape-repeater config on its `fx` (undefined clears it). */
+  setRepeater(nodeId: ID, repeater: unknown): void {
+    this.setFx(nodeId, 'repeater', repeater);
+  }
+
+  /** Store the layer's trim-path config on its `fx` (undefined clears it). */
+  setTrimPath(nodeId: ID, trim: unknown): void {
+    this.setFx(nodeId, 'trim', trim);
+  }
+
+  /** Store the layer's path-operator config on its `fx` (undefined clears it). */
+  setPathOp(nodeId: ID, op: unknown): void {
+    this.setFx(nodeId, 'pathOp', op);
+  }
+
+  /** Flag a group as a precomp (composite its subtree as one unit). */
+  setPrecomp(nodeId: ID, on: unknown): void {
+    this.setFx(nodeId, 'precomp', on);
+  }
+
+  /** Store the layer's fill paint on its `fx` component (undefined clears it). */
+  setFill(nodeId: ID, fill: unknown): void {
+    this.setFx(nodeId, 'fill', fill);
+  }
+
+  /** Store the layer's stroke on its `fx` component (undefined clears it). */
+  setStroke(nodeId: ID, stroke: unknown): void {
+    this.setFx(nodeId, 'stroke', stroke);
+  }
+
+  /** Flag the layer as a full-frame solid on its `fx` component. */
+  setSolid(nodeId: ID, on: unknown): void {
+    this.setFx(nodeId, 'solid', on);
+  }
+
+  /** Store the layer's time controls (stretch/reverse/freeze) on its `fx`. */
+  setLayerTime(nodeId: ID, time: unknown): void {
+    this.setFx(nodeId, 'time', time);
+  }
+
+  /** Store the layer's Photoshop-style layer styles (shadow/glow) on its `fx`. */
+  setLayerStyles(nodeId: ID, styles: unknown): void {
+    this.setFx(nodeId, 'layerStyles', styles);
+  }
+
   /** Write a single key onto the node's `fx` component (created on demand). */
   private setFx(nodeId: ID, key: string, value: unknown): void {
     const e = this.engine(nodeId);
@@ -279,6 +383,10 @@ export class SceneGraph {
       e.addComponent(fx);
     }
     fx.set(key, value);
+  }
+
+  clear(): void {
+    this.scene = new Scene();
   }
 
   // Compute world transforms (naive additive; retained for API parity).

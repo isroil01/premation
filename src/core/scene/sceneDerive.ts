@@ -36,10 +36,15 @@ export function flattenScene(graph: SceneGraph): SceneNode[] {
  */
 export const KIND_COLOR: Record<SceneKind, string> = {
   group: 'var(--color-category-null)',
+  null: 'var(--color-category-null)',
   shape: 'var(--color-category-shape)',
   text: 'var(--color-category-text)',
   image: 'var(--color-category-image)',
   video: 'var(--color-category-video)',
+  audio: 'var(--color-category-audio, var(--color-category-video))',
+  camera: 'var(--color-category-camera)',
+  light: 'var(--color-category-light)',
+  adjustment: 'var(--color-category-3d)',
 };
 
 /**
@@ -48,10 +53,15 @@ export const KIND_COLOR: Record<SceneKind, string> = {
  */
 export const KIND_FILL: Record<SceneKind, string> = {
   group: '#94a3b8',
+  null: '#94a3b8',
   shape: '#14b8a6',
   text: '#60a5fa',
   image: '#f59e0b',
   video: '#f43f5e',
+  audio: '#22d3ee',
+  camera: '#38bdf8',
+  light: '#fbbf24',
+  adjustment: '#a78bfa',
 };
 
 /**
@@ -60,8 +70,13 @@ export const KIND_FILL: Record<SceneKind, string> = {
  */
 export const KIND_ICON: Record<SceneKind, string> = {
   group: 'folder',
+  null: 'crosshair',
   shape: 'shape',
   text: 'type',
   image: 'image',
   video: 'video',
+  audio: 'audio',
+  camera: 'camera',
+  light: 'light',
+  adjustment: 'adjustment',
 };

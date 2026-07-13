@@ -9,11 +9,30 @@ export interface Vec2 {
   y: number;
 }
 
+/** A 3D vector / point. */
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
 /** A 2D size. */
 export interface Size {
   width: number;
   height: number;
 }
+
+/**
+ * A 4x4 matrix in **column-major** order (WebGL / gl-matrix convention):
+ * `index = col * 4 + row`, translation in indices 12/13/14. Used for 3D (and
+ * lifted-2D) transforms. See `../utils/matrix4`.
+ */
+export type Matrix4 = [
+  number, number, number, number,
+  number, number, number, number,
+  number, number, number, number,
+  number, number, number, number,
+];
 
 /**
  * A 2D affine transform in the canonical 6-value form (same convention as

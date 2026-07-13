@@ -4,9 +4,10 @@
  * ancestor's transform, changed (dirty propagation). Reads are then O(1).
  */
 
-import type { Matrix2D } from '../types';
+import type { Matrix2D, Matrix4 } from '../types';
 import type { SceneNode } from '../nodes/SceneNode';
 import { multiply } from '../utils/matrix';
+import { multiply as multiply4, clone as cloneMat4 } from '../utils/matrix4';
 
 function copyInto(src: Readonly<Matrix2D>, dst: Matrix2D): void {
   dst.a = src.a; dst.b = src.b; dst.c = src.c; dst.d = src.d; dst.e = src.e; dst.f = src.f;
@@ -46,6 +47,24 @@ export function computeWorldMatrix(node: SceneNode, out?: Matrix2D): Matrix2D {
   copyInto(first.transform.getLocalMatrix(), result);
   for (let i = 1; i < path.length; i++) {
     multiply(result, (path[i] as SceneNode).transform.getLocalMatrix(), result);
+  }
+  return result;
+}
+
+/**
+ * Compute a single node's world **4x4** matrix by composing its 4x4 locals
+ * along the path from the root. Every local is either a true 3D compose or a
+ * lifted-2D affine (see {@link import('../components/TransformComponent')}),
+ * so a 3D node nested under 2D ancestors composes correctly and uniformly.
+ * Lazy and allocation-cheap; used by the renderer for 3D layers only.
+ */
+export function computeWorldMatrix4(node: SceneNode): Matrix4 {
+  const path = node.path(); // root → node
+  const first = path[0];
+  if (!first) return cloneMat4(node.transform.getLocalMatrix4() as Matrix4);
+  const result: Matrix4 = cloneMat4(first.transform.getLocalMatrix4() as Matrix4);
+  for (let i = 1; i < path.length; i++) {
+    multiply4(result, (path[i] as SceneNode).transform.getLocalMatrix4() as Matrix4, result);
   }
   return result;
 }
