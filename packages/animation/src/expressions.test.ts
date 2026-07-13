@@ -69,4 +69,17 @@ describe('compileExpression', () => {
     const e = compileExpression('   ');
     expect(e.run({ time: 0, value: 0 })).toEqual({ value: null, error: null });
   });
+
+  it('audio accessor reads the context amplitude (0 when absent)', () => {
+    const e = compileExpression('value + audio * 100');
+    expect(e.run({ time: 0, value: 10, audio: 0.5 }).value).toBe(60);
+    expect(e.run({ time: 0, value: 10 }).value).toBe(10);
+  });
+
+  it('ctrl() reads named slider controls (0 when no provider)', () => {
+    const e = compileExpression("value + ctrl('Speed') * 2");
+    const ctrl = (name: string): number => (name === 'Speed' ? 25 : 0);
+    expect(e.run({ time: 0, value: 10, ctrl }).value).toBe(60);
+    expect(e.run({ time: 0, value: 10 }).value).toBe(10);
+  });
 });

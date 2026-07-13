@@ -30,6 +30,9 @@ export interface Keyframe {
   easing?: EasingKind;
   /** Control points when `easing === 'bezier'`. */
   bezier?: BezierHandles;
+  /** Roving: the keyframe's TIME is auto-positioned between its anchor
+   *  neighbours for constant speed (its value is unchanged). Ends can't rove. */
+  roving?: boolean;
 }
 
 export interface PropertyTrack {

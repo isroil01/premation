@@ -11,19 +11,23 @@
 import { Workspace, Rect, commands, type CommandPort } from '@motion/workspace';
 import type { Tool as UITool } from '@stores/uiStore';
 import type { RenderView } from '@core/rendering/RenderBackend';
-import { COMP_WIDTH, COMP_HEIGHT } from '@core/rendering/buildSnapshot';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import { createSceneGraphPort, createSelectionPort, createCommandPort } from './ports';
 
 /** Map the app's tool-bar tools onto engine tool ids. */
 const TOOL_MAP: Record<UITool, string> = {
   select: 'select',
   move: 'move',
+  hand: 'hand',
+  zoom: 'zoom',
   rotate: 'select', // rotate happens via the selection rotate handle
   scale: 'select', // scale happens via the selection resize handles
   pen: 'pen',
   text: 'text',
   shape: 'rectangle',
+  ellipse: 'ellipse',
+  'direct-select': 'direct-select',
 };
 
 export class WorkspaceController {
@@ -105,7 +109,8 @@ export class WorkspaceController {
 
   /** Frame the whole composition in the viewport. */
   fitComposition(padding = 48): void {
-    this.ws.zoomToFit(Rect.rect(0, 0, COMP_WIDTH, COMP_HEIGHT), padding);
+    const { width, height } = useCompositionStore.getState();
+    this.ws.zoomToFit(Rect.rect(0, 0, width, height), padding);
   }
 
   /** Frame the current selection (falls back to fit-all). */

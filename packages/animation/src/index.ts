@@ -18,7 +18,11 @@ export type {
 } from './types';
 
 // ── Interpolation / sampling ──────────────────────────────────────
-export { cubicBezierEase, ease, sampleTrack, upsertKeyframe } from './interpolate';
+export {
+  cubicBezierEase, ease, sampleTrack, upsertKeyframe,
+  sampleSpeed, applyRoving,
+  EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER,
+} from './interpolate';
 
 // ── Expressions ───────────────────────────────────────────────────
 export {
@@ -42,4 +46,4 @@ export type { KeyframeRefParts } from './keyframeId';
 
 // ── Engine ────────────────────────────────────────────────────────
 export { AnimationEngine, defaultAnimation } from './AnimationEngine';
-export type { AnimSnapshot, AnimationChangeListener } from './AnimationEngine';
+export type { AnimSnapshot, AnimationChangeListener, AudioLevelProvider, ControlProvider } from './AnimationEngine';

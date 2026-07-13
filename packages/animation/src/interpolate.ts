@@ -77,6 +77,63 @@ export function sampleTrack(track: PropertyTrack, t: number): number | undefined
   return last.value;
 }
 
+/**
+ * Sample the track's SPEED (value units per second) at time `t` — the slope of
+ * the value curve, via a symmetric finite difference. Feeds the speed-graph
+ * view. Returns 0 for an empty/flat track or outside the keyframe range.
+ */
+export function sampleSpeed(track: PropertyTrack, t: number, dt = 1 / 240): number {
+  const a = sampleTrack(track, t - dt);
+  const b = sampleTrack(track, t + dt);
+  if (a === undefined || b === undefined) return 0;
+  return (b - a) / (2 * dt);
+}
+
+/** After Effects "Easy Ease" — cubic bezier with ~33% influence each side. */
+export const EASY_EASE_BEZIER: BezierHandles = [1 / 3, 0, 2 / 3, 1];
+/** Easy Ease Out only (fast-in, ease to a stop). */
+export const EASY_EASE_OUT_BEZIER: BezierHandles = [0, 0, 2 / 3, 1];
+/** Easy Ease In only (ease from a stop, fast-out). */
+export const EASY_EASE_IN_BEZIER: BezierHandles = [1 / 3, 0, 1, 1];
+
+/**
+ * Reposition roving keyframes for constant speed. A maximal run of `roving`
+ * keyframes bounded by two non-roving anchors is retimed so each keyframe sits
+ * at the fraction of the time span equal to its cumulative |value| distance
+ * from the start anchor — i.e. the value moves at a constant rate through them.
+ * Values are never changed; end keyframes (no bounding anchor) never rove. Pure.
+ */
+export function applyRoving(kfs: Keyframe[]): Keyframe[] {
+  if (kfs.length < 3) return kfs.map((k) => ({ ...k }));
+  const out = kfs.map((k) => ({ ...k }));
+  let i = 0;
+  while (i < out.length) {
+    if (!out[i]!.roving) { i++; continue; }
+    const startAnchor = i - 1;
+    let j = i;
+    while (j < out.length && out[j]!.roving) j++;
+    const endAnchor = j; // first non-roving after the run
+    if (startAnchor < 0 || endAnchor >= out.length) { i = j; continue; } // unbounded run
+    const a = out[startAnchor]!;
+    const b = out[endAnchor]!;
+    const run = out.slice(i, endAnchor);
+    const seq = [a, ...run, b];
+    let total = 0;
+    const cum: number[] = [0];
+    for (let k = 1; k < seq.length; k++) {
+      total += Math.abs(seq[k]!.value - seq[k - 1]!.value);
+      cum.push(total);
+    }
+    const tSpan = b.t - a.t;
+    for (let k = 0; k < run.length; k++) {
+      const frac = total > 0 ? cum[k + 1]! / total : (k + 1) / (run.length + 1);
+      out[i + k]!.t = a.t + frac * tSpan;
+    }
+    i = j;
+  }
+  return out;
+}
+
 /** Insert or replace a keyframe at time `t`, keeping the list sorted. */
 export function upsertKeyframe(kfs: Keyframe[], kf: Keyframe): Keyframe[] {
   const next = kfs.filter((k) => k.t !== kf.t);

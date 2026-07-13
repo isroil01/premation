@@ -1,8 +1,16 @@
-import { app, BrowserWindow, shell, ipcMain, dialog, Menu, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol, net, type MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const isDev = process.env.NODE_ENV === 'development';
+
+// Add ANGLE flag for hardware-accelerated GPU graphics
+app.commandLine.appendSwitch('use-angle', 'default');
+
+// Privileged local-file protocol for assets in Electron
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'local-file', privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, stream: true } }
+]);
 
 const PROJECT_FILTERS = [
   { name: 'Motion Project', extensions: ['motion', 'json'] },
@@ -42,6 +50,27 @@ function registerFileIpc(): void {
   ipcMain.handle('file:write', async (_event, filePath: string, contents: string) => {
     await writeFile(filePath, contents, 'utf8');
   });
+
+  ipcMain.handle('window:minimize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    win?.minimize();
+  });
+
+  ipcMain.handle('window:maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
+    }
+  });
+
+  ipcMain.handle('window:close', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    win?.close();
+  });
+
+  ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('app:quit', () => app.quit());
 }
 
 /**
@@ -104,12 +133,13 @@ function createMainWindow(): BrowserWindow {
     title: 'Motion Editor',
     backgroundColor: '#0a0a0b',
     show: false,
-    autoHideMenuBar: true, // native menu available via Alt / macOS bar; app has its own bar too
+    autoHideMenuBar: true,
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -133,6 +163,17 @@ function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  // Protocol handler to resolve local files under the local-file:// scheme
+  protocol.handle('local-file', (request) => {
+    let filePath = request.url.replace(/^local-file:\/\//, '');
+    filePath = decodeURIComponent(filePath);
+    // On Windows, local-file://C:/... sometimes retains a slash or format that needs normalize/file URL format
+    if (process.platform === 'win32') {
+      filePath = filePath.replace(/^\/([A-Za-z]:)/, '$1');
+    }
+    return net.fetch('file://' + filePath);
+  });
+
   registerFileIpc();
   createMainWindow();
 

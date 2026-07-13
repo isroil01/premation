@@ -23,6 +23,7 @@ import {
   type DeleteNodesPayload,
   type ResizeNodePayload,
   type RotateNodePayload,
+  type UpdateNodePathPayload,
 } from '@motion/workspace';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
@@ -52,6 +53,7 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
     locked: !!node.locked,
     zIndex,
     hitTestLocal: makeHitTestLocal(g),
+    pathPoints: node.components.find((c) => c.type === 'Geometry')?.props.points as import('@motion/workspace').BezierPoint[] | undefined,
   };
 }
 
@@ -111,7 +113,7 @@ const KIND_FOR_CREATE: Record<string, SceneKind> = {
 
 let createSeq = 0;
 
-function makeNodeAt(kind: SceneKind, name: string, cx: number, cy: number, ellipse: boolean): SceneNode {
+function makeNodeAt(kind: SceneKind, name: string, cx: number, cy: number, ellipse: boolean, points?: import('@motion/workspace').BezierPoint[]): SceneNode {
   const id = `${kind}_${(createSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
   const displayName = ellipse ? 'Circle' : name;
   const transform = { position: { x: cx, y: cy }, rotation: 0, scale: { x: 1, y: 1 } };
@@ -125,6 +127,11 @@ function makeNodeAt(kind: SceneKind, name: string, cx: number, cy: number, ellip
           { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: kind, x: cx, y: cy, rotation: 0 } },
           { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
         ];
+
+  if (kind === 'shape' && points) {
+    components.push({ id: `${id}_g`, type: 'Geometry', props: { points } });
+  }
+
   return { id, name: displayName, parent: null, children: [], transform, visible: true, locked: false, components };
 }
 
@@ -162,7 +169,7 @@ function createNode(payload: CreateNodePayload): void {
     payload.kind === 'Ellipse' ||
     (kind === 'shape' && Math.abs(payload.bounds.width - payload.bounds.height) < 8 && payload.bounds.width > 0);
   const rootId = defaultSceneGraph.getRoots()[0]?.id ?? ('comp_root' as ID);
-  const node = makeNodeAt(kind, payload.kind, cx, cy, ellipse);
+  const node = makeNodeAt(kind, payload.kind, cx, cy, ellipse, payload.points);
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
@@ -203,6 +210,16 @@ function deleteNodes(payload: DeleteNodesPayload): void {
   bumpScene();
 }
 
+function updateNodePath(payload: UpdateNodePathPayload): void {
+  const node = defaultSceneGraph.getNode(payload.id as ID);
+  if (!node || node.locked) return;
+  const geomComponent = node.components.find((c) => c.type === 'Geometry');
+  if (geomComponent) {
+    defaultSceneGraph.writeProp(node.id, geomComponent.id, 'points', payload.points);
+    bumpScene();
+  }
+}
+
 export function createCommandPort(): CommandPort {
   return {
     execute(command: WorkspaceCommand): void {
@@ -221,6 +238,9 @@ export function createCommandPort(): CommandPort {
           break;
         case WorkspaceCommandType.DeleteNodes:
           deleteNodes(command.payload as DeleteNodesPayload);
+          break;
+        case WorkspaceCommandType.UpdateNodePath:
+          updateNodePath(command.payload as UpdateNodePathPayload);
           break;
         default:
           break;

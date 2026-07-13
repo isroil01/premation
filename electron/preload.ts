@@ -7,7 +7,7 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 
-contextBridge.exposeInMainWorld('motionEditor', {
+const bridge = {
   platform: process.platform,
   version: process.versions.electron,
 
@@ -21,9 +21,23 @@ contextBridge.exposeInMainWorld('motionEditor', {
     write: (filePath: string, contents: string) => ipcRenderer.invoke('file:write', filePath, contents),
   },
 
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+  },
+
+  app: {
+    quit: () => ipcRenderer.invoke('app:quit'),
+    version: () => ipcRenderer.invoke('app:version'),
+  },
+
   onMenuCommand: (handler: (commandId: string) => void) => {
     const listener = (_event: unknown, commandId: string): void => handler(commandId);
     ipcRenderer.on('menu:command', listener);
     return () => ipcRenderer.removeListener('menu:command', listener);
   },
-});
+};
+
+contextBridge.exposeInMainWorld('motionEditor', bridge);
+contextBridge.exposeInMainWorld('electronAPI', bridge);

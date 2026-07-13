@@ -36,6 +36,7 @@ export const APP_EVENTS = [
   'SelectionChanged',
 
   // Scene graph
+  'SceneGraphChanged',
   'NodeUpdated',
 
   // Animation
@@ -81,11 +82,11 @@ export interface AppEventPayloads {
   ProjectSaved:    { projectId: string };
   ProjectDirtyChanged: { dirty: boolean };
 
-  SelectionChanged: { ids: ReadonlyArray<string> };
-
+  SelectionChanged: { ids: string[] };
+  SceneGraphChanged: undefined;
   NodeUpdated: { nodeId: string; componentId: string; propName: string; value: unknown };
 
-  AnimationChanged: { nodeId: string };
+  AnimationChanged: { nodeId?: string };
 
   TimelineFocused: undefined;
   TimelineBlurred: undefined;

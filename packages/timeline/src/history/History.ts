@@ -15,17 +15,21 @@ export interface Command {
 export interface HistoryOptions {
   /** Max entries kept before the oldest is dropped (default 200). */
   limit?: number;
+  /** Custom handler to route commands to a global undo stack instead of the local one. */
+  onPush?: (command: Command) => void;
 }
 
 export class History {
   private readonly undoStack: Command[] = [];
   private readonly redoStack: Command[] = [];
   private readonly limit: number;
+  private readonly onPush?: (command: Command) => void;
   private enabled = true;
   private applying = false;
 
   constructor(opts: HistoryOptions = {}) {
     this.limit = opts.limit ?? 200;
+    this.onPush = opts.onPush;
   }
 
   get canUndo(): boolean {
@@ -50,9 +54,14 @@ export class History {
   run(command: Command): void {
     command.do();
     if (!this.enabled || this.applying) return;
-    this.undoStack.push(command);
-    if (this.undoStack.length > this.limit) this.undoStack.shift();
-    this.redoStack.length = 0;
+
+    if (this.onPush) {
+      this.onPush(command);
+    } else {
+      this.undoStack.push(command);
+      if (this.undoStack.length > this.limit) this.undoStack.shift();
+      this.redoStack.length = 0;
+    }
   }
 
   undo(): boolean {

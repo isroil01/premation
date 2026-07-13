@@ -19,6 +19,7 @@ import { getEventBus, setEventBus, EventBus } from '@core/events/EventBus';
 import {
   getCommandRegistry,
   type Command,
+  type IUndoableCommand,
   type CommandServices,
   type PanelService,
   type SelectionService,
@@ -102,7 +103,7 @@ export class Application {
     setCommandSystem(commandSystem);
 
     // Wire the undo push to the real history now that CommandSystem exists.
-    (commandServices.undo as { push: (cmd: Command) => void }).push = (cmd) => {
+    (commandServices.undo as { push: (cmd: IUndoableCommand) => void }).push = (cmd) => {
       commandSystem.getHistory().push(cmd);
     };
 

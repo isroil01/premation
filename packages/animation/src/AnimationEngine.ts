@@ -8,7 +8,7 @@
  */
 
 import type { PropPath, PropertyTrack, SceneValueSnapshot, EasingKind, BezierHandles, Keyframe } from './types';
-import { sampleTrack, upsertKeyframe } from './interpolate';
+import { sampleTrack, upsertKeyframe, applyRoving } from './interpolate';
 import { compileExpression, type CompiledExpression } from './expressions';
 
 /**
@@ -17,6 +17,12 @@ import { compileExpression, type CompiledExpression } from './expressions';
  * keeping it injectable is what lets this engine stay framework-independent.
  */
 export type AnimationChangeListener = (nodeId: string) => void;
+/** Supplies the audio amplitude (0..1) at time `t` for the `audio` expression
+ *  accessor. Injected by the host so this engine stays framework-independent. */
+export type AudioLevelProvider = (t: number) => number;
+/** Resolves a named slider control's value at time `t` for the `ctrl(name)`
+ *  expression accessor. Injected by the host (reads the scene's control rigs). */
+export type ControlProvider = (name: string, t: number) => number;
 
 export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
@@ -24,6 +30,10 @@ export class AnimationEngine {
   private expressions = new Map<string, Map<PropPath, CompiledExpression>>();
   /** Change sink — no-op until the host binds one via setChangeListener(). */
   private notifyChange: AnimationChangeListener = () => {};
+  /** Audio amplitude source — 0 until the host binds the AudioEngine. */
+  private audioLevel: AudioLevelProvider = () => 0;
+  /** Slider-control source — 0 until the host binds the scene rig lookup. */
+  private controlProvider: ControlProvider = () => 0;
 
   /**
    * Bind the change sink (the app maps this onto its EventBus 'AnimationChanged'
@@ -31,6 +41,16 @@ export class AnimationEngine {
    */
   setChangeListener(listener: AnimationChangeListener): void {
     this.notifyChange = listener;
+  }
+
+  /** Bind the audio-amplitude source used by the `audio` expression accessor. */
+  setAudioLevelProvider(provider: AudioLevelProvider): void {
+    this.audioLevel = provider;
+  }
+
+  /** Bind the slider-control source used by the `ctrl(name)` accessor. */
+  setControlProvider(provider: ControlProvider): void {
+    this.controlProvider = provider;
   }
 
   /** All property tracks for a node. */
@@ -85,12 +105,30 @@ export class AnimationEngine {
     this.notifyChange(nodeId);
   }
 
+  /** Apply an Easy-Ease-style bezier to the segment starting at `t`. */
+  setBezier(nodeId: string, prop: PropPath, t: number, bezier: BezierHandles): void {
+    const kf = this.tracks.get(nodeId)?.get(prop)?.keyframes.find((k) => k.t === t);
+    if (!kf) return;
+    kf.easing = 'bezier';
+    kf.bezier = [...bezier] as BezierHandles;
+    this.notifyChange(nodeId);
+  }
+
+  /** Toggle a keyframe's roving flag and re-time the track for constant speed. */
+  setRoving(nodeId: string, prop: PropPath, t: number, roving: boolean): void {
+    const track = this.tracks.get(nodeId)?.get(prop);
+    if (!track) return;
+    const flagged = track.keyframes.map((k) => (k.t === t ? { ...k, roving } : { ...k }));
+    track.keyframes = applyRoving(flagged);
+    this.notifyChange(nodeId);
+  }
+
   /** Replace the keyframe at `oldT` with new time/value/easing/bezier. */
   updateKeyframe(
     nodeId: string,
     prop: PropPath,
     oldT: number,
-    patch: { t?: number; value?: number; easing?: EasingKind; bezier?: BezierHandles },
+    patch: { t?: number; value?: number; easing?: EasingKind; bezier?: BezierHandles; roving?: boolean },
   ): void {
     const track = this.tracks.get(nodeId)?.get(prop);
     const kf = track?.keyframes.find((k) => k.t === oldT);
@@ -100,6 +138,7 @@ export class AnimationEngine {
       value: patch.value ?? kf.value,
       easing: patch.easing ?? kf.easing,
       bezier: patch.bezier ?? kf.bezier,
+      roving: patch.roving ?? kf.roving,
     };
     track.keyframes = upsertKeyframe(track.keyframes.filter((k) => k.t !== oldT), next);
     this.notifyChange(nodeId);
@@ -161,10 +200,46 @@ export class AnimationEngine {
     const base = track ? sampleTrack(track, t) : undefined;
     const expr = this.expressions.get(nodeId)?.get(prop);
     if (expr) {
-      const r = expr.run({ time: t, value: base ?? 0 });
+      const r = expr.run({
+        time: t,
+        value: base ?? 0,
+        audio: this.audioLevel(t),
+        ctrl: (name) => this.controlProvider(name, t),
+      });
       if (r.value !== null) return r.value;
     }
     return base;
+  }
+
+  /** Evaluate a single node's animated/expressed properties at time `t`.
+   *  Used by per-layer time remapping (each layer samples at its own time). */
+  evaluateNode(nodeId: string, t: number): Map<PropPath, number> {
+    const values = new Map<PropPath, number>();
+    const props = new Set<PropPath>([
+      ...(this.tracks.get(nodeId)?.keys() ?? []),
+      ...(this.expressions.get(nodeId)?.keys() ?? []),
+    ]);
+    for (const prop of props) {
+      const v = this.sample(nodeId, prop, t);
+      if (v !== undefined) values.set(prop, v);
+    }
+    return values;
+  }
+
+  /** The node's animated time span (first→last keyframe across all its tracks),
+   *  or `null` when it has no keyframes. Anchors time-stretch and reverse. */
+  timeSpan(nodeId: string): { start: number; end: number } | null {
+    const byProp = this.tracks.get(nodeId);
+    if (!byProp) return null;
+    let start = Infinity;
+    let end = -Infinity;
+    for (const track of byProp.values()) {
+      const kfs = track.keyframes;
+      if (kfs.length === 0) continue;
+      start = Math.min(start, kfs[0]!.t);
+      end = Math.max(end, kfs[kfs.length - 1]!.t);
+    }
+    return Number.isFinite(start) ? { start, end } : null;
   }
 
   /** Evaluate every animated/expressed property at time `t`. */

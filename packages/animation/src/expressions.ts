@@ -17,6 +17,12 @@ export interface ExprContext {
   time: number;
   /** The value the property would have from its keyframes/base. */
   value: number;
+  /** Audio amplitude at the playhead, 0..1 (0 when no audio / provider). Lets
+   *  expressions be audio-reactive, e.g. `value + audio * 200`. */
+  audio?: number;
+  /** Named slider-control lookup: `ctrl('Speed')` reads a user rig control
+   *  anywhere in the scene (0 when absent / no provider). */
+  ctrl?: (name: string) => number;
 }
 
 export interface ExprResult {
@@ -50,13 +56,13 @@ function smoothNoise(x: number): number {
 function humanize(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   const ref = /(\w+) is not defined/.exec(msg);
-  if (ref) return `Unknown name “${ref[1]}”. Try time, value, wiggle, clamp, linear or Math.`;
+  if (ref) return `Unknown name “${ref[1]}”. Try time, value, audio, wiggle, clamp, linear or Math.`;
   if (/is not a function/.test(msg)) return `That isn’t a function — check the name and parentheses.`;
   if (/Unexpected/.test(msg) || /missing/.test(msg)) return `Syntax error: ${msg}`;
   return msg;
 }
 
-const API_PARAMS = ['time', 'value', 'wiggle', 'clamp', 'linear', 'random', 'Math'] as const;
+const API_PARAMS = ['time', 'value', 'audio', 'ctrl', 'wiggle', 'clamp', 'linear', 'random', 'Math'] as const;
 
 export function compileExpression(src: string): CompiledExpression {
   const trimmed = src.trim();
@@ -81,6 +87,8 @@ export function compileExpression(src: string): CompiledExpression {
     run: (ctx) => {
       if (compileError || !fn) return { value: null, error: compileError };
       const { time, value } = ctx;
+      const audio = ctx.audio ?? 0;
+      const ctrl = ctx.ctrl ?? ((): number => 0);
       const wiggle = (freq = 2, amp = 30): number =>
         value + (smoothNoise(time * freq) * 2 - 1) * amp;
       const clamp = (v: number, min: number, max: number): number =>
@@ -92,7 +100,7 @@ export function compileExpression(src: string): CompiledExpression {
       };
       const random = (seed = time): number => hash01(seed);
       try {
-        const out = fn(time, value, wiggle, clamp, linear, random, Math);
+        const out = fn(time, value, audio, ctrl, wiggle, clamp, linear, random, Math);
         if (typeof out === 'number' && Number.isFinite(out)) return { value: out, error: null };
         return { value: null, error: 'Expression must return a number.' };
       } catch (e) {
@@ -128,7 +136,7 @@ export interface SyntaxToken {
   start: number;
 }
 
-const API_NAMES = new Set(['time', 'value', 'wiggle', 'clamp', 'linear', 'random', 'Math']);
+const API_NAMES = new Set(['time', 'value', 'audio', 'ctrl', 'wiggle', 'clamp', 'linear', 'random', 'Math']);
 
 /** Split an expression into colored syntax tokens. Never throws. */
 export function tokenizeExpression(src: string): SyntaxToken[] {

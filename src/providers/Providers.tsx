@@ -39,16 +39,29 @@ import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { asThemeId, asCommandId } from '@app-types/common';
+import { hydrateComposition } from '@stores/compositionStore';
+import { useAssetStore } from '@stores/assetStore';
+import { applyPasteboardColor } from '@core/theme/pasteboard';
+import { applyAccentColor } from '@core/theme/accent';
+import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { audioEngine } from '@core/audio/AudioEngine';
+import { AudioPlaybackBridge } from '@core/audio/useAudioPlayback';
+import { controlValue } from '@core/animation/expressionControls';
 import { ProjectCommands } from '@layout/Menu';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
 import { CommandPalette } from '@layout/CommandPalette';
 import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
+import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
+import { insertNull } from '@core/scene/parenting';
+import { addEffect } from '@core/effects/effects';
+import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
+import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -56,6 +69,33 @@ interface ProvidersProps {
 
 function notify(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 2600 });
+}
+
+/** Tool-switching commands — single-key AE shortcuts (V/A/H/Z/W/R/S/P/T/U/E).
+ *  Going through the CommandSystem makes them remappable in Customize…. The
+ *  ShortcutManager already ignores keys typed into inputs/textareas. */
+function buildToolCommands(): ReadonlyArray<Command> {
+  const tools: Array<{ tool: import('@stores/uiStore').Tool; label: string; key: string }> = [
+    { tool: 'select', label: 'Select Tool', key: 'v' },
+    { tool: 'direct-select', label: 'Direct Selection Tool', key: 'a' },
+    { tool: 'hand', label: 'Hand Tool', key: 'h' },
+    { tool: 'zoom', label: 'Zoom Tool', key: 'z' },
+    { tool: 'move', label: 'Move Tool', key: 'w' },
+    { tool: 'rotate', label: 'Rotate Tool', key: 'r' },
+    { tool: 'scale', label: 'Scale Tool', key: 's' },
+    { tool: 'pen', label: 'Pen Tool', key: 'p' },
+    { tool: 'text', label: 'Text Tool', key: 't' },
+    { tool: 'shape', label: 'Rectangle Tool', key: 'u' },
+    { tool: 'ellipse', label: 'Ellipse Tool', key: 'e' },
+  ];
+  return tools.map(({ tool, label, key }) => ({
+    id: asCommandId(`tool.${tool}`),
+    label,
+    icon: 'crosshair' as const,
+    shortcut: { key },
+    enabled: () => true,
+    execute: () => useUIStore.getState().setActiveTool(tool),
+  }));
 }
 
 function buildBuiltinCommands(): ReadonlyArray<Command> {
@@ -137,11 +177,180 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => useSelectionStore.getState().clear(),
     },
+    {
+      id: BuiltinCommands.DeleteSelected,
+      label: 'Delete Selected',
+      icon: 'trash',
+      shortcut: { key: 'Backspace' },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        deleteSelectedLayers();
+        notify('Deleted selected layers', 'info');
+      },
+    },
+    {
+      id: asCommandId('edit.deleteSelected.del'),
+      label: 'Delete Selected (Del key)',
+      shortcut: { key: 'Delete' },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        deleteSelectedLayers();
+        notify('Deleted selected layers', 'info');
+      },
+    },
+    {
+      id: BuiltinCommands.DuplicateSelected,
+      label: 'Duplicate Selected',
+      icon: 'copy',
+      shortcut: { key: 'd', meta: true },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        duplicateSelectedLayers();
+        notify('Duplicated layers', 'success');
+      },
+    },
   ];
 }
 
 function buildProjectCommands(): ReadonlyArray<Command> {
   return [
+    {
+      id: asCommandId('comp.new'),
+      label: 'New Composition…',
+      shortcut: { key: 'n', meta: true, ctrl: true },
+      enabled: () => true,
+      execute: () => {
+        openNewCompositionDialog();
+      },
+    },
+    {
+      id: asCommandId('comp.settings'),
+      label: 'Composition Settings…',
+      shortcut: { key: 'k', meta: true },
+      enabled: () => true,
+      execute: () => {
+        openCompositionSettings();
+      },
+    },
+    {
+      id: asCommandId('layer.newText'),
+      label: 'Text',
+      shortcut: { key: 't', meta: true, alt: true, shift: true },
+      enabled: () => true,
+      execute: () => insertPrimitive('text', 'Text'),
+    },
+    {
+      id: asCommandId('layer.newSolid'),
+      label: 'Solid…',
+      shortcut: { key: 'y', meta: true },
+      enabled: () => true,
+      execute: () => insertSolid(),
+    },
+    {
+      id: asCommandId('layer.newCamera'),
+      label: 'Camera',
+      enabled: () => true,
+      execute: () => insertCamera(),
+    },
+    {
+      id: asCommandId('layer.newLight'),
+      label: 'Light',
+      enabled: () => true,
+      execute: () => insertLight(),
+    },
+    {
+      id: asCommandId('layer.newNull'),
+      label: 'Null Object',
+      shortcut: { key: 'y', meta: true, alt: true, shift: true },
+      enabled: () => true,
+      execute: () => insertNull(),
+    },
+    {
+      id: asCommandId('layer.newAdjustment'),
+      label: 'Adjustment Layer',
+      shortcut: { key: 'y', meta: true, alt: true },
+      enabled: () => true,
+      execute: () => insertAdjustmentLayer(),
+    },
+    {
+      id: asCommandId('layer.precompose'),
+      label: 'Pre-compose…',
+      shortcut: { key: 'c', meta: true, shift: true },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => precomposeSelected(),
+    },
+    {
+      id: asCommandId('effect.blur'),
+      label: 'Fast Box Blur',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'blur'); notify('Added Fast Box Blur', 'success'); }
+      },
+    },
+    {
+      id: asCommandId('effect.glow'),
+      label: 'Glow',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'glow'); notify('Added Glow', 'success'); }
+      },
+    },
+    {
+      id: asCommandId('effect.brightness'),
+      label: 'Brightness & Contrast',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'brightness'); notify('Added Brightness & Contrast', 'success'); }
+      },
+    },
+    {
+      id: asCommandId('effect.contrast'),
+      label: 'Contrast',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'contrast'); notify('Added Contrast', 'success'); }
+      },
+    },
+    {
+      id: asCommandId('effect.saturate'),
+      label: 'Hue/Saturation',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'saturate'); notify('Added Hue/Saturation', 'success'); }
+      },
+    },
+    {
+      id: asCommandId('effect.grayscale'),
+      label: 'Grayscale',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'grayscale'); notify('Added Grayscale', 'success'); }
+      },
+    },
+    {
+      id: asCommandId('effect.sepia'),
+      label: 'Sepia',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'sepia'); notify('Added Sepia', 'success'); }
+      },
+    },
+    {
+      id: asCommandId('effect.hue'),
+      label: 'Hue Rotate',
+      enabled: () => useSelectionStore.getState().primary !== null,
+      execute: () => {
+        const id = useSelectionStore.getState().primary;
+        if (id) { addEffect(id, 'hue-rotate'); notify('Added Hue Rotate', 'success'); }
+      },
+    },
     {
       id: asCommandId(ProjectCommands.New),
       label: 'New Project',
@@ -270,21 +479,29 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // Register built-in + project commands AFTER boot so the registry exists.
         const registry = getCommandRegistry();
         for (const cmd of buildBuiltinCommands()) registry.register(cmd);
-
-        const cs = getCommandSystem();
+        for (const cmd of buildToolCommands()) registry.register(cmd);
         registry.register({
           id: BuiltinCommands.Undo,
           label: 'Undo',
           shortcut: { key: 'z', meta: true },
-          enabled: () => cs.canUndo(),
-          execute: () => cs.undo(),
+          enabled: () => useHistoryStore.getState().index > 0,
+          execute: () => {
+            const { index, jumpTo } = useHistoryStore.getState();
+            if (index > 0) jumpTo(index - 1);
+          },
         });
         registry.register({
           id: BuiltinCommands.Redo,
           label: 'Redo',
           shortcut: { key: 'z', meta: true, shift: true },
-          enabled: () => cs.canRedo(),
-          execute: () => cs.redo(),
+          enabled: () => {
+            const state = useHistoryStore.getState();
+            return state.index < state.entries.length - 1;
+          },
+          execute: () => {
+            const state = useHistoryStore.getState();
+            if (state.index < state.entries.length - 1) state.jumpTo(state.index + 1);
+          },
         });
 
         for (const cmd of buildProjectCommands()) registry.register(cmd);
@@ -297,6 +514,12 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         theme.subscribe((t) => usePreferenceStore.getState().set('theme', asThemeId(t)));
         theme.apply();
 
+        // Composition settings + pasteboard colour: load persisted values now
+        // that the SettingsManager is booted (defaults until the user edits).
+        hydrateComposition();
+        applyPasteboardColor();
+        applyAccentColor();
+
         // Project: bridge to the scene document and refresh scene UI on load.
         const project = getProjectManager();
         project.setDocumentIO(sceneProjectIO);
@@ -308,6 +531,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         defaultAnimation.setChangeListener((nodeId) =>
           getEventBus().emit('AnimationChanged', { nodeId }),
         );
+        // Audio-reactive expressions read live amplitude from the AudioEngine.
+        defaultAnimation.setAudioLevelProvider(() => audioEngine.currentLevel());
+        // ctrl('name') expressions read slider-control rigs from the scene.
+        defaultAnimation.setControlProvider((name, t) => controlValue(name, t));
         // Keyframe edits refresh the timeline tracks + inspector + viewport,
         // and invalidate the render cache (cached frames are now stale).
         getEventBus().on('AnimationChanged', () => { renderCache.invalidate(); bumpScene(); });
@@ -352,6 +579,40 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             id: asCommandId('view.rulers'), label: 'Toggle Rulers', icon: 'layout',
             enabled: () => true, execute: () => useGuidesStore.getState().toggleRulers(),
           });
+          registry.register({
+            id: asCommandId('view.renderQueue'), label: 'Render Queue', icon: 'layers',
+            shortcut: { key: 'F6' },
+            enabled: () => true,
+            execute: () => {
+              const ls = useLayoutStore.getState();
+              const panel = ls.panels['renderQueue'];
+              if (!panel) {
+                ls.openPanel('renderQueue');
+              } else {
+                ls.togglePanel('renderQueue');
+              }
+            },
+          });
+          registry.register({
+            id: asCommandId('view.effectControls'), label: 'Effect Controls', icon: 'keyframe',
+            shortcut: { key: 'F3' },
+            enabled: () => true,
+            execute: () => {
+              const ls = useLayoutStore.getState();
+              if (!ls.panels['effectControls']) ls.openPanel('effectControls');
+              else ls.togglePanel('effectControls');
+            },
+          });
+          registry.register({
+            id: asCommandId('view.graphEditor'), label: 'Graph Editor', icon: 'track',
+            shortcut: { key: 'g', shift: true },
+            enabled: () => true,
+            execute: () => useLayoutStore.getState().toggleRegion('bottomTimeline'),
+          });
+          registry.register({
+            id: asCommandId('view.customize'), label: 'Customize…', icon: 'settings',
+            enabled: () => true, execute: () => openCustomizeDialog(),
+          });
           getShortcutManager().rehydrateFromRegistry();
         } catch { /* ignore */ }
 
@@ -366,6 +627,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         try { registerDefaultEditors(); } catch { /* ignore */ }
         try { seedDefaultScene(); } catch { /* ignore */ }
         try { seedDemoAnimation(); } catch { /* ignore */ }
+        try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
 
         // History: initial "Open" state, then a debounced snapshot after edits.
         try {
@@ -382,6 +644,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           };
           getEventBus().on('AnimationChanged', scheduleRecord);
           getEventBus().on('NodeUpdated', scheduleRecord);
+          getEventBus().on('SceneGraphChanged', scheduleRecord);
         } catch { /* ignore */ }
 
         // Dirty tracking + autosave (crash recovery). Edits mark the active
@@ -394,6 +657,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           };
           getEventBus().on('AnimationChanged', markDirty);
           getEventBus().on('NodeUpdated', markDirty);
+          getEventBus().on('SceneGraphChanged', markDirty);
           getAutosaveController().start({
             intervalMs: 60_000,
             now: () => Date.now(),
@@ -475,6 +739,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
   return (
     <TooltipProvider>
       {children}
+      <AudioPlaybackBridge />
       <CommandPalette />
       <PresentationMode />
       <OnboardingOverlay onDone={() => getSettingsManager().set('onboarding.seen', true)} />

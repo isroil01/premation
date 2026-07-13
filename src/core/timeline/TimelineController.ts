@@ -15,14 +15,15 @@
  *                            workspaceStore (seconds) ──▶ existing UI
  */
 
-import { Timeline, FPS_60, framesToSeconds, secondsToFrames, type Layer } from '@motion/timeline';
+import { Timeline, frameRate, framesToSeconds, secondsToFrames, type Layer } from '@motion/timeline';
 import { useWorkspaceStore } from '@stores/workspaceStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenScene } from '@core/scene/sceneDerive';
 
-/** Composition defaults (kept in sync with the app's timeline constants). */
-const DURATION_SECONDS = 10;
-const FPS = 60;
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
+import type { Command as TimelineCommand } from '@motion/timeline';
 
 export interface TimelineMarkerView {
   id: string;
@@ -32,15 +33,41 @@ export interface TimelineMarkerView {
   color: string | null;
 }
 
+class TimelineCommandAdapter implements IUndoableCommand {
+  readonly label: string;
+  private readonly cmd: TimelineCommand;
+
+  constructor(cmd: TimelineCommand) {
+    this.label = cmd.label;
+    this.cmd = cmd;
+  }
+
+  execute(_ctx: CommandContext): void {
+    this.cmd.do();
+  }
+
+  undo(_ctx: CommandContext): void {
+    this.cmd.undo();
+  }
+}
+
 export class TimelineController {
   readonly timeline: Timeline;
   private readonly compositionTrackId: string;
 
   constructor() {
+    // Initialise time facts from the composition settings (single source of
+    // truth for fps + duration); the store defaults if nothing is persisted.
+    const comp = useCompositionStore.getState();
     this.timeline = Timeline.create({
       name: 'Composition',
-      frameRate: FPS_60,
-      duration: Math.round(DURATION_SECONDS * FPS),
+      frameRate: frameRate(comp.fps),
+      duration: Math.max(1, Math.round(comp.durationSeconds * comp.fps)),
+      historyOptions: {
+        onPush: (cmd) => {
+          getCommandSystem().getHistory().push(new TimelineCommandAdapter(cmd));
+        }
+      }
     });
     // Loop the whole composition during playback (matches the app's prior clock).
     this.timeline.setRange('loop', { start: 0, duration: this.timeline.duration });
@@ -48,7 +75,7 @@ export class TimelineController {
     const track = this.timeline.addTrack({ name: 'Composition', kind: 'group' });
     this.compositionTrackId = track.id;
     // Initial zoom so pixels-per-second matches the app's default (~80px/s).
-    this.timeline.setZoom(80 / FPS);
+    this.timeline.setZoom(80 / comp.fps);
 
     // Engine → store mirror (seconds). The store never re-enters the engine, so
     // no reentrancy guard is needed.
@@ -67,10 +94,23 @@ export class TimelineController {
 
   // ── Time facts ───────────────────────────────────────────────────
   get fps(): number {
-    return FPS;
+    return this.timeline.getFrameRate().fps;
   }
   get durationSeconds(): number {
     return framesToSeconds(this.timeline.duration, this.timeline.getFrameRate());
+  }
+
+  // ── Comp settings → time domain (driven by the Composition Settings dialog) ─
+  /** Change the comp frame rate, preserving on-screen timing, and reloop. */
+  setFrameRate(fps: number): void {
+    this.timeline.setFrameRate(fps, { preserveTiming: true });
+    this.timeline.setRange('loop', { start: 0, duration: this.timeline.duration });
+  }
+  /** Change the comp duration (seconds) and reloop over the new length. */
+  setDurationSeconds(seconds: number): void {
+    const frames = Math.max(1, Math.round(seconds * this.timeline.getFrameRate().fps));
+    this.timeline.setDuration(frames);
+    this.timeline.setRange('loop', { start: 0, duration: this.timeline.duration });
   }
   get currentSeconds(): number {
     return framesToSeconds(this.timeline.currentFrame, this.timeline.getFrameRate());

@@ -42,13 +42,14 @@ export interface TimelineInit {
   frameRate?: FrameRate;
   /** Duration in frames. */
   duration?: number;
+  historyOptions?: import('../history/History').HistoryOptions;
 }
 
 export class Timeline {
   readonly id: string;
   name: string;
   readonly events = new TypedEmitter<TimelineEventMap>();
-  readonly history = new History();
+  readonly history: History;
   readonly selection = new TimelineSelection();
   readonly playhead: Playhead;
   readonly markers = new MarkerList();
@@ -68,6 +69,7 @@ export class Timeline {
     this.name = init.name ?? 'Timeline';
     this.frameRate = init.frameRate ?? FPS_30;
     this.durationFrames = Math.max(0, init.duration ?? 0);
+    this.history = new History(init.historyOptions);
     this.playhead = new Playhead(this.durationFrames);
 
     this.playhead.onChange = (current, previous): void => {
