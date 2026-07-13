@@ -13,7 +13,9 @@ export const MASK_TARGET = 'mask';
  */
 export class MaskPass extends RenderPass {
   readonly name = 'mask';
-  override readonly writes = [MASK_TARGET];
+  override get writes(): readonly string[] {
+    return [MASK_TARGET];
+  }
   override readonly after = ['background'];
   override enabled = false;
 

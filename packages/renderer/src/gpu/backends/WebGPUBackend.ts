@@ -75,6 +75,12 @@ function blendState(mode: BlendMode): Record<string, unknown> | undefined {
       return { color: { srcFactor: 'dst', dstFactor: 'zero', operation: 'add' }, alpha: over };
     case 'screen':
       return { color: { srcFactor: 'one', dstFactor: 'one-minus-src', operation: 'add' }, alpha: over };
+    case 'subtract':
+      return { color: { srcFactor: 'one', dstFactor: 'one', operation: 'reverse-subtract' }, alpha: over };
+    case 'darken':
+      return { color: { srcFactor: 'one', dstFactor: 'one', operation: 'min' }, alpha: over };
+    case 'lighten':
+      return { color: { srcFactor: 'one', dstFactor: 'one', operation: 'max' }, alpha: over };
     default:
       return { color: over, alpha: over };
   }

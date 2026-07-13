@@ -26,6 +26,7 @@ import type {
   ShaderModuleHandle,
   TextureDescriptor,
   TextureHandle,
+  TextureSource,
 } from './types';
 
 interface Entry<H> {
@@ -128,6 +129,12 @@ export class ResourceManager {
   }
   texture(key: string, desc: TextureDescriptor, pinned = false): TextureHandle {
     return this.textures.acquire(key, this.frame, () => this.backend.createTexture(desc), pinned);
+  }
+  /** Upload pixel data into a texture (image bitmap, canvas, video frame, or raw
+   *  bytes). Thin passthrough so a `TextureProvider` — which only receives the
+   *  ResourceManager — can populate the textures it allocates. */
+  writeTexture(texture: TextureHandle, source: TextureSource): void {
+    this.backend.writeTexture(texture, source);
   }
   sampler(key: string, desc: SamplerDescriptor, pinned = false): SamplerHandle {
     return this.samplers.acquire(key, this.frame, () => this.backend.createSampler(desc), pinned);

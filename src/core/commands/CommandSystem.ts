@@ -15,6 +15,7 @@ import type {
   Command,
   CommandContext,
   CommandServices,
+  IUndoableCommand,
 } from './Command';
 import { HistoryService } from './HistoryService';
 import type { CommandId } from '@app-types/common';
@@ -55,7 +56,7 @@ export class CommandSystem {
 
     const ctx = this.buildContext(cmd);
     await cmd.execute(ctx);
-    if (cmd.undo) this.history.push(cmd);
+    if (cmd.undo) this.history.push(cmd as IUndoableCommand);
   }
 
   /** Execute a command bypassing the enabled check (used by scripts / tests). */
@@ -64,7 +65,7 @@ export class CommandSystem {
     if (!cmd) return;
     const ctx = this.buildContext(cmd);
     await cmd.execute(ctx);
-    if (cmd.undo) this.history.push(cmd);
+    if (cmd.undo) this.history.push(cmd as IUndoableCommand);
   }
 
   async executeByShortcut(chord: import('@app-types/common').KeyChord): Promise<boolean> {
@@ -79,7 +80,7 @@ export class CommandSystem {
   undo(): void { this.history.undo(); }
   redo(): void { this.history.redo(); }
 
-  private buildContext(_cmd: Command): CommandContext {
+  private buildContext(_cmd: Command | IUndoableCommand): CommandContext {
     const state = this.opts.getState();
     const services: CommandServices = {
       ...this.opts.services,
@@ -94,7 +95,7 @@ export class CommandSystem {
    */
   private attachBuiltinHistory(): void {
     const services = this.opts.services as CommandServices & {
-      __undo?: (cmd: Command) => void;
+      __undo?: (cmd: IUndoableCommand) => void;
     };
     services.__undo = (cmd) => this.history.push(cmd);
   }

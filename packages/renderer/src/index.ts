@@ -67,6 +67,9 @@ export {
   type FrameScene,
   type Renderable,
   type RenderableKind,
+  type RenderableSdf,
+  type RenderableColorMatrix,
+  type RenderableEffect,
   type CompositionInfo,
   emptyScene,
 } from './scene/FrameScene';

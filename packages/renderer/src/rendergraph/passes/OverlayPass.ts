@@ -11,7 +11,9 @@ import { beginViewportPass, emitSolid, modelFromRect, mvpFor, writeAttachment } 
  */
 export class OverlayPass extends RenderPass {
   readonly name = 'overlay';
-  override readonly writes = [SURFACE];
+  override get writes(): readonly string[] {
+    return [SURFACE];
+  }
   override readonly after = ['selection'];
 
   gridColor = Color.of(1, 1, 1, 0.06);

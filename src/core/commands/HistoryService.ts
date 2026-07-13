@@ -7,14 +7,14 @@
  */
 
 import { getEventBus } from '@core/events/EventBus';
-import type { Command, CommandContext } from './Command';
+import type { CommandContext, IUndoableCommand } from './Command';
 
 /** Builds the context a command's execute()/undo() runs with during undo/redo. */
-export type ContextBuilder = (command: Command) => CommandContext;
+export type ContextBuilder = (command: IUndoableCommand) => CommandContext;
 
 export class HistoryService {
-  private readonly undoStack: Command[] = [];
-  private readonly redoStack: Command[] = [];
+  private readonly undoStack: IUndoableCommand[] = [];
+  private readonly redoStack: IUndoableCommand[] = [];
   private readonly capacity: number;
   private readonly buildContext?: ContextBuilder;
   private suspended = 0;
@@ -25,12 +25,22 @@ export class HistoryService {
   }
 
   /** Top of the undo stack without popping (used to coalesce edits). */
-  peek(): Command | undefined {
+  peek(): IUndoableCommand | undefined {
     return this.undoStack[this.undoStack.length - 1];
   }
 
+  /** Returns all commands in chronological order for UI display. */
+  getEntries(): IUndoableCommand[] {
+    return [...this.undoStack, ...[...this.redoStack].reverse()];
+  }
+
+  /** Returns the index of the currently applied command in the combined entries list. */
+  getIndex(): number {
+    return this.undoStack.length - 1;
+  }
+
   /** Push a command onto the undo stack. */
-  push(command: Command): void {
+  push(command: IUndoableCommand): void {
     if (this.suspended > 0) return;
     this.undoStack.push(command);
     if (this.undoStack.length > this.capacity) {
@@ -42,7 +52,7 @@ export class HistoryService {
 
   undo(): void {
     const command = this.undoStack.pop();
-    if (!command || !command.undo) return;
+    if (!command) return;
     this.suspended++;
     try {
       void command.undo(this.ctxFor(command));
@@ -68,11 +78,41 @@ export class HistoryService {
 
   canUndo(): boolean {
     const top = this.undoStack[this.undoStack.length - 1];
-    return !!top && typeof top.undo === 'function';
+    return !!top;
   }
 
   canRedo(): boolean {
     return this.redoStack.length > 0;
+  }
+
+  jumpTo(index: number): void {
+    const currentIndex = this.getIndex();
+    if (index === currentIndex) return;
+
+    this.withSuppressed(() => {
+      if (index < currentIndex) {
+        // Undo until we reach the desired index
+        const steps = currentIndex - index;
+        for (let i = 0; i < steps; i++) {
+          const cmd = this.undoStack.pop();
+          if (cmd) {
+            void cmd.undo(this.ctxFor(cmd));
+            this.redoStack.push(cmd);
+          }
+        }
+      } else {
+        // Redo until we reach the desired index
+        const steps = index - currentIndex;
+        for (let i = 0; i < steps; i++) {
+          const cmd = this.redoStack.pop();
+          if (cmd) {
+            void cmd.execute(this.ctxFor(cmd));
+            this.undoStack.push(cmd);
+          }
+        }
+      }
+    });
+    this.emit();
   }
 
   clear(): void {
@@ -87,7 +127,7 @@ export class HistoryService {
     try { fn(); } finally { this.suspended--; }
   }
 
-  private ctxFor(command: Command): CommandContext {
+  private ctxFor(command: IUndoableCommand): CommandContext {
     // CommandSystem injects a context builder at construction so undo()/redo()
     // can re-run commands with the same services execute() saw. Commands whose
     // execute()/undo() are self-contained (e.g. keyframe edits that close over

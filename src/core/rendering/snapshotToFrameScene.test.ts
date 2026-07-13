@@ -31,6 +31,65 @@ describe('snapshotToFrameScene', () => {
     expect(scene.selection).toEqual([]);
   });
 
+  test('transparent comp → fully transparent background (alpha 0)', () => {
+    const scene = snapshotToFrameScene(snapshot([], { transparent: true }));
+    expect(scene.composition.background).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+  });
+
+  describe('shape SDF geometry', () => {
+    test('a rect layer gets a rounded-rect SDF (matching Canvas2D 12px corners)', () => {
+      const r = layerToRenderable(layer({ primitive: 'rect', width: 220, height: 140 }));
+      expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 12, width: 220, height: 140 });
+    });
+
+    test('an ellipse layer gets an ellipse SDF', () => {
+      const r = layerToRenderable(layer({ primitive: 'ellipse', width: 200, height: 200 }));
+      expect(r.sdf).toEqual({ shape: 'ellipse', radiusPx: 0, width: 200, height: 200 });
+    });
+
+    test('a path layer has no SDF (deferred → flat quad)', () => {
+      expect(layerToRenderable(layer({ primitive: 'path' })).sdf).toBeUndefined();
+    });
+
+    test('textured layers (image/text/video) never carry an SDF', () => {
+      for (const kind of ['image', 'text', 'video'] as const) {
+        expect(layerToRenderable(layer({ kind })).sdf).toBeUndefined();
+      }
+    });
+  });
+
+  describe('colour-grade effects on solid shapes', () => {
+    test('brightness(50%) halves a white fill on the GPU path', () => {
+      const r = layerToRenderable(layer({
+        fill: '#ffffff',
+        effects: [{ id: 'e', type: 'brightness', amount: 50 }],
+      }));
+      expect(r.color!.r).toBeCloseTo(0.5, 5);
+      expect(r.color!.g).toBeCloseTo(0.5, 5);
+      expect(r.color!.b).toBeCloseTo(0.5, 5);
+      expect(r.color!.a).toBe(1);
+    });
+
+    test('a spatial-only effect stack (blur) leaves the colour unchanged', () => {
+      const r = layerToRenderable(layer({ fill: '#3366cc', effects: [{ id: 'b', type: 'blur', amount: 8 }] }));
+      const base = layerToRenderable(layer({ fill: '#3366cc' }));
+      expect(r.color).toEqual(base.color);
+    });
+
+    test('textured layers carry a colorMatrix when colour-graded (per-pixel shader)', () => {
+      const graded = layerToRenderable(layer({ kind: 'image', effects: [{ id: 'e', type: 'invert', amount: 100 }] }));
+      expect(graded.colorMatrix).toBeDefined();
+      // invert(100%): m = diag(-1), offset = [1,1,1]
+      expect(graded.colorMatrix!.m).toEqual([-1, 0, 0, 0, -1, 0, 0, 0, -1]);
+      expect(graded.colorMatrix!.offset).toEqual([1, 1, 1]);
+    });
+
+    test('textured layers with no colour effects carry no colorMatrix', () => {
+      expect(layerToRenderable(layer({ kind: 'image' })).colorMatrix).toBeUndefined();
+      expect(layerToRenderable(layer({ kind: 'image', effects: [{ id: 'b', type: 'blur', amount: 8 }] })).colorMatrix).toBeUndefined();
+    });
+  });
+
   test('drops invisible layers', () => {
     const scene = snapshotToFrameScene(snapshot([layer({ visible: false }), layer({ id: 'n2' })]));
     expect(scene.renderables.map((r) => r.id)).toEqual(['n2']);
@@ -55,12 +114,21 @@ describe('snapshotToFrameScene', () => {
   test('maps kinds and assigns texture keys for textured kinds', () => {
     const scene = snapshotToFrameScene(snapshot([
       layer({ id: 's', kind: 'shape' }),
+      layer({ id: 'p', kind: 'shape', primitive: 'path', pathPoints: [{ x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 }] }),
+      layer({ id: 'm', kind: 'shape', mask: { paths: [{ id: 'm1', points: [], inverted: false, mode: 'add', closed: true, feather: 0, opacity: 1 }] } }),
+      layer({ id: 'c', kind: 'shape', matte: 'alpha' }),
       layer({ id: 't', kind: 'text' }),
       layer({ id: 'i', kind: 'image' }),
       layer({ id: 'v', kind: 'video' }),
     ]));
     const byId = Object.fromEntries(scene.renderables.map((r) => [r.id, r]));
     expect(byId.s!.kind).toBe('rect');
+    expect(byId.p!.kind).toBe('image');
+    expect(byId.p!.textureKey).toBe('path:p');
+    expect(byId.m!.kind).toBe('image');
+    expect(byId.m!.textureKey).toBe('masked:m');
+    expect(byId.c!.kind).toBe('image');
+    expect(byId.c!.textureKey).toBe('matte:c');
     expect(byId.t!.kind).toBe('text');
     expect(byId.t!.textureKey).toBe('text:t');
     expect(byId.i!.kind).toBe('image');
@@ -79,6 +147,13 @@ describe('snapshotToFrameScene', () => {
   test('maps the layer blend mode onto the renderable', () => {
     const [r] = snapshotToFrameScene(snapshot([layer({ blend: 'multiply' })])).renderables;
     expect(r!.blend).toBe('multiply');
+  });
+
+  test('textured renderables (image/video/text) are untinted (white)', () => {
+    for (const kind of ['image', 'video', 'text'] as const) {
+      const [r] = snapshotToFrameScene(snapshot([layer({ kind, fill: '#00ff00' })])).renderables;
+      expect(r!.color).toEqual({ r: 1, g: 1, b: 1, a: 1 });
+    }
   });
 
   test('defaults blend to normal when the layer omits it', () => {
@@ -119,6 +194,50 @@ describe('snapshotToFrameScene', () => {
       expect(r.bounds.y).toBeCloseTo(-10); // 20 - 30
       expect(r.bounds.width).toBeCloseTo(100);
       expect(r.bounds.height).toBeCloseTo(60);
+    });
+  });
+
+  describe('nested precompositions', () => {
+    test('recursively flattens precomp child layers and computes world transform and opacity', () => {
+      const child = layer({
+        id: 'nested_child',
+        kind: 'shape',
+        x: 100,
+        y: 50,
+        width: 100,
+        height: 100,
+        opacity: 0.5,
+      });
+      const precomp = layer({
+        id: 'precomp_container',
+        kind: 'shape', // buildSnapshot emits precomp containers as 'shape'
+        x: 100,
+        y: 200,
+        width: 1920,
+        height: 1080,
+        opacity: 0.8,
+        precompLayers: [child],
+      });
+
+      const scene = snapshotToFrameScene(snapshot([precomp]));
+
+      // Precomp container itself is dropped from final renderables list, but its children are flattened in
+      expect(scene.renderables).toHaveLength(1);
+      const r = scene.renderables[0]!;
+      expect(r.id).toBe('nested_child');
+
+      // Opacity: parent (0.8) * child (0.5) = 0.4
+      expect(r.opacity).toBeCloseTo(0.4);
+
+      // World matrix translation:
+      // Parent center = (100, 200), parent width = 1920, height = 1080
+      // Parent top-left local offset = (-960, -540)
+      // Parent top-left in world = (100 - 960, 200 - 540) = (-860, -340)
+      // Child local offset = (100, 50)
+      // Child center in world = (-860 + 100, -340 + 50) = (-760, -290)
+      const centre = apply(r.modelMatrix, 0.5, 0.5);
+      expect(centre.x).toBeCloseTo(-760);
+      expect(centre.y).toBeCloseTo(-290);
     });
   });
 });

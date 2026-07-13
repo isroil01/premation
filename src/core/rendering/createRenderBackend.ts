@@ -13,16 +13,21 @@ import { Canvas2DBackend } from './Canvas2DBackend';
 import { MotionRendererBackend } from './MotionRendererBackend';
 import { getSettingsManager } from '@core/services/coreServices';
 
-export type BackendChoice = 'canvas2d' | 'webgl2' | 'webgpu' | 'null';
+export type BackendChoice = 'canvas2d' | 'webgl2' | 'webgpu' | 'null' | 'auto';
 
 export const RENDER_BACKEND_SETTING = 'rendering.backend';
 
-const CHOICES: ReadonlySet<string> = new Set(['canvas2d', 'webgl2', 'webgpu', 'null']);
+const CHOICES: ReadonlySet<string> = new Set(['canvas2d', 'webgl2', 'webgpu', 'null', 'auto']);
 
 /** The configured backend choice (defaults to canvas2d; tolerant of no settings). */
 export function resolveBackendChoice(): BackendChoice {
   try {
-    const v = getSettingsManager().get<string>(RENDER_BACKEND_SETTING, 'canvas2d');
+    const v = getSettingsManager().get<string>(RENDER_BACKEND_SETTING, 'auto');
+    if (v === 'auto') {
+      if (typeof navigator !== 'undefined' && 'gpu' in navigator) return 'webgpu';
+      if (typeof window !== 'undefined' && 'WebGL2RenderingContext' in window) return 'webgl2';
+      return 'canvas2d';
+    }
     if (CHOICES.has(v)) return v as BackendChoice;
   } catch {
     /* settings not booted (e.g. tests) — fall through to the default */

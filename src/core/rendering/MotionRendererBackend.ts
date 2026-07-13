@@ -24,6 +24,8 @@ import {
 } from '@motion/renderer';
 import type { RenderBackend, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, viewToCamera } from './snapshotToFrameScene';
+import { AppTextureProvider } from './AppTextureProvider';
+import { getEventBus } from '@core/events/EventBus';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
@@ -33,11 +35,14 @@ const VOID: Color = { r: 0, g: 0, b: 0, a: 0 };
 
 export class MotionRendererBackend implements RenderBackend {
   readonly kind: string;
+  readonly readyPromise: Promise<void>;
+  private resolveReady!: () => void;
   private readonly preferred: RendererBackendKind;
 
   private canvas: HTMLCanvasElement | null = null;
   private renderer: Renderer | null = null;
   private viewport: Viewport | null = null;
+  private textures: AppTextureProvider | null = null;
   private ready = false;
   private disposed = false;
   private pending: RenderSnapshot | null = null;
@@ -49,6 +54,9 @@ export class MotionRendererBackend implements RenderBackend {
   constructor(preferred: RendererBackendKind = 'webgl2') {
     this.preferred = preferred;
     this.kind = `motion-${preferred}`;
+    this.readyPromise = new Promise<void>((resolve) => {
+      this.resolveReady = resolve;
+    });
   }
 
   attach(canvas: HTMLCanvasElement): void {
@@ -69,7 +77,17 @@ export class MotionRendererBackend implements RenderBackend {
   }
 
   private async init(canvas: HTMLCanvasElement): Promise<void> {
-    const renderer = new Renderer({ backend: this.createGpuBackend() });
+    // The app-side texture provider decodes image assets to real GPU textures.
+    // A finished decode fires onChange → we re-render so the pixels appear. The
+    // `textures` factory runs synchronously inside the Renderer constructor.
+    const renderer = new Renderer({
+      backend: this.createGpuBackend(),
+      textures: (resources) => (this.textures = new AppTextureProvider(resources)),
+    });
+    if (this.textures) {
+      (this.textures as AppTextureProvider).onChange = () =>
+        getEventBus().emit('AnimationChanged', { nodeId: '__texture__' });
+    }
     try {
       await renderer.initialize({ canvas });
     } catch (err) {
@@ -78,10 +96,12 @@ export class MotionRendererBackend implements RenderBackend {
       // eslint-disable-next-line no-console
       console.warn('[MotionRendererBackend] init failed:', err);
       renderer.dispose();
+      this.resolveReady();
       return;
     }
     if (this.disposed) {
       renderer.dispose();
+      this.resolveReady();
       return;
     }
     this.renderer = renderer;
@@ -93,6 +113,7 @@ export class MotionRendererBackend implements RenderBackend {
     this.sizeCanvas();
     renderer.resize(this.cssW, this.cssH, this.dpr);
     this.ready = true;
+    this.resolveReady();
 
     if (this.pending) {
       const snapshot = this.pending;
@@ -131,6 +152,61 @@ export class MotionRendererBackend implements RenderBackend {
     }
     const vp = this.viewport;
 
+    // Feed image asset sources for this frame (keyed to match snapshotToFrameScene's
+    // `asset:<id>` or `path:<id>` textureKey), and forget layers that left the scene.
+    if (this.textures) {
+      const activeKeys = new Set<string>();
+      for (const layer of snapshot.layers) {
+        const hasMatte = !!layer.matte;
+        const hasMask = !!(layer.mask && layer.mask.paths.length > 0);
+        if (hasMatte) {
+          const idx = snapshot.layers.indexOf(layer);
+          const matteSource = idx > 0 ? snapshot.layers[idx - 1] : undefined;
+          if (matteSource) {
+            const key = `matte:${layer.id}`;
+            activeKeys.add(key);
+            this.textures.setMattedLayer(key, layer, matteSource);
+            if (layer.kind === 'image' && layer.src) {
+              this.textures.setImage(`asset:${layer.id}`, layer.src);
+            }
+            if (matteSource.kind === 'image' && matteSource.src) {
+              this.textures.setImage(`asset:${matteSource.id}`, matteSource.src);
+            }
+          }
+        } else if (hasMask) {
+          const key = `masked:${layer.id}`;
+          activeKeys.add(key);
+          this.textures.setMaskedLayer(key, layer);
+          if (layer.kind === 'image' && layer.src) {
+            this.textures.setImage(`asset:${layer.id}`, layer.src);
+          }
+        } else if (layer.kind === 'image' && layer.src) {
+          const key = `asset:${layer.id}`;
+          activeKeys.add(key);
+          this.textures.setImage(key, layer.src);
+        } else if (layer.kind === 'video' && layer.src) {
+          const key = `asset:${layer.id}`;
+          activeKeys.add(key);
+          this.textures.setVideo(key, layer.src, snapshot.time ?? 0);
+        } else if (layer.kind === 'text') {
+          const key = `text:${layer.id}`;
+          activeKeys.add(key);
+          this.textures.setText(key, {
+            text: layer.text ?? 'Text',
+            fontSize: layer.fontSize ?? 48,
+            color: layer.fill,
+            width: layer.width,
+            height: layer.height,
+          });
+        } else if (layer.kind === 'shape' && layer.primitive === 'path') {
+          const key = `path:${layer.id}`;
+          activeKeys.add(key);
+          this.textures.setPath(key, layer);
+        }
+      }
+      this.textures.retain(activeKeys);
+    }
+
     // Camera from the app's comp→canvas view (pan/zoom) or a centered fit.
     const cam = viewToCamera(snapshot.view, { width: snapshot.width, height: snapshot.height }, this.cssW, this.cssH);
     vp.camera.setState(cam);
@@ -152,6 +228,7 @@ export class MotionRendererBackend implements RenderBackend {
     this.renderer?.dispose();
     this.renderer = null;
     this.viewport = null;
+    this.textures = null;
     this.canvas = null;
   }
 }

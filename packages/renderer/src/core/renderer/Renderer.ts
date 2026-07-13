@@ -16,8 +16,8 @@ import { QuadRenderer } from '../../pipeline/QuadRenderer';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import { DefaultTextureProvider, type TextureProvider } from '../../resources/TextureProvider';
 import { RenderGraph } from '../../rendergraph/RenderGraph';
-import { buildDefaultGraph } from '../../rendergraph/passes';
-import type { RenderServices } from '../../rendergraph/RenderPass';
+import { buildDefaultGraph, EffectPass, SCENE_COLOR_TARGET } from '../../rendergraph/passes';
+import { SURFACE, type RenderServices } from '../../rendergraph/RenderPass';
 import { Viewport, type ViewportOptions } from '../../viewport/Viewport';
 import type { FrameScene } from '../../scene/FrameScene';
 import type { FrameInfo } from '../Frame';
@@ -139,6 +139,18 @@ export class Renderer {
   /** Render one viewport's scene. Must be called between begin/endFrame. */
   renderViewport(viewport: Viewport, scene: FrameScene, frame: FrameInfo): void {
     if (!this.inFrame) throw new Error('renderViewport called outside a frame');
+    
+    // Dynamically toggle EffectPass based on whether the scene has layers with effects
+    const effectPass = this.graph.getPass('effect');
+    if (effectPass) {
+      const needsEffect = !!scene.hasEffects;
+      if (effectPass.enabled !== needsEffect) {
+        effectPass.enabled = needsEffect;
+        EffectPass.activeColorTarget = needsEffect ? SCENE_COLOR_TARGET : SURFACE;
+        this.graph.invalidate();
+      }
+    }
+
     this.graph.execute({ services: this.services, frame, viewport, scene });
   }
 

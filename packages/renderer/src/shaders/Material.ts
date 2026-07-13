@@ -44,6 +44,17 @@ export const TEXTURED_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Built-in material: blur pass. Uniform + texture + sampler. */
+export const BLUR_MATERIAL: MaterialDescriptor = {
+  shader: 'blur',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 export class MaterialSystem {
   constructor(
     private readonly resources: ResourceManager,

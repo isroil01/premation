@@ -10,46 +10,110 @@ export interface ShaderSource {
   glsl: { vertex: string; fragment: string };
 }
 
+// Solid-colored quad with an optional SDF mask so shapes render with real
+// geometry, not just flat rectangles. `shape` = (kind, radiusPx, worldW, worldH):
+//   kind 0 = plain rect (alpha 1 — unchanged; used by masks & default solids)
+//   kind 1 = rounded rect (isotropic rounded-box SDF in world px → circular corners)
+//   kind 2 = ellipse inscribed in the box
+// Edges are antialiased via screen-space derivatives (fwidth).
 const SOLID: ShaderSource = {
   name: 'solid',
   wgsl: /* wgsl */ `
 struct Object {
   mvp : mat3x3<f32>,
   color : vec4<f32>,
+  shape : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) local : vec2<f32>,
+};
+
 @vertex
-fn vs(@location(0) pos : vec2<f32>) -> @builtin(position) vec4<f32> {
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  return vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.local = pos;
+  return o;
+}
+
+fn shapeAlpha(local : vec2<f32>) -> f32 {
+  let kind = i32(obj.shape.x + 0.5);
+  if (kind == 2) {
+    let p = (local - vec2<f32>(0.5)) * 2.0;
+    let d = length(p) - 1.0;
+    let aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  if (kind == 1) {
+    let r = obj.shape.y;
+    let sz = obj.shape.zw;
+    let p = (local - vec2<f32>(0.5)) * sz;
+    let b = sz * 0.5 - r;
+    let q = abs(p) - b;
+    let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    let aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  return 1.0;
 }
 
 @fragment
-fn fs() -> @location(0) vec4<f32> {
-  return vec4<f32>(obj.color.rgb * obj.color.a, obj.color.a);
+fn fs(@location(0) local : vec2<f32>) -> @location(0) vec4<f32> {
+  let a = obj.color.a * shapeAlpha(local);
+  return vec4<f32>(obj.color.rgb * a, a);
 }
 `,
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat3 mvp; vec4 color; };
+layout(std140) uniform Object { mat3 mvp; vec4 color; vec4 shape; };
+out vec2 vLocal;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
   gl_Position = vec4(p.xy, 0.0, 1.0);
+  vLocal = pos;
 }
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 color; };
+layout(std140) uniform Object { mat3 mvp; vec4 color; vec4 shape; };
+in vec2 vLocal;
 out vec4 frag;
+float shapeAlpha(vec2 local) {
+  int kind = int(shape.x + 0.5);
+  if (kind == 2) {
+    vec2 p = (local - 0.5) * 2.0;
+    float d = length(p) - 1.0;
+    float aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  if (kind == 1) {
+    float r = shape.y;
+    vec2 sz = shape.zw;
+    vec2 p = (local - 0.5) * sz;
+    vec2 b = sz * 0.5 - r;
+    vec2 q = abs(p) - b;
+    float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    float aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  return 1.0;
+}
 void main() {
-  frag = vec4(color.rgb * color.a, color.a);
+  float a = color.a * shapeAlpha(vLocal);
+  frag = vec4(color.rgb * a, a);
 }
 `,
   },
 };
 
+// Textured quad with an optional colour-grade transform (from colour effects):
+// cr0/cr1/cr2 are the rows of `(M | offset)`, so graded.rgb = (dot(crᵢ, vec4(rgb,1)))
+// — convention-free (no row/column-major transpose). Identity rows = no grade.
 const TEXTURED: ShaderSource = {
   name: 'textured',
   wgsl: /* wgsl */ `
@@ -57,6 +121,9 @@ struct Object {
   mvp : mat3x3<f32>,
   uvRect : vec4<f32>,
   tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
@@ -79,13 +146,15 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
-  return vec4<f32>(c.rgb * c.a, c.a);
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(graded * c.a, c.a);
 }
 `,
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
@@ -95,16 +164,106 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
 uniform sampler2D uTex;
 in vec2 vUv;
 out vec4 frag;
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
-  frag = vec4(c.rgb * c.a, c.a);
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  frag = vec4(graded * c.a, c.a);
 }
 `,
   },
 };
 
-export const BUILTIN_SHADERS: readonly ShaderSource[] = [SOLID, TEXTURED];
+const BLUR: ShaderSource = {
+  name: 'blur',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  blurParams : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let r = obj.blurParams.z;
+  if (r <= 0.0) {
+    return textureSample(tex, smp, uv);
+  }
+  let dir = obj.blurParams.xy;
+  var c = vec4<f32>(0.0);
+  var total = 0.0;
+  
+  // Approximate Gaussian blur. For a large radius, a proper implementation would use
+  // two passes and potentially downsampling, but this is a 2D exact-radius pass.
+  let steps = min(i32(ceil(r)), 30);
+  for(var i = -steps; i <= steps; i = i + 1) {
+    let fi = f32(i);
+    let w = exp(-0.5 * (fi * fi) / (r * r * 0.25));
+    c = c + textureSample(tex, smp, uv + dir * fi) * w;
+    total = total + w;
+  }
+  return c / total;
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 blurParams; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 blurParams; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  float r = blurParams.z;
+  if (r <= 0.0) {
+    frag = texture(uTex, vUv);
+    return;
+  }
+  vec2 dir = blurParams.xy;
+  vec4 c = vec4(0.0);
+  float total = 0.0;
+  
+  int steps = min(int(ceil(r)), 30);
+  for(int i = -steps; i <= steps; i++) {
+    float fi = float(i);
+    float w = exp(-0.5 * (fi * fi) / (r * r * 0.25));
+    c += texture(uTex, vUv + dir * fi) * w;
+    total += w;
+  }
+  frag = c / total;
+}
+`,
+  },
+};
+
+export const BUILTIN_SHADERS: readonly ShaderSource[] = [SOLID, TEXTURED, BLUR];

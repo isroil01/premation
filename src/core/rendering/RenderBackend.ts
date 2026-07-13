@@ -9,8 +9,12 @@
  */
 
 import type { LayerBlendMode } from '@core/effects/blendMode';
+import type { Effect } from '@core/effects/effects';
 import type { LayerMask } from '@core/effects/mask';
 import type { MatteType } from '@core/effects/matte';
+import type { FillPaint } from '@core/paint/fill';
+import type { Stroke } from '@core/paint/stroke';
+import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
@@ -38,6 +42,13 @@ export interface RenderLayer {
   /** Adjustment layer: its `filter` applies to everything beneath, and it draws
    *  no content of its own. */
   isAdjustment?: boolean;
+  /** Precomp (nested composition): these inner layers are rendered to an
+   *  offscreen texture, then this layer composites that texture as one unit
+   *  (its opacity / blend / filter / mask apply to the whole nested result). */
+  precompLayers?: ReadonlyArray<RenderLayer>;
+  /** Point light: a radial glow (colour, intensity 0..100, radius px) drawn at
+   *  x,y with a screen blend to brighten the layers beneath. */
+  light?: { color: string; intensity: number; radius: number };
   /** Sub-frame transform samples for motion blur (accumulated by the backend).
    *  Present only when motion blur is on and the layer actually moves. */
   motionSamples?: ReadonlyArray<MotionSample>;
@@ -47,22 +58,71 @@ export interface RenderLayer {
   rotation: number; // degrees
   scaleX: number;
   scaleY: number;
+  /** Anchor offset from centre (px). Content is shifted by -anchor so the
+   *  anchor point sits at the pivot (rotation/scale centre). */
+  anchorX?: number;
+  anchorY?: number;
+  /** Full 2×3 affine `[a,b,c,d,e,f]` in composition space, mapping the layer's
+   *  local coords to screen. Present for 3D layers (carries perspective tilt /
+   *  shear that x/y/rotation/scale can't); when set it supersedes them for
+   *  drawing. `x/y/scaleX/scaleY/rotation` remain as the decomposed fallback. */
+  matrix?: readonly [number, number, number, number, number, number];
+  /** Distance from the camera along the view axis; larger = farther. Drives 3D
+   *  painter-order sorting. */
+  depth?: number;
   opacity: number; // 0..1
   width: number;
   height: number;
+  /** Solid fallback colour (legacy). `fillPaint` supersedes it when present. */
   fill: string;
+  /** Rich fill: solid / linear / radial gradient. Canvas2D renders all; the GPU
+   *  path uses the first stop for gradients (documented gap). */
+  fillPaint?: FillPaint;
+  /** Outline stroke over the layer's primitive (Canvas2D only for now). */
+  stroke?: Stroke;
   visible: boolean;
   /** For shapes. */
-  primitive?: 'rect' | 'ellipse';
+  primitive?: 'rect' | 'ellipse' | 'path';
+  /** Vector path points in LOCAL space (only present if primitive === 'path') */
+  pathPoints?: ReadonlyArray<BezierPoint>;
+  /** Trim-path visible arcs [lo,hi] (0..1 of the outline length). When present
+   *  the backend strokes only these portions of the shape outline (MG-C). */
+  trim?: ReadonlyArray<readonly [number, number]>;
   /** For text. */
   text?: string;
   fontSize?: number;
-  /** CSS filter string from the layer's effect stack (blur/glow/color…). */
+  /** Font family name (e.g. 'Inter', 'Roboto'). Falls back to Inter. */
+  fontFamily?: string;
+  /** CSS font-weight ('300'..'700'). Falls back to 600. */
+  fontWeight?: string;
+  /** 'normal' | 'italic'. */
+  fontStyle?: string;
+  /** Extra spacing between characters (px). */
+  letterSpacing?: number;
+  /** Line height as a multiple of font size (for multi-line text). */
+  lineHeight?: number;
+  /** Paragraph alignment: 'left' | 'center' | 'right' | 'justify'. */
+  align?: string;
+  /** Per-glyph transforms from the layer's text animators (MG Phase D). When
+   *  present the backend lays the string out glyph-by-glyph; when absent it
+   *  draws the whole string as one run (no animators → unchanged). */
+  glyphs?: ReadonlyArray<import('@core/text/textAnimators').GlyphTransform>;
+  /** CSS filter string from the layer's effect stack (blur/glow/color…). Used by
+   *  the Canvas2D backend. */
   filter?: string;
+  /** The resolved effect stack (amounts sampled at the current time). Canvas2D
+   *  uses `filter`; the GPU path reads this to build a colour matrix, etc. */
+  effects?: ReadonlyArray<Effect>;
+  /** Imported source URL (blob: or web URL) for image/video/audio layers. */
+  src?: string;
+  /** Referenced project asset ID. */
+  assetId?: string;
 }
 
 export interface RenderOverlays {
   grid?: boolean;
+  /** Number of grid cells per axis (default 3 = rule-of-thirds). */
+  gridDivisions?: number;
   safeArea?: boolean;
   rulers?: boolean;
 }
@@ -84,6 +144,11 @@ export interface RenderSnapshot {
   width: number;
   height: number;
   background: string;
+  /** When true the comp has no background fill (transparent — checkerboard in
+   *  preview, alpha:0 in export). `background` is then ignored for compositing. */
+  transparent?: boolean;
+  /** Current playhead time in seconds. */
+  time?: number;
   layers: ReadonlyArray<RenderLayer>;
   /** Guide overlays drawn over the composition. */
   overlays?: RenderOverlays;
@@ -97,5 +162,10 @@ export interface RenderBackend {
   /** CSS pixel size + device pixel ratio. */
   resize(width: number, height: number, dpr: number): void;
   renderFrame(snapshot: RenderSnapshot): void;
+  /** Enable preview-only chrome (float shadow + transparency checkerboard).
+   *  Left off for export so transparent comps yield real alpha. */
+  setPreviewChrome?(on: boolean): void;
   dispose(): void;
+  /** Promise that resolves when the backend is fully initialized (e.g. GPU compilation). */
+  readyPromise?: Promise<void>;
 }

@@ -1,6 +1,7 @@
 import { Color } from '../../core/math/Color';
-import { RenderPass, SURFACE, type RenderPassContext } from '../RenderPass';
+import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, emitSolid, modelFromRect, mvpFor, writeAttachment } from './passUtils';
+import { EffectPass } from './EffectPass';
 
 /**
  * Draws the composition's own backdrop (a solid fill of its frame) over the
@@ -9,7 +10,9 @@ import { beginViewportPass, emitSolid, modelFromRect, mvpFor, writeAttachment } 
  */
 export class BackgroundPass extends RenderPass {
   readonly name = 'background';
-  override readonly writes = [SURFACE];
+  override get writes() {
+    return [EffectPass.activeColorTarget];
+  }
   override readonly after = ['clear'];
 
   execute(ctx: RenderPassContext): void {
@@ -18,7 +21,7 @@ export class BackgroundPass extends RenderPass {
     const rect = { x: 0, y: 0, width: scene.composition.size.width, height: scene.composition.size.height };
     emitSolid(services.commands, mvpFor(viewport, modelFromRect(rect)), bg, 1, 'normal');
 
-    const enc = beginViewportPass(ctx, this.name, writeAttachment(ctx, SURFACE));
+    const enc = beginViewportPass(ctx, this.name, writeAttachment(ctx, this.writes[0]!));
     services.quad.execute(enc, services.commands);
     enc.end();
   }

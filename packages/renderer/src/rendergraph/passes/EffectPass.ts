@@ -1,19 +1,21 @@
+import { Color } from '../../core/math/Color';
 import { RenderPass, SURFACE, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, writeAttachment } from './passUtils';
+import { beginViewportPass, emitTextured, modelFromRect, mvpFor, writeAttachment } from './passUtils';
 
 export const SCENE_COLOR_TARGET = 'scene-color';
 
 /**
  * Post-process effect pass. Reads an offscreen scene-color target and composites
  * it back to the surface through an effect material (blur, glow, color-grade…).
- * The structural wiring is here (declare `SCENE_COLOR_TARGET`, sample it, blit);
- * concrete effect shaders register as materials and select per-frame. Off by
- * default — the default graph renders directly to the surface.
  */
 export class EffectPass extends RenderPass {
+  static activeColorTarget = SURFACE;
+
   readonly name = 'effect';
   override readonly reads = [SCENE_COLOR_TARGET];
-  override readonly writes = [SURFACE];
+  override get writes(): readonly string[] {
+    return [SURFACE];
+  }
   override readonly after = ['text'];
   override enabled = false;
 
@@ -21,10 +23,30 @@ export class EffectPass extends RenderPass {
     const source = ctx.target(SCENE_COLOR_TARGET);
     if (!source) return;
     const tex = ctx.services.backend.renderTargetTexture(source);
-    void tex; // A full-screen blit through the effect material samples `tex`.
+    if (!tex) return;
+
+    const { scene, viewport, services } = ctx;
+    const rect = { x: 0, y: 0, width: scene.composition.size.width, height: scene.composition.size.height };
+
+    services.commands.clear();
+    emitTextured(
+      services.commands,
+      mvpFor(viewport, modelFromRect(rect)),
+      Color.white(),
+      1,
+      'normal',
+      tex,
+      ctx.services.resources.sampler('linear-clamp', {
+        min: 'linear',
+        mag: 'linear',
+        addressU: 'clamp',
+        addressV: 'clamp',
+      }),
+      { x: 0, y: 0, width: 1, height: 1 }
+    );
+
     const enc = beginViewportPass(ctx, this.name, writeAttachment(ctx, SURFACE));
-    // No-op composite placeholder: real effects bind the effect pipeline + `tex`
-    // and draw a full-screen triangle. Kept inert until a material is supplied.
+    services.quad.execute(enc, services.commands);
     enc.end();
   }
 }

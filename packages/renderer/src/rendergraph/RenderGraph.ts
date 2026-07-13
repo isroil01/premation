@@ -44,6 +44,10 @@ export class RenderGraph {
   private readonly targets = new Map<string, TargetDecl>();
   private compiled: RenderPass[] | null = null;
 
+  invalidate(): void {
+    this.compiled = null;
+  }
+
   addPass(pass: RenderPass): this {
     if (this.passes.some((p) => p.name === pass.name)) {
       throw new RenderGraphError(`Duplicate pass "${pass.name}"`, 'duplicate-pass');

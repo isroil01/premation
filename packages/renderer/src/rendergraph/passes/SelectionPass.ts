@@ -10,7 +10,9 @@ import { beginViewportPass, emitSolid, modelFromRect, mvpFor, writeAttachment } 
  */
 export class SelectionPass extends RenderPass {
   readonly name = 'selection';
-  override readonly writes = [SURFACE];
+  override get writes(): readonly string[] {
+    return [SURFACE];
+  }
   override readonly after = ['text'];
 
   /** Selection accent (blue). */

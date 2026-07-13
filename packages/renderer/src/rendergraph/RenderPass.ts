@@ -48,7 +48,9 @@ export interface RenderPassContext {
 export abstract class RenderPass {
   abstract readonly name: string;
   readonly reads: readonly string[] = [];
-  readonly writes: readonly string[] = [SURFACE];
+  get writes(): readonly string[] {
+    return [SURFACE];
+  }
   readonly after: readonly string[] = [];
   enabled = true;
 

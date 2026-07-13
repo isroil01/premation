@@ -1,6 +1,5 @@
 import { HistoryService } from './HistoryService';
-import type { Command, CommandContext } from './Command';
-import { asCommandId } from '@app-types/common';
+import type { CommandContext, IUndoableCommand } from './Command';
 
 /** A minimal context — real commands used here ignore it, but it must exist. */
 const ctx: CommandContext = {
@@ -14,9 +13,8 @@ const ctx: CommandContext = {
   },
 };
 
-function counterCommand(log: string[]): Command {
+function counterCommand(log: string[]): IUndoableCommand {
   return {
-    id: asCommandId('test.counter'),
     label: 'Counter',
     execute: () => { log.push('execute'); },
     undo: () => { log.push('undo'); },

@@ -9,7 +9,7 @@ import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
 import { SOLID_MATERIAL, TEXTURED_MATERIAL } from '../../shaders/Material';
-import { packSolid, packTextured } from '../../pipeline/uniforms';
+import { packSolid, packTextured, type SolidShape, type ColorTransform } from '../../pipeline/uniforms';
 
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
 
@@ -39,13 +39,21 @@ export function beginViewportPass(ctx: RenderPassContext, label: string, attachm
   return enc;
 }
 
-/** Queue a solid-colored quad. Consecutive solids of one blend batch together. */
-export function emitSolid(cmds: CommandBuffer, mvp: Mat3, color: Color, opacity: number, blend: BlendMode): void {
+/** Queue a solid-colored quad, optionally SDF-masked to a rounded-rect/ellipse.
+ *  Consecutive solids of one blend batch together. */
+export function emitSolid(
+  cmds: CommandBuffer,
+  mvp: Mat3,
+  color: Color,
+  opacity: number,
+  blend: BlendMode,
+  shape?: SolidShape,
+): void {
   cmds.add({
     batchKey: `solid|${blend}`,
     material: SOLID_MATERIAL,
     blend,
-    uniforms: packSolid(mvp, color, opacity),
+    uniforms: packSolid(mvp, color, opacity, shape),
   });
 }
 
@@ -59,12 +67,13 @@ export function emitTextured(
   texture: TextureHandle,
   sampler: SamplerHandle,
   uvRect: Rect = FULL_UV,
+  color?: ColorTransform,
 ): void {
   cmds.add({
     batchKey: `tex|${texture.id}|${blend}`,
     material: TEXTURED_MATERIAL,
     blend,
-    uniforms: packTextured(mvp, uvRect, tint, opacity),
+    uniforms: packTextured(mvp, uvRect, tint, opacity, color),
     texture,
     sampler,
   });

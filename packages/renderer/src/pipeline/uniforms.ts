@@ -47,19 +47,86 @@ export function packRect(r: Rect, out: Float32Array, floatOffset: number): numbe
   return floatOffset + 4;
 }
 
-/** Solid material uniform: mat3 mvp + vec4 color. */
-export function packSolid(mvp: Mat3, color: Color, opacity: number): Float32Array {
-  const out = new Float32Array(MAT3_STD140_FLOATS + 4);
+/** SDF shape params packed into the solid uniform's `shape` vec4:
+ *  (kind, radiusPx, worldW, worldH). kind 0 = plain rect (no mask). */
+export interface SolidShape {
+  kind: 0 | 1 | 2;
+  radiusPx: number;
+  width: number;
+  height: number;
+}
+
+const RECT_SHAPE: SolidShape = { kind: 0, radiusPx: 0, width: 0, height: 0 };
+
+/** Solid material uniform: mat3 mvp + vec4 color + vec4 shape. `shape` defaults
+ *  to a plain rect (kind 0), so masks and untyped solids are unchanged. */
+export function packSolid(mvp: Mat3, color: Color, opacity: number, shape: SolidShape = RECT_SHAPE): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);
-  packColor(color, out, o, opacity);
+  o = packColor(color, out, o, opacity);
+  out[o + 0] = shape.kind;
+  out[o + 1] = shape.radiusPx;
+  out[o + 2] = shape.width;
+  out[o + 3] = shape.height;
   return out;
 }
 
-/** Textured material uniform: mat3 mvp + vec4 uvRect + vec4 tint. */
-export function packTextured(mvp: Mat3, uvRect: Rect, tint: Color, opacity: number): Float32Array {
+/** A per-pixel colour transform: row-major 3×3 `m` + `offset` (out = M·rgb+off). */
+export interface ColorTransform {
+  m: readonly number[];
+  offset: readonly number[];
+}
+
+/** Identity colour transform (no grade). */
+export const IDENTITY_COLOR_TRANSFORM: ColorTransform = { m: [1, 0, 0, 0, 1, 0, 0, 0, 1], offset: [0, 0, 0] };
+
+/**
+ * Pack a colour transform as THREE vec4 rows: (mRow, offsetComponent). The shader
+ * computes `dot(rowᵢ, vec4(rgb, 1))` per channel — so it's independent of any
+ * row/column-major matrix convention (no transpose ambiguity).
+ */
+export function packColorRows(ct: ColorTransform, out: Float32Array, floatOffset: number): number {
+  const m = ct.m;
+  const off = ct.offset;
+  for (let row = 0; row < 3; row++) {
+    out[floatOffset + row * 4 + 0] = m[row * 3 + 0]!;
+    out[floatOffset + row * 4 + 1] = m[row * 3 + 1]!;
+    out[floatOffset + row * 4 + 2] = m[row * 3 + 2]!;
+    out[floatOffset + row * 4 + 3] = off[row]!;
+  }
+  return floatOffset + 12;
+}
+
+/** Textured material uniform: mat3 mvp + vec4 uvRect + vec4 tint + 3 colour rows. */
+export function packTextured(
+  mvp: Mat3,
+  uvRect: Rect,
+  tint: Color,
+  opacity: number,
+  color: ColorTransform = IDENTITY_COLOR_TRANSFORM,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 12);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  o = packColor(tint, out, o, opacity);
+  packColorRows(color, out, o);
+  return out;
+}
+
+/** Blur material uniform: mat3 mvp + vec4 uvRect + vec4 blurParams (dirX, dirY, radiusPx, 0). */
+export function packBlur(
+  mvp: Mat3,
+  uvRect: Rect,
+  dirX: number,
+  dirY: number,
+  radiusPx: number,
+): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
-  packColor(tint, out, o, opacity);
+  out[o + 0] = dirX;
+  out[o + 1] = dirY;
+  out[o + 2] = radiusPx;
+  out[o + 3] = 0;
   return out;
 }

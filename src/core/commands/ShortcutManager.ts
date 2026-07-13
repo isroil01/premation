@@ -13,7 +13,9 @@
 import { chordFromEvent, getCommandSystem } from '@core/commands/CommandSystem';
 import { getCommandRegistry, chordKey } from '@core/commands/Command';
 import type { Disposable, KeyChord } from '@app-types/common';
+import { asCommandId } from '@app-types/common';
 import { getEventBus } from '@core/events/EventBus';
+import { getShortcutOverrides, resolveChord } from '@core/commands/shortcutOverrides';
 
 interface ShortcutBinding {
   chord: KeyChord;
@@ -64,18 +66,26 @@ export class ShortcutManager {
     return this.bindings;
   }
 
-  /** Re-scan commands in the registry and re-bind them. */
+  /** Re-scan commands in the registry and re-bind them, applying the user's
+   *  persisted overrides (rebind / disable) over each command's default chord. */
   rehydrateFromRegistry(): void {
     this.bindings.length = 0;
+    const overrides = getShortcutOverrides();
     for (const cmd of getCommandRegistry().all()) {
-      if (!cmd.shortcut) continue;
+      const chord = resolveChord(cmd.id as unknown as string, cmd.shortcut, overrides);
+      if (!chord) continue; // no default and no override, or override = disabled
       this.add({
-        chord: cmd.shortcut,
+        chord,
         commandId: cmd.id as unknown as string,
         preventDefault: true,
         description: cmd.description ?? cmd.label,
       });
     }
+  }
+
+  /** Re-apply overrides after the user edits shortcuts (same as rehydrate). */
+  applyOverrides(): void {
+    this.rehydrateFromRegistry();
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {
@@ -94,7 +104,9 @@ export class ShortcutManager {
       if (chordKey(b.chord) !== key) continue;
       if (b.preventDefault) e.preventDefault();
       e.stopPropagation();
-      void getCommandSystem().executeByShortcut(b.chord);
+      // Dispatch by commandId (not chord) so rebound shortcuts resolve even
+      // when the registry still holds the command's original chord.
+      void getCommandSystem().execute(asCommandId(b.commandId));
       getEventBus().emit('WorkspaceFocused', { workspaceId: 'global' });
       return;
     }

@@ -36,7 +36,7 @@ export interface CommandServices {
 }
 
 export interface UndoService {
-  push(command: Command): void;
+  push(command: IUndoableCommand): void;
   undo(): void;
   redo(): void;
   canUndo(): boolean;
@@ -59,6 +59,13 @@ export interface PanelService {
 export interface WorkspaceService {
   setActive(id: string): void;
   getActive(): string;
+}
+
+/** What every undoable action must implement for the global stack. */
+export interface IUndoableCommand {
+  readonly label: string;
+  execute(ctx: CommandContext): void | Promise<void>;
+  undo(ctx: CommandContext): void | Promise<void>;
 }
 
 /** What every command must implement. */
@@ -147,14 +154,41 @@ export function setCommandRegistry(r: CommandRegistryImpl): void {
 // ── Built-in commands (UI-level, always present) ──────────────────
 
 export const BuiltinCommands = {
-  ToggleLeftSidebar:  asCommandId('view.toggleLeftSidebar'),
+  ToggleLeftSidebar:    asCommandId('view.toggleLeftSidebar'),
   ToggleRightInspector: asCommandId('view.toggleRightInspector'),
-  ToggleTimeline:     asCommandId('view.toggleTimeline'),
-  FocusWorkspace:     asCommandId('view.focusWorkspace'),
-  ResetLayout:        asCommandId('layout.reset'),
-  SwitchTheme:        asCommandId('theme.switch'),
-  Undo:               asCommandId('edit.undo'),
-  Redo:               asCommandId('edit.redo'),
-  SelectAll:          asCommandId('edit.selectAll'),
-  Deselect:           asCommandId('edit.deselect'),
+  ToggleTimeline:       asCommandId('view.toggleTimeline'),
+  FocusWorkspace:       asCommandId('view.focusWorkspace'),
+  ResetLayout:          asCommandId('layout.reset'),
+  SwitchTheme:          asCommandId('theme.switch'),
+  Undo:                 asCommandId('edit.undo'),
+  Redo:                 asCommandId('edit.redo'),
+  SelectAll:            asCommandId('edit.selectAll'),
+  Deselect:             asCommandId('edit.deselect'),
+  DeleteSelected:       asCommandId('edit.deleteSelected'),
+  DuplicateSelected:    asCommandId('edit.duplicateSelected'),
 } as const;
+
+export class CompositeCommand implements IUndoableCommand {
+  readonly label: string;
+  private readonly commands: IUndoableCommand[];
+
+  constructor(label: string, commands: IUndoableCommand[]) {
+    this.label = label;
+    this.commands = commands;
+  }
+
+  async execute(ctx: CommandContext): Promise<void> {
+    for (const cmd of this.commands) {
+      await cmd.execute(ctx);
+    }
+  }
+
+  async undo(ctx: CommandContext): Promise<void> {
+    // Undo in reverse order
+    for (let i = this.commands.length - 1; i >= 0; i--) {
+      await this.commands[i]!.undo(ctx);
+    }
+  }
+}
+
+

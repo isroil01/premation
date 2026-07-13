@@ -336,6 +336,10 @@ function applyBlend(gl: GL, blend: BlendMode): void {
     return;
   }
   gl.enable(gl.BLEND);
+  
+  // Default blend equation
+  gl.blendEquation(gl.FUNC_ADD);
+
   switch (blend) {
     case 'add':
       gl.blendFunc(gl.ONE, gl.ONE);
@@ -346,8 +350,19 @@ function applyBlend(gl: GL, blend: BlendMode): void {
     case 'screen':
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
       break;
+    case 'subtract':
+      gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      break;
+    case 'darken':
+      gl.blendEquation(gl.MIN);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      break;
+    case 'lighten':
+      gl.blendEquation(gl.MAX);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      break;
     default:
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied over
   }
-  gl.blendEquation(gl.FUNC_ADD);
 }

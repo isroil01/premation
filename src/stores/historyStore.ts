@@ -14,33 +14,8 @@ import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
 import type { ProjectFile } from '@core/types';
 import { bumpScene } from './sceneStore';
-
-export interface HistoryEntry {
-  id: string;
-  label: string;
-  /** True when the user explicitly named/snapshotted this state. */
-  named: boolean;
-  at: number;
-  scene: ProjectFile;
-  anim: AnimSnapshot;
-}
-
-interface HistoryStore {
-  entries: ReadonlyArray<HistoryEntry>;
-  /** Index of the state the document currently reflects. */
-  index: number;
-  /** True while a jump is restoring state (suppresses auto-record). */
-  restoring: boolean;
-
-  record: (label?: string, named?: boolean) => void;
-  jumpTo: (index: number) => void;
-  rename: (index: number, label: string) => void;
-  reset: () => void;
-}
-
-const CAP = 100;
-let seq = 0;
-let idSeq = 0;
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 
 /** Deep-clone the current editable state into a snapshot. */
 function captureState(): { scene: ProjectFile; anim: AnimSnapshot } {
@@ -50,48 +25,83 @@ function captureState(): { scene: ProjectFile; anim: AnimSnapshot } {
   };
 }
 
-export const useHistoryStore = create<HistoryStore>((set, get) => ({
+export class StoreSnapshotCommand implements IUndoableCommand {
+  readonly label: string;
+  private readonly before: { scene: ProjectFile; anim: AnimSnapshot };
+  private readonly after: { scene: ProjectFile; anim: AnimSnapshot };
+
+  constructor(
+    label: string,
+    before: { scene: ProjectFile; anim: AnimSnapshot },
+    after: { scene: ProjectFile; anim: AnimSnapshot }
+  ) {
+    this.label = label;
+    this.before = before;
+    this.after = after;
+  }
+
+  execute(_ctx: CommandContext): void {
+    sceneProjectIO.restore(structuredClone(this.after.scene));
+    defaultAnimation.restore(this.after.anim);
+    bumpScene();
+  }
+
+  undo(_ctx: CommandContext): void {
+    sceneProjectIO.restore(structuredClone(this.before.scene));
+    defaultAnimation.restore(this.before.anim);
+    bumpScene();
+  }
+}
+
+interface HistoryStore {
+  /** @deprecated History is now managed globally by CommandSystem. */
+  entries: ReadonlyArray<any>;
+  index: number;
+  restoring: boolean;
+
+  record: (label?: string, named?: boolean) => void;
+  jumpTo: (index: number) => void;
+  rename: (index: number, label: string) => void;
+  reset: () => void;
+}
+
+let seq = 0;
+let lastState: { scene: ProjectFile; anim: AnimSnapshot } | null = null;
+
+export const useHistoryStore = create<HistoryStore>((_set, get) => ({
   entries: [],
   index: -1,
   restoring: false,
 
-  record: (label, named = false) => {
+  record: (label, _named = false) => {
     if (get().restoring) return;
-    const state = captureState();
-    const entry: HistoryEntry = {
-      id: `h_${(idSeq += 1)}`,
-      label: label ?? `Edit ${(seq += 1)}`,
-      named,
-      at: Date.now(),
-      ...state,
-    };
-    set((s) => {
-      // A new edit after jumping back truncates the redoable future (Photoshop).
-      const kept = s.entries.slice(0, s.index + 1);
-      let entries = [...kept, entry];
-      if (entries.length > CAP) entries = entries.slice(entries.length - CAP);
-      return { entries, index: entries.length - 1 };
-    });
-  },
-
-  jumpTo: (index) => {
-    const entry = get().entries[index];
-    if (!entry) return;
-    set({ restoring: true });
-    try {
-      // Restore is non-destructive: swap state, never touch source assets.
-      sceneProjectIO.restore(structuredClone(entry.scene));
-      defaultAnimation.restore(entry.anim);
-      bumpScene();
-    } finally {
-      set({ index, restoring: false });
+    const currentState = captureState();
+    
+    if (lastState) {
+      const command = new StoreSnapshotCommand(
+        label ?? `Edit ${(seq += 1)}`,
+        lastState,
+        currentState
+      );
+      getCommandSystem().getHistory().push(command);
     }
+    
+    lastState = currentState;
   },
 
-  rename: (index, label) =>
-    set((s) => ({
-      entries: s.entries.map((e, i) => (i === index ? { ...e, label, named: true } : e)),
-    })),
-
-  reset: () => set({ entries: [], index: -1, restoring: false }),
+  // These are deprecated but kept so existing UI doesn't crash until refactored.
+  jumpTo: (_index) => {},
+  rename: (_index, _label) => {},
+  reset: () => {
+    lastState = null;
+    getCommandSystem().getHistory().clear();
+  },
 }));
+
+import { getEventBus } from '@core/events/EventBus';
+getEventBus().on('UndoStackChanged', () => {
+  // Whenever the global undo stack is manipulated (undo/redo), 
+  // we must recapture the current state so the next StoreSnapshotCommand 
+  // uses the accurate "before" state instead of a stale one.
+  lastState = captureState();
+});
