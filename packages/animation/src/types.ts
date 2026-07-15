@@ -18,7 +18,9 @@ export type EasingKind =
   | 'easeOut'
   | 'easeInOut'
   | 'bezier'
-  | 'hold';
+  | 'hold'
+  | 'autoBezier'
+  | 'continuousBezier';
 
 /** Cubic-bezier control points [x1, y1, x2, y2] (x in 0..1, y may overshoot). */
 export type BezierHandles = [number, number, number, number];
@@ -34,6 +36,18 @@ export interface Keyframe {
   /** Roving: the keyframe's TIME is auto-positioned between its anchor
    *  neighbours for constant speed (its value is unchanged). Ends can't rove. */
   roving?: boolean;
+  /**
+   * Spatial bezier tangents — VALUE-space offsets relative to `value`.
+   * `so` (spatial out) shapes the segment leaving this keyframe; `si` (spatial
+   * in) shapes the segment arriving at it. When either end of a segment defines
+   * one, the value follows a 1D cubic bezier between the keyframes (the missing
+   * side defaults to the linear third-point). Position tracks (x + y) sharing
+   * the same eased parameter make the 2D trajectory a true cubic bezier —
+   * AE-style curved motion paths. Temporal easing is unchanged: it remaps the
+   * segment parameter, not the spatial shape.
+   */
+  si?: number;
+  so?: number;
 }
 
 export interface PropertyTrack {

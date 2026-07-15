@@ -21,6 +21,7 @@ export type {
 export {
   cubicBezierEase, ease, sampleTrack, upsertKeyframe,
   sampleSpeed, applyRoving,
+  cubicValueAt, smoothTrackTangents, clearTrackTangents,
   EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER,
 } from './interpolate';
 
@@ -38,6 +39,7 @@ export type {
   CompiledExpression,
   TokenKind,
   SyntaxToken,
+  LoopMode,
 } from './expressions';
 
 // ── Keyframe ids (timeline ↔ engine reference encoding) ───────────
@@ -46,4 +48,11 @@ export type { KeyframeRefParts } from './keyframeId';
 
 // ── Engine ────────────────────────────────────────────────────────
 export { AnimationEngine, defaultAnimation } from './AnimationEngine';
-export type { AnimSnapshot, AnimationChangeListener, AudioLevelProvider, ControlProvider } from './AnimationEngine';
+export type {
+  AnimSnapshot,
+  AnimationChangeListener,
+  AudioLevelProvider,
+  ControlProvider,
+  LayerResolver,
+  BaseValueProvider,
+} from './AnimationEngine';

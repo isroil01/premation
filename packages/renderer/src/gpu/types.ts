@@ -68,6 +68,10 @@ export interface TextureDescriptor {
   mipmapped?: boolean;
   /** Marks the texture as a color attachment target. */
   renderable?: boolean;
+  /** Texture will be uploaded from an external image (bitmap/canvas/video).
+   *  WebGPU's copyExternalImageToTexture requires the destination to carry
+   *  RENDER_ATTACHMENT usage, so backends must add it when this is set. */
+  externalCopy?: boolean;
 }
 
 export interface SamplerDescriptor {

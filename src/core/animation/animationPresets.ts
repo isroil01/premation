@@ -15,6 +15,8 @@ import { defaultAnimation, type AnimationEngine, type Keyframe, type PropPath } 
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { getSettingsManager } from '@core/services/coreServices';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { is3DEnabled, set3DEnabled, THREE_D_PROPS } from '@core/scene/threeD';
+import { readNodeKind } from '@core/scene/sceneDerive';
 
 export interface PresetTrack {
   prop: PropPath;
@@ -120,8 +122,24 @@ export function applyPresetTracks(
 ): void {
   const resolved = resolveRelativeTracks(tracks, (prop) => nodeBaseValue(nodeId, prop, atTime, engine));
   const shifted = offsetTracks(resolved, atTime);
+  // 3D presets (z / rotationX / rotationY tracks) need the layer's 3D switch on
+  // to render — flip it automatically so they are one-click on any 2D layer.
+  // Cameras/lights read their depth props directly and don't use the switch.
+  const uses3D = tracks.some((t) => (THREE_D_PROPS as readonly string[]).includes(t.prop));
+  if (uses3D) {
+    const node = defaultSceneGraph.getNode(nodeId);
+    const kind = node ? readNodeKind(node) : null;
+    if (node && kind !== 'camera' && kind !== 'light' && !is3DEnabled(node)) {
+      set3DEnabled(nodeId, true);
+    }
+  }
   runAnimEdit('Apply animation preset', () => {
-    for (const t of shifted) engine.setTrackKeyframes(nodeId, t.prop, t.keyframes);
+    for (const t of shifted) {
+      for (const k of t.keyframes) {
+        engine.setKeyframe(nodeId, t.prop, k.t, k.value, k.easing);
+        if (k.bezier) engine.setBezier(nodeId, t.prop, k.t, k.bezier);
+      }
+    }
   });
 }
 
@@ -203,6 +221,44 @@ export const BUILTIN_PRESETS: ReadonlyArray<AnimationPreset> = [
     builtin: true,
     tracks: [
       { prop: 'rotation', relative: true, keyframes: [kf(0, 0), kf(0.08, 8), kf(0.16, -7), kf(0.24, 5), kf(0.32, -3), kf(0.4, 0)] },
+    ],
+  },
+  // ── 3D presets — applying one auto-enables the layer's 3D switch ──
+  {
+    name: 'Flip In 3D',
+    builtin: true,
+    tracks: [
+      { prop: 'rotationY', keyframes: [kf(0, -90, 'easeOut'), kf(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.3, 100)] },
+    ],
+  },
+  {
+    name: 'Card Flip 3D',
+    builtin: true,
+    tracks: [{ prop: 'rotationY', keyframes: [kf(0, 0, 'easeInOut'), kf(0.9, 180)] }],
+  },
+  {
+    name: 'Swing In 3D',
+    builtin: true,
+    tracks: [
+      { prop: 'rotationX', keyframes: [kf(0, -80, 'easeOut'), kf(0.5, 12, 'easeInOut'), kf(0.75, 0)] },
+      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.25, 100)] },
+    ],
+  },
+  {
+    name: 'Depth Push In',
+    builtin: true,
+    tracks: [
+      { prop: 'z', keyframes: [kf(0, 900, 'easeOut'), kf(0.8, 0)] },
+      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.35, 100)] },
+    ],
+  },
+  {
+    name: 'Orbit Tilt 3D',
+    builtin: true,
+    tracks: [
+      { prop: 'rotationY', keyframes: [kf(0, 0, 'easeInOut'), kf(0.6, 28, 'easeInOut'), kf(1.2, 0)] },
+      { prop: 'rotationX', keyframes: [kf(0, 0, 'easeInOut'), kf(0.6, -14, 'easeInOut'), kf(1.2, 0)] },
     ],
   },
 ];

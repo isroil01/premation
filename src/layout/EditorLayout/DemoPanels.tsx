@@ -13,9 +13,10 @@ import { HistoryPanel } from '@layout/History/HistoryPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { CommentsPanel } from '@layout/Comments/CommentsPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
-import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
+import { MotionToolsPanel } from '@layout/MotionTools';
 import { TreeView, type TreeNode } from '@components/TreeView';
+import { Accordion, type AccordionItem } from '@components/Accordion';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
@@ -23,27 +24,42 @@ import { NodeInspector } from '@components/Inspector/NodeInspector';
 import { ParentControl } from '@layout/Inspector/ParentControl';
 import { MotionControls } from '@layout/Inspector/MotionControls';
 import { PrecompControl } from '@layout/Inspector/PrecompControl';
-import { AnchorControl } from '@layout/Inspector/AnchorControl';
 import { TextAnimatorControls } from '@layout/Inspector/TextAnimatorControls';
 import { AudioControls } from '@layout/Inspector/AudioControls';
 import { TransformSection } from '@layout/Inspector/TransformSection';
 import { AppearanceSection } from '@layout/Inspector/AppearanceSection';
+import { AlignSection } from '@layout/Inspector/AlignSection';
 import { TextSection } from '@layout/Inspector/TextSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
-import { EffectsSection } from '@layout/Inspector/EffectsSection';
+import { ThreeDControl } from '@layout/Inspector/ThreeDControl';
+import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusStore } from '@stores/focusStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import { openContextMenu } from '@stores/contextMenuStore';
+import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { insertMedia } from '@core/scene/sceneInsert';
+import {
+  insertMedia,
+  toggleSelectedLocked,
+  toggleSelectedSolo,
+  groupSelectedLayers,
+  ungroupSelected,
+  precomposeSelected,
+  duplicateSelectedLayers,
+  deleteSelectedLayers,
+} from '@core/scene/sceneInsert';
+import { reparentNode, moveNodeAdjacent, canReparent } from '@core/scene/parenting';
+import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 import { getNodeFill, setNodeFill } from '@core/paint/fill';
-import { insertPrimitive } from '@core/scene/sceneInsert';
+import { insertShape, insertText } from '@core/scene/sceneInsert';
+import { UI_COMPONENT_PRESETS } from '@core/scene/uiComponents';
+import { useComponentStore } from '@stores/componentStore';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
 import { useUIStore } from '@stores/uiStore';
+import { useWorkspaceStore } from '@stores/projectStore';
 import type { SceneNode } from '@core/types';
 import styles from './DemoPanels.module.css';
 
@@ -73,6 +89,7 @@ function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
     id: node.id,
     label: node.name ?? node.id,
     icon: KIND_ICON[kind],
+    labelColor: readNodeLabelColor(node),
     data: { type: kind },
     children: children.length ? children : undefined,
   };
@@ -83,24 +100,55 @@ function sceneGraphToTree(): TreeNode<SceneNodeData>[] {
   return defaultSceneGraph.getRoots().map(toTreeNode);
 }
 
-let nodeSeq = 0;
+/** A small round swatch shown next to a color name in the Label Color menu. */
+function LabelSwatch({ color }: { color: string }): JSX.Element {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-block',
+        width: 9,
+        height: 9,
+        borderRadius: '50%',
+        background: color,
+        marginRight: 8,
+        verticalAlign: 'baseline',
+        flex: 'none',
+      }}
+    />
+  );
+}
 
-/** Clone a node (fresh ids, "copy" suffix); children are not duplicated. */
-function cloneNode(node: SceneNode): SceneNode {
-  const id = `${readNodeKind(node)}_${(nodeSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
-  return {
-    ...node,
-    id,
-    name: `${node.name ?? 'Node'} copy`,
-    parent: node.parent ?? null,
-    children: [],
-    transform: {
-      position: { ...node.transform.position },
-      rotation: node.transform.rotation,
-      scale: { ...node.transform.scale },
+/**
+ * "Label Color" submenu (AE-style): the fixed swatch palette + a None entry
+ * that clears back to the layer kind's default category color. Applies to the
+ * whole selection when the clicked layer is part of it (AE behavior).
+ */
+function labelColorMenuItems(targetId: string): ContextMenuItem[] {
+  const sel = useSelectionStore.getState().ids;
+  const ids: string[] = sel.includes(targetId) ? [...sel] : [targetId];
+  const node = defaultSceneGraph.getNode(targetId);
+  const current = node ? readNodeLabelColor(node) : undefined;
+  return [
+    {
+      id: 'label-none',
+      label: 'None (Default)',
+      icon: current === undefined ? 'check' : undefined,
+      onSelect: () => setNodeLabelColor(ids, undefined),
     },
-    components: node.components.map((c, i) => ({ id: `${id}_c${i}`, type: c.type, props: { ...c.props } })),
-  };
+    { id: 'label-sep', separator: true },
+    ...LABEL_COLORS.map((c): ContextMenuItem => ({
+      id: `label-${c.id}`,
+      label: (
+        <>
+          <LabelSwatch color={c.color} />
+          {c.label}
+        </>
+      ),
+      icon: current === c.color ? 'check' : undefined,
+      onSelect: () => setNodeLabelColor(ids, c.color),
+    })),
+  ];
 }
 
 /** Filter the tree by label, keeping ancestors of any match. */
@@ -132,6 +180,8 @@ export function ScenePanel(): JSX.Element {
   const expandIds = useMemo(() => collectIds(filtered), [filtered]);
   const itemCount = defaultSceneGraph.size;
 
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+
   const toggleVisible = (id: string): void => {
     const n = defaultSceneGraph.getNode(id);
     if (!n) return;
@@ -139,29 +189,46 @@ export function ScenePanel(): JSX.Element {
     bumpScene();
   };
 
-  const deleteNode = (id: string): void => {
-    defaultSceneGraph.removeNode(id);
-    setSelected(selected.filter((s) => s !== id));
-    bumpScene();
+  const commitRename = (id: string, name: string): void => {
+    const n = defaultSceneGraph.getNode(id);
+    if (n) { n.name = name; bumpScene(); }
+    setRenamingId(null);
   };
 
-  const duplicateNode = (id: string): void => {
-    const n = defaultSceneGraph.getNode(id);
-    if (!n) return;
-    const copy = cloneNode(n);
-    if (n.parent) defaultSceneGraph.addChild(n.parent, copy);
-    else defaultSceneGraph.addNode(copy);
-    setSelected([copy.id]);
-    bumpScene();
+  // Drag-to-reorder / reparent from the layer tree.
+  const handleReorder = (
+    dragId: string,
+    targetId: string,
+    pos: 'before' | 'after' | 'inside',
+  ): void => {
+    if (pos === 'inside') {
+      if (canReparent(dragId, targetId)) reparentNode(dragId, targetId);
+      else moveNodeAdjacent(dragId, targetId, 'after');
+    } else {
+      moveNodeAdjacent(dragId, targetId, pos);
+    }
   };
 
   const openNodeMenu = (id: string, e: React.MouseEvent): void => {
-    const hidden = defaultSceneGraph.getNode(id)?.visible === false;
+    const node = defaultSceneGraph.getNode(id);
+    const hidden = node?.visible === false;
+    const locked = (node as { locked?: boolean } | undefined)?.locked === true;
+    const solo = (node as { solo?: boolean } | undefined)?.solo === true;
+    const isGroup = node ? readNodeKind(node) === 'group' : false;
     openContextMenu(e.clientX, e.clientY, [
-      { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateNode(id) },
+      { id: 'rename', label: 'Rename', onSelect: () => setRenamingId(id) },
+      { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
+      { id: 'sep1', separator: true },
       { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: () => toggleVisible(id) },
-      { id: 'sep', separator: true },
-      { id: 'delete', label: 'Delete', danger: true, onSelect: () => deleteNode(id) },
+      { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked() },
+      { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => toggleSelectedSolo() },
+      { id: 'labelColor', label: 'Label Color', children: labelColorMenuItems(id) },
+      { id: 'sep2', separator: true },
+      { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
+      ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
+      { id: 'precompose', label: 'Pre-compose…', onSelect: () => precomposeSelected() },
+      { id: 'sep3', separator: true },
+      { id: 'delete', label: 'Delete', danger: true, onSelect: () => deleteSelectedLayers() },
     ]);
   };
 
@@ -192,6 +259,10 @@ export function ScenePanel(): JSX.Element {
             defaultExpandedIds={expandIds}
             expandedIds={q ? expandIds : undefined}
             onNodeContextMenu={openNodeMenu}
+            onReorder={handleReorder}
+            renamingId={renamingId ?? undefined}
+            onRename={commitRename}
+            onRenameCancel={() => setRenamingId(null)}
             renderActions={(node) => {
               const hidden = defaultSceneGraph.getNode(node.id)?.visible === false;
               return (
@@ -209,7 +280,7 @@ export function ScenePanel(): JSX.Element {
           />
         ) : (
           <div className={styles.empty}>
-            {q ? 'No layers match your search.' : 'No layers yet. Use the + buttons to add one.'}
+            {q ? 'No layers match your search.' : 'No layers yet. Add one from the “+ New layer” menu in the toolbar.'}
           </div>
         )}
       </div>
@@ -305,7 +376,7 @@ export function AssetsPanel(): JSX.Element {
       <div className={styles.body}>
         {filteredAssets.length === 0 ? (
           <div className={styles.empty}>
-            <p style={{ margin: 0, color: '#666', fontSize: '11px' }}>
+            <p style={{ margin: 0, color: 'var(--color-text-tertiary)', fontSize: '11px' }}>
               {searchQuery ? 'No matching assets found.' : 'No media assets imported yet. Click Import to add files.'}
             </p>
           </div>
@@ -375,23 +446,28 @@ export function PropertiesPanel(): JSX.Element {
 }
 
 function InspectorContent({ nodeId }: { nodeId: string | null }): JSX.Element {
+  // Hooks must run unconditionally on every render — keep this above the early
+  // returns below (nothing-selected / missing-node), or React throws
+  // "Expected static flag was missing" when the selection toggles.
+  const enterFocus = useFocusStore((s) => s.enter);
+
   if (!nodeId) {
     return (
-      <div style={{ padding: '16px 14px', color: '#8a8a90', fontSize: 12, lineHeight: 1.6 }}>
-        <div style={{ color: '#c8c8ce', fontWeight: 600, marginBottom: 8 }}>Nothing selected</div>
+      <div style={{ padding: '16px 14px', color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
+        <div style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 8 }}>Nothing selected</div>
         <p style={{ margin: '0 0 12px' }}>
           Select a layer in the canvas or the Scene panel to edit its properties
           (fill, font, transform, effects…).
         </p>
-        <div style={{ color: '#c8c8ce', fontWeight: 600, margin: '4px 0 6px' }}>Give it motion</div>
+        <div style={{ color: 'var(--color-text-primary)', fontWeight: 600, margin: '4px 0 6px' }}>Give it motion</div>
         <ol style={{ margin: 0, paddingLeft: 16 }}>
           <li>Select a layer.</li>
-          <li>Click <strong style={{ color: '#e0e0e6' }}>Animate</strong> next to a property (Position, Scale, Opacity…) to set a first keyframe.</li>
+          <li>Click <strong style={{ color: 'var(--color-text-primary)' }}>Animate</strong> next to a property (Position, Scale, Opacity…) to set a first keyframe.</li>
           <li>Move the playhead in the timeline, then change the value — a second keyframe is created.</li>
-          <li>Press <strong style={{ color: '#e0e0e6' }}>Play</strong> to preview.</li>
+          <li>Press <strong style={{ color: 'var(--color-text-primary)' }}>Play</strong> to preview.</li>
         </ol>
-        <p style={{ margin: '12px 0 0', opacity: 0.8 }}>
-          Tip: with a layer selected, use the <strong style={{ color: '#e0e0e6' }}>Animate</strong> menu (top bar) or the
+        <p style={{ margin: '12px 0 0', opacity: 0.8, color: 'var(--color-text-tertiary)' }}>
+          Tip: with a layer selected, use the <strong style={{ color: 'var(--color-text-primary)' }}>Animate</strong> menu (top bar) or the
           assistant (“Ask anything…”) for one-click motion presets.
         </p>
       </div>
@@ -402,128 +478,150 @@ function InspectorContent({ nodeId }: { nodeId: string | null }): JSX.Element {
   if (!node) return <div className={styles.empty}>No node data</div>;
 
   const kind = readNodeKind(node);
-  const enterFocus = useFocusStore((s) => s.enter);
 
   switch (kind) {
-    case 'shape':
-      return (
-        <div style={{ padding: 8 }}>
-          <ParentControl nodeId={nodeId} />
-          <AnchorControl nodeId={nodeId} />
-          <TransformSection nodeId={nodeId} />
-          <AppearanceSection nodeId={nodeId} />
-          <MotionControls nodeId={nodeId} />
-          <EffectsSection nodeId={nodeId} />
-        </div>
-      );
-    case 'text':
-      return (
-        <div style={{ padding: 8 }}>
-          <ParentControl nodeId={nodeId} />
-          <AnchorControl nodeId={nodeId} />
-          <TransformSection nodeId={nodeId} />
-          <TextSection nodeId={nodeId} />
-          <MotionControls nodeId={nodeId} />
-          <TextAnimatorControls nodeId={nodeId} />
-          <EffectsSection nodeId={nodeId} />
-        </div>
-      );
+    case 'shape': {
+      const items: AccordionItem[] = [
+        { id: 'transform', title: 'Transform', icon: 'settings', defaultOpen: true, content: (
+          <>
+            <TransformSection nodeId={nodeId} />
+            <ThreeDControl nodeId={nodeId} />
+          </>
+        )},
+        { id: 'parenting', title: 'Parent & Link', icon: 'layers', content: <ParentControl nodeId={nodeId} /> },
+        { id: 'motion', title: 'Motion & Keyframes', icon: 'keyframe', content: <MotionControls nodeId={nodeId} /> },
+        { id: 'appearance', title: 'Appearance (Fill & Stroke)', icon: 'shape', defaultOpen: true, content: <AppearanceSection nodeId={nodeId} /> },
+        { id: 'geometry', title: 'Geometry & Path Effects', icon: 'line', content: <ShapeEffects nodeId={nodeId} /> },
+        { id: 'align', title: 'Align & Distribute', icon: 'align-center', content: <AlignSection /> },      ];
+      return <div style={{ padding: 4 }}><Accordion items={items} /></div>;
+    }
+    case 'text': {
+      const items: AccordionItem[] = [
+        { id: 'transform', title: 'Transform', icon: 'settings', defaultOpen: true, content: (
+          <>
+            <TransformSection nodeId={nodeId} />
+            <ThreeDControl nodeId={nodeId} />
+          </>
+        )},
+        { id: 'parenting', title: 'Parent & Link', icon: 'layers', content: <ParentControl nodeId={nodeId} /> },
+        { id: 'motion', title: 'Motion & Keyframes', icon: 'keyframe', content: <MotionControls nodeId={nodeId} /> },
+        { id: 'text', title: 'Text Styles', icon: 'type', defaultOpen: true, content: <TextSection nodeId={nodeId} /> },
+        { id: 'appearance', title: 'Appearance (Fill & Stroke)', icon: 'shape', content: <AppearanceSection nodeId={nodeId} /> },
+        { id: 'animators', title: 'Text Animators', icon: 'sparkles', content: <TextAnimatorControls nodeId={nodeId} /> },
+        { id: 'align', title: 'Align & Distribute', icon: 'align-center', content: <AlignSection /> },      ];
+      return <div style={{ padding: 4 }}><Accordion items={items} /></div>;
+    }
     case 'image':
-    case 'video':
-      return (
-        <div style={{ padding: 8 }}>
-          <ParentControl nodeId={nodeId} />
-          <AnchorControl nodeId={nodeId} />
-          <TransformSection nodeId={nodeId} />
-          <MediaSection nodeId={nodeId} />
-          <MotionControls nodeId={nodeId} />
-          <EffectsSection nodeId={nodeId} />
-        </div>
-      );
+    case 'video': {
+      const items: AccordionItem[] = [
+        { id: 'transform', title: 'Transform', icon: 'settings', defaultOpen: true, content: (
+          <>
+            <TransformSection nodeId={nodeId} />
+            <ThreeDControl nodeId={nodeId} />
+          </>
+        )},
+        { id: 'parenting', title: 'Parent & Link', icon: 'layers', content: <ParentControl nodeId={nodeId} /> },
+        { id: 'motion', title: 'Motion & Keyframes', icon: 'keyframe', content: <MotionControls nodeId={nodeId} /> },
+        { id: 'media', title: 'Media Settings', icon: 'image', defaultOpen: true, content: <MediaSection nodeId={nodeId} /> },
+        { id: 'align', title: 'Align & Distribute', icon: 'align-center', content: <AlignSection /> },      ];
+      return <div style={{ padding: 4 }}><Accordion items={items} /></div>;
+    }
     case 'group': {
       const childrenCount = defaultSceneGraph.getChildren(nodeId).length;
-      return (
-        <div style={{ padding: 8 }}>
-          <ParentControl nodeId={nodeId} />
-          <TransformSection nodeId={nodeId} />
-          <PrecompControl nodeId={nodeId} />
-          <div style={{ margin: '12px 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-              Children Count: {childrenCount}
-            </span>
-            <button
-              type="button"
-              onClick={() => enterFocus(nodeId)}
-              style={{
-                width: '100%',
-                background: '#28282c',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: '#fff',
-                fontSize: 11,
-                padding: '6px',
-                borderRadius: 3,
-                cursor: 'pointer'
-              }}
-            >
-              Enter Group (Focus Mode)
-            </button>
-          </div>
-          <MotionControls nodeId={nodeId} />
-          <EffectsSection nodeId={nodeId} />
-        </div>
-      );
+      const items: AccordionItem[] = [
+        { id: 'transform', title: 'Transform', icon: 'settings', defaultOpen: true, content: <TransformSection nodeId={nodeId} /> },
+        { id: 'parenting', title: 'Parent & Link', icon: 'layers', content: <ParentControl nodeId={nodeId} /> },
+        { id: 'precomp', title: 'Pre-composition', icon: 'folder', defaultOpen: true, content: (
+          <>
+            <PrecompControl nodeId={nodeId} />
+            <div style={{ margin: '12px 0 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
+                Children Count: {childrenCount}
+              </span>
+              <button
+                type="button"
+                onClick={() => enterFocus(nodeId)}
+                style={{
+                  width: '100%',
+                  background: 'var(--color-surface-3)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-primary)',
+                  fontSize: 11,
+                  padding: '6px',
+                  borderRadius: 4,
+                  cursor: 'pointer'
+                }}
+              >
+                Enter Group (Focus Mode)
+              </button>
+            </div>
+          </>
+        )},
+        { id: 'motion', title: 'Motion & Keyframes', icon: 'keyframe', content: <MotionControls nodeId={nodeId} /> },      ];
+      return <div style={{ padding: 4 }}><Accordion items={items} /></div>;
     }
-    case 'null':
-      return (
-        <div style={{ padding: 8 }}>
-          <ParentControl nodeId={nodeId} />
-          <AnchorControl nodeId={nodeId} />
+    case 'camera': {
+      const items: AccordionItem[] = [
+        { id: 'transform', title: 'Transform', icon: 'settings', defaultOpen: true, content: <TransformSection nodeId={nodeId} /> },
+        { id: 'parenting', title: 'Parent & Link', icon: 'layers', content: <ParentControl nodeId={nodeId} /> },
+        { id: 'custom', title: 'Camera Settings', icon: 'camera', defaultOpen: true, content: (
+          <>
+            <NodeInspector nodeId={nodeId} />
+            <div style={{ margin: '10px 0', fontSize: 10, color: 'var(--color-primary)', background: 'rgba(56, 189, 248, 0.08)', padding: '6px 8px', borderRadius: 4, border: '1px solid rgba(56, 189, 248, 0.2)' }}>
+              <strong>Camera:</strong> 3D viewport view controller. Adjust Position X/Y/Z and Focal Length to navigate.
+            </div>
+          </>
+        )},
+      ];
+      return <div style={{ padding: 4 }}><Accordion items={items} /></div>;
+    }
+    case 'light': {
+      const items: AccordionItem[] = [
+        { id: 'transform', title: 'Transform', icon: 'settings', defaultOpen: true, content: <TransformSection nodeId={nodeId} /> },
+        { id: 'custom', title: 'Light Settings', icon: 'light', defaultOpen: true, content: (
+          <>
+            <NodeInspector nodeId={nodeId} />
+            <div style={{ margin: '10px 0', fontSize: 10, color: '#f59e0b', background: 'rgba(245, 158, 11, 0.08)', padding: '6px 8px', borderRadius: 4, border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+              <strong>Light:</strong> Casts radial illumination onto layers beneath. Adjust radius and intensity in transform.
+            </div>
+          </>
+        )},
+      ];
+      return <div style={{ padding: 4 }}><Accordion items={items} /></div>;
+    }
+    case 'null': {
+      const items: AccordionItem[] = [
+        { id: 'transform', title: 'Transform', icon: 'settings', defaultOpen: true, content: (
           <TransformSection nodeId={nodeId} />
-          <div style={{ margin: '10px 0', fontSize: 10, color: '#ffb703', background: 'rgba(255, 183, 3, 0.08)', padding: '6px 8px', borderRadius: 3, border: '1px solid rgba(255, 183, 3, 0.2)' }}>
+        )},
+        { id: 'parenting', title: 'Parent & Link', icon: 'layers', content: <ParentControl nodeId={nodeId} /> },
+        { id: 'motion', title: 'Motion & Keyframes', icon: 'keyframe', content: <MotionControls nodeId={nodeId} /> },
+        { id: 'info', title: 'Null Object Info', icon: 'info', defaultOpen: true, content: (
+          <div style={{ margin: '10px 0', fontSize: 10, color: '#ffb703', background: 'rgba(255, 183, 3, 0.08)', padding: '6px 8px', borderRadius: 4, border: '1px solid rgba(255, 183, 3, 0.2)' }}>
             <strong>Null Object:</strong> Invisible controller. Attach layers as children via Parent & Link.
           </div>
-          <MotionControls nodeId={nodeId} />
-        </div>
-      );
-    case 'camera':
-      return (
-        <div style={{ padding: 8 }}>
-          <ParentControl nodeId={nodeId} />
-          <TransformSection nodeId={nodeId} />
-          <div style={{ margin: '10px 0', fontSize: 10, color: '#38bdf8', background: 'rgba(56, 189, 248, 0.08)', padding: '6px 8px', borderRadius: 3, border: '1px solid rgba(56, 189, 248, 0.2)' }}>
-            <strong>Camera:</strong> 3D viewport view controller. Adjust Position X/Y/Z to navigate.
-          </div>
-        </div>
-      );
-    case 'light':
-      return (
-        <div style={{ padding: 8 }}>
-          <TransformSection nodeId={nodeId} />
-          <div style={{ margin: '10px 0', fontSize: 10, color: '#f59e0b', background: 'rgba(245, 158, 11, 0.08)', padding: '6px 8px', borderRadius: 3, border: '1px solid rgba(245, 158, 11, 0.2)' }}>
-            <strong>Light:</strong> Casts radial illumination onto layers beneath. Adjust radius and intensity in transform.
-          </div>
-        </div>
-      );
-    case 'audio':
+        )},
+      ];
+      return <div style={{ padding: 4 }}><Accordion items={items} /></div>;
+    }
+    case 'audio': {
       return (
         <div style={{ padding: 8 }}>
           <ParentControl nodeId={nodeId} />
           <AudioControls nodeId={nodeId} />
         </div>
       );
+    }
     default:
       return (
         <div style={{ padding: 8 }}>
           <ParentControl nodeId={nodeId} />
-          <AnchorControl nodeId={nodeId} />
           <TransformSection nodeId={nodeId} />
           <NodeInspector nodeId={nodeId} />
         </div>
       );
   }
 }
-
-// ── Libraries (Left sidebar) ──────────────────────────────────────────────
 
 const SHAPE_PRESETS = [
   { id: 'rect',    label: 'Rectangle', svg: <rect x="4" y="4" width="24" height="24" rx="3" fill="none" stroke="currentColor" strokeWidth="2" />, primitive: 'rect' },
@@ -553,14 +651,19 @@ const SWATCHES = [
 ];
 
 export function LibrariesPanel(): JSX.Element {
-  const [activeTab, setActiveTab] = useState<'shapes' | 'text' | 'colors' | 'motion'>('shapes');
+  const [activeTab, setActiveTab] = useState<'ui' | 'components' | 'shapes' | 'text' | 'colors' | 'motion'>('ui');
+  const savedComponents = useComponentStore((s) => s.components);
+  const saveComponent = useComponentStore((s) => s.saveFromSelection);
+  const insertComponent = useComponentStore((s) => s.insert);
+  const removeComponent = useComponentStore((s) => s.remove);
+  const hasSelection = useSelectionStore((s) => s.ids.length > 0);
 
   const handleShapeInsert = (preset: typeof SHAPE_PRESETS[number]) => {
-    insertPrimitive('shape', preset.label);
+    insertShape(preset.primitive, preset.label);
   };
 
   const handleTextInsert = (preset: typeof TEXT_PRESETS[number]) => {
-    insertPrimitive('text', preset.label);
+    insertText(preset.label, preset.fontSize, preset.weight);
   };
 
   const handleColorClick = (color: string) => {
@@ -589,19 +692,86 @@ export function LibrariesPanel(): JSX.Element {
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'libraries' })}
     >
       <div className={styles.libTabs}>
-        {(['shapes', 'text', 'colors', 'motion'] as const).map((t) => (
+        {(['ui', 'components', 'shapes', 'text', 'colors', 'motion'] as const).map((t) => (
           <button
             key={t}
             type="button"
             className={activeTab === t ? styles.libTabActive : styles.libTab}
             onClick={() => setActiveTab(t)}
           >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'ui' ? 'UI' : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
 
       <div className={styles.libBody}>
+        {activeTab === 'ui' && (
+          <div className={styles.libGrid}>
+            {UI_COMPONENT_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={styles.libChip}
+                title={`Insert ${p.label} mock-up (editable layers)`}
+                onClick={() => { p.insert(); useUIStore.getState().notify({ level: 'success', message: `Inserted ${p.label}`, durationMs: 1500 }); }}
+              >
+                <Icon name="layout" size={26} />
+                <span className={styles.libChipLabel}>{p.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {activeTab === 'components' && (
+          <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <button
+              type="button"
+              className={styles.libChip}
+              style={{ flexDirection: 'row', gap: 8, justifyContent: 'center', opacity: hasSelection ? 1 : 0.5, cursor: hasSelection ? 'pointer' : 'not-allowed' }}
+              disabled={!hasSelection}
+              title={hasSelection ? 'Save the current selection as a reusable component' : 'Select layer(s) first'}
+              onClick={() => {
+                const name = window.prompt('Component name', 'My Component');
+                if (name == null) return;
+                const id = saveComponent(name);
+                useUIStore.getState().notify(
+                  id
+                    ? { level: 'success', message: `Saved “${name}”`, durationMs: 1800 }
+                    : { level: 'warning', message: 'Select layer(s) to save first', durationMs: 2000 },
+                );
+              }}
+            >
+              <Icon name="plus" size={14} /> Save selection as component
+            </button>
+            {savedComponents.length === 0 ? (
+              <p style={{ fontSize: 11, color: 'var(--color-text-tertiary)', textAlign: 'center', margin: '8px 0' }}>
+                No components yet. Select a layer or group and save it — then reuse it anywhere.
+              </p>
+            ) : (
+              <div className={styles.libGrid}>
+                {savedComponents.map((c) => (
+                  <div key={c.id} style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      className={styles.libChip}
+                      title={`Insert a copy of “${c.name}”`}
+                      onClick={() => { insertComponent(c.id); useUIStore.getState().notify({ level: 'success', message: `Inserted ${c.name}`, durationMs: 1500 }); }}
+                    >
+                      <Icon name="shape" size={24} />
+                      <span className={styles.libChipLabel}>{c.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${c.name}`}
+                      title="Delete component"
+                      onClick={() => removeComponent(c.id)}
+                      style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: '50%', border: '1px solid var(--color-border)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 11, lineHeight: 1 }}
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {activeTab === 'shapes' && (
           <div className={styles.libGrid}>
             {SHAPE_PRESETS.map((p) => (
@@ -669,7 +839,9 @@ export function LibrariesPanel(): JSX.Element {
                 onClick={() => {
                   const sel = useSelectionStore.getState().ids;
                   if (sel[0]) {
-                    applyPresetByName(sel[0], preset.name, 0);
+                    const ws = useWorkspaceStore.getState();
+                    const playhead = (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
+                    applyPresetByName(sel[0], preset.name, playhead);
                     useUIStore.getState().notify({ level: 'success', message: `Applied "${preset.name}"`, durationMs: 2000 });
                   } else {
                     useUIStore.getState().notify({ level: 'warning', message: 'Select a layer first', durationMs: 2000 });
@@ -689,20 +861,15 @@ export function LibrariesPanel(): JSX.Element {
 
 // ── Render the registered panels in a region ──────────────────────
 
-export function getSidebarRenderers(): Record<string, () => ReactNode> {
+export function getAllPanelRenderers(): Record<string, () => ReactNode> {
   return {
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,
     libraries: () => <LibrariesPanel />,
-  };
-}
-
-export function getInspectorRenderers(): Record<string, () => ReactNode> {
-  return {
     properties: () => <PropertiesPanel />,
     motion: () => <MotionEditorPanel />,
     effects: () => <EffectsPanel />,
-    effectControls: () => <EffectControlsPanel />,
+    motionTools: () => <MotionToolsPanel />,
     comments: () => <CommentsPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,

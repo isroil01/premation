@@ -71,6 +71,22 @@ describe('reparentNode — does not move the layer on screen', () => {
     expect(reparentNode('P', 'C')).toBe(false);
     expect(defaultSceneGraph.getNode('P')!.parent).toBe('comp_root');
   });
+
+  test('defaultSceneGraph.setParent compensates transform by default (preserveWorld: true)', () => {
+    defaultSceneGraph.setParent('C', 'P');
+    const c = defaultSceneGraph.getNode('C')!;
+    expect(c.parent).toBe('P');
+    expect(c.transform.position.x).toBeCloseTo(100, 4);
+    expect(c.transform.position.y).toBeCloseTo(0, 4);
+  });
+
+  test('defaultSceneGraph.setParent allows preserveWorld: false to skip transform compensation', () => {
+    defaultSceneGraph.setParent('C', 'P', { preserveWorld: false });
+    const c = defaultSceneGraph.getNode('C')!;
+    expect(c.parent).toBe('P');
+    expect(c.transform.position.x).toBeCloseTo(200, 4);
+    expect(c.transform.position.y).toBeCloseTo(50, 4);
+  });
 });
 
 describe('eligibleParents + parentOfNode', () => {

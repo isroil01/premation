@@ -16,6 +16,11 @@ export interface WorkspaceLayout {
   name: string;
   builtin?: boolean;
   regions: LayoutSnapshot;
+  panelOrder?: Record<RegionId, ReadonlyArray<string>>;
+  activePanelByRegion?: Partial<Record<RegionId, string>>;
+  leftSidebarPosition?: 'left' | 'right';
+  rightInspectorPosition?: 'left' | 'right';
+  timelinePosition?: 'bottom' | 'top';
 }
 
 /** Built-in presets tuned for common tasks. */
@@ -58,6 +63,29 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
   },
 ];
 
+const DEFAULT_PANEL_ORDER: Record<RegionId, ReadonlyArray<string>> = {
+  leftSidebar: ['scene', 'assets', 'libraries'],
+  rightInspector: ['properties', 'motion', 'effects', 'motionTools', 'comments', 'history', 'renderQueue'],
+  centerWorkspace: [],
+  bottomTimeline: [],
+};
+
+const DEFAULT_ACTIVE_PANEL: Record<RegionId, string> = {
+  leftSidebar: 'scene',
+  rightInspector: 'properties',
+  centerWorkspace: '',
+  bottomTimeline: '',
+};
+
+// Helper to fill in panelOrder for builtin layouts
+export function getBuiltinLayouts(): ReadonlyArray<WorkspaceLayout> {
+  return BUILTIN_LAYOUTS.map(layout => ({
+    ...layout,
+    panelOrder: layout.panelOrder || DEFAULT_PANEL_ORDER,
+    activePanelByRegion: layout.activePanelByRegion || DEFAULT_ACTIVE_PANEL
+  }));
+}
+
 const SETTINGS_KEY = 'workspaceLayouts';
 
 function readUserLayouts(): WorkspaceLayout[] {
@@ -78,7 +106,7 @@ function writeUserLayouts(layouts: WorkspaceLayout[]): void {
 
 /** All layouts (built-ins first, then the user's saved ones). */
 export function listLayouts(): WorkspaceLayout[] {
-  return [...BUILTIN_LAYOUTS, ...readUserLayouts()];
+  return [...getBuiltinLayouts(), ...readUserLayouts()];
 }
 
 /** Snapshot the current region geometry from a layout map (pure). */
@@ -93,16 +121,22 @@ export function captureRegions(regions: LayoutMap): LayoutSnapshot {
 
 /** Save the current layout under `name` (overwrites a same-named user layout). */
 export function saveCurrentLayout(name: string): void {
-  const snapshot = captureRegions(useLayoutStore.getState().regions);
+  const store = useLayoutStore.getState();
+  const snapshot = captureRegions(store.regions);
   const others = readUserLayouts().filter((l) => l.name !== name);
-  writeUserLayouts([...others, { name, regions: snapshot }]);
+  writeUserLayouts([...others, { 
+    name, 
+    regions: snapshot,
+    panelOrder: store.panelOrder,
+    activePanelByRegion: store.activePanelByRegion
+  }]);
 }
 
 /** Apply a layout by name to the live layout store. */
 export function applyLayout(name: string): boolean {
   const layout = listLayouts().find((l) => l.name === name);
   if (!layout) return false;
-  useLayoutStore.getState().applyRegions(layout.regions);
+  useLayoutStore.getState().applyWorkspaceLayout(layout);
   return true;
 }
 

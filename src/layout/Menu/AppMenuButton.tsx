@@ -14,6 +14,7 @@ import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import { APP_MENU } from './menuModel';
 import { formatChord } from './formatChord';
+import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import styles from './AppMenuBar.module.css';
 
 export function AppMenuButton(): JSX.Element {
@@ -66,7 +67,8 @@ export function AppMenuButton(): JSX.Element {
                       const cmd = it.commandId ? getCommandRegistry().get(asCommandId(it.commandId)) : undefined;
                       const enabled = cmd?.enabled ? cmd.enabled() : true;
                       const label = it.label ?? cmd?.label ?? it.commandId ?? '';
-                      const shortcut = cmd?.shortcut ? formatChord(cmd.shortcut) : undefined;
+                      const resolvedChord = cmd ? resolveChord(cmd.id as unknown as string, cmd.shortcut, getShortcutOverrides()) : undefined;
+                      const shortcut = resolvedChord ? formatChord(resolvedChord) : undefined;
                       return (
                         <MenuItem
                           key={it.commandId ?? i}

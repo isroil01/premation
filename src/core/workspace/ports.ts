@@ -24,10 +24,11 @@ import {
   type ResizeNodePayload,
   type RotateNodePayload,
   type UpdateNodePathPayload,
+  Mat,
+  Rect,
 } from '@motion/workspace';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
-import { isDrawableKind as drawable } from './geometry';
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
@@ -37,22 +38,139 @@ import type { SceneNode, ID } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
-import { readGeometry, worldBounds, worldMatrix, localBounds, makeHitTestLocal, isDrawableKind } from './geometry';
+import { readGeometry, localBounds, makeHitTestLocal, isDrawableKind as drawable } from './geometry';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { defaultAnimation } from '@motion/animation';
+import { runAnimEdit } from '@core/animation/animationCommands';
+import { useProjectStore } from '@stores/projectStore';
+import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
+import { is3DEnabled } from '@core/scene/threeD';
+import { Project3D, Matrix4Math } from '@motion/scene';
+import { useGuidesStore } from '@stores/guidesStore';
 
 // ── SceneGraphPort ────────────────────────────────────────────────
 function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null {
   const g = readGeometry(node);
   if (!g) return null;
+
+  // Retrieve current active tab settings and active playhead time
+  const activeTabId = useProjectStore.getState().activeTabId;
+  const activeTab = useProjectStore.getState().tabs[activeTabId ?? ''];
+  const rawTime = activeTab?.time ?? 0;
+  const compositionId = activeTab?.compositionId ?? 'comp_root';
+  const comp = useProjectStore.getState().comps[compositionId];
+  const width = comp?.width ?? 1920;
+  const height = comp?.height ?? 1080;
+  const cameraMode = useGuidesStore.getState().camera3dMode;
+
+  // Evaluate the node's properties at the current playhead time
+  const localTime = getRemappedTime(node.id, rawTime);
+  const av = defaultAnimation.evaluateNode(node.id, localTime);
+
+  const x = av.get('x') ?? g.x;
+  const y = av.get('y') ?? g.y;
+  const scaleX = av.get('scaleX') ?? av.get('scale') ?? g.scaleX;
+  const scaleY = av.get('scaleY') ?? av.get('scale') ?? g.scaleY;
+  const rotationDeg = av.get('rotation') ?? g.rotationDeg;
+
+  // Find the first camera layer to compute 3D camera projection
+  let cameraNode: SceneNode | undefined;
+  for (const n of flattenScene(defaultSceneGraph)) {
+    if (readNodeKind(n) === 'camera') {
+      cameraNode = n;
+      break;
+    }
+  }
+
+  let camera: import('@motion/scene').Project3D.Camera3D;
+  if (cameraMode === 'front') {
+    camera = Project3D.defaultCamera(width, height);
+  } else if (cameraNode) {
+    const camTime = getRemappedTime(cameraNode.id, rawTime);
+    const camValues = defaultAnimation.evaluateNode(cameraNode.id, camTime);
+    const def = Project3D.defaultCamera(width, height);
+    let cx: number | undefined, cy: number | undefined, cz: number | undefined, cfocal: number | undefined;
+    for (const c of cameraNode.components) {
+      if (c.type === 'Transform') {
+        const p = c.props as Record<string, unknown>;
+        if (typeof p.x === 'number') cx = p.x;
+        if (typeof p.y === 'number') cy = p.y;
+        if (typeof p.z === 'number') cz = p.z;
+        if (typeof p.focalLength === 'number') cfocal = p.focalLength;
+      }
+    }
+    cx = camValues.get('x') ?? cx;
+    cy = camValues.get('y') ?? cy;
+    cz = camValues.get('z') ?? cz;
+    cfocal = camValues.get('focalLength') ?? cfocal;
+    const focalLength = cfocal ?? def.focalLength;
+    camera = {
+      focalLength,
+      position: { x: cx ?? def.position.x, y: cy ?? def.position.y, z: cz ?? -focalLength },
+    };
+  } else {
+    camera = Project3D.defaultCamera(width, height);
+  }
+
+  // Calculate the world matrix based on whether 3D is active
+  const is3D = is3DEnabled(node);
+  const kind = readNodeKind(node);
+  let worldMatrixVal: import('@motion/workspace').Mat2D;
+
+  if (is3D && kind !== 'camera' && kind !== 'light') {
+    const z3 = av.get('z') ?? 0;
+    const rotX = av.get('rotationX') ?? 0;
+    const rotY = av.get('rotationY') ?? 0;
+
+    const DEG = Math.PI / 180;
+    const M = Matrix4Math.compose({
+      position: { x, y, z: z3 },
+      rotation: { x: rotX * DEG, y: rotY * DEG, z: rotationDeg * DEG },
+      scale: { x: scaleX, y: scaleY, z: 1 },
+      anchor: { x: 0, y: 0, z: 0 },
+    });
+
+    const O = Project3D.projectPoint(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }), camera);
+    const X = Project3D.projectPoint(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }), camera);
+    const Y = Project3D.projectPoint(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }), camera);
+
+    const ax = X.x - O.x;
+    const ay = X.y - O.y;
+    const cx_coeff = Y.x - O.x;
+    const cy_coeff = Y.y - O.y;
+
+    worldMatrixVal = { a: ax, b: ay, c: cx_coeff, d: cy_coeff, e: O.x, f: O.y };
+  } else {
+    const tr = Mat.multiply(Mat.translation(x, y), Mat.rotation((rotationDeg * Math.PI) / 180));
+    worldMatrixVal = Mat.multiply(tr, Mat.scaling(scaleX, scaleY));
+  }
+
+  const localBoundsVal = localBounds(g);
+  const worldBoundsVal = Rect.transform(localBoundsVal, worldMatrixVal);
+  const hitTestLocalVal = makeHitTestLocal(g);
+
+  let visibleVal = node.visible !== false;
+  const controller = getTimelineController();
+  const nodeClips = controller.getLayersForNode(node.id);
+  if (nodeClips.length > 0) {
+    const fps = comp?.fps ?? 60;
+    const lastFrame = Math.max(0, Math.round((comp?.durationSeconds ?? 10) * fps) - 1);
+    const gateFrame = Math.min(Math.round(rawTime * fps), lastFrame);
+    if (!nodeClips.some((l: any) => l.isActiveAt(gateFrame))) {
+      visibleVal = false;
+    }
+  }
+
   return {
     id: node.id as string,
     parentId: (node.parent as string | null) ?? null,
-    worldBounds: worldBounds(g),
-    worldMatrix: worldMatrix(g),
-    localBounds: localBounds(g),
-    visible: node.visible !== false,
+    worldBounds: worldBoundsVal,
+    worldMatrix: worldMatrixVal,
+    localBounds: localBoundsVal,
+    visible: visibleVal,
     locked: !!node.locked,
     zIndex,
-    hitTestLocal: makeHitTestLocal(g),
+    hitTestLocal: hitTestLocalVal,
     pathPoints: node.components.find((c) => c.type === 'Geometry')?.props.points as import('@motion/workspace').BezierPoint[] | undefined,
   };
 }
@@ -77,8 +195,20 @@ export function createSceneGraphPort(): SceneGraphPort {
       return toWorkspaceNode(node, idx < 0 ? 0 : idx) ?? undefined;
     },
     onChanged(listener: () => void): () => void {
-      // Any graph mutation bumps the scene revision store.
-      return useSceneRevision.subscribe(listener);
+      const unsubScene = useSceneRevision.subscribe(listener);
+      let lastTime: number | undefined;
+      const unsubTime = useProjectStore.subscribe((s) => {
+        const activeTab = s.tabs[s.activeTabId ?? ''];
+        const t = activeTab?.time;
+        if (t !== lastTime) {
+          lastTime = t;
+          listener();
+        }
+      });
+      return () => {
+        unsubScene();
+        unsubTime();
+      };
     },
   };
 }
@@ -106,30 +236,78 @@ const KIND_FOR_CREATE: Record<string, SceneKind> = {
   Rectangle: 'shape',
   Ellipse: 'shape',
   Path: 'shape',
+  Polygon: 'shape',
+  Star: 'shape',
+  Line: 'shape',
+  Pencil: 'shape',
   Text: 'text',
   Image: 'image',
   Video: 'video',
 };
 
+/** Kinds that are open strokes (no enclosed area) → render with a stroke, no fill. */
+const STROKED_KINDS = new Set(['Line', 'Pencil', 'Path']);
+
 let createSeq = 0;
 
-function makeNodeAt(kind: SceneKind, name: string, cx: number, cy: number, ellipse: boolean, points?: import('@motion/workspace').BezierPoint[]): SceneNode {
+function makeNodeAt(
+  kind: SceneKind,
+  name: string,
+  cx: number,
+  cy: number,
+  ellipse: boolean,
+  points?: import('@motion/workspace').BezierPoint[],
+  width?: number,
+  height?: number,
+): SceneNode {
   const id = `${kind}_${(createSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
   const displayName = ellipse ? 'Circle' : name;
   const transform = { position: { x: cx, y: cy }, rotation: 0, scale: { x: 1, y: 1 } };
-  const components: SceneNode['components'] =
-    kind === 'text'
-      ? [
-          { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: kind, x: cx, y: cy, rotation: 0 } },
-          { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: 32, opacity: 100 } },
-        ]
-      : [
-          { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: kind, x: cx, y: cy, rotation: 0 } },
-          { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
-        ];
+  // Open strokes (line / pencil) enclose no area, so a fill is invisible —
+  // give them a visible stroke and a transparent fill instead.
+  const stroked = STROKED_KINDS.has(name);
+  const styleProps = stroked
+    ? { opacity: 100, fill: 'rgba(0,0,0,0)', stroke: { color: '#2b7eff', width: 4, opacity: 1, cap: 'round', join: 'round', align: 'center', dash: [] } }
+    : { opacity: 100, fill: '#2b7eff' };
+
+  const transformProps: Record<string, unknown> = {
+    [SCENE_KIND_PROP]: kind,
+    x: cx,
+    y: cy,
+    rotation: 0,
+    scaleX: 1,
+    scaleY: 1,
+    anchorX: 0,
+    anchorY: 0,
+  };
+  
+  if (width !== undefined) transformProps.width = width;
+  if (height !== undefined) transformProps.height = height;
+  if (ellipse) transformProps.shapeType = 'ellipse';
+  else if (name === 'Rectangle') transformProps.shapeType = 'rect';
+  else if (kind === 'shape') transformProps.shapeType = 'path';
+
+  const components: SceneNode['components'] = [];
+  if (kind === 'text') {
+    components.push(
+      { id: `${id}_t`, type: 'Transform', props: transformProps },
+      { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: 32, opacity: 100 } },
+    );
+  } else {
+    components.push(
+      { id: `${id}_t`, type: 'Transform', props: transformProps },
+      { id: `${id}_s`, type: 'Style', props: { opacity: styleProps.opacity, fill: styleProps.fill } },
+    );
+    if ('stroke' in styleProps) {
+      components.push({ id: `${id}_fx`, type: 'fx', props: { stroke: (styleProps as any).stroke } });
+    }
+  }
 
   if (kind === 'shape' && points) {
-    components.push({ id: `${id}_g`, type: 'Geometry', props: { points } });
+    // Open strokes (line / pencil) must render as an un-closed polyline; mark
+    // the geometry so the renderer doesn't wrap the last point back to the first.
+    const openProps = stroked ? { open: true } : {};
+    components.push({ id: `${id}_g`, type: 'Geometry', props: { points, ...openProps } });
   }
 
   return { id, name: displayName, parent: null, children: [], transform, visible: true, locked: false, components };
@@ -145,7 +323,25 @@ function transformComponentId(node: SceneNode): ID | null {
 }
 
 function moveNodes(payload: MoveNodesPayload): void {
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
   let changed = false;
+  
+  if (autoKeyframe) {
+    runAnimEdit('Auto-Keyframe Position', () => {
+      for (const id of payload.ids) {
+        const node = defaultSceneGraph.getNode(id as ID);
+        if (!node || node.locked) continue;
+        const g = readGeometry(node);
+        if (!g) continue;
+        const time = getRemappedTime(id, rawTime);
+        defaultAnimation.setKeyframe(id, 'x', getTimelineController().toLayerTime(id, time), g.x + payload.delta.x);
+        defaultAnimation.setKeyframe(id, 'y', getTimelineController().toLayerTime(id, time), g.y + payload.delta.y);
+      }
+    });
+    return;
+  }
+
   for (const id of payload.ids) {
     const node = defaultSceneGraph.getNode(id as ID);
     if (!node || node.locked) continue;
@@ -164,15 +360,21 @@ function createNode(payload: CreateNodePayload): void {
   const kind = KIND_FOR_CREATE[payload.kind] ?? 'shape';
   const cx = payload.bounds.x + payload.bounds.width / 2;
   const cy = payload.bounds.y + payload.bounds.height / 2;
-  // Square-ish drag on a shape → name it "Circle" so it renders as an ellipse.
-  const ellipse =
-    payload.kind === 'Ellipse' ||
-    (kind === 'shape' && Math.abs(payload.bounds.width - payload.bounds.height) < 8 && payload.bounds.width > 0);
+  // Ellipse is true only for explicit Ellipse kind
+  const ellipse = payload.kind === 'Ellipse';
   
-  const node = makeNodeAt(kind, payload.kind, cx, cy, ellipse, payload.points);
+  const width = payload.bounds.width;
+  const height = payload.bounds.height;
+  const node = makeNodeAt(kind, payload.kind, cx, cy, ellipse, payload.points, width, height);
   
   if (payload.maskTargetId) {
     const parentId = payload.maskTargetId as string;
+    // Remove stroke fx if present, and force white solid fill
+    node.components = node.components.filter((c) => c.type !== 'fx');
+    const sComp = node.components.find((c) => c.type === 'Style');
+    if (sComp && sComp.props) {
+      sComp.props.fill = '#ffffff';
+    }
     // Add Mask component so it's recognized as a mask instead of a normal shape
     node.components.push({ id: `${node.id}_mask`, type: 'mask', props: { mode: 'alpha', inverted: false, feather: 0 } });
     node.name = 'Mask';
@@ -193,10 +395,32 @@ function resizeNode(payload: ResizeNodePayload): void {
   if (!cid) return;
   const kind = kindOf(node);
   if (!drawable(kind)) return;
-  const base = SIZE[kind];
+  
+  let baseW = (SIZE as Record<string, { w: number; h: number }>)[kind]?.w ?? 100;
+  let baseH = (SIZE as Record<string, { w: number; h: number }>)[kind]?.h ?? 100;
+  const transComp = node.components.find((c) => c.type === 'Transform');
+  if (transComp && transComp.props) {
+    if (typeof transComp.props.width === 'number') baseW = transComp.props.width;
+    if (typeof transComp.props.height === 'number') baseH = transComp.props.height;
+  }
   const b = payload.bounds;
-  const scaleX = base.w > 0 ? b.width / base.w : 1;
-  const scaleY = base.h > 0 ? b.height / base.h : 1;
+  const scaleX = baseW > 0 ? b.width / baseW : 1;
+  const scaleY = baseH > 0 ? b.height / baseH : 1;
+  
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  const time = getRemappedTime(node.id, rawTime);
+  
+  if (autoKeyframe) {
+    runAnimEdit('Auto-Keyframe Resize', () => {
+      defaultAnimation.setKeyframe(node.id, 'x', getTimelineController().toLayerTime(node.id, time), b.x + b.width / 2);
+      defaultAnimation.setKeyframe(node.id, 'y', getTimelineController().toLayerTime(node.id, time), b.y + b.height / 2);
+      defaultAnimation.setKeyframe(node.id, 'scaleX', getTimelineController().toLayerTime(node.id, time), scaleX);
+      defaultAnimation.setKeyframe(node.id, 'scaleY', getTimelineController().toLayerTime(node.id, time), scaleY);
+    });
+    return;
+  }
+
   defaultSceneGraph.writeProp(node.id, cid, 'x', b.x + b.width / 2);
   defaultSceneGraph.writeProp(node.id, cid, 'y', b.y + b.height / 2);
   defaultSceneGraph.writeProp(node.id, cid, 'scaleX', scaleX);
@@ -209,6 +433,18 @@ function rotateNode(payload: RotateNodePayload): void {
   if (!node || node.locked) return;
   const cid = transformComponentId(node);
   if (!cid) return;
+
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  const time = getRemappedTime(node.id, rawTime);
+  
+  if (autoKeyframe) {
+    runAnimEdit('Auto-Keyframe Rotate', () => {
+      defaultAnimation.setKeyframe(node.id, 'rotation', getTimelineController().toLayerTime(node.id, time), (payload.rotation * 180) / Math.PI);
+    });
+    return;
+  }
+
   defaultSceneGraph.writeProp(node.id, cid, 'rotation', (payload.rotation * 180) / Math.PI);
   bumpScene();
 }
@@ -260,4 +496,4 @@ export function createCommandPort(): CommandPort {
   };
 }
 
-export { isDrawableKind, readNodeKind };
+export { drawable as isDrawableKind, readNodeKind };

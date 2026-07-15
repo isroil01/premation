@@ -14,6 +14,7 @@ import { cn } from '@utils/cn';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { ColorPicker } from '@components/ColorPicker';
+import { useLayoutStore } from '@stores/layoutStore';
 import { openModal } from '@stores/modalStore';
 import { getCommandRegistry } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
@@ -36,11 +37,12 @@ import {
 import { getThemeManager } from '@core/services/coreServices';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { useRenderBackendStore } from '@stores/renderBackendStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import type { BackendChoice } from '@core/rendering/createRenderBackend';
 import type { KeyChord } from '@app-types/common';
 import styles from './CustomizeDialog.module.css';
 
-type Tab = 'shortcuts' | 'workspaces' | 'appearance';
+type Tab = 'shortcuts' | 'tabs' | 'appearance';
 
 /** Modifier-only keydowns aren't a chord — keep listening until a real key. */
 function isModifierKey(key: string): boolean {
@@ -192,11 +194,24 @@ function AppearanceTab(): JSX.Element {
   const [accent, setAccent] = useState<string>(() => getAccentColor());
   const applyAccent = (c: string): void => { setAccent(c); setAccentColor(c); };
 
+  const uiScale = usePreferenceStore((s) => s.uiScale);
+  const reduceMotion = usePreferenceStore((s) => s.editorReduceMotion);
+  const confirmOnClose = usePreferenceStore((s) => s.confirmOnClose);
+  const setPref = usePreferenceStore((s) => s.set);
+
   const backend = useRenderBackendStore((s) => s.choice);
   const setBackend = useRenderBackendStore((s) => s.setChoice);
 
   // Check if WebGPU is supported in the current browser/environment
   const webgpuSupported = typeof navigator !== 'undefined' && 'gpu' in navigator;
+
+  const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition);
+  const rightInspectorPos = useLayoutStore((s) => s.rightInspectorPosition);
+  const timelinePos = useLayoutStore((s) => s.timelinePosition);
+
+  const setLeftSidebarPos = useLayoutStore((s) => s.setLeftSidebarPosition);
+  const setRightInspectorPos = useLayoutStore((s) => s.setRightInspectorPosition);
+  const setTimelinePos = useLayoutStore((s) => s.setTimelinePosition);
 
   return (
     <div className={styles.tabBody}>
@@ -230,6 +245,110 @@ function AppearanceTab(): JSX.Element {
           </select>
         </div>
       </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Left Sidebar Position</span>
+        <div className={styles.rowRight}>
+          <Button
+            variant={leftSidebarPos === 'left' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setLeftSidebarPos('left')}
+          >
+            Left
+          </Button>
+          <Button
+            variant={leftSidebarPos === 'right' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setLeftSidebarPos('right')}
+          >
+            Right
+          </Button>
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Right Inspector Position</span>
+        <div className={styles.rowRight}>
+          <Button
+            variant={rightInspectorPos === 'left' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setRightInspectorPos('left')}
+          >
+            Left
+          </Button>
+          <Button
+            variant={rightInspectorPos === 'right' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setRightInspectorPos('right')}
+          >
+            Right
+          </Button>
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Timeline Position</span>
+        <div className={styles.rowRight}>
+          <Button
+            variant={timelinePos === 'bottom' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setTimelinePos('bottom')}
+          >
+            Bottom
+          </Button>
+          <Button
+            variant={timelinePos === 'top' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setTimelinePos('top')}
+          >
+            Top
+          </Button>
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>UI Scale</span>
+        <div className={styles.rowRight}>
+          <input
+            type="range"
+            min={0.75}
+            max={1.5}
+            step={0.05}
+            value={uiScale}
+            onChange={(e) => setPref('uiScale', Number(e.target.value))}
+            aria-label="UI scale"
+          />
+          <span style={{ minWidth: 42, textAlign: 'right' }}>{Math.round(uiScale * 100)}%</span>
+          <Button variant="ghost" size="sm" onClick={() => setPref('uiScale', 1)} disabled={uiScale === 1}>
+            Reset
+          </Button>
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Reduce motion</span>
+        <div className={styles.rowRight}>
+          <input
+            type="checkbox"
+            checked={reduceMotion}
+            onChange={(e) => setPref('editorReduceMotion', e.target.checked)}
+            aria-label="Reduce UI motion (disables chrome transitions; playback unaffected)"
+          />
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Confirm before discarding unsaved changes</span>
+        <div className={styles.rowRight}>
+          <input
+            type="checkbox"
+            checked={confirmOnClose}
+            onChange={(e) => setPref('confirmOnClose', e.target.checked)}
+            aria-label="Ask before New/Open/Close discards unsaved changes"
+          />
+        </div>
+      </div>
+
       <p className={styles.hint}>
         The accent tints buttons, selection and the playhead. Empty follows the theme.
         <br />
@@ -243,7 +362,7 @@ function AppearanceTab(): JSX.Element {
 
 const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
   { id: 'shortcuts', label: 'Shortcuts' },
-  { id: 'workspaces', label: 'Workspaces' },
+  { id: 'tabs', label: 'Workspaces' },
   { id: 'appearance', label: 'Appearance' },
 ];
 
@@ -265,7 +384,7 @@ function Customize(): JSX.Element {
           </button>
         ))}
       </div>
-      {tab === 'shortcuts' ? <ShortcutsTab /> : tab === 'workspaces' ? <WorkspacesTab /> : <AppearanceTab />}
+      {tab === 'shortcuts' ? <ShortcutsTab /> : tab === 'tabs' ? <WorkspacesTab /> : <AppearanceTab />}
     </div>
   );
 }

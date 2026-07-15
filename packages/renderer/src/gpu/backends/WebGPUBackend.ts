@@ -133,7 +133,11 @@ export class WebGPUBackend implements RenderBackend {
   }
 
   createTexture(desc: TextureDescriptor): TextureHandle {
-    const usage = TEX.TEXTURE_BINDING | TEX.COPY_DST | (desc.renderable ? TEX.RENDER_ATTACHMENT : 0);
+    // copyExternalImageToTexture (bitmap/canvas/video uploads) requires the
+    // destination texture to have RENDER_ATTACHMENT usage per the WebGPU spec,
+    // so `externalCopy` textures get it too — not just render targets.
+    const usage =
+      TEX.TEXTURE_BINDING | TEX.COPY_DST | (desc.renderable || desc.externalCopy ? TEX.RENDER_ATTACHMENT : 0);
     const texture = this.device.createTexture({
       label: desc.label,
       size: { width: desc.width, height: desc.height },
@@ -154,7 +158,19 @@ export class WebGPUBackend implements RenderBackend {
       );
     } else {
       const src = source.type === 'bitmap' ? source.bitmap : source.type === 'video' ? source.video : source.canvas;
-      this.device.queue.copyExternalImageToTexture({ source: src }, { texture: tex }, {});
+      let width = 0;
+      let height = 0;
+      if (source.type === 'bitmap') {
+        width = source.bitmap.width;
+        height = source.bitmap.height;
+      } else if (source.type === 'video') {
+        width = source.video.videoWidth;
+        height = source.video.videoHeight;
+      } else if (source.type === 'canvas') {
+        width = source.canvas.width;
+        height = source.canvas.height;
+      }
+      this.device.queue.copyExternalImageToTexture({ source: src }, { texture: tex }, { width, height });
     }
   }
   destroyTexture(texture: TextureHandle): void {

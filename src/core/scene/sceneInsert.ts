@@ -11,6 +11,12 @@ import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
 import { parseSvgToShapes } from '../../utils/svgParser';
+import { bezierCorner as corner } from '@motion/workspace';
+import { useCompositionStore } from '@stores/compositionStore';
+import { useUIStore } from '@stores/uiStore';
+import { Project3D } from '@motion/scene';
+import { is3DEnabled } from './threeD';
+import { flattenScene, readNodeKind } from './sceneDerive';
 
 let seq = 0;
 
@@ -21,13 +27,41 @@ function makeNode(kind: SceneKind, name: string): SceneNode {
   const components: SceneNode['components'] =
     kind === 'text'
       ? [
-          { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: kind, x: 160, y: 120, rotation: 0 } },
+          {
+            id: `${id}_t`,
+            type: 'Transform',
+            props: {
+              [SCENE_KIND_PROP]: kind,
+              x: 160,
+              y: 120,
+              rotation: 0,
+              scaleX: 1,
+              scaleY: 1,
+              anchorX: 0,
+              anchorY: 0,
+            },
+          },
           { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: 32, opacity: 100 } },
         ]
       : kind === 'group'
         ? [{ id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: kind } }]
         : [
-            { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: kind, x: 160, y: 120, rotation: 0 } },
+            {
+              id: `${id}_t`,
+              type: 'Transform',
+              props: {
+                [SCENE_KIND_PROP]: kind,
+                x: 160,
+                y: 120,
+                rotation: 0,
+                scaleX: 1,
+                scaleY: 1,
+                anchorX: 0,
+                anchorY: 0,
+                width: 100,
+                height: 100,
+              },
+            },
             { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
           ];
   return { id, name, parent: null, children: [], transform, visible: true, locked: false, components };
@@ -37,6 +71,112 @@ function makeNode(kind: SceneKind, name: string): SceneNode {
 export function insertPrimitive(kind: SceneKind, name: string): void {
   const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
   const node = makeNode(kind, name);
+  defaultSceneGraph.addChild(rootId, node);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+}
+
+/** The distinct shapes the shape library can insert. */
+export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'star' | 'polygon';
+
+/** Outline points (local space, centred at 0,0, spanning ±w/2 · ±h/2) for the
+ *  path-based shapes. `rect`/`ellipse` return null — they render as native SDF
+ *  primitives keyed off the `shapeType` prop, no geometry needed. */
+function shapeOutlinePoints(shape: ShapeKind, w: number, h: number): Array<{ x: number; y: number }> | null {
+  const rx = w / 2;
+  const ry = h / 2;
+  const TOP = -Math.PI / 2; // start at 12 o'clock so shapes point up
+  switch (shape) {
+    case 'polygon': {
+      // Regular hexagon.
+      const pts: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i < 6; i++) {
+        const a = TOP + (i / 6) * Math.PI * 2;
+        pts.push({ x: Math.cos(a) * rx, y: Math.sin(a) * ry });
+      }
+      return pts;
+    }
+    case 'star': {
+      // 5-point star: alternating outer / inner radius.
+      const pts: Array<{ x: number; y: number }> = [];
+      const innerRatio = 0.42;
+      for (let i = 0; i < 10; i++) {
+        const a = TOP + (i / 10) * Math.PI * 2;
+        const r = i % 2 === 0 ? 1 : innerRatio;
+        pts.push({ x: Math.cos(a) * rx * r, y: Math.sin(a) * ry * r });
+      }
+      return pts;
+    }
+    case 'line':
+      // Diagonal stroke (bottom-left → top-right), matching the library icon.
+      return [{ x: -rx, y: ry }, { x: rx, y: -ry }];
+    default:
+      return null; // rect / ellipse
+  }
+}
+
+/**
+ * Insert a specific shape (rectangle / ellipse / line / star / polygon) rather
+ * than the generic square `insertPrimitive('shape', …)` produced for every
+ * preset. `rect`/`ellipse` render as native SDF primitives; the others carry a
+ * `Geometry` component so the renderer draws their real outline as a path.
+ */
+export function insertShape(shape: ShapeKind, name: string): void {
+  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const node = makeNode('shape', name);
+  const W = 220;
+  const H = 220;
+
+  const transform = node.components.find((c) => c.type === 'Transform');
+  if (transform) {
+    transform.props.width = W;
+    transform.props.height = H;
+    // Explicit shape type — buildSnapshot reads this to pick the primitive,
+    // so it no longer depends on the layer's (renameable) name.
+    transform.props.shapeType = shape;
+  }
+
+  const pts = shapeOutlinePoints(shape, W, H);
+  if (pts) {
+    node.components.push({
+      id: `${node.id}_g`,
+      type: 'Geometry',
+      // A line is an open stroke — flag it so the renderer doesn't close the
+      // 2-point path into a degenerate loop.
+      props: { points: pts.map((p) => corner(p.x, p.y)), ...(shape === 'line' ? { open: true } : {}) },
+    });
+  }
+
+  if (shape === 'line') {
+    // A line encloses no area, so a fill is invisible — give it a stroke.
+    // The stroke must live on the `fx` component: readNodeStroke() reads only
+    // fx, so a stroke stashed in Style props would never render.
+    const style = node.components.find((c) => c.type === 'Style');
+    if (style) style.props.fill = 'rgba(0,0,0,0)';
+    node.components.push({
+      id: `${node.id}_fx`,
+      type: 'fx',
+      props: {
+        stroke: { enabled: true, color: '#2b7eff', width: 6, opacity: 1, cap: 'round', join: 'miter', align: 'center', dash: [] },
+      },
+    });
+  }
+
+  defaultSceneGraph.addChild(rootId, node);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+}
+
+/** Insert a text layer seeded with a preset's font size / weight and label. */
+export function insertText(name: string, fontSize = 32, fontWeight = 400): void {
+  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const node = makeNode('text', name);
+  const text = node.components.find((c) => c.type === 'Text');
+  if (text) {
+    text.props.content = name;
+    text.props.fontSize = fontSize;
+    text.props.fontWeight = fontWeight;
+  }
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
@@ -54,37 +194,56 @@ export function insertSolid(color = '#2b7eff'): void {
   bumpScene();
 }
 
-/** Insert a Camera layer, centred on a 1080p comp and pulled back by its focal
+/** Insert a Camera layer, centred on the REAL comp and pulled back by its focal
  *  length so the comp plane renders 1:1. Position / z / focalLength are plain
  *  editable + keyframeable props (the inspector shows them automatically). */
 export function insertCamera(): void {
   const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
   const node = makeNode('camera', 'Camera 1');
-  const focalLength = 2666; // ~50mm on a 1920-wide comp
+  const compSize = useCompositionStore.getState();
+  const cam = Project3D.defaultCamera(compSize.width, compSize.height);
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
     // Seeded before the node enters the graph, so these become its base props.
-    t.props.x = 960;
-    t.props.y = 540;
-    t.props.z = -focalLength;
-    t.props.focalLength = focalLength;
+    t.props.x = cam.position.x;
+    t.props.y = cam.position.y;
+    t.props.z = cam.position.z;
+    t.props.focalLength = cam.focalLength;
   }
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
+  // A camera only affects layers whose 3D switch is on. Inserting one into an
+  // all-2D scene silently did nothing — tell the user what to do next.
+  // Only CONTENT layers count — other cameras/lights carry depth props but
+  // aren't layers the camera can move.
+  const anyThreeD = flattenScene(defaultSceneGraph).some((n) => {
+    const k = readNodeKind(n);
+    return n.id !== node.id && k !== 'camera' && k !== 'light' && is3DEnabled(n);
+  });
+  if (!anyThreeD) {
+    useUIStore.getState().notify({
+      level: 'info',
+      message: 'Camera added — it moves layers with the 3D switch on. Select a layer and enable 3D, then move or keyframe the camera.',
+      durationMs: 9000,
+    });
+  }
 }
 
 /** Insert a Light layer */
 export function insertLight(): void {
   const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
   const node = makeNode('light', 'Light 1');
+  const compSize = useCompositionStore.getState();
   // Seed position + keyframeable intensity/radius; warm colour via Style.fill.
+  // Radius scales with the comp so the glow reads on any size (a fixed 500px
+  // was easy to miss on a 1920-wide comp over bright content).
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
-    t.props.x = 960;
-    t.props.y = 540;
+    t.props.x = compSize.width / 2;
+    t.props.y = compSize.height / 2;
     t.props.intensity = 100;
-    t.props.radius = 500;
+    t.props.radius = Math.round(Math.max(compSize.width, compSize.height) * 0.45);
   }
   const s = node.components.find((c) => c.type === 'Style');
   if (s) s.props.fill = '#fff3c0';
@@ -241,9 +400,10 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
     transform.props.height = height;
     transform.props.src = asset.src;
     transform.props.assetId = asset.id;
-    // Center it in a standard 1080p composition (can be improved later if comp size is variable here)
-    transform.props.x = 1920 / 2;
-    transform.props.y = 1080 / 2;
+    // Center it in the REAL composition (was hardcoded to 1080p).
+    const comp = useCompositionStore.getState();
+    transform.props.x = comp.width / 2;
+    transform.props.y = comp.height / 2;
     node.transform.position.x = transform.props.x as number;
     node.transform.position.y = transform.props.y as number;
   }
@@ -335,4 +495,77 @@ export function duplicateSelectedLayers(): void {
     bumpScene();
   }
 }
+
+// ── Layer actions (operate on the current selection) ──────────────────
+
+/** Wrap the selected layers in a new plain Group and select it. */
+export function groupSelectedLayers(): void {
+  const sel = useSelectionStore.getState();
+  const ids = sel.ids;
+  if (ids.length === 0) return;
+  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const group = makeNode('group', 'Group');
+  defaultSceneGraph.addChild(rootId, group);
+  for (const id of ids) {
+    const node = defaultSceneGraph.getNode(id);
+    if (node && node.parent !== null) defaultSceneGraph.setParent(id, group.id);
+  }
+  sel.set([group.id]);
+  bumpScene();
+}
+
+/** Dissolve the selected group(s): reparent their children up, remove the group. */
+export function ungroupSelected(): void {
+  const sel = useSelectionStore.getState();
+  const ids = sel.ids;
+  if (ids.length === 0) return;
+  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const freed: string[] = [];
+  let changed = false;
+  for (const id of ids) {
+    const node = defaultSceneGraph.getNode(id);
+    if (!node) continue;
+    const isGroup = node.components.some((c) => c.props[SCENE_KIND_PROP] === 'group' || c.type === 'group');
+    if (!isGroup) continue;
+    const parentId = node.parent ?? rootId;
+    for (const child of defaultSceneGraph.getChildren(id)) {
+      defaultSceneGraph.setParent(child.id, parentId);
+      freed.push(child.id);
+    }
+    defaultSceneGraph.removeNode(id);
+    changed = true;
+  }
+  if (changed) {
+    sel.set(freed);
+    bumpScene();
+  }
+}
+
+/** Toggle a boolean layer flag across the whole selection (all follow the
+ *  first node's inverse, so one click flips them together). */
+function toggleSelectionFlag(flag: 'locked' | 'solo' | 'visible'): void {
+  const ids = useSelectionStore.getState().ids;
+  if (ids.length === 0) return;
+  const first = defaultSceneGraph.getNode(ids[0]!);
+  if (!first) return;
+  if (flag === 'visible') {
+    // hidden = visible:false; flip the whole selection to match !first.
+    const newVisible = first.visible === false;
+    for (const id of ids) {
+      const node = defaultSceneGraph.getNode(id);
+      if (node) node.visible = newVisible;
+    }
+  } else {
+    const target = !first[flag];
+    for (const id of ids) {
+      const node = defaultSceneGraph.getNode(id);
+      if (node) node[flag] = target;
+    }
+  }
+  bumpScene();
+}
+
+export const toggleSelectedLocked = (): void => toggleSelectionFlag('locked');
+export const toggleSelectedSolo = (): void => toggleSelectionFlag('solo');
+export const toggleSelectedVisible = (): void => toggleSelectionFlag('visible');
 

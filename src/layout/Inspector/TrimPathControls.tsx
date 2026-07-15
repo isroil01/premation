@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * TrimPathControls (MG Phase C) — "Trim Paths" inspector section for shape
  * layers. Reveal a portion of the outline stroke; every param is keyframeable
@@ -42,14 +43,14 @@ function ParamRow({
 
   const onChange = (v: number): void => {
     if (animated) {
-      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, v), `trim:${nodeId}:${path}:${time}`);
+      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v), `trim:${nodeId}:${path}:${time}`);
     } else {
       updateTrim(nodeId, { [param]: v } as Partial<TrimPath>);
     }
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, value));
+    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), value));
   };
 
   return (

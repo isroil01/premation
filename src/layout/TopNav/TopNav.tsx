@@ -4,18 +4,18 @@
  * motion-design tools. Replaces the old floating dropdown + left tool rail.
  *
  *   ┌───────────────────────────────────────────────────────────┐
- *   │ ← │ File  Edit  View  Help          ·············  ✦ AI    │  menu row
+ *   │ ← │ File Edit Composition Layer Effect … ·····  ✦ AI       │  menu row
  *   ├───────────────────────────────────────────────────────────┤
- *   │ ▸ ✥ ↻ ⤢ │ ✎ T ▣ │ 3D                                       │  tool row
+ *   │ ▸ ✥ ✎ T ▣ ○ │ ⬚ mask │ + layer │ 3D │ Animate │ align      │  tool row
  *   └───────────────────────────────────────────────────────────┘
  */
 
-import { useRef, type ChangeEvent } from 'react';
+import { useRef, useState, useEffect, type ChangeEvent } from 'react';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { getEventBus } from '@core/events/EventBus';
 import { IconButton } from '@components/IconButton';
-import { Button } from '@components/Button';
 import { Icon, type IconName } from '@components/Icon';
 import { AppMenuBar } from '@layout/Menu';
-import { AiSparkleButton } from '@layout/TopToolbar/AiSparkleButton';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -23,61 +23,61 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio } from '@core/scene/sceneInsert';
 import { useAssetStore } from '@stores/assetStore';
-import { useHistoryStore } from '@stores/historyStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
-import { timeReverseKeyframes, easyEaseAll, sequenceLayers, applyTypewriter } from '@core/animation/keyframeAssistants';
+import { timeReverseKeyframes, easyEaseAll, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
 import { addSliderControl } from '@core/animation/expressionControls';
 import { hasTextComponent } from '@core/text/textAnimators';
 import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
-import { useGuidesStore } from '@stores/guidesStore';
-import { alignNodes, type AlignMode } from '@core/scene/alignNodes';
+import { useLayoutStore } from '@stores/layoutStore';
+
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
+import { useContainerSize } from '@hooks/useContainerSize';
 import styles from './TopNav.module.css';
 
 interface ToolDef {
   id: Tool;
   icon: IconName;
   label: string;
-  shortcut: string;
+  /** Advertised only when a real keyboard binding exists (see buildToolCommands). */
+  shortcut?: string;
 }
 
-/** Tool groups, separated by hairlines (AE tool-bar grouping). Every tool has
- *  a DISTINCT icon and maps to a real engine tool (see TOOL_MAP). */
+/** Tool groups, separated by hairlines (AE tool-bar grouping). Every tool maps
+ *  to a real engine tool (see TOOL_MAP); tooltips advertise a shortcut only when
+ *  one is actually registered. AE-exact key assignments:
+ *  V=Select, A=DirectSelect, W=Rotate, Y=PanBehind, H=Hand, Z=Zoom.
+ *  The Select tool handles on-canvas drag (move), resize, and rotate via its handles. */
 const TOOL_GROUPS: ToolDef[][] = [
   [
-    { id: 'select', icon: 'mouse-pointer', label: 'Select', shortcut: 'V' },
-    { id: 'direct-select', icon: 'select-all', label: 'Direct Selection (path points)', shortcut: 'A' },
-    { id: 'hand', icon: 'drag', label: 'Hand (pan the view)', shortcut: 'H' },
-    { id: 'zoom', icon: 'zoom-in', label: 'Zoom (click / Alt-click)', shortcut: 'Z' },
+    { id: 'select',        icon: 'mouse-pointer', label: 'Selection Tool (move, scale, rotate via handles)',    shortcut: 'V' },
+    { id: 'direct-select', icon: 'select-all',    label: 'Direct Selection Tool (path points)',                shortcut: 'A' },
+    { id: 'rotate',        icon: 'rotate',        label: 'Rotation Tool (constrained rotate)',                 shortcut: 'W' },
+    { id: 'pan-behind',    icon: 'anchor',        label: 'Pan Behind / Anchor Point Tool (reposition pivot)', shortcut: 'Y' },
+    { id: 'hand',          icon: 'drag',          label: 'Hand Tool (pan the view)',                          shortcut: 'H' },
+    { id: 'zoom',          icon: 'zoom-in',       label: 'Zoom Tool (click / Alt-click)',                     shortcut: 'Z' },
   ],
   [
-    { id: 'move', icon: 'move', label: 'Move', shortcut: 'W' },
-    { id: 'rotate', icon: 'rotate-cw', label: 'Rotate', shortcut: 'R' },
-    { id: 'scale', icon: 'maximize', label: 'Scale', shortcut: 'S' },
+    { id: 'pen',      icon: 'pen',        label: 'Pen Tool (draw bezier paths)', shortcut: 'G' },
+    { id: 'pencil',   icon: 'pencil',     label: 'Pencil Tool (freehand draw)',  shortcut: 'Shift+P' },
+    { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen',               shortcut: 'Alt+P' },
+    { id: 'text',     icon: 'type',       label: 'Text Tool (click canvas to create)', shortcut: 'Ctrl+T' },
+    { id: 'line',     icon: 'line',       label: 'Line Segment',                shortcut: 'L' },
+    { id: 'shape',    icon: 'square',     label: 'Rectangle Tool (drag to draw)',shortcut: 'Q' },
+    { id: 'ellipse',  icon: 'circle',     label: 'Ellipse Tool (drag to draw)', shortcut: 'Shift+Q' },
+    { id: 'polygon',  icon: 'polygon',    label: 'Polygon Tool (drag to draw)' },
+    { id: 'star',     icon: 'star',       label: 'Star Tool (drag to draw)' },
   ],
   [
-    { id: 'pen', icon: 'pen', label: 'Pen (draw bezier paths)', shortcut: 'P' },
-    { id: 'text', icon: 'type', label: 'Text (click canvas to create)', shortcut: 'T' },
-    { id: 'shape', icon: 'square', label: 'Rectangle (drag to draw)', shortcut: 'U' },
-    { id: 'ellipse', icon: 'circle', label: 'Ellipse (drag to draw)', shortcut: 'E' },
-  ],
+    { id: 'mask-rect',    icon: 'mask-square', label: 'Rectangle Mask Tool (drag to draw)' },
+    { id: 'mask-ellipse', icon: 'mask-circle', label: 'Ellipse Mask Tool (drag to draw)' },
+  ]
 ];
 
-const ALIGN_ACTIONS: { id: AlignMode; icon: IconName; label: string }[] = [
-  { id: 'left',          icon: 'align-left',           label: 'Align Left' },
-  { id: 'center-h',     icon: 'align-center',          label: 'Align Centers (H)' },
-  { id: 'right',        icon: 'align-right',           label: 'Align Right' },
-  { id: 'top',          icon: 'align-top',             label: 'Align Top' },
-  { id: 'middle-v',     icon: 'align-middle',          label: 'Align Middles (V)' },
-  { id: 'bottom',       icon: 'align-bottom',          label: 'Align Bottom' },
-  { id: 'distribute-h', icon: 'distribute-horizontal', label: 'Distribute Horizontally' },
-  { id: 'distribute-v', icon: 'distribute-vertical',   label: 'Distribute Vertically' },
-];
 
 /**
  * The Animate menu — AE-style one-click animation actions, keyframe
@@ -117,6 +117,36 @@ function buildAnimateItems(
       disabled: !isTextLayer,
       onSelect: () => {
         if (applyTypewriter(id, playhead)) notify('Typewriter rig created');
+      },
+    },
+    {
+      type: 'item',
+      id: 'anim-bounce-in-words',
+      label: 'Bounce In Words (text)',
+      icon: 'type',
+      disabled: !isTextLayer,
+      onSelect: () => {
+        if (applyBounceInWords(id, playhead)) notify('Bounce In Words rig created');
+      },
+    },
+    {
+      type: 'item',
+      id: 'anim-spin-fade-chars',
+      label: 'Spin & Fade Characters (text)',
+      icon: 'type',
+      disabled: !isTextLayer,
+      onSelect: () => {
+        if (applySpinFadeCharacters(id, playhead)) notify('Spin & Fade Characters rig created');
+      },
+    },
+    {
+      type: 'item',
+      id: 'anim-tracking-reveal',
+      label: 'Tracking Reveal (text)',
+      icon: 'type',
+      disabled: !isTextLayer,
+      onSelect: () => {
+        if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created');
       },
     },
     { type: 'separator' },
@@ -177,16 +207,23 @@ export function TopNav(): JSX.Element {
   const playhead = useActiveWorkspace()?.time ?? 0;
   const snap = useUIStore((s) => s.snap);
   const toggleSnap = useUIStore((s) => s.toggleSnap);
-  const showGrid = useGuidesStore((s) => s.grid);
-  const toggleGrid = useGuidesStore((s) => s.toggleGrid);
-  const showRulers = useGuidesStore((s) => s.rulers);
-  const toggleRulers = useGuidesStore((s) => s.toggleRulers);
   const canBe3D = !!selectedNode && selectedNode.components.some((c) => c.type === 'Transform');
   const is3D = canBe3D ? is3DEnabled(selectedNode) : false;
   const enterPresentation = usePresentationStore((s) => s.enter);
-  const history = useHistoryStore();
-  const canUndo = history.index > 0;
-  const canRedo = history.index < history.entries.length - 1;
+  const [canUndo, setCanUndo] = useState(() => getCommandSystem().getHistory().canUndo());
+  const [canRedo, setCanRedo] = useState(() => getCommandSystem().getHistory().canRedo());
+  const leftCollapsed = useLayoutStore((s) => s.regions.leftSidebar?.collapsed);
+  const bottomCollapsed = useLayoutStore((s) => s.regions.bottomTimeline?.collapsed);
+  const rightCollapsed = useLayoutStore((s) => s.regions.rightInspector?.collapsed);
+
+  useEffect(() => {
+    const handleChanged = () => {
+      setCanUndo(getCommandSystem().getHistory().canUndo());
+      setCanRedo(getCommandSystem().getHistory().canRedo());
+    };
+    const sub = getEventBus().on('UndoStackChanged', handleChanged);
+    return () => sub.dispose();
+  }, []);
   const addAsset = useAssetStore((s) => s.addAsset);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const onPickAudio = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -204,11 +241,14 @@ export function TopNav(): JSX.Element {
   const compDuration = useCompositionStore((s) => s.durationSeconds);
   const title = wsTitle ?? compName ?? 'Untitled';
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { width: containerWidth } = useContainerSize(containerRef);
+
   return (
-    <div className={styles.root}>
+    <div className={styles.root} ref={containerRef}>
       {/* Row 1 — menu bar. */}
       <div className={styles.menuRow}>
-        <IconButton aria-label="Back" size="sm" className={styles.back}>
+        <IconButton aria-label="Back" size="sm" className={styles.back} onClick={() => window.history.back()}>
           <Icon name="arrow-left" size={15} />
         </IconButton>
         <span className={styles.wordmark}>Motion&nbsp;Editor</span>
@@ -227,26 +267,88 @@ export function TopNav(): JSX.Element {
           <span className={styles.compMeta}>{compWidth}×{compHeight} · {compFps}fps</span>
         </button>
         <div className={styles.spacer} aria-hidden />
-        <AiSparkleButton />
-        <span className={styles.menuDivider} aria-hidden />
-        <Button
-          variant="secondary"
-          size="sm"
-          className={styles.action}
-          leftIcon={<Icon name="eye" size={14} />}
-          onClick={() => enterPresentation()}
-        >
-          Preview
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          className={styles.action}
-          leftIcon={<Icon name="arrow-up" size={14} />}
-          onClick={() => openExportDialog(compDuration, compFps)}
-        >
-          Export
-        </Button>
+
+        {containerWidth >= 600 && (
+          <>
+            <span className={styles.menuDivider} aria-hidden />
+            <IconButton
+              aria-label="Toggle Left Sidebar"
+              size="sm"
+              className={styles.layoutToggle}
+              active={!leftCollapsed}
+              title="Toggle Left Sidebar"
+              onClick={() => useLayoutStore.getState().toggleRegion('leftSidebar')}
+            >
+              <Icon name="panel-left" size={14} />
+            </IconButton>
+            <IconButton
+              aria-label="Toggle Bottom Timeline"
+              size="sm"
+              className={styles.layoutToggle}
+              active={!bottomCollapsed}
+              title="Toggle Bottom Timeline"
+              onClick={() => useLayoutStore.getState().toggleRegion('bottomTimeline')}
+            >
+              <Icon name="panel-bottom" size={14} />
+            </IconButton>
+            <IconButton
+              aria-label="Toggle Right Inspector"
+              size="sm"
+              className={styles.layoutToggle}
+              active={!rightCollapsed}
+              title="Toggle Right Inspector"
+              onClick={() => useLayoutStore.getState().toggleRegion('rightInspector')}
+            >
+              <Icon name="panel-right" size={14} />
+            </IconButton>
+          </>
+        )}
+
+        {containerWidth >= 800 ? (
+          <>
+            <span className={styles.menuDivider} aria-hidden />
+            <IconButton
+              aria-label="Preview"
+              size="sm"
+              className={styles.layoutToggle}
+              title="Preview"
+              onClick={() => enterPresentation()}
+            >
+              <Icon name="eye" size={14} />
+            </IconButton>
+            <IconButton
+              aria-label="Export"
+              size="sm"
+              className={styles.layoutToggle}
+              title="Export"
+              onClick={() => openExportDialog(compDuration, compFps)}
+            >
+              <Icon name="download" size={14} />
+            </IconButton>
+          </>
+        ) : (
+          <>
+            <span className={styles.menuDivider} aria-hidden />
+            <Dropdown
+              placement="bottom-end"
+              trigger={
+                <IconButton aria-label="More actions" size="sm" className={styles.layoutToggle}>
+                  <Icon name="more-horizontal" size={14} />
+                </IconButton>
+              }
+              items={[
+                ...(containerWidth < 600 ? [
+                  { type: 'item' as const, id: 'toggle-left', label: 'Toggle Left Sidebar', icon: 'panel-left' as const, onSelect: () => useLayoutStore.getState().toggleRegion('leftSidebar') },
+                  { type: 'item' as const, id: 'toggle-bottom', label: 'Toggle Bottom Timeline', icon: 'panel-bottom' as const, onSelect: () => useLayoutStore.getState().toggleRegion('bottomTimeline') },
+                  { type: 'item' as const, id: 'toggle-right', label: 'Toggle Right Inspector', icon: 'panel-right' as const, onSelect: () => useLayoutStore.getState().toggleRegion('rightInspector') },
+                  { type: 'separator' as const },
+                ] : []),
+                { type: 'item' as const, id: 'preview', label: 'Preview', icon: 'eye' as const, onSelect: () => enterPresentation() },
+                { type: 'item' as const, id: 'export', label: 'Export', icon: 'download' as const, onSelect: () => openExportDialog(compDuration, compFps) },
+              ]}
+            />
+          </>
+        )}
       </div>
 
       {/* Row 2 — tool bar. */}
@@ -263,7 +365,7 @@ export function TopNav(): JSX.Element {
                   className={active ? styles.toolActive : styles.tool}
                   aria-label={tool.label}
                   aria-pressed={active}
-                  title={`${tool.label}  (${tool.shortcut})`}
+                  title={tool.shortcut ? `${tool.label}  (${tool.shortcut})` : tool.label}
                   onClick={() => setTool(tool.id)}
                 >
                   <Icon name={tool.icon} size={16} />
@@ -282,7 +384,7 @@ export function TopNav(): JSX.Element {
             aria-label="Undo"
             title="Undo  (Ctrl+Z)"
             disabled={!canUndo}
-            onClick={() => canUndo && history.jumpTo(history.index - 1)}
+            onClick={() => canUndo && getCommandSystem().getHistory().undo()}
           >
             <Icon name="undo" size={16} />
           </button>
@@ -292,7 +394,7 @@ export function TopNav(): JSX.Element {
             aria-label="Redo"
             title="Redo  (Ctrl+Shift+Z)"
             disabled={!canRedo}
-            onClick={() => canRedo && history.jumpTo(history.index + 1)}
+            onClick={() => canRedo && getCommandSystem().getHistory().redo()}
           >
             <Icon name="redo" size={16} />
           </button>
@@ -313,7 +415,7 @@ export function TopNav(): JSX.Element {
             items={[
               { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => insertPrimitive('shape', 'Shape') },
               { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => insertPrimitive('text', 'Text') },
-              { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'square', onSelect: () => insertSolid() },
+              { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'panel-bottom', onSelect: () => insertSolid() },
               { type: 'separator' },
               { type: 'item', id: 'new-group', label: 'Group', icon: 'folder', onSelect: () => insertPrimitive('group', 'Group') },
               { type: 'item', id: 'new-null', label: 'Null Object', icon: 'crosshair', onSelect: () => insertNull() },
@@ -367,25 +469,7 @@ export function TopNav(): JSX.Element {
           />
         </div>
 
-        {/* ── Alignment tools ─────────────────────────────────────── */}
-        <div className={styles.toolGroup}>
-          <span className={styles.toolDivider} aria-hidden />
-          {ALIGN_ACTIONS.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className={styles.tool}
-              aria-label={a.label}
-              title={`${a.label}${selectedIds.length < 2 && !a.id.startsWith('distribute') ? ' (select 2+ layers)' : ''}`}
-              disabled={selectedIds.length < 2}
-              onClick={() => alignNodes([...selectedIds], a.id)}
-            >
-              <Icon name={a.icon} size={14} />
-            </button>
-          ))}
-        </div>
-
-        {/* ── Snap / Grid / Rulers ─────────────────────────────────── */}
+        {/* ── Snap ─────────────────────────────────── */}
         <div className={styles.toolGroup}>
           <span className={styles.toolDivider} aria-hidden />
           <button
@@ -397,26 +481,6 @@ export function TopNav(): JSX.Element {
             onClick={toggleSnap}
           >
             <Icon name="magnet" size={16} />
-          </button>
-          <button
-            type="button"
-            className={showGrid ? styles.toolActive : styles.tool}
-            aria-label="Toggle grid"
-            aria-pressed={showGrid}
-            title={showGrid ? 'Hide grid' : 'Show grid'}
-            onClick={toggleGrid}
-          >
-            <Icon name="grid" size={16} />
-          </button>
-          <button
-            type="button"
-            className={showRulers ? styles.toolActive : styles.tool}
-            aria-label="Toggle rulers"
-            aria-pressed={showRulers}
-            title={showRulers ? 'Hide rulers' : 'Show rulers'}
-            onClick={toggleRulers}
-          >
-            <Icon name="ruler" size={16} />
           </button>
         </div>
 

@@ -19,13 +19,18 @@ export interface MotionBlurConfig {
   enabled: boolean;
   /** Shutter angle in degrees (0–360). 180 = half-frame exposure. */
   shutterAngle: number;
+  /** Shutter phase in degrees (-360–360). -90 centers the exposure on frame time (AE default). */
+  shutterPhase?: number;
   /** Samples across the shutter interval (≥2 to blur). */
   samples: number;
+  /** Adaptive sample limit per frame across the exposure (up to 128 in AE). */
+  adaptiveSampleLimit?: number;
   fps: number;
 }
 
 /**
- * Sub-frame sample times (seconds) across the shutter interval centred on `t`.
+ * Sub-frame sample times (seconds) across the shutter interval governed by
+ * shutterAngle and shutterPhase relative to frame time `t`.
  * Deterministic. Returns `[t]` when there's nothing to blur (≤1 sample or a
  * closed shutter), otherwise `samples` evenly-spaced times spanning the shutter.
  */
@@ -34,13 +39,16 @@ export function motionBlurSampleTimes(
   fps: number,
   shutterAngle: number,
   samples: number,
+  shutterPhase = -90,
+  adaptiveSampleLimit = 128,
 ): number[] {
-  const n = Math.max(1, Math.floor(samples));
-  const shutter = (Math.max(0, Math.min(360, shutterAngle)) / 360) / Math.max(1, fps);
-  if (n <= 1 || shutter <= 0) return [t];
+  const effectiveSamples = Math.min(Math.max(1, Math.floor(samples)), Math.max(1, Math.floor(adaptiveSampleLimit)));
+  const shutterDuration = (Math.max(0, Math.min(360, shutterAngle)) / 360) / Math.max(1, fps);
+  if (effectiveSamples <= 1 || shutterDuration <= 0) return [t];
+  const phaseOffset = ((Math.max(-360, Math.min(360, shutterPhase)) + 90) / 360) / Math.max(1, fps);
   const times: number[] = [];
-  for (let i = 0; i < n; i++) {
-    times.push(t + (i / (n - 1) - 0.5) * shutter);
+  for (let i = 0; i < effectiveSamples; i++) {
+    times.push(t + phaseOffset + (i / (effectiveSamples - 1) - 0.5) * shutterDuration);
   }
   return times;
 }

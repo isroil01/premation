@@ -39,6 +39,16 @@ export class HistoryService {
     return this.undoStack.length - 1;
   }
 
+  /** Rename the entry at combined-index `i` (as returned by getEntries) for
+   *  display in the History panel. Returns false if the index is out of range. */
+  setLabel(i: number, label: string): boolean {
+    const entry = this.getEntries()[i];
+    if (!entry) return false;
+    (entry as { label: string }).label = label;
+    this.emit();
+    return true;
+  }
+
   /** Push a command onto the undo stack. */
   push(command: IUndoableCommand): void {
     if (this.suspended > 0) return;

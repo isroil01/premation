@@ -10,12 +10,10 @@ import { Icon } from '@components/Icon';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useWorkspaceStore, useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
-import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
+import { useCompositionStore } from '@stores/compositionStore';
 import { useViewportRenderer } from '@layout/Workspace/useViewportRenderer';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import styles from './PresentationMode.module.css';
-
-const DURATION = 10;
 
 export function PresentationMode(): JSX.Element | null {
   const active = usePresentationStore((s) => s.active);
@@ -23,12 +21,15 @@ export function PresentationMode(): JSX.Element | null {
   const ws = useActiveWorkspace();
   const setPlaying = useWorkspaceStore((s) => s.actions.setPlaying);
   const sceneRev = useSceneRevision((s) => s.rev);
+  // Real comp duration for the scrub bar (was a hardcoded 10s).
+  const duration = useCompositionStore((s) => s.durationSeconds) || 1;
   const time = ws?.time ?? 0;
 
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   useViewportRenderer(canvasRef, stageRef, sceneRev, time);
-  usePlaybackClock();
+  // NOTE: no usePlaybackClock() here — App.tsx already runs the single shared
+  // clock; a second instance double-ticked the controller (2× playback speed).
 
   // Auto-play from the start on enter; stop on exit.
   useEffect(() => {
@@ -60,7 +61,7 @@ export function PresentationMode(): JSX.Element | null {
           <Icon name={ws?.playing ? 'pause' : 'play'} size={16} />
         </button>
         <div className={styles.scrub}>
-          <div className={styles.scrubFill} style={{ width: `${Math.min(100, (time / DURATION) * 100)}%` }} />
+          <div className={styles.scrubFill} style={{ width: `${Math.min(100, (time / duration) * 100)}%` }} />
         </div>
         <span className={styles.time}>{time.toFixed(1)}s</span>
       </div>

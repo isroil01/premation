@@ -1,8 +1,8 @@
 .root {
   display: flex;
   flex-direction: column;
-  background: #161616;
-  border-top: 1px solid #2c2c2c;
+  background: var(--color-surface-0);
+  border-top: 1px solid var(--color-border-strong);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -13,8 +13,8 @@
   gap: 2px;
   height: 32px;
   padding: 0 8px;
-  background: #1d1d1d;
-  border-bottom: 1px solid #2c2c2c;
+  background: var(--color-toolbar);
+  border-bottom: 1px solid var(--color-border-strong);
   flex-shrink: 0;
 }
 
@@ -27,7 +27,7 @@
   height: 22px;
   background: transparent;
   border: none;
-  color: var(--color-text-muted, #8a8a8a);
+  color: var(--color-text-muted);
   font-size: 11px;
   cursor: pointer;
   letter-spacing: 0.01em;
@@ -35,12 +35,12 @@
 }
 
 .tab:hover {
-  color: var(--color-text-primary, #e8e8e8);
+  color: var(--color-text-primary);
 }
 
 .tabActive {
-  color: #2988ff;
-  border-bottom: 1px solid #2988ff;
+  color: var(--color-primary);
+  border-bottom: 1px solid var(--color-primary);
 }
 
 .spacer {
@@ -49,9 +49,14 @@
 
 .hint {
   font-size: 11px;
-  color: var(--color-text-muted, #5a5a5a);
+  color: var(--color-text-muted);
   font-style: italic;
   padding: 0 8px;
+}
+
+.easingLabel {
+  margin-left: 8px;
+  color: var(--color-text-secondary);
 }
 
 .legendItem {
@@ -59,9 +64,9 @@
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: var(--color-text-secondary, #b0b0b0);
+  color: var(--color-text-secondary);
   padding: 0 6px;
-  border-left: 1px solid #2c2c2c;
+  border-left: 1px solid var(--color-border-strong);
 }
 
 .legendDot {
@@ -75,10 +80,52 @@
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #161616;
+  background: var(--color-surface-0);
 }
 
 .svg {
   display: block;
   cursor: crosshair;
+}
+
+/* ── SVG chrome (theme-aware; presentation attributes can't use var()) ── */
+.gridLine {
+  stroke: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+
+.gridLineMinor {
+  stroke: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+}
+
+.axisLabel {
+  fill: color-mix(in srgb, var(--color-text-primary) 18%, transparent);
+}
+
+.handleLine {
+  stroke: color-mix(in srgb, var(--color-text-primary) 25%, transparent);
+}
+
+.handleDot {
+  fill: var(--color-slate-0);
+  stroke: var(--color-primary);
+  cursor: crosshair;
+}
+
+.keyframe {
+  stroke: var(--color-timeline-keyframe-stroke);
+  cursor: move;
+}
+
+.keyframeSelected {
+  fill: var(--color-slate-0);
+  stroke: var(--color-primary);
+  cursor: move;
+}
+
+.playheadLine {
+  stroke: var(--color-timeline-playhead);
+}
+
+.playheadCap {
+  fill: var(--color-timeline-playhead);
 }

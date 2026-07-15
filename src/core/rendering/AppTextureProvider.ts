@@ -82,7 +82,10 @@ const defaultVideoFactory: VideoFactory = (src) => {
   v.autoplay = false;
   v.loop = true;
   v.crossOrigin = 'anonymous';
+  v.playsInline = true;
+  v.preload = 'auto';
   v.src = src;
+  v.load();
   return v;
 };
 
@@ -150,7 +153,7 @@ export class AppTextureProvider implements TextureProvider {
     const canvas = rasterizeText(spec);
     const tex = this.resources.texture(
       `text:${key}:${signature}`,
-      { label: `text:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm' },
+      { label: `text:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -164,7 +167,7 @@ export class AppTextureProvider implements TextureProvider {
   setPath(key: string, layer: RenderLayer): void {
     const ptsSig = layer.pathPoints ? layer.pathPoints.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') : '';
     const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
-    const signature = `${layer.width}x${layer.height}|${ptsSig}|${layer.fill}|${strokeSig}`;
+    const signature = `${layer.width}x${layer.height}|${ptsSig}|${layer.fill}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}`;
     
     const existing = this.pathEntries.get(key);
     if (existing && existing.signature === signature) return;
@@ -172,7 +175,7 @@ export class AppTextureProvider implements TextureProvider {
     const canvas = rasterizePath(layer);
     const tex = this.resources.texture(
       `path:${key}:${signature}`,
-      { label: `path:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm' },
+      { label: `path:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -191,6 +194,10 @@ export class AppTextureProvider implements TextureProvider {
     if (!entry || entry.src !== src) {
       entry = { kind: 'video', src, video: this.videoFactory(src), texture: null, w: 1, h: 1 };
       this.videoEntries.set(key, entry);
+      
+      const notifyReady = () => this.onChange?.();
+      entry.video.addEventListener('loadeddata', notifyReady, { once: true });
+      entry.video.addEventListener('seeked', notifyReady);
     }
     const v = entry.video;
     if (v.readyState < HAVE_CURRENT_DATA) return; // not decoded yet → placeholder
@@ -200,7 +207,7 @@ export class AppTextureProvider implements TextureProvider {
     if (entry.texture === null || entry.w !== w || entry.h !== h) {
       entry.texture = this.resources.texture(
         `vid:${key}:${w}x${h}`,
-        { label: `video:${key}`, width: w, height: h, format: 'rgba8unorm' },
+        { label: `video:${key}`, width: w, height: h, format: 'rgba8unorm', externalCopy: true },
         /* pinned */ true,
       );
       entry.w = w;
@@ -241,7 +248,7 @@ export class AppTextureProvider implements TextureProvider {
     entry.height = bitmap.height || 1;
     const tex = this.resources.texture(
       `img:${src}`,
-      { label: `image:${src}`, width: entry.width, height: entry.height, format: 'rgba8unorm' },
+      { label: `image:${src}`, width: entry.width, height: entry.height, format: 'rgba8unorm', externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'bitmap', bitmap });
@@ -337,7 +344,7 @@ export class AppTextureProvider implements TextureProvider {
 
     const tex = this.resources.texture(
       `mask:${key}:${signature}`,
-      { label: `mask:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm' },
+      { label: `mask:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -384,9 +391,13 @@ function rasterizePath(layer: RenderLayer): HTMLCanvasElement {
 
   ctx.beginPath();
   const pts = layer.pathPoints || [];
+  // Open strokes (line / freehand pencil) stop at the last point; closed shapes
+  // (polygon / star / mask) wrap the final segment back to the first point.
+  const open = layer.pathOpen === true;
   if (pts.length > 0) {
     ctx.moveTo(pts[0]!.x, pts[0]!.y);
-    for (let i = 0; i < pts.length; i++) {
+    const lastSeg = open ? pts.length - 1 : pts.length;
+    for (let i = 0; i < lastSeg; i++) {
       const curr = pts[i]!;
       const next = pts[(i + 1) % pts.length]!;
       ctx.bezierCurveTo(
@@ -395,12 +406,14 @@ function rasterizePath(layer: RenderLayer): HTMLCanvasElement {
         next.x, next.y
       );
     }
-    ctx.closePath();
+    if (!open) ctx.closePath();
   }
 
-  // Draw fill
-  ctx.fillStyle = layer.fill;
-  ctx.fill();
+  // Draw fill (open strokes enclose no area — skip the fill entirely).
+  if (!open) {
+    ctx.fillStyle = layer.fill;
+    ctx.fill();
+  }
 
   // Draw stroke if specified
   if (layer.stroke && layer.stroke.width > 0) {

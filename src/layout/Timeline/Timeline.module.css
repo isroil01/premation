@@ -43,7 +43,7 @@
   background: transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: #3a3a3a #1a1a1a;
+  scrollbar-color: var(--color-border-strong) var(--color-divider);
 }
 
 /* Flat AE-style scrollbars in the timeline lanes */
@@ -52,17 +52,17 @@
   height: 4px;
 }
 .lanes::-webkit-scrollbar-track {
-  background: #1a1a1a;
+  background: var(--color-divider);
 }
 .lanes::-webkit-scrollbar-thumb {
-  background: #3a3a3a;
+  background: var(--color-border-strong);
   border-radius: 0;
 }
 .lanes::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--color-text-muted);
 }
 .lanes::-webkit-scrollbar-corner {
-  background: #1a1a1a;
+  background: var(--color-divider);
 }
 
 .lanesInner {
@@ -173,17 +173,30 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 10px;
   cursor: ew-resize;
-  z-index: 2;
+  z-index: 3;
+  transition: background-color 100ms ease;
+}
+
+.clip:hover .clipHandle {
+  background-color: var(--color-white-a15);
+}
+
+.clipHandle:hover {
+  background-color: var(--color-white-a40) !important;
 }
 
 .clipHandle[data-edge='start'] {
   left: 0;
+  border-top-left-radius: 3px;
+  border-bottom-left-radius: 3px;
 }
 
 .clipHandle[data-edge='end'] {
   right: 0;
+  border-top-right-radius: 3px;
+  border-bottom-right-radius: 3px;
 }
 
 /* Animation duration bar — AE uses a flat tinted bar, no border. */
@@ -261,6 +274,17 @@
   box-sizing: border-box;
 }
 
+/* Marquee (rubber-band) keyframe-selection rectangle — drawn while dragging
+   on empty lane space; purely visual (hit math runs in marqueeSelection.ts). */
+.marquee {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+  box-sizing: border-box;
+}
+
 /* ── Keyframes ─────────────────────────────────────────────────── */
 .keyframe {
   position: absolute;
@@ -327,7 +351,7 @@
   background: var(--color-primary);
   border-color: var(--color-primary);
   transform: translate(-50%, -50%) rotate(45deg) scale(1.15);
-  box-shadow: 0 0 0 2px rgba(41, 136, 255, 0.35);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 35%, transparent);
 }
 
 .keyframeRoving.keyframeSelected {
@@ -393,7 +417,7 @@
   width: 10px;
   height: 10px;
   background: var(--color-timeline-playhead);
-  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border: 1.5px solid var(--color-white-a24);
   border-radius: 2px;
   transform: translate(-50%, -5px) rotate(45deg);
   transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
@@ -592,6 +616,27 @@
   flex: none;
 }
 
+.trackColorPicker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--color-divider);
+  padding: 0;
+  cursor: pointer;
+  outline: none;
+  background: none;
+  overflow: hidden;
+  flex: none;
+  margin-right: var(--space-2);
+}
+.trackColorPicker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.trackColorPicker::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
 .trackName {
   flex: 1;
   min-width: 0;
@@ -666,8 +711,8 @@
 }
 
 .trackAction[data-kind="solo"][data-on] {
-  color: #ffd84d;
-  text-shadow: 0 0 6px rgba(255, 220, 50, 0.5);
+  color: var(--color-switch-solo);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--color-switch-solo) 50%, transparent);
 }
 
 /* A hidden track's eye is a de-emphasis, not an accent — stay muted. */
@@ -684,19 +729,25 @@
 
 /* Motion blur = cyan accent when on */
 .trackAction[data-kind="motionBlur"][data-on] {
-  color: #00cfff;
+  color: var(--color-switch-motion-blur);
   opacity: 1;
 }
 
 /* Adjustment layer = soft purple */
 .trackAction[data-kind="adjustment"][data-on] {
-  color: #b07fff;
+  color: var(--color-switch-adjustment);
   opacity: 1;
 }
 
 /* 3D layer = gold */
 .trackAction[data-kind="threeD"][data-on] {
-  color: #ffc44d;
+  color: var(--color-switch-3d);
+  opacity: 1;
+}
+
+/* Shy layer = soft blue */
+.trackAction[data-kind="shy"][data-on] {
+  color: var(--color-switch-shy);
   opacity: 1;
 }
 
@@ -824,4 +875,15 @@
   background: var(--color-primary);
   z-index: 10;
   pointer-events: none;
+}
+
+/* Region past the composition end — clips may overhang it (AE-style). */
+.pastEndShade {
+  position: absolute;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-black, #000) 22%, transparent);
+  border-left: 1px solid var(--color-border-strong);
+  box-sizing: border-box;
 }

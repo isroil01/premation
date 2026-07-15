@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * TextAnimatorControls (MG Phase D) — the "Text Animators" section of the
  * inspector, shown only for text layers.
@@ -82,7 +83,7 @@ function ParamRow({
     if (animated) {
       runAnimEdit(
         `Set ${label}`,
-        () => defaultAnimation.setKeyframe(nodeId, path, time, v),
+        () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v),
         `ta:${nodeId}:${path}:${time}`,
       );
     } else {
@@ -94,7 +95,7 @@ function ParamRow({
     if (animated) {
       runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
     } else {
-      runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, value));
+      runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), value));
     }
   };
 

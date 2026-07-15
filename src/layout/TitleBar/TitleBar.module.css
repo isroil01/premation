@@ -1,3 +1,8 @@
+/* INTENTIONAL DARK CHROME: the title bar stays near-black in BOTH themes
+   (native-app frame convention, like VS Code / AE). Its background and the
+   white-alpha text/hover literals below are therefore deliberately NOT
+   theme-tokenized — swapping them for --color-titlebar/--color-text-* would
+   make the bar flip to light and break the fixed white-on-dark contrast. */
 .titleBar {
   height: 32px;
   background: #09090b;
@@ -51,13 +56,18 @@
 .projectName {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.9);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dirtyDot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #38bdf8;
+  /* Amber = the app's "modified" signal (see themes/dark.css --color-modified). */
+  background: var(--color-modified, #e0a83c);
 }
 
 .right {

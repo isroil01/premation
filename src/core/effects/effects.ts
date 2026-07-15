@@ -19,7 +19,11 @@ export type EffectType =
   | 'grayscale'
   | 'sepia'
   | 'hue-rotate'
-  | 'invert';
+  | 'invert'
+  | 'gradient-ramp'
+  | 'fractal-noise'
+  | 'displacement-map'
+  | 'motion-tile';
 
 export interface Effect {
   id: string;
@@ -53,6 +57,10 @@ export const EFFECT_DEFS: EffectDef[] = [
   { type: 'sepia', label: 'Sepia', unit: '%', min: 0, max: 100, default: 80, css: (a) => `sepia(${a / 100})` },
   { type: 'hue-rotate', label: 'Hue', unit: '°', min: 0, max: 360, default: 90, css: (a) => `hue-rotate(${a}deg)` },
   { type: 'invert', label: 'Invert', unit: '%', min: 0, max: 100, default: 100, css: (a) => `invert(${a / 100})` },
+  { type: 'gradient-ramp', label: 'Gradient Ramp', unit: '%', min: 0, max: 100, default: 100, css: () => '' },
+  { type: 'fractal-noise', label: 'Fractal Noise', unit: 'x', min: 1, max: 50, default: 10, css: () => '' },
+  { type: 'displacement-map', label: 'Displace', unit: 'px', min: -100, max: 100, default: 20, css: () => '' },
+  { type: 'motion-tile', label: 'Motion Tile', unit: 'x', min: 0.1, max: 10, default: 2, css: () => '' },
 ];
 
 const DEF = new Map(EFFECT_DEFS.map((d) => [d.type, d]));

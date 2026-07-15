@@ -7,6 +7,8 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
+import { assetUrl } from '@core/api/client';
+import { useAssetStore } from '@stores/assetStore';
 import type { AudioLayerState } from './AudioEngine';
 
 interface CompRef {
@@ -31,8 +33,14 @@ export function readAudioLayer(node: SceneNode): AudioLayerState | null {
   const a = audioComponent(node);
   if (!a) return null;
   const p = a.props;
-  const src = typeof p.__src === 'string' ? p.__src : '';
   const assetId = typeof p.__assetId === 'string' ? p.__assetId : '';
+  let src = typeof p.__src === 'string' ? assetUrl(p.__src) : '';
+  if (assetId) {
+    const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
+    if (asset && asset.src) {
+      src = asset.src;
+    }
+  }
   if (!src || !assetId) return null;
   const duration = num(p.__duration) ?? 0;
   return {

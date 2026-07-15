@@ -16,7 +16,9 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { defaultAnimation } from '@motion/animation';
+import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
 import { clamp } from '@utils/lang';
+import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
 import styles from './GraphEditor.module.css';
 
@@ -51,6 +53,7 @@ interface SelectedKf {
   t: number;
 }
 
+/** Fixed multi-curve series palette (data-viz, not chrome) — shared across themes. */
 const COLORS = ['#2988ff', '#ff6b6b', '#4cdf8e', '#ffd770', '#bf8cff', '#ff8cde'];
 const GRAPH_HEIGHT_DEFAULT = 200;
 const HANDLE_RADIUS = 4.5;
@@ -174,6 +177,7 @@ export function GraphEditor({
     startY: number;
     minV: number;
     maxV: number;
+    tx?: ReturnType<typeof beginAnimEdit>;
   } | null>(null);
 
   const svgCoords = useCallback(
@@ -206,6 +210,7 @@ export function GraphEditor({
         startY: y,
         minV: kf.minV,
         maxV: kf.maxV,
+        tx: beginAnimEdit(),
       };
     },
     [svgCoords],
@@ -228,6 +233,7 @@ export function GraphEditor({
         startY: y,
         minV: kf.minV,
         maxV: kf.maxV,
+        tx: beginAnimEdit(),
       };
     },
     [svgCoords],
@@ -255,25 +261,40 @@ export function GraphEditor({
         dragRef.current!.origValue = newV;
         setSelectedKf({ nodeId: d.nodeId, prop: d.prop, t: newT });
       } else {
-        // Handle drag — modifies bezier x1/y1 or x2/y2.
+        // Handle drag — modifies bezier x1/y1 or x2/y2 based on proportional screen-space mapping.
         const bz = [...d.origBezier] as [number, number, number, number];
-        const dtNorm = clamp(dx / (duration * pps), -0.5, 0.5);
-        const dvNorm = clamp(-dy / INNER_H, -0.5, 0.5);
+        const nextKf = sampledPaths.find(p => p.nodeId === d.nodeId && p.prop === d.prop)?.keyframes.find(k => k.t > d.origT);
+        if (!nextKf) return;
+        const dt = nextKf.t - d.origT;
+        const dv = nextKf.value - d.origValue;
+        
+        const tHover = clamp(x / pps, d.origT, nextKf.t);
+        const vHover = mode === 'value' ? clamp(yToValue(y, d.minV, d.maxV, INNER_H), d.minV, d.maxV) : d.origValue;
+        
+        const nx = dt === 0 ? 0 : Math.max(0, Math.min(1, (tHover - d.origT) / dt));
+        const ny = dv === 0 ? 0 : Math.max(-1, Math.min(2, (vHover - d.origValue) / dv));
+        
         if (d.kind === 'handle-in') {
-          bz[0] = clamp(bz[0] + dtNorm * 0.3, 0, 1);
-          bz[1] = clamp(bz[1] + dvNorm * 0.3, 0, 1);
+          bz[0] = nx;
+          bz[1] = ny;
         } else {
-          bz[2] = clamp(bz[2] + dtNorm * 0.3, 0, 1);
-          bz[3] = clamp(bz[3] + dvNorm * 0.3, 0, 1);
+          bz[2] = nx;
+          bz[3] = ny;
         }
         defaultAnimation.setBezier(d.nodeId, d.prop, d.origT, bz);
         dragRef.current!.origBezier = bz;
       }
     },
-    [svgCoords, pps, duration, INNER_H],
+    [svgCoords, pps, duration, INNER_H, sampledPaths, mode],
   );
 
   const onSvgPointerUp = useCallback(() => {
+    const d = dragRef.current;
+    if (d && d.tx) {
+      const label = d.kind === 'kf' ? 'Move Keyframe' : 'Edit Curve';
+      const cmd = d.tx.commit(label);
+      recordAnimEdit(cmd);
+    }
     dragRef.current = null;
   }, []);
 
@@ -309,10 +330,33 @@ export function GraphEditor({
         </button>
         <span className={styles.spacer} />
         {selectedKfData && (
-          <span className={styles.hint} style={{ color: '#c8c8c8' }}>
-            t={selectedKfData.t.toFixed(2)}s  v={selectedKfData.value.toFixed(2)}
-            {selectedKfData.easing ? `  · ${selectedKfData.easing}` : ''}
-          </span>
+          <div className={styles.hint} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <div style={{ width: 60 }}>
+              <span>t=</span>
+              <ValueField
+                value={selectedKfData.t}
+                unit="s"
+                precision={2}
+                min={0}
+                max={duration}
+              onChange={(newT: number) => {
+                defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, { t: newT });
+                setSelectedKf(selectedKf ? { ...selectedKf, t: newT } : null);
+              }}
+            />
+          </div>
+          <div style={{ width: 60 }}>
+            <span>v=</span>
+            <ValueField
+              value={selectedKfData.value}
+              precision={2}
+              onChange={(newV: number) => {
+                defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, { value: newV });
+              }}
+            />
+            {selectedKfData.easing ? <span className={styles.easingLabel}>· {selectedKfData.easing}</span> : null}
+          </div>
+          </div>
         )}
         {allTracks.length === 0 && (
           <span className={styles.hint}>Select a layer with keyframes to view curves</span>
@@ -341,14 +385,14 @@ export function GraphEditor({
           {/* Grid — horizontal */}
           {[0, 0.25, 0.5, 0.75, 1].map((frac) => {
             const y = frac * INNER_H;
-            return <line key={frac} x1={0} y1={y} x2={totalWidth} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth={1} />;
+            return <line key={frac} className={styles.gridLine} x1={0} y1={y} x2={totalWidth} y2={y} strokeWidth={1} />;
           })}
 
           {/* Grid — vertical (seconds) */}
           {Array.from({ length: Math.ceil(duration) + 1 }, (_, i) => i).map((sec) => (
             <g key={sec}>
-              <line x1={sec * pps} y1={0} x2={sec * pps} y2={INNER_H} stroke="rgba(255,255,255,0.04)" strokeWidth={1} />
-              <text x={sec * pps + 3} y={INNER_H - 3} fill="rgba(255,255,255,0.18)" fontSize={9}>{sec}s</text>
+              <line className={styles.gridLineMinor} x1={sec * pps} y1={0} x2={sec * pps} y2={INNER_H} strokeWidth={1} />
+              <text className={styles.axisLabel} x={sec * pps + 3} y={INNER_H - 3} fontSize={9}>{sec}s</text>
             </g>
           ))}
 
@@ -359,26 +403,29 @@ export function GraphEditor({
               <path d={d} stroke={color} strokeWidth={1.5} fill="none" opacity={0.9} />
 
               {/* Bézier handles for selected keyframe */}
-              {keyframes.map((kf) => {
+              {keyframes.map((kf, i) => {
                 const isSelected = selectedKf?.nodeId === kf.nodeId && selectedKf.prop === kf.prop && Math.abs(kf.t - selectedKf.t) < 0.001;
                 if (!isSelected || kf.easing !== 'bezier' || !kf.bezier) return null;
+                const nextKf = keyframes[i + 1];
+                if (!nextKf) return null;
+
                 const kx = kf.t * pps;
                 const ky = kf.y;
-                const hw = 60; // px horizontal span for handles
-                const hh = 30; // px vertical span
-                const inX = kx - hw * kf.bezier[0];
-                const inY = ky + hh * (1 - kf.bezier[1]) - hh / 2;
-                const outX = kx + hw * kf.bezier[2];
-                const outY = ky + hh * (1 - kf.bezier[3]) - hh / 2;
+                const dt = nextKf.t - kf.t;
+                const dv = nextKf.value - kf.value;
+                
+                const inX = kx + dt * pps * kf.bezier[0];
+                const inY = mode === 'value' ? valueToY(kf.value + dv * kf.bezier[1], kf.minV, kf.maxV, INNER_H) : ky;
+                const outX = kx + dt * pps * kf.bezier[2];
+                const outY = mode === 'value' ? valueToY(kf.value + dv * kf.bezier[3], kf.minV, kf.maxV, INNER_H) : ky;
+                
                 return (
                   <g key={`handle-${kf.t}`}>
-                    <line x1={kx} y1={ky} x2={inX} y2={inY} stroke="rgba(255,255,255,0.25)" strokeWidth={1} strokeDasharray="2 2" />
-                    <line x1={kx} y1={ky} x2={outX} y2={outY} stroke="rgba(255,255,255,0.25)" strokeWidth={1} strokeDasharray="2 2" />
-                    <circle cx={inX} cy={inY} r={HANDLE_RADIUS} fill="#fff" stroke="#2988ff" strokeWidth={1.5}
-                      style={{ cursor: 'crosshair' }}
+                    <line className={styles.handleLine} x1={kx} y1={ky} x2={inX} y2={inY} strokeWidth={1} strokeDasharray="2 2" />
+                    <line className={styles.handleLine} x1={nextKf.t * pps} y1={nextKf.y} x2={outX} y2={outY} strokeWidth={1} strokeDasharray="2 2" />
+                    <circle className={styles.handleDot} cx={inX} cy={inY} r={HANDLE_RADIUS} strokeWidth={1.5}
                       onPointerDown={(e) => onHandlePointerDown(e, kf, 'handle-in')} />
-                    <circle cx={outX} cy={outY} r={HANDLE_RADIUS} fill="#fff" stroke="#2988ff" strokeWidth={1.5}
-                      style={{ cursor: 'crosshair' }}
+                    <circle className={styles.handleDot} cx={outX} cy={outY} r={HANDLE_RADIUS} strokeWidth={1.5}
                       onPointerDown={(e) => onHandlePointerDown(e, kf, 'handle-out')} />
                   </g>
                 );
@@ -392,15 +439,14 @@ export function GraphEditor({
                 return (
                   <rect
                     key={`${kf.t}`}
+                    className={isSelected ? styles.keyframeSelected : styles.keyframe}
                     x={kx - KF_SIZE / 2}
                     y={ky - KF_SIZE / 2}
                     width={KF_SIZE}
                     height={KF_SIZE}
                     transform={`rotate(45, ${kx}, ${ky})`}
-                    fill={isSelected ? '#fff' : color}
-                    stroke={isSelected ? '#2988ff' : '#161616'}
+                    fill={color}
                     strokeWidth={isSelected ? 2 : 1.5}
-                    style={{ cursor: 'move' }}
                     onPointerDown={(e) => onKfPointerDown(e, kf)}
                   />
                 );
@@ -409,8 +455,8 @@ export function GraphEditor({
           ))}
 
           {/* Playhead */}
-          <line x1={playheadX} y1={0} x2={playheadX} y2={INNER_H} stroke="#2988ff" strokeWidth={1.5} />
-          <polygon points={`${playheadX - 5},0 ${playheadX + 5},0 ${playheadX},8`} fill="#2988ff" />
+          <line className={styles.playheadLine} x1={playheadX} y1={0} x2={playheadX} y2={INNER_H} strokeWidth={1.5} />
+          <polygon className={styles.playheadCap} points={`${playheadX - 5},0 ${playheadX + 5},0 ${playheadX},8`} />
         </svg>
       </div>
     </div>

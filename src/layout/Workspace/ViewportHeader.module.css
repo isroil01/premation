@@ -1,19 +1,19 @@
-/* ── Root ─────────────────────────────────────────────────────────── */
 .root {
   display: flex;
   align-items: center;
   gap: 0;
   height: 28px;
   min-height: 28px;
-  background: #1c1c1c;
-  border-bottom: 1px solid #2a2a2a;
+  background: var(--color-toolbar);
+  border-bottom: 1px solid var(--color-border-strong);
   padding: 0 6px;
   font-size: 11px;
-  color: #a0a0a0;
+  color: var(--color-text-secondary);
   font-family: 'Inter', system-ui, sans-serif;
   flex-shrink: 0;
   overflow: hidden;
   user-select: none;
+  container-type: inline-size;
 }
 
 /* ── Structural ───────────────────────────────────────────────────── */
@@ -27,7 +27,7 @@
 .divider {
   width: 1px;
   height: 14px;
-  background: #2e2e2e;
+  background: var(--color-border-strong);
   flex-shrink: 0;
   margin: 0 2px;
 }
@@ -41,7 +41,7 @@
   gap: 5px;
   background: transparent;
   border: none;
-  color: #c8c8c8;
+  color: var(--color-text-secondary);
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
@@ -53,9 +53,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.compName:hover { color: #fff; }
+.compName:hover { color: var(--color-text-primary); }
 
-.compIcon { color: #666; flex-shrink: 0; }
+.compIcon { color: var(--color-text-muted); flex-shrink: 0; }
 .compLabel { overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Generic header buttons ───────────────────────────────────────── */
@@ -65,7 +65,7 @@
   gap: 3px;
   background: transparent;
   border: 1px solid transparent;
-  color: #888;
+  color: var(--color-text-tertiary);
   cursor: pointer;
   padding: 2px 5px;
   font-size: 11px;
@@ -74,19 +74,19 @@
   white-space: nowrap;
 }
 .headerBtn:hover {
-  color: #d0d0d0;
-  background: #2a2a2a;
-  border-color: #363636;
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
 }
 .headerBtnActive {
   composes: headerBtn;
-  color: #2988ff;
-  background: rgba(41, 136, 255, 0.12);
-  border-color: rgba(41, 136, 255, 0.3);
+  color: var(--color-primary);
+  background: var(--color-primary-subtle);
+  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 .headerBtnActive:hover {
-  color: #4da6ff;
-  background: rgba(41, 136, 255, 0.2);
+  color: var(--color-primary-hover);
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
 }
 
 .btnLabel {
@@ -100,13 +100,13 @@
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #3a3a3a;
+  background: var(--color-border-strong);
   margin: 0 3px;
   flex-shrink: 0;
 }
 
 .x {
-  color: #555;
+  color: var(--color-text-muted);
   margin: 0 2px;
   font-size: 10px;
 }
@@ -116,7 +116,7 @@
   display: inline-block;
   min-width: 32px;
   text-align: center;
-  color: #c0c0c0;
+  color: var(--color-text-secondary);
   cursor: ew-resize;
   padding: 1px 4px;
   border: 1px solid transparent;
@@ -127,17 +127,17 @@
   transition: background 0.1s, border-color 0.1s;
 }
 .scrubField:hover {
-  background: #2a2a2a;
-  border-color: #3a3a3a;
-  color: #e0e0e0;
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 .scrubInput {
   min-width: 44px;
   max-width: 64px;
-  background: #1a1a1a;
-  border: 1px solid #2988ff;
-  color: #fff;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-primary);
+  color: var(--color-text-primary);
   font-size: 11px;
   font-family: 'Inter', system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
@@ -154,23 +154,23 @@
   gap: 5px;
   cursor: pointer;
   padding: 2px 6px;
-  border: 1px solid #333;
-  background: #242424;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-1);
   transition: border-color 0.1s;
 }
-.colourSwatch:hover { border-color: #484848; }
+.colourSwatch:hover { border-color: var(--color-field-border-hover); }
 
 .colourPreview {
   width: 14px;
   height: 14px;
-  border: 1px solid rgba(255,255,255,0.15);
+  border: 1px solid var(--color-field-border-hover);
   flex-shrink: 0;
 }
 
 .colourHex {
   font-size: 10px;
   font-family: 'JetBrains Mono', 'Fira Mono', monospace;
-  color: #b0b0b0;
+  color: var(--color-text-secondary);
   letter-spacing: 0.04em;
 }
 
@@ -181,3 +181,22 @@
   gap: 1px;
   padding: 0 4px;
 }
+
+/* ── Container Responsive Overrides ───────────────────────────────── */
+/* When the Workspace Viewport is squeezed (e.g., sidebars are open) */
+@container (max-width: 650px) {
+  .btnLabel { display: none; }
+  .colourSwatch { display: none; }
+}
+
+@container (max-width: 500px) {
+  .scrubField { display: none; }
+  .sep { display: none; }
+  .x { display: none; }
+}
+
+@container (max-width: 350px) {
+  .compName { max-width: 80px; }
+  .zoomGroup { display: none; }
+}
+

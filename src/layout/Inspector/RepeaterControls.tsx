@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * RepeaterControls (MG Phase C) — the "Repeater" inspector section for shape
  * layers. Add a repeater to fan a shape into N copies; every parameter is
@@ -51,14 +52,14 @@ function ParamRow({
 
   const onChange = (v: number): void => {
     if (animated) {
-      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, v), `rep:${nodeId}:${path}:${time}`);
+      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v), `rep:${nodeId}:${path}:${time}`);
     } else {
       updateRepeater(nodeId, { [param]: v } as Partial<Repeater>);
     }
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, value));
+    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), value));
   };
 
   return (

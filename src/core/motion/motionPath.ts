@@ -125,6 +125,115 @@ export function motionPathKeyframes(
   });
 }
 
+// ── Spatial bezier tangents (curved motion paths) ────────────────────
+
+/** One keyframe's tangent handles in comp space, at their EFFECTIVE positions
+ *  (explicit spatial tangents, or the linear third-point default so a handle is
+ *  always grabbable). `out`/`in` are absolute comp positions; null at the ends
+ *  of the path where no segment exists. */
+export interface PathTangents {
+  t: number;
+  x: number;
+  y: number;
+  out: { x: number; y: number } | null;
+  in: { x: number; y: number } | null;
+}
+
+/** Value + spatial tangents of the keyframe at `t` on one scalar track. */
+function kfAt(
+  nodeId: string,
+  prop: 'x' | 'y',
+  t: number,
+  engine: AnimationEngine,
+): { value: number; si?: number; so?: number } | null {
+  const kf = (engine.getTrackKeyframes(nodeId, prop) ?? []).find((k) => k.t === t);
+  return kf ? { value: kf.value, si: kf.si, so: kf.so } : null;
+}
+
+/**
+ * The selected layer's motion-path keyframes with their tangent handles, for
+ * the canvas overlay (draw + hit-test). Uses the path sampler for positions so
+ * it matches the drawn trajectory even when one axis lacks a keyframe at `t`.
+ */
+export function motionPathTangents(
+  node: SceneNode,
+  engine: AnimationEngine = defaultAnimation,
+): PathTangents[] {
+  const times = keyframeTimes(node.id, engine);
+  const sampler = positionSamplerFor(node, engine);
+  return times.map((t, i) => {
+    const p = sampler(t);
+    const kx = kfAt(node.id, 'x', t, engine);
+    const ky = kfAt(node.id, 'y', t, engine);
+    let out: { x: number; y: number } | null = null;
+    let inn: { x: number; y: number } | null = null;
+    if (i < times.length - 1) {
+      const n = sampler(times[i + 1]!);
+      out = {
+        x: p.x + (kx?.so ?? (n.x - p.x) / 3),
+        y: p.y + (ky?.so ?? (n.y - p.y) / 3),
+      };
+    }
+    if (i > 0) {
+      const q = sampler(times[i - 1]!);
+      inn = {
+        x: p.x + (kx?.si ?? (q.x - p.x) / 3),
+        y: p.y + (ky?.si ?? (q.y - p.y) / 3),
+      };
+    }
+    return { t, x: p.x, y: p.y, out, in: inn };
+  });
+}
+
+/**
+ * Write one tangent handle of the keyframe at `t` from an absolute comp-space
+ * handle position. `mirror` reflects the opposite handle (smooth point,
+ * AE-default); without it the point is "broken". Callers wrap in runAnimEdit.
+ */
+export function setPathTangent(
+  nodeId: string,
+  t: number,
+  which: 'in' | 'out',
+  handle: { x: number; y: number },
+  mirror: boolean,
+  engine: AnimationEngine = defaultAnimation,
+): void {
+  const kx = kfAt(nodeId, 'x', t, engine);
+  const ky = kfAt(nodeId, 'y', t, engine);
+  if (!kx || !ky) return;
+  const dx = handle.x - kx.value;
+  const dy = handle.y - ky.value;
+  const key = which === 'out' ? 'so' : 'si';
+  const opp = which === 'out' ? 'si' : 'so';
+  engine.setSpatialTangent(nodeId, 'x', t, { [key]: dx });
+  engine.setSpatialTangent(nodeId, 'y', t, { [key]: dy });
+  if (mirror) {
+    engine.setSpatialTangent(nodeId, 'x', t, { [opp]: -dx });
+    engine.setSpatialTangent(nodeId, 'y', t, { [opp]: -dy });
+  }
+}
+
+/** Auto-bezier the position path (smooth curve through every keyframe). */
+export function smoothMotionPath(nodeId: string, engine: AnimationEngine = defaultAnimation): void {
+  engine.smoothSpatialTangents(nodeId, 'x');
+  engine.smoothSpatialTangents(nodeId, 'y');
+}
+
+/** Remove all spatial tangents from the position path (straight segments). */
+export function straightenMotionPath(nodeId: string, engine: AnimationEngine = defaultAnimation): void {
+  engine.clearSpatialTangents(nodeId, 'x');
+  engine.clearSpatialTangents(nodeId, 'y');
+}
+
+/** True when any position keyframe carries an explicit spatial tangent. */
+export function hasPathTangents(nodeId: string, engine: AnimationEngine = defaultAnimation): boolean {
+  for (const prop of ['x', 'y'] as const) {
+    const kfs = engine.getTrackKeyframes(nodeId, prop) ?? [];
+    if (kfs.some((k) => k.si !== undefined || k.so !== undefined)) return true;
+  }
+  return false;
+}
+
 /** Direction of travel (degrees) at time `t`, or null when not moving. */
 export function autoOrientAngleDeg(
   node: SceneNode,

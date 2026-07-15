@@ -88,3 +88,27 @@ export function anchorCompensation(
     dy: dax * sx * Math.sin(rot) + day * sy * Math.cos(rot),
   };
 }
+
+/** 
+ * Estimate the visual bounds of a node to support automatic anchor point snapping. 
+ * Defaults to 100x100 if dimensions cannot be cleanly inferred from components.
+ */
+export function estimateNodeBounds(nodeId: string): { width: number; height: number } {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return { width: 100, height: 100 };
+  
+  const t = transformComponent(node);
+  if (t) {
+    const w = t.props.width;
+    const h = t.props.height;
+    if (typeof w === 'number' && typeof h === 'number') {
+      return { width: w, height: h };
+    }
+  }
+  
+  // Fallback heuristic based on kind
+  const isText = node.components.some(c => c.type === 'Text');
+  if (isText) return { width: 300, height: 50 };
+  
+  return { width: 100, height: 100 };
+}

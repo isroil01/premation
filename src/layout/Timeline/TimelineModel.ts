@@ -99,6 +99,10 @@ export interface TimelineTrack {
   motionBlur?: boolean;
   adjustment?: boolean;
   threeD?: boolean;
+  nodeColor?: string;
+  depth?: number;
+  isGroup?: boolean;
+  expanded?: boolean;
 }
 
 export interface TimelineMarker {

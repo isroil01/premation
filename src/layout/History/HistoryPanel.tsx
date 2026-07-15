@@ -32,10 +32,9 @@ export function HistoryPanel(): JSX.Element {
   }, []);
 
   const jumpTo = (i: number) => getCommandSystem().getHistory().jumpTo(i);
-  
-  // The global stack doesn't have renaming right now, so we'll stub it.
-  const rename = (_i: number, _label: string) => {
-    console.warn("Renaming is not supported yet on the global stack.");
+
+  const rename = (i: number, label: string) => {
+    getCommandSystem().getHistory().setLabel(i, label);
   };
   const record = useHistoryStore((s) => s.record);
 

@@ -18,12 +18,41 @@
 import { Timeline, frameRate, framesToSeconds, secondsToFrames, type Layer } from '@motion/timeline';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import { useAssetStore } from '@stores/assetStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import type { SceneNode } from '@core/types';
+import { defaultAnimation } from '@motion/animation';
 
 
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import type { Command as TimelineCommand } from '@motion/timeline';
+
+/**
+ * The real footage length of a media node in FRAMES, or null when unbounded
+ * (shapes/text/images/groups — anything generative). Video reads its asset's
+ * probed metadata; audio reads the duration stamped on its Audio component.
+ * Media whose duration isn't known yet stays unbounded (graceful).
+ */
+export function mediaSourceFrames(node: SceneNode, fps: number): number | null {
+  const kind = readNodeKind(node);
+  if (kind === 'video') {
+    const t = node.components.find((c) => c.type === 'Transform');
+    const assetId = t?.props.assetId;
+    if (typeof assetId !== 'string') return null;
+    const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
+    const sec = asset?.metadata?.duration;
+    return typeof sec === 'number' && sec > 0 ? Math.max(1, Math.round(sec * fps)) : null;
+  }
+  if (kind === 'audio') {
+    const a = node.components.find((c) => c.type === 'Audio');
+    const sec = a?.props.__duration;
+    return typeof sec === 'number' && sec > 0 ? Math.max(1, Math.round(sec * fps)) : null;
+  }
+  return null;
+}
 
 export interface TimelineMarkerView {
   id: string;
@@ -57,8 +86,8 @@ export class TimelineController {
 
   get timeline(): Timeline {
     const ws = useWorkspaceStore.getState();
-    const activeId = ws.activeId;
-    const tab = activeId ? ws.workspaces[activeId] : null;
+    const activeTabId = ws.activeTabId;
+    const tab = activeTabId ? ws.tabs[activeTabId] : null;
     const compId = tab?.compositionId || 'comp_default';
     if (!this.registries.has(compId)) {
       this.initTimeline(compId);
@@ -68,8 +97,8 @@ export class TimelineController {
 
   private get compositionTrackId(): string {
     const ws = useWorkspaceStore.getState();
-    const activeId = ws.activeId;
-    const tab = activeId ? ws.workspaces[activeId] : null;
+    const activeTabId = ws.activeTabId;
+    const tab = activeTabId ? ws.tabs[activeTabId] : null;
     const compId = tab?.compositionId || 'comp_default';
     return this.compositionTrackIds.get(compId)!;
   }
@@ -86,7 +115,11 @@ export class TimelineController {
       duration: Math.max(1, Math.round(compSettings.durationSeconds * compSettings.fps)),
       historyOptions: {
         onPush: (cmd) => {
-          getCommandSystem().getHistory().push(new TimelineCommandAdapter(cmd));
+          try {
+            getCommandSystem().getHistory().push(new TimelineCommandAdapter(cmd));
+          } catch (err) {
+            // CommandSystem is not initialized in headless tests.
+          }
         }
       }
     });
@@ -99,8 +132,8 @@ export class TimelineController {
     timeline.events.on('CurrentTimeChanged', ({ frame, seconds }) => {
       // Only mirror to the store if this is the active comp's timeline!
       const ws = useWorkspaceStore.getState();
-      const activeId = ws.activeId;
-      const tab = activeId ? ws.workspaces[activeId] : null;
+      const activeTabId = ws.activeTabId;
+      const tab = activeTabId ? ws.tabs[activeTabId] : null;
       if (tab?.compositionId === compId) {
         ws.actions.setTime(seconds, Math.round(frame));
       }
@@ -108,8 +141,8 @@ export class TimelineController {
 
     timeline.events.on('PlayStateChanged', ({ playing }) => {
       const ws = useWorkspaceStore.getState();
-      const activeId = ws.activeId;
-      const tab = activeId ? ws.workspaces[activeId] : null;
+      const activeTabId = ws.activeTabId;
+      const tab = activeTabId ? ws.tabs[activeTabId] : null;
       if (tab?.compositionId === compId && tab.playing !== playing) {
         ws.actions.setPlaying(playing);
       }
@@ -215,6 +248,25 @@ export class TimelineController {
     this.timeline.trimLayer(layerId, edge, Math.round(secondsToFrames(seconds, this.timeline.getFrameRate())));
   }
 
+  // ── Time Mapping (Absolute ↔ Layer-Relative) ────────────────────
+
+  /** Convert an absolute timeline time (seconds) to layer-relative time. */
+  toLayerTime(nodeId: string, absoluteSeconds: number): number {
+    const clips = this.getLayersForNode(nodeId);
+    const firstClip = clips[0];
+    if (clips.length === 0 || !firstClip) return absoluteSeconds;
+    // We treat the first clip's start as the origin of layer time.
+    return absoluteSeconds - (firstClip.start / this.timeline.getFrameRate().fps);
+  }
+
+  /** Convert a layer-relative time (seconds) to absolute timeline time. */
+  toAbsoluteTime(nodeId: string, layerSeconds: number): number {
+    const clips = this.getLayersForNode(nodeId);
+    const firstClip = clips[0];
+    if (clips.length === 0 || !firstClip) return layerSeconds;
+    return layerSeconds + (firstClip.start / this.timeline.getFrameRate().fps);
+  }
+
   // ── Undo / redo (the engine's own history — clip edits, split, …) ─
   undo(): boolean {
     return this.timeline.history.undo();
@@ -248,6 +300,51 @@ export class TimelineController {
     for (const nodeId of nodeIds) {
       for (const layer of this.getLayersForNode(nodeId)) {
         if (frame > layer.start && frame < layer.end) this.timeline.splitLayer(layer.id, frame);
+      }
+    }
+  }
+
+  /** Trim In point of selected layers to playhead (After Effects: Alt+[). */
+  trimSelectedStartToPlayhead(nodeIds: readonly string[]): void {
+    const frame = Math.round(this.timeline.currentFrame);
+    for (const nodeId of nodeIds) {
+      for (const layer of this.getLayersForNode(nodeId)) {
+        if (frame < layer.end) {
+          this.timeline.trimLayer(layer.id, 'start', frame);
+        }
+      }
+    }
+  }
+
+  /** Trim Out point of selected layers to playhead (After Effects: Alt+]). */
+  trimSelectedEndToPlayhead(nodeIds: readonly string[]): void {
+    const frame = Math.round(this.timeline.currentFrame);
+    for (const nodeId of nodeIds) {
+      for (const layer of this.getLayersForNode(nodeId)) {
+        if (frame > layer.start) {
+          this.timeline.trimLayer(layer.id, 'end', frame);
+        }
+      }
+    }
+  }
+
+  /** Move selected layers' start time to playhead (After Effects: [). */
+  moveSelectedStartToPlayhead(nodeIds: readonly string[]): void {
+    const frame = Math.round(this.timeline.currentFrame);
+    for (const nodeId of nodeIds) {
+      for (const layer of this.getLayersForNode(nodeId)) {
+        this.timeline.setLayerStart(layer.id, frame);
+      }
+    }
+  }
+
+  /** Move selected layers' end time to playhead (After Effects: ]). */
+  moveSelectedEndToPlayhead(nodeIds: readonly string[]): void {
+    const frame = Math.round(this.timeline.currentFrame);
+    for (const nodeId of nodeIds) {
+      for (const layer of this.getLayersForNode(nodeId)) {
+        const duration = layer.end - layer.start;
+        this.timeline.setLayerStart(layer.id, frame - duration);
       }
     }
   }
@@ -323,6 +420,49 @@ export class TimelineController {
     const m = this.timeline.markers.previous(Math.round(this.timeline.currentFrame));
     if (m) this.timeline.seek(m.frame);
   }
+
+  private collectKeyframeTimes(): number[] {
+    const ids = useSelectionStore.getState().ids;
+    let nodeIds: string[];
+    if (ids.length > 0) {
+      nodeIds = [...ids];
+    } else {
+      nodeIds = [];
+      defaultSceneGraph.traverse((n) => nodeIds.push(n.id));
+    }
+    const times = new Set<number>();
+    
+    for (const nodeId of nodeIds) {
+      const tracks = defaultAnimation.tracksFor(nodeId);
+      for (const track of tracks) {
+        for (const kf of track.keyframes) {
+          times.add(kf.t);
+        }
+      }
+    }
+    return Array.from(times).sort((a, b) => a - b);
+  }
+
+  /** Seek to the next keyframe after the playhead across selected layers (or all). */
+  goToNextKeyframe(): void {
+    const currentT = framesToSeconds(this.timeline.currentFrame, this.timeline.getFrameRate());
+    const times = this.collectKeyframeTimes();
+    // Use a small epsilon to avoid getting stuck on the current keyframe due to float precision
+    const next = times.find(t => t > currentT + 0.0001);
+    if (next !== undefined) {
+      this.seekSeconds(next);
+    }
+  }
+
+  /** Seek to the previous keyframe before the playhead across selected layers (or all). */
+  goToPrevKeyframe(): void {
+    const currentT = framesToSeconds(this.timeline.currentFrame, this.timeline.getFrameRate());
+    const times = this.collectKeyframeTimes();
+    const prev = times.slice().reverse().find(t => t < currentT - 0.0001);
+    if (prev !== undefined) {
+      this.seekSeconds(prev);
+    }
+  }
   getMarkers(): TimelineMarkerView[] {
     const rate = this.timeline.getFrameRate();
     return this.timeline.markers.list().map((m) => ({
@@ -341,8 +481,8 @@ export class TimelineController {
    */
   syncFromScene(compId?: string): void {
     const ws = useWorkspaceStore.getState();
-    const activeId = ws.activeId;
-    const tab = activeId ? ws.workspaces[activeId] : null;
+    const activeTabId = ws.activeTabId;
+    const tab = activeTabId ? ws.tabs[activeTabId] : null;
     const targetCompId = compId || tab?.compositionId || 'scene-root';
 
     const timeline = this.registries.get(targetCompId);
@@ -375,14 +515,28 @@ export class TimelineController {
             layer.name = node.name ?? nodeId;
             layer.enabled = node.visible !== false;
             layer.locked = node.locked === true;
+            // Media layers learn their real footage bound as soon as it is
+            // known (asset metadata probes async) — bounds future trims only.
+            if (layer.clip.sourceDuration === null) {
+              const late = mediaSourceFrames(node, timeline.getFrameRate().fps);
+              if (late !== null) layer.clip.sourceDuration = late;
+            }
           }
         } else {
+          // Video/audio clips are bounded by their real footage length so a
+          // clip can't be stretched past media that doesn't exist; generative
+          // layers (shapes/text/images) stay unbounded (null).
+          const sourceFrames = mediaSourceFrames(node, timeline.getFrameRate().fps);
           timeline.addLayer(trackId, {
             name: node.name ?? nodeId,
             sourceId: nodeId,
             enabled: node.visible !== false,
             locked: node.locked === true,
-            clip: { start: 0, duration: timeline.duration },
+            clip: {
+              start: 0,
+              duration: sourceFrames !== null ? Math.min(timeline.duration, sourceFrames) : timeline.duration,
+              sourceDuration: sourceFrames ?? undefined,
+            },
           });
         }
       }
@@ -400,9 +554,24 @@ let singleton: TimelineController | null = null;
 export function getTimelineController(): TimelineController {
   if (!singleton) {
     singleton = new TimelineController();
-    if (import.meta.env?.DEV && typeof window !== 'undefined') {
+    const isDev = typeof process !== 'undefined' && process.env ? process.env.NODE_ENV === 'development' : true;
+    if (isDev && typeof window !== 'undefined') {
       (window as unknown as { __timeline?: TimelineController }).__timeline = singleton;
     }
   }
   return singleton;
+}
+
+export function getRemappedTime(nodeId: string, time: number): number {
+  const controller = getTimelineController();
+  const fps = controller.timeline.getFrameRate().fps;
+  const currentFrame = Math.round(time * fps);
+  const clips = controller.getLayersForNode(nodeId);
+  if (clips.length > 0) {
+    const active = clips.find((l) => l.isActiveAt(currentFrame));
+    if (active) {
+      return active.clip.sourceFrameAt(currentFrame) / fps;
+    }
+  }
+  return time;
 }

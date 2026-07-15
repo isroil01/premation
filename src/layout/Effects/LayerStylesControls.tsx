@@ -6,6 +6,7 @@
 
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
+import { Switch } from '@components/Switch';
 import {
   getNodeLayerStyles,
   toggleDropShadow,
@@ -26,14 +27,7 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
 
       <div className={styles.blendRow}>
         <span className={styles.blendLabel}>Drop shadow</span>
-        <button
-          type="button"
-          className={ds ? styles.invertOn : styles.blendTrigger}
-          aria-pressed={!!ds}
-          onClick={() => toggleDropShadow(nodeId)}
-        >
-          {ds ? 'On' : 'Off'}
-        </button>
+        <Switch checked={!!ds} onChange={() => toggleDropShadow(nodeId)} aria-label="Drop shadow" />
       </div>
       {ds ? (
         <>
@@ -70,14 +64,7 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
 
       <div className={styles.blendRow}>
         <span className={styles.blendLabel}>Outer glow</span>
-        <button
-          type="button"
-          className={og ? styles.invertOn : styles.blendTrigger}
-          aria-pressed={!!og}
-          onClick={() => toggleOuterGlow(nodeId)}
-        >
-          {og ? 'On' : 'Off'}
-        </button>
+        <Switch checked={!!og} onChange={() => toggleOuterGlow(nodeId)} aria-label="Outer glow" />
       </div>
       {og ? (
         <>

@@ -18,6 +18,62 @@ import { immer } from 'zustand/middleware/immer';
 import { getEventBus } from '@core/events/EventBus';
 import { clamp } from '@utils/lang';
 
+const PANEL_ORDER_SETTINGS_KEY = 'layout.panelOrder';
+const LAYOUT_PERSIST_KEY = 'motion-editor.layout.v1';
+
+// ── Persistence helpers ───────────────────────────────────────────
+interface PersistedLayout {
+  regions: Partial<Record<RegionId, Partial<RegionState>>>;
+  panelOrder?: Partial<Record<RegionId, ReadonlyArray<string>>>;
+  activePanelByRegion?: Partial<Record<RegionId, string>>;
+  leftSidebarPosition?: 'left' | 'right';
+  rightInspectorPosition?: 'left' | 'right';
+  timelinePosition?: 'bottom' | 'top';
+}
+
+function loadPersistedLayout(): PersistedLayout | null {
+  try {
+    const raw = localStorage.getItem(LAYOUT_PERSIST_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedLayout;
+  } catch {
+    return null;
+  }
+}
+
+function saveLayout(
+  regions: LayoutMap,
+  panelOrder: Record<RegionId, ReadonlyArray<string>>,
+  activePanelByRegion: Partial<Record<RegionId, string>>,
+  leftSidebarPosition?: 'left' | 'right',
+  rightInspectorPosition?: 'left' | 'right',
+  timelinePosition?: 'bottom' | 'top'
+): void {
+  try {
+    const data: PersistedLayout = {
+      regions,
+      panelOrder,
+      activePanelByRegion,
+      leftSidebarPosition,
+      rightInspectorPosition,
+      timelinePosition,
+    };
+    localStorage.setItem(LAYOUT_PERSIST_KEY, JSON.stringify(data));
+  } catch {
+    // storage quota or private mode — silently ignore
+  }
+}
+
+function applyPersistedToRegions(regions: LayoutMap, saved: Partial<Record<RegionId, Partial<RegionState>>>): void {
+  for (const key of Object.keys(saved) as RegionId[]) {
+    const patch = saved[key];
+    const r = regions[key];
+    if (!patch || !r) continue;
+    if (typeof patch.collapsed === 'boolean') r.collapsed = patch.collapsed;
+    if (typeof patch.size === 'number') r.size = clamp(patch.size, r.minSize, r.maxSize);
+  }
+}
+
 export type RegionId =
   | 'leftSidebar'
   | 'rightInspector'
@@ -40,6 +96,9 @@ export interface PanelRegistration {
   id: string;
   /** Region where the panel is docked. */
   region: RegionId;
+  /** The panel's default region as declared at registration — `region` mutates
+   *  when the user moves the tab; resetLayout restores panels to this. */
+  homeRegion?: RegionId;
   /** Display title (also used as default tab label). */
   title: string;
   /** Optional icon name. */
@@ -60,13 +119,19 @@ interface LayoutActions {
   openPanel(panelId: string): void;
   closePanel(panelId: string): void;
   togglePanel(panelId: string): void;
+  /** Move a panel tab to a new index within its current region. */
+  reorderPanel(panelId: string, toIndex: number): void;
+  /** Move a panel tab to a new region and index. */
+  movePanel(panelId: string, toRegion: RegionId, toIndex: number): void;
   setRegionSize(region: RegionId, size: number): void;
   toggleRegion(region: RegionId): void;
   setCollapsed(region: RegionId, collapsed: boolean): void;
-  /** Apply a saved workspace layout (region sizes + collapsed states). Each
-   *  region patch is partial — min/max come from the current region. */
-  applyRegions(regions: Partial<Record<RegionId, Partial<RegionState>>>): void;
+  /** Apply a saved workspace layout (region sizes + collapsed states + tab assignments). */
+  applyWorkspaceLayout(layout: import('@core/layout/workspaceLayouts').WorkspaceLayout): void;
   resetLayout(): void;
+  setLeftSidebarPosition(pos: 'left' | 'right'): void;
+  setRightInspectorPosition(pos: 'left' | 'right'): void;
+  setTimelinePosition(pos: 'bottom' | 'top'): void;
 }
 
 export interface LayoutStore {
@@ -77,6 +142,9 @@ export interface LayoutStore {
   panelOrder: Record<RegionId, ReadonlyArray<string>>;
   /** The currently active panel per region (for tab focus). */
   activePanelByRegion: Partial<Record<RegionId, string>>;
+  leftSidebarPosition: 'left' | 'right';
+  rightInspectorPosition: 'left' | 'right';
+  timelinePosition: 'bottom' | 'top';
 }
 
 const DEFAULT_REGIONS: LayoutMap = {
@@ -86,25 +154,50 @@ const DEFAULT_REGIONS: LayoutMap = {
   bottomTimeline:  { collapsed: false, size: 260, minSize: 120, maxSize: 600 },
 };
 
+// Merge any persisted region state on top of defaults at module load time.
+const _persisted = loadPersistedLayout();
+const _initialRegions: LayoutMap = structuredClone(DEFAULT_REGIONS);
+if (_persisted?.regions) applyPersistedToRegions(_initialRegions, _persisted.regions);
+
 export const useLayoutStore = create<LayoutStore & LayoutActions>()(
   immer((set, get) => ({
     panels: {},
-    regions: structuredClone(DEFAULT_REGIONS),
+    regions: _initialRegions,
+    // De-dupe restored order: older persisted layouts (written before the
+    // registerPanel guard below) can contain each id twice, which rendered
+    // every sidebar tab twice.
     panelOrder: {
-      leftSidebar: [],
-      rightInspector: [],
+      leftSidebar: [...new Set(_persisted?.panelOrder?.leftSidebar ?? [])],
+      rightInspector: [...new Set(_persisted?.panelOrder?.rightInspector ?? [])],
+      // Only the two sidebars host panels. Any ids persisted into the center or
+      // bottom (timeline) regions by the old move code are orphans — nothing
+      // renders them — so drop them; the panels re-register into their home
+      // sidebar on boot. Prevents "moved a panel to the timeline and it vanished".
       centerWorkspace: [],
       bottomTimeline: [],
     },
-    activePanelByRegion: {},
+    activePanelByRegion: (_persisted?.activePanelByRegion ?? {}) as Partial<Record<RegionId, string>>,
+    leftSidebarPosition: _persisted?.leftSidebarPosition ?? 'left',
+    rightInspectorPosition: _persisted?.rightInspectorPosition ?? 'right',
+    timelinePosition: _persisted?.timelinePosition ?? 'bottom',
 
     registerPanel: (panel) =>
       set((s) => {
         if (s.panels[panel.id]) return; // idempotent
-        s.panels[panel.id] = panel;
-        s.panelOrder[panel.region].push(panel.id);
-        if (!s.activePanelByRegion[panel.region]) {
-          s.activePanelByRegion[panel.region] = panel.id;
+        const persistedRegion = (Object.keys(s.panelOrder) as RegionId[]).find((r) =>
+          s.panelOrder[r].includes(panel.id),
+        );
+        const region = persistedRegion ?? panel.region;
+        s.panels[panel.id] = { ...panel, homeRegion: panel.homeRegion ?? panel.region, region };
+        
+        // Strip this id from all regions first to guarantee no cross-dock duplicates
+        for (const rKey of Object.keys(s.panelOrder) as RegionId[]) {
+          s.panelOrder[rKey] = s.panelOrder[rKey].filter((id) => id !== panel.id);
+        }
+        
+        s.panelOrder[region].push(panel.id);
+        if (!s.activePanelByRegion[region]) {
+          s.activePanelByRegion[region] = panel.id;
         }
         getEventBus().emit('PanelOpened', { panelId: panel.id });
       }),
@@ -154,6 +247,54 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       }
     },
 
+    reorderPanel: (panelId: string, toIndex: number) => {
+      set((s) => {
+        const panel = s.panels[panelId];
+        if (!panel) return;
+        const order = [...s.panelOrder[panel.region]];
+        const fromIndex = order.indexOf(panelId);
+        if (fromIndex === -1) return;
+
+        order.splice(fromIndex, 1);
+        order.splice(toIndex, 0, panelId);
+        s.panelOrder[panel.region] = order;
+      });
+      getEventBus().emit('LayoutChanged', undefined);
+    },
+
+    movePanel: (panelId: string, toRegion: RegionId, toIndex: number) => {
+      set((s) => {
+        const panel = s.panels[panelId];
+        if (!panel) return;
+        
+        const fromRegion = panel.region;
+        if (fromRegion === toRegion) {
+          const order = [...s.panelOrder[fromRegion]];
+          const fromIndex = order.indexOf(panelId);
+          if (fromIndex === -1) return;
+          order.splice(fromIndex, 1);
+          order.splice(toIndex, 0, panelId);
+          s.panelOrder[fromRegion] = order;
+        } else {
+          // Remove from ALL regions completely so no duplicate version remains
+          for (const rKey of Object.keys(s.panelOrder) as RegionId[]) {
+            const oldLen = s.panelOrder[rKey].length;
+            s.panelOrder[rKey] = s.panelOrder[rKey].filter((id) => id !== panelId);
+            if (s.panelOrder[rKey].length !== oldLen && s.activePanelByRegion[rKey] === panelId) {
+              s.activePanelByRegion[rKey] = s.panelOrder[rKey].length > 0 ? s.panelOrder[rKey][0] : undefined;
+            }
+          }
+          
+          panel.region = toRegion;
+          const toOrder = [...(s.panelOrder[toRegion] || [])];
+          toOrder.splice(toIndex, 0, panelId);
+          s.panelOrder[toRegion] = toOrder;
+          s.activePanelByRegion[toRegion] = panelId;
+        }
+      });
+      getEventBus().emit('LayoutChanged', undefined);
+    },
+
     setRegionSize: (region, size) =>
       set((s) => {
         const r = s.regions[region];
@@ -172,15 +313,41 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         s.regions[region].collapsed = collapsed;
       }),
 
-    applyRegions: (regions) =>
+    applyWorkspaceLayout: (layout) =>
       set((s) => {
-        for (const key of Object.keys(regions) as RegionId[]) {
-          const patch = regions[key];
+        for (const key of Object.keys(layout.regions) as RegionId[]) {
+          const patch = layout.regions[key];
           const r = s.regions[key];
           if (!patch || !r) continue;
           if (typeof patch.collapsed === 'boolean') r.collapsed = patch.collapsed;
           if (typeof patch.size === 'number') r.size = clamp(patch.size, r.minSize, r.maxSize);
         }
+        
+        if (layout.panelOrder) {
+          // Reset all arrays to ensure clean non-duplicated placement across regions
+          s.panelOrder = { leftSidebar: [], rightInspector: [], centerWorkspace: [], bottomTimeline: [] };
+          for (const [regionId, order] of Object.entries(layout.panelOrder)) {
+            const rId = regionId as RegionId;
+            const uniqueOrder = [...new Set(order)];
+            s.panelOrder[rId] = uniqueOrder;
+            for (const panelId of uniqueOrder) {
+              if (s.panels[panelId]) {
+                s.panels[panelId].region = rId;
+              }
+            }
+          }
+        }
+        
+        if (layout.activePanelByRegion) {
+          for (const [regionId, activeTabId] of Object.entries(layout.activePanelByRegion)) {
+            s.activePanelByRegion[regionId as RegionId] = activeTabId;
+          }
+        }
+
+        if (layout.leftSidebarPosition) s.leftSidebarPosition = layout.leftSidebarPosition;
+        if (layout.rightInspectorPosition) s.rightInspectorPosition = layout.rightInspectorPosition;
+        if (layout.timelinePosition) s.timelinePosition = layout.timelinePosition;
+
         getEventBus().emit('LayoutChanged', undefined);
       }),
 
@@ -188,16 +355,94 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         s.regions = structuredClone(DEFAULT_REGIONS);
         s.activePanelByRegion = {};
+        s.leftSidebarPosition = 'left';
+        s.rightInspectorPosition = 'right';
+        s.timelinePosition = 'bottom';
+        s.panelOrder = {
+          leftSidebar: [],
+          rightInspector: [],
+          centerWorkspace: [],
+          bottomTimeline: [],
+        };
         for (const p of Object.values(s.panels)) {
-          s.panelOrder[p.region].push(p.id);
-          if (!s.activePanelByRegion[p.region]) {
-            s.activePanelByRegion[p.region] = p.id;
+          const home = p.homeRegion ?? p.region;
+          p.region = home;
+          if (!s.panelOrder[home].includes(p.id)) {
+            s.panelOrder[home].push(p.id);
+          }
+          if (!s.activePanelByRegion[home]) {
+            s.activePanelByRegion[home] = p.id;
           }
         }
+        try {
+          localStorage.removeItem(LAYOUT_PERSIST_KEY);
+          const { getSettingsManager } = require('@core/services/coreServices') as typeof import('@core/services/coreServices');
+          getSettingsManager().delete(PANEL_ORDER_SETTINGS_KEY);
+        } catch { /* noop */ }
+        getEventBus().emit('LayoutChanged', undefined);
+      }),
+
+    setLeftSidebarPosition: (pos) =>
+      set((s) => {
+        s.leftSidebarPosition = pos;
+        getEventBus().emit('LayoutChanged', undefined);
+      }),
+
+    setRightInspectorPosition: (pos) =>
+      set((s) => {
+        s.rightInspectorPosition = pos;
+        getEventBus().emit('LayoutChanged', undefined);
+      }),
+
+    setTimelinePosition: (pos) =>
+      set((s) => {
+        s.timelinePosition = pos;
         getEventBus().emit('LayoutChanged', undefined);
       }),
   })),
 );
+
+// Persist panelOrder to SettingsManager whenever it changes so tab ordering
+// survives page refresh. We subscribe lazily to avoid a boot-order dependency
+// on SettingsManager (which is registered during Application.boot).
+let _lastPanelOrder: unknown = null;
+useLayoutStore.subscribe((state) => {
+  if (state.panelOrder === _lastPanelOrder) return;
+  _lastPanelOrder = state.panelOrder;
+  try {
+    const { getSettingsManager } = require('@core/services/coreServices') as typeof import('@core/services/coreServices');
+    getSettingsManager().set(PANEL_ORDER_SETTINGS_KEY, state.panelOrder);
+  } catch {
+    /* SettingsManager not yet booted — safe to ignore on first render */
+  }
+});
+
+// Persist the full layout (regions, panelOrder, activePanelByRegion) to
+// localStorage so the workspace survives page refresh / Electron restart.
+let _lastLayoutSig = '';
+useLayoutStore.subscribe((state) => {
+  // Cheap signature: JSON of the parts we care about.
+  const sig = JSON.stringify({
+    r: Object.fromEntries(
+      (Object.keys(state.regions) as RegionId[]).map((k) => [k, { collapsed: state.regions[k].collapsed, size: state.regions[k].size }])
+    ),
+    p: state.panelOrder,
+    a: state.activePanelByRegion,
+    leftPos: state.leftSidebarPosition,
+    rightPos: state.rightInspectorPosition,
+    timePos: state.timelinePosition,
+  });
+  if (sig === _lastLayoutSig) return;
+  _lastLayoutSig = sig;
+  saveLayout(
+    state.regions,
+    state.panelOrder,
+    state.activePanelByRegion,
+    state.leftSidebarPosition,
+    state.rightInspectorPosition,
+    state.timelinePosition
+  );
+});
 
 export const usePanel = (panelId: string): PanelRegistration | undefined =>
   useLayoutStore((s) => s.panels[panelId]);

@@ -3,9 +3,12 @@ import {
   Scene,
   createNode,
   DataComponent,
+  Matrix,
+  type Matrix2D,
   type SceneNode as EngineNode,
   type NodeId,
 } from '@motion/scene';
+import { worldMatrixOf, localUnderParent } from './worldTransform';
 
 /**
  * The app's scene graph — backed by the framework-independent `@motion/scene`
@@ -106,6 +109,16 @@ class AppNodeView implements SceneNode {
   set solo(v: boolean | undefined) {
     this.e.custom.solo = !!v;
   }
+  /** AE-style label color (hex). Stored on the engine node so it survives the
+   *  view cache and serializes with the project (sceneProjectIO.capture). */
+  get color(): string | undefined {
+    const c = this.e.custom.labelColor;
+    return typeof c === 'string' ? c : undefined;
+  }
+  set color(v: string | undefined) {
+    if (v === undefined) delete this.e.custom.labelColor;
+    else this.e.custom.labelColor = v;
+  }
   get transform(): Transform {
     // Derived from whichever component carries x/y/rotation (app convention).
     let x = 0;
@@ -136,6 +149,7 @@ export class SceneGraph {
     e.visible = node.visible !== false;
     e.locked = !!node.locked;
     if (node.solo) e.custom.solo = true;
+    if (typeof node.color === 'string') e.custom.labelColor = node.color;
     e.custom.kind = kind;
     e.custom.childIds = [...(node.children ?? [])];
     e.custom.parentId = node.parent ?? null;
@@ -179,13 +193,51 @@ export class SceneGraph {
     if (ce) ce.custom.parentId = parentId;
   }
 
+  private getLocalTransform(nodeId: ID): { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null {
+    const node = this.getNode(nodeId);
+    if (!node) return null;
+    let scaleX = 1;
+    let scaleY = 1;
+    let scale: number | undefined;
+    for (const c of node.components) {
+      const p = c.props as Record<string, unknown>;
+      if (typeof p.scaleX === 'number') scaleX = p.scaleX;
+      if (typeof p.scaleY === 'number') scaleY = p.scaleY;
+      if (typeof p.scale === 'number') scale = p.scale;
+    }
+    return {
+      x: node.transform.position.x,
+      y: node.transform.position.y,
+      rotation: node.transform.rotation,
+      scaleX: scale ?? scaleX,
+      scaleY: scale ?? scaleY,
+    };
+  }
+
   /** Relink `childId` under `newParentId` (or a root when null), keeping both
-   *  the old and new parents' child lists consistent. Transform is untouched —
-   *  callers that want "reparent without moving" compensate the local transform. */
-  setParent(childId: ID, newParentId: ID | null): void {
+   *  the old and new parents' child lists consistent. By default (`options.preserveWorld = true`),
+   *  compensates the local transform so the node does not jump on screen. */
+  setParent(
+    childId: ID,
+    newParentId: ID | null,
+    options: { preserveWorld?: boolean } = { preserveWorld: true },
+  ): void {
     const ce = this.engine(childId);
     if (!ce) return;
     const oldParentId = ce.custom.parentId as ID | null;
+    const targetId = newParentId && newParentId !== 'comp_root' ? newParentId : null;
+    if (oldParentId === targetId || oldParentId === newParentId) return;
+
+    let childWorld: Matrix2D | null = null;
+    if (options.preserveWorld !== false) {
+      const localOf = (id: string) => this.getLocalTransform(id);
+      const parentOf = (id: string) => {
+        const p = this.engine(id)?.custom.parentId as ID | null;
+        return p && p !== 'comp_root' ? p : null;
+      };
+      childWorld = worldMatrixOf(childId, localOf, parentOf, new Map());
+    }
+
     if (oldParentId) {
       const oe = this.engine(oldParentId);
       if (oe && Array.isArray(oe.custom.childIds)) {
@@ -199,6 +251,19 @@ export class SceneGraph {
         const kids = (pe.custom.childIds as ID[]) ?? (pe.custom.childIds = []);
         if (!kids.includes(childId)) kids.push(childId);
       }
+    }
+
+    if (options.preserveWorld !== false && childWorld) {
+      const localOf = (id: string) => this.getLocalTransform(id);
+      const parentOf = (id: string) => {
+        const p = this.engine(id)?.custom.parentId as ID | null;
+        return p && p !== 'comp_root' ? p : null;
+      };
+      const parentWorld = targetId
+        ? worldMatrixOf(targetId, localOf, parentOf, new Map())
+        : Matrix.identity();
+      const compensated = localUnderParent(childWorld, Matrix.clone(parentWorld));
+      this.setLocalTransform(childId, compensated);
     }
   }
 

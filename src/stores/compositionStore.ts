@@ -60,8 +60,9 @@ export interface CompositionStoreFn {
 }
 
 export const useCompositionStore = function <T>(selector?: (state: CompositionStore) => T): T | CompositionStore {
-  const activeTabId = useProjectStore(s => s.activeTabId);
-  const tab = activeTabId ? useProjectStore(s => s.tabs[activeTabId]) : null;
+  // Hooks must be unconditional — a null↔set transition of activeTabId while
+  // consumers stay mounted would otherwise change the hook count and crash.
+  const tab = useProjectStore(s => (s.activeTabId ? s.tabs[s.activeTabId] : undefined)) ?? null;
   const compId = tab?.compositionId;
   const compData = useProjectStore(s => (compId ? s.comps[compId] : undefined)) ?? DEFAULT_COMPOSITION;
   const updateComp = useProjectStore(s => s.actions.updateComp);

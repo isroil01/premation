@@ -8,6 +8,7 @@
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
+import { Switch } from '@components/Switch';
 import {
   getNodeLayerTime,
   updateNodeLayerTime,
@@ -43,26 +44,24 @@ export function TimeControls({ nodeId }: { nodeId: string }): JSX.Element {
             aria-label="Time stretch"
           />
         </label>
-        <button
-          type="button"
-          className={time.reverse ? styles.invertOn : styles.blendTrigger}
-          aria-pressed={time.reverse}
-          onClick={() => updateNodeLayerTime(nodeId, { reverse: !time.reverse })}
-        >
-          Reverse
-        </button>
+      </div>
+
+      <div className={styles.blendRow}>
+        <span className={styles.blendLabel}>Reverse</span>
+        <Switch
+          checked={time.reverse}
+          onChange={(e) => updateNodeLayerTime(nodeId, { reverse: e.currentTarget.checked })}
+          aria-label="Reverse playback"
+        />
       </div>
 
       <div className={styles.blendRow}>
         <span className={styles.blendLabel}>Freeze frame</span>
-        <button
-          type="button"
-          className={time.freeze ? styles.invertOn : styles.blendTrigger}
-          aria-pressed={time.freeze}
-          onClick={() => updateNodeLayerTime(nodeId, { freeze: !time.freeze })}
-        >
-          {time.freeze ? 'On' : 'Off'}
-        </button>
+        <Switch
+          checked={time.freeze}
+          onChange={(e) => updateNodeLayerTime(nodeId, { freeze: e.currentTarget.checked })}
+          aria-label="Freeze frame"
+        />
       </div>
 
       {time.freeze ? (

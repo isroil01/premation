@@ -15,7 +15,15 @@ function fakeBitmap(w = 320, h = 240): ImageBitmap {
 
 /** A fake video element (only the fields setVideo touches). */
 function fakeVideo(over: Partial<HTMLVideoElement> = {}): HTMLVideoElement {
-  return { readyState: 2, currentTime: 0, videoWidth: 640, videoHeight: 480, ...over } as unknown as HTMLVideoElement;
+  return {
+    readyState: 2,
+    currentTime: 0,
+    videoWidth: 640,
+    videoHeight: 480,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    ...over
+  } as unknown as HTMLVideoElement;
 }
 
 /** Flush the microtask/timer queue so an injected async loader settles. */

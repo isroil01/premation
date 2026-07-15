@@ -99,7 +99,9 @@ describe('EFFECT_DEFS', () => {
   });
 
   test('every def compiles to a non-empty css filter at its default', () => {
+    const gpuOnly = ['gradient-ramp', 'fractal-noise', 'displacement-map', 'motion-tile'];
     for (const d of EFFECT_DEFS) {
+      if (gpuOnly.includes(d.type)) continue;
       expect(d.css(d.default).length).toBeGreaterThan(0);
     }
   });

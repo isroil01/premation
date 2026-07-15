@@ -27,6 +27,8 @@ export interface TreeNode<T> {
   id: string;
   label: ReactNode;
   icon?: IconName;
+  /** Optional label color — renders a small color dot before the label. */
+  labelColor?: string;
   children?: ReadonlyArray<TreeNode<T>>;
   hasChildren?: boolean;
   /** When true, this branch is lazy-loaded by the parent engine. */
@@ -45,6 +47,15 @@ export interface TreeViewProps<T> {
   renderActions?: (node: TreeNode<T>) => ReactNode;
   /** Right-click a row. Receives the node id and the mouse event. */
   onNodeContextMenu?: (id: string, e: React.MouseEvent) => void;
+  /** Enables drag-to-reorder/reparent. Called on drop with the drag source,
+   *  the row dropped onto, and where relative to it. */
+  onReorder?: (dragId: string, targetId: string, pos: 'before' | 'after' | 'inside') => void;
+  /** Id of the row currently being renamed (inline edit). */
+  renamingId?: string;
+  /** Commit an inline rename. */
+  onRename?: (id: string, name: string) => void;
+  /** Cancel the inline rename (Escape / blur with empty value). */
+  onRenameCancel?: () => void;
   className?: string;
   /** Indent step in px. */
   indent?: number;
@@ -90,9 +101,15 @@ export function TreeView<T = unknown>({
   onToggleExpand,
   renderActions,
   onNodeContextMenu,
+  onReorder,
+  renamingId,
+  onRename,
+  onRenameCancel,
   className,
   indent = 16,
 }: TreeViewProps<T>): JSX.Element {
+  const dragId = useRef<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; pos: 'before' | 'after' | 'inside' } | null>(null);
   const [internalExpanded, setInternalExpanded] = useState<Set<string>>(
     () => new Set(defaultExpandedIds ?? []),
   );
@@ -234,6 +251,8 @@ export function TreeView<T = unknown>({
             data-id={row.node.id}
             data-focused={isDefaultFocus || undefined}
             data-selected={isSelected || undefined}
+            data-drop={dropTarget?.id === row.node.id ? dropTarget.pos : undefined}
+            draggable={onReorder ? renamingId !== row.node.id : undefined}
             className={cn(styles.row, isSelected && styles.selected)}
             style={{ paddingLeft: 8 + row.depth * indent }}
             onClick={(e) => onRowClick(e, row.node.id)}
@@ -247,6 +266,46 @@ export function TreeView<T = unknown>({
                   }
                 : undefined
             }
+            onDragStart={
+              onReorder
+                ? (e) => {
+                    dragId.current = row.node.id;
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', row.node.id);
+                  }
+                : undefined
+            }
+            onDragOver={
+              onReorder
+                ? (e) => {
+                    if (!dragId.current || dragId.current === row.node.id) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const frac = (e.clientY - r.top) / r.height;
+                    const pos = frac < 0.3 ? 'before' : frac > 0.7 ? 'after' : 'inside';
+                    setDropTarget({ id: row.node.id, pos });
+                  }
+                : undefined
+            }
+            onDragLeave={
+              onReorder
+                ? () => setDropTarget((d) => (d?.id === row.node.id ? null : d))
+                : undefined
+            }
+            onDrop={
+              onReorder
+                ? (e) => {
+                    e.preventDefault();
+                    const src = dragId.current;
+                    const t = dropTarget;
+                    dragId.current = null;
+                    setDropTarget(null);
+                    if (src && t && src !== t.id) onReorder(src, t.id, t.pos);
+                  }
+                : undefined
+            }
+            onDragEnd={onReorder ? () => { dragId.current = null; setDropTarget(null); } : undefined}
           >
             <span
               className={styles.chevron}
@@ -264,7 +323,39 @@ export function TreeView<T = unknown>({
               ) : null}
             </span>
             {row.node.icon ? <Icon name={row.node.icon} size={14} className={styles.icon} /> : null}
-            <span className={styles.label}>{row.node.label}</span>
+            {row.node.labelColor ? (
+              <span
+                className={styles.labelDot}
+                style={{ backgroundColor: row.node.labelColor }}
+                aria-hidden="true"
+              />
+            ) : null}
+            {renamingId === row.node.id && onRename ? (
+              <input
+                className={styles.renameInput}
+                autoFocus
+                defaultValue={typeof row.node.label === 'string' ? row.node.label : ''}
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') {
+                    const v = e.currentTarget.value.trim();
+                    if (v) onRename(row.node.id, v);
+                    else onRenameCancel?.();
+                  } else if (e.key === 'Escape') {
+                    onRenameCancel?.();
+                  }
+                }}
+                onBlur={(e) => {
+                  const v = e.currentTarget.value.trim();
+                  if (v) onRename(row.node.id, v);
+                  else onRenameCancel?.();
+                }}
+              />
+            ) : (
+              <span className={styles.label}>{row.node.label}</span>
+            )}
             {renderActions ? (
               <span className={styles.actions} onClick={(e) => e.stopPropagation()}>
                 {renderActions(row.node)}

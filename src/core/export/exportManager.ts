@@ -14,11 +14,16 @@ import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, type SnapshotComp } from '@core
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { renderOffline, frameCount, type OfflineRenderParams } from './offlineRenderer';
+import { renderOffline, frameCount, exportView, type OfflineRenderParams } from './offlineRenderer';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { createStoreZip, type ZipEntry } from './zip';
+import { createAnimatedGIF, type GifFrame } from './gifEncoder';
+import { api } from '@core/api/client';
+import { useUIStore } from '@stores/uiStore';
 
-export type ExportFormat = 'webm' | 'png' | 'png-sequence' | 'jpg-sequence' | 'json' | 'lottie';
+export type ExportFormat = 'webm' | 'png' | 'png-sequence' | 'jpg-sequence' | 'json' | 'lottie' | 'mp4' | 'gif';
 
 export interface ExportOptions {
   format: ExportFormat;
@@ -34,10 +39,26 @@ export interface ExportOptions {
   onProgress?: (fraction: number) => void;
 }
 
-/** buildSnapshot with the export comp settings (bg colour + transparency),
- *  no preview chrome, no camera view — pure comp render. */
+/** Viewport motion-blur settings, threaded into export so it matches preview. */
+function exportMotionBlur(fps: number): import('@core/effects/motionBlur').MotionBlurConfig | undefined {
+  const mb = useMotionBlurStore.getState();
+  return mb.enabled ? { enabled: true, shutterAngle: mb.shutterAngle, shutterPhase: mb.shutterPhase, samples: mb.samples, adaptiveSampleLimit: mb.adaptiveSampleLimit, fps } : undefined;
+}
+
+/** buildSnapshot with the export comp settings (bg colour + transparency), no
+ *  preview chrome, comp mapped 1:1 into the output frame (the implicit fallback
+ *  fit insets 8% for preview framing — exported frames must fill exactly). */
 function exportSnapshot(opts: ExportOptions, time: number): ReturnType<typeof buildSnapshot> {
-  return buildSnapshot(defaultSceneGraph, defaultAnimation, time, undefined, undefined, undefined, undefined, opts.comp);
+  return buildSnapshot(
+    defaultSceneGraph,
+    defaultAnimation,
+    time,
+    undefined,
+    undefined,
+    exportView(opts.width, opts.height, opts.comp),
+    exportMotionBlur(opts.fps),
+    opts.comp,
+  );
 }
 
 /** Trigger a browser download for a blob. */
@@ -67,7 +88,16 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** Offline-render params derived from the export options. */
 function offlineParams(opts: ExportOptions): OfflineRenderParams {
-  return { width: opts.width, height: opts.height, fps: opts.fps, durationSec: opts.duration, comp: opts.comp };
+  const wa = getTimelineController().getWorkArea();
+  return {
+    width: opts.width,
+    height: opts.height,
+    fps: opts.fps,
+    durationSec: opts.duration,
+    comp: opts.comp,
+    motionBlur: exportMotionBlur(opts.fps),
+    ...(wa ? { startFrame: Math.round(wa.start * opts.fps), endFrame: Math.round(wa.end * opts.fps) } : {}),
+  };
 }
 
 /** Encode a canvas frame to raw bytes (png/jpeg). */
@@ -176,6 +206,37 @@ async function exportWebM(opts: ExportOptions): Promise<void> {
   download(blob, 'motion-export.webm');
 }
 
+export async function renderGIFBlob(
+  opts: ExportOptions,
+  onProgress?: (f: number) => void,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const frames: GifFrame[] = [];
+  await renderOffline(
+    offlineParams(opts),
+    async (canvas, frame, count) => {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const imgData = ctx.getImageData(0, 0, opts.width, opts.height);
+        frames.push({
+          width: opts.width,
+          height: opts.height,
+          pixels: imgData.data,
+        });
+      }
+      onProgress?.((frame + 1) / count);
+    },
+    signal,
+  );
+  return createAnimatedGIF(frames, opts.fps);
+}
+
+async function exportGIF(opts: ExportOptions): Promise<void> {
+  const blob = await renderGIFBlob(opts, opts.onProgress);
+  opts.onProgress?.(1);
+  download(blob, 'motion-export.gif');
+}
+
 async function exportSequence(opts: ExportOptions, ext: 'png' | 'jpg'): Promise<void> {
   const blob = await renderSequenceZip(opts, ext, opts.onProgress);
   opts.onProgress?.(1);
@@ -220,6 +281,47 @@ function exportLottie(opts: ExportOptions): void {
   download(new Blob([JSON.stringify(lottie)], { type: 'application/json' }), 'motion-export.lottie.json');
 }
 
+async function exportMP4(opts: ExportOptions): Promise<void> {
+  const signal = new AbortController().signal;
+  try {
+    const renderJob = await api.createRender({
+      format: 'mp4',
+      width: opts.width,
+      height: opts.height,
+      fps: opts.fps,
+      duration: opts.duration,
+      transparent: false,
+    });
+    opts.onProgress?.(0.1);
+    const zipBlob = await renderSequenceZip(opts, 'jpg', (f) => opts.onProgress?.(0.1 + f * 0.4), signal);
+    opts.onProgress?.(0.5);
+    await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
+    
+    while (true) {
+      const status = await api.getRender(renderJob.id);
+      if (status.status === 'completed' && status.resultUrl) {
+        opts.onProgress?.(1.0);
+        const res = await fetch(status.resultUrl);
+        const blob = await res.blob();
+        download(blob, `motion-export-${Date.now()}.mp4`);
+        return;
+      }
+      if (status.status === 'failed') {
+        throw new Error(status.error || 'Backend render failed');
+      }
+      opts.onProgress?.(0.5 + status.progress * 0.45);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  } catch (err) {
+    useUIStore.getState().notify({
+      level: 'error',
+      message: `MP4 export requires the backend to be online (localhost:4000). Please check connection or start the backend.`,
+      durationMs: 4000
+    });
+    throw err;
+  }
+}
+
 export async function runExport(opts: ExportOptions): Promise<void> {
   switch (opts.format) {
     case 'png': return exportPNG(opts);
@@ -228,10 +330,14 @@ export async function runExport(opts: ExportOptions): Promise<void> {
     case 'json': return exportJSON(opts);
     case 'lottie': return exportLottie(opts);
     case 'webm': return exportWebM(opts);
+    case 'mp4': return exportMP4(opts);
+    case 'gif': return exportGIF(opts);
   }
 }
 
 export const EXPORT_PRESETS: { format: ExportFormat; label: string; ext: string; hint: string }[] = [
+  { format: 'mp4', label: 'MP4 Video', ext: 'mp4', hint: 'MP4 video (requires backend online)' },
+  { format: 'gif', label: 'GIF Animation', ext: 'gif', hint: 'GIF animation (local render)' },
   { format: 'webm', label: 'Video', ext: 'webm', hint: 'WebM video, deterministic frame-by-frame render' },
   { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames in a zip (deterministic)' },
   { format: 'png', label: 'Still frame', ext: 'png', hint: 'Current frame as a PNG image' },

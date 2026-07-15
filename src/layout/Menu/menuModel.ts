@@ -35,7 +35,6 @@ export const APP_MENU: MenuGroupModel[] = [
     id: 'file',
     label: 'File',
     items: [
-      { commandId: 'comp.new', label: 'New Composition…' },
       { commandId: ProjectCommands.New, label: 'New Project' },
       { commandId: ProjectCommands.Open, label: 'Open…' },
       { separator: true },
@@ -43,6 +42,8 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: ProjectCommands.SaveAs, label: 'Save As…' },
       { separator: true },
       { commandId: 'file.export', label: 'Export…' },
+      { separator: true },
+      { commandId: 'file.versionHistory', label: 'Version History…' },
       { separator: true },
       { commandId: ProjectCommands.Close, label: 'Close Project' },
     ],
@@ -53,6 +54,10 @@ export const APP_MENU: MenuGroupModel[] = [
     items: [
       { commandId: BuiltinCommands.Undo, label: 'Undo' },
       { commandId: BuiltinCommands.Redo, label: 'Redo' },
+      { separator: true },
+      { commandId: 'edit.cut', label: 'Cut' },
+      { commandId: 'edit.copy', label: 'Copy' },
+      { commandId: 'edit.paste', label: 'Paste' },
       { separator: true },
       { commandId: BuiltinCommands.SelectAll, label: 'Select All' },
       { commandId: BuiltinCommands.Deselect, label: 'Deselect' },
@@ -98,6 +103,14 @@ export const APP_MENU: MenuGroupModel[] = [
     ],
   },
   {
+    id: 'examples',
+    label: 'Examples',
+    items: [
+      { commandId: 'scene.loadSaaSAd', label: 'Load: Nova AI — SaaS Ad (24s)' },
+      { commandId: 'scene.loadShowcase', label: 'Load: Complex Showcase' },
+    ],
+  },
+  {
     id: 'view',
     label: 'View',
     items: [
@@ -120,7 +133,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.commandPalette', label: 'Command Palette' },
       { commandId: 'view.presentation', label: 'Present (Preview)' },
       { separator: true },
-      { commandId: 'view.effectControls', label: 'Effect Controls' },
+      { commandId: 'view.effectControls', label: 'Effects' },
       { commandId: 'view.renderQueue', label: 'Render Queue' },
       { commandId: 'view.graphEditor', label: 'Graph Editor' },
       { separator: true },

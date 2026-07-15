@@ -26,6 +26,8 @@ export interface ContextMenuItem {
   /** Render a divider instead of an action. */
   separator?: boolean;
   onSelect?: () => void;
+  /** Nested items — renders this entry as a submenu (opens to the right). */
+  children?: ContextMenuItem[];
 }
 
 interface ContextMenuState {

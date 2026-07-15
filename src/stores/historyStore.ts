@@ -53,15 +53,22 @@ export class StoreSnapshotCommand implements IUndoableCommand {
   }
 }
 
-interface HistoryStore {
-  /** @deprecated History is now managed globally by CommandSystem. */
-  entries: ReadonlyArray<any>;
-  index: number;
-  restoring: boolean;
+function statesEqual(
+  a: { scene: ProjectFile; anim: AnimSnapshot } | null,
+  b: { scene: ProjectFile; anim: AnimSnapshot } | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
 
+interface HistoryStore {
+  restoring: boolean;
   record: (label?: string, named?: boolean) => void;
-  jumpTo: (index: number) => void;
-  rename: (index: number, label: string) => void;
   reset: () => void;
 }
 
@@ -69,8 +76,6 @@ let seq = 0;
 let lastState: { scene: ProjectFile; anim: AnimSnapshot } | null = null;
 
 export const useHistoryStore = create<HistoryStore>((_set, get) => ({
-  entries: [],
-  index: -1,
   restoring: false,
 
   record: (label, _named = false) => {
@@ -78,6 +83,9 @@ export const useHistoryStore = create<HistoryStore>((_set, get) => ({
     const currentState = captureState();
     
     if (lastState) {
+      if (statesEqual(lastState, currentState)) {
+        return;
+      }
       const command = new StoreSnapshotCommand(
         label ?? `Edit ${(seq += 1)}`,
         lastState,
@@ -89,9 +97,6 @@ export const useHistoryStore = create<HistoryStore>((_set, get) => ({
     lastState = currentState;
   },
 
-  // These are deprecated but kept so existing UI doesn't crash until refactored.
-  jumpTo: (_index) => {},
-  rename: (_index, _label) => {},
   reset: () => {
     lastState = null;
     getCommandSystem().getHistory().clear();

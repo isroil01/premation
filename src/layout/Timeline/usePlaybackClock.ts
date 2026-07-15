@@ -23,7 +23,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 
 export function usePlaybackClock(): void {
   const playing = useWorkspaceStore((s) =>
-    s.activeId ? s.workspaces[s.activeId]?.playing ?? false : false,
+    s.activeTabId ? s.tabs[s.activeTabId]?.playing ?? false : false,
   );
 
   const lastRef = useRef<number | undefined>(undefined);

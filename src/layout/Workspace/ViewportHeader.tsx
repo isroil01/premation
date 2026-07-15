@@ -13,9 +13,13 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore } from '@stores/guidesStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
+import { ColorPicker } from '@components/ColorPicker';
+import { useContainerSize } from '@hooks/useContainerSize';
 import styles from './ViewportHeader.module.css';
 
 /** Tiny inline number field that scrubs on drag. */
@@ -116,21 +120,7 @@ function ScrubField({
 
 /** Tiny colour swatch that opens native <input type=color>. */
 function ColourSwatch({ value, onChange, title }: { value: string; onChange: (v: string) => void; title?: string }): JSX.Element {
-  const inputRef = useRef<HTMLInputElement>(null);
-  return (
-    <span className={styles.colourSwatch} title={title} onClick={() => inputRef.current?.click()}>
-      <span className={styles.colourPreview} style={{ background: value }} />
-      <span className={styles.colourHex}>{value}</span>
-      <input
-        ref={inputRef}
-        type="color"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }}
-        tabIndex={-1}
-      />
-    </span>
-  );
+  return <ColorPicker value={value} onChange={onChange} aria-label={title} />;
 }
 
 /** Live zoom % field — syncs with the workspace camera. */
@@ -163,7 +153,7 @@ function ZoomField(): JSX.Element {
       <button className={styles.headerBtn} onClick={() => getWorkspaceController().zoomIn()} title="Zoom in (+)">
         <Icon name="zoom-in" size={12} />
       </button>
-      <button className={styles.headerBtn} onClick={() => getWorkspaceController().fitComposition()} title="Fit comp in view (Shift+/ or H)">
+      <button className={styles.headerBtn} onClick={() => getWorkspaceController().fitComposition()} title="Fit comp in view">
         <Icon name="fit" size={12} />
       </button>
     </span>
@@ -193,11 +183,17 @@ export function ViewportHeader(): JSX.Element {
   const toggleSafeArea = useGuidesStore((s) => s.toggleSafeArea);
   const toggleCamera3dMode = useGuidesStore((s) => s.toggleCamera3dMode);
 
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
+  const setAutoKeyframe = (v: boolean) => usePreferenceStore.getState().set('timelineAutoKeyframe', v);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { width: containerWidth } = useContainerSize(containerRef);
+
   return (
-    <div className={styles.root}>
+    <div className={styles.root} ref={containerRef}>
       {/* ── Left: comp name + settings cog ──────────────────── */}
       <div className={styles.group}>
-        <button className={styles.compName} onClick={() => openCompositionSettings()} title="Composition Settings (Ctrl+K)">
+        <button className={styles.compName} onClick={() => openCompositionSettings()} title="Composition Settings">
           <Icon name="layers" size={11} className={styles.compIcon} />
           <span className={styles.compLabel}>{name}</span>
         </button>
@@ -207,35 +203,41 @@ export function ViewportHeader(): JSX.Element {
         </button>
       </div>
 
-      <span className={styles.divider} />
+      {containerWidth >= 700 && (
+        <>
+          <span className={styles.divider} />
 
-      {/* ── Resolution & FPS ─────────────────────────────────── */}
-      <div className={styles.group}>
-        <ScrubField value={width}  onChange={(v) => { update({ width: Math.round(v) }); requestAnimationFrame(() => getWorkspaceController().fitComposition()); }}  step={4}  min={1} max={16384} title="Width · drag or double-click" />
-        <span className={styles.x}>×</span>
-        <ScrubField value={height} onChange={(v) => { update({ height: Math.round(v) }); requestAnimationFrame(() => getWorkspaceController().fitComposition()); }} step={4}  min={1} max={16384} title="Height · drag or double-click" />
-        <span className={styles.sep} />
-        <ScrubField value={fps}    onChange={(v) => update({ fps: Math.round(v) })}    step={1}  min={1} max={240}   unit=" fps" title="Frame rate · drag or double-click" />
-        <span className={styles.sep} />
-        <ScrubField value={dur}    onChange={(v) => update({ durationSeconds: v })}    step={0.1} min={0.1} max={3600} digits={1} unit="s" title="Duration · drag or double-click" />
-      </div>
+          {/* ── Resolution & FPS ─────────────────────────────────── */}
+          <div className={styles.group}>
+            <ScrubField value={width}  onChange={(v) => { update({ width: Math.round(v) }); requestAnimationFrame(() => getWorkspaceController().fitComposition()); }}  step={4}  min={1} max={16384} title="Width · drag or double-click" />
+            <span className={styles.x}>×</span>
+            <ScrubField value={height} onChange={(v) => { update({ height: Math.round(v) }); requestAnimationFrame(() => getWorkspaceController().fitComposition()); }} step={4}  min={1} max={16384} title="Height · drag or double-click" />
+            <span className={styles.sep} />
+            <ScrubField value={fps}    onChange={(v) => { const f = Math.round(v); update({ fps: f }); getTimelineController().setFrameRate(f); }}    step={1}  min={1} max={240}   unit=" fps" title="Frame rate · drag or double-click" />
+            <span className={styles.sep} />
+            <ScrubField value={dur}    onChange={(v) => { update({ durationSeconds: v }); getTimelineController().setDurationSeconds(v); }}    step={0.1} min={0.1} max={3600} digits={1} unit="s" title="Duration · drag or double-click" />
+          </div>
+        </>
+      )}
 
-      <span className={styles.divider} />
+      {containerWidth >= 500 && <span className={styles.divider} />}
 
       {/* ── Background colour + transparency ─────────────────── */}
-      <div className={styles.group}>
-        {!transp && (
-          <ColourSwatch value={bg} onChange={setBg} title="Background colour" />
-        )}
-        <button
-          className={transp ? styles.headerBtnActive : styles.headerBtn}
-          onClick={() => setTrans(!transp)}
-          title="Toggle transparent background (checkerboard)"
-        >
-          <Icon name="image" size={12} />
-          <span className={styles.btnLabel}>α</span>
-        </button>
-      </div>
+      {containerWidth >= 500 && (
+        <div className={styles.group}>
+          {!transp && (
+            <ColourSwatch value={bg} onChange={setBg} title="Background colour" />
+          )}
+          <button
+            className={transp ? styles.headerBtnActive : styles.headerBtn}
+            onClick={() => setTrans(!transp)}
+            title="Toggle transparent background (checkerboard)"
+          >
+            <Icon name="image" size={12} />
+            <span className={styles.btnLabel}>α</span>
+          </button>
+        </div>
+      )}
 
       <span className={styles.divider} />
 
@@ -246,7 +248,7 @@ export function ViewportHeader(): JSX.Element {
           onClick={toggleGrid}
           title="Toggle grid (')"
         >
-          <Icon name="layout" size={12} />
+          <Icon name="grid" size={12} />
         </button>
         {grid ? (
           <input
@@ -258,8 +260,11 @@ export function ViewportHeader(): JSX.Element {
             title="Grid divisions (cells per axis)"
             aria-label="Grid divisions"
             style={{
-              width: 40, height: 22, background: '#1c1c1f', color: '#ddd',
-              border: '1px solid #333', borderRadius: 3, fontSize: 11,
+              width: 40, height: 22,
+              background: 'var(--color-surface-0)',
+              color: 'var(--color-text-primary)',
+              border: '1px solid var(--color-border-strong)',
+              borderRadius: 3, fontSize: 11,
               textAlign: 'center', marginRight: 2,
             }}
           />
@@ -267,9 +272,9 @@ export function ViewportHeader(): JSX.Element {
         <button
           className={rulers ? styles.headerBtnActive : styles.headerBtn}
           onClick={toggleRulers}
-          title="Toggle rulers (Ctrl+R)"
+          title="Toggle rulers"
         >
-          <Icon name="move" size={12} />
+          <Icon name="ruler" size={12} />
         </button>
         <button
           className={safeArea ? styles.headerBtnActive : styles.headerBtn}
@@ -284,6 +289,19 @@ export function ViewportHeader(): JSX.Element {
           title={camera3dMode === 'active' ? 'Active Camera View (3D)' : 'Front View (2D)'}
         >
           <Icon name="camera" size={12} />
+        </button>
+      </div>
+      
+      <span className={styles.divider} />
+      
+      <div className={styles.group}>
+        <button
+          className={autoKeyframe ? styles.headerBtnActive : styles.headerBtn}
+          onClick={() => setAutoKeyframe(!autoKeyframe)}
+          title="Auto-Keyframe Mode: automatically record keyframes when moving layers or changing values"
+          style={{ color: autoKeyframe ? 'var(--color-primary)' : undefined }}
+        >
+          <Icon name="keyframe" size={12} />
         </button>
       </div>
 

@@ -13,8 +13,9 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { bumpScene } from '@stores/sceneStore';
+import { getEventBus } from '@core/events/EventBus';
 
 export type StrokeAlign = 'inside' | 'center' | 'outside';
 export type StrokeCap = 'butt' | 'round' | 'square';
@@ -98,6 +99,7 @@ export function getNodeStroke(nodeId: string): Stroke | undefined {
 /** Set (or clear, when undefined) the node's stroke. */
 export function setNodeStroke(nodeId: string, stroke: Stroke | undefined): void {
   defaultSceneGraph.setStroke(nodeId, stroke);
+  bumpScene();
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 

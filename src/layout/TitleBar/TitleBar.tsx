@@ -1,12 +1,32 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
+import { getProjectManager } from '@core/services/coreServices';
+import { useProjectStore } from '@stores/projectStore';
 import styles from './TitleBar.module.css';
 
 export function TitleBar(): JSX.Element | null {
   const [isMaximized, setIsMaximized] = useState(false);
   const isElectron = typeof window !== 'undefined' && (!!window.motionEditor || !!window.electronAPI);
 
+  // Live project ref + dirty flag — the title bar must reflect the real
+  // document, not a hardcoded placeholder.
+  const [project, setProject] = useState(() => (isElectron ? getProjectManager().getState() : null));
+  useEffect(() => {
+    if (!isElectron) return undefined;
+    return getProjectManager().subscribe(setProject);
+  }, [isElectron]);
+  const tabDirty = useProjectStore((s) =>
+    s.activeTabId ? s.tabs?.[s.activeTabId]?.dirty === true : false,
+  );
+  const compName = useProjectStore((s) => {
+    const tab = s.activeTabId ? s.tabs?.[s.activeTabId] : null;
+    return tab ? s.comps?.[tab.compositionId]?.name ?? tab.title : null;
+  });
+
   if (!isElectron) return null;
+
+  const projectName = project?.current?.name ?? compName ?? 'Untitled';
+  const dirty = (project?.dirty ?? false) || tabDirty;
 
   const handleMinimize = () => {
     window.electronAPI?.window?.minimize?.();
@@ -31,8 +51,8 @@ export function TitleBar(): JSX.Element | null {
         <span className={styles.appName}>Motion Editor</span>
       </div>
       <div className={styles.center}>
-        <span className={styles.projectName}>New Project.motion</span>
-        <span className={styles.dirtyDot} />
+        <span className={styles.projectName} title={projectName}>{projectName}</span>
+        {dirty && <span className={styles.dirtyDot} title="Unsaved changes" />}
       </div>
       <div className={styles.right}>
         <button type="button" onClick={handleMinimize} className={styles.btn} title="Minimize">

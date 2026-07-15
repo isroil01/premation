@@ -122,3 +122,25 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+.compactTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  outline: none;
+  flex: none;
+}
+
+.compactSwatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--color-divider);
+}

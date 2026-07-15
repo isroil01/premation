@@ -37,9 +37,14 @@ describe('snapshotToFrameScene', () => {
   });
 
   describe('shape SDF geometry', () => {
-    test('a rect layer gets a rounded-rect SDF (matching Canvas2D 12px corners)', () => {
+    test('a rect layer gets a rounded-rect SDF (default 0px corners)', () => {
       const r = layerToRenderable(layer({ primitive: 'rect', width: 220, height: 140 }));
-      expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 12, width: 220, height: 140 });
+      expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 0, width: 220, height: 140 });
+    });
+
+    test('a rect layer with cornerRadius gets a rounded-rect SDF with that radius', () => {
+      const r = layerToRenderable(layer({ primitive: 'rect', width: 220, height: 140, cornerRadius: 15 }));
+      expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 15, width: 220, height: 140 });
     });
 
     test('an ellipse layer gets an ellipse SDF', () => {
@@ -115,7 +120,7 @@ describe('snapshotToFrameScene', () => {
     const scene = snapshotToFrameScene(snapshot([
       layer({ id: 's', kind: 'shape' }),
       layer({ id: 'p', kind: 'shape', primitive: 'path', pathPoints: [{ x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 }] }),
-      layer({ id: 'm', kind: 'shape', mask: { paths: [{ id: 'm1', points: [], inverted: false, mode: 'add', closed: true, feather: 0, opacity: 1 }] } }),
+      layer({ id: 'm', kind: 'shape', mask: { paths: [{ id: 'm1', points: [], inverted: false, mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0 }] } }),
       layer({ id: 'c', kind: 'shape', matte: 'alpha' }),
       layer({ id: 't', kind: 'text' }),
       layer({ id: 'i', kind: 'image' }),
@@ -125,10 +130,15 @@ describe('snapshotToFrameScene', () => {
     expect(byId.s!.kind).toBe('rect');
     expect(byId.p!.kind).toBe('image');
     expect(byId.p!.textureKey).toBe('path:p');
-    expect(byId.m!.kind).toBe('image');
-    expect(byId.m!.textureKey).toBe('masked:m');
-    expect(byId.c!.kind).toBe('image');
-    expect(byId.c!.textureKey).toBe('matte:c');
+    
+    // Masks are now passed directly as a mask texture
+    expect(byId.m!.kind).toBe('rect');
+    expect(byId.m!.textureKey).toBeUndefined();
+    expect(byId.m!.maskTextureKey).toBe('mask:m');
+    
+    // Mattes are temporarily treated as normal until phase 4.3
+    expect(byId.c!.kind).toBe('rect');
+    expect(byId.c!.textureKey).toBeUndefined();
     expect(byId.t!.kind).toBe('text');
     expect(byId.t!.textureKey).toBe('text:t');
     expect(byId.i!.kind).toBe('image');

@@ -51,6 +51,9 @@ export const APP_EVENTS = [
   // Undo / redo
   'UndoStackChanged',
 
+  // Timeline reveal (AE U / UU shortcuts)
+  'RevealAnimatedProps',
+
   // Engine lifecycle (future)
   'EngineReady',
   'EngineError',
@@ -94,6 +97,9 @@ export interface AppEventPayloads {
   PlayStateChanged: { playing: boolean };
 
   UndoStackChanged: { canUndo: boolean; canRedo: boolean };
+
+  /** Emitted by the U / UU shortcut; Timeline subscribes to expand/filter tracks. */
+  RevealAnimatedProps: { nodeIds: string[]; mode: 'animated' | 'modified' };
 
   EngineReady: { engine: string };
   EngineError: { engine: string; error: Error };

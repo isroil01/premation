@@ -17,17 +17,24 @@ import { createSceneGraphPort, createSelectionPort, createCommandPort } from './
 
 /** Map the app's tool-bar tools onto engine tool ids. */
 const TOOL_MAP: Record<UITool, string> = {
-  select: 'select',
+  select: 'select', // Select also rotates (rotate handle) and scales (resize handles)
   move: 'move',
+  rotate: 'rotate',       // AE W — dedicated rotate interaction (engine falls back to select if unavailable)
+  'pan-behind': 'pan-behind', // AE Y — reposition anchor point without moving layer
   hand: 'hand',
   zoom: 'zoom',
-  rotate: 'select', // rotate happens via the selection rotate handle
-  scale: 'select', // scale happens via the selection resize handles
   pen: 'pen',
+  pencil: 'pencil',
+  curvature: 'curvature',
+  line: 'line',
   text: 'text',
   shape: 'rectangle',
   ellipse: 'ellipse',
+  polygon: 'polygon',
+  star: 'star',
   'direct-select': 'direct-select',
+  'mask-rect': 'mask-rect',
+  'mask-ellipse': 'mask-ellipse',
 };
 
 export class WorkspaceController {
@@ -141,7 +148,8 @@ export function getWorkspaceController(): WorkspaceController {
   if (!singleton) {
     singleton = new WorkspaceController();
     // Dev aid: expose the engine on the window for debugging/inspection.
-    if (import.meta.env?.DEV && typeof window !== 'undefined') {
+    const isDev = typeof process !== 'undefined' && process.env ? process.env.NODE_ENV === 'development' : true;
+    if (isDev && typeof window !== 'undefined') {
       (window as unknown as { __wsController?: WorkspaceController }).__wsController = singleton;
     }
   }

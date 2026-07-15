@@ -11,6 +11,7 @@
 import type { FileAdapter, StoredFile, OpenOptions } from './FileManager';
 import { api, isAuthenticated } from '@core/api/client';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
+import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 
 export class ApiFileAdapter implements FileAdapter {
   readonly kind = 'api' as const;
@@ -31,8 +32,23 @@ export class ApiFileAdapter implements FileAdapter {
     if (!isAuthenticated()) return null;
     try {
       const project = await api.getProject(path);
-      const doc = project.document as EditorDocument;
-      if (!doc?.scene) return null;
+      const doc = project.document as EditorDocument | null | undefined;
+      // A freshly-created project has no real scene yet: the backend seeds
+      // `emptyDocument()` with `scene.nodes: []`, so we must treat an empty node
+      // list the same as a missing scene. Seed a default composition root (so the
+      // Scene panel shows "Composition 1" and inserted layers have a parent),
+      // while still restoring the doc's default comp/animation. Only a genuinely
+      // missing project (getProject throws) should error.
+      if (!doc?.scene?.nodes?.length) {
+        const seeded: EditorDocument = {
+          version: doc?.version ?? '1.0.0',
+          scene: sceneProjectIO.createEmpty('Untitled'),
+          animation: doc?.animation ?? { tracks: {}, expressions: {} },
+          comp: doc?.comp,
+        };
+        restoreDocument(seeded);
+        return JSON.stringify(seeded.scene);
+      }
       // Side-effect: bring animation + comp back into the live engines.
       restoreDocument(doc);
       return JSON.stringify(doc.scene);

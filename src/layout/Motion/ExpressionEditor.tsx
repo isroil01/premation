@@ -13,14 +13,13 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import {
   defaultAnimation,
-  sampleTrack,
-  compileExpression,
   suggestExpression,
   tokenizeExpression,
   matchBracket,
   EXPRESSION_API,
   type TokenKind,
 } from '@motion/animation';
+import { runAnimEdit } from '@core/animation/animationCommands';
 import styles from './ExpressionEditor.module.css';
 
 const TOKEN_CLASS: Record<TokenKind, string | undefined> = {
@@ -59,16 +58,18 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
 
   const enabled = defaultAnimation.hasExpression(nodeId, prop);
 
-  // Live evaluation of the current draft at the playhead.
-  const preview = useMemo(() => {
-    const track = defaultAnimation.tracksFor(nodeId).find((t) => t.prop === prop);
-    const base = track ? sampleTrack(track, time) ?? 0 : 0;
-    return compileExpression(draft).run({ time, value: base });
-  }, [draft, nodeId, prop, time]);
+  // Live evaluation of the current draft at the playhead — through the engine
+  // so valueAtTime / layer() / loopOut() preview exactly as playback resolves.
+  const preview = useMemo(
+    () => defaultAnimation.previewExpression(nodeId, prop, draft, time),
+    [draft, nodeId, prop, time],
+  );
 
   const commit = (src: string): void => {
     setDraft(src);
-    defaultAnimation.setExpression(nodeId, prop, src);
+    runAnimEdit('Set Expression', () => {
+      defaultAnimation.setExpression(nodeId, prop, src);
+    });
   };
 
   const insert = (token: string): void => {
@@ -95,7 +96,12 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
             type="button"
             className={styles.remove}
             title="Remove expression"
-            onClick={() => { setDraft(''); defaultAnimation.removeExpression(nodeId, prop); }}
+            onClick={() => {
+              setDraft('');
+              runAnimEdit('Remove Expression', () => {
+                defaultAnimation.removeExpression(nodeId, prop);
+              });
+            }}
           >
             <Icon name="close" size={12} />
           </button>

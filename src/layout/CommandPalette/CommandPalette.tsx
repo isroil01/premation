@@ -32,6 +32,7 @@ import { flattenScene, readNodeKind, KIND_COLOR } from '@core/scene/sceneDerive'
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { asCommandId } from '@app-types/common';
 import { formatChord } from '@layout/Menu/formatChord';
+import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import { parseQuery, fuzzyScore, parseTimecode, formatSeconds } from './paletteSearch';
 import styles from './CommandPalette.module.css';
 
@@ -88,7 +89,10 @@ function buildItems(query: string, closePalette: () => void): Item[] {
         key: `cmd:${c.id}`,
         section: 'Commands',
         label: c.label,
-        hint: c.shortcut ? formatChord(c.shortcut) : undefined,
+        hint: (() => {
+          const resolvedChord = resolveChord(c.id as unknown as string, c.shortcut, getShortcutOverrides());
+          return resolvedChord ? formatChord(resolvedChord) : undefined;
+        })(),
         icon: (c.icon as IconName) ?? 'crosshair',
         disabled,
         run: () => {

@@ -7,7 +7,6 @@
  * operations + the eligibility/cycle rules the UI drives.
  */
 
-import { Matrix } from '@motion/scene';
 import defaultSceneGraph from './DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
@@ -15,11 +14,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import {
-  worldMatrixOf,
-  localUnderParent,
   type LocalTransform,
-  type LocalOf,
-  type ParentOf,
 } from './worldTransform';
 
 /** The composition root — the implicit "no parent" (comp-space) container. */
@@ -44,12 +39,6 @@ export function baseLocal(node: SceneNode): LocalTransform {
     scaleY: scale ?? scaleY,
   };
 }
-
-const localOf: LocalOf = (id) => {
-  const n = defaultSceneGraph.getNode(id);
-  return n ? baseLocal(n) : null;
-};
-const parentOf: ParentOf = (id) => defaultSceneGraph.getNode(id)?.parent ?? null;
 
 /** True when `nodeId` is a (deep) descendant of `ancestorId`. */
 function isDescendant(ancestorId: string, nodeId: string): boolean {
@@ -79,13 +68,7 @@ export function reparentNode(childId: string, newParentId: string | null): boole
   if (!canReparent(childId, newParentId)) return false;
   const target = newParentId ?? COMP_ROOT;
 
-  // World pose BEFORE relinking (old parent chain).
-  const childWorld = worldMatrixOf(childId, localOf, parentOf, new Map());
-  defaultSceneGraph.setParent(childId, target);
-  // New parent's world (fresh cache; the child is now excluded upstream).
-  const parentWorld = worldMatrixOf(target, localOf, parentOf, new Map());
-  const compensated = localUnderParent(childWorld, Matrix.clone(parentWorld));
-  defaultSceneGraph.setLocalTransform(childId, compensated);
+  defaultSceneGraph.setParent(childId, target, { preserveWorld: true });
 
   getEventBus().emit('AnimationChanged', { nodeId: childId });
   bumpScene();
@@ -158,5 +141,73 @@ export function reorderNode(nodeId: string, toIndex: number): boolean {
   kids.splice(dest, 0, nodeId);
   parentEngNode.custom.childIds = kids;
   getEventBus().emit('AnimationChanged', { nodeId });
+  return true;
+}
+
+/**
+ * Drag-to-reorder drop: move `dragId` to sit directly before/after `targetId`
+ * among the target's siblings, reparenting into the target's parent first if
+ * the drag came from a different branch (transform-compensated). Drives the
+ * Scene tree's drag handle.
+ */
+export function moveNodeAdjacent(
+  dragId: string,
+  targetId: string,
+  pos: 'before' | 'after',
+): boolean {
+  if (dragId === targetId) return false;
+  if (!defaultSceneGraph.getNode(dragId) || !defaultSceneGraph.getNode(targetId)) return false;
+  const targetParent = parentOfNode(targetId); // null → comp root
+  // Reparent into the target's branch first (no-op if already siblings).
+  if (parentOfNode(dragId) !== targetParent) {
+    if (!reparentNode(dragId, targetParent)) return false;
+  }
+  const parentId = targetParent ?? COMP_ROOT;
+  const parentEng = (defaultSceneGraph as any).engine?.(parentId);
+  if (!parentEng) return false;
+  const kids: string[] = Array.isArray(parentEng.custom.childIds)
+    ? (parentEng.custom.childIds as string[])
+    : [];
+  const from = kids.indexOf(dragId);
+  if (from !== -1) kids.splice(from, 1);
+  let idx = kids.indexOf(targetId);
+  if (idx === -1) idx = kids.length;
+  if (pos === 'after') idx += 1;
+  kids.splice(idx, 0, dragId);
+  parentEng.custom.childIds = kids;
+  getEventBus().emit('AnimationChanged', { nodeId: dragId });
+  bumpScene();
+  return true;
+}
+
+export function moveNodeInStack(nodeId: string, action: 'front' | 'back' | 'forward' | 'backward'): boolean {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return false;
+  const parentId = node.parent ?? 'comp_root';
+  const parentEngNode = (defaultSceneGraph as any).engine?.(parentId);
+  if (!parentEngNode) return false;
+  const kids: string[] = Array.isArray(parentEngNode.custom.childIds)
+    ? [...parentEngNode.custom.childIds]
+    : [];
+  const fromIndex = kids.indexOf(nodeId);
+  if (fromIndex === -1) return false;
+
+  kids.splice(fromIndex, 1);
+
+  if (action === 'front') {
+    kids.push(nodeId);
+  } else if (action === 'back') {
+    kids.unshift(nodeId);
+  } else if (action === 'forward') {
+    const dest = Math.min(kids.length, fromIndex + 1);
+    kids.splice(dest, 0, nodeId);
+  } else if (action === 'backward') {
+    const dest = Math.max(0, fromIndex - 1);
+    kids.splice(dest, 0, nodeId);
+  }
+
+  parentEngNode.custom.childIds = kids;
+  getEventBus().emit('AnimationChanged', { nodeId });
+  bumpScene();
   return true;
 }

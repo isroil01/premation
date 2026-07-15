@@ -10,14 +10,16 @@ import { readNodeEffects, effectsToFilter, resolveEffectAmounts, effectPropPath 
 import { readNodeLayerStyles, layerStylesToFilter } from '@core/effects/layerStyles';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMaskAt } from '@core/effects/mask';
-import { readNodeMatte } from '@core/effects/matte';
+import { readNodeMatte, getMatteSourceId } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readNodeMotionBlur, motionBlurSampleTimes, type MotionBlurConfig } from '@core/effects/motionBlur';
 import { readNodeFill } from '@core/paint/fill';
 import { readNodeStroke } from '@core/paint/stroke';
+import { assetUrl } from '@core/api/client';
+import { useAssetStore } from '@stores/assetStore';
 import { worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
-import { readNode3D } from '@core/scene/threeD';
+import { readNode3D, is3DEnabled } from '@core/scene/threeD';
 import { readNodeAutoOrient } from '@core/scene/autoOrient';
 import { autoOrientAngleDeg } from '@core/motion/motionPath';
 import { resolveRepeater, repeaterCopies } from '@core/scene/repeater';
@@ -31,6 +33,9 @@ import { resolveAnimators, evaluateTextAnimators } from '@core/text/textAnimator
 import { readSceneCamera } from '@core/scene/camera3d';
 import type { PropPath } from '@motion/animation';
 import { Project3D, Matrix4Math, type Matrix2D } from '@motion/scene';
+import { Color } from '@motion/renderer';
+
+import { getTimelineController } from '@core/timeline/TimelineController';
 
 const DEG = Math.PI / 180;
 import type { MotionSample } from './RenderBackend';
@@ -49,6 +54,8 @@ export interface SnapshotComp {
   background: string;
   transparent?: boolean;
   camera3dMode?: 'active' | 'front';
+  /** Comp length in seconds — used to clamp the layer in/out gate frame. */
+  durationSeconds?: number;
 }
 
 const DEFAULT_COMP: SnapshotComp = { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG };
@@ -62,10 +69,11 @@ function readBase(node: SceneNode): {
   x: number; y: number; rotation: number; opacity: number;
   scaleX: number; scaleY: number;
   width?: number; height?: number;
+  cornerRadius?: number;
   fill?: string; text?: string; fontSize: number;
   fontFamily?: string; fontWeight?: string; fontStyle?: string;
   letterSpacing?: number; lineHeight?: number; align?: string;
-  src?: string; assetId?: string;
+  src?: string; assetId?: string; color?: string;
 } {
   let x: number | undefined;
   let y: number | undefined;
@@ -85,8 +93,10 @@ function readBase(node: SceneNode): {
   let align: string | undefined;
   let src: string | undefined;
   let assetId: string | undefined;
+  let color: string | undefined;
   let width: number | undefined;
   let height: number | undefined;
+  let cornerRadius: number | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
     x = num(p.x) ?? x;
@@ -108,8 +118,10 @@ function readBase(node: SceneNode): {
     if (typeof p.align === 'string') align = p.align;
     if (typeof p.src === 'string') src = p.src;
     if (typeof p.assetId === 'string') assetId = p.assetId;
+    if (typeof p.color === 'string') color = p.color;
     width = num(p.width) ?? width;
     height = num(p.height) ?? height;
+    if (num(p.cornerRadius) !== undefined) cornerRadius = num(p.cornerRadius);
   }
   return {
     x: x ?? node.transform.position.x,
@@ -120,6 +132,7 @@ function readBase(node: SceneNode): {
     scaleY: scaleY ?? scale ?? 1,
     width,
     height,
+    cornerRadius,
     fill,
     text,
     fontSize,
@@ -131,6 +144,7 @@ function readBase(node: SceneNode): {
     align,
     src,
     assetId,
+    color,
   };
 }
 
@@ -167,6 +181,9 @@ export function buildSnapshot(
   const nodes = flattenScene(graph);
   const anySolo = nodes.some((n) => n.solo === true);
 
+  const controller = getTimelineController();
+  const fps = controller.timeline.getFrameRate().fps;
+
   // Parenting: each layer's on-screen transform is its local transform composed
   // with its parent chain's world transform (E3). Groups/nulls don't draw but
   // still participate as parents. Composition uses each node's ANIMATED local
@@ -179,18 +196,32 @@ export function buildSnapshot(
   // Default (100% / no reverse / no freeze) is identity → no behaviour change.
   const remapOf = (id: string): (tt: number) => number => {
     const n = nodeById.get(id);
+
+    let baseMap = (tt: number) => tt;
+    const clips = controller.getLayersForNode(id);
+    if (clips.length > 0) {
+      baseMap = (tt: number) => {
+        const frame = Math.round(tt * fps);
+        const active = clips.find((l) => l.isActiveAt(frame));
+        if (active) {
+          return active.clip.sourceFrameAt(frame) / fps;
+        }
+        return tt;
+      };
+    }
+
     // Per-layer time (E6): stretch / reverse / freeze on the node itself.
     const cfg = n ? readNodeLayerTime(n) : undefined;
     const own: (tt: number) => number = cfg
-      ? (tt) => remapTime(tt, cfg, anim.timeSpan(id) ?? { start: 0, end: 1 })
-      : (tt) => tt;
+      ? (tt) => remapTime(baseMap(tt), cfg, anim.timeSpan(id) ?? { start: 0, end: 1 })
+      : (tt) => baseMap(tt);
     // Precomp time remap (Prompt 10): a layer inside a precomp whose group has a
     // keyframed `precompTime` is sampled at that remapped internal time. The
     // group's own animation stays on comp time — only its nested content remaps.
     if (n) {
       const pc = nearestPrecompRoot(n, nodeById);
-      if (pc && anim.isAnimated(pc.id, 'precompTime')) {
-        return (tt) => own(anim.sample(pc.id, 'precompTime', tt) ?? tt);
+      if (pc && (anim.isAnimated(pc.id, 'timeRemap') || anim.isAnimated(pc.id, 'precompTime'))) {
+        return (tt) => own(anim.sample(pc.id, 'timeRemap', tt) ?? anim.sample(pc.id, 'precompTime', tt) ?? tt);
       }
     }
     return own;
@@ -254,6 +285,11 @@ export function buildSnapshot(
       visible: groupNode.visible !== false,
       filter,
       precompLayers: inner,
+      sourceTime: (() => {
+        const remapped = anim.sample(groupNode.id, 'timeRemap', t) ?? anim.sample(groupNode.id, 'precompTime', t);
+        if (remapped !== undefined) return remapOf(groupNode.id)(remapped);
+        return remapOf(groupNode.id)(t);
+      })(),
     };
   };
   const emitLayer = (l: RenderLayer, node: SceneNode): void => {
@@ -271,16 +307,35 @@ export function buildSnapshot(
   // 3D: the composition camera (a Camera layer if present, else the default)
   // projects each 3D layer's plane — +z dollies + parallaxes, and X/Y rotation
   // tilts it in real perspective. Pure-2D layers skip this entirely, so their
-  // output is byte-for-byte unchanged.
+  // output is byte-for-byte unchanged. The camera's keyframed x/y/z/focalLength
+  // are sampled at the current (remapped) time via valuesOf, so animating the
+  // camera pans / dollies / zooms the whole 3D scene; an unkeyframed camera
+  // resolves from its static props exactly as before.
   const cameraMode = comp.camera3dMode ?? 'active';
   const camera = cameraMode === 'front'
     ? Project3D.defaultCamera(comp.width, comp.height)
-    : readSceneCamera(graph, comp.width, comp.height);
+    : readSceneCamera(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p));
 
   for (const node of nodes) {
     const kind = readNodeKind(node);
     // Groups / nulls / cameras / audio are structural — they never draw.
     if (kind === 'group' || kind === 'null' || kind === 'camera' || kind === 'audio') continue;
+
+    // AE-style layer in/out points: when the timeline has clip bars for this
+    // node and NONE is active at the current frame, the layer sits outside its
+    // trimmed range and must not draw. Safe now that remapOf() maps sampling
+    // through clip.sourceFrameAt for active clips — gating and retime agree.
+    // The gate frame clamps to the last comp frame so a full-length layer
+    // doesn't blink out at the exactly-end playhead (clip spans are
+    // end-exclusive).
+    {
+      const nodeClips = controller.getLayersForNode(node.id);
+      if (nodeClips.length > 0) {
+        const lastFrame = Math.max(0, Math.round((comp.durationSeconds ?? t) * fps) - 1);
+        const gateFrame = Math.min(Math.round(t * fps), lastFrame);
+        if (!nodeClips.some((l) => l.isActiveAt(gateFrame))) continue;
+      }
+    }
 
     // Light: a radial glow at its world position, composited (screen) to
     // brighten what's beneath. Intensity / radius are keyframeable.
@@ -326,9 +381,14 @@ export function buildSnapshot(
     const isSolid = node.components.find((c) => c.type === 'fx')?.props.solid === true;
     const geomComponent = node.components.find((c) => c.type === 'Geometry');
     const pathPoints = geomComponent?.props.points as import('../../../packages/workspace/src/math/BezierPoint').BezierPoint[] | undefined;
+    // Open strokes (line / freehand pencil) must not be closed into a loop.
+    const pathOpen = geomComponent?.props.open === true;
+    // Explicit shape type set at insert time; falls back to the legacy
+    // name heuristic for older nodes that never carried one.
+    const shapeType = node.components.find((c) => c.type === 'Transform')?.props.shapeType as string | undefined;
     
-    const layerW = isSolid ? comp.width : (base.width ?? size.w);
-    const layerH = isSolid ? comp.height : (base.height ?? size.h);
+    const layerW = isSolid ? comp.width : ((a?.has('width') ? (a.get('width') as number) : base.width) ?? size.w);
+    const layerH = isSolid ? comp.height : ((a?.has('height') ? (a.get('height') as number) : base.height) ?? size.h);
 
     // Project 3D layers through the camera into a full 2×3 affine, so X/Y
     // rotation produces real perspective tilt/shear (not just a squish). The
@@ -340,7 +400,7 @@ export function buildSnapshot(
     const z3 = a?.get('z') ?? d3.z;
     const rotX = a?.get('rotationX') ?? d3.rotationX;
     const rotY = a?.get('rotationY') ?? d3.rotationY;
-    const is3D = !isSolid && (z3 !== 0 || rotX !== 0 || rotY !== 0);
+    const is3D = !isSolid && is3DEnabled(node);
     let px = world.x;
     let py = world.y;
     let sx = scaleX;
@@ -374,6 +434,51 @@ export function buildSnapshot(
       depth = O.depth;
     }
 
+    let fillPaint = readNodeFill(node);
+    if (fillPaint) {
+      if (fillPaint.type === 'linear' && a?.has('fillAngle')) {
+        fillPaint = { ...fillPaint, angle: a.get('fillAngle') ?? fillPaint.angle };
+      } else if (fillPaint.type === 'radial') {
+        const cx = a?.has('fillCenterX') ? a.get('fillCenterX')! : fillPaint.cx;
+        const cy = a?.has('fillCenterY') ? a.get('fillCenterY')! : fillPaint.cy;
+        const radius = a?.has('fillRadius') ? a.get('fillRadius')! : fillPaint.radius;
+        fillPaint = { ...fillPaint, cx, cy, radius };
+      }
+    }
+    let finalFill = base.fill ?? KIND_FILL[kind];
+    // A solid paint set via the Fill & Stroke panel lives on the fx component
+    // and must beat the legacy Style fill string — Canvas2D's fillStyleFor
+    // resolves solid paints to this fallback string, so bake it in here.
+    if (fillPaint?.type === 'solid' && typeof fillPaint.color === 'string') {
+      finalFill = fillPaint.color;
+    }
+    if (a?.has('fill_r')) {
+      const r = a.get('fill_r') ?? 0;
+      const g = a.get('fill_g') ?? 0;
+      const b = a.get('fill_b') ?? 0;
+      const alpha = a.get('fill_a') ?? 1;
+      finalFill = Color.toHex({ r, g, b, a: alpha });
+    }
+
+    const baseStroke = readNodeStroke(node);
+    let finalStroke = baseStroke;
+    if (baseStroke && a?.has('stroke_r')) {
+      const r = a.get('stroke_r') ?? 0;
+      const g = a.get('stroke_g') ?? 0;
+      const b = a.get('stroke_b') ?? 0;
+      const alpha = a.get('stroke_a') ?? 1;
+      finalStroke = { ...baseStroke, color: Color.toHex({ r, g, b, a: alpha }) };
+    }
+
+    let finalColor = base.color;
+    if (a?.has('color_r')) {
+      const r = a.get('color_r') ?? 0;
+      const g = a.get('color_g') ?? 0;
+      const b = a.get('color_b') ?? 0;
+      const alpha = a.get('color_a') ?? 1;
+      finalColor = Color.toHex({ r, g, b, a: alpha });
+    }
+
     const layer: RenderLayer = {
       id: node.id,
       kind: layerKind,
@@ -381,6 +486,11 @@ export function buildSnapshot(
       mask: readNodeMaskAt(node, remapOf(node.id)(t)),
       matte: readNodeMatte(node),
       isAdjustment: readNodeAdjustment(node) || undefined,
+      sourceTime: (() => {
+        const remapped = anim.sample(node.id, 'timeRemap', t) ?? anim.sample(node.id, 'precompTime', t);
+        if (remapped !== undefined) return remapOf(node.id)(remapped);
+        return remapOf(node.id)(t);
+      })(),
       x: isSolid ? comp.width / 2 : px,
       y: isSolid ? comp.height / 2 : py,
       rotation: isSolid ? 0 : rot,
@@ -391,23 +501,41 @@ export function buildSnapshot(
       opacity: ghost ? baseOpacity * GHOST_OPACITY : baseOpacity,
       width: layerW,
       height: layerH,
-      fill: base.fill ?? KIND_FILL[kind],
-      fillPaint: readNodeFill(node),
-      stroke: readNodeStroke(node),
+      fill: finalFill,
+      fillPaint,
+      stroke: finalStroke,
+      color: finalColor,
       visible: node.visible !== false && (!anySolo || node.solo === true),
-      primitive: pathPoints ? 'path' : (isSolid ? 'rect' : (/circle|ellip|dot|orb/.test(name) ? 'ellipse' : 'rect')),
+      primitive: pathPoints
+        ? 'path'
+        : isSolid
+          ? 'rect'
+          : (shapeType === 'ellipse' || (!shapeType && /circle|ellip|dot|orb/.test(name)))
+            ? 'ellipse'
+            : 'rect',
+      cornerRadius: base.cornerRadius,
       pathPoints,
+      pathOpen: pathOpen || undefined,
       text: base.text,
-      fontSize: base.fontSize,
+      // Numeric character props are keyframeable — sample the animated value
+      // when a track exists, else fall back to the static base prop.
+      fontSize: a?.get('fontSize') ?? base.fontSize,
       fontFamily: base.fontFamily,
       fontWeight: base.fontWeight,
       fontStyle: base.fontStyle,
-      letterSpacing: base.letterSpacing,
-      lineHeight: base.lineHeight,
+      letterSpacing: a?.get('letterSpacing') ?? base.letterSpacing,
+      lineHeight: a?.get('lineHeight') ?? base.lineHeight,
       align: base.align,
       filter,
       effects: resolvedEffects.length ? resolvedEffects : undefined,
-      src: base.src,
+      // Heal absolute backend URLs baked into older documents → same-origin path.
+      src: (() => {
+        if (base.assetId) {
+          const asset = useAssetStore.getState().assets.find((a) => a.id === base.assetId);
+          if (asset && asset.src) return asset.src;
+        }
+        return assetUrl(base.src);
+      })(),
       assetId: base.assetId,
     };
 
@@ -489,7 +617,14 @@ export function buildSnapshot(
   // on list order). 2D layers share one plane depth, so a stable sort leaves a
   // pure-2D scene in its original order.
   const anyThreeD = layers.some((l) => l.matrix);
-  const orderDependent = layers.some((l) => l.matte || l.isMatteSource || l.isAdjustment);
+  const orderDependent = layers.some((l) => {
+    if (l.isAdjustment) return true;
+    if (l.matte) {
+      const sourceId = getMatteSourceId(l.matte);
+      if (!sourceId) return true;
+    }
+    return false;
+  });
   if (anyThreeD && !orderDependent) {
     layers.sort((p, q) => (q.depth ?? 0) - (p.depth ?? 0));
   }
@@ -525,7 +660,7 @@ function sampleMotion(
   cfg: MotionBlurConfig,
   remap: (tt: number) => number,
 ): MotionSample[] {
-  const times = motionBlurSampleTimes(t, cfg.fps, cfg.shutterAngle, cfg.samples);
+  const times = motionBlurSampleTimes(t, cfg.fps, cfg.shutterAngle, cfg.samples, cfg.shutterPhase ?? -90, cfg.adaptiveSampleLimit ?? 128);
   const g = ghost ? GHOST_OPACITY : 1;
   return times.map((tc) => {
     const ti = remap(tc);
@@ -543,13 +678,23 @@ function sampleMotion(
 }
 
 /**
- * Mark each matted layer's source: the layer directly above it in the list
- * (its predecessor) becomes the matte source and is drawn only as the matte,
- * never on its own. Mutates the layers in place.
+ * Mark each matted layer's source: if the matte defines an explicit `sourceId`,
+ * that layer becomes the matte source and is drawn only as the matte. Otherwise,
+ * falls back to AE positional convention (the layer directly above).
  */
 export function resolveMatteSources(layers: RenderLayer[]): void {
-  for (let i = 1; i < layers.length; i++) {
-    if (layers[i]!.matte) layers[i - 1]!.isMatteSource = true;
+  const layerMap = new Map<string, RenderLayer>();
+  for (const l of layers) layerMap.set(l.id, l);
+
+  for (let i = 0; i < layers.length; i++) {
+    const layer = layers[i]!;
+    if (!layer.matte || (layer.matte as any) === 'none') continue;
+    const sourceId = getMatteSourceId(layer.matte);
+    if (sourceId && layerMap.has(sourceId)) {
+      layerMap.get(sourceId)!.isMatteSource = true;
+    } else if (i > 0) {
+      layers[i - 1]!.isMatteSource = true;
+    }
   }
 }
 

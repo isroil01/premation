@@ -11,6 +11,8 @@
 import { useMemo, useState, useEffect, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
 import { IconButton } from '@components/IconButton';
+import { ValueField } from '@components/ValueField';
+import { useCompositionStore } from '@stores/compositionStore';
 import { Timeline, type TimelineProps } from '@layout/Timeline';
 import { GraphEditor } from '@layout/Timeline/GraphEditor';
 import { cn } from '@utils/cn';
@@ -18,9 +20,12 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
+import { useUIStore } from '@stores/uiStore';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import type { EasingPreset } from '@core/animation/keyframeAssistants';
 import { useFocusStore } from '@stores/focusStore';
+import { bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import styles from './BottomTimeline.module.css';
 
@@ -39,12 +44,15 @@ export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
   onSetEasing?: (preset: EasingPreset) => void;
 }
 
+/** mm:ss:ff — the last field is FRAMES at the comp fps (AE timecode), not
+ *  milliseconds. Frames pad to the fps digit width (3 digits above 99 fps). */
 function formatTime(sec: number, fps: number): string {
   const totalFrames = Math.floor(sec * fps);
   const m = Math.floor(totalFrames / (fps * 60));
   const s = Math.floor((totalFrames / fps) % 60);
   const f = totalFrames % fps;
-  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
+  const fw = Math.max(2, String(Math.max(1, Math.ceil(fps)) - 1).length);
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(fw, '0')}`;
 }
 
 const ZOOM_STEP = 1.4;
@@ -54,8 +62,14 @@ const ZOOM_DEFAULT = 80;
 
 export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const { className, transport, onSetEasing, ...timelineProps } = props;
-  const ws = useWorkspaceStore((s) => (s.activeId ? s.workspaces[s.activeId] : null));
-  const toggleTimeline = useLayoutStore((s) => s.toggleRegion);
+  const ws = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId] : null));
+  // Project tabs (main comp + any group/precomp tabs opened by double-click).
+  const tabOrder = useWorkspaceStore((s) => s.tabOrder);
+  const projectTabs = useWorkspaceStore((s) => s.tabs);
+  const activeTabId = useWorkspaceStore((s) => s.activeTabId);
+  const comps = useWorkspaceStore((s) => s.comps);
+  const setActiveTab = useWorkspaceStore((s) => s.actions.setActiveTab);
+  const closeTab = useWorkspaceStore((s) => s.actions.closeTab);
   // Read collapse state directly from the store so the header always knows.
   const isCollapsed = useLayoutStore((s) => s.regions.bottomTimeline.collapsed);
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -63,10 +77,20 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const jumpToFocus = useFocusStore((s) => s.jumpTo);
 
   // Graph Editor toggle state (AE: the "Graph Editor" button in the timeline header)
-  const [graphEditorOpen, setGraphEditorOpen] = useState(false);
+  const graphEditorOpen = useUIStore((s) => s.graphEditorOpen);
+  const setGraphEditorOpen = useUIStore((s) => s.setGraphEditorOpen);
+  const globalShy = useUIStore((s) => s.globalShy);
+  const setGlobalShy = useUIStore((s) => s.setGlobalShy);
+  
+  const motionBlurEnabled = useMotionBlurStore((s) => s.enabled);
+  const setMotionBlurEnabled = useMotionBlurStore((s) => s.setEnabled);
+
   const [looping, setLooping] = useState(false);
   const draftQuality = useRenderQualityStore((s) => s.draft);
   const setDraftQuality = useRenderQualityStore((s) => s.setDraft);
+  // Comp duration — surfaced here so timeline length is editable in place.
+  const compDuration = useCompositionStore((s) => s.durationSeconds);
+  const updateComp = useCompositionStore((s) => s.update);
   // Horizontal scroll mirror from Timeline → GraphEditor for pixel-alignment
   const [scrollLeft, setScrollLeft] = useState(0);
 
@@ -98,15 +122,43 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   );
   const timelineModelProps = { ...timelineProps, model };
 
+  const [searchQuery, setSearchQuery] = useState('');
+
   return (
     <section className={cn(styles.root, className)}>
       <header className={styles.header}>
         {transport ?? (
           <>
             {/* AE-style: the timecode leads the timeline panel. */}
-            <div className={styles.timecode}>
+            <div
+              className={styles.timecode}
+              title={`Current time — minutes : seconds : frames @ ${fps} fps`}
+            >
               {formatTime(ws?.time ?? props.model.currentTime, fps)}
               <span className={styles.timecodeTotal}>/ {formatTime(props.model.duration, fps)}</span>
+            </div>
+
+            {/* Timeline Search/Filter Bar */}
+            <div className={styles.searchContainer}>
+              <Icon name="search" size={11} className={styles.searchIcon} />
+              <input
+                type="text"
+                placeholder="Filter layers/properties..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={styles.searchInput}
+                aria-label="Filter layers and properties"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className={styles.searchClear}
+                  onClick={() => setSearchQuery('')}
+                  title="Clear search filter"
+                >
+                  <Icon name="close" size={10} />
+                </button>
+              )}
             </div>
 
             <div className={styles.transport}>
@@ -118,7 +170,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </IconButton>
               <IconButton
                 aria-label={ws?.playing ? 'Pause' : 'Play'}
-                title={ws?.playing ? 'Pause (Space)' : 'Play (Space)'}
+                title={ws?.playing ? 'Pause' : 'Play'}
                 size="md"
                 variant="primary"
                 className={styles.play}
@@ -163,6 +215,88 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </button>
             </div>
 
+            {/* Global switches for Shy and Motion Blur */}
+            <div className={styles.toggleGroup}>
+              <button
+                type="button"
+                className={globalShy ? styles.toggleBtnActive : styles.toggleBtn}
+                title={globalShy ? 'Global Shy: Active (Shy layers hidden)' : 'Global Shy: Inactive (All layers visible)'}
+                onClick={() => setGlobalShy(!globalShy)}
+              >
+                <Icon name="shy" size={11} />
+                Shy
+              </button>
+              <button
+                type="button"
+                className={motionBlurEnabled ? styles.toggleBtnActive : styles.toggleBtn}
+                title={motionBlurEnabled ? 'Global Motion Blur: Enabled' : 'Global Motion Blur: Disabled'}
+                onClick={() => setMotionBlurEnabled(!motionBlurEnabled)}
+              >
+                <Icon name="refresh" size={11} />
+                Motion Blur
+              </button>
+            </div>
+
+            {/* Layer split / trim controls */}
+            <div className={styles.toggleGroup}>
+              <button
+                type="button"
+                className={styles.toggleBtn}
+                title="Split selected layers at playhead (Ctrl+Shift+D)"
+                onClick={() => {
+                  getTimelineController().splitSelectedAtPlayhead(selectedIds);
+                  bumpScene();
+                }}
+              >
+                <Icon name="scissors" size={11} />
+                Split
+              </button>
+              <button
+                type="button"
+                className={styles.toggleBtn}
+                title="Trim Layer In point to playhead (Alt+[)"
+                onClick={() => {
+                  getTimelineController().trimSelectedStartToPlayhead(selectedIds);
+                  bumpScene();
+                }}
+              >
+                <Icon name="chevron-left" size={11} />
+                Trim In
+              </button>
+              <button
+                type="button"
+                className={styles.toggleBtn}
+                title="Trim Layer Out point to playhead (Alt+])"
+                onClick={() => {
+                  getTimelineController().trimSelectedEndToPlayhead(selectedIds);
+                  bumpScene();
+                }}
+              >
+                <Icon name="chevron-right" size={11} />
+                Trim Out
+              </button>
+            </div>
+
+            {/* Composition duration — editable right where users look for it. */}
+            <div
+              className={styles.toggleGroup}
+              title="Composition duration (seconds) — also editable in Composition Settings"
+            >
+              <span style={{ fontSize: 10, opacity: 0.7 }}>Dur</span>
+              <ValueField
+                value={compDuration}
+                onChange={(v) => {
+                  updateComp({ durationSeconds: v });
+                  getTimelineController().setDurationSeconds(v);
+                }}
+                min={0.1}
+                max={3600}
+                step={0.5}
+                unit="s"
+                aria-label="Composition duration"
+              />
+            </div>
+
             {/* Keyframe interpolation controls */}
             <div className={styles.interpGroup}>
               {(['Linear', 'Ease', 'EaseIn', 'EaseOut', 'Hold'] as const).map((ease) => (
@@ -189,9 +323,9 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               <button
                 type="button"
                 className={graphEditorOpen ? styles.graphBtnActive : styles.graphBtn}
-                title="Toggle Graph Editor (Shift+F3)"
+                title="Toggle Graph Editor (Shift+G)"
                 aria-pressed={graphEditorOpen}
-                onClick={() => setGraphEditorOpen((v) => !v)}
+                onClick={() => setGraphEditorOpen(!graphEditorOpen)}
               >
                 <Icon name="track" size={13} />
                 Graph Editor
@@ -237,32 +371,61 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               >
                 <Icon name="zoom-in" size={12} />
               </IconButton>
-
-              <span className={styles.zoomDivider} aria-hidden />
-
-              <IconButton
-                aria-label="Collapse timeline"
-                size="sm"
-                title="Collapse timeline"
-                onClick={() => toggleTimeline('bottomTimeline')}
-              >
-                <Icon name="panel-bottom" size={13} />
-              </IconButton>
             </div>
           </>
         )}
       </header>
 
-      {/* ── Timeline Tabs ── */}
-      {!isCollapsed && (
+      {/* ── Timeline Tabs — real project tabs (main comp + opened groups).
+            Hidden while there is only the main comp and no focus breadcrumb —
+            a single static tab is pure noise between the header and tracks. ── */}
+      {!isCollapsed && (tabOrder.length > 1 || focusPath.length > 0) && (
         <div className={styles.tabBar}>
-          <button
-            type="button"
-            className={cn(styles.tab, focusPath.length === 0 && styles.tabActive)}
-            onClick={() => jumpToFocus(-1)}
-          >
-            Main Composition
-          </button>
+          {tabOrder.map((tid, idx) => {
+            const tab = projectTabs[tid];
+            if (!tab) return null;
+            const node = defaultSceneGraph.getNode(tab.compositionId);
+            const label =
+              comps[tab.compositionId]?.name ?? node?.name ?? tab.title ?? tab.compositionId;
+            const isActive = tid === activeTabId && focusPath.length === 0;
+            return (
+              <div key={tid} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+                {idx > 0 && <span className={styles.tabChevron} aria-hidden>|</span>}
+                <button
+                  type="button"
+                  className={cn(styles.tab, isActive && styles.tabActive)}
+                  onClick={() => {
+                    setActiveTab(tid);
+                    jumpToFocus(-1);
+                  }}
+                >
+                  {label}
+                  {idx > 0 && (
+                    <span
+                      className={styles.tabClose}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Close ${label}`}
+                      title={`Close ${label}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(tid);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          closeTab(tid);
+                        }
+                      }}
+                    >
+                      ×
+                    </span>
+                  )}
+                </button>
+              </div>
+            );
+          })}
           {focusPath.map((id, idx) => {
             const node = defaultSceneGraph.getNode(id);
             const name = node?.name || id;
@@ -285,6 +448,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
       <div className={cn(styles.body, isCollapsed && styles.bodyCollapsed)}>
         <Timeline
           {...timelineModelProps}
+          searchQuery={searchQuery}
+          globalShy={globalShy}
           onScroll={(px) => {
             setScrollLeft(px);
             timelineProps.onScroll?.(px);

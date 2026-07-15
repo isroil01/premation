@@ -163,3 +163,52 @@
   background: var(--color-primary);
   border-radius: 0;
 }
+
+.layoutToggle {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--color-text-secondary) !important;
+  padding: 0 !important;
+  cursor: pointer;
+}
+
+.layoutToggle:hover {
+  background: transparent !important;
+  color: var(--color-text-primary) !important;
+}
+
+.layoutToggle[data-active] {
+  background: transparent !important;
+  color: var(--color-primary) !important;
+  border: none !important;
+}
+
+.layoutToggle[data-active]:hover {
+  background: transparent !important;
+  color: var(--color-primary-hover, var(--color-primary)) !important;
+  border: none !important;
+}
+
+/* ── Responsive Overrides ─────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .compMeta {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .wordmark {
+    display: none;
+  }
+  .menuDivider {
+    display: none;
+  }
+  .compName {
+    max-width: 120px;
+  }
+  .toolHint {
+    display: none;
+  }
+}
+

@@ -4,14 +4,36 @@
  * Escape, or item activation. Clamps to the viewport.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Menu, MenuItem, MenuSeparator } from '@components/Menu';
-import { useContextMenuStore } from '@stores/contextMenuStore';
+import { useContextMenuStore, type ContextMenuItem } from '@stores/contextMenuStore';
 import styles from './overlays.module.css';
 
 const MENU_MIN_WIDTH = 200;
 const MENU_EST_ROW = 30;
+
+/** Render items (recursively for submenus — Menu handles nesting/portals). */
+function renderItems(items: ReadonlyArray<ContextMenuItem>): ReactNode {
+  return items.map((it) =>
+    it.separator ? (
+      <MenuSeparator key={it.id} />
+    ) : (
+      <MenuItem
+        key={it.id}
+        id={it.id}
+        label={it.label}
+        icon={it.icon}
+        shortcut={it.shortcut}
+        disabled={it.disabled}
+        danger={it.danger}
+        onSelect={it.onSelect}
+      >
+        {it.children && it.children.length > 0 ? renderItems(it.children) : undefined}
+      </MenuItem>
+    ),
+  );
+}
 
 export function ContextMenuHost(): JSX.Element | null {
   const open = useContextMenuStore((s) => s.open);
@@ -24,7 +46,12 @@ export function ContextMenuHost(): JSX.Element | null {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) close();
+      // Submenus portal to document.body (outside `ref`), so also keep the
+      // menu open for pointerdowns inside any open menu popup.
+      const t = e.target as Element | null;
+      if (ref.current && !ref.current.contains(e.target as Node) && !t?.closest('[role="menu"]')) {
+        close();
+      }
     };
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') close();
@@ -45,24 +72,7 @@ export function ContextMenuHost(): JSX.Element | null {
 
   return createPortal(
     <div ref={ref} className={styles.contextMenu} style={{ left, top }}>
-      <Menu onItemActivate={close}>
-        {items.map((it) =>
-          it.separator ? (
-            <MenuSeparator key={it.id} />
-          ) : (
-            <MenuItem
-              key={it.id}
-              id={it.id}
-              label={it.label}
-              icon={it.icon}
-              shortcut={it.shortcut}
-              disabled={it.disabled}
-              danger={it.danger}
-              onSelect={it.onSelect}
-            />
-          ),
-        )}
-      </Menu>
+      <Menu onItemActivate={close}>{renderItems(items)}</Menu>
     </div>,
     document.body,
   );

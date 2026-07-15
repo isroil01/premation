@@ -19,11 +19,23 @@ describe('Clip', () => {
     expect(clip.sourceIn).toBe(10); // advanced by +5
   });
 
-  it("won't pull sourceIn below zero when trimming head left", () => {
-    const clip = new Clip({ start: 10, duration: 20, sourceIn: 3 });
+  it("won't pull sourceIn below zero when trimming a BOUNDED head left", () => {
+    const clip = new Clip({ start: 10, duration: 20, sourceIn: 3, sourceDuration: 30 });
     clip.trimStart(2); // wants -8 but only 3 of source-in available
     expect(clip.sourceIn).toBe(0);
     expect(clip.start).toBe(7);
+  });
+
+  it('lets an UNBOUNDED (generative) head extend left past sourceIn 0', () => {
+    // Shapes/text have no media bound — dragging the start handle left must
+    // expand the clip (the old sourceIn clamp made this silently no-op).
+    const clip = new Clip({ start: 10, duration: 20, sourceIn: 0 });
+    clip.trimStart(2);
+    expect(clip.start).toBe(2);
+    expect(clip.end).toBe(30);
+    expect(clip.duration).toBe(28);
+    expect(clip.sourceIn).toBe(-8); // mapping stays consistent: shifts with start
+    expect(clip.sourceFrameAt(15)).toBe(5); // unchanged comp→source mapping
   });
 
   it('trims the tail, clamped to source length when bounded', () => {

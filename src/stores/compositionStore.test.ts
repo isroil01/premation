@@ -18,6 +18,7 @@ describe('compositionStore', () => {
   test('comp() returns just the render-facing slice', () => {
     const comp = useCompositionStore.getState().comp();
     expect(comp).toEqual({
+      id: DEFAULT_COMPOSITION.id,
       name: DEFAULT_COMPOSITION.name,
       width: 1920,
       height: 1080,

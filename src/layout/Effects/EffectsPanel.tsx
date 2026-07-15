@@ -11,6 +11,7 @@ import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
+import { Switch } from '@components/Switch';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -36,8 +37,6 @@ import {
 import { useActiveWorkspace } from '@stores/projectStore';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { FillStrokeControls } from './FillStrokeControls';
-import { TrimPathControls } from './TrimPathControls';
 import { TimeControls } from './TimeControls';
 import { LayerStylesControls } from './LayerStylesControls';
 import styles from './EffectsPanel.module.css';
@@ -93,10 +92,6 @@ export function EffectsPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
-      {(kind === 'shape' || kind === 'text') && <FillStrokeControls nodeId={primary} />}
-
-      {kind === 'shape' && <TrimPathControls nodeId={primary} />}
-
       <TimeControls nodeId={primary} />
 
       <LayerStylesControls nodeId={primary} />
@@ -131,26 +126,20 @@ export function EffectsPanel(): JSX.Element {
 
       <div className={styles.blendRow}>
         <span className={styles.blendLabel}>Adjustment layer</span>
-        <button
-          type="button"
-          className={isAdjustment ? styles.invertOn : styles.blendTrigger}
-          aria-pressed={isAdjustment}
-          onClick={() => setNodeAdjustment(primary, !isAdjustment)}
-        >
-          {isAdjustment ? 'On' : 'Off'}
-        </button>
+        <Switch
+          checked={isAdjustment}
+          onChange={(e) => setNodeAdjustment(primary, e.currentTarget.checked)}
+          aria-label="Adjustment layer"
+        />
       </div>
 
       <div className={styles.blendRow}>
         <span className={styles.blendLabel}>Motion blur</span>
-        <button
-          type="button"
-          className={motionBlur ? styles.invertOn : styles.blendTrigger}
-          aria-pressed={motionBlur}
-          onClick={() => setNodeMotionBlur(primary, !motionBlur)}
-        >
-          {motionBlur ? 'On' : 'Off'}
-        </button>
+        <Switch
+          checked={motionBlur}
+          onChange={(e) => setNodeMotionBlur(primary, e.currentTarget.checked)}
+          aria-label="Motion blur"
+        />
       </div>
 
       {motionBlur && (
@@ -165,9 +154,19 @@ export function EffectsPanel(): JSX.Element {
               onChange={mb.setShutterAngle} aria-label="Shutter angle" />
           </label>
           <label className={styles.maskField}>
+            <span>Phase°</span>
+            <ValueField value={mb.shutterPhase ?? -90} min={-360} max={360} precision={0} unit="°"
+              onChange={mb.setShutterPhase} aria-label="Shutter phase" />
+          </label>
+          <label className={styles.maskField}>
             <span>Samples</span>
             <ValueField value={mb.samples} min={2} max={32} precision={0}
               onChange={mb.setSamples} aria-label="Motion blur samples" />
+          </label>
+          <label className={styles.maskField}>
+            <span>Limit</span>
+            <ValueField value={mb.adaptiveSampleLimit ?? 128} min={2} max={128} precision={0}
+              onChange={mb.setAdaptiveSampleLimit} aria-label="Adaptive sample limit" />
           </label>
         </div>
       )}
@@ -256,6 +255,11 @@ export function EffectsPanel(): JSX.Element {
                   <span>Opacity</span>
                   <ValueField value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
                     onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 })} aria-label="Mask opacity" />
+                </label>
+                <label className={styles.maskField}>
+                  <span>Expansion</span>
+                  <ValueField value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
+                    onChange={(v) => updateMaskPath(primary, m.id, { expansion: v })} aria-label="Mask expansion" />
                 </label>
                 <button
                   type="button"

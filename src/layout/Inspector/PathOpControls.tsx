@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * PathOpControls (MG Phase C) — "Path Operator" inspector section for shape
  * layers. Deform the outline with Zig-Zag or Round Corners; Amount/Detail are
@@ -65,14 +66,14 @@ function ParamRow({
 
   const onChange = (v: number): void => {
     if (animated) {
-      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, v), `pathop:${nodeId}:${path}:${time}`);
+      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v), `pathop:${nodeId}:${path}:${time}`);
     } else {
       updatePathOp(nodeId, { [param]: v } as Partial<PathOp>);
     }
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, value));
+    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), value));
   };
 
   return (

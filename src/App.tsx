@@ -27,16 +27,18 @@ import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { Icon } from '@components/Icon';
 import { EditorLayout } from '@layout/EditorLayout';
-import { TitleBar } from '@layout/TitleBar/TitleBar';
+
 import { StatusBar } from '@layout/StatusBar';
+import { getEventBus } from '@core/events/EventBus';
 import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
-import { getSidebarRenderers, getInspectorRenderers } from '@layout/EditorLayout/DemoPanels';
+import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
 import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineCacheRange, TimelineClip } from '@layout/Timeline';
 import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, makeKeyframeId, parseKeyframeId } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { useCompositionStore } from '@stores/compositionStore';
 import { readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
 import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
 import { reparentNode, reorderNode } from '@core/scene/parenting';
@@ -44,28 +46,39 @@ import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
 import renderCache from '@core/rendering/renderCache';
 import { openPalette } from '@stores/commandPaletteStore';
 import { AccountButton } from '@layout/Auth/AccountButton';
-import { useAuthStore } from '@stores/authStore';
 import { FpsMeter } from '@layout/StatusBar/FpsMeter';
 import { useFocusStore } from '@stores/focusStore';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { openContextMenu } from '@stores/contextMenuStore';
+import { useResponsiveLayout } from '@hooks/useResponsiveLayout';
 import type { TimelineKeyframeRef } from '@layout/Timeline';
 import type { KeyId, NodeId } from '@app-types/common';
 
-const TIMELINE_DURATION = 10;
-const TIMELINE_FPS = 60;
-
-/** Format seconds as mm:ss:ff at the timeline frame rate. */
-function formatClock(sec: number): string {
-  const frames = Math.floor(sec * TIMELINE_FPS);
-  const m = Math.floor(frames / (TIMELINE_FPS * 60));
-  const s = Math.floor((frames / TIMELINE_FPS) % 60);
-  const f = frames % TIMELINE_FPS;
+/** Format seconds as mm:ss:ff at the timeline frame rate (AE-style timecode —
+ *  the last field is FRAMES at the comp fps, not milliseconds). Frames pad to
+ *  the fps digit width so e.g. 120 fps shows a stable 3-digit field. */
+function formatClock(sec: number, fps: number = 60): string {
+  const frames = Math.floor(sec * fps);
+  const m = Math.floor(frames / (fps * 60));
+  const s = Math.floor((frames / fps) % 60);
+  const f = frames % fps;
+  const fw = Math.max(2, String(Math.max(1, Math.ceil(fps)) - 1).length);
   const p = (n: number): string => n.toString().padStart(2, '0');
-  return `${p(m)}:${p(s)}:${p(f)}`;
+  return `${p(m)}:${p(s)}:${f.toString().padStart(fw, '0')}`;
 }
 
-function EditorShell(): JSX.Element {
+function getNodeColor(node: any): string | undefined {
+  return node.color ?? KIND_COLOR[readNodeKind(node)];
+}
+
+function setNodeColor(nodeId: string, color: string): void {
+  const node = defaultSceneGraph.getNode(nodeId as any);
+  if (!node) return;
+  (node as any).color = color;
+  bumpScene();
+}
+
+export function EditorShell(): JSX.Element {
   const registerPanel = useLayoutStore((s) => s.registerPanel);
   const selectionCount = useSelectionStore((s) => s.ids.length);
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -73,9 +86,15 @@ function EditorShell(): JSX.Element {
   const addSelected = useSelectionStore((s) => s.add);
   const sceneRev = useSceneRevision((s) => s.rev);
   const active = useActiveWorkspace();
+  
+  const compFps = useCompositionStore((s) => s.fps);
+  const compDuration = useCompositionStore((s) => s.durationSeconds);
 
   const focusIsolate = useFocusStore((s) => s.isolate);
   const { activeSet } = useFocusContext();
+  
+  // Enable responsive UI auto-collapsing behaviors
+  useResponsiveLayout();
 
   // Register the default panels exactly once.
   useEffect(() => {
@@ -85,15 +104,17 @@ function EditorShell(): JSX.Element {
     registerPanel({ id: 'properties',  title: 'Properties',   icon: 'settings',  region: 'rightInspector', weight: 3, closable: true });
     registerPanel({ id: 'motion',      title: 'Motion',       icon: 'keyframe',  region: 'rightInspector', weight: 3, closable: true });
     registerPanel({ id: 'effects',     title: 'Effects',      icon: 'sparkles',  region: 'rightInspector', weight: 2, closable: true });
-    registerPanel({ id: 'effectControls', title: 'Effect Controls', icon: 'keyframe', region: 'rightInspector', weight: 2, closable: true });
+    registerPanel({ id: 'motionTools', title: 'Motion Tools', icon: 'move', region: 'rightInspector', weight: 1, closable: true });
     registerPanel({ id: 'comments',    title: 'Comments',     icon: 'marker',    region: 'rightInspector', weight: 1, closable: true });
     registerPanel({ id: 'history',     title: 'History',      icon: 'undo',      region: 'rightInspector', weight: 0, closable: true });
-    registerPanel({ id: 'renderQueue', title: 'Render Queue', icon: 'layers',    region: 'rightInspector', weight: 0, closable: true });
+    registerPanel({ id: 'renderQueue', title: 'Render Queue', icon: 'video',    region: 'rightInspector', weight: 0, closable: true });
   }, [registerPanel]);
 
   // Bumped when the engine's layers/clips change (add/remove/move/trim/split),
   // so the derived clip bars stay in sync.
   const [clipRev, setClipRev] = useState(0);
+
+  const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
 
   // Timeline tracks derived from the scene graph — one track per node, in
   // layer order. Clip bars come from the Timeline Engine's layers for that node.
@@ -101,19 +122,39 @@ function EditorShell(): JSX.Element {
     void sceneRev;
     void clipRev;
     const controller = getTimelineController();
-    const compId = active?.compositionId || 'scene-root';
-    return defaultSceneGraph.getChildren(compId).map((node) => {
-      const kind = readNodeKind(node);
-      // Per-property sub-tracks (revealed when the layer is expanded).
+    const compId = active?.compositionId || 'comp_root';
+
+    const result: TimelineTrack[] = [];
+
+    const traverse = (parentId: string, depth: number) => {
+      const nodes = defaultSceneGraph.getChildren(parentId);
+      for (const node of nodes) {
+        const kind = readNodeKind(node);
+        // Per-property sub-tracks (revealed when the layer is expanded).
       let properties: TimelinePropertyTrack[] = defaultAnimation
         .tracksFor(node.id)
         .map((track) => ({
           prop: track.prop,
-          label: track.prop === 'x' ? 'Position X' : track.prop === 'y' ? 'Position Y' : track.prop === 'z' ? 'Position Z' : track.prop,
+          label:
+            track.prop === 'x'
+              ? 'Position X'
+              : track.prop === 'y'
+                ? 'Position Y'
+                : track.prop === 'z'
+                  ? 'Position Z'
+                  : track.prop === 'fillAngle'
+                    ? 'Fill Angle'
+                    : track.prop === 'fillCenterX'
+                      ? 'Fill Center X'
+                      : track.prop === 'fillCenterY'
+                        ? 'Fill Center Y'
+                        : track.prop === 'fillRadius'
+                          ? 'Fill Radius'
+                          : track.prop,
           keyframes: track.keyframes.map((kf) => ({
             id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
-            time: kf.t,
+            time: controller.toAbsoluteTime(node.id, kf.t),
             roving: kf.roving,
             isHold: kf.easing === 'hold',
           })),
@@ -146,32 +187,47 @@ function EditorShell(): JSX.Element {
         id: l.id,
         trackId: node.id as TrackId,
         nodeId: node.id as NodeId,
-        start: l.start / TIMELINE_FPS,
-        duration: l.duration / TIMELINE_FPS,
+        start: l.start / compFps,
+        duration: l.duration / compFps,
         label: node.name ?? node.id,
-        color: KIND_FILL[kind],
+        color: (node as any).color ?? KIND_FILL[kind],
       }));
-      return {
+      const track: TimelineTrack = {
         id: node.id as TrackId,
         name: node.name ?? node.id,
         kind,
         icon: KIND_ICON[kind],
-        color: KIND_COLOR[kind],
+        color: (node as any).color ?? KIND_COLOR[kind],
         muted: node.visible === false,
         locked: node.locked === true,
         solo: node.solo === true,
         blendMode: getNodeBlend(node.id),
         parent: node.parent ?? null,
+        nodeColor: getNodeColor(node),
         threeD: is3DEnabled(node),
         motionBlur: (node as any).motionBlur === true,
         fxEnabled: (node as any).fxEnabled !== false,
         adjustment: (node as any).adjustment === true,
+        shy: (node as any).shy === true,
         keyframes,
         properties,
         clips,
+        depth,
+        isGroup: kind === 'group',
+        expanded: expandedIds.includes(node.id),
       };
-    });
-  }, [sceneRev, clipRev]);
+      
+      result.push(track);
+      
+      if (kind === 'group' && expandedIds.includes(node.id)) {
+        traverse(node.id, depth + 1);
+      }
+    }
+    };
+    
+    traverse(compId, 0);
+    return result;
+  }, [sceneRev, clipRev, compFps, expandedIds, active?.compositionId]);
 
   // Mirror the scene graph into the Timeline Engine's layers whenever the scene
   // changes (structural, non-undoable). The engine then owns the time domain.
@@ -180,10 +236,9 @@ function EditorShell(): JSX.Element {
     getTimelineController().syncFromScene();
   }, [sceneRev]);
 
-  // Validate any stored backend session once on boot (loads cloud assets).
-  useEffect(() => {
-    void useAuthStore.getState().hydrate();
-  }, []);
+  // Session hydration is owned by AppRouter (before any route renders), so the
+  // editor must NOT re-hydrate here — doing so flips auth status to 'loading'
+  // mid-session and bounces RequireAuth back to /login.
 
   // Re-read engine markers + work area when they change (add/remove, in/out).
   const [markerRev, setMarkerRev] = useState(0);
@@ -232,7 +287,6 @@ function EditorShell(): JSX.Element {
   // ── Timeline expansion (reveal animated properties) ──────────────
   // Calm by default: a layer is one row until its chevron — or the `U`
   // reveal shortcut on the selected layers — expands it (AE muscle memory).
-  const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
   // AE reveal filter: which properties the sub-rows show (null = all).
   const [revealFilter, setRevealFilter] = useState<ReadonlyArray<string> | null>(null);
 
@@ -254,8 +308,6 @@ function EditorShell(): JSX.Element {
   // Latest tracks, read by the reveal shortcuts without re-binding the listener.
   const tracksRef = useRef(tracks);
   tracksRef.current = tracks;
-  // Timestamp of the last bare `U` press, for double-tap (UU) detection.
-  const lastUPressRef = useRef(0);
 
   useEffect(() => {
     // AE reveal shortcuts, filtering which property sub-rows show:
@@ -269,45 +321,20 @@ function EditorShell(): JSX.Element {
       s: ['scale', 'scaleX', 'scaleY'],
       r: ['rotation'],
       t: ['opacity'],
+      m: ['mask'],
+      a: ['anchorX', 'anchorY'],
+      l: ['audio'],
     };
-    const DOUBLE_TAP_MS = 350;
-    const animatedTrackIds = (): string[] =>
-      tracksRef.current.filter((t) => (t.properties?.length ?? 0) > 0).map((t) => t.id);
 
     const onKey = (e: KeyboardEvent): void => {
       const key = e.key.toLowerCase();
-      if (key !== 'u' && REVEAL[key] === undefined) return;
+      // 'u' is handled by CommandSystem/EventBus RevealAnimatedProps
+      if (REVEAL[key] === undefined) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
 
-      if (key === 'u') {
-        e.preventDefault();
-        const now = e.timeStamp || performance.now();
-        const isDoubleTap = now - lastUPressRef.current < DOUBLE_TAP_MS;
-        lastUPressRef.current = isDoubleTap ? 0 : now;
-        setRevealFilter(null); // U reveals all animated props (no sub-filter)
-
-        if (isDoubleTap) {
-          // UU — reveal every animated layer, or hide all if already shown.
-          const all = animatedTrackIds();
-          setExpandedIds((cur) => (all.length > 0 && all.every((id) => cur.includes(id)) ? [] : all));
-          return;
-        }
-        // Single U — toggle the selected layers.
-        const sel = useSelectionStore.getState().ids;
-        if (sel.length === 0) return;
-        setExpandedIds((cur) => {
-          const revealed = sel.every((id) => cur.includes(id));
-          const set = new Set(cur);
-          if (revealed) for (const id of sel) set.delete(id); // collapse
-          else for (const id of sel) set.add(id); // reveal
-          return [...set];
-        });
-        return;
-      }
-
-      // P / S / R / T — expand the selection and switch which props are shown.
+      // Expand the selection and switch which props are shown.
       const sel = useSelectionStore.getState().ids;
       if (sel.length === 0) return;
       e.preventDefault();
@@ -319,7 +346,35 @@ function EditorShell(): JSX.Element {
       });
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+
+    const sub = getEventBus().on('RevealAnimatedProps', (evt: { nodeIds: string[], mode: 'animated' | 'modified' }) => {
+      const { nodeIds, mode } = evt;
+      const targetIds = nodeIds.length > 0 ? nodeIds : tracksRef.current.map(t => t.id);
+      
+      setRevealFilter(null);
+      
+      if (mode === 'animated' || mode === 'modified') {
+        const animatedInTarget = targetIds.filter(id => 
+          (tracksRef.current.find(t => t.id === id)?.properties?.length ?? 0) > 0
+        );
+        
+        setExpandedIds((cur) => {
+          const revealed = targetIds.every((id: string) => cur.includes(id));
+          const set = new Set(cur);
+          if (revealed) {
+            for (const id of targetIds) set.delete(id);
+          } else {
+            for (const id of animatedInTarget) set.add(id);
+          }
+          return [...set];
+        });
+      }
+    });
+
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      sub.dispose();
+    };
   }, []);
 
   // Mark tracks that fall outside the current Focus Mode context as ghosted.
@@ -341,10 +396,10 @@ function EditorShell(): JSX.Element {
     void markerRev;
     return [
       { id: 'm_start', time: 0, label: 'Start' },
-      { id: 'm_end', time: TIMELINE_DURATION, label: 'End' },
+      { id: 'm_end', time: compDuration, label: 'End' },
       ...getTimelineController().getMarkers().map((m) => ({ id: m.id, time: m.time, label: m.label })),
     ];
-  }, [markerRev]);
+  }, [markerRev, compDuration]);
 
   // Work area (in/out) from the engine, in seconds — re-read on RangeChanged.
   const workArea = useMemo(() => {
@@ -354,15 +409,15 @@ function EditorShell(): JSX.Element {
 
   // Model object carries the live playhead (currentTime) without rebuilding tracks.
   const timelineModel = useMemo<TimelineModel>(() => ({
-    duration: TIMELINE_DURATION,
-    frameRate: TIMELINE_FPS,
+    duration: compDuration,
+    frameRate: compFps,
     currentTime: active?.time ?? 0,
     pixelsPerSecond: pps,
     markers,
     tracks: focusTracks,
     cachedRanges,
     ...(workArea ? { workArea } : {}),
-  }), [focusTracks, active?.time, cachedRanges, pps, markers, workArea]);
+  }), [focusTracks, active?.time, cachedRanges, pps, markers, workArea, compDuration, compFps]);
 
   // Real-time playback clock: pumps the Timeline Engine while `playing` is set.
   usePlaybackClock();
@@ -393,7 +448,7 @@ function EditorShell(): JSX.Element {
     if (!node) return;
     if (readNodeKind(node) === 'group') {
       const ws = useProjectStore.getState();
-      ws.actions.openTab(trackId);
+      ws.actions.openTab(trackId, undefined, node.name ?? trackId);
     } else {
       focusIsolate(trackId);
       setSelected([trackId]);
@@ -423,8 +478,9 @@ function EditorShell(): JSX.Element {
           for (const p of props) defaultAnimation.removeKeyframe(ref.nodeId, p, ref.t);
         });
       } else {
+        const c = getTimelineController();
         runAnimEdit('Move keyframe', () => {
-          for (const p of props) defaultAnimation.moveKeyframe(ref.nodeId, p, ref.t, time);
+          for (const p of props) defaultAnimation.moveKeyframe(ref.nodeId, p, ref.t, c.toLayerTime(ref.nodeId, time));
         });
       }
     }
@@ -521,7 +577,7 @@ function EditorShell(): JSX.Element {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
-      <TitleBar />
+
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <EditorLayout
           topNav={<TopNav />}
@@ -529,10 +585,11 @@ function EditorShell(): JSX.Element {
             <StatusBar
               left={
                 <>
-                  <span style={{ color: 'var(--color-success)' }}>●</span>
-                  <span>Ready</span>
+                  {/* Real state, not a hardcoded "Ready": amber while unsaved. */}
+                  <span style={{ color: active?.dirty ? 'var(--color-modified)' : 'var(--color-success)' }}>●</span>
+                  <span>{active?.dirty ? 'Unsaved changes' : 'Ready'}</span>
                   <span style={{ opacity: 0.4 }}>·</span>
-                  <span>{defaultSceneGraph.size} layers</span>
+                  <span>{tracks.length} layers</span>
                   {selectionCount > 0 ? (
                     <>
                       <span style={{ opacity: 0.4 }}>·</span>
@@ -559,7 +616,7 @@ function EditorShell(): JSX.Element {
                   <FpsMeter />
                   <span style={{ opacity: 0.4 }}>·</span>
                   <span style={{ fontFamily: 'var(--font-family-mono)', fontVariantNumeric: 'tabular-nums' }}>
-                    {formatClock(active?.time ?? 0)}
+                    {formatClock(active?.time ?? 0, compFps)}
                   </span>
                   <span style={{ opacity: 0.4 }}>·</span>
                   <button
@@ -634,10 +691,11 @@ function EditorShell(): JSX.Element {
               onTrackActivate={handleTrackActivate}
               onTrackRename={handleTrackRename}
               onTrackReorder={handleTrackReorder}
+              onTrackColorChange={(trackId, color) => setNodeColor(trackId, color)}
             />
           }
-          sidebarRenderers={getSidebarRenderers()}
-          inspectorRenderers={getInspectorRenderers()}
+          sidebarRenderers={getAllPanelRenderers()}
+          inspectorRenderers={getAllPanelRenderers()}
         />
       </div>
     </div>

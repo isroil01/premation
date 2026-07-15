@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 import { ValueField } from '@components/ValueField';
 import { InspectorRow } from '@components/Inspector';
+import { Switch } from '@components/Switch';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
+import { TimeRemapRow } from './PrecompControl';
 import styles from './TransformSection.module.css';
 
 export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -62,37 +64,11 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
     <div className={styles.section}>
       <h4 className={styles.title}>{isVideo ? 'Video Source' : 'Image Source'}</h4>
       
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 10 }}>
-        <span
-          style={{
-            flex: 1,
-            fontSize: 10,
-            color: '#aaa',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            background: '#151518',
-            padding: '4px 6px',
-            borderRadius: 2,
-            border: '1px solid rgba(255,255,255,0.05)'
-          }}
-          title={String(src ?? '')}
-        >
+      <div className={styles.mediaSrcRow}>
+        <span className={styles.mediaFileName} title={String(src ?? '')}>
           {getFileName(String(src ?? ''))}
         </span>
-        <button
-          type="button"
-          onClick={handleReplace}
-          style={{
-            background: '#28282c',
-            border: '1px solid rgba(255,255,255,0.1)',
-            color: '#fff',
-            fontSize: 10,
-            padding: '4px 8px',
-            borderRadius: 2,
-            cursor: 'pointer'
-          }}
-        >
+        <button type="button" onClick={handleReplace} className={styles.presetChip}>
           Replace
         </button>
       </div>
@@ -101,7 +77,7 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
         <select
           value={String(fitMode ?? 'fill')}
           onChange={(e) => setFitMode(e.target.value)}
-          style={{ width: '100%', background: '#1c1c1f', border: '1px solid #333', color: '#fff', fontSize: 11, padding: '2px 4px', borderRadius: 2 }}
+          className={styles.select}
         >
           <option value="fill">Fill</option>
           <option value="fit">Fit</option>
@@ -127,6 +103,7 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
       {isVideo && (
         <>
           <h4 className={styles.title} style={{ marginTop: 12 }}>Playback</h4>
+          <TimeRemapRow nodeId={nodeId} />
           <InspectorRow label="Speed" align="center">
             <ValueField value={Number(speed ?? 1)} unit="x" onChange={(v) => setSpeed(v)} />
           </InspectorRow>
@@ -134,20 +111,10 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
             <ValueField value={Number(startOffset ?? 0)} unit="s" onChange={(v) => setStartOffset(v)} />
           </InspectorRow>
           <InspectorRow label="Loop" align="center">
-            <input
-              type="checkbox"
-              checked={!!loop}
-              onChange={(e) => setLoop(e.target.checked)}
-              style={{ cursor: 'pointer' }}
-            />
+            <Switch checked={!!loop} onChange={(e) => setLoop(e.currentTarget.checked)} aria-label="Loop video" />
           </InspectorRow>
           <InspectorRow label="Muted" align="center">
-            <input
-              type="checkbox"
-              checked={!!muted}
-              onChange={(e) => setMuted(e.target.checked)}
-              style={{ cursor: 'pointer' }}
-            />
+            <Switch checked={!!muted} onChange={(e) => setMuted(e.currentTarget.checked)} aria-label="Mute video" />
           </InspectorRow>
         </>
       )}

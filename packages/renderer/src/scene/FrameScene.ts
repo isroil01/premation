@@ -34,7 +34,11 @@ export interface RenderableColorMatrix {
 export type RenderableEffect = 
   | { type: 'blur'; radiusPx: number }
   | { type: 'glow'; radiusPx: number; color?: Color }
-  | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number };
+  | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number }
+  | { type: 'gradient-ramp'; blend: number; colorA?: Color; colorB?: Color }
+  | { type: 'fractal-noise'; scale: number }
+  | { type: 'displacement-map'; amount: number }
+  | { type: 'motion-tile'; scale: number };
 
 export interface Renderable {
   id: string;

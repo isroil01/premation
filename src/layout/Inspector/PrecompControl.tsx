@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * PrecompControl (Prompt 10) — the "Precompose" switch + Time Remap, shown for
  * group layers. Precompose: the group's subtree renders to a texture and
@@ -20,21 +21,29 @@ import { isPrecomp, setPrecomp } from '@core/scene/precomp';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
 
-const REMAP = 'precompTime';
+const REMAP = 'timeRemap';
+const LEGACY_REMAP = 'precompTime';
 
-function TimeRemapRow({ nodeId }: { nodeId: string }): JSX.Element {
+export function TimeRemapRow({ nodeId }: { nodeId: string }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
-  const animated = defaultAnimation.isAnimated(nodeId, REMAP);
-  const display = animated ? defaultAnimation.sample(nodeId, REMAP, time) ?? time : time;
+  const animated = defaultAnimation.isAnimated(nodeId, REMAP) || defaultAnimation.isAnimated(nodeId, LEGACY_REMAP);
+  const display = animated
+    ? (defaultAnimation.sample(nodeId, REMAP, time) ?? defaultAnimation.sample(nodeId, LEGACY_REMAP, time) ?? time)
+    : time;
 
   const onChange = (v: number): void => {
-    runAnimEdit('Set time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, time, v), `precompTime:${nodeId}:${time}`);
+    runAnimEdit('Set time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, getTimelineController().toLayerTime(nodeId, time), v), `timeRemap:${nodeId}:${time}`);
   };
   const toggle = (): void => {
-    if (animated) runAnimEdit('Remove time remap', () => defaultAnimation.removeTrack(nodeId, REMAP));
-    // Enabling seeds an identity keyframe at the playhead (comp time = inner time).
-    else runAnimEdit('Enable time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, time, time));
+    if (animated) {
+      runAnimEdit('Remove time remap', () => {
+        defaultAnimation.removeTrack(nodeId, REMAP);
+        defaultAnimation.removeTrack(nodeId, LEGACY_REMAP);
+      });
+    } else {
+      runAnimEdit('Enable time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, getTimelineController().toLayerTime(nodeId, time), time));
+    }
   };
 
   return (

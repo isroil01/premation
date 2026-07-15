@@ -18,6 +18,7 @@ describe('mask presets', () => {
     expect(m.closed).toBe(true);
     expect(m.mode).toBe('add');
     expect(m.inverted).toBe(false);
+    expect(m.expansion).toBe(0);
     expect(m.points).toHaveLength(4);
     expect(m.points.map((p) => [p.x, p.y])).toEqual([
       [-100, -50], [100, -50], [100, 50], [-100, 50],
@@ -40,7 +41,7 @@ describe('mask presets', () => {
   });
 });
 
-describe('maskSegments', () => {
+describe('maskSegments and expansion', () => {
   test('a closed 4-point path yields 4 segments (wraps to the start)', () => {
     const segs = maskSegments(rectangleMask(200, 100));
     expect(segs).toHaveLength(4);
@@ -62,6 +63,15 @@ describe('maskSegments', () => {
 
   test('degenerate paths produce no segments', () => {
     expect(maskSegments({ ...rectangleMask(10, 10), points: [] })).toEqual([]);
+  });
+
+  test('maskSegments applies expansion to dilate bounds outward', () => {
+    const m = rectangleMask(200, 100); // [-100, -50] to [100, 50]
+    m.expansion = 10;
+    const segs = maskSegments(m);
+    // Top-left corner expands outward and upward by expansion * bisector factor
+    expect(segs[0]!.x0).toBeLessThan(-100);
+    expect(segs[0]!.y0).toBeLessThan(-50);
   });
 });
 

@@ -74,3 +74,36 @@ describe('presets registry', () => {
     expect(saveCurrentAsPreset('no-such-node-xyz', 'X')).toBe(false);
   });
 });
+
+describe('3D presets', () => {
+  test('builtins include the 3D set', () => {
+    const names = BUILTIN_PRESETS.map((p) => p.name);
+    for (const n of ['Flip In 3D', 'Card Flip 3D', 'Swing In 3D', 'Depth Push In', 'Orbit Tilt 3D']) {
+      expect(names).toContain(n);
+    }
+  });
+
+  test('applying a 3D preset auto-enables the layer 3D switch', async () => {
+    const { applyPresetByName } = await import('./animationPresets');
+    const { default: defaultSceneGraph } = await import('@core/scene/DefaultSceneGraph');
+    const { insertShape } = await import('@core/scene/sceneInsert');
+    const { is3DEnabled } = await import('@core/scene/threeD');
+    const { useSelectionStore } = await import('@stores/selectionStore');
+    const { setCommandSystem, CommandSystem } = await import('@core/commands/CommandSystem');
+    // runAnimEdit records onto the command system — boot a minimal one.
+    const dummyServices = {
+      undo: { push: () => {}, undo: () => {}, redo: () => {}, canUndo: () => false, canRedo: () => false },
+      selection: { get: () => [], set: () => {}, clear: () => {} },
+      panels: { open: () => {}, close: () => {}, toggle: () => {}, isOpen: () => false },
+      workspace: { setActive: () => {}, getActive: () => '' },
+      get: () => undefined,
+    } as never;
+    setCommandSystem(new CommandSystem({ services: dummyServices, getState: () => ({}) }));
+    insertShape('rect', 'Preset Test Rect');
+    const nodeId = useSelectionStore.getState().ids[0]!;
+    const node = defaultSceneGraph.getNode(nodeId)!;
+    expect(is3DEnabled(node)).toBe(false);
+    applyPresetByName(nodeId, 'Flip In 3D', 0);
+    expect(is3DEnabled(defaultSceneGraph.getNode(nodeId)!)).toBe(true);
+  });
+});

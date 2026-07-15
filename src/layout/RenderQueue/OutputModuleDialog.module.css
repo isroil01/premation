@@ -4,28 +4,28 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--color-overlay-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000;
+  z-index: var(--z-index-modal, 1300);
 }
 
 .dialog {
-  background: #252526;
-  border: 1px solid #3c3c3c;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
   border-radius: 6px;
   width: 320px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 12px var(--color-black-a40);
   font-family: sans-serif;
-  color: #cccccc;
+  color: var(--color-text-primary);
 }
 
 .header {
   padding: 12px 16px;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--color-border-strong);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -35,13 +35,13 @@
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #e0e0e0;
+  color: var(--color-text-primary);
 }
 
 .closeBtn {
   background: none;
   border: none;
-  color: #888;
+  color: var(--color-text-tertiary);
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -50,8 +50,8 @@
 }
 
 .closeBtn:hover {
-  background: #3c3c3c;
-  color: #fff;
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .body {
@@ -69,13 +69,13 @@
 
 .fieldRow label {
   font-size: 11px;
-  color: #aaa;
+  color: var(--color-text-secondary);
 }
 
 .fieldRow select, .fieldRow input[type="number"] {
-  background: #1e1e1e;
-  border: 1px solid #3c3c3c;
-  color: #ccc;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-field-border);
+  color: var(--color-text-primary);
   padding: 6px;
   border-radius: 4px;
   font-size: 12px;
@@ -96,13 +96,13 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #ccc;
+  color: var(--color-text-primary);
   cursor: pointer;
 }
 
 .footer {
   padding: 12px 16px;
-  border-top: 1px solid #3c3c3c;
+  border-top: 1px solid var(--color-border-strong);
   display: flex;
   justify-content: flex-end;
   gap: 8px;
@@ -118,19 +118,19 @@
 
 .cancelBtn {
   background: transparent;
-  color: #ccc;
-  border-color: #3c3c3c;
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
 }
 
 .cancelBtn:hover {
-  background: #333;
+  background: var(--color-surface-3);
 }
 
 .okBtn {
-  background: #0e639c;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
 }
 
 .okBtn:hover {
-  background: #1177bb;
+  background: var(--color-primary-hover);
 }

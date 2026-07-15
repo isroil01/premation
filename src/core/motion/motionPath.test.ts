@@ -5,8 +5,15 @@ import {
   positionSpan,
   keyframeTimes,
   motionPathKeyframes,
+  motionPathTangents,
+  setPathTangent,
+  smoothMotionPath,
+  straightenMotionPath,
+  hasPathTangents,
+  positionSamplerFor,
   autoOrientAngleDeg,
 } from './motionPath';
+import { AnimationEngine as AnimationEngineReal } from '@motion/animation';
 import type { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 
@@ -83,5 +90,86 @@ describe('engine-backed helpers', () => {
 
   it('auto-orients along the direction of travel (rightward → 0°)', () => {
     expect(autoOrientAngleDeg(node, 0.5, engine)).toBeCloseTo(0);
+  });
+});
+
+// ── Spatial bezier tangents (curved paths) — real engine ────────────
+
+describe('spatial motion-path tangents', () => {
+  const makeEngine = (): AnimationEngineReal => {
+    const engine = new AnimationEngineReal();
+    engine.setKeyframe('n1', 'x', 0, 0);
+    engine.setKeyframe('n1', 'y', 0, 0);
+    engine.setKeyframe('n1', 'x', 1, 100);
+    engine.setKeyframe('n1', 'y', 1, 0);
+    return engine;
+  };
+
+  it('exposes effective handles at the linear third-points by default', () => {
+    const engine = makeEngine();
+    const tans = motionPathTangents(mockNode(), engine);
+    expect(tans).toHaveLength(2);
+    expect(tans[0]!.out).toEqual({ x: 100 / 3, y: 0 });
+    expect(tans[0]!.in).toBeNull(); // no segment arrives at the first keyframe
+    expect(tans[1]!.in).toEqual({ x: 100 - 100 / 3, y: 0 });
+    expect(tans[1]!.out).toBeNull();
+  });
+
+  it('setPathTangent bends the trajectory through the dragged handle', () => {
+    const engine = makeEngine();
+    const node = mockNode();
+    // Straight path: y is 0 at the midpoint.
+    expect(positionSamplerFor(node, engine)(0.5).y).toBeCloseTo(0);
+    // Pull the out handle down (+y in comp space).
+    setPathTangent('n1', 0, 'out', { x: 33, y: 60 }, false, engine);
+    setPathTangent('n1', 1, 'in', { x: 67, y: 60 }, false, engine);
+    const mid = positionSamplerFor(node, engine)(0.5);
+    expect(mid.y).toBeGreaterThan(20); // curve dips through the handles
+    // Keyframe positions themselves are unchanged.
+    expect(positionSamplerFor(node, engine)(0).y).toBeCloseTo(0);
+    expect(positionSamplerFor(node, engine)(1).y).toBeCloseTo(0);
+  });
+
+  it('mirror reflects the opposite handle; broken leaves it alone', () => {
+    const engine = makeEngine();
+    engine.setKeyframe('n1', 'x', 2, 200);
+    engine.setKeyframe('n1', 'y', 2, 0);
+    // Interior keyframe at t=1 has both sides. Mirrored drag of 'out'…
+    setPathTangent('n1', 1, 'out', { x: 130, y: 40 }, true, engine);
+    let kx = engine.getTrackKeyframes('n1', 'x')!.find((k) => k.t === 1)!;
+    let ky = engine.getTrackKeyframes('n1', 'y')!.find((k) => k.t === 1)!;
+    expect(kx.so).toBe(30);
+    expect(kx.si).toBe(-30); // mirrored
+    expect(ky.so).toBe(40);
+    expect(ky.si).toBe(-40);
+    // …then a broken drag of 'in' only moves 'in'.
+    setPathTangent('n1', 1, 'in', { x: 80, y: 0 }, false, engine);
+    kx = engine.getTrackKeyframes('n1', 'x')!.find((k) => k.t === 1)!;
+    ky = engine.getTrackKeyframes('n1', 'y')!.find((k) => k.t === 1)!;
+    expect(kx.si).toBe(-20);
+    expect(kx.so).toBe(30); // untouched
+    expect(ky.si).toBe(0);
+    expect(ky.so).toBe(40);
+  });
+
+  it('smoothMotionPath curves the path; straightenMotionPath restores lines', () => {
+    const engine = new AnimationEngineReal();
+    const node = mockNode();
+    // An L-shaped path: right then down.
+    engine.setKeyframe('n1', 'x', 0, 0);
+    engine.setKeyframe('n1', 'y', 0, 0);
+    engine.setKeyframe('n1', 'x', 1, 100);
+    engine.setKeyframe('n1', 'y', 1, 0);
+    engine.setKeyframe('n1', 'x', 2, 100);
+    engine.setKeyframe('n1', 'y', 2, 100);
+    expect(hasPathTangents('n1', engine)).toBe(false);
+    smoothMotionPath('n1', engine);
+    expect(hasPathTangents('n1', engine)).toBe(true);
+    // The smoothed corner overshoots x past 100 (classic rounded corner).
+    const nearCorner = positionSamplerFor(node, engine)(1.2);
+    expect(nearCorner.x).toBeGreaterThan(100);
+    straightenMotionPath('n1', engine);
+    expect(hasPathTangents('n1', engine)).toBe(false);
+    expect(positionSamplerFor(node, engine)(1.2).x).toBeCloseTo(100);
   });
 });

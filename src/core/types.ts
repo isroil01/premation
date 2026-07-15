@@ -35,6 +35,9 @@ export interface SceneNode {
   locked?: boolean;
   /** Solo — when ANY node is soloed, only soloed nodes render (AE-style). */
   solo?: boolean;
+  /** Label color (AE-style) — hex tint for the layer's Scene row / timeline
+   *  track & clip bar. Absent = the kind's default category color. */
+  color?: string;
 }
 
 // Timeline model

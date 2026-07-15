@@ -79,4 +79,39 @@ describe('buildSnapshot — precomp', () => {
     expect(innerX(0)).toBeCloseTo(100); // reversed
     expect(innerX(1)).toBeCloseTo(0);
   });
+
+  it('time-remaps nested content via the new timeRemap property on precomp', () => {
+    const g = new SceneGraph();
+    g.addNode(group('G'));
+    g.addChild('G', shape('C1'));
+    g.setPrecomp('G', true);
+    const engine = new AnimationEngine();
+    engine.setKeyframe('C1', 'x', 0, 0);
+    engine.setKeyframe('C1', 'x', 1, 100);
+    engine.setKeyframe('G', 'timeRemap', 0, 1);
+    engine.setKeyframe('G', 'timeRemap', 1, 0);
+    const innerX = (t: number): number =>
+      buildSnapshot(g, engine, t, undefined, undefined, undefined, undefined, COMP).layers[0]!.precompLayers![0]!.x;
+    expect(innerX(0)).toBeCloseTo(100);
+    expect(innerX(1)).toBeCloseTo(0);
+  });
+
+  it('populates sourceTime on media layers (video) when timeRemap is keyframed', () => {
+    const g = new SceneGraph();
+    const vidNode = {
+      id: 'V', name: 'V', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 400, y: 300 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        { id: 'V_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'video', x: 400, y: 300, rotation: 0, src: 'test.mp4' } },
+      ],
+    } as unknown as SceneNode;
+    g.addNode(vidNode);
+    const engine = new AnimationEngine();
+    engine.setKeyframe('V', 'timeRemap', 0, 2);
+    engine.setKeyframe('V', 'timeRemap', 5, 0);
+    const snapshot = buildSnapshot(g, engine, 0, undefined, undefined, undefined, undefined, COMP);
+    expect(snapshot.layers[0]!.sourceTime).toBeCloseTo(2);
+    const snapshot2 = buildSnapshot(g, engine, 2.5, undefined, undefined, undefined, undefined, COMP);
+    expect(snapshot2.layers[0]!.sourceTime).toBeCloseTo(1);
+  });
 });

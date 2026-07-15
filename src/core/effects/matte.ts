@@ -18,6 +18,13 @@ import type { SceneNode } from '@core/types';
 
 export type MatteType = 'alpha' | 'luma' | 'alpha-inv' | 'luma-inv';
 
+export interface TrackMatteConfig {
+  mode: MatteType;
+  sourceId?: string;
+}
+
+export type MatteProp = MatteType | TrackMatteConfig;
+
 export const MATTE_OPTIONS: ReadonlyArray<{ value: MatteType | 'none'; label: string }> = [
   { value: 'none', label: 'No matte' },
   { value: 'alpha', label: 'Alpha' },
@@ -32,19 +39,35 @@ export function isMatteType(v: unknown): v is MatteType {
   return typeof v === 'string' && VALID.has(v);
 }
 
-/** Read a node's matte type from its `fx` component (undefined = none). */
-export function readNodeMatte(node: SceneNode): MatteType | undefined {
-  const fx = node.components.find((c) => c.type === 'fx');
-  const m = fx?.props.matte;
-  return isMatteType(m) ? m : undefined;
+export function isTrackMatteConfig(v: unknown): v is TrackMatteConfig {
+  return typeof v === 'object' && v !== null && 'mode' in v && isMatteType((v as any).mode);
 }
 
-export function getNodeMatte(nodeId: string): MatteType | 'none' {
+export function getMatteMode(v: unknown): MatteType | undefined {
+  if (isMatteType(v)) return v;
+  if (isTrackMatteConfig(v)) return v.mode;
+  return undefined;
+}
+
+export function getMatteSourceId(v: unknown): string | undefined {
+  if (isTrackMatteConfig(v)) return v.sourceId;
+  return undefined;
+}
+
+/** Read a node's matte from its `fx` component (undefined = none). */
+export function readNodeMatte(node: SceneNode): MatteProp | undefined {
+  const fx = node.components.find((c) => c.type === 'fx');
+  const m = fx?.props.matte;
+  if (isMatteType(m) || isTrackMatteConfig(m)) return m;
+  return undefined;
+}
+
+export function getNodeMatte(nodeId: string): MatteProp | 'none' {
   const node = defaultSceneGraph.getNode(nodeId);
   return (node && readNodeMatte(node)) ?? 'none';
 }
 
-export function setNodeMatte(nodeId: string, matte: MatteType | 'none'): void {
+export function setNodeMatte(nodeId: string, matte: MatteProp | 'none'): void {
   defaultSceneGraph.setMatte(nodeId, matte === 'none' ? undefined : matte);
   getEventBus().emit('AnimationChanged', { nodeId });
 }

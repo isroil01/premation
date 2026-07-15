@@ -38,9 +38,18 @@ import type {
   TimelineClip,
 } from './TimelineModel';
 import { Dropdown } from '@components/Dropdown';
+import { ColorPicker } from '@components/ColorPicker';
 import { BLEND_MODES, type LayerBlendMode } from '@core/effects/blendMode';
 import { eligibleParents, parentOfNode } from '@core/scene/parenting';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import {
+  combineMarqueeSelection,
+  exceedsDragThreshold,
+  marqueeHitKeyframeIds,
+  normalizeMarqueeRect,
+  type MarqueeRect,
+  type MarqueeRow,
+} from './marqueeSelection';
 import styles from './Timeline.module.css';
 
 const RULER_HEIGHT_DEFAULT = 26;
@@ -88,7 +97,10 @@ export interface TimelineProps {
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
   /** Called when user drags a track row to a new position. toIndex is 0-based. */
   onTrackReorder?: (fromId: string, toIndex: number) => void;
+  onTrackColorChange?: (trackId: string, color: string) => void;
   className?: string;
+  searchQuery?: string;
+  globalShy?: boolean;
 }
 
 export function Timeline({
@@ -117,7 +129,10 @@ export function Timeline({
   onKeyframeMove,
   onKeyframeContextMenu,
   onTrackReorder,
+  onTrackColorChange,
   className,
+  searchQuery,
+  globalShy,
 }: TimelineProps): JSX.Element {
   const rulerHeight = model.rulerHeight ?? RULER_HEIGHT_DEFAULT;
   const trackHeight = model.trackHeight ?? TRACK_HEIGHT_DEFAULT;
@@ -137,25 +152,74 @@ export function Timeline({
   );
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
+    const query = searchQuery?.trim().toLowerCase();
+
     for (const track of model.tracks) {
-      const hasProps = (track.properties?.length ?? 0) > 0;
-      const isExpanded = hasProps && expanded.has(track.id);
-      out.push({ type: 'track', track, expanded: isExpanded, hasProps });
-      if (isExpanded && track.properties) {
-        // P/S/R/T reveal filters which property sub-rows are shown.
-        const shown = revealSet
-          ? track.properties.filter((p) => revealSet.has(p.prop))
-          : track.properties;
-        for (const prop of shown) out.push({ type: 'prop', track, prop });
+      if (globalShy && (track as any).shy) {
+        continue;
+      }
+      const trackName = (track.name ?? '').toLowerCase();
+      const hasProps = (track.properties?.length ?? 0) > 0 || track.isGroup === true;
+      
+      const layerMatches = !query || trackName.includes(query);
+      const matchingProps = query && track.properties
+        ? track.properties.filter(
+            (p) =>
+              p.prop.toLowerCase().includes(query) ||
+              (p.label ?? '').toLowerCase().includes(query)
+          )
+        : [];
+      
+      const hasMatchingProps = matchingProps.length > 0;
+      
+      if (!query || layerMatches || hasMatchingProps) {
+        const isExpanded = hasProps && (expanded.has(track.id) || hasMatchingProps);
+        out.push({ type: 'track', track, expanded: isExpanded, hasProps });
+        
+        if (track.properties) {
+          let shownProps = track.properties;
+          if (query) {
+            if (hasMatchingProps) {
+              shownProps = matchingProps;
+            } else if (layerMatches && isExpanded) {
+              shownProps = revealSet
+                ? track.properties.filter((p) => revealSet.has(p.prop))
+                : track.properties;
+            } else {
+              shownProps = [];
+            }
+          } else {
+            if (isExpanded) {
+              shownProps = revealSet
+                ? track.properties.filter((p) => revealSet.has(p.prop))
+                : track.properties;
+            } else {
+              shownProps = [];
+            }
+          }
+          
+          for (const prop of shownProps) {
+            out.push({ type: 'prop', track, prop });
+          }
+        }
       }
     }
     return out;
-  }, [model.tracks, expanded, revealSet]);
+  }, [model.tracks, expanded, revealSet, searchQuery, globalShy]);
 
   // ── Derived geometry ───────────────────────────────────────────
   const totalSeconds = Math.max(model.duration, 1);
   const pps = model.pixelsPerSecond;
-  const laneWidth = totalSeconds * pps;
+  // Lanes extend past the comp end when clips overhang it (AE-style), so an
+  // overhanging bar stays visible/scrollable instead of clipping at the edge.
+  const contentSeconds = useMemo(() => {
+    let max = totalSeconds;
+    for (const t of model.tracks) {
+      for (const c of t.clips ?? []) max = Math.max(max, c.start + c.duration);
+    }
+    return max;
+  }, [model.tracks, totalSeconds]);
+  const laneWidth = (contentSeconds + 1) * pps;
   const totalLanesHeight = rows.length * trackHeight;
 
   // ── Vertical virtualization (rows) ─────────────────────────────
@@ -290,20 +354,20 @@ export function Timeline({
       clipDrag.current = {
         id: clip.id,
         mode,
-        startX: e.clientX - lanesRect.left + scrollLeft,
+        startX: e.clientX - lanesRect.left + lanesRef.current.scrollLeft,
         start: clip.start,
         duration: clip.duration,
         live: { start: clip.start, duration: clip.duration },
       };
       setClipPreview({ id: clip.id, start: clip.start, duration: clip.duration });
       try {
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        lanesRef.current.setPointerCapture(e.pointerId);
       } catch {
         /* best-effort capture */
       }
       document.body.style.userSelect = 'none';
     },
-    [onClipMove, onClipTrim, scrollLeft],
+    [onClipMove, onClipTrim],
   );
 
   useEffect(() => {
@@ -311,18 +375,33 @@ export function Timeline({
       const d = clipDrag.current;
       if (!d || !lanesRef.current) return;
       const lanesRect = lanesRef.current.getBoundingClientRect();
-      const deltaSec = (e.clientX - lanesRect.left + scrollLeft - d.startX) / pps;
-      const minGap = 1 / (model.frameRate || 30);
+      const currentScrollLeft = lanesRef.current.scrollLeft;
+      const deltaSec = (e.clientX - lanesRect.left + currentScrollLeft - d.startX) / pps;
+      const frameDur = 1 / (model.frameRate || 30);
+      const minGap = frameDur;
+      // Snap to the frame grid DURING the drag — the engine stores whole
+      // frames, so an unsnapped preview visibly jumped on release. Alt frees
+      // the drag (same convention as keyframe drags); the engine still rounds
+      // to a whole frame on commit.
+      const snapToFrame = (v: number): number => Math.round(v / frameDur) * frameDur;
+      const passThrough = (v: number): number => v;
+      const snap = e.altKey ? passThrough : snapToFrame;
       let start = d.start;
       let duration = d.duration;
+      // AE semantics: clip bars may OVERHANG the composition end freely (the
+      // render simply stops at the comp bound) — only the left edge pins at 0.
+      // Clamping to totalSeconds made full-comp clips immovable and turned
+      // every "expand" gesture into a shrink.
       if (d.mode === 'move') {
-        start = clamp(d.start + deltaSec, 0, Math.max(0, totalSeconds - d.duration));
+        start = snap(Math.max(0, d.start + deltaSec));
       } else if (d.mode === 'start') {
         const end = d.start + d.duration;
-        start = clamp(d.start + deltaSec, 0, end - minGap);
+        start = snap(clamp(d.start + deltaSec, 0, end - minGap));
+        start = Math.min(start, end - minGap);
         duration = end - start;
       } else {
-        duration = clamp(d.duration + deltaSec, minGap, totalSeconds - d.start);
+        const end = snap(Math.max(d.start + minGap, d.start + d.duration + deltaSec));
+        duration = Math.max(minGap, end - d.start);
       }
       d.live = { start, duration };
       setClipPreview({ id: d.id, start, duration });
@@ -344,7 +423,7 @@ export function Timeline({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [pps, scrollLeft, totalSeconds, onClipMove, onClipTrim, model.frameRate]);
+  }, [pps, totalSeconds, onClipMove, onClipTrim, model.frameRate]);
 
   // ── Playhead keyboard nudge (role="slider" must be operable) ──
   // Arrow keys step one frame; Shift steps one second; Home/End jump to bounds.
@@ -394,8 +473,17 @@ export function Timeline({
       rowDrag.current = null;
       setRowDragOver(null);
       document.body.style.userSelect = '';
-      if (idx !== null && idx !== d.currentIndex && idx !== d.currentIndex + 1) {
-        onTrackReorder?.(d.id, idx);
+      if (idx === null) return;
+      // The pixel math yields FLATTENED row indices (which include expanded
+      // property sub-rows), but reorder consumers expect a sibling/track
+      // index — convert both sides, else drops land at the wrong position
+      // whenever any layer above is expanded.
+      const toTrackIndex = (flatIdx: number): number =>
+        rows.slice(0, Math.max(0, Math.min(flatIdx, rows.length))).filter((r) => r.type === 'track').length;
+      const to = toTrackIndex(idx);
+      const from = toTrackIndex(d.currentIndex);
+      if (to !== from && to !== from + 1) {
+        onTrackReorder?.(d.id, to);
       }
     };
     window.addEventListener('pointermove', onMove);
@@ -404,7 +492,7 @@ export function Timeline({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [rows.length, trackHeight, rowDragOver, onTrackReorder]);
+  }, [rows, trackHeight, rowDragOver, onTrackReorder]);
 
   // ── Multi-keyframe selection ────────────────────────────────────────────────
   const [selectedKfIds, setSelectedKfIds] = useState<Set<string>>(new Set());
@@ -431,29 +519,24 @@ export function Timeline({
 
   const onKeyframeDown = useCallback((kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
-    setSelectedKfIds(prev => {
-      const next = new Set(prev);
-      if (e.shiftKey) {
-        if (next.has(kf.id)) next.delete(kf.id);
-        else next.add(kf.id);
-      } else {
-        if (!next.has(kf.id)) { next.clear(); next.add(kf.id); }
-      }
-      return next;
-    });
-    // Build times map from ALL currently-selected keyframes (after state update)
-    // We read via kfTimeById which is computed from the model
-    setTimeout(() => {
-      const sel = selectedKfIds;
-      const ids = new Set(sel);
-      if (!ids.has(kf.id)) ids.add(kf.id);
-      const times = new Map<string, number>();
-      for (const id of ids) {
-        const t = id === kf.id ? kf.time : (kfTimeById.get(id) ?? 0);
-        times.set(id, t);
-      }
-      activeKf.current = { ids: [...ids], times, startX: e.clientX, moved: false };
-    }, 0);
+    
+    // Compute next selection synchronously to avoid stale closure in drag start
+    const nextSel = new Set(selectedKfIds);
+    if (e.shiftKey) {
+      if (nextSel.has(kf.id)) nextSel.delete(kf.id);
+      else nextSel.add(kf.id);
+    } else {
+      if (!nextSel.has(kf.id)) { nextSel.clear(); nextSel.add(kf.id); }
+    }
+    setSelectedKfIds(nextSel);
+
+    const times = new Map<string, number>();
+    for (const id of nextSel) {
+      const t = id === kf.id ? kf.time : (kfTimeById.get(id) ?? 0);
+      times.set(id, t);
+    }
+    activeKf.current = { ids: [...nextSel], times, startX: e.clientX, moved: false };
+
     setKfPreview(new Map());
   }, [selectedKfIds, kfTimeById]);
 
@@ -465,9 +548,14 @@ export function Timeline({
       if (!d.moved && Math.abs(dx) < 3) return;
       d.moved = true;
       const dtSec = dx / pps;
+      // Keyframes land on whole frames (hold Alt for free positioning) —
+      // without this, drags committed arbitrary sub-frame float times.
+      const frameDur = 1 / (model.frameRate || 30);
+      const snap = (v: number): number =>
+        e.altKey ? v : Math.round(v / frameDur) * frameDur;
       const newPreview = new Map<string, number>();
       for (const [id, origTime] of d.times) {
-        newPreview.set(id, Math.max(0, origTime + dtSec));
+        newPreview.set(id, Math.max(0, snap(origTime + dtSec)));
       }
       setKfPreview(newPreview);
     };
@@ -496,9 +584,119 @@ export function Timeline({
     };
   }, [pps, scrollLeft, totalSeconds, onKeyframeMove, onKeyframeSeek, kfPreview]);
 
+  // ── Marquee (rubber-band) keyframe selection ──────────────────
+  // Pointer-down on EMPTY lane space (not a keyframe, clip, playhead, marker
+  // flag — those either stopPropagation or are guarded below) starts a drag
+  // that draws a translucent rect and live-selects every keyframe it touches.
+  // Shift at drag START adds to the existing selection; a plain click with no
+  // movement clears it. Rows list is the FULL flattened list (not just the
+  // virtualized window), so the rect selects across offscreen rows too.
+  const marqueeRows = useMemo<ReadonlyArray<MarqueeRow>>(
+    () =>
+      rows.map((row) =>
+        row.type === 'prop'
+          ? { keyframes: row.prop.keyframes }
+          : // Collapsed summary rows stand in for their property keyframes
+            // (track.keyframes is the flat union, same ids); expanded rows
+            // defer to the property sub-rows that follow them.
+            { keyframes: row.expanded ? [] : (row.track.keyframes ?? []) },
+      ),
+    [rows],
+  );
+  const marqueeDrag = useRef<
+    null | { x0: number; y0: number; additive: boolean; base: Set<string>; moved: boolean }
+  >(null);
+  const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
+
+  /** Pointer position → lane content coords (x from t=0, y from first row). */
+  const lanesPoint = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const lanes = lanesRef.current;
+      if (!lanes) return null;
+      const rect = lanes.getBoundingClientRect();
+      return {
+        x: Math.max(0, clientX - rect.left + lanes.scrollLeft),
+        y: clamp(clientY - rect.top + lanes.scrollTop - rulerHeight, 0, totalLanesHeight),
+      };
+    },
+    [rulerHeight, totalLanesHeight],
+  );
+
+  const onLanesPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      // Keyframes and clips stopPropagation in their own handlers; the
+      // playhead and marker flags do not, so guard them (and re-guard the
+      // others defensively) before claiming the gesture.
+      const target = e.target as HTMLElement;
+      if (
+        target.closest(`.${styles.playhead}`) ||
+        target.closest(`.${styles.keyframe}`) ||
+        target.closest(`.${styles.clip}`) ||
+        target.closest(`.${styles.markerFlag}`)
+      ) {
+        return;
+      }
+      const p = lanesPoint(e.clientX, e.clientY);
+      if (!p) return;
+      marqueeDrag.current = {
+        x0: p.x,
+        y0: p.y,
+        additive: e.shiftKey,
+        base: new Set(selectedKfIds),
+        moved: false,
+      };
+      document.body.style.userSelect = 'none';
+    },
+    [lanesPoint, selectedKfIds],
+  );
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      const d = marqueeDrag.current;
+      if (!d) return;
+      const p = lanesPoint(e.clientX, e.clientY);
+      if (!p) return;
+      if (!d.moved && !exceedsDragThreshold(p.x - d.x0, p.y - d.y0)) return;
+      d.moved = true;
+      const rect = normalizeMarqueeRect(d.x0, d.y0, p.x, p.y);
+      setMarqueeRect(rect);
+      const hits = marqueeHitKeyframeIds(marqueeRows, rect, {
+        pixelsPerSecond: pps,
+        trackHeight,
+      });
+      setSelectedKfIds(combineMarqueeSelection(d.base, hits, d.additive));
+    };
+    const onUp = (): void => {
+      const d = marqueeDrag.current;
+      if (!d) return;
+      marqueeDrag.current = null;
+      setMarqueeRect(null);
+      document.body.style.userSelect = '';
+      // Marquee selection was applied live — release just clears the rect.
+      // A plain click (no movement) on empty space clears the selection;
+      // Shift+click on empty space leaves it untouched.
+      if (!d.moved && !d.additive) setSelectedKfIds(new Set());
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [lanesPoint, marqueeRows, pps, trackHeight]);
+
   // ── Keyframe selection keyboard shortcuts ──────────────────────
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedKfIds.size > 0) {
           selectedKfIds.forEach(id => onKeyframeMove?.(id, -1)); // -1 signals delete
@@ -539,7 +737,7 @@ export function Timeline({
             <span className={styles.colHeadLayer}>Layer Name</span>
             <span className={styles.colHeadMode}>Mode</span>
             <span className={styles.colHeadParent}>Parent & Link</span>
-            <span className={styles.colHeadAeSwitches}>F/M/A/3D</span>
+            <span className={styles.colHeadAeSwitches}>S/F/M/A/3D</span>
             <span className={styles.colHeadSwitches}>Switches</span>
           </div>
         </div>
@@ -577,6 +775,7 @@ export function Timeline({
                     onParentChange={(parentId) => onTrackParentChange?.(row.track.id, parentId)}
                     onToggleFlag={(flag) => onTrackToggleFlag?.(row.track.id, flag)}
                     onRename={(name) => onTrackRename?.(row.track.id, name)}
+                    onTrackColorChange={onTrackColorChange}
                     onReorderStart={(e) => {
                       rowDrag.current = { id: row.track.id, startY: e.clientY, currentIndex: realIndex };
                       document.body.style.userSelect = 'none';
@@ -664,6 +863,7 @@ export function Timeline({
           <div
             className={styles.lanesInner}
             style={{ position: 'absolute', top: rulerHeight, left: 0, right: 0, height: totalLanesHeight }}
+            onPointerDown={onLanesPointerDown}
           >
             {/* Row backgrounds */}
             {visibleRows.map((row, i) => {
@@ -691,18 +891,14 @@ export function Timeline({
                   <TrackContent
                     key={`c_${row.track.id}`}
                     track={row.track}
-                    expanded={row.expanded}
                     ghosted={row.track.ghosted ?? false}
                     pps={pps}
                     trackHeight={trackHeight}
                     top={top}
-                    kfPreview={kfPreview}
-                    selectedKfIds={selectedKfIds}
-                    onKeyframeDown={onKeyframeDown}
-                    onKeyframeContextMenu={onKeyframeContextMenu}
                     clipPreview={clipPreview}
                     onClipDown={onClipDown}
                     onClipContextMenu={onClipContextMenu}
+                    onActivate={() => onTrackActivate?.(row.track.id)}
                   />
                 );
               }
@@ -719,6 +915,20 @@ export function Timeline({
                 </LaneRow>
               );
             })}
+
+            {/* Past-comp-end shade — clips may overhang the composition (AE-style);
+                this darkens the region beyond the comp so the bound stays legible. */}
+            {contentSeconds > totalSeconds ? (
+              <div
+                className={styles.pastEndShade}
+                style={{
+                  left: totalSeconds * pps,
+                  width: (contentSeconds + 1 - totalSeconds) * pps,
+                  height: totalLanesHeight,
+                }}
+                aria-hidden
+              />
+            ) : null}
 
             {/* Work-area tint spanning all lanes (visual context for the region). */}
             {model.workArea ? (
@@ -746,6 +956,20 @@ export function Timeline({
                 </span>
               </div>
             ))}
+
+            {/* Marquee selection rectangle (drag on empty lane space). */}
+            {marqueeRect ? (
+              <div
+                className={styles.marquee}
+                style={{
+                  left: marqueeRect.left,
+                  top: marqueeRect.top,
+                  width: marqueeRect.right - marqueeRect.left,
+                  height: marqueeRect.bottom - marqueeRect.top,
+                }}
+                aria-hidden
+              />
+            ) : null}
 
             {/* Playhead */}
             <div
@@ -892,6 +1116,7 @@ function TrackHeader({
   onParentChange,
   onToggleFlag,
   onRename,
+  onTrackColorChange,
   onReorderStart,
   style,
 }: {
@@ -910,6 +1135,7 @@ function TrackHeader({
   onParentChange?: (parentId: string | null) => void;
   onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
   onRename?: (newName: string) => void;
+  onTrackColorChange?: (trackId: string, color: string) => void;
   onReorderStart?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   style: CSSProperties;
 }): JSX.Element {
@@ -981,7 +1207,7 @@ function TrackHeader({
       aria-label={track.name}
       title="Enter to select · F2 to focus"
     >
-      <div className={styles.layerInfoCol}>
+      <div className={styles.layerInfoCol} style={{ paddingLeft: track.depth ? track.depth * 16 : undefined }}>
         <div
           className={styles.dragHandle}
           title="Drag to reorder"
@@ -1010,6 +1236,16 @@ function TrackHeader({
         >
           <Icon name={(track.icon as IconName) ?? 'layers'} size={14} />
         </span>
+        {typeof track.nodeColor === 'string' && (
+          <div onClick={(e) => e.stopPropagation()} style={{ marginRight: 'var(--space-2)', display: 'inline-flex' }}>
+            <ColorPicker
+              value={track.nodeColor}
+              onChange={(color) => onTrackColorChange?.(track.id, color)}
+              compact
+              aria-label="Change layer color"
+            />
+          </div>
+        )}
         {editing ? (
           <input
             ref={inputRef}
@@ -1066,6 +1302,16 @@ function TrackHeader({
       </div>
 
       <div className={styles.aeSwitchesCol}>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="shy"
+          data-on={(track as any).shy || undefined}
+          title="Toggle Shy Layer"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
+        >
+          <Icon name="shy" size={10} />
+        </button>
         <button
           type="button"
           className={styles.trackAction}
@@ -1158,34 +1404,25 @@ function PropertyHeader({ label, style }: { label: string; style: CSSProperties 
 /** A track's lane content: the calm animation block + (collapsed) keyframes. */
 function TrackContent({
   track,
-  expanded,
   ghosted,
   pps,
   trackHeight,
   top,
-  kfPreview,
-  selectedKfIds,
-  onKeyframeDown,
-  onKeyframeContextMenu,
   clipPreview,
   onClipDown,
   onClipContextMenu,
+  onActivate,
 }: {
   track: TimelineTrack;
-  expanded: boolean;
   ghosted: boolean;
   pps: number;
   trackHeight: number;
   top: number;
-  kfPreview: Map<string, number>;
-  selectedKfIds: Set<string>;
-  onKeyframeDown: (kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => void;
-  onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
   clipPreview: { id: string; start: number; duration: number } | null;
   onClipDown?: (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>) => void;
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
+  onActivate?: () => void;
 }): JSX.Element {
-  const span = keyframeSpan(track.keyframes);
   return (
     <LaneRow top={top} trackHeight={trackHeight} ghosted={ghosted}>
       {/* Clips — draggable body (move) + edge handles (trim). */}
@@ -1216,6 +1453,7 @@ function TrackContent({
                   }
                 : undefined
             }
+            onDoubleClick={onActivate}
           >
             {onClipDown ? (
               <>
@@ -1236,30 +1474,7 @@ function TrackContent({
         );
       })}
 
-      {/* Animation summary block — neutral bar spanning first→last keyframe.
-          Color stays reserved for clips (the thing the user actually added). */}
-      {span ? (
-        <div
-          className={styles.animBlock}
-          style={{
-            left: span.start * pps,
-            width: Math.max(6, (span.end - span.start) * pps),
-          }}
-          title={`Animated ${span.start.toFixed(2)}s – ${span.end.toFixed(2)}s`}
-        />
-      ) : null}
 
-      {/* Collapsed rows show the keyframes inline; expanded rows defer to props. */}
-      {!expanded ? (
-        <Keyframes
-          keyframes={track.keyframes ?? []}
-          pps={pps}
-          kfPreview={kfPreview}
-          selectedKfIds={selectedKfIds}
-          onKeyframeDown={onKeyframeDown}
-          onKeyframeContextMenu={onKeyframeContextMenu}
-        />
-      ) : null}
     </LaneRow>
   );
 }
@@ -1332,20 +1547,7 @@ function Keyframes({
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-/** First→last keyframe times, or null when there is nothing to summarize. */
-function keyframeSpan(
-  keyframes: ReadonlyArray<TimelineKeyframeRef> | undefined,
-): { start: number; end: number } | null {
-  if (!keyframes || keyframes.length < 2) return null;
-  let start = Infinity;
-  let end = -Infinity;
-  for (const kf of keyframes) {
-    if (kf.time < start) start = kf.time;
-    if (kf.time > end) end = kf.time;
-  }
-  if (!Number.isFinite(start) || end <= start) return null;
-  return { start, end };
-}
+
 
 function generateRulerTicks(durationSec: number, pps: number, fps: number): { x: number; major: boolean; label: string }[] {
   const targetPxBetweenMajor = 100;

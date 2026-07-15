@@ -113,7 +113,7 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   if (layer.primitive === 'ellipse') {
     return { shape: 'ellipse', radiusPx: 0, width: layer.width, height: layer.height };
   }
-  return { shape: 'rounded', radiusPx: 12, width: layer.width, height: layer.height };
+  return { shape: 'rounded', radiusPx: layer.cornerRadius ?? 0, width: layer.width, height: layer.height };
 }
 
 function extractSpatialEffects(layer: RenderLayer): import('@motion/renderer').RenderableEffect[] | undefined {
@@ -124,6 +124,10 @@ function extractSpatialEffects(layer: RenderLayer): import('@motion/renderer').R
     if (e.type === 'blur') spatial.push({ type: 'blur', radiusPx: e.amount });
     if (e.type === 'glow') spatial.push({ type: 'glow', radiusPx: e.amount, color: Color.fromHex('rgba(120,180,255,0.9)') });
     if (e.type === 'drop-shadow') spatial.push({ type: 'drop-shadow', radiusPx: e.amount, offsetX: e.amount * 0.45, offsetY: e.amount * 0.45, color: Color.fromHex('rgba(0,0,0,0.55)') });
+    if (e.type === 'gradient-ramp') spatial.push({ type: 'gradient-ramp', blend: e.amount / 100, colorA: Color.fromHex('#ff0000'), colorB: Color.fromHex('#0000ff') });
+    if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: e.amount });
+    if (e.type === 'displacement-map') spatial.push({ type: 'displacement-map', amount: e.amount });
+    if (e.type === 'motion-tile') spatial.push({ type: 'motion-tile', scale: e.amount });
   }
   return spatial.length > 0 ? spatial : undefined;
 }
@@ -192,6 +196,10 @@ function flattenLayers(
   for (const layer of layers) {
     if (!layer.visible) continue;
     if (layer.isMatteSource || layer.isAdjustment) continue;
+    // 2D lights are a Canvas2D screen-blend gradient; the GPU graph has no
+    // light pass yet. Without this skip the light's carrier layer (a full-comp
+    // black shape) rasterized as an opaque black rectangle over the frame.
+    if (layer.light) continue;
 
     if (layer.precompLayers && layer.precompLayers.length > 0) {
       // Precomp container: accumulate transformation matrix and opacity for child layers

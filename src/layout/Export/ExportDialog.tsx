@@ -27,7 +27,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   const [scaleIdx, setScaleIdx] = useState(0);
   const [progress, setProgress] = useState<number | null>(null);
   const notify = useUIStore((s) => s.notify);
-  const time = useWorkspaceStore((s) => (s.activeId ? s.workspaces[s.activeId]?.time : 0)) ?? 0;
+  const time = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0)) ?? 0;
   const comp = useCompositionStore((s) => s.comp());
   const compName = useCompositionStore((s) => s.name);
 

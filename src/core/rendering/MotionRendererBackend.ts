@@ -22,7 +22,7 @@ import {
   WebGPUBackend,
   type RenderBackend as GpuBackend,
 } from '@motion/renderer';
-import type { RenderBackend, RenderSnapshot } from './RenderBackend';
+import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, viewToCamera } from './snapshotToFrameScene';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
@@ -50,6 +50,9 @@ export class MotionRendererBackend implements RenderBackend {
   private cssW = 1;
   private cssH = 1;
   private dpr = 1;
+
+  /** Layer ids whose texture feed already failed — warn once, not every frame. */
+  private readonly warnedTextureLayers = new Set<string>();
 
   constructor(preferred: RendererBackendKind = 'webgl2') {
     this.preferred = preferred;
@@ -154,47 +157,65 @@ export class MotionRendererBackend implements RenderBackend {
 
     // Feed image asset sources for this frame (keyed to match snapshotToFrameScene's
     // `asset:<id>` or `path:<id>` textureKey), and forget layers that left the scene.
-      if (this.textures) {
+    if (this.textures) {
       const activeKeys = new Set<string>();
-      for (const layer of snapshot.layers) {
-        // 1. Base layer rasterization
-        if (layer.kind === 'image' && layer.src) {
-          const key = `asset:${layer.id}`;
-          activeKeys.add(key);
-          this.textures.setImage(key, layer.src);
-        } else if (layer.kind === 'video' && layer.src) {
-          const key = `asset:${layer.id}`;
-          activeKeys.add(key);
-          this.textures.setVideo(key, layer.src, snapshot.time ?? 0);
-        } else if (layer.kind === 'text') {
-          const key = `text:${layer.id}`;
-          activeKeys.add(key);
-          this.textures.setText(key, {
-            text: layer.text ?? 'Text',
-            fontSize: layer.fontSize ?? 48,
-            color: layer.fill,
-            width: layer.width,
-            height: layer.height,
-          });
-        } else if (layer.kind === 'shape' && layer.primitive === 'path') {
-          const key = `path:${layer.id}`;
-          activeKeys.add(key);
-          this.textures.setPath(key, layer);
-        }
+      // Walks the full layer tree (including layers nested inside precomps —
+      // snapshotToFrameScene.flattenLayers recurses the same way, so every
+      // textureKey it emits must be registered here or it renders as a white
+      // placeholder quad).
+      const processLayers = (layers: ReadonlyArray<RenderLayer>) => {
+        for (const layer of layers) {
+          // One bad asset (broken src, rasterization failure, upload error)
+          // must not abort texture feeding for the rest of the frame.
+          try {
+            // 1. Base layer rasterization
+            if (layer.kind === 'image' && layer.src) {
+              const key = `asset:${layer.id}`;
+              activeKeys.add(key);
+              this.textures!.setImage(key, layer.src);
+            } else if (layer.kind === 'video' && layer.src) {
+              const key = `asset:${layer.id}`;
+              activeKeys.add(key);
+              const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
+              this.textures!.setVideo(key, layer.src, targetTime);
+            } else if (layer.kind === 'text') {
+              const key = `text:${layer.id}`;
+              activeKeys.add(key);
+              this.textures!.setText(key, {
+                text: layer.text ?? 'Text',
+                fontSize: layer.fontSize ?? 48,
+                color: layer.fill,
+                width: layer.width,
+                height: layer.height,
+              });
+            } else if (layer.kind === 'shape' && layer.primitive === 'path') {
+              const key = `path:${layer.id}`;
+              activeKeys.add(key);
+              this.textures!.setPath(key, layer);
+            }
 
-        // 2. Auxiliary alpha textures (masks/mattes)
-        const hasMask = !!(layer.mask && layer.mask.paths.length > 0);
-        if (hasMask) {
-          const key = `mask:${layer.id}`;
-          activeKeys.add(key);
-          this.textures.setMask(key, layer);
+            // 2. Auxiliary alpha textures (masks/mattes)
+            const hasMask = !!(layer.mask && layer.mask.paths.length > 0);
+            if (hasMask) {
+              const key = `mask:${layer.id}`;
+              activeKeys.add(key);
+              this.textures!.setMask(key, layer);
+            }
+          } catch (err) {
+            if (!this.warnedTextureLayers.has(layer.id)) {
+              this.warnedTextureLayers.add(layer.id);
+              // eslint-disable-next-line no-console
+              console.warn(`[MotionRendererBackend] texture feed failed for layer ${layer.id}:`, err);
+            }
+          }
+
+          // Recurse outside the try so a bad parent asset never skips children.
+          if (layer.precompLayers && layer.precompLayers.length > 0) {
+            processLayers(layer.precompLayers);
+          }
         }
-        
-        const hasMatte = !!layer.matte;
-        if (hasMatte) {
-          // Mattes will be implemented similarly via setMatte(key, matteSource, consumer)
-        }
-      }
+      };
+      processLayers(snapshot.layers);
       this.textures.retain(activeKeys);
     }
 

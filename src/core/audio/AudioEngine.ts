@@ -203,7 +203,8 @@ class AudioEngine {
       if (!asset) continue; // not decoded yet; a later sync will start it
       const localT = timeSec - l.startSec;
       const offset = l.inSec + localT;
-      if (localT < 0 || offset >= l.outSec) continue; // playhead outside the clip
+      const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
+      if (localT < 0 || offset >= outSec) continue; // playhead outside the clip
       this.startVoice(nodeId, l, asset, offset);
     }
   }
@@ -215,7 +216,8 @@ class AudioEngine {
     const gain = ctx.createGain();
     gain.gain.value = Math.max(0, l.level / 100);
     source.connect(gain).connect(ctx.destination);
-    const remaining = Math.max(0, l.outSec - offset);
+    const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
+    const remaining = Math.max(0, outSec - offset);
     const startAt = Math.max(0, offset);
     try {
       source.start(ctx.currentTime, startAt, remaining);

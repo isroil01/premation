@@ -14,13 +14,12 @@ import { getEventBus } from '@core/events/EventBus';
 
 export interface Preferences {
   theme: ThemeId;
-  uiScale: number;            // 0.75 .. 1.5
-  showStatusBar: boolean;
-  showToolbar: boolean;
-  timelineSnapToGrid: boolean;
-  timelineFrameRate: number; // future timeline engine reads this
+  /** Whole-UI zoom, 0.75 .. 1.5 (applied as document zoom). */
+  uiScale: number;
   timelineAutoKeyframe: boolean;
+  /** Disables UI transitions/animations (accessibility / low-power). */
   editorReduceMotion: boolean;
+  /** Ask before discarding unsaved changes on New/Open/Close. */
   confirmOnClose: boolean;
 }
 
@@ -35,10 +34,6 @@ export type PreferenceStore = Preferences & PreferenceActions;
 export const DEFAULT_PREFERENCES: Preferences = {
   theme: asThemeId('dark'),
   uiScale: 1,
-  showStatusBar: true,
-  showToolbar: true,
-  timelineSnapToGrid: true,
-  timelineFrameRate: 60,
   timelineAutoKeyframe: false,
   editorReduceMotion: false,
   confirmOnClose: true,
@@ -97,12 +92,16 @@ export const usePreferenceStore = create<PreferenceStore>()(
           to: value as unknown as string,
         });
       }
+      // Document-level prefs take effect immediately.
+      if (key === 'uiScale' || key === 'editorReduceMotion') applyUiPreferences();
     },
 
     setMany: (values) => {
       set((s) => {
         for (const [k, v] of Object.entries(values)) {
-          (s as unknown as Record<string, unknown>)[k] = v;
+          // Only known preference keys — stale persisted fields (from removed
+          // prefs) must not resurrect as dead state.
+          if (k in DEFAULT_PREFERENCES) (s as unknown as Record<string, unknown>)[k] = v;
         }
       });
       void backend.write({ ...get() } as Preferences);
@@ -115,7 +114,15 @@ export const usePreferenceStore = create<PreferenceStore>()(
   })),
 );
 
-/** Apply persisted preferences to the document (theme attribute, etc.). */
+/** Push the document-level preferences (zoom + reduced motion) onto the DOM. */
+export function applyUiPreferences(): void {
+  const { uiScale, editorReduceMotion } = usePreferenceStore.getState();
+  const root = document.documentElement as HTMLElement & { style: CSSStyleDeclaration & { zoom?: string } };
+  root.style.zoom = uiScale === 1 ? '' : String(uiScale);
+  root.classList.toggle('reduce-motion', editorReduceMotion);
+}
+
+/** Apply persisted preferences to the document (theme attribute, zoom, etc.). */
 export async function applyPreferencesToDocument(): Promise<void> {
   const stored = await backend.read();
   if (stored) {
@@ -123,4 +130,5 @@ export async function applyPreferencesToDocument(): Promise<void> {
   }
   const { theme } = usePreferenceStore.getState();
   document.documentElement.setAttribute('data-theme', theme as unknown as string);
+  applyUiPreferences();
 }

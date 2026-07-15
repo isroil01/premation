@@ -17,8 +17,9 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+import { bumpScene } from '@stores/sceneStore';
+import { getEventBus } from '@core/events/EventBus';
 
 export interface ColorStop {
   id: string;
@@ -168,6 +169,7 @@ export function getNodeFill(nodeId: string): FillPaint | undefined {
 /** Set (or clear, when undefined) the node's fill paint. */
 export function setNodeFill(nodeId: string, paint: FillPaint | undefined): void {
   defaultSceneGraph.setFill(nodeId, paint);
+  bumpScene();
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 

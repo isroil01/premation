@@ -185,7 +185,7 @@ export function RenderQueuePanel(): JSX.Element {
       <div className={styles.footer}>
         <Icon name="layers" size={11} />
         {jobs.length} job{jobs.length !== 1 ? 's' : ''} · {queuedCount} queued · {doneCount} done
-        {isRunning && <span style={{ color: '#2988ff' }}> · Rendering…</span>}
+        {isRunning && <span style={{ color: 'var(--color-primary)' }}> · Rendering…</span>}
       </div>
     </div>
   );

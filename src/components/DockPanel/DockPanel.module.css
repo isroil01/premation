@@ -92,3 +92,104 @@
   overflow: hidden;
   position: relative;
 }
+
+/* Drag-to-reorder wrapper for each vertical tab icon. */
+.draggableTab {
+  display: block;
+  cursor: grab;
+}
+
+.draggableTab:active {
+  cursor: grabbing;
+}
+
+.draggableTab[data-over='true'] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* ── Grip / reposition button ────────────────────────────────── */
+.gripWrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.gripBtn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+  flex: none;
+  padding: 0;
+}
+
+.gripBtn:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.gripBtnActive {
+  background: var(--color-surface-3) !important;
+  color: var(--color-primary) !important;
+}
+
+.moveMenu {
+  position: absolute;
+  left: 110%;
+  top: 0;
+  z-index: var(--z-index-popover, 1360);
+  min-width: 180px;
+  background: var(--color-surface-2, #1e2027);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 4px;
+  list-style: none;
+  margin: 0;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.4),
+    0 2px 4px -2px rgba(0, 0, 0, 0.3);
+}
+
+.moveMenuLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 8px 6px;
+  pointer-events: none;
+}
+
+.moveMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs, 11px);
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+  white-space: nowrap;
+}
+
+.moveMenuItem:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+

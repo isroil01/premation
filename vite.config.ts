@@ -51,6 +51,13 @@ export default defineConfig({
         target: process.env.MOTION_API_TARGET || 'http://localhost:4000',
         changeOrigin: true,
       },
+      // Uploaded assets are served by the backend at /files/<key>. Proxy them so
+      // the browser loads them same-origin (the page CSP is default-src 'self',
+      // which blocks the backend's absolute http://localhost:4000 URLs).
+      '/files': {
+        target: process.env.MOTION_API_TARGET || 'http://localhost:4000',
+        changeOrigin: true,
+      },
     },
   },
 });

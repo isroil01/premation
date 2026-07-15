@@ -159,6 +159,86 @@ export function applyTypewriter(
   return true;
 }
 
+export function applyBounceInWords(
+  nodeId: string,
+  atTime: number,
+  durationSec = 1.5,
+  engine: AnimationEngine = defaultAnimation,
+): boolean {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node || !hasTextComponent(node)) return false;
+  addTextAnimator(nodeId);
+  const index = readAnimatorData(defaultSceneGraph.getNode(nodeId)!).length - 1;
+  updateAnimator(nodeId, index, {
+    basedOn: 'words',
+    shape: 'rampDown',
+    y: -80,
+    opacity: 0,
+    scale: 50,
+    start: 0,
+    end: 100,
+  });
+  const path = animatorPropPath(index, 'offset');
+  runAnimEdit('Bounce In Words', () => {
+    engine.setKeyframe(nodeId, path, atTime, -100, 'easeOut');
+    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'easeOut');
+  });
+  return true;
+}
+
+export function applySpinFadeCharacters(
+  nodeId: string,
+  atTime: number,
+  durationSec = 1.5,
+  engine: AnimationEngine = defaultAnimation,
+): boolean {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node || !hasTextComponent(node)) return false;
+  addTextAnimator(nodeId);
+  const index = readAnimatorData(defaultSceneGraph.getNode(nodeId)!).length - 1;
+  updateAnimator(nodeId, index, {
+    basedOn: 'characters',
+    shape: 'rampDown',
+    rotation: 90,
+    opacity: 0,
+    scale: 150,
+    start: 0,
+    end: 100,
+  });
+  const path = animatorPropPath(index, 'offset');
+  runAnimEdit('Spin & Fade Characters', () => {
+    engine.setKeyframe(nodeId, path, atTime, -100, 'easeOut');
+    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'easeOut');
+  });
+  return true;
+}
+
+export function applyTrackingReveal(
+  nodeId: string,
+  atTime: number,
+  durationSec = 1.5,
+  engine: AnimationEngine = defaultAnimation,
+): boolean {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node || !hasTextComponent(node)) return false;
+  addTextAnimator(nodeId);
+  const index = readAnimatorData(defaultSceneGraph.getNode(nodeId)!).length - 1;
+  updateAnimator(nodeId, index, {
+    basedOn: 'characters',
+    shape: 'square',
+    tracking: 40,
+    opacity: 0,
+    start: 0,
+    end: 100,
+  });
+  const path = animatorPropPath(index, 'start');
+  runAnimEdit('Tracking Reveal', () => {
+    engine.setKeyframe(nodeId, path, atTime, 0, 'easeInOut');
+    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'easeInOut');
+  });
+  return true;
+}
+
 /**
  * Apply a named easing preset to a set of keyframes (identified by their
  * compound ID `nodeId::prop@time` from `makeKeyframeId`).
@@ -206,6 +286,32 @@ export function applyEasingToKeyframes(
           engine.setKeyframe(nodeId, prop, t, value, 'step');
           break;
       }
+    }
+  });
+}
+
+/**
+ * Apply custom symmetric Bezier influence to a set of keyframes.
+ * E.g. influence = 75% -> bezier = [0.75, 0, 0.25, 1.0].
+ */
+export function applyInfluenceToKeyframes(
+  kfIds: ReadonlyArray<string>,
+  influence: number,
+  engine: AnimationEngine = defaultAnimation,
+): void {
+  if (!kfIds.length) return;
+  const inflVal = Math.max(0.01, Math.min(0.99, influence / 100));
+  const bezier: [number, number, number, number] = [inflVal, 0, 1 - inflVal, 1];
+  runAnimEdit(`Set keyframe velocity influence: ${influence}%`, () => {
+    for (const kfId of kfIds) {
+      const ref = parseKeyframeId(kfId);
+      if (!ref) continue;
+      const { nodeId, prop, t } = ref;
+      const kfs = engine.getTrackKeyframes(nodeId, prop);
+      const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
+      if (!kf) continue;
+      engine.setKeyframe(nodeId, prop, t, kf.value, 'bezier');
+      engine.setBezier(nodeId, prop, t, bezier);
     }
   });
 }

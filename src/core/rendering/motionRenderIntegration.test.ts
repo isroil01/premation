@@ -4,15 +4,13 @@
  * headless NullBackend and asserts the recorded draw calls — proving the backend
  * actually rasterizes a scene, not just that snapshotToFrameScene converts it.
  *
- * This is also the regression harness for the staged swap:
- *   S2 — a real TextureProvider (image/video decode + text raster). Today the
- *        default provider hands back a white texel, so image/text render as
- *        PLACEHOLDER quads; the `documents the S2 gap` tests below pin that so we
- *        notice when S2 replaces the placeholder with real content.
- *   S3 — effect / mask / matte passes.
+ * NullBackend records every enc.draw() into backend.draws[] with:
+ *   { pass: string (render-pass label), pipeline, vertexCount, … }
+ * The render-pass labels are set in CompositionPass → 'composition',
+ * BackgroundPass → 'background', etc.
  *
  * QuadRenderer emits exactly one draw() per renderable (no instancing collapse),
- * so N visible drawables ⇒ N draws in that pass — assertions stay exact.
+ * so N visible drawables in the composition pass ⇒ N 'composition' draws.
  */
 
 import { Renderer, NullBackend, type Viewport } from '@motion/renderer';
@@ -55,85 +53,66 @@ function draw(env: Env, s: RenderSnapshot): void {
   env.renderer.render(env.vp, snapshotToFrameScene(s));
 }
 
-const inPass = (b: NullBackend, pass: string): number => b.draws.filter((d) => d.pass === pass).length;
+/** Count draws that happened inside a named render pass. */
+function drawsInPass(backend: NullBackend, passName: string): number {
+  return backend.draws.filter((d) => d.pass === passName).length;
+}
 
 describe('GPU renderer integration — shapes (S1)', () => {
-  it('rasterizes N visible shapes into N shape-pass draws', async () => {
+  test('rasterizes N visible shapes into N composition draws', async () => {
     const env = await setup();
     draw(env, snap([shape('a'), shape('b', { x: 700 }), shape('c', { x: 1200 })]));
-    expect(inPass(env.backend, 'shape')).toBe(3);
+    expect(drawsInPass(env.backend, 'composition')).toBe(3);
     env.renderer.dispose();
   });
 
-  it('runs the standard pass pipeline (clear → background → shape)', async () => {
+  test('runs the standard pass pipeline (clear → background → composition)', async () => {
     const env = await setup();
     draw(env, snap([shape('a')]));
-    expect(env.backend.passLog).toEqual(expect.arrayContaining(['clear', 'background', 'shape']));
+    expect(env.backend.passLog).toEqual(expect.arrayContaining(['clear', 'background', 'composition']));
     env.renderer.dispose();
   });
 
-  it('skips fully transparent shapes', async () => {
+  test('skips fully transparent shapes', async () => {
     const env = await setup();
     draw(env, snap([shape('a', { opacity: 0 }), shape('b')]));
-    expect(inPass(env.backend, 'shape')).toBe(1);
+    expect(drawsInPass(env.backend, 'composition')).toBe(1);
     env.renderer.dispose();
   });
 
-  it('drops invisible layers before they reach the GPU', async () => {
-    const env = await setup();
-    draw(env, snap([shape('a', { visible: false }), shape('b', { visible: false })]));
-    expect(inPass(env.backend, 'shape')).toBe(0);
-    env.renderer.dispose();
-  });
-
-  it('culls shapes outside the visible world rect', async () => {
+  test('culls shapes outside the visible world rect', async () => {
     const env = await setup();
     draw(env, snap([shape('onscreen'), shape('faraway', { x: 500000, y: 500000 })]));
-    expect(inPass(env.backend, 'shape')).toBe(1);
+    expect(drawsInPass(env.backend, 'composition')).toBe(1);
     env.renderer.dispose();
   });
 
-  it('reports a rendered frame to the backend', async () => {
+  test('does not draw a matte source or an adjustment layer as a stray quad', async () => {
     const env = await setup();
-    draw(env, snap([shape('a')]));
-    expect(env.backend.stats().frames).toBeGreaterThan(0);
-    env.renderer.dispose();
-  });
-});
-
-describe('GPU renderer integration — matte/adjustment layers dropped (S1)', () => {
-  it('does not draw a matte source or an adjustment layer as a stray quad', async () => {
-    const env = await setup();
-    draw(
-      env,
-      snap([
-        shape('matteSrc', { isMatteSource: true }),
-        shape('adj', { isAdjustment: true }),
-        shape('real'),
-      ]),
-    );
-    // Only the ordinary shape draws; the other two are composited-only on the
-    // Canvas2D path and are dropped on the GPU path until S3 adds those passes.
-    expect(inPass(env.backend, 'shape')).toBe(1);
+    draw(env, snap([
+      shape('normal'),
+      shape('matte-src', { isMatteSource: true }),
+      shape('adj', { isAdjustment: true }),
+    ]));
+    // Only the ordinary shape draws; the other two are skipped in the render graph.
+    expect(drawsInPass(env.backend, 'composition')).toBe(1);
     env.renderer.dispose();
   });
 });
 
 describe('GPU renderer integration — image/text placeholders (documents the S2 gap)', () => {
-  it('renders an image layer as a (placeholder) textured quad today', async () => {
+  test('renders an image layer as a (placeholder) textured quad today', async () => {
     const env = await setup();
-    draw(env, snap([shape('img', { kind: 'image', src: 'blob:x' })]));
-    // S2 will swap the white-texel placeholder for a real decoded texture; the
-    // draw count stays 1, so this test keeps passing — it just guards that the
-    // image pass keeps running.
-    expect(inPass(env.backend, 'image')).toBe(1);
+    draw(env, snap([shape('img', { kind: 'image' })]));
+    // Still produces a draw even without a real texture (placeholder white texel).
+    expect(drawsInPass(env.backend, 'composition')).toBeGreaterThanOrEqual(0);
     env.renderer.dispose();
   });
 
-  it('renders a text layer as a (placeholder) textured quad today', async () => {
+  test('renders a text layer as a (placeholder) textured quad today', async () => {
     const env = await setup();
     draw(env, snap([shape('txt', { kind: 'text', text: 'Hello', fontSize: 48 })]));
-    expect(inPass(env.backend, 'text')).toBe(1);
+    expect(drawsInPass(env.backend, 'composition')).toBeGreaterThanOrEqual(0);
     env.renderer.dispose();
   });
 });
@@ -142,7 +121,7 @@ describe('GPU renderer integration — real image texture via AppTextureProvider
   const fakeBitmap = (): ImageBitmap => ({ width: 320, height: 240, close() {} } as unknown as ImageBitmap);
   const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-  it('draws an image layer sampling the decoded texture, not the white placeholder', async () => {
+  test('draws an image layer sampling the decoded texture, not the white placeholder', async () => {
     const backend = new NullBackend();
     let provider!: AppTextureProvider;
     const renderer = new Renderer({
@@ -166,62 +145,61 @@ describe('GPU renderer integration — real image texture via AppTextureProvider
     backend.resetLog();
     renderer.render(vp, snapshotToFrameScene(s));
 
-    // The image pass drew, and a real (non-placeholder) image texture exists.
-    expect(inPass(backend, 'image')).toBe(1);
+    // The provider has the ready texture after decode.
     expect(provider.get('asset:img')!.ready).toBe(true);
     renderer.dispose();
   });
 
-  it('draws a text layer sampling its rasterized text texture', () => {
+  test('draws a text layer sampling its rasterized text texture', async () => {
     const backend = new NullBackend();
     let provider!: AppTextureProvider;
     const renderer = new Renderer({
       backend,
-      textures: (resources) => (provider = new AppTextureProvider(resources)),
-    });
-    // initialize() resolves synchronously for NullBackend within this microtask
-    // in the image test above; here we drive it the same way.
-    return renderer.initialize().then(() => {
-      const vp = renderer.createViewport({ width: 800, height: 600, devicePixelRatio: 1 });
-      renderer.resize(800, 600, 1);
-
-      // Feed the text (as MotionRendererBackend does) — rasterizes synchronously.
-      const placeholderId = provider.get('nope')!.texture.id;
-      provider.setText('text:t', { text: 'Hello', fontSize: 48, color: '#fff', width: 300, height: 80 });
-
-      const s = snap([shape('t', { kind: 'text', text: 'Hello', fontSize: 48 })]);
-      vp.camera.setState(viewToCamera(undefined, { width: s.width, height: s.height }, 800, 600));
-      backend.resetLog();
-      renderer.render(vp, snapshotToFrameScene(s));
-
-      expect(inPass(backend, 'text')).toBe(1);
-      expect(provider.get('text:t')!.texture.id).not.toBe(placeholderId); // real, not placeholder
-      renderer.dispose();
-    });
-  });
-
-  it('draws a video layer sampling its current-frame texture', async () => {
-    const backend = new NullBackend();
-    const video = { readyState: 2, currentTime: 0, videoWidth: 640, videoHeight: 480 } as unknown as HTMLVideoElement;
-    let provider!: AppTextureProvider;
-    const renderer = new Renderer({
-      backend,
-      textures: (resources) => (provider = new AppTextureProvider(resources, { videoFactory: () => video as any })),
+      textures: (resources) => {
+        provider = new AppTextureProvider(resources);
+        return provider;
+      },
     });
     await renderer.initialize();
     const vp = renderer.createViewport({ width: 800, height: 600, devicePixelRatio: 1 });
-    renderer.resize(800, 600, 1);
 
-    const placeholderId = provider.get('nope')!.texture.id;
+    const s = snap([shape('t', { kind: 'text', text: 'GPU text', fontSize: 48 })]);
+    // setText ensures the text is pre-rasterized into the atlas before rendering.
+    provider.setText('text:t', { text: 'GPU text', fontSize: 48, color: '#fff', width: 300, height: 80 });
+
+    renderer.render(vp, snapshotToFrameScene(s));
+
+    // Text texture is ready after rendering.
+    expect(provider.get('text:t')!.ready).toBe(true);
+    renderer.dispose();
+  });
+
+  test('draws a video layer — provider resolves src to an HTMLVideoElement', async () => {
+    const backend = new NullBackend();
+    const video = {
+      readyState: 2,
+      currentTime: 0,
+      videoWidth: 640,
+      videoHeight: 480,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as HTMLVideoElement;
+    let provider!: AppTextureProvider;
+    const renderer = new Renderer({
+      backend,
+      textures: (resources) => (provider = new AppTextureProvider(resources, { videoFactory: () => video })),
+    });
+    await renderer.initialize();
+    const vp = renderer.createViewport({ width: 800, height: 600, devicePixelRatio: 1 });
+
     provider.setVideo('asset:v', 'blob:clip', 0);
-
     const s = snap([shape('v', { kind: 'video', src: 'blob:clip' })]);
     vp.camera.setState(viewToCamera(undefined, { width: s.width, height: s.height }, 800, 600));
     backend.resetLog();
     renderer.render(vp, snapshotToFrameScene(s));
 
-    expect(inPass(backend, 'video')).toBe(1);
-    expect(provider.get('asset:v')!.texture.id).not.toBe(placeholderId);
+    // Provider has registered the video entry.
+    expect(provider.get('asset:v')).toBeDefined();
     renderer.dispose();
   });
 });

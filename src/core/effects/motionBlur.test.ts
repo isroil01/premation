@@ -44,6 +44,27 @@ describe('motionBlurSampleTimes', () => {
     expect(motionBlurSampleTimes(0, 60, 720, 4)).toEqual(motionBlurSampleTimes(0, 60, 360, 4));
     expect(motionBlurSampleTimes(0, 60, 180, 3.9)).toHaveLength(3);
   });
+
+  test('shutterPhase -90 centers exposure on frame time exactly (AE default)', () => {
+    const times = motionBlurSampleTimes(1, 60, 180, 3, -90);
+    expect(times).toHaveLength(3);
+    const shutter = 0.5 / 60;
+    expect(times[0]).toBeCloseTo(1 - shutter / 2, 10);
+    expect(times[1]).toBeCloseTo(1, 10);
+    expect(times[2]).toBeCloseTo(1 + shutter / 2, 10);
+  });
+
+  test('shutterPhase shifts exposure interval relative to frame time', () => {
+    // phase 0° starts right at frame time t
+    const times = motionBlurSampleTimes(1, 60, 180, 3, 0);
+    expect(times[0]).toBeCloseTo(1, 10);
+    expect(times[2]).toBeCloseTo(1 + 0.5 / 60, 10);
+  });
+
+  test('adaptiveSampleLimit caps effective samples when requested samples exceed limit', () => {
+    const times = motionBlurSampleTimes(1, 60, 180, 32, -90, 8);
+    expect(times).toHaveLength(8);
+  });
 });
 
 describe('readNodeMotionBlur', () => {

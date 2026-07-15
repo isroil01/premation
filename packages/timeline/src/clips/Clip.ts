@@ -61,14 +61,19 @@ export class Clip {
   /**
    * Trim the head to a new timeline start, holding the tail (end) fixed and
    * advancing `sourceIn` so the media stays in sync. Clamped so duration stays
-   * >= `minDuration` and `sourceIn` can't go negative.
+   * >= `minDuration`. For BOUNDED sources `sourceIn` can't go negative (there is
+   * no media before frame 0); unbounded/generative sources (shapes, text —
+   * `sourceDuration === null`) may extend their head freely — the source mapping
+   * stays consistent because `sourceIn` shifts with `start`.
    */
   trimStart(newStart: number, minDuration = 1): void {
     const tail = this.end;
     let start = Math.min(newStart, tail - minDuration);
-    // Don't pull source-in below 0.
-    const deltaMax = this.sourceIn; // how far left we can move start
-    start = Math.max(start, this.start - deltaMax);
+    if (this.sourceDuration !== null) {
+      // Don't pull source-in below 0 — the media has nothing before frame 0.
+      const deltaMax = this.sourceIn; // how far left we can move start
+      start = Math.max(start, this.start - deltaMax);
+    }
     const delta = start - this.start;
     this.start = start;
     this.duration = tail - start;

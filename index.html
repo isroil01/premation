@@ -3,7 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'" />
+    <!--
+      connect/img/media-src include the local backend origin (localhost:*) so the
+      Electron renderer can reach motion-back directly (no dev proxy there) and
+      load /files assets; the browser build still works same-origin via 'self'.
+      blob:/data: cover in-memory asset previews. A packaged build pointing at a
+      deployed backend must add that origin here (or set it via Electron session).
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:* ws://localhost:* blob:; img-src 'self' http://localhost:* blob: data:; media-src 'self' http://localhost:* blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'" />
     <title>Motion Editor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

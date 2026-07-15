@@ -39,6 +39,10 @@ export function ease(kind: EasingKind, x: number): number {
     case 'easeOut':
       return t * (2 - t);
     case 'ease':
+      return cubicBezierEase([0.25, 0.1, 0.25, 1], t);
+    case 'autoBezier':
+    case 'continuousBezier':
+      return cubicBezierEase([0.333, 0, 0.667, 1], t);
     case 'easeInOut':
       return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
     case 'linear':
@@ -48,9 +52,23 @@ export function ease(kind: EasingKind, x: number): number {
 }
 
 /**
+ * Evaluate a 1D cubic bezier B(u) with endpoints `v0`,`v3` and control VALUES
+ * `v1`,`v2` at parameter u∈[0,1]. With v1/v2 at the linear third-points the
+ * curve is exactly linear — the identity spatial tangents.
+ */
+export function cubicValueAt(v0: number, v1: number, v2: number, v3: number, u: number): number {
+  const s = u < 0 ? 0 : u > 1 ? 1 : u;
+  const m = 1 - s;
+  return m * m * m * v0 + 3 * m * m * s * v1 + 3 * m * s * s * v2 + s * s * s * v3;
+}
+
+/**
  * Sample a property track at time `t`.
  * - Before the first / after the last keyframe: clamps to the endpoint value.
- * - Between keyframes: interpolates with the segment's easing.
+ * - Between keyframes: interpolates with the segment's easing. When the segment
+ *   carries spatial tangents (`a.so` / `b.si`) the value follows a 1D cubic
+ *   bezier through them (the shared eased parameter makes x+y trace a true 2D
+ *   bezier — curved motion paths).
  * Returns `undefined` when the track has no keyframes.
  */
 export function sampleTrack(track: PropertyTrack, t: number): number | undefined {
@@ -66,11 +84,19 @@ export function sampleTrack(track: PropertyTrack, t: number): number | undefined
     const b = kfs[i + 1]!;
     if (t >= a.t && t <= b.t) {
       const kind = a.easing ?? 'linear';
-      if (kind === 'step') return a.value;
+      if (kind === 'step' || kind === 'hold') return a.value;
       const span = b.t - a.t;
       const local = span <= 0 ? 0 : (t - a.t) / span;
       const eased =
-        kind === 'bezier' && a.bezier ? cubicBezierEase(a.bezier, local) : ease(kind, local);
+        (kind === 'bezier' || kind === 'autoBezier' || kind === 'continuousBezier') && a.bezier
+          ? cubicBezierEase(a.bezier, local)
+          : ease(kind, local);
+      if (a.so !== undefined || b.si !== undefined) {
+        const third = (b.value - a.value) / 3; // linear default for the missing side
+        const c1 = a.value + (a.so ?? third);
+        const c2 = b.value + (b.si ?? -third);
+        return cubicValueAt(a.value, c1, c2, b.value, eased);
+      }
       return a.value + (b.value - a.value) * eased;
     }
   }
@@ -132,6 +158,44 @@ export function applyRoving(kfs: Keyframe[]): Keyframe[] {
     i = j;
   }
   return out;
+}
+
+/**
+ * Auto-bezier ("smooth path"): give every keyframe Catmull-Rom-style spatial
+ * tangents so the value curve is C1-continuous through the points. The slope at
+ * an interior keyframe is the chord through its neighbours; endpoints use the
+ * one-sided slope (curve leaves/arrives straight). Offsets are scaled by each
+ * segment's own duration ÷ 3, so non-uniform keyframe spacing stays smooth.
+ * Pure — returns copies, never mutates.
+ */
+export function smoothTrackTangents(kfs: Keyframe[]): Keyframe[] {
+  if (kfs.length < 2) return kfs.map((k) => ({ ...k }));
+  const out = kfs.map((k) => ({ ...k }));
+  const slope = (i: number): number => {
+    const prev = out[Math.max(0, i - 1)]!;
+    const next = out[Math.min(out.length - 1, i + 1)]!;
+    const dt = next.t - prev.t;
+    return dt > 0 ? (next.value - prev.value) / dt : 0;
+  };
+  for (let i = 0; i < out.length; i++) {
+    const k = out[i]!;
+    const m = slope(i);
+    if (i < out.length - 1) k.so = (m * (out[i + 1]!.t - k.t)) / 3;
+    else delete k.so;
+    if (i > 0) k.si = (-m * (k.t - out[i - 1]!.t)) / 3;
+    else delete k.si;
+  }
+  return out;
+}
+
+/** Remove all spatial tangents (straight-line path). Pure — returns copies. */
+export function clearTrackTangents(kfs: Keyframe[]): Keyframe[] {
+  return kfs.map((k) => {
+    const next = { ...k };
+    delete next.si;
+    delete next.so;
+    return next;
+  });
 }
 
 /** Insert or replace a keyframe at time `t`, keeping the list sorted. */

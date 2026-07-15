@@ -38,11 +38,6 @@ export const TOUR_STEPS: TourStep[] = [
     body: 'Double-click a layer to isolate it — everything else ghosts, and a breadcrumb keeps you oriented. Esc steps back up. Never lose context.',
     hint: 'Try it: double-click a layer in the timeline.',
   },
-  {
-    title: 'AI, only when relevant',
-    body: 'Select a layer and contextual suggestions appear near it — always editable keyframes, never black boxes. Purple always means AI.',
-    hint: "You're ready. Suggestions live behind the ✦ sparkle in the toolbar.",
-  },
 ];
 
 interface OnboardingStore {

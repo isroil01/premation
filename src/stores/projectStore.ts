@@ -35,13 +35,10 @@ export interface ProjectStoreShape {
   comps: Record<string, CompositionSettings>;
   tabOrder: string[];
   activeTabId: string | null;
-  // Compatibility
-  activeId: string | null;
-  workspaces: Record<string, any>;
   actions: {
     setActiveTab: (tabId: string) => void;
     setActive: (id: string) => void;
-    openTab: (compositionId: string, breadcrumbPath?: string[]) => string;
+    openTab: (compositionId: string, breadcrumbPath?: string[], title?: string) => string;
     closeTab: (tabId: string) => void;
     markDirty: (id: string, dirty: boolean) => void;
     
@@ -62,7 +59,7 @@ export const useProjectStore = create<ProjectStoreShape>()(
   immer((set, get) => {
     // We start with one default tab pointing to a "Main Comp"
     const defaultTabId = `tab_${shortId()}`;
-    const defaultCompId = 'scene-root';
+    const defaultCompId = 'comp_root';
 
     const initialTab: TabInfo = {
       id: defaultTabId,
@@ -91,9 +88,6 @@ export const useProjectStore = create<ProjectStoreShape>()(
       comps: { [defaultCompId]: initialComp },
       tabOrder: [defaultTabId],
       activeTabId: defaultTabId,
-      // Compatibility aliases for the old WorkspaceStore shape
-      get activeId() { return this.activeTabId; },
-      get workspaces() { return this.tabs as Record<string, any>; },
       actions: {
         setActiveTab: (tabId) => {
           const previous = get().activeTabId;
@@ -108,7 +102,17 @@ export const useProjectStore = create<ProjectStoreShape>()(
         setActive: (id: string) => {
           get().actions.setActiveTab(id);
         },
-        openTab: (compositionId, breadcrumbPath) => {
+        openTab: (compositionId, breadcrumbPath, title) => {
+          // Re-activating an existing tab beats stacking duplicates — repeated
+          // double-clicks on the same group must not spawn parallel tabs.
+          const existing = Object.values(get().tabs).find(
+            (t) => t.compositionId === compositionId,
+          );
+          if (existing) {
+            get().actions.setActiveTab(existing.id);
+            return existing.id;
+          }
+          const previous = get().activeTabId;
           const tabId = `tab_${shortId()}`;
           const tab: TabInfo = {
             id: tabId,
@@ -117,7 +121,7 @@ export const useProjectStore = create<ProjectStoreShape>()(
             time: 0,
             frame: 0,
             playing: false,
-            title: 'New Comp',
+            title: title ?? 'New Comp',
             dirty: false,
           };
           set((s) => {
@@ -125,7 +129,7 @@ export const useProjectStore = create<ProjectStoreShape>()(
             s.tabOrder.push(tabId);
             s.activeTabId = tabId;
           });
-          getEventBus().emit('WorkspaceChanged', { from: get().activeTabId ?? '', to: tabId });
+          getEventBus().emit('WorkspaceChanged', { from: previous ?? '', to: tabId });
           return tabId;
         },
         closeTab: (tabId) => {

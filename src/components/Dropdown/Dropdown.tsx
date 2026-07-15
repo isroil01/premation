@@ -11,7 +11,7 @@
  *   />
  */
 
-import { type ReactElement, type ReactNode } from 'react';
+import { type ReactElement, type ReactNode, useState } from 'react';
 import { Popover } from '@components/Popover';
 import { Menu, MenuItem, MenuSeparator, MenuLabel, MenuCheckbox } from '@components/Menu';
 import type { IconName } from '@components/Icon';
@@ -30,6 +30,15 @@ export interface DropdownProps {
 }
 
 export function Dropdown({ trigger, items, placement = 'bottom-start', className }: DropdownProps): JSX.Element {
+  const [open, setOpen] = useState(false);
+
+  const handleSelect = (onSelect?: () => void) => {
+    return () => {
+      onSelect?.();
+      setOpen(false);
+    };
+  };
+
   return (
     <Popover
       trigger={trigger}
@@ -38,6 +47,8 @@ export function Dropdown({ trigger, items, placement = 'bottom-start', className
       closeOnOutside
       closeOnEscape
       bare
+      open={open}
+      onOpenChange={setOpen}
     >
       <Menu>
         {items.map((item, idx) => {
@@ -57,7 +68,7 @@ export function Dropdown({ trigger, items, placement = 'bottom-start', className
           }
           if (item.submenu) {
             return (
-              <MenuItem key={item.id} id={item.id} label={item.label} icon={item.icon} shortcut={item.shortcut} disabled={item.disabled} danger={item.danger} onSelect={item.onSelect}>
+              <MenuItem key={item.id} id={item.id} label={item.label} icon={item.icon} shortcut={item.shortcut} disabled={item.disabled} danger={item.danger} onSelect={handleSelect(item.onSelect)}>
                 {item.submenu.map((sub, subIdx) => {
                   if (sub.type === 'separator') return <MenuSeparator key={`sep_${item.id}_${subIdx}`} />;
                   if (sub.type === 'label') return <MenuLabel key={`label_${item.id}_${subIdx}`}>{sub.label}</MenuLabel>;
@@ -67,7 +78,7 @@ export function Dropdown({ trigger, items, placement = 'bottom-start', className
                     );
                   }
                   return (
-                    <MenuItem key={sub.id} id={sub.id} label={sub.label} icon={sub.icon} shortcut={sub.shortcut} disabled={sub.disabled} danger={sub.danger} onSelect={sub.onSelect} />
+                    <MenuItem key={sub.id} id={sub.id} label={sub.label} icon={sub.icon} shortcut={sub.shortcut} disabled={sub.disabled} danger={sub.danger} onSelect={handleSelect(sub.onSelect)} />
                   );
                 })}
               </MenuItem>
@@ -82,7 +93,7 @@ export function Dropdown({ trigger, items, placement = 'bottom-start', className
               shortcut={item.shortcut}
               disabled={item.disabled}
               danger={item.danger}
-              onSelect={item.onSelect}
+              onSelect={handleSelect(item.onSelect)}
             />
           );
         })}

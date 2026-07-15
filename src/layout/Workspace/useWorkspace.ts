@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
  *
@@ -16,7 +17,7 @@ import { useEffect, useRef } from 'react';
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import type { RenderBackend } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
-import type { WorkspaceOverlay } from '@motion/workspace';
+import type { Guide, GuideAxis, WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -34,12 +35,85 @@ import {
   hasPositionAnimation,
   motionPathSamples,
   motionPathKeyframes,
+  motionPathTangents,
+  setPathTangent,
   positionSamplerFor,
 } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
+import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { bumpScene } from '@stores/sceneStore';
+import { readNodeKind, flattenScene } from '@core/scene/sceneDerive';
+import { readGeometry } from '@core/workspace/geometry';
+import {
+  duplicateSelectedLayers,
+  deleteSelectedLayers,
+  toggleSelectedLocked,
+  toggleSelectedSolo,
+  groupSelectedLayers,
+  ungroupSelected,
+  precomposeSelected,
+} from '@core/scene/sceneInsert';
 
-/** Comp frame rate used for motion-blur sub-frame sampling (matches timeline). */
-const MOTION_BLUR_FPS = 60;
+
+// ── Ruler guides (drag-out) ──────────────────────────────────────────
+/** Ruler strip thickness in DEVICE px — must match Canvas2DBackend.drawOverlays. */
+const RULER_DEVICE_PX = 16;
+/** Screen-px tolerance for grabbing an existing guide line. */
+const GUIDE_GRAB_PX = 4;
+/** Guide line color (cyan — distinct from the magenta snap lines). */
+const GUIDE_COLOR = 'rgba(45, 212, 235, 0.9)';
+
+/** An in-flight ruler-guide drag. `guideId` is null while dragging out a new guide. */
+interface GuideDrag {
+  /** 'x' = vertical guide (from the left ruler), 'y' = horizontal (top ruler). */
+  axis: GuideAxis;
+  guideId: string | null;
+  screen: { x: number; y: number };
+  /** True while the pointer is back over the source ruler (release = cancel/delete). */
+  overRuler: boolean;
+}
+
+interface StripRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const inStrip = (r: StripRect, p: { x: number; y: number }): boolean =>
+  p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
+
+/**
+ * The ruler strips in overlay (CSS px) space. The backend paints them just
+ * outside the composition frame, RULER_DEVICE_PX device-px thick.
+ */
+function rulerStrips(controller: WorkspaceController, dpr: number): { top: StripRect; left: StripRect } {
+  const comp = useCompositionStore.getState();
+  const o = controller.ws.worldToScreen({ x: 0, y: 0 });
+  const e = controller.ws.worldToScreen({ x: comp.width, y: comp.height });
+  const t = RULER_DEVICE_PX / dpr;
+  return {
+    top: { x: o.x, y: o.y - t, width: e.x - o.x, height: t },
+    left: { x: o.x - t, y: o.y, width: t, height: e.y - o.y },
+  };
+}
+
+/** Topmost unlocked guide whose line passes within GUIDE_GRAB_PX of `p` (screen px). */
+function hitGuideAt(controller: WorkspaceController, p: { x: number; y: number }): Guide | null {
+  for (const g of controller.ws.guides.list()) {
+    if (g.locked) continue;
+    const s =
+      g.axis === 'x'
+        ? controller.ws.worldToScreen({ x: g.position, y: 0 }).x
+        : controller.ws.worldToScreen({ x: 0, y: g.position }).y;
+    const d = g.axis === 'x' ? Math.abs(s - p.x) : Math.abs(s - p.y);
+    if (d <= GUIDE_GRAB_PX) return g;
+  }
+  return null;
+}
+
+const guideCursor = (axis: GuideAxis): string => (axis === 'x' ? 'ew-resize' : 'ns-resize');
 
 export interface UseWorkspaceArgs {
   contentCanvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -59,8 +133,13 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
   // Which render backend to build (Canvas2D vs experimental GPU). Changing it
   // re-runs the mount effect below, rebuilding the backend onto the new choice.
   const backendChoice = useRenderBackendStore((s) => s.choice);
-  // Active on-canvas motion-path keyframe drag (E4): { nodeId, t } or null.
-  const mpDragRef = useRef<{ nodeId: string; t: number } | null>(null);
+  // Active on-canvas motion-path drag (E4): a keyframe point or one of its
+  // spatial tangent handles ('in'/'out'), or null.
+  const mpDragRef = useRef<{ nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null>(null);
+  // Active ruler-guide drag (drag-out / move / delete), or null.
+  const guideDragRef = useRef<GuideDrag | null>(null);
+  // True while we override the engine cursor with a guide resize cursor.
+  const guideCursorRef = useRef(false);
   const timeRef = useRef(time);
   timeRef.current = time;
   const focusRef = useRef(focus);
@@ -73,20 +152,26 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
   const overlaysRef = useRef({ rulers, grid, gridDivisions, safeArea });
   overlaysRef.current = { rulers, grid, gridDivisions, safeArea };
+  // Via ref so the mount-scoped render closure always reads the CURRENT view
+  // mode — the raw closure froze it at mount and deadened the 3D/2D toggle.
+  const camera3dModeRef = useRef(camera3dMode);
+  camera3dModeRef.current = camera3dMode;
 
   const mbEnabled = useMotionBlurStore((s) => s.enabled);
   const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
+  const mbPhase = useMotionBlurStore((s) => s.shutterPhase);
   const mbSamples = useMotionBlurStore((s) => s.samples);
+  const mbLimit = useMotionBlurStore((s) => s.adaptiveSampleLimit);
   // Draft preview quality skips the expensive motion-blur multi-sample pass.
   const draft = useRenderQualityStore((s) => s.draft);
-  const motionBlurRef = useRef({ enabled: mbEnabled && !draft, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS });
-  motionBlurRef.current = { enabled: mbEnabled && !draft, shutterAngle: mbShutter, samples: mbSamples, fps: MOTION_BLUR_FPS };
 
-  // Composition settings (size + background) feed the snapshot; `compKey`
-  // changes whenever a render-affecting field does, re-triggering the render.
   const compKey = useCompositionStore((s) => s.key());
   const compRef = useRef(useCompositionStore.getState().comp());
   compRef.current = useCompositionStore.getState().comp();
+
+  const activeFps = compRef.current.fps || 60;
+  const motionBlurRef = useRef({ enabled: mbEnabled && !draft, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps });
+  motionBlurRef.current = { enabled: mbEnabled && !draft, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps };
 
   // ── Backend attach + size + render loop (once) ─────────────────────
   useEffect(() => {
@@ -113,11 +198,11 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
           overlaysRef.current,
           controller.getView(),
           motionBlurRef.current,
-          { ...compRef.current, camera3dMode },
+          { ...compRef.current, camera3dMode: camera3dModeRef.current },
         ),
       );
       renderCache.mark(timeRef.current);
-      paintOverlay(overlay, controller.ws.overlay(), dprRef.current);
+      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller);
       paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
     };
     controller.onRender(render);
@@ -135,8 +220,13 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       overlay.height = Math.max(1, Math.round(rect.height * dpr));
       overlay.style.width = `${rect.width}px`;
       overlay.style.height = `${rect.height}px`;
-      controller.resize(rect.width, rect.height, dpr, firstFit);
-      firstFit = false;
+      // Only consume the one-shot fit-to-composition once the stage has a
+      // realistic size. On first load the stage can briefly measure collapsed
+      // (mid-mount / behind the onboarding tour); fitting then pins the zoom to
+      // ~5% and it never recovers. Keep re-fitting until a settled size arrives.
+      const settled = rect.width >= 240 && rect.height >= 160;
+      controller.resize(rect.width, rect.height, dpr, firstFit && settled);
+      if (settled) firstFit = false;
       render();
     };
     const ro = new ResizeObserver(sizeAll);
@@ -144,6 +234,10 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     sizeAll();
     // Catch the size once layout settles (first frame after mount).
     const raf = requestAnimationFrame(sizeAll);
+    // Backstops: a window resize + a delayed re-measure recover the fit even if
+    // the ResizeObserver misses a late layout settle (observed on first load).
+    window.addEventListener('resize', sizeAll);
+    const settleTimer = setTimeout(sizeAll, 600);
 
     // Content also depends on the animation engine (keyframe edits, playback).
     const animSub = getEventBus().on('AnimationChanged', () => controller.requestRender());
@@ -155,6 +249,8 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
 
     return () => {
       cancelAnimationFrame(raf);
+      clearTimeout(settleTimer);
+      window.removeEventListener('resize', sizeAll);
       ro.disconnect();
       animSub.dispose();
       cursorSub.dispose();
@@ -167,7 +263,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
   // ── Re-render on scene / playhead / guide changes ──────────────────
   useEffect(() => {
     getWorkspaceController().requestRender();
-  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, safeArea, draft, mbEnabled, mbShutter, mbSamples, compKey]);
+  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, draft, mbEnabled, mbShutter, mbSamples, compKey]);
 
   // ── Tool bar → engine tool ─────────────────────────────────────────
   useEffect(() => {
@@ -179,6 +275,18 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     );
   }, []);
 
+  // ── Snap toggle → engine SnapEngine ────────────────────────────────
+  // The TopNav magnet button writes uiStore.snap; the engine's snapping
+  // lives in ws.setSnap — without this bridge the button is cosmetic.
+  useEffect(() => {
+    const controller = getWorkspaceController();
+    controller.ws.setSnap({ enabled: useUIStore.getState().snap });
+    return useUIStore.subscribe(
+      (s) => s.snap,
+      (snap) => controller.ws.setSnap({ enabled: snap }),
+    );
+  }, []);
+
   // ── Pointer + wheel input on the overlay canvas ────────────────────
   useEffect(() => {
     const controller = getWorkspaceController();
@@ -186,7 +294,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     const stage = stageRef.current;
     if (!overlay || !stage) return;
 
-    const local = (e: PointerEvent | WheelEvent): { x: number; y: number } => {
+    const local = (e: MouseEvent): { x: number; y: number } => {
       const rect = stage.getBoundingClientRect();
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
@@ -205,6 +313,27 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
 
     const onDown = (e: PointerEvent): void => {
       if (e.button !== 0) return; // left-button interactions only
+      // Ruler guides: pointer-down inside a ruler strip drags out a NEW guide
+      // (top strip → horizontal 'y' guide, left strip → vertical 'x' guide).
+      // Checked before anything is forwarded to the engine.
+      if (overlaysRef.current.rulers) {
+        const p = local(e);
+        const strips = rulerStrips(controller, dprRef.current);
+        const axis: GuideAxis | null = inStrip(strips.top, p) ? 'y' : inStrip(strips.left, p) ? 'x' : null;
+        if (axis) {
+          guideDragRef.current = { axis, guideId: null, screen: p, overRuler: true };
+          try {
+            overlay.setPointerCapture(e.pointerId);
+          } catch {
+            /* best-effort */
+          }
+          useUIStore.getState().setDragging(true);
+          overlay.style.cursor = guideCursor(axis);
+          guideCursorRef.current = true;
+          controller.requestRender();
+          return;
+        }
+      }
       // E4: grabbing a motion-path keyframe dot starts a local drag that edits
       // the keyframe directly (the engine never sees it, so it can't also
       // move/marquee the layer).
@@ -219,6 +348,23 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
         useUIStore.getState().setDragging(true);
         return;
       }
+      // Ruler guides: grabbing an existing guide line (rulers visible) moves it.
+      if (overlaysRef.current.rulers) {
+        const p = local(e);
+        const g = hitGuideAt(controller, p);
+        if (g) {
+          guideDragRef.current = { axis: g.axis, guideId: g.id, screen: p, overRuler: false };
+          try {
+            overlay.setPointerCapture(e.pointerId);
+          } catch {
+            /* best-effort */
+          }
+          useUIStore.getState().setDragging(true);
+          overlay.style.cursor = guideCursor(g.axis);
+          guideCursorRef.current = true;
+          return;
+        }
+      }
       try {
         overlay.setPointerCapture(e.pointerId);
       } catch {
@@ -229,19 +375,66 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       controller.ws.feedPointerDown(toPointer(e));
     };
     const onMove = (e: PointerEvent): void => {
+      // Active ruler-guide drag: track the pointer, live-move existing guides,
+      // and flag when the pointer is back over the source ruler (= cancel/delete).
+      const gd = guideDragRef.current;
+      if (gd) {
+        const p = local(e);
+        gd.screen = p;
+        const strips = rulerStrips(controller, dprRef.current);
+        gd.overRuler = inStrip(gd.axis === 'y' ? strips.top : strips.left, p);
+        if (gd.guideId) {
+          const w = controller.ws.screenToWorld(p);
+          controller.ws.guides.move(gd.guideId, gd.axis === 'x' ? w.x : w.y);
+        }
+        controller.requestRender();
+        return;
+      }
+      // Hover cursor over rulers / guide lines (only while no buttons are down).
+      if (overlaysRef.current.rulers && e.buttons === 0) {
+        const p = local(e);
+        const strips = rulerStrips(controller, dprRef.current);
+        const cursor = inStrip(strips.top, p)
+          ? 'ns-resize'
+          : inStrip(strips.left, p)
+            ? 'ew-resize'
+            : (() => {
+                const g = hitGuideAt(controller, p);
+                return g ? guideCursor(g.axis) : null;
+              })();
+        if (cursor) {
+          overlay.style.cursor = cursor;
+          guideCursorRef.current = true;
+        } else if (guideCursorRef.current) {
+          overlay.style.cursor = controller.ws.cursor.css;
+          guideCursorRef.current = false;
+        }
+      }
       const drag = mpDragRef.current;
       if (drag) {
         const w = controller.ws.screenToWorld(local(e));
-        // One coalesced undo step for the whole drag (stable merge key), moving
-        // the point in 2D (both axis tracks get a key at this time).
-        runAnimEdit(
-          'Move keyframe',
-          () => {
-            defaultAnimation.setKeyframe(drag.nodeId, 'x', drag.t, w.x);
-            defaultAnimation.setKeyframe(drag.nodeId, 'y', drag.t, w.y);
-          },
-          `mpdrag:${drag.nodeId}:${drag.t}`,
-        );
+        const part = drag.part;
+        // One coalesced undo step for the whole drag (stable merge key).
+        if (part === 'point') {
+          // Move the point in 2D (both axis tracks get a key at this time;
+          // spatial tangents are relative offsets, so they travel with it).
+          runAnimEdit(
+            'Move keyframe',
+            () => {
+              defaultAnimation.setKeyframe(drag.nodeId, 'x', getTimelineController().toLayerTime(drag.nodeId, drag.t), w.x);
+              defaultAnimation.setKeyframe(drag.nodeId, 'y', getTimelineController().toLayerTime(drag.nodeId, drag.t), w.y);
+            },
+            `mpdrag:${drag.nodeId}:${drag.t}`,
+          );
+        } else {
+          // Pull a spatial tangent handle — bends the path. Mirrored (smooth
+          // point) by default; hold Alt to break the pair.
+          runAnimEdit(
+            'Adjust path tangent',
+            () => setPathTangent(drag.nodeId, drag.t, part, w, !e.altKey),
+            `mptan:${drag.nodeId}:${drag.t}:${part}`,
+          );
+        }
         return;
       }
       controller.ws.feedPointerMove(toPointer(e));
@@ -252,6 +445,27 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       } catch {
         /* ignore */
       }
+      // Finish a ruler-guide drag: commit (add/move) or cancel/delete on the ruler.
+      const gd = guideDragRef.current;
+      if (gd) {
+        guideDragRef.current = null;
+        useUIStore.getState().setDragging(false);
+        const p = local(e);
+        const strips = rulerStrips(controller, dprRef.current);
+        const overRuler = inStrip(gd.axis === 'y' ? strips.top : strips.left, p);
+        const w = controller.ws.screenToWorld(p);
+        const pos = gd.axis === 'x' ? w.x : w.y;
+        if (gd.guideId) {
+          if (overRuler) controller.ws.removeGuide(gd.guideId);
+          else controller.ws.guides.move(gd.guideId, pos);
+        } else if (!overRuler) {
+          controller.ws.addGuide(gd.axis, pos);
+        }
+        overlay.style.cursor = controller.ws.cursor.css;
+        guideCursorRef.current = false;
+        controller.requestRender();
+        return;
+      }
       if (mpDragRef.current) {
         mpDragRef.current = null;
         useUIStore.getState().setDragging(false);
@@ -261,6 +475,24 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       controller.ws.feedPointerUp(toPointer(e));
     };
     const onDoubleClick = (e: MouseEvent): void => {
+      const sel = useSelectionStore.getState().ids;
+      if (sel.length === 1) {
+        const node = defaultSceneGraph.getNode(sel[0]!);
+        if (node) {
+          const textComp = node.components.find((c) => c.type === 'Text');
+          if (textComp) {
+            e.preventDefault();
+            e.stopPropagation();
+            const currentVal = (textComp.props.content as string) ?? '';
+            const newVal = window.prompt('Edit text:', currentVal);
+            if (newVal !== null) {
+              updateNodeComponentProp(defaultSceneGraph, node.id, textComp.id, 'content', newVal);
+            }
+            return;
+          }
+        }
+      }
+
       controller.ws.feedPointerUp({
         position: local(e as unknown as PointerEvent),
         pointerType: 'mouse',
@@ -271,6 +503,18 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
         time: performance.now(),
         pointerId: 0,
       });
+    };
+    const onContextMenu = (e: MouseEvent): void => {
+      e.preventDefault();
+      const node = controller.ws.hitTestScreen(local(e));
+      if (node) {
+        // Match click-select behavior: right-clicking an unselected node selects it.
+        const sel = useSelectionStore.getState();
+        if (!sel.ids.includes(node.id)) sel.set([node.id]);
+        openContextMenu(e.clientX, e.clientY, nodeContextMenuItems(node.id));
+      } else {
+        openContextMenu(e.clientX, e.clientY, canvasContextMenuItems(controller));
+      }
     };
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault();
@@ -290,6 +534,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     overlay.addEventListener('pointerup', onUp);
     overlay.addEventListener('pointercancel', onUp);
     overlay.addEventListener('dblclick', onDoubleClick);
+    overlay.addEventListener('contextmenu', onContextMenu);
     overlay.addEventListener('wheel', onWheel, { passive: false });
 
     return () => {
@@ -298,17 +543,111 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       overlay.removeEventListener('pointerup', onUp);
       overlay.removeEventListener('pointercancel', onUp);
       overlay.removeEventListener('dblclick', onDoubleClick);
+      overlay.removeEventListener('contextmenu', onContextMenu);
       overlay.removeEventListener('wheel', onWheel);
     };
   }, [overlayCanvasRef, stageRef]);
 }
 
+// ── Canvas context menus ─────────────────────────────────────────────
+
+/**
+ * Right-click menu for a canvas node — the same actions as the scene-tree menu
+ * (DemoPanels.openNodeMenu), minus Rename: the tree's inline rename is local
+ * ScenePanel state and window.prompt is unavailable in Electron.
+ */
+function nodeContextMenuItems(id: string): ContextMenuItem[] {
+  const node = defaultSceneGraph.getNode(id);
+  const hidden = node?.visible === false;
+  const locked = (node as { locked?: boolean } | undefined)?.locked === true;
+  const solo = (node as { solo?: boolean } | undefined)?.solo === true;
+  const isGroup = node ? readNodeKind(node) === 'group' : false;
+  const toggleVisible = (): void => {
+    const n = defaultSceneGraph.getNode(id);
+    if (!n) return;
+    n.visible = n.visible === false;
+    bumpScene();
+  };
+  return [
+    { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
+    { id: 'sep1', separator: true },
+    { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleVisible },
+    { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked() },
+    { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => toggleSelectedSolo() },
+    { id: 'sep2', separator: true },
+    { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
+    ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
+    { id: 'precompose', label: 'Pre-compose…', onSelect: () => precomposeSelected() },
+    { id: 'sep3', separator: true },
+    { id: 'delete', label: 'Delete', danger: true, onSelect: () => deleteSelectedLayers() },
+  ];
+}
+
+/** Right-click menu for empty canvas — view/selection basics. */
+function canvasContextMenuItems(controller: WorkspaceController): ContextMenuItem[] {
+  const guides = useGuidesStore.getState();
+  const hasSelection = useSelectionStore.getState().ids.length > 0;
+  return [
+    { id: 'select-all', label: 'Select All', onSelect: () => controller.ws.selectAll() },
+    { id: 'deselect', label: 'Deselect', disabled: !hasSelection, onSelect: () => controller.ws.clearSelection() },
+    { id: 'sep1', separator: true },
+    { id: 'fit', label: 'Fit Comp in View', onSelect: () => controller.fitComposition() },
+    { id: 'sep2', separator: true },
+    { id: 'grid', label: guides.grid ? 'Hide Grid' : 'Show Grid', onSelect: () => guides.toggleGrid() },
+    { id: 'rulers', label: guides.rulers ? 'Hide Rulers' : 'Show Rulers', onSelect: () => guides.toggleRulers() },
+  ];
+}
+
 // ── Overlay painter ──────────────────────────────────────────────────
-function paintOverlay(canvas: HTMLCanvasElement, overlay: WorkspaceOverlay, dpr: number): void {
+function paintOverlay(
+  canvas: HTMLCanvasElement,
+  overlay: WorkspaceOverlay,
+  dpr: number,
+  guideDrag: GuideDrag | null = null,
+  controller?: WorkspaceController,
+): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+
+  const cssW = canvas.width / dpr;
+  const cssH = canvas.height / dpr;
+
+  // Persistent ruler guides (screen-space, from the engine's overlay).
+  if (overlay.guides.length) {
+    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.lineWidth = 1;
+    for (const g of overlay.guides) {
+      ctx.beginPath();
+      if (g.axis === 'x') {
+        ctx.moveTo(g.position + 0.5, 0);
+        ctx.lineTo(g.position + 0.5, cssH);
+      } else {
+        ctx.moveTo(0, g.position + 0.5);
+        ctx.lineTo(cssW, g.position + 0.5);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // Live preview while dragging a NEW guide out of a ruler (hidden while the
+  // pointer is back over the ruler — releasing there cancels).
+  if (guideDrag && !guideDrag.guideId && !guideDrag.overRuler) {
+    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    if (guideDrag.axis === 'x') {
+      ctx.moveTo(guideDrag.screen.x + 0.5, 0);
+      ctx.lineTo(guideDrag.screen.x + 0.5, cssH);
+    } else {
+      ctx.moveTo(0, guideDrag.screen.y + 0.5);
+      ctx.lineTo(cssW, guideDrag.screen.y + 0.5);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // Selection chrome follows the theme's selection token (white in the
   // monochrome dark theme, the accent in light) — not a hardcoded blue.
@@ -487,26 +826,96 @@ function paintOverlay(canvas: HTMLCanvasElement, overlay: WorkspaceOverlay, dpr:
       ctx.strokeRect(pt.x - 3, pt.y - 3, 6, 6);
     }
   }
+
+  // Draw scene guides for Camera / Light nodes
+  if (controller) {
+    for (const node of flattenScene(defaultSceneGraph)) {
+      const kind = readNodeKind(node);
+      if (kind === 'camera' || kind === 'light') {
+        const geometry = readGeometry(node);
+        if (!geometry) continue;
+        
+        // Calculate screen position from world position
+        const screenPos = controller.ws.worldToScreen({ x: geometry.x, y: geometry.y });
+        const selected = useSelectionStore.getState().isSelected(node.id);
+        
+        ctx.save();
+        ctx.translate(screenPos.x, screenPos.y);
+        ctx.rotate((geometry.rotationDeg * Math.PI) / 180);
+        
+        if (kind === 'camera') {
+          // Draw a beautiful camera guide shape
+          ctx.strokeStyle = selected ? ACCENT : '#38bdf8';
+          ctx.fillStyle = selected ? 'rgba(56, 189, 248, 0.2)' : 'rgba(56, 189, 248, 0.05)';
+          ctx.lineWidth = 1.5;
+          
+          ctx.beginPath();
+          // Draw camera body
+          ctx.rect(-10, -6, 20, 12);
+          // Draw lens cone
+          ctx.moveTo(10, -3);
+          ctx.lineTo(16, -8);
+          ctx.lineTo(16, 8);
+          ctx.lineTo(10, 3);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        } else if (kind === 'light') {
+          // Draw a beautiful light bulb / starburst shape
+          ctx.strokeStyle = selected ? ACCENT : '#f59e0b';
+          ctx.fillStyle = selected ? 'rgba(245, 158, 11, 0.2)' : 'rgba(245, 158, 11, 0.05)';
+          ctx.lineWidth = 1.5;
+          
+          ctx.beginPath();
+          // Inner circle
+          ctx.arc(0, 0, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          
+          // Draw light rays
+          for (let r = 0; r < 8; r++) {
+            const angle = (r * Math.PI) / 4;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(angle) * 10, Math.sin(angle) * 10);
+            ctx.lineTo(Math.cos(angle) * 18, Math.sin(angle) * 18);
+            ctx.stroke();
+          }
+        }
+        
+        ctx.restore();
+      }
+    }
+  }
 }
 
 /**
- * Hit-test the selected layer's motion-path keyframe dots at a screen point
- * (within a small radius). Returns the { nodeId, t } of the grabbed keyframe,
- * or null. Used to start an on-canvas keyframe drag.
+ * Hit-test the selected layer's motion-path keyframe dots and tangent handles
+ * at a screen point (within a small radius). Returns the grabbed part — the
+ * keyframe 'point' itself or its 'in'/'out' spatial tangent handle — or null.
+ * Handles are tested first: they can sit close to the point and are the finer
+ * target. Used to start an on-canvas motion-path drag.
  */
 function hitMotionPathKeyframe(
   controller: WorkspaceController,
   screen: { x: number; y: number },
-): { nodeId: string; t: number } | null {
+): { nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null {
   const ids = useSelectionStore.getState().ids;
   if (ids.length !== 1) return null;
   const nodeId = ids[0]!;
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasPositionAnimation(nodeId)) return null;
   const R = 8; // grab radius, screen px
-  for (const k of motionPathKeyframes(node)) {
-    const s = controller.ws.worldToScreen({ x: k.x, y: k.y });
-    if (Math.hypot(s.x - screen.x, s.y - screen.y) <= R) return { nodeId, t: k.t };
+  const near = (p: { x: number; y: number }): boolean => {
+    const s = controller.ws.worldToScreen(p);
+    return Math.hypot(s.x - screen.x, s.y - screen.y) <= R;
+  };
+  const tangents = motionPathTangents(node);
+  for (const k of tangents) {
+    if (k.out && near(k.out)) return { nodeId, t: k.t, part: 'out' };
+    if (k.in && near(k.in)) return { nodeId, t: k.t, part: 'in' };
+  }
+  for (const k of tangents) {
+    if (near(k)) return { nodeId, t: k.t, part: 'point' };
   }
   return null;
 }
@@ -549,6 +958,25 @@ function paintMotionPath(
   ctx.strokeStyle = 'rgba(120,170,255,0.9)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
+
+  // Spatial tangent handles — a thin stem from each keyframe to its in/out
+  // control point, with a small square grab dot (AE-style). Drawn under the
+  // keyframe dots so the points stay the primary target.
+  for (const k of motionPathTangents(node)) {
+    const p = toS(k);
+    for (const h of [k.out, k.in]) {
+      if (!h) continue;
+      const s = toS(h);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(s.x, s.y);
+      ctx.strokeStyle = 'rgba(120,170,255,0.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(120,170,255,1)';
+      ctx.fillRect(s.x - 2.5, s.y - 2.5, 5, 5);
+    }
+  }
 
   // Keyframe dots.
   for (const k of motionPathKeyframes(node)) {

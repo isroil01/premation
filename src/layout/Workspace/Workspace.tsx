@@ -29,7 +29,6 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { AiPromptBar } from './AiPromptBar';
-import { AiSuggestionCard } from './AiSuggestionCard';
 import { ViewportHeader } from './ViewportHeader';
 import { FocusBreadcrumb } from '@layout/focus/FocusBreadcrumb';
 import { useFocusContext } from '@layout/focus/useFocusContext';
@@ -80,6 +79,14 @@ export function WorkspaceViewport({
   });
 
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>): void => {
+    const target = e.target as HTMLElement | null;
+    if (
+      target?.tagName === 'INPUT' ||
+      target?.tagName === 'TEXTAREA' ||
+      target?.isContentEditable
+    ) {
+      return;
+    }
     if (!VIEWPORT_KEYS.has(e.code)) return;
     const controller = getWorkspaceController();
     switch (e.code) {
@@ -110,6 +117,14 @@ export function WorkspaceViewport({
   }, []);
 
   const onKeyUp = useCallback((e: KeyboardEvent<HTMLDivElement>): void => {
+    const target = e.target as HTMLElement | null;
+    if (
+      target?.tagName === 'INPUT' ||
+      target?.tagName === 'TEXTAREA' ||
+      target?.isContentEditable
+    ) {
+      return;
+    }
     if (e.code === 'Space') getWorkspaceController().ws.feedKeyUp(keyFrom(e, performance.now()));
   }, []);
 
@@ -143,7 +158,6 @@ export function WorkspaceViewport({
         <div className={styles.overlayBR}>{bottomRight}</div>
         <div className={styles.overlayBC}><AiPromptBar /></div>
 
-        <AiSuggestionCard />
         <FocusBreadcrumb />
       </div>
     </div>

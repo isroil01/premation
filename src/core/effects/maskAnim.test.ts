@@ -2,7 +2,7 @@ import { interpolateMask, type MaskKeyframe } from './mask';
 import type { LayerMask, MaskPoint } from './mask';
 
 const corner = (x: number, y: number): MaskPoint => ({ x, y, inX: x, inY: y, outX: x, outY: y });
-const path = (points: MaskPoint[]) => ({ id: 'm', mode: 'add' as const, closed: true, feather: 0, opacity: 1, inverted: false, points });
+const path = (points: MaskPoint[]) => ({ id: 'm', mode: 'add' as const, closed: true, feather: 0, opacity: 1, expansion: 0, inverted: false, points });
 const square = (s: number): LayerMask => ({
   paths: [path([corner(-s, -s), corner(s, -s), corner(s, s), corner(-s, s)])],
 });

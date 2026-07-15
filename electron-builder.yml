@@ -14,6 +14,22 @@ files:
   - dist-electron/**
   - package.json
 
+# Bundle the motion-back server as a sidecar so the packaged desktop app can
+# launch it itself (electron/backend.ts resolves <resources>/backend/dist/main.js).
+# NOTE: this ships the server's node_modules (incl. the Prisma engine) and .env.
+# The app still needs a reachable database — for a portable installer switch
+# motion-back to SQLite, and provide the OpenAI key via a first-run setting
+# rather than shipping .env. Run `npm run build` in ../motion-back first.
+extraResources:
+  - from: ../motion-back/dist
+    to: backend/dist
+  - from: ../motion-back/node_modules
+    to: backend/node_modules
+  - from: ../motion-back/prisma
+    to: backend/prisma
+  - from: ../motion-back/.env
+    to: backend/.env
+
 win:
   target: nsis
   artifactName: ${productName}-${version}-setup.${ext}

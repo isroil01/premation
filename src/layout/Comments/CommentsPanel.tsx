@@ -22,7 +22,7 @@ export function CommentsPanel(): JSX.Element {
   const remove = useCommentsStore((s) => s.remove);
   const primary = useSelectionStore((s) => s.primary);
   const setSelected = useSelectionStore((s) => s.set);
-  const time = useWorkspaceStore((s) => (s.activeId ? s.workspaces[s.activeId]?.time : 0)) ?? 0;
+  const time = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0)) ?? 0;
   const setTime = useWorkspaceStore((s) => s.actions.setTime);
 
   const [draft, setDraft] = useState('');

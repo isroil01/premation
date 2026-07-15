@@ -6,7 +6,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: #161616;
+  background: var(--color-surface-0);
   overflow: hidden;
 }
 
@@ -35,13 +35,15 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background-color: #1a1a1a;
+  background-color: var(--color-workspace);
   background-image:
-    radial-gradient(circle, #2a2a2a 1px, transparent 1px);
+    radial-gradient(circle, var(--color-border-strong) 1px, transparent 1px);
   background-size: 20px 20px;
 }
 
-/* Transparent-mode: show checkerboard beneath the comp */
+/* Transparent-mode: show checkerboard beneath the comp.
+   Checker literals stay hardcoded on purpose: the pattern represents alpha
+   transparency (a fixed neutral checker, like AE/Photoshop), not themed UI. */
 .stageTransparent {
   position: absolute;
   inset: 0;
@@ -115,13 +117,13 @@
   align-items: center;
   gap: 10px;
   padding: 3px 8px;
-  background: rgba(18, 18, 18, 0.82);
-  border: 1px solid #2a2a2a;
+  background: color-mix(in srgb, var(--color-surface-0) 82%, transparent);
+  border: 1px solid var(--color-border-strong);
   backdrop-filter: blur(4px);
   font-size: 10px;
   font-family: 'Inter', system-ui, monospace;
-  color: #666;
+  color: var(--color-text-muted);
   letter-spacing: 0.04em;
 }
 .infoBar span { white-space: nowrap; }
-.infoHighlight { color: #a0a0a0; }
+.infoHighlight { color: var(--color-text-secondary); }

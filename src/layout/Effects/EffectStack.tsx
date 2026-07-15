@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * EffectStack — the applied-effects list for a layer (AE Effect Controls): each
  * effect has an enable toggle, reorder, remove, and a **keyframeable** amount
@@ -48,14 +49,14 @@ function EffectAmount({
 
   const onChange = (v: number): void => {
     if (animated) {
-      runAnimEdit(`Set ${def.label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, v), `fx:${nodeId}:${path}:${time}`);
+      runAnimEdit(`Set ${def.label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v), `fx:${nodeId}:${path}:${time}`);
     } else {
       updateEffect(nodeId, effectId, v);
     }
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${def.label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${def.label}`, () => defaultAnimation.setKeyframe(nodeId, path, time, amount));
+    else runAnimEdit(`Animate ${def.label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), amount));
   };
 
   return (

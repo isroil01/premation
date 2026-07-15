@@ -1,4 +1,3 @@
-export { AiSparkleButton } from './TopToolbar';
 export { StatusBar } from './StatusBar';
 export type { StatusBarProps } from './StatusBar';
 export { WorkspaceViewport } from './Workspace';

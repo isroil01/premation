@@ -65,6 +65,14 @@
   flex: none;
 }
 
+/* Small per-row label-color dot (AE-style layer label). */
+.labelDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
 .label {
   flex: 1;
   min-width: 0;
@@ -84,4 +92,33 @@
 .row:hover .actions,
 .row:focus-within .actions {
   opacity: 1;
+}
+
+/* Inline rename field — matches row typography, sits in place of the label. */
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  padding: 0 var(--space-1);
+  font: inherit;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  background: var(--color-surface-raised, var(--color-hover));
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-xs);
+  outline: none;
+}
+
+/* Drag-to-reorder drop indicators. */
+.row[data-drop='before'] {
+  box-shadow: inset 0 2px 0 0 var(--color-primary);
+}
+
+.row[data-drop='after'] {
+  box-shadow: inset 0 -2px 0 0 var(--color-primary);
+}
+
+.row[data-drop='inside'] {
+  background: var(--color-primary-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
 }

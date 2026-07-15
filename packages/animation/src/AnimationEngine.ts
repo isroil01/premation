@@ -8,8 +8,8 @@
  */
 
 import type { PropPath, PropertyTrack, SceneValueSnapshot, EasingKind, BezierHandles, Keyframe } from './types';
-import { sampleTrack, upsertKeyframe, applyRoving } from './interpolate';
-import { compileExpression, type CompiledExpression } from './expressions';
+import { sampleTrack, upsertKeyframe, applyRoving, smoothTrackTangents, clearTrackTangents } from './interpolate';
+import { compileExpression, type CompiledExpression, type ExprContext, type ExprResult } from './expressions';
 
 /**
  * Notified whenever a node's animation changes. `'*'` means "all nodes"
@@ -23,6 +23,28 @@ export type AudioLevelProvider = (t: number) => number;
 /** Resolves a named slider control's value at time `t` for the `ctrl(name)`
  *  expression accessor. Injected by the host (reads the scene's control rigs). */
 export type ControlProvider = (name: string, t: number) => number;
+/** Resolves a layer NAME to a nodeId for the `layer(name, prop)` expression
+ *  accessor. Injected by the host (the engine doesn't know scene names).
+ *  `null` = no such layer. */
+export type LayerResolver = (name: string) => string | null;
+/** Supplies a node's static/base value for a prop (e.g. the Transform
+ *  component's x/y) when a cross-layer read finds no keyframe track. Injected
+ *  by the host; `undefined` = no base value either. */
+export type BaseValueProvider = (nodeId: string, prop: PropPath) => number | undefined;
+/** Supplies composition metadata (`thisComp`) for expressions. */
+export type CompInfoProvider = () => {
+  width: number;
+  height: number;
+  duration: number;
+  fps: number;
+  numLayers: number;
+};
+/** Supplies layer metadata (`thisLayer`) for expressions. */
+export type LayerInfoProvider = (nodeId: string) => {
+  name: string;
+  width: number;
+  height: number;
+};
 
 export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
@@ -34,6 +56,24 @@ export class AnimationEngine {
   private audioLevel: AudioLevelProvider = () => 0;
   /** Slider-control source — 0 until the host binds the scene rig lookup. */
   private controlProvider: ControlProvider = () => 0;
+  /** Layer name → nodeId lookup for `layer()` — unknown until the host binds. */
+  private layerResolver: LayerResolver = () => null;
+  /** Base (un-keyframed) value source for cross-layer reads — none by default. */
+  private baseValueProvider: BaseValueProvider = () => undefined;
+  /** Composition metadata provider for `thisComp`. */
+  private compInfoProvider: CompInfoProvider = () => ({
+    width: 1920,
+    height: 1080,
+    duration: 10,
+    fps: 60,
+    numLayers: 1,
+  });
+  /** Layer metadata provider for `thisLayer`. */
+  private layerInfoProvider: LayerInfoProvider = () => ({
+    name: 'Layer',
+    width: 1920,
+    height: 1080,
+  });
 
   /**
    * Bind the change sink (the app maps this onto its EventBus 'AnimationChanged'
@@ -53,6 +93,28 @@ export class AnimationEngine {
     this.controlProvider = provider;
   }
 
+  /** Bind the layer-name → nodeId lookup used by `layer()`/`layerAt()`. */
+  setLayerResolver(resolver: LayerResolver): void {
+    this.layerResolver = resolver;
+  }
+
+  /** Bind the base-value fallback used by `layer()`/`layerAt()` when the
+   *  referenced layer has no keyframe track for the prop (the host reads the
+   *  node's static Transform/component props). */
+  setBaseValueProvider(provider: BaseValueProvider): void {
+    this.baseValueProvider = provider;
+  }
+
+  /** Bind composition metadata (`thisComp`) provider. */
+  setCompInfoProvider(provider: CompInfoProvider): void {
+    this.compInfoProvider = provider;
+  }
+
+  /** Bind layer metadata (`thisLayer`) provider. */
+  setLayerInfoProvider(provider: LayerInfoProvider): void {
+    this.layerInfoProvider = provider;
+  }
+
   /** All property tracks for a node. */
   tracksFor(nodeId: string): PropertyTrack[] {
     const byProp = this.tracks.get(nodeId);
@@ -63,7 +125,11 @@ export class AnimationEngine {
     return (this.tracks.get(nodeId)?.size ?? 0) > 0;
   }
 
-  /** Add/replace a keyframe on (nodeId, prop). */
+  /**
+   * Add/replace a keyframe on (nodeId, prop). Re-keying an existing time keeps
+   * its auxiliary fields (easing/bezier/roving/spatial tangents) unless a new
+   * easing is passed — changing a value shouldn't silently reset its curve.
+   */
   setKeyframe(nodeId: string, prop: PropPath, t: number, value: number, easing?: EasingKind): void {
     let byProp = this.tracks.get(nodeId);
     if (!byProp) {
@@ -71,7 +137,11 @@ export class AnimationEngine {
       this.tracks.set(nodeId, byProp);
     }
     const track = byProp.get(prop) ?? { nodeId, prop, keyframes: [] };
-    track.keyframes = upsertKeyframe(track.keyframes, { t, value, easing });
+    const existing = track.keyframes.find((k) => k.t === t);
+    const next: Keyframe = existing
+      ? { ...existing, value, easing: easing ?? existing.easing }
+      : { t, value, easing };
+    track.keyframes = upsertKeyframe(track.keyframes, next);
     byProp.set(prop, track);
     this.notifyChange(nodeId);
   }
@@ -102,6 +172,7 @@ export class AnimationEngine {
     kf.easing = easing;
     // Seed default handles when switching to a custom bezier curve.
     if (easing === 'bezier' && !kf.bezier) kf.bezier = [0.25, 0.1, 0.25, 1];
+    if ((easing === 'autoBezier' || easing === 'continuousBezier') && !kf.bezier) kf.bezier = [0.333, 0, 0.667, 1];
     this.notifyChange(nodeId);
   }
 
@@ -111,6 +182,46 @@ export class AnimationEngine {
     if (!kf) return;
     kf.easing = 'bezier';
     kf.bezier = [...bezier] as BezierHandles;
+    this.notifyChange(nodeId);
+  }
+
+  /**
+   * Set/clear the spatial bezier tangents on the keyframe at `t` (value-space
+   * offsets — see Keyframe.si/so). `undefined` leaves a side untouched; `null`
+   * clears it. Position tracks (x + y) edited together bend the motion path.
+   */
+  setSpatialTangent(
+    nodeId: string,
+    prop: PropPath,
+    t: number,
+    tangent: { si?: number | null; so?: number | null },
+  ): void {
+    const kf = this.tracks.get(nodeId)?.get(prop)?.keyframes.find((k) => k.t === t);
+    if (!kf) return;
+    if (tangent.si !== undefined) {
+      if (tangent.si === null) delete kf.si;
+      else kf.si = tangent.si;
+    }
+    if (tangent.so !== undefined) {
+      if (tangent.so === null) delete kf.so;
+      else kf.so = tangent.so;
+    }
+    this.notifyChange(nodeId);
+  }
+
+  /** Auto-bezier the whole track (Catmull-Rom spatial tangents — smooth path). */
+  smoothSpatialTangents(nodeId: string, prop: PropPath): void {
+    const track = this.tracks.get(nodeId)?.get(prop);
+    if (!track || track.keyframes.length < 2) return;
+    track.keyframes = smoothTrackTangents(track.keyframes);
+    this.notifyChange(nodeId);
+  }
+
+  /** Remove every spatial tangent on the track (straight-line path). */
+  clearSpatialTangents(nodeId: string, prop: PropPath): void {
+    const track = this.tracks.get(nodeId)?.get(prop);
+    if (!track) return;
+    track.keyframes = clearTrackTangents(track.keyframes);
     this.notifyChange(nodeId);
   }
 
@@ -139,6 +250,8 @@ export class AnimationEngine {
       easing: patch.easing ?? kf.easing,
       bezier: patch.bezier ?? kf.bezier,
       roving: patch.roving ?? kf.roving,
+      si: kf.si,
+      so: kf.so,
     };
     track.keyframes = upsertKeyframe(track.keyframes.filter((k) => k.t !== oldT), next);
     this.notifyChange(nodeId);
@@ -154,6 +267,23 @@ export class AnimationEngine {
 
   isAnimated(nodeId: string, prop: PropPath): boolean {
     return (this.tracks.get(nodeId)?.get(prop)?.keyframes.length ?? 0) > 0;
+  }
+
+  /** All prop-paths with at least one keyframe for `nodeId`. Used by the
+   *  AE-style `U` shortcut to filter the timeline to animated properties. */
+  getAnimatedPropPaths(nodeId: string): PropPath[] {
+    const byProp = this.tracks.get(nodeId);
+    if (!byProp) return [];
+    return [...byProp.entries()]
+      .filter(([, track]) => track.keyframes.length > 0)
+      .map(([prop]) => prop);
+  }
+
+  /** All nodeIds that have at least one keyframe track (used by `UU`). */
+  getAnimatedNodeIds(): string[] {
+    return [...this.tracks.entries()]
+      .filter(([, byProp]) => [...byProp.values()].some((t) => t.keyframes.length > 0))
+      .map(([nodeId]) => nodeId);
   }
 
   // ── Atomic track capture/restore ────────────────────────────────
@@ -196,19 +326,105 @@ export class AnimationEngine {
    * Returns `undefined` when neither keyframes nor an expression apply.
    */
   sample(nodeId: string, prop: PropPath, t: number): number | undefined {
+    try {
+      return this.sampleInternal(nodeId, prop, t, new Set(), 0);
+    } catch (e) {
+      // If cycle or max depth exceeded during viewport rendering, safely fall back to track/base
+      const track = this.tracks.get(nodeId)?.get(prop);
+      return (track ? sampleTrack(track, t) : undefined) ?? this.baseValueProvider(nodeId, prop);
+    }
+  }
+
+  private sampleInternal(
+    nodeId: string,
+    prop: PropPath,
+    t: number,
+    visited: Set<string>,
+    depth: number,
+  ): number | undefined {
+    const key = `${nodeId}:${prop}`;
+    if (visited.has(key)) {
+      throw new Error(`Cycle detected across expression evaluation (${nodeId}:${prop})`);
+    }
+    if (depth > 16) {
+      throw new Error(`Maximum cross-layer evaluation depth (16) exceeded (${nodeId}:${prop})`);
+    }
+
+    visited.add(key);
+    try {
+      const track = this.tracks.get(nodeId)?.get(prop);
+      const base = track ? sampleTrack(track, t) : undefined;
+      const expr = this.expressions.get(nodeId)?.get(prop);
+      if (expr) {
+        const r = expr.run(this.exprContext(nodeId, prop, t, base, visited, depth + 1));
+        if (r.error) {
+          if (/Cycle detected/i.test(r.error) || /Maximum cross-layer/i.test(r.error)) {
+            throw new Error(r.error);
+          }
+        }
+        if (r.value !== null) return r.value;
+      }
+      return base ?? this.baseValueProvider(nodeId, prop);
+    } finally {
+      visited.delete(key);
+    }
+  }
+
+  /**
+   * Build the run context for an expression on (nodeId, prop) at time `t`.
+   * `selfAt` samples the property's own KEYFRAMES (never the expression — no
+   * recursion); `layerAt` resolves cross-layer reads with cycle/depth checks.
+   */
+  private exprContext(
+    nodeId: string,
+    prop: PropPath,
+    t: number,
+    base?: number,
+    visited = new Set<string>(),
+    depth = 0,
+  ): ExprContext {
+    const track = this.tracks.get(nodeId)?.get(prop);
+    const kfs = track?.keyframes ?? [];
+    return {
+      time: t,
+      value: base ?? 0,
+      audio: this.audioLevel(t),
+      ctrl: (name) => this.controlProvider(name, t),
+      selfAt: (tt) => (track ? sampleTrack(track, tt) : undefined) ?? 0,
+      selfSpan: kfs.length > 0 ? { start: kfs[0]!.t, end: kfs[kfs.length - 1]!.t } : null,
+      layerAt: (name, p, tt) => this.crossLayerValue(name, p, tt, visited, depth),
+      comp: this.compInfoProvider(),
+      layerInfo: this.layerInfoProvider(nodeId),
+    };
+  }
+
+  /**
+   * Resolve `layer(name, prop)` across layers with cycle detection and depth caps.
+   * Chaining expressions across layers is supported up to depth 16; if a cycle
+   * or depth overflow occurs, an explicit error is thrown.
+   */
+  private crossLayerValue(
+    name: string,
+    prop: PropPath,
+    t: number,
+    visited: Set<string>,
+    depth: number,
+  ): number | undefined {
+    const targetNodeId = this.layerResolver(name);
+    if (!targetNodeId) return undefined;
+    return this.sampleInternal(targetNodeId, prop, t, visited, depth);
+  }
+
+  /**
+   * Evaluate an arbitrary expression source against (nodeId, prop) at time
+   * `t` with the SAME context sample() uses — so editor previews see
+   * valueAtTime/layer/loopOut and cycle errors exactly as playback will.
+   */
+  previewExpression(nodeId: string, prop: PropPath, src: string, t: number): ExprResult {
     const track = this.tracks.get(nodeId)?.get(prop);
     const base = track ? sampleTrack(track, t) : undefined;
-    const expr = this.expressions.get(nodeId)?.get(prop);
-    if (expr) {
-      const r = expr.run({
-        time: t,
-        value: base ?? 0,
-        audio: this.audioLevel(t),
-        ctrl: (name) => this.controlProvider(name, t),
-      });
-      if (r.value !== null) return r.value;
-    }
-    return base;
+    const visited = new Set<string>([`${nodeId}:${prop}`]);
+    return compileExpression(src).run(this.exprContext(nodeId, prop, t, base, visited, 1));
   }
 
   /** Evaluate a single node's animated/expressed properties at time `t`.

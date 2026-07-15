@@ -15,16 +15,17 @@ export interface ColorPickerProps {
   onChange: (hex: string) => void;
   className?: string;
   'aria-label'?: string;
+  compact?: boolean;
 }
 
-export function ColorPicker({ value, onChange, className, 'aria-label': ariaLabel }: ColorPickerProps): JSX.Element {
+export function ColorPicker({ value, onChange, className, 'aria-label': ariaLabel, compact = false }: ColorPickerProps): JSX.Element {
   const color = value && /^#/.test(value) ? value : `#${value || '000000'}`;
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button type="button" className={cn(styles.trigger, className)} aria-label={ariaLabel ?? 'Pick a color'}>
-          <span className={styles.swatch} style={{ background: color }} />
-          <span className={styles.hex}>{color.toUpperCase()}</span>
+        <button type="button" className={cn(compact ? styles.compactTrigger : styles.trigger, className)} aria-label={ariaLabel ?? 'Pick a color'}>
+          <span className={cn(styles.swatch, compact && styles.compactSwatch)} style={{ background: color }} />
+          {!compact && <span className={styles.hex}>{color.toUpperCase()}</span>}
         </button>
       </Popover.Trigger>
       <Popover.Portal>

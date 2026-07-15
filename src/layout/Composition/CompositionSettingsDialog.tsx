@@ -8,7 +8,7 @@
  * fps/duration, into the TimelineController so the time domain stays consistent.
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
@@ -21,12 +21,41 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { getPasteboardColor, setPasteboardColor } from '@core/theme/pasteboard';
 import styles from './CompositionSettingsDialog.module.css';
 
+interface ResolutionPreset {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+}
+
+const RESOLUTION_PRESETS: ResolutionPreset[] = [
+  { id: '16_9', name: '16:9 Landscape (1920×1080) - YouTube', width: 1920, height: 1080 },
+  { id: '9_16', name: '9:16 Portrait (1080×1920) - Reels/TikTok', width: 1080, height: 1920 },
+  { id: '1_1', name: '1:1 Square (1080×1080) - Post', width: 1080, height: 1080 },
+  { id: '4_5', name: '4:5 Vertical (1080×1350) - Feed', width: 1080, height: 1350 },
+  { id: '4_3', name: '4:3 Classic (1440×1080) - Retro TV', width: 1440, height: 1080 },
+  { id: '21_9', name: '21:9 UltraWide (2560×1080) - Cinematic', width: 2560, height: 1080 },
+];
+
 /** Common frame rates offered as quick chips. */
 const FPS_PRESETS = [24, 25, 30, 50, 60] as const;
 
 function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   const s = useCompositionStore();
   const [pasteboard, setPasteboard] = useState<string>(() => getPasteboardColor());
+
+  const activePreset = useMemo(() => {
+    const match = RESOLUTION_PRESETS.find((p) => p.width === s.width && p.height === s.height);
+    return match ? match.id : 'custom';
+  }, [s.width, s.height]);
+
+  const handlePresetChange = (presetId: string): void => {
+    if (presetId === 'custom') return;
+    const match = RESOLUTION_PRESETS.find((p) => p.id === presetId);
+    if (match) {
+      s.update({ width: match.width, height: match.height });
+    }
+  };
 
   const setName = (name: string): void => s.update({ name });
   const setWidth = (width: number): void => s.update({ width });
@@ -54,7 +83,29 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
 
       {/* Size */}
       <div className={styles.section}>
-        <div className={styles.label}>Size</div>
+        <div className={styles.label}>Size & Preset</div>
+        <div style={{ marginBottom: '8px' }}>
+          <select
+            value={activePreset}
+            onChange={(e) => handlePresetChange(e.target.value)}
+            style={{
+              width: '100%',
+              background: '#1c1c1f',
+              border: '1px solid #333',
+              color: '#fff',
+              fontSize: 12,
+              padding: '6px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            <option value="custom">Custom Size</option>
+            {RESOLUTION_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
         <div className={styles.row}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Width</span>

@@ -35,6 +35,14 @@ export const Color = {
     };
   },
 
+  toHex(c: Color): string {
+    const r = Math.round(Math.max(0, Math.min(1, c.r)) * 255);
+    const g = Math.round(Math.max(0, Math.min(1, c.g)) * 255);
+    const b = Math.round(Math.max(0, Math.min(1, c.b)) * 255);
+    const a = Math.round(Math.max(0, Math.min(1, c.a)) * 255);
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}${a.toString(16).padStart(2, '0')}`;
+  },
+
   toArray(c: Color): [number, number, number, number] {
     return [c.r, c.g, c.b, c.a];
   },

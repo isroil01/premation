@@ -22,7 +22,7 @@ const CHOICES: ReadonlySet<string> = new Set(['canvas2d', 'webgl2', 'webgpu', 'n
 /** The configured backend choice (defaults to canvas2d; tolerant of no settings). */
 export function resolveBackendChoice(): BackendChoice {
   try {
-    const v = getSettingsManager().get<string>(RENDER_BACKEND_SETTING, 'auto');
+    const v = getSettingsManager().get<string>(RENDER_BACKEND_SETTING, 'canvas2d');
     if (v === 'auto') {
       if (typeof navigator !== 'undefined' && 'gpu' in navigator) return 'webgpu';
       if (typeof window !== 'undefined' && 'WebGL2RenderingContext' in window) return 'webgl2';

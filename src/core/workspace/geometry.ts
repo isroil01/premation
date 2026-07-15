@@ -10,7 +10,6 @@
 import type { SceneNode } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SIZE } from '@core/rendering/buildSnapshot';
-import type { LayerKind } from '@core/rendering/RenderBackend';
 import { Mat, Rect, type Vec2, type Mat2D } from '@motion/workspace';
 
 /** The workspace's plain rectangle value type. */
@@ -28,9 +27,9 @@ export interface NodeGeometry {
   ellipse: boolean;
 }
 
-/** True for kinds that actually draw (groups have no geometry). */
-export function isDrawableKind(kind: string): kind is LayerKind {
-  return kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video';
+/** True for kinds that actually draw or are selectable in viewport (groups have no geometry). */
+export function isDrawableKind(kind: string): boolean {
+  return kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video' || kind === 'light' || kind === 'camera';
 }
 
 /** Read a node's on-canvas geometry from its components (base/authoring props). */
@@ -44,6 +43,9 @@ export function readGeometry(node: SceneNode): NodeGeometry | null {
   let scaleX: number | undefined;
   let scaleY: number | undefined;
   let scale: number | undefined;
+  let width: number | undefined;
+  let height: number | undefined;
+  let shapeType: string | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
     if (typeof p.x === 'number') x = p.x;
@@ -52,18 +54,27 @@ export function readGeometry(node: SceneNode): NodeGeometry | null {
     if (typeof p.scaleX === 'number') scaleX = p.scaleX;
     if (typeof p.scaleY === 'number') scaleY = p.scaleY;
     if (typeof p.scale === 'number') scale = p.scale;
+    if (typeof p.width === 'number') width = p.width;
+    if (typeof p.height === 'number') height = p.height;
+    if (typeof p.shapeType === 'string') shapeType = p.shapeType;
   }
-  const size = SIZE[kind];
+  const size = kind === 'light' ? { w: 100, h: 100 }
+             : kind === 'camera' ? { w: 80, h: 80 }
+             : (SIZE as any)[kind] ?? { w: 100, h: 100 };
   const name = (node.name ?? '').toLowerCase();
   return {
     x: x ?? node.transform.position.x,
     y: y ?? node.transform.position.y,
     rotationDeg: rotation ?? node.transform.rotation,
-    width: size.w,
-    height: size.h,
+    // Real authored size when present (drag-created shapes, media) — the fixed
+    // per-kind SIZE is only the fallback. Otherwise hit boxes float off the
+    // shape (a 100×100 rect carried a 220×220 selection box).
+    width: width ?? size.w,
+    height: height ?? size.h,
     scaleX: scaleX ?? scale ?? 1,
     scaleY: scaleY ?? scale ?? 1,
-    ellipse: /circle|ellip|dot|orb/.test(name),
+    // Explicit shapeType wins; the name regex only covers legacy nodes.
+    ellipse: shapeType ? shapeType === 'ellipse' : /circle|ellip|dot|orb/.test(name),
   };
 }
 

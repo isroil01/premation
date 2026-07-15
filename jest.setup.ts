@@ -16,3 +16,14 @@ if (typeof globalThis.TextEncoder === 'undefined') {
 if (typeof globalThis.TextDecoder === 'undefined') {
   globalThis.TextDecoder = NodeTextDecoder as unknown as typeof globalThis.TextDecoder;
 }
+
+jest.mock('@core/api/env', () => ({
+  IS_ELECTRON: false,
+  BACKEND_ORIGIN: 'http://localhost:4000',
+  API_URL: '/api',
+}));
+jest.mock('./src/core/api/env', () => ({
+  IS_ELECTRON: false,
+  BACKEND_ORIGIN: 'http://localhost:4000',
+  API_URL: '/api',
+}));

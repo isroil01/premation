@@ -174,3 +174,14 @@ select:focus-visible {
   outline: none !important;
   box-shadow: none !important;
 }
+
+/* Reduce motion (Preferences → Reduce motion): kill UI transitions/animations.
+   Canvas playback is unaffected — this only calms the chrome. */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}

@@ -3,7 +3,7 @@
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-3);
-  width: min(560px, 60vw);
+  position: relative;
 }
 
 .spark {
@@ -18,12 +18,13 @@
   align-items: center;
   gap: var(--space-3);
   height: 38px;
-  padding: 0 var(--space-3) 0 var(--space-5);
-  border-radius: var(--radius-full);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  border-radius: 20px;
   border: 1px solid var(--color-border-strong);
   /* Solid floating chrome — flat by doctrine, no glass blur. */
   background: var(--color-surface-raised);
   box-shadow: var(--shadow-lg);
+  user-select: none;
 }
 
 .input {
@@ -63,15 +64,100 @@
   background: var(--color-primary-hover);
 }
 
+/* ── Drag and Grip handles ─────────────────────────────────────── */
+.barDragHandle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  opacity: 0.4;
+  cursor: grab;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+  margin-left: -6px;
+  padding: 4px;
+}
+
+.barDragHandle:hover {
+  opacity: 0.9;
+}
+
+.dragIndicator {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  opacity: 0.5;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.panelHeader:hover .dragIndicator {
+  opacity: 0.9;
+}
+
+/* ── Resize handles ────────────────────────────────────────────── */
+.resizeL,
+.resizeR,
+.resizeT,
+.resizeTL,
+.resizeTR {
+  position: absolute;
+  z-index: 100;
+}
+
+.resizeL {
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.resizeR {
+  right: -4px;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.resizeT {
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.resizeTL {
+  left: -4px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  cursor: nwse-resize;
+}
+
+.resizeTR {
+  right: -4px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  cursor: nesw-resize;
+}
+
 /* ── Expanded chat panel ───────────────────────────────────────── */
 .panel {
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-lg);
+  border-radius: 20px;
   border: 1px solid var(--color-border);
   background: var(--color-panel);
   box-shadow: var(--shadow-xl);
   overflow: hidden;
+  position: relative;
 }
 
 .panelHeader {
@@ -79,9 +165,16 @@
   align-items: center;
   gap: var(--space-3);
   height: 40px;
-  padding: 0 var(--space-3) 0 var(--space-5);
+  padding: 8px var(--space-3) 0 var(--space-5);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-panel-header);
+  position: relative;
+  cursor: grab;
+  user-select: none;
+}
+
+.panelHeader:active {
+  cursor: grabbing;
 }
 
 .title {
@@ -107,10 +200,12 @@
 }
 
 .messages {
-  min-height: 160px;
-  max-height: 40vh;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
 }
 
 .empty {
@@ -120,3 +215,98 @@
   text-align: center;
   margin: auto;
 }
+
+/* Chat bubble styling */
+.messageWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.userMessage {
+  align-self: flex-end;
+  background: var(--color-surface-2, #2c2c2c);
+  color: var(--color-text-primary, #ffffff);
+  border-radius: 12px 12px 0 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: var(--line-height-normal);
+  max-width: 85%;
+  word-break: break-word;
+  margin: 4px 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.assistantMessage {
+  align-self: flex-start;
+  background: rgba(41, 136, 255, 0.08);
+  border: 1px solid rgba(41, 136, 255, 0.15);
+  color: var(--color-text-primary, #ffffff);
+  border-radius: 12px 12px 12px 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: var(--line-height-normal);
+  max-width: 85%;
+  word-break: break-word;
+  margin: 4px 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.thinkingMessage {
+  align-self: flex-start;
+  color: var(--color-text-muted, #7e7e7e);
+  font-size: 12px;
+  font-style: italic;
+  margin-top: 4px;
+}
+
+/* ── Minimized Bubble and Minimize Button ──────────────────────── */
+.bubble {
+  width: 44px;
+  height: 44px;
+  border-radius: 50% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-xl);
+  cursor: grab;
+  color: var(--color-primary);
+  transition: transform 0.2s, background-color 0.2s, box-shadow 0.2s;
+  user-select: none;
+  padding: 0;
+}
+
+.bubble:hover {
+  background: var(--color-hover);
+  box-shadow: 0 0 12px rgba(41, 136, 255, 0.4);
+  color: var(--color-primary-hover);
+}
+
+.bubble:active {
+  cursor: grabbing;
+  transform: scale(0.95);
+}
+
+.minimize {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.minimize:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+

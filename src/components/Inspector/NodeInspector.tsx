@@ -1,3 +1,4 @@
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { InspectorRow } from './Inspector';
 import { propertyRegistry } from '@core/inspector/PropertyRegistry';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -5,7 +6,9 @@ import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { getRemappedTime } from '@core/timeline/TimelineController';
 import { useSceneRevision } from '@stores/sceneStore';
+import { Color } from '@motion/renderer';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import styles from './NodeInspector.module.css';
@@ -32,14 +35,31 @@ function PropertyRow({
   propName: string;
 }): JSX.Element {
   const [baseVal, setBaseVal] = useNodeComponentProp(defaultSceneGraph, nodeId, componentId, propName);
-  const time = useActiveWorkspace()?.time ?? 0;
+  const rawTime = useActiveWorkspace()?.time ?? 0;
+  const time = getRemappedTime(nodeId, rawTime);
   // Subscribe to the revision so the row re-renders on keyframe/scene changes.
   useSceneRevision((s) => s.rev);
 
   const Editor = propertyRegistry.get(componentType, propName);
   const numeric = typeof baseVal === 'number';
-  const animated = numeric && defaultAnimation.isAnimated(nodeId, propName);
-  const displayVal = animated ? defaultAnimation.sample(nodeId, propName, time) ?? baseVal : baseVal;
+  const isColor = typeof baseVal === 'string' && baseVal.startsWith('#');
+  
+  let animated = false;
+  let displayVal = baseVal;
+
+  if (numeric) {
+    animated = defaultAnimation.isAnimated(nodeId, propName);
+    displayVal = animated ? defaultAnimation.sample(nodeId, propName, time) ?? baseVal : baseVal;
+  } else if (isColor) {
+    animated = defaultAnimation.isAnimated(nodeId, `${propName}_r`);
+    if (animated) {
+      const r = defaultAnimation.sample(nodeId, `${propName}_r`, time) ?? 0;
+      const g = defaultAnimation.sample(nodeId, `${propName}_g`, time) ?? 0;
+      const b = defaultAnimation.sample(nodeId, `${propName}_b`, time) ?? 0;
+      const a = defaultAnimation.sample(nodeId, `${propName}_a`, time) ?? 1;
+      displayVal = Color.toHex({ r, g, b, a });
+    }
+  }
 
   const onChange = (v: unknown): void => {
     if (animated && typeof v === 'number') {
@@ -47,7 +67,19 @@ function PropertyRow({
       // (node, prop, time); the merge key collapses them into one undo step.
       runAnimEdit(
         `Set ${propName}`,
-        () => defaultAnimation.setKeyframe(nodeId, propName, time, v),
+        () => defaultAnimation.setKeyframe(nodeId, propName, getTimelineController().toLayerTime(nodeId, time), v),
+        `set:${nodeId}:${propName}:${time}`,
+      );
+    } else if (animated && isColor && typeof v === 'string') {
+      const c = Color.fromHex(v);
+      runAnimEdit(
+        `Set ${propName}`,
+        () => {
+          defaultAnimation.setKeyframe(nodeId, `${propName}_r`, getTimelineController().toLayerTime(nodeId, time), c.r);
+          defaultAnimation.setKeyframe(nodeId, `${propName}_g`, getTimelineController().toLayerTime(nodeId, time), c.g);
+          defaultAnimation.setKeyframe(nodeId, `${propName}_b`, getTimelineController().toLayerTime(nodeId, time), c.b);
+          defaultAnimation.setKeyframe(nodeId, `${propName}_a`, getTimelineController().toLayerTime(nodeId, time), c.a);
+        },
         `set:${nodeId}:${propName}:${time}`,
       );
     } else {
@@ -57,20 +89,37 @@ function PropertyRow({
 
   const toggleAnim = (): void => {
     if (animated) {
-      runAnimEdit(`Remove ${propName} animation`, () =>
-        defaultAnimation.removeTrack(nodeId, propName),
-      );
+      if (numeric) {
+        runAnimEdit(`Remove ${propName} animation`, () =>
+          defaultAnimation.removeTrack(nodeId, propName),
+        );
+      } else if (isColor) {
+        runAnimEdit(`Remove ${propName} animation`, () => {
+          defaultAnimation.removeTrack(nodeId, `${propName}_r`);
+          defaultAnimation.removeTrack(nodeId, `${propName}_g`);
+          defaultAnimation.removeTrack(nodeId, `${propName}_b`);
+          defaultAnimation.removeTrack(nodeId, `${propName}_a`);
+        });
+      }
     } else if (numeric) {
       runAnimEdit(`Animate ${propName}`, () =>
-        defaultAnimation.setKeyframe(nodeId, propName, time, Number(baseVal)),
+        defaultAnimation.setKeyframe(nodeId, propName, getTimelineController().toLayerTime(nodeId, time), Number(baseVal)),
       );
+    } else if (isColor) {
+      const c = Color.fromHex(String(baseVal));
+      runAnimEdit(`Animate ${propName}`, () => {
+        defaultAnimation.setKeyframe(nodeId, `${propName}_r`, getTimelineController().toLayerTime(nodeId, time), c.r);
+        defaultAnimation.setKeyframe(nodeId, `${propName}_g`, getTimelineController().toLayerTime(nodeId, time), c.g);
+        defaultAnimation.setKeyframe(nodeId, `${propName}_b`, getTimelineController().toLayerTime(nodeId, time), c.b);
+        defaultAnimation.setKeyframe(nodeId, `${propName}_a`, getTimelineController().toLayerTime(nodeId, time), c.a);
+      });
     }
   };
 
   return (
     <InspectorRow label={propName} align="center">
       <div className={styles.control}>
-        {numeric ? (
+        {numeric || isColor ? (
           <button
             type="button"
             className={cn(styles.stopwatch, animated && styles.stopwatchOn)}
@@ -105,7 +154,8 @@ export function NodeInspector({ nodeId }: { nodeId: string }): JSX.Element {
         // (fills, mask paths, effect stacks…) have dedicated editors and would
         // otherwise render as "[object Object]".
         const props = Object.keys(comp.props ?? {}).filter(
-          (p) => !p.startsWith('__') && (typeof comp.props[p] !== 'object' || comp.props[p] === null),
+          (p) => !p.startsWith('__') && (typeof comp.props[p] !== 'object' || comp.props[p] === null) &&
+                 !(comp.type === 'Transform' && ['x', 'y', 'z', 'rotation', 'rotationX', 'rotationY', 'scaleX', 'scaleY', 'width', 'height', 'anchorX', 'anchorY'].includes(p)),
         );
         if (props.length === 0) return null;
         return (

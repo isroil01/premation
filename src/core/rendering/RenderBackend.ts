@@ -11,7 +11,7 @@
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import type { Effect } from '@core/effects/effects';
 import type { LayerMask } from '@core/effects/mask';
-import type { MatteType } from '@core/effects/matte';
+import type { MatteProp } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
@@ -35,8 +35,8 @@ export interface RenderLayer {
   blend?: LayerBlendMode;
   /** Vector mask clipping the layer (local space). Omitted when unmasked. */
   mask?: LayerMask;
-  /** Track matte: the layer above defines this layer's alpha. */
-  matte?: MatteType;
+  /** Track matte: the layer above (or explicit sourceId) defines this layer's alpha. */
+  matte?: MatteProp;
   /** True when the layer above consumes this layer as its matte source. */
   isMatteSource?: boolean;
   /** Adjustment layer: its `filter` applies to everything beneath, and it draws
@@ -49,6 +49,8 @@ export interface RenderLayer {
   /** Point light: a radial glow (colour, intensity 0..100, radius px) drawn at
    *  x,y with a screen blend to brighten the layers beneath. */
   light?: { color: string; intensity: number; radius: number };
+  /** Source playhead time in seconds (for video/audio/precomps with timeRemap or stretch). Defaults to current composition time if undefined. */
+  sourceTime?: number;
   /** Sub-frame transform samples for motion blur (accumulated by the backend).
    *  Present only when motion blur is on and the layer actually moves. */
   motionSamples?: ReadonlyArray<MotionSample>;
@@ -80,11 +82,17 @@ export interface RenderLayer {
   fillPaint?: FillPaint;
   /** Outline stroke over the layer's primitive (Canvas2D only for now). */
   stroke?: Stroke;
+  /** Layer color (e.g. for label tagging in the UI). */
+  color?: string;
   visible: boolean;
   /** For shapes. */
   primitive?: 'rect' | 'ellipse' | 'path';
+  cornerRadius?: number;
   /** Vector path points in LOCAL space (only present if primitive === 'path') */
   pathPoints?: ReadonlyArray<BezierPoint>;
+  /** True for open strokes (freehand pencil / line) that must NOT be closed or
+   *  filled — the backend draws them as an open polyline instead of a loop. */
+  pathOpen?: boolean;
   /** Trim-path visible arcs [lo,hi] (0..1 of the outline length). When present
    *  the backend strokes only these portions of the shape outline (MG-C). */
   trim?: ReadonlyArray<readonly [number, number]>;

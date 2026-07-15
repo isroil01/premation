@@ -30,8 +30,15 @@ export function useNodeComponentProp(
       if (payload.propName !== propName) return;
       setValue(payload.value);
     };
-    const sub = getEventBus().on('NodeUpdated', handler);
-    return () => { sub.dispose(); };
+    const onSceneChanged = () => {
+      setValue(read());
+    };
+    const sub1 = getEventBus().on('NodeUpdated', handler);
+    const sub2 = getEventBus().on('SceneGraphChanged', onSceneChanged);
+    return () => {
+      sub1.dispose();
+      sub2.dispose();
+    };
   }, [nodeId, componentId, propName, read]);
 
   const setProp = useCallback((v: unknown) => {

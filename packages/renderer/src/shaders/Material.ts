@@ -67,6 +67,47 @@ export const BLUR_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+export const GRADIENT_RAMP_MATERIAL: MaterialDescriptor = {
+  shader: 'gradient-ramp',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+export const FRACTAL_NOISE_MATERIAL: MaterialDescriptor = {
+  shader: 'fractal-noise',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+export const DISPLACEMENT_MAP_MATERIAL: MaterialDescriptor = {
+  shader: 'displacement-map',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+export const MOTION_TILE_MATERIAL: MaterialDescriptor = {
+  shader: 'motion-tile',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 export class MaterialSystem {
   constructor(
     private readonly resources: ResourceManager,

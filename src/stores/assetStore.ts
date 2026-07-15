@@ -75,6 +75,30 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           img.onerror = () => resolve();
           img.src = src;
         });
+      } else if (type === 'audio') {
+        await new Promise<void>((resolve) => {
+          const audio = new Audio();
+          audio.onloadedmetadata = () => {
+            asset.metadata = { duration: audio.duration };
+            resolve();
+          };
+          audio.onerror = () => resolve();
+          audio.src = src;
+        });
+      } else if (type === 'video') {
+        await new Promise<void>((resolve) => {
+          const video = document.createElement('video');
+          video.onloadedmetadata = () => {
+            asset.metadata = {
+              width: video.videoWidth,
+              height: video.videoHeight,
+              duration: video.duration,
+            };
+            resolve();
+          };
+          video.onerror = () => resolve();
+          video.src = src;
+        });
       }
 
       // Save to IndexedDB for local persistence

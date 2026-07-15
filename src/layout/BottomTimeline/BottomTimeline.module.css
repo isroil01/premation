@@ -5,8 +5,8 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: #1a1a1a;
-  border-top: 1px solid #252525;
+  background: var(--color-surface-1);
+  border-top: 1px solid var(--color-border-strong);
   overflow: hidden;
 }
 
@@ -17,8 +17,8 @@
   gap: 6px;
   height: 38px;
   padding: 0 8px;
-  background: #1e1e1e;
-  border-bottom: 1px solid #272727;
+  background: var(--color-surface-2);
+  border-bottom: 1px solid var(--color-border);
   flex: none;
   user-select: none;
 }
@@ -29,21 +29,82 @@
   align-items: baseline;
   gap: 4px;
   padding: 2px 10px 2px 6px;
-  border-right: 1px solid #2a2a2a;
+  border-right: 1px solid var(--color-border);
   font-family: 'JetBrains Mono', 'Fira Mono', 'Courier New', monospace;
   font-size: 15px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.08em;
-  color: #d4d4d4;
+  color: var(--color-text-primary);
   cursor: default;
   white-space: nowrap;
 }
 
 .timecodeTotal {
   font-size: 10px;
-  color: #484848;
+  color: var(--color-text-muted);
   letter-spacing: 0.04em;
+}
+
+/* ── Timeline Search/Filter Bar ────────────────────────────────────── */
+.searchContainer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-field-border);
+  border-radius: 4px;
+  padding: 0 8px;
+  height: 24px;
+  width: 220px;
+  margin: 0 4px;
+  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
+}
+
+.searchContainer:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+  background: var(--color-surface-2);
+}
+
+.searchIcon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.searchInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs, 11px);
+  padding: 0;
+  width: 100%;
+}
+
+.searchInput::placeholder {
+  color: var(--color-text-muted);
+}
+
+.searchClear {
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 50%;
+  margin-right: -4px;
+}
+
+.searchClear:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
 }
 
 /* ── Transport controls ────────────────────────────────────────────── */
@@ -58,8 +119,8 @@ button.play {
   border-radius: 50%;
   width: 30px;
   height: 30px;
-  background: #2988ff;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
   border: none;
   display: grid;
   place-items: center;
@@ -67,7 +128,9 @@ button.play {
   transition: background 0.12s;
   flex-shrink: 0;
 }
-button.play:hover { background: #3a98ff; }
+button.play:hover {
+  background: var(--color-primary-hover);
+}
 
 /* ── Loop + quality toggles ────────────────────────────────────────── */
 .toggleGroup {
@@ -75,8 +138,8 @@ button.play:hover { background: #3a98ff; }
   align-items: center;
   gap: 2px;
   padding: 0 6px;
-  border-left: 1px solid #2a2a2a;
-  border-right: 1px solid #2a2a2a;
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
 }
 
 .toggleBtn {
@@ -87,7 +150,7 @@ button.play:hover { background: #3a98ff; }
   padding: 0 7px;
   background: transparent;
   border: 1px solid transparent;
-  color: #666;
+  color: var(--color-text-tertiary);
   font-size: 10px;
   font-family: 'Inter', system-ui, sans-serif;
   letter-spacing: 0.04em;
@@ -97,15 +160,15 @@ button.play:hover { background: #3a98ff; }
   white-space: nowrap;
 }
 .toggleBtn:hover {
-  color: #c0c0c0;
-  background: #2a2a2a;
-  border-color: #363636;
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
 }
 .toggleBtnActive {
   composes: toggleBtn;
-  color: #2988ff;
-  background: rgba(41, 136, 255, 0.12);
-  border-color: rgba(41, 136, 255, 0.3);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 /* ── Graph Editor toggle ──────────────────────────────────────────── */
@@ -118,7 +181,7 @@ button.play:hover { background: #3a98ff; }
   padding: 0 9px;
   border: 1px solid transparent;
   background: transparent;
-  color: #777;
+  color: var(--color-text-tertiary);
   font-size: 11px;
   font-family: 'Inter', system-ui, sans-serif;
   cursor: pointer;
@@ -127,19 +190,19 @@ button.play:hover { background: #3a98ff; }
 }
 
 .graphBtn:hover {
-  background: #2a2a2a;
-  color: #c0c0c0;
-  border-color: #363636;
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
 }
 
 .graphBtnActive {
-  background: rgba(41, 136, 255, 0.12);
-  border-color: rgba(41, 136, 255, 0.35);
-  color: #2988ff;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  color: var(--color-primary);
 }
 
 .graphBtnActive:hover {
-  background: rgba(41, 136, 255, 0.2);
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
 }
 
 /* ── Zoom cluster ─────────────────────────────────────────────────── */
@@ -159,18 +222,21 @@ button.play:hover { background: #3a98ff; }
   font-family: 'Inter', system-ui, monospace;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: #777;
+  color: var(--color-text-tertiary);
   cursor: pointer;
   text-align: center;
   transition: background 0.1s, color 0.1s, border-color 0.1s;
   letter-spacing: 0.02em;
 }
 .zoomLabel:hover:not(:disabled) {
-  background: #2a2a2a;
-  color: #c0c0c0;
-  border-color: #363636;
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
 }
-.zoomLabel:disabled { opacity: 0.4; cursor: default; }
+.zoomLabel:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 /* Row-height cycle */
 .rowHeightBtn {
@@ -181,16 +247,16 @@ button.play:hover { background: #3a98ff; }
   padding: 0 6px;
   border: 1px solid transparent;
   background: transparent;
-  color: #666;
+  color: var(--color-text-tertiary);
   cursor: pointer;
   font-size: 11px;
   font-family: 'Inter', system-ui, sans-serif;
   transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 .rowHeightBtn:hover {
-  background: #2a2a2a;
-  color: #c0c0c0;
-  border-color: #363636;
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
 }
 
 .rowHeightKey {
@@ -205,7 +271,7 @@ button.play:hover { background: #3a98ff; }
   width: 1px;
   height: 14px;
   margin: 0 3px;
-  background: #2c2c2c;
+  background: var(--color-border);
   flex-shrink: 0;
 }
 
@@ -234,9 +300,10 @@ button.play:hover { background: #3a98ff; }
   align-items: center;
   gap: 1px;
   padding: 0 6px;
-  border-left: 1px solid #2a2a2a;
-  border-right: 1px solid #2a2a2a;
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
 }
+
 .interpBtn {
   display: inline-flex;
   align-items: center;
@@ -245,7 +312,7 @@ button.play:hover { background: #3a98ff; }
   padding: 0 8px;
   background: transparent;
   border: 1px solid transparent;
-  color: #666;
+  color: var(--color-text-tertiary);
   font-size: 10px;
   font-family: 'JetBrains Mono', monospace;
   cursor: pointer;
@@ -254,9 +321,9 @@ button.play:hover { background: #3a98ff; }
   letter-spacing: 0.02em;
 }
 .interpBtn:hover {
-  color: #c0c0c0;
-  background: #2a2a2a;
-  border-color: #363636;
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
 }
 
 /* ── Timeline Tabs ──────────────────────────────────────────────── */
@@ -266,8 +333,8 @@ button.play:hover { background: #3a98ff; }
   gap: 4px;
   height: 28px;
   padding: 0 12px;
-  background: #14171e; /* Surface 1 matching DESIGN.md */
-  border-bottom: 1px solid #1e222c; /* Surface 2 border */
+  background: var(--color-surface-0);
+  border-bottom: 1px solid var(--color-border);
   flex: none;
   overflow-x: auto;
   scrollbar-width: none;
@@ -285,7 +352,7 @@ button.play:hover { background: #3a98ff; }
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  color: #707b8d; /* Ink Muted */
+  color: var(--color-text-secondary);
   font-size: 11px;
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
   font-weight: 500;
@@ -294,17 +361,118 @@ button.play:hover { background: #3a98ff; }
   white-space: nowrap;
 }
 .tab:hover {
-  color: #c6cdd9; /* Ink Secondary */
+  color: var(--color-text-primary);
 }
 
 .tabActive {
-  color: #3170e6; /* Signal Blue */
-  border-bottom-color: #3170e6;
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
   font-weight: 600;
 }
 
 .tabChevron {
-  color: #707b8d;
+  color: var(--color-text-secondary);
   font-size: 10px;
   flex-shrink: 0;
+}
+
+.tabClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 2px;
+  border-radius: 3px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tabClose:hover {
+  color: var(--color-text-primary);
+  background: var(--color-active);
+}
+
+/* ── Timeline grip / reposition button ────────────────────────── */
+.tlGripWrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-right: 2px;
+}
+
+.tlGripBtn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.tlGripBtn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-secondary);
+}
+
+.tlGripBtnActive {
+  background: var(--color-active) !important;
+  color: var(--color-primary) !important;
+}
+
+.tlMoveMenu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 1360;
+  min-width: 180px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  padding: 4px;
+  list-style: none;
+  margin: 0;
+  box-shadow:
+    0 4px 16px var(--color-black-a40),
+    0 1px 4px var(--color-black-a24);
+}
+
+.tlMoveMenuLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 8px 6px;
+  pointer-events: none;
+}
+
+.tlMoveMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+  white-space: nowrap;
+}
+
+.tlMoveMenuItem:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
 }

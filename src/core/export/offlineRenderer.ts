@@ -14,7 +14,9 @@
  */
 
 import { createRenderBackend, type BackendChoice } from '@core/rendering/createRenderBackend';
-import { buildSnapshot, type SnapshotComp } from '@core/rendering/buildSnapshot';
+import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, type SnapshotComp } from '@core/rendering/buildSnapshot';
+import type { MotionBlurConfig } from '@core/effects/motionBlur';
+import type { RenderView } from '@core/rendering/RenderBackend';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 
@@ -30,6 +32,24 @@ export interface OfflineRenderParams {
   endFrame?: number;
   /** Preferred rendering backend choice (defaults to resolveBackendChoice()). */
   backendChoice?: BackendChoice;
+  /** Motion blur (threaded from the viewport settings so export matches). */
+  motionBlur?: MotionBlurConfig;
+}
+
+/**
+ * Exact fit-contain of the comp into the output frame — the backend's implicit
+ * fallback fit insets by 8% (preview "float" framing), which exported every
+ * frame with a border. Pure, exported for tests.
+ */
+export function exportView(
+  outW: number,
+  outH: number,
+  comp?: SnapshotComp,
+): RenderView {
+  const cw = comp?.width ?? COMP_WIDTH;
+  const ch = comp?.height ?? COMP_HEIGHT;
+  const scale = Math.min(outW / cw, outH / ch);
+  return { scale, offsetX: (outW - cw * scale) / 2, offsetY: (outH - ch * scale) / 2 };
 }
 
 // ── Pure frame timing (deterministic, tested) ────────────────────────
@@ -94,7 +114,16 @@ export async function renderOffline(
       if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
       const t = frameTimeAt(i, params.fps);
       backend.renderFrame(
-        buildSnapshot(defaultSceneGraph, defaultAnimation, t, undefined, undefined, undefined, undefined, params.comp),
+        buildSnapshot(
+          defaultSceneGraph,
+          defaultAnimation,
+          t,
+          undefined,
+          undefined,
+          exportView(params.width, params.height, params.comp), // 1:1 comp→frame (no preview inset)
+          params.motionBlur,
+          params.comp,
+        ),
       );
       await onFrame(canvas, i - start, total);
       // Yield so progress paints and cancellation can interrupt.

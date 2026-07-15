@@ -1,43 +1,49 @@
 .section {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 12px;
-  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .title {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.4);
-  margin: 0 0 8px 0;
-  letter-spacing: 0.5px;
+  color: var(--color-text-tertiary);
+  margin: 0 0 var(--space-3) 0;
+  letter-spacing: var(--letter-spacing-uppercase, 0.5px);
 }
 
 .control {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   width: 100%;
 }
 
 .stopwatch {
   background: none;
-  border: none;
-  padding: 2px;
-  color: rgba(255, 255, 255, 0.3);
+  border: 1px solid transparent;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--color-text-tertiary);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
 }
 
 .stopwatch:hover {
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-primary);
+  background: var(--color-hover, rgba(255, 255, 255, 0.04));
+  border-color: var(--color-field-border, rgba(255, 255, 255, 0.08));
 }
 
 .stopwatchOn {
-  color: #38bdf8;
+  color: var(--color-primary, #2988ff) !important;
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15)) !important;
+  border-color: rgba(41, 136, 255, 0.3) !important;
 }
 
 .stopwatchSpacer {
@@ -46,4 +52,135 @@
 
 .field {
   flex: 1;
+}
+
+/* Shared inspector form controls — tokenized, comfortable padding so inputs
+   don't crowd each other. Used by the select/text/color inputs across the
+   Appearance / Character / Media sections (replacing inline hardcoded hex). */
+.select,
+.textInput {
+  width: 100%;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-field-border, var(--color-border));
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.textInput { cursor: text; }
+
+.select:hover,
+.textInput:hover {
+  border-color: var(--color-border-strong);
+}
+.select:focus-visible,
+.textInput:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.colorInput {
+  width: 100%;
+  height: 24px;
+  border: 1px solid var(--color-field-border, var(--color-border));
+  border-radius: 4px;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* Text/style preset chips — 2-col grid, breathing room, token colors. */
+.presetGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.presetChip {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.presetChip:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+/* Media source row: filename pill + Replace button. */
+.mediaSrcRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.mediaFileName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--color-surface-0);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 4px;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.colorPickerWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-field-border, var(--color-border));
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
+  width: 100%;
+  height: 24px;
+}
+
+.colorPickerWrapper:hover {
+  border-color: var(--color-text-tertiary);
+  background: var(--color-hover, rgba(255, 255, 255, 0.04));
+}
+
+.colorSwatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
+.colorHex {
+  font-size: 11px;
+  font-family: var(--font-family-mono, monospace);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.colorInputHidden {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  border: none;
 }

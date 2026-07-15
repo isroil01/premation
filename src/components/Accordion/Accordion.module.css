@@ -6,11 +6,11 @@
 .item {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--color-divider);
-}
-
-.item:first-child {
-  border-top: 1px solid var(--color-divider);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+  overflow: hidden;
 }
 
 .disabled {
@@ -88,4 +88,8 @@
   flex-direction: column;
   gap: var(--space-5);
   background: var(--color-panel);
+}
+
+.panel[hidden] {
+  display: none;
 }

@@ -14,15 +14,22 @@ import type { Disposable } from '@app-types/common';
 export type Tool =
   | 'select'
   | 'direct-select'
+  | 'rotate'
+  | 'pan-behind'
   | 'hand'
   | 'zoom'
   | 'move'
-  | 'rotate'
-  | 'scale'
   | 'pen'
+  | 'pencil'
+  | 'curvature'
+  | 'line'
   | 'text'
   | 'shape'
-  | 'ellipse';
+  | 'ellipse'
+  | 'polygon'
+  | 'star'
+  | 'mask-rect'
+  | 'mask-ellipse';
 
 interface UIState {
   /** Active tool in the toolbar. */
@@ -31,8 +38,6 @@ interface UIState {
   isDragging: boolean;
   /** ID of the panel currently focused (for keyboard routing). */
   focusedPanelId: string | null;
-  /** Cursor override applied to the workspace. */
-  cursor: 'default' | 'crosshair' | 'grab' | 'grabbing' | 'move' | 'text' | 'none';
   /** Generic "toast"-style notifications. */
   notifications: ReadonlyArray<Notification>;
   /** Mouse position in screen coords, updated by the app shell. */
@@ -43,6 +48,10 @@ interface UIState {
   showGrid: boolean;
   /** Show rulers along the workspace edges. */
   showRulers: boolean;
+  /** Whether the graph editor is currently open. */
+  graphEditorOpen: boolean;
+  /** Whether the global Shy layers toggle is active. */
+  globalShy: boolean;
 }
 
 export interface Notification {
@@ -58,13 +67,14 @@ interface UIActions {
   setActiveTool(tool: Tool): void;
   setDragging(isDragging: boolean): void;
   setFocusedPanel(id: string | null): void;
-  setCursor(cursor: UIState['cursor']): void;
   setPointer(x: number, y: number): void;
   notify(notification: Omit<Notification, 'id' | 'createdAt'>): string;
   dismissNotification(id: string): void;
   toggleSnap(): void;
   toggleGrid(): void;
   toggleRulers(): void;
+  setGraphEditorOpen(open: boolean): void;
+  setGlobalShy(open: boolean): void;
 }
 
 export type UIStore = UIState & UIActions;
@@ -75,12 +85,13 @@ export const useUIStore = create<UIStore>()(
       activeTool: 'select',
       isDragging: false,
       focusedPanelId: null,
-      cursor: 'default',
       notifications: [],
       pointer: { x: 0, y: 0 },
       snap: true,
       showGrid: false,
       showRulers: false,
+      graphEditorOpen: false,
+      globalShy: false,
 
       setActiveTool: (tool) =>
         set((s) => {
@@ -93,10 +104,6 @@ export const useUIStore = create<UIStore>()(
       setFocusedPanel: (id) =>
         set((s) => {
           s.focusedPanelId = id;
-        }),
-      setCursor: (cursor) =>
-        set((s) => {
-          s.cursor = cursor;
         }),
       setPointer: (x, y) =>
         set((s) => {
@@ -134,6 +141,14 @@ export const useUIStore = create<UIStore>()(
       toggleRulers: () =>
         set((s) => {
           s.showRulers = !s.showRulers;
+        }),
+      setGraphEditorOpen: (open) =>
+        set((s) => {
+          s.graphEditorOpen = open;
+        }),
+      setGlobalShy: (open) =>
+        set((s) => {
+          s.globalShy = open;
         }),
     })),
   ),

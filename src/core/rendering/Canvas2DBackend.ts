@@ -14,6 +14,7 @@ import { sortedStops, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import { mixHex, type GlyphTransform } from '@core/text/textAnimators';
 import { trimPolyline, type Pt } from '@core/scene/trimPath';
+import { getMatteMode, getMatteSourceId } from '@core/effects/matte';
 import { getEventBus } from '@core/events/EventBus';
 
 /** Build a clip path (layer-local space) from a layer's vector mask. Inverted
@@ -45,7 +46,7 @@ function fillStyleFor(
   w: number,
   h: number,
 ): string | CanvasGradient {
-  if (!paint || paint.type === 'solid') return paint?.color ?? fallback;
+  if (!paint || paint.type === 'solid') return fallback;
   let grad: CanvasGradient;
   if (paint.type === 'linear') {
     // Endpoints span the box along the angle (0°=→, 90°=↓).
@@ -187,11 +188,7 @@ export class Canvas2DBackend implements RenderBackend {
     // Skipped for export so transparent → true alpha (no baked plate/checker).
     if (this.previewChrome) {
       ctx.save();
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-      ctx.shadowBlur = 40;
-      ctx.shadowOffsetY = 12;
-      // Fill an opaque plate the checkerboard covers (transparent) or the comp
-      // background colour (opaque) so the shadow has something to cast from.
+      // No drop shadow per user request
       ctx.fillStyle = snapshot.transparent ? '#2a2a2e' : snapshot.background;
       ctx.fillRect(offX, offY, devW, devH);
       ctx.restore();
@@ -228,16 +225,17 @@ export class Canvas2DBackend implements RenderBackend {
     if (snapshot.overlays) this.drawOverlays(ctx, snapshot, offX, offY, devW, devH);
   }
 
-  // ── Layer compositing (with track mattes) ───────────────────────
   private scratchA: HTMLCanvasElement | null = null;
   private scratchB: HTMLCanvasElement | null = null;
+  private scratchC: HTMLCanvasElement | null = null;
 
-  private scratch(which: 'A' | 'B', w: number, h: number): HTMLCanvasElement {
-    let c = which === 'A' ? this.scratchA : this.scratchB;
+  private scratch(which: 'A' | 'B' | 'C', w: number, h: number): HTMLCanvasElement {
+    let c = which === 'A' ? this.scratchA : (which === 'B' ? this.scratchB : this.scratchC);
     if (!c) {
       c = document.createElement('canvas');
       if (which === 'A') this.scratchA = c;
-      else this.scratchB = c;
+      else if (which === 'B') this.scratchB = c;
+      else this.scratchC = c;
     }
     if (c.width !== w) c.width = w;
     if (c.height !== h) c.height = h;
@@ -294,9 +292,13 @@ export class Canvas2DBackend implements RenderBackend {
         }
         continue;
       }
-      if (layer.matte && i > 0) {
-        this.drawMatted(ctx, layers[i - 1]!, layer, offX, offY, scale, cw, ch);
-        continue;
+      if (layer.matte) {
+        const sourceId = getMatteSourceId(layer.matte);
+        const sourceLayer = sourceId ? layers.find((l) => l.id === sourceId) : (i > 0 ? layers[i - 1] : undefined);
+        if (sourceLayer) {
+          this.drawMatted(ctx, sourceLayer, layer, offX, offY, scale, cw, ch);
+          continue;
+        }
       }
       if (!layer.visible) continue;
       this.drawComposited(ctx, layer);
@@ -404,8 +406,50 @@ export class Canvas2DBackend implements RenderBackend {
   }
 
   /** Draw one layer with its transform, opacity, blend, filter and mask, in the
-   *  current (composition-space) transform. */
+   *  current (composition-space) transform.
+   *  Enforces AE order (`masks` -> `effects` (`filter`) -> `transform`):
+   *  when a filter is present, the raw layer (and mask clip) is rendered to an offscreen
+   *  texture (`scratchC`) at native dimensions, then drawn through the filter and spatial transform. */
   private drawComposited(ctx: CanvasRenderingContext2D, layer: RenderLayer, useBlend = true): void {
+    if (layer.filter) {
+      const w = Math.max(1, Math.ceil(layer.width || 100));
+      const h = Math.max(1, Math.ceil(layer.height || 100));
+      const off = this.scratch('C', w, h);
+      const oc = off.getContext('2d');
+      if (oc) {
+        oc.setTransform(1, 0, 0, 1, 0, 0);
+        oc.clearRect(0, 0, w, h);
+        oc.setTransform(1, 0, 0, 1, w / 2, h / 2);
+        if (layer.mask && layer.mask.paths.length > 0) {
+          oc.save();
+          oc.clip(buildMaskPath(layer.mask, layer.width, layer.height), 'evenodd');
+        }
+        this.drawLayer(oc, layer);
+        if (layer.mask && layer.mask.paths.length > 0) {
+          oc.restore();
+        }
+
+        ctx.save();
+        ctx.globalAlpha = clamp01(layer.opacity);
+        if (useBlend && layer.blend && layer.blend !== 'normal') {
+          ctx.globalCompositeOperation = blendToComposite(layer.blend);
+        }
+        ctx.filter = layer.filter;
+        if (layer.matrix) {
+          const m = layer.matrix;
+          ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+        } else {
+          ctx.translate(layer.x, layer.y);
+          ctx.rotate((layer.rotation * Math.PI) / 180);
+          ctx.scale(layer.scaleX || 1, layer.scaleY || 1);
+        }
+        if (layer.anchorX || layer.anchorY) ctx.translate(-(layer.anchorX ?? 0), -(layer.anchorY ?? 0));
+        ctx.drawImage(off, -w / 2, -h / 2, w, h);
+        ctx.restore();
+        return;
+      }
+    }
+
     ctx.save();
     ctx.globalAlpha = clamp01(layer.opacity);
     if (useBlend && layer.blend && layer.blend !== 'normal') {
@@ -464,7 +508,8 @@ export class Canvas2DBackend implements RenderBackend {
     applyComp(bc);
     this.drawComposited(bc, { ...source, blend: undefined }, false);
 
-    const type = matted.matte!;
+    const type = getMatteMode(matted.matte);
+    if (!type) return;
     if (type === 'luma' || type === 'luma-inv') {
       lumaToAlpha(bc, cw, ch, type === 'luma-inv');
     }
@@ -604,8 +649,9 @@ export class Canvas2DBackend implements RenderBackend {
           
           if (vid.readyState >= 2) { // HAVE_CURRENT_DATA
             // Only set currentTime if it differs significantly, to avoid infinite seeking loops
-            if (Math.abs(vid.currentTime - this.currentTime) > 0.05) {
-              vid.currentTime = this.currentTime;
+            const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : this.currentTime;
+            if (Math.abs(vid.currentTime - targetTime) > 0.05) {
+              vid.currentTime = targetTime;
             }
             ctx.drawImage(vid, -w / 2, -h / 2, w, h);
           } else {
@@ -719,7 +765,7 @@ export class Canvas2DBackend implements RenderBackend {
       return { pts, closed: true };
     }
     if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 1) {
-      return { pts: layer.pathPoints.map((p) => ({ x: p.x, y: p.y })), closed: true };
+      return { pts: layer.pathPoints.map((p) => ({ x: p.x, y: p.y })), closed: layer.pathOpen !== true };
     }
     return {
       pts: [
@@ -758,11 +804,15 @@ export class Canvas2DBackend implements RenderBackend {
     } else if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 0) {
       ctx.beginPath();
       const pts = layer.pathPoints;
+      // Open strokes (line / freehand pencil) stop at the last point; closed
+      // shapes wrap the final segment back to the first and close.
+      const open = layer.pathOpen === true;
       // Move to first anchor
       ctx.moveTo(pts[0]!.x, pts[0]!.y);
       // Draw cubic bezier segments: each segment uses outgoing handle of current point
       // and incoming handle of next point
-      for (let i = 0; i < pts.length; i++) {
+      const lastSeg = open ? pts.length - 1 : pts.length;
+      for (let i = 0; i < lastSeg; i++) {
         const curr = pts[i]!;
         const next = pts[(i + 1) % pts.length]!;
         ctx.bezierCurveTo(
@@ -771,9 +821,9 @@ export class Canvas2DBackend implements RenderBackend {
           next.x,    next.y,      // next anchor
         );
       }
-      ctx.closePath();
+      if (!open) ctx.closePath();
     } else {
-      this.roundRect(ctx, -w / 2, -h / 2, w, h, 12);
+      this.roundRect(ctx, -w / 2, -h / 2, w, h, layer.cornerRadius ?? 0);
     }
   }
 

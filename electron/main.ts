@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol, net, type MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
+import { startBackend, stopBackend } from './backend';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -175,6 +176,14 @@ app.whenReady().then(() => {
   });
 
   registerFileIpc();
+
+  // The app connects to the backend at localhost:4000 (the renderer's default
+  // API origin — see src/core/api/env.ts). You run motion-back yourself,
+  // separately, so the app does NOT start its own server by default.
+  // Opt in with MOTION_LOCAL_BACKEND=1 to have the app spawn/stop the server for
+  // you (it reuses one already running rather than duplicating it).
+  if (process.env.MOTION_LOCAL_BACKEND === '1') void startBackend();
+
   createMainWindow();
 
   app.on('activate', () => {
@@ -183,5 +192,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopBackend();
   if (process.platform !== 'darwin') app.quit();
 });
+
+// Ensure the managed server is torn down on every exit path.
+app.on('before-quit', () => stopBackend());

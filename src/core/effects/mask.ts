@@ -41,6 +41,8 @@ export interface MaskPath {
   feather: number;
   /** 0..1 mask strength (stored; compositing is a later slice). */
   opacity: number;
+  /** Outline expansion/dilation in px (positive dilates outward, negative erodes inward). */
+  expansion: number;
   /** Clip to the OUTSIDE of the path instead of the inside. */
   inverted: boolean;
 }
@@ -71,7 +73,7 @@ export function rectangleMask(w: number, h: number): MaskPath {
   const hw = w / 2;
   const hh = h / 2;
   return {
-    id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, inverted: false,
+    id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0, inverted: false,
     points: [corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)],
   };
 }
@@ -86,7 +88,7 @@ export function ellipseMask(w: number, h: number): MaskPath {
   const pt = (x: number, y: number, inX: number, inY: number, outX: number, outY: number): MaskPoint =>
     ({ x, y, inX, inY, outX, outY });
   return {
-    id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, inverted: false,
+    id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0, inverted: false,
     points: [
       pt(0, -ry, -kx, -ry, kx, -ry), // top
       pt(rx, 0, rx, -ky, rx, ky), // right
@@ -96,9 +98,59 @@ export function ellipseMask(w: number, h: number): MaskPath {
   };
 }
 
+/** Dilate or erode points along vertex normals by `expansion` pixels. */
+export function expandMaskPoints(points: MaskPoint[], expansion: number): MaskPoint[] {
+  if (!expansion || Math.abs(expansion) < 1e-4 || points.length < 2) return points;
+  const n = points.length;
+  return points.map((curr, i) => {
+    const prev = points[(i - 1 + n) % n]!;
+    const next = points[(i + 1) % n]!;
+
+    // Incoming tangent arriving at curr
+    let vx1 = curr.x - curr.inX;
+    let vy1 = curr.y - curr.inY;
+    if (Math.hypot(vx1, vy1) < 1e-4) {
+      vx1 = curr.x - prev.x;
+      vy1 = curr.y - prev.y;
+    }
+    const l1 = Math.hypot(vx1, vy1) || 1;
+    const nx1 = vy1 / l1;
+    const ny1 = -vx1 / l1;
+
+    // Outgoing tangent leaving curr
+    let vx2 = curr.outX - curr.x;
+    let vy2 = curr.outY - curr.y;
+    if (Math.hypot(vx2, vy2) < 1e-4) {
+      vx2 = next.x - curr.x;
+      vy2 = next.y - curr.y;
+    }
+    const l2 = Math.hypot(vx2, vy2) || 1;
+    const nx2 = vy2 / l2;
+    const ny2 = -vx2 / l2;
+
+    // Average normal at vertex (miter bisector)
+    const nx = (nx1 + nx2) / 2;
+    const ny = (ny1 + ny2) / 2;
+    const nLen = Math.hypot(nx, ny) || 1;
+    const factor = expansion / Math.max(0.2, nLen);
+
+    const dx = nx * factor;
+    const dy = ny * factor;
+
+    return {
+      x: curr.x + dx,
+      y: curr.y + dy,
+      inX: curr.inX + dx,
+      inY: curr.inY + dy,
+      outX: curr.outX + dx,
+      outY: curr.outY + dy,
+    };
+  });
+}
+
 /** Convert a closed path's anchors into the cubic segments that draw it. */
 export function maskSegments(path: MaskPath): MaskSegment[] {
-  const pts = path.points;
+  const pts = expandMaskPoints(path.points, path.expansion ?? 0);
   const n = pts.length;
   if (n < 2) return [];
   const segs: MaskSegment[] = [];
@@ -159,7 +211,13 @@ export function interpolateMask(kfs: ReadonlyArray<MaskKeyframe>, t: number): La
   const paths = a.mask.paths.map((pa, i) => {
     const pb = b.mask.paths[i];
     if (!pb || pb.points.length !== pa.points.length) return f < 0.5 ? pa : (pb ?? pa);
-    return { ...pa, points: pa.points.map((pt, j) => lerpPoint(pt, pb.points[j]!, f)) };
+    return {
+      ...pa,
+      feather: lerp(pa.feather, pb.feather, f),
+      opacity: lerp(pa.opacity, pb.opacity, f),
+      expansion: lerp(pa.expansion ?? 0, pb.expansion ?? 0, f),
+      points: pa.points.map((pt, j) => lerpPoint(pt, pb.points[j]!, f)),
+    };
   });
   return { paths };
 }

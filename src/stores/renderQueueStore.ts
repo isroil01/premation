@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import { renderSequenceZip, renderWebMBlob, downloadBlob, type ExportOptions } from '@core/export/exportManager';
 import { api } from '@core/api/client';
+import { useUIStore } from './uiStore';
 
 export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
 
@@ -39,6 +40,8 @@ interface RenderQueueState {
   isRunning: boolean;
   /** Aborts the in-flight render when the user pauses. */
   _abort: AbortController | null;
+  /** Backend render-job id in flight (mp4), so pause can cancel it server-side. */
+  _backendJobId: string | null;
 
   addJob: (job: Omit<RenderJob, 'id' | 'status' | 'progress'>) => void;
   removeJob: (id: string) => void;
@@ -58,6 +61,7 @@ async function renderJobBlob(
   job: RenderJob,
   onProgress: (f: number) => void,
   signal: AbortSignal,
+  onBackendJob: (id: string | null) => void,
 ): Promise<{ blob: Blob; ext: string }> {
   const opts: ExportOptions = {
     format: 'webm',
@@ -82,27 +86,40 @@ async function renderJobBlob(
         duration: opts.duration,
         transparent: job.transparent,
       });
-      const frameExt = job.transparent ? 'png' : 'jpg';
-      const zipBlob = await renderSequenceZip(opts, frameExt, (f) => onProgress(f * 0.5), signal);
-      if (signal.aborted) throw new Error('Aborted');
-      onProgress(0.5);
-      await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
-      while (true) {
+      // Expose the backend job id so a pause/skip can cancel it server-side.
+      onBackendJob(renderJob.id);
+      try {
+        const frameExt = job.transparent ? 'png' : 'jpg';
+        const zipBlob = await renderSequenceZip(opts, frameExt, (f) => onProgress(f * 0.5), signal);
         if (signal.aborted) throw new Error('Aborted');
-        const status = await api.getRender(renderJob.id);
-        if (status.status === 'completed' && status.resultUrl) {
-          onProgress(1.0);
-          const res = await fetch(status.resultUrl);
-          return { blob: await res.blob(), ext: 'mp4' };
+        onProgress(0.5);
+        await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
+        while (true) {
+          if (signal.aborted) throw new Error('Aborted');
+          const status = await api.getRender(renderJob.id);
+          if (status.status === 'completed' && status.resultUrl) {
+            onProgress(1.0);
+            const res = await fetch(status.resultUrl);
+            return { blob: await res.blob(), ext: 'mp4' };
+          }
+          if (status.status === 'failed') throw new Error(status.error || 'Backend render failed');
+          if (status.status === 'canceled') throw new Error('Aborted');
+          onProgress(0.5 + status.progress * 0.45);
+          await new Promise(r => setTimeout(r, 1000));
         }
-        if (status.status === 'failed') throw new Error(status.error || 'Backend render failed');
-        onProgress(0.5 + status.progress * 0.45);
-        await new Promise(r => setTimeout(r, 1000));
+      } finally {
+        onBackendJob(null);
       }
     }
     case 'webm':
-    case 'gif': // no GIF encoder yet → deliver WebM
     default:
+      return { blob: await renderWebMBlob(opts, onProgress, signal), ext: 'webm' };
+    case 'gif':
+      useUIStore.getState().notify({
+        level: 'warning',
+        message: 'GIF format falls back to WebM output (no local GIF encoder).',
+        durationMs: 4000
+      });
       return { blob: await renderWebMBlob(opts, onProgress, signal), ext: 'webm' };
   }
 }
@@ -111,6 +128,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   jobs: [],
   isRunning: false,
   _abort: null,
+  _backendJobId: null,
 
   addJob(job) {
     const id = `rq_${Date.now()}_${jobSeq++}`;
@@ -160,6 +178,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
             job,
             (f) => get().updateJob(job.id, { progress: f }),
             abort.signal,
+            (backendId) => set({ _backendJobId: backendId }),
           );
           const base = job.outputPath.replace(/\.[^/.]+$/, '');
           downloadBlob(blob, `${base.split('/').pop() || 'render'}.${ext}`);
@@ -178,7 +197,11 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
 
   pauseAll() {
     get()._abort?.abort();
-    set({ isRunning: false, _abort: null });
+    // Cancel the backend mp4 job too, so a paused render doesn't linger
+    // queued/running on the server (best-effort — the abort already stopped us).
+    const backendId = get()._backendJobId;
+    if (backendId) void api.cancelRender(backendId).catch(() => undefined);
+    set({ isRunning: false, _abort: null, _backendJobId: null });
   },
 
   skipJob(id) {

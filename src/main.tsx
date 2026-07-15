@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
+import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import './styles/global.css';
 
@@ -12,7 +12,7 @@ if (!rootEl) {
 createRoot(rootEl).render(
   <StrictMode>
     <ErrorBoundary scope="root">
-      <App />
+      <AppRouter />
     </ErrorBoundary>
   </StrictMode>,
 );

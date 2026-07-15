@@ -15,6 +15,7 @@ import type { ProjectFile } from '@core/types';
 const KEY = 'recovery';
 
 export interface RecoverySnapshot {
+  projectId?: string;
   savedAt: number;
   time: number;
   scene: ProjectFile;
@@ -22,8 +23,12 @@ export interface RecoverySnapshot {
 }
 
 /** Snapshot the current editable state (deep-cloned). */
-export function captureRecovery(time: number): RecoverySnapshot {
+export function captureRecovery(time: number): RecoverySnapshot | null {
+  const match = typeof window !== 'undefined' ? window.location.pathname.match(/\/editor\/([^/]+)/) : null;
+  const projectId = match ? match[1] : undefined;
+  if (!projectId || projectId.trim() === '') return null;
   return {
+    projectId,
     savedAt: 0, // stamped at persist time (Date.now lives at the call site)
     time,
     scene: structuredClone(sceneProjectIO.capture()),
@@ -31,13 +36,14 @@ export function captureRecovery(time: number): RecoverySnapshot {
   };
 }
 
-export function persistRecovery(snap: RecoverySnapshot): void {
+export function persistRecovery(snap: RecoverySnapshot | null): void {
+  if (!snap || !snap.projectId) return;
   getSettingsManager().set(KEY, snap);
 }
 
 export function readRecovery(): RecoverySnapshot | null {
   const v = getSettingsManager().get<RecoverySnapshot | null>(KEY, null);
-  return v && typeof v.savedAt === 'number' && v.scene ? v : null;
+  return v && typeof v.savedAt === 'number' && v.scene && typeof v.projectId === 'string' && v.projectId.trim() !== '' ? v : null;
 }
 
 export function clearRecovery(): void {

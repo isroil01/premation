@@ -104,17 +104,23 @@
   justify-content: center;
   width: 20px;
   height: 20px;
-  border-radius: var(--radius-sm);
+  border-radius: 4px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
   flex: none;
+  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
 }
-.stopwatch:hover { color: var(--color-text-primary); }
+.stopwatch:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover, rgba(255, 255, 255, 0.04));
+  border-color: var(--color-field-border, rgba(255, 255, 255, 0.08));
+}
 .stopwatchOn {
-  color: var(--color-accent, #0099ff);
-  border-color: var(--color-accent, #0099ff);
+  color: var(--color-primary, #2988ff) !important;
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15)) !important;
+  border-color: rgba(41, 136, 255, 0.3) !important;
 }
 
 .pick {

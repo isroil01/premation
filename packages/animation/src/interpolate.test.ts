@@ -1,4 +1,13 @@
-import { cubicBezierEase, sampleTrack, sampleSpeed, applyRoving, EASY_EASE_BEZIER } from './interpolate';
+import {
+  cubicBezierEase,
+  sampleTrack,
+  sampleSpeed,
+  applyRoving,
+  cubicValueAt,
+  smoothTrackTangents,
+  clearTrackTangents,
+  EASY_EASE_BEZIER,
+} from './interpolate';
 import type { PropertyTrack, Keyframe } from './types';
 
 const track = (keyframes: Keyframe[]): PropertyTrack => ({ nodeId: 'n', prop: 'x', keyframes });
@@ -88,5 +97,105 @@ describe('EASY_EASE_BEZIER', () => {
   it('is a symmetric 1/3-influence curve passing through 0.5 at the midpoint', () => {
     expect(EASY_EASE_BEZIER).toEqual([1 / 3, 0, 2 / 3, 1]);
     expect(cubicBezierEase(EASY_EASE_BEZIER, 0.5)).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe('spatial bezier tangents (curved motion paths)', () => {
+  it('cubicValueAt hits the endpoints and is linear at third-points', () => {
+    expect(cubicValueAt(0, 10, 20, 30, 0)).toBeCloseTo(0);
+    expect(cubicValueAt(0, 10, 20, 30, 1)).toBeCloseTo(30);
+    // Control values at the linear third-points ⇒ exact identity line.
+    expect(cubicValueAt(0, 10, 20, 30, 0.25)).toBeCloseTo(7.5, 6);
+    expect(cubicValueAt(0, 10, 20, 30, 0.75)).toBeCloseTo(22.5, 6);
+  });
+
+  it('a segment with spatial tangents bows away from the straight line', () => {
+    // Both tangents pull upward (+40): the midpoint overshoots the linear 50.
+    const t = track([
+      { t: 0, value: 0, so: 40 },
+      { t: 1, value: 100, si: 40 },
+    ]);
+    expect(sampleTrack(t, 0)!).toBeCloseTo(0);
+    expect(sampleTrack(t, 1)!).toBeCloseTo(100);
+    expect(sampleTrack(t, 0.5)!).toBeGreaterThan(50);
+  });
+
+  it('a one-sided tangent defaults the other side to the linear third-point', () => {
+    const curved = track([{ t: 0, value: 0, so: 90 }, { t: 1, value: 100 }]);
+    const straight = track([{ t: 0, value: 0 }, { t: 1, value: 100 }]);
+    // Early in the segment the out-tangent dominates and lifts the value.
+    expect(sampleTrack(curved, 0.25)!).toBeGreaterThan(sampleTrack(straight, 0.25)!);
+    // Endpoints are always exact.
+    expect(sampleTrack(curved, 1)!).toBeCloseTo(100);
+  });
+
+  it('linear third-point tangents reproduce the straight line exactly', () => {
+    const t = track([
+      { t: 0, value: 0, so: 100 / 3 },
+      { t: 1, value: 100, si: -100 / 3 },
+    ]);
+    expect(sampleTrack(t, 0.25)!).toBeCloseTo(25, 6);
+    expect(sampleTrack(t, 0.5)!).toBeCloseTo(50, 6);
+  });
+
+  it('temporal easing remaps the parameter without changing the spatial shape', () => {
+    // Same spatial curve, eased vs linear: values differ mid-segment (timing),
+    // but the eased track still passes through the same endpoints.
+    const shape: Keyframe[] = [
+      { t: 0, value: 0, so: 40 },
+      { t: 1, value: 100, si: 40 },
+    ];
+    const eased = track([{ ...shape[0]!, easing: 'easeIn' }, shape[1]!]);
+    const linear = track(shape.map((k) => ({ ...k })));
+    // easeIn(0.25) < 0.25 ⇒ the eased sample sits earlier on the same curve.
+    expect(sampleTrack(eased, 0.25)!).toBeLessThan(sampleTrack(linear, 0.25)!);
+    expect(sampleTrack(eased, 1)!).toBeCloseTo(100);
+  });
+
+  it('smoothTrackTangents produces C1-continuous Catmull-Rom tangents', () => {
+    const out = smoothTrackTangents([
+      { t: 0, value: 0 },
+      { t: 1, value: 100 },
+      { t: 2, value: 0 },
+    ]);
+    // Interior keyframe: neighbours have equal values ⇒ zero slope ⇒ flat tangents.
+    expect(out[1]!.so).toBeCloseTo(0);
+    expect(out[1]!.si).toBeCloseTo(0);
+    // Endpoints use the one-sided slope toward the neighbour.
+    expect(out[0]!.so).toBeCloseTo(100 / 3);
+    expect(out[0]!.si).toBeUndefined();
+    expect(out[2]!.si).toBeCloseTo(100 / 3); // arriving slope -100/t, si = -m*dt/3
+    expect(out[2]!.so).toBeUndefined();
+  });
+
+  it('smoothTrackTangents scales tangents by segment duration (non-uniform spacing)', () => {
+    const out = smoothTrackTangents([
+      { t: 0, value: 0 },
+      { t: 1, value: 30 },
+      { t: 5, value: 100 },
+    ]);
+    // Interior slope m = (100-0)/(5-0) = 20; out spans 4s, in spans 1s.
+    expect(out[1]!.so).toBeCloseTo((20 * 4) / 3);
+    expect(out[1]!.si).toBeCloseTo((-20 * 1) / 3);
+  });
+
+  it('clearTrackTangents strips every spatial tangent and nothing else', () => {
+    const out = clearTrackTangents([
+      { t: 0, value: 0, so: 40, easing: 'easeIn' },
+      { t: 1, value: 100, si: 40, roving: true },
+    ]);
+    expect(out[0]!.so).toBeUndefined();
+    expect(out[1]!.si).toBeUndefined();
+    expect(out[0]!.easing).toBe('easeIn');
+    expect(out[1]!.roving).toBe(true);
+  });
+
+  it('evaluates autoBezier and continuousBezier smoothly', () => {
+    const tAuto = track([{ t: 0, value: 0, easing: 'autoBezier' }, { t: 1, value: 100 }]);
+    const tCont = track([{ t: 0, value: 0, easing: 'continuousBezier' }, { t: 1, value: 100 }]);
+    expect(sampleTrack(tAuto, 0.5)).toBeCloseTo(50);
+    expect(sampleTrack(tCont, 0.5)).toBeCloseTo(50);
+    expect(sampleTrack(tAuto, 0.25)).toBeGreaterThan(0);
+    expect(sampleTrack(tAuto, 0.25)).toBeLessThan(25);
   });
 });

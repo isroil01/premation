@@ -44,9 +44,14 @@ describe('applyLayout', () => {
   });
 });
 
-describe('layoutStore.applyRegions', () => {
+describe('layoutStore.applyWorkspaceLayout', () => {
   test('clamps sizes to the region min/max', () => {
-    useLayoutStore.getState().applyRegions({ leftSidebar: { size: 9999, collapsed: false } });
+    useLayoutStore.getState().applyWorkspaceLayout({
+      name: 'Test',
+      regions: {
+        leftSidebar: { size: 9999, collapsed: false }
+      }
+    });
     // leftSidebar maxSize is 480.
     expect(regions().leftSidebar.size).toBe(480);
   });

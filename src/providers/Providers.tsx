@@ -15,7 +15,7 @@ import {
 } from '@stores/preferenceStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useWorkspaceStore } from '@stores/projectStore';
+import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openModal } from '@stores/modalStore';
@@ -41,8 +41,6 @@ import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { asThemeId, asCommandId } from '@app-types/common';
 import { hydrateComposition } from '@stores/compositionStore';
 import { useAssetStore } from '@stores/assetStore';
-import { applyPasteboardColor } from '@core/theme/pasteboard';
-import { applyAccentColor } from '@core/theme/accent';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
@@ -82,7 +80,6 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'zoom', label: 'Zoom Tool', key: 'z' },
     { tool: 'move', label: 'Move Tool', key: 'w' },
     { tool: 'rotate', label: 'Rotate Tool', key: 'r' },
-    { tool: 'scale', label: 'Scale Tool', key: 's' },
     { tool: 'pen', label: 'Pen Tool', key: 'p' },
     { tool: 'text', label: 'Text Tool', key: 't' },
     { tool: 'shape', label: 'Rectangle Tool', key: 'u' },
@@ -385,8 +382,8 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: async () => {
         const ok = await getProjectManager().save();
         // An explicit save clears the unsaved indicator + recovery snapshot.
-        const ws = useWorkspaceStore.getState();
-        if (ws.activeId) ws.actions.markDirty(ws.activeId, false);
+        const ws = useProjectStore.getState();
+        if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
         clearRecovery();
         notify(ok ? 'Project saved' : 'Saved', 'success');
       },
@@ -455,8 +452,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         },
       };
       const workspace = {
-        setActive: (id: string) => useWorkspaceStore.getState().actions.setActive(id),
-        getActive: () => useWorkspaceStore.getState().activeId ?? '',
+        setActive: (id: string) => useProjectStore.getState().actions.setActive(id),
+        getActive: () => useProjectStore.getState().activeTabId ?? '',
       };
 
       Application.boot({
@@ -464,7 +461,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           ui: useUIStore.getState(),
           layout: useLayoutStore.getState(),
           selection: useSelectionStore.getState(),
-          workspace: useWorkspaceStore.getState(),
+          workspace: useProjectStore.getState(),
           preferences: usePreferenceStore.getState(),
         }),
         selection,
@@ -481,26 +478,25 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         for (const cmd of buildBuiltinCommands()) registry.register(cmd);
         for (const cmd of buildToolCommands()) registry.register(cmd);
         registry.register({
-          id: BuiltinCommands.Undo,
+          id: asCommandId(BuiltinCommands.Undo),
           label: 'Undo',
           shortcut: { key: 'z', meta: true },
-          enabled: () => useHistoryStore.getState().index > 0,
+          enabled: () => getCommandSystem().getHistory().canUndo(),
           execute: () => {
-            const { index, jumpTo } = useHistoryStore.getState();
-            if (index > 0) jumpTo(index - 1);
+            if (getCommandSystem().getHistory().canUndo()) {
+              getCommandSystem().getHistory().undo();
+            }
           },
         });
         registry.register({
-          id: BuiltinCommands.Redo,
+          id: asCommandId(BuiltinCommands.Redo),
           label: 'Redo',
           shortcut: { key: 'z', meta: true, shift: true },
-          enabled: () => {
-            const state = useHistoryStore.getState();
-            return state.index < state.entries.length - 1;
-          },
+          enabled: () => getCommandSystem().getHistory().canRedo(),
           execute: () => {
-            const state = useHistoryStore.getState();
-            if (state.index < state.entries.length - 1) state.jumpTo(state.index + 1);
+            if (getCommandSystem().getHistory().canRedo()) {
+              getCommandSystem().getHistory().redo();
+            }
           },
         });
 
@@ -517,8 +513,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // Composition settings + pasteboard colour: load persisted values now
         // that the SettingsManager is booted (defaults until the user edits).
         hydrateComposition();
-        applyPasteboardColor();
-        applyAccentColor();
 
         // Project: bridge to the scene document and refresh scene UI on load.
         const project = getProjectManager();
@@ -652,8 +646,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // every 60s while dirty, never clearing the unsaved indicator.
         try {
           const markDirty = (): void => {
-            const s = useWorkspaceStore.getState();
-            if (s.activeId && !s.workspaces[s.activeId]?.dirty) s.actions.markDirty(s.activeId, true);
+            const s = useProjectStore.getState();
+            if (s.activeTabId && !s.tabs[s.activeTabId]?.dirty) s.actions.markDirty(s.activeTabId, true);
           };
           getEventBus().on('AnimationChanged', markDirty);
           getEventBus().on('NodeUpdated', markDirty);
@@ -662,12 +656,12 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             intervalMs: 60_000,
             now: () => Date.now(),
             getTime: () => {
-              const s = useWorkspaceStore.getState();
-              return (s.activeId ? s.workspaces[s.activeId]?.time : 0) ?? 0;
+              const s = useProjectStore.getState();
+              return (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0) ?? 0;
             },
             isDirty: () => {
-              const s = useWorkspaceStore.getState();
-              return !!(s.activeId && s.workspaces[s.activeId]?.dirty);
+              const s = useProjectStore.getState();
+              return !!(s.activeTabId && s.tabs[s.activeTabId]?.dirty);
             },
           });
         } catch { /* ignore */ }
@@ -696,11 +690,11 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
                     size="sm"
                     onClick={() => {
                       const t = restoreRecovery(rec);
-                      useWorkspaceStore.getState().actions.setTime(t, Math.round(t * 60));
+                      useProjectStore.getState().actions.setTime(t, Math.round(t * 60));
                       bumpScene();
                       useHistoryStore.getState().record('Recovered', true);
-                      const s = useWorkspaceStore.getState();
-                      if (s.activeId) s.actions.markDirty(s.activeId, true);
+                      const s = useProjectStore.getState();
+                      if (s.activeTabId) s.actions.markDirty(s.activeTabId, true);
                       notify('Session recovered', 'success');
                       close();
                     }}

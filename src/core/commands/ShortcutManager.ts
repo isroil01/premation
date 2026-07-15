@@ -88,6 +88,10 @@ export class ShortcutManager {
     this.rehydrateFromRegistry();
   }
 
+  private readonly DOUBLE_TAP_MS = 400;
+  private lastKey = '';
+  private lastKeyTime = 0;
+
   private onKeyDown = (e: KeyboardEvent): void => {
     // Ignore when focus is in editable text. We can't tell perfectly, but
     // common form elements are a strong signal.
@@ -97,11 +101,38 @@ export class ShortcutManager {
     const chord = chordFromEvent(e);
     const key = chordKey(chord);
 
+    // ── Double-tap UU = Reveal Modified Properties (AE exact) ─────────────
+    // Single U dispatches 'timeline.revealAnimated' via the registry binding.
+    // A second U within DOUBLE_TAP_MS upgrades to 'timeline.revealModified'.
+    const now = Date.now();
+    if (
+      chord.key === 'u' &&
+      !chord.ctrl && !chord.meta && !chord.alt && !chord.shift &&
+      this.lastKey === key &&
+      now - this.lastKeyTime < this.DOUBLE_TAP_MS
+    ) {
+      this.lastKey = '';
+      this.lastKeyTime = 0;
+      if (this.isCommandEnabled('timeline.revealModified')) {
+        e.preventDefault();
+        e.stopPropagation();
+        void getCommandSystem().execute(asCommandId('timeline.revealModified'));
+        getEventBus().emit('WorkspaceFocused', { workspaceId: 'global' });
+        return;
+      }
+    }
+    this.lastKey = key;
+    this.lastKeyTime = now;
+
     // Exact match only. Order = most recently added first, so user overrides win.
     for (let i = this.bindings.length - 1; i >= 0; i--) {
       const b = this.bindings[i];
       if (!b) continue;
       if (chordKey(b.chord) !== key) continue;
+      // Only consume the event when the command can actually run — a disabled
+      // command must let the chord fall through to other handlers (e.g. Escape
+      // closing a menu instead of being eaten by a no-op deselect).
+      if (!this.isCommandEnabled(b.commandId)) continue;
       if (b.preventDefault) e.preventDefault();
       e.stopPropagation();
       // Dispatch by commandId (not chord) so rebound shortcuts resolve even
@@ -111,6 +142,17 @@ export class ShortcutManager {
       return;
     }
   };
+
+  private isCommandEnabled(commandId: string): boolean {
+    try {
+      const cmd = getCommandRegistry().get(asCommandId(commandId));
+      if (!cmd) return false;
+      return cmd.enabled ? cmd.enabled() !== false : true;
+    } catch {
+      // A throwing enabled() must not kill the dispatcher — treat as enabled.
+      return true;
+    }
+  }
 
   private isEditable(el: HTMLElement): boolean {
     if (!el) return false;

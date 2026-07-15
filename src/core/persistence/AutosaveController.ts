@@ -43,9 +43,11 @@ export class AutosaveController {
     if (!o || !o.isDirty()) return;
     try {
       const snap = captureRecovery(o.getTime());
-      snap.savedAt = o.now();
-      persistRecovery(snap);
-      o.onSaved?.(snap.savedAt);
+      if (snap) {
+        snap.savedAt = o.now();
+        persistRecovery(snap);
+        o.onSaved?.(snap.savedAt);
+      }
     } catch {
       /* autosave must never throw into the app */
     }
