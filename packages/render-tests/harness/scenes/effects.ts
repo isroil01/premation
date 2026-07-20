@@ -1,0 +1,97 @@
+/**
+ * Effect family: one scene per effect in the registry (src/core/effects/effects.ts).
+ * Subject is a gradient-filled ellipse on a dark comp, giving both an alpha edge
+ * (for glow/shadow/stroke) and colour content (for colour ops). gpuOnly effects
+ * (displacement-map, motion-tile) render as no-ops on the Canvas2D reference —
+ * that is the documented gap the reference captures.
+ *
+ * Params are the registry defaults per the authoring cookbook. Echo is covered
+ * in the motion family (it needs an animated subject to show ghosts).
+ */
+
+import { defineScene, node, type Scene } from '../sceneKit';
+
+const COMP = { width: 320, height: 220, background: '#0c0c12' };
+const SIZE = { w: 320, h: 220 };
+
+interface EffectSpec {
+  type: string;
+  params?: Record<string, unknown>;
+  gpuOnly?: boolean;
+  /** Per-scene diff tolerance override (fraction of pixels). */
+  tolerance?: number;
+  /** Force GPU-oracle for a procedural effect Canvas2D implements with a
+   *  fundamentally different (unmatchable) algorithm — the GPU output is a valid
+   *  render, just different (eyeballed). Distinct from gpuOnly (Canvas2D no-op). */
+  gpuOracle?: boolean;
+}
+
+const EFFECTS: EffectSpec[] = [
+  { type: 'blur', params: { amount: 6 } },
+  { type: 'glow', params: { radius: 16, color: '#78b4ff', intensity: 90 } },
+  // tolerance: the GPU shadow penumbra sits at 0.501% vs the 0.5% default gate —
+  // visually identical (soft-edge AA rounding), so give the blurred edge headroom.
+  { type: 'drop-shadow', params: { distance: 6, angle: 135, softness: 12, color: '#000000', opacity: 55 }, tolerance: 0.008 },
+  { type: 'brightness', params: { amount: 140 } },
+  { type: 'contrast', params: { amount: 150 } },
+  { type: 'saturate', params: { amount: 180 } },
+  { type: 'grayscale', params: { amount: 100 } },
+  { type: 'sepia', params: { amount: 90 } },
+  { type: 'hue-rotate', params: { amount: 120 } },
+  { type: 'hue-saturation', params: { hue: 40, saturation: 30, lightness: 0 } },
+  { type: 'invert', params: { amount: 100 } },
+  { type: 'levels', params: { inputBlack: 20, inputWhite: 235, gamma: 1.2, outputBlack: 0, outputWhite: 255 } },
+  { type: 'curves', params: { points: [[0, 0], [128, 90], [255, 255]] } },
+  { type: 'posterize', params: { levels: 5 } },
+  { type: 'tint', params: { mapBlack: '#001040', mapWhite: '#ffe0b0', amount: 100 } },
+  { type: 'channel-mixer', params: { redRed: 40, redGreen: 60, redBlue: 0, redConst: 0, greenRed: 0, greenGreen: 100, greenBlue: 0, greenConst: 0, blueRed: 0, blueGreen: 0, blueBlue: 100, blueConst: 0, monochrome: false } },
+  { type: 'gradient-ramp', params: { blend: 100, colorA: '#ff0000', colorB: '#0000ff' } },
+  { type: 'fractal-noise', params: { scale: 12 }, gpuOracle: true },
+  { type: 'displacement-map', params: { amount: 20 }, gpuOnly: true },
+  { type: 'motion-tile', params: { scale: 2 }, gpuOnly: true },
+  { type: 'fill', params: { color: '#ff2d55', opacity: 100 } },
+  { type: 'four-color-gradient', params: { colorTL: '#ff0055', colorTR: '#ffcc00', colorBL: '#00d0ff', colorBR: '#7b61ff', blend: 100 } },
+  { type: 'stroke', params: { width: 4, color: '#ffffff', opacity: 100 } },
+  { type: 'beam', params: { length: 100, startX: 10, startY: 50, endX: 90, endY: 50, thickness: 8, softness: 30, color: '#8fd0ff' } },
+  { type: 'sharpen', params: { amount: 60 } },
+  { type: 'noise', params: { amount: 30, evolution: 0, monochrome: true } },
+  { type: 'keylight', params: { screenColor: '#00ff00', balance: 50, gain: 100, clipBlack: 8, clipWhite: 65, despill: 100, choke: 0, matteSoftness: 0 } },
+  { type: 'wave-warp', params: { waveHeight: 20, waveWidth: 120, direction: 90, phase: 0 } },
+  { type: 'turbulent-displace', params: { amount: 30, size: 120, complexity: 2, evolution: 0 } },
+];
+
+function effectScene(spec: EffectSpec): Scene {
+  const isDivergent = ['blur', 'glow', 'posterize', 'gradient-ramp'].includes(spec.type);
+  return defineScene({
+    id: `effect-${spec.type}`,
+    description: `Effect "${spec.type}"${spec.gpuOnly ? ' (gpuOnly — Canvas2D no-op)' : ''} on a gradient ellipse.`,
+    size: SIZE,
+    comp: COMP,
+    fps: 30,
+    frames: [0],
+    gpuParity: isDivergent ? 'known-divergent' : 'expect-pass',
+    ...(spec.tolerance ? { tolerance: spec.tolerance } : {}),
+    // gpuOnly (Canvas2D no-op) and gpuOracle (Canvas2D implements it with a
+    // different, unmatchable algorithm — eyeballed) both make the GPU the oracle.
+    ...(spec.gpuOnly || spec.gpuOracle ? { oracle: 'gpu' as const } : {}),
+    build(graph) {
+      graph.addNode(node('subj', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 220, height: 170, shapeType: 'ellipse' },
+        style: { fill: '#000' },
+      }));
+      graph.setFill('subj', {
+        type: 'linear',
+        angle: 30,
+        stops: [
+          { id: 'a', offset: 0, color: '#2b3cff' },
+          { id: 'b', offset: 1, color: '#ff7a1a' },
+        ],
+      } as never);
+      graph.setEffects('subj', [{ id: 'fx', type: spec.type, params: spec.params ?? {} }]);
+    },
+  });
+}
+
+export const effectScenes: Scene[] = EFFECTS.map(effectScene);

@@ -1,0 +1,46 @@
+# Golden-frame render-tests (Phase 0 of the single-engine unification).
+#
+# Runs the offscreen-Electron + SwiftShader golden suite headlessly. SwiftShader
+# pins the GL driver so "same runner image ⇒ same bytes"; xvfb provides the
+# virtual display Electron needs on Linux CI. This scaffold is ready for when a
+# remote is wired up — it is not yet exercised by any hosted CI in this repo.
+name: render-tests
+
+on:
+  push:
+    paths:
+      - 'src/core/rendering/**'
+      - 'packages/renderer/**'
+      - 'packages/render-tests/**'
+      - 'src/core/export/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Render-tests (oracle gate + GPU parity dashboard)
+        # xvfb-run gives Electron a display; SwiftShader switches are set in
+        # electron/main.cjs. The runner exits non-zero on any oracle regression
+        # or expect-pass GPU failure.
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" npm run render-tests
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-tests-diffs
+          path: packages/render-tests/.artifacts/diff/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,3 @@
+# Build output + run artifacts — never committed. References ARE committed.
+dist-harness/
+.artifacts/
