@@ -1,0 +1,25 @@
+/* Contextual tool-options strip under the toolbar. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 30px;
+  padding: 0 var(--space-4);
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.opt {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.optLabel {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  user-select: none;
+}

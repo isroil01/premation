@@ -21,6 +21,14 @@ export interface Preferences {
   editorReduceMotion: boolean;
   /** Ask before discarding unsaved changes on New/Open/Close. */
   confirmOnClose: boolean;
+  /**
+   * Width of the timeline's track-header column, px.
+   *
+   * A preference, not view state: how much room the property names and their
+   * value fields need is a per-person, per-monitor decision, and re-dragging it
+   * on every launch would undo the point of the control.
+   */
+  timelineHeaderWidth: number;
 }
 
 interface PreferenceActions {
@@ -37,6 +45,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   timelineAutoKeyframe: false,
   editorReduceMotion: false,
   confirmOnClose: true,
+  timelineHeaderWidth: 460,
 };
 
 /** Pluggable persistence backend. */

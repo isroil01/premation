@@ -9,7 +9,7 @@ import { Timeline } from '../core/Timeline';
 import { Track, type TrackData } from '../tracks/Track';
 import { Marker, type MarkerData } from '../markers/Marker';
 import type { FrameRate } from '../time/FrameRate';
-import type { TimelineRanges } from '../core/ranges';
+import { emptyRanges, type TimelineRanges } from '../core/ranges';
 import type { TimelineViewState } from '../core/navigation';
 import type { TrackGroup } from '../core/Timeline';
 
@@ -69,6 +69,45 @@ export function serializeTimeline(timeline: Timeline): SerializedTimeline {
   };
 }
 
+/**
+ * Load a serialized document into an EXISTING timeline, replacing its contents.
+ *
+ * The host app builds its timelines with event wiring and history hooks already
+ * attached (see TimelineController.initTimeline). Restoring must therefore
+ * refill the instance it was handed rather than swap in a fresh one, or those
+ * hooks are silently dropped and clip edits stop reaching the undo stack.
+ *
+ * Structural restore is not a user action, so it runs with history suppressed.
+ */
+export function applySerializedTimeline(
+  timeline: Timeline,
+  doc: SerializedTimeline | Record<string, unknown>,
+): Timeline {
+  const data = migrate(doc as Record<string, unknown>);
+
+  timeline.history.silently(() => {
+    const internal = timeline._internal();
+
+    timeline.name = data.name ?? timeline.name;
+    if (data.frameRate) timeline.setFrameRate(data.frameRate);
+    if (typeof data.duration === 'number') timeline.setDuration(data.duration);
+
+    internal.tracks.length = 0;
+    internal.groups.clear();
+    timeline.markers.clear();
+
+    for (const td of data.tracks ?? []) internal.tracks.push(Track.fromJSON(td));
+    for (const g of data.groups ?? []) internal.groups.set(g.id, { ...g, trackIds: [...g.trackIds] });
+    internal.setRanges(data.ranges ?? emptyRanges());
+    if (data.view) internal.setView(data.view);
+    internal.reindex();
+    for (const m of data.markers ?? []) timeline.markers.add(Marker.fromJSON(m));
+    if (typeof data.currentFrame === 'number') timeline.playhead.set(data.currentFrame);
+  });
+
+  return timeline;
+}
+
 export function deserializeTimeline(doc: SerializedTimeline | Record<string, unknown>): Timeline {
   const data = migrate(doc as Record<string, unknown>);
   const timeline = new Timeline({
@@ -77,15 +116,5 @@ export function deserializeTimeline(doc: SerializedTimeline | Record<string, unk
     frameRate: data.frameRate,
     duration: data.duration,
   });
-  timeline.history.silently(() => {
-    const internal = timeline._internal();
-    for (const td of data.tracks) internal.tracks.push(Track.fromJSON(td));
-    for (const g of data.groups ?? []) internal.groups.set(g.id, { ...g, trackIds: [...g.trackIds] });
-    internal.setRanges(data.ranges);
-    internal.setView(data.view);
-    internal.reindex();
-    for (const m of data.markers ?? []) timeline.markers.add(Marker.fromJSON(m));
-    if (typeof data.currentFrame === 'number') timeline.playhead.set(data.currentFrame);
-  });
-  return timeline;
+  return applySerializedTimeline(timeline, data);
 }

@@ -12,7 +12,7 @@ export type { Vec2, Vec3, Size, Matrix2D, Matrix4, BlendMode, Metadata, Timestam
 export * as Matrix from './utils/matrix';
 export * as Matrix4Math from './utils/matrix4';
 export * as Project3D from './utils/project3d';
-export type { Camera3D, Projected } from './utils/project3d';
+export type { Camera3D, Projected, OrthoView } from './utils/project3d';
 export { uuid, newNodeId } from './utils/id';
 
 // ── Events ────────────────────────────────────────────────────────

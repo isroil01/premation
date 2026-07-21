@@ -44,13 +44,29 @@ export interface TimelinePropertyTrack {
   prop: string;
   label: string;
   keyframes: ReadonlyArray<TimelineKeyframeRef>;
+  /**
+   * False marks a STATIC placeholder row (AE-style property tree): the
+   * property has no keyframe track yet, so its header shows a stopwatch to
+   * enable animation instead of the ◀◆▶ keyframe navigator. Omitted/true for
+   * real animated rows.
+   */
+  animated?: boolean;
+  /** Engine props this placeholder's stopwatch keys when clicked. */
+  stopwatchProps?: ReadonlyArray<string>;
+  /**
+   * Engine props this row's value fields edit, in display order — Position is
+   * `['x','y']`, Opacity is `['opacity']`.
+   *
+   * AE shows a live, scrubbable value beside every property in the timeline, so
+   * you can key AND set values without crossing to the inspector. Without this
+   * the timeline could only ever *add* a keyframe: changing what it held meant
+   * a round trip to the right-hand panel.
+   */
+  valueProps?: ReadonlyArray<string>;
+  /** Unit suffix for this row's value fields ('px', '%', '°'). */
+  valueUnit?: string;
 }
 
-/** A cached time range (rendered frames) shown on the cache bar. */
-export interface TimelineCacheRange {
-  start: number;
-  end: number;
-}
 
 export interface TimelineClip {
   id: string;
@@ -62,6 +78,7 @@ export interface TimelineClip {
   duration: number;
   label?: string;
   color?: string;
+  assetId?: string;
 }
 
 export interface TimelineTrack {
@@ -90,6 +107,7 @@ export interface TimelineTrack {
   headerContent?: ReactNode;
   /** Blend mode of the layer node. */
   blendMode?: string;
+  matteMode?: any;
   /** Parent ID of the layer node. */
   parent?: string | null;
   /** Layout flags */
@@ -118,19 +136,19 @@ export interface TimelineModel {
   duration: number;
   frameRate: number;
   currentTime: number;
+  /** Frame the DISPLAYED timecode starts from (comp start timecode). Ruler
+   *  labels add it; tick positions stay 0-based. Default 0. */
+  startFrame?: number;
   /** Horizontal zoom factor. 1 = default. */
   pixelsPerSecond: number;
-  /**
-   * Cached (rendered) time ranges shown on the cache bar under the ruler.
-   * Cached regions render in Success green at 40% opacity; the rest stays
-   * transparent — preserving AE muscle memory.
-   */
-  cachedRanges?: ReadonlyArray<TimelineCacheRange>;
   /** Loop region. */
   loop?: { start: number; end: number };
   /** Work area (in/out region, seconds). Playback loops within it; a band is
    *  drawn on the ruler + a faint tint over the lanes. */
   workArea?: { start: number; end: number };
+  /** Frame-cache coverage (seconds) — the REAL RAM-preview state, drawn as a
+   *  thin green bar under the ruler. */
+  cachedRanges?: ReadonlyArray<{ start: number; end: number }>;
   /** Snap to grid (UI hint; engine may ignore). */
   snapToGrid?: boolean;
   /** Total height of the track header column. */

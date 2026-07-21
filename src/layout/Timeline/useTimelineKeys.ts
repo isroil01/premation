@@ -10,6 +10,9 @@
  *   Shift+B                 → clear the work area
  *   Ctrl/Cmd+Shift+D        → split selected clips at the playhead
  *   Ctrl/Cmd+Z / +Shift     → undo / redo timeline edits (clip move/trim/split)
+ *   Ctrl/Cmd+C              → copy selected keyframes to clipboard
+ *   Ctrl/Cmd+V              → paste keyframes at playhead (onto selected layers)
+ *   Ctrl/Cmd+Alt+S          → smooth motion path for selected layers
  *
  * Deliberately avoids Arrow keys and Space — those are owned by the viewport
  * (nudge / temporary-hand) when it has focus. Ignores events originating from
@@ -19,7 +22,11 @@
 import { useEffect } from 'react';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
+import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
+import { smoothMotionPath } from '@core/motion/motionPath';
+import { runAnimEdit } from '@core/animation/animationCommands';
 
 export function useTimelineKeys(): void {
   useEffect(() => {
@@ -27,24 +34,66 @@ export function useTimelineKeys(): void {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       const c = getTimelineController();
-      // Split selected layers at the playhead (After Effects: Ctrl/Cmd+Shift+D).
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
-        e.preventDefault();
-        c.splitSelectedAtPlayhead(useSelectionStore.getState().ids);
-        return;
-      }
-      // Undo / redo via the unified global CommandSystem history.
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
-        const redo = e.shiftKey;
-        const history = getCommandSystem().getHistory();
-        if (redo ? history.canRedo() : history.canUndo()) {
+
+      // ── Ctrl/Cmd combos ─────────────────────────────────────────
+      if (e.ctrlKey || e.metaKey) {
+        // Split selected layers at the playhead (After Effects: Ctrl/Cmd+Shift+D).
+        if (e.shiftKey && (e.key === 'd' || e.key === 'D')) {
           e.preventDefault();
-          if (redo) history.redo();
-          else history.undo();
+          c.splitSelectedAtPlayhead(useSelectionStore.getState().ids);
+          return;
         }
-        return;
+        // Undo / redo via the unified global CommandSystem history.
+        if (e.key === 'z' || e.key === 'Z') {
+          const redo = e.shiftKey;
+          const history = getCommandSystem().getHistory();
+          if (redo ? history.canRedo() : history.canUndo()) {
+            e.preventDefault();
+            if (redo) history.redo();
+            else history.undo();
+          }
+          return;
+        }
+        // Ctrl+C — copy selected keyframes to clipboard.
+        if (!e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'C')) {
+          const kfIds = useKeyframeSelectionStore.getState().ids;
+          if (kfIds.size > 0) {
+            e.preventDefault();
+            copyKeyframes(kfIds);
+          }
+          return;
+        }
+        // Ctrl+V — paste keyframes from clipboard at the playhead.
+        if (!e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) {
+          const targetIds = useSelectionStore.getState().ids;
+          if (targetIds.length > 0) {
+            e.preventDefault();
+            const playhead = getTimelineController().currentSeconds;
+            pasteKeyframes(targetIds, playhead);
+          }
+          return;
+        }
+        // Ctrl+Alt+S — smooth motion path for selected layers.
+        if (e.altKey && (e.key === 's' || e.key === 'S')) {
+          e.preventDefault();
+          const ids = useSelectionStore.getState().ids;
+          if (ids.length > 0) {
+            runAnimEdit('Smooth motion path', () => {
+              for (const id of ids) smoothMotionPath(id);
+            });
+          }
+          return;
+        }
+        return; // don't fall through to single-key handling
       }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // ── Single-key ───────────────────────────────────────────────
+      // Alt is allowed through for [ and ] only: those are AE's Trim In/Out
+      // (Alt+[ / Alt+]), and their branches below test altKey themselves. A
+      // blanket `if (e.altKey) return` made both permanently unreachable while
+      // the transport tooltips went on advertising them.
+      const altTrim = e.key === '[' || e.key === ']';
+      if (e.altKey && !altTrim) return;
       switch (e.key) {
         case 'Home':
           e.preventDefault();

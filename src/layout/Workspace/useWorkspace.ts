@@ -1,4 +1,5 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { mergeSelectedPaths } from '@core/scene/mergePaths';
+import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
  *
@@ -18,8 +19,9 @@ import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import type { RenderBackend } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
 import type { Guide, GuideAxis, WorkspaceOverlay } from '@motion/workspace';
-import { modifiersFrom, type PointerInput, type WheelInput } from '@motion/workspace';
+import { modifiersFrom, drawToolOptions, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
+import { useProjectStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
@@ -29,7 +31,8 @@ import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useRenderBackendStore } from '@stores/renderBackendStore';
+
+
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
 import {
   hasPositionAnimation,
@@ -44,6 +47,11 @@ import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { bumpScene } from '@stores/sceneStore';
 import { readNodeKind, flattenScene } from '@core/scene/sceneDerive';
+import { addPaintStroke } from '@core/paint/paintStrokes';
+import { compToLayerLocal, isPaintableKind, localBrushSize } from '@core/paint/paintCoords';
+import { usePaintStore } from '@stores/paintStore';
+import { useInfoStore } from '@stores/infoStore';
+import { samplePixelRgba } from '@core/workspace/pixelSample';
 import { readGeometry } from '@core/workspace/geometry';
 import {
   duplicateSelectedLayers,
@@ -54,6 +62,7 @@ import {
   ungroupSelected,
   precomposeSelected,
 } from '@core/scene/sceneInsert';
+import { rigLogoForAnimation } from '@core/scene/rigLogo';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
@@ -130,12 +139,13 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
 
   const backendRef = useRef<RenderBackend | null>(null);
   const dprRef = useRef(1);
-  // Which render backend to build (Canvas2D vs experimental GPU). Changing it
-  // re-runs the mount effect below, rebuilding the backend onto the new choice.
-  const backendChoice = useRenderBackendStore((s) => s.choice);
+
   // Active on-canvas motion-path drag (E4): a keyframe point or one of its
   // spatial tangent handles ('in'/'out'), or null.
   const mpDragRef = useRef<{ nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null>(null);
+  // Active Brush-tool paint pass: comp[] commits to the layer on release,
+  // screen[] previews the wet stroke on the overlay while dragging.
+  const paintDragRef = useRef<{ nodeId: string; comp: Array<{ x: number; y: number }>; screen: Array<{ x: number; y: number }> } | null>(null);
   // Active ruler-guide drag (drag-out / move / delete), or null.
   const guideDragRef = useRef<GuideDrag | null>(null);
   // True while we override the engine cursor with a guide resize cursor.
@@ -166,8 +176,20 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
   const draft = useRenderQualityStore((s) => s.draft);
 
   const compKey = useCompositionStore((s) => s.key());
+  const compWidth = useCompositionStore((s) => s.width);
+  const compHeight = useCompositionStore((s) => s.height);
   const compRef = useRef(useCompositionStore.getState().comp());
   compRef.current = useCompositionStore.getState().comp();
+
+  // RAM preview (frame cache) inputs, threaded via refs into the mount-scoped
+  // render closure. The cache only fills AND serves during PLAYBACK (read
+  // straight off the store at render time): canvas drags can repaint
+  // mid-gesture without bumping any revision, so caching interactive renders
+  // could blit stale (or half-dragged) pixels back.
+  const sceneRevRef = useRef(sceneRev);
+  sceneRevRef.current = sceneRev;
+  const focusKeyRef = useRef(focusKey);
+  focusKeyRef.current = focusKey;
 
   const activeFps = compRef.current.fps || 60;
   const motionBlurRef = useRef({ enabled: mbEnabled && !draft, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps });
@@ -181,14 +203,26 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     const stage = stageRef.current;
     if (!content || !overlay || !stage) return;
 
-    const backend = createRenderBackend(backendChoice);
+    const backend = createRenderBackend();
     backend.attach(content);
     backend.setPreviewChrome?.(true);
     backendRef.current = backend;
 
+    // AnimationChanged revision — part of the cache key so a keyframe edit
+    // during a playing loop invalidates every cached frame.
+    let animRev = 0;
+
+    const paintChrome = (): void => {
+      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null);
+      paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
+    };
+
     const render = (): void => {
       const b = backendRef.current;
       if (!b) return;
+
+
+
       b.renderFrame(
         buildSnapshot(
           defaultSceneGraph,
@@ -198,16 +232,19 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
           overlaysRef.current,
           controller.getView(),
           motionBlurRef.current,
-          { ...compRef.current, camera3dMode: camera3dModeRef.current },
+          // rootId scopes the render to the ACTIVE composition's subtree. Without
+          // it, buildSnapshot flattens every root and draws all comps stacked on
+          // top of each other — and the preview (which DOES pass rootId) then
+          // showed a different picture than the editor. Both scope the same now.
+          { ...compRef.current, rootId: compRef.current.id, camera3dMode: camera3dModeRef.current },
         ),
       );
+
       renderCache.mark(timeRef.current);
-      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller);
-      paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
+      paintChrome();
     };
     controller.onRender(render);
 
-    let firstFit = true;
     const sizeAll = (): void => {
       const rect = stage.getBoundingClientRect();
       // Skip degenerate layouts (0×0 during mount/transition) so we never poison
@@ -215,18 +252,22 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       if (rect.width < 1 || rect.height < 1) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       dprRef.current = dpr;
-      backend.resize(rect.width, rect.height, dpr);
+      // Preview resolution (Full/Half/Third/Quarter) scales only the CONTENT
+      // buffer — overlay chrome and interaction math stay at full dpr so
+      // handles/rulers remain crisp and hit-testing is unaffected.
+      const previewRes = useRenderQualityStore.getState().resolution || 1;
+      backend.resize(rect.width, rect.height, dpr / previewRes);
       overlay.width = Math.max(1, Math.round(rect.width * dpr));
       overlay.height = Math.max(1, Math.round(rect.height * dpr));
       overlay.style.width = `${rect.width}px`;
       overlay.style.height = `${rect.height}px`;
-      // Only consume the one-shot fit-to-composition once the stage has a
-      // realistic size. On first load the stage can briefly measure collapsed
-      // (mid-mount / behind the onboarding tour); fitting then pins the zoom to
-      // ~5% and it never recovers. Keep re-fitting until a settled size arrives.
+      // Re-fit while auto-fit is on so the comp keeps filling the available
+      // space as panels collapse/expand (AE-style). The `settled` guard avoids
+      // fitting against a briefly-collapsed stage on first load (mid-mount /
+      // behind the onboarding tour), which would pin the zoom to ~5%. A manual
+      // zoom/pan turns auto-fit off, so this stops honoring it until "Fit".
       const settled = rect.width >= 240 && rect.height >= 160;
-      controller.resize(rect.width, rect.height, dpr, firstFit && settled);
-      if (settled) firstFit = false;
+      controller.resize(rect.width, rect.height, dpr, controller.autoFit && settled);
       render();
     };
     const ro = new ResizeObserver(sizeAll);
@@ -239,8 +280,22 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     window.addEventListener('resize', sizeAll);
     const settleTimer = setTimeout(sizeAll, 600);
 
+    // Re-size the content buffer when the preview-resolution dropdown changes
+    // (sizeAll re-reads the store), so Full/Half/Third/Quarter takes effect in
+    // the main editor viewport — not just Presentation mode.
+    let lastPreviewRes = useRenderQualityStore.getState().resolution;
+    const qualitySub = useRenderQualityStore.subscribe((s) => {
+      if (s.resolution !== lastPreviewRes) {
+        lastPreviewRes = s.resolution;
+        sizeAll();
+      }
+    });
+
     // Content also depends on the animation engine (keyframe edits, playback).
-    const animSub = getEventBus().on('AnimationChanged', () => controller.requestRender());
+    const animSub = getEventBus().on('AnimationChanged', () => {
+      animRev++; // invalidates the frame cache key
+      controller.requestRender();
+    });
     // Reflect the engine cursor on the overlay (rich resize/rotate cursors).
     const cursorSub = controller.ws.cursor.events.on('changed', ({ css }) => {
       overlay.style.cursor = css;
@@ -252,18 +307,35 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       clearTimeout(settleTimer);
       window.removeEventListener('resize', sizeAll);
       ro.disconnect();
+      qualitySub();
       animSub.dispose();
       cursorSub.dispose();
       controller.onRender(() => {});
       backend.dispose();
       backendRef.current = null;
     };
-  }, [contentCanvasRef, overlayCanvasRef, stageRef, backendChoice]);
+  }, [contentCanvasRef, overlayCanvasRef, stageRef]);
 
   // ── Re-render on scene / playhead / guide changes ──────────────────
   useEffect(() => {
     getWorkspaceController().requestRender();
   }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, draft, mbEnabled, mbShutter, mbSamples, compKey]);
+
+  // ── Auto-fit on comp-size change ───────────────────────────────────
+  // Switching resolution (e.g. a 9:16 reel ↔ 16:9) re-frames the comp to fill
+  // the viewport, like After Effects fitting a freshly-sized comp. This also
+  // re-enables auto-fit so subsequent panel collapse/expand keeps tracking.
+  // Skipped on the very first mount — the mount effect's initial fit handles it.
+  const didMountFitRef = useRef(false);
+  useEffect(() => {
+    if (!didMountFitRef.current) {
+      didMountFitRef.current = true;
+      return;
+    }
+    const controller = getWorkspaceController();
+    controller.fitComposition();
+    controller.requestRender();
+  }, [compWidth, compHeight]);
 
   // ── Tool bar → engine tool ─────────────────────────────────────────
   useEffect(() => {
@@ -334,6 +406,29 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
           return;
         }
       }
+      // Brush tool over a selected paintable layer = paint a stroke onto that
+      // layer (AE Paint), not draw a freehand shape via the engine. Gated on a
+      // single paintable selection so the freehand brush still works with none
+      // selected. Points collect in comp space; committed layer-local on release.
+      if (controller.ws.getTool() === 'brush') {
+        const ids = useSelectionStore.getState().ids;
+        if (ids.length === 1) {
+          const node = defaultSceneGraph.getNode(ids[0]!);
+          if (node && isPaintableKind(node)) {
+            e.preventDefault();
+            const cp = controller.ws.screenToWorld(local(e));
+            paintDragRef.current = { nodeId: node.id, comp: [cp], screen: [local(e)] };
+            try {
+              overlay.setPointerCapture(e.pointerId);
+            } catch {
+              /* best-effort */
+            }
+            useUIStore.getState().setDragging(true);
+            controller.requestRender();
+            return;
+          }
+        }
+      }
       // E4: grabbing a motion-path keyframe dot starts a local drag that edits
       // the keyframe directly (the engine never sees it, so it can't also
       // move/marquee the layer).
@@ -375,6 +470,26 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       controller.ws.feedPointerDown(toPointer(e));
     };
     const onMove = (e: PointerEvent): void => {
+      // Info readout (AE Info panel): comp-space position + sampled pixel under
+      // the cursor. Runs for every move regardless of the active tool/drag.
+      {
+        const p = local(e);
+        const world = controller.ws.screenToWorld(p);
+        const content = contentCanvasRef.current;
+        useInfoStore.getState().set({
+          x: Math.round(world.x),
+          y: Math.round(world.y),
+          rgba: content ? samplePixelRgba(content, p) : null,
+          present: true,
+        });
+      }
+      // Active Brush paint: append the sample and repaint the wet-stroke preview.
+      if (paintDragRef.current) {
+        paintDragRef.current.comp.push(controller.ws.screenToWorld(local(e)));
+        paintDragRef.current.screen.push(local(e));
+        controller.requestRender();
+        return;
+      }
       // Active ruler-guide drag: track the pointer, live-move existing guides,
       // and flag when the pointer is back over the source ruler (= cancel/delete).
       const gd = guideDragRef.current;
@@ -444,6 +559,31 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
         if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
       } catch {
         /* ignore */
+      }
+      // Commit the Brush paint pass: map every sample into layer space and add
+      // ONE stroke (one undo step), then clear the wet-stroke preview.
+      const pd = paintDragRef.current;
+      if (pd) {
+        paintDragRef.current = null;
+        useUIStore.getState().setDragging(false);
+        const node = defaultSceneGraph.getNode(pd.nodeId);
+        if (node) {
+          const s = usePaintStore.getState();
+          const points = pd.comp.map((cp) => compToLayerLocal(node, cp));
+          addPaintStroke(pd.nodeId, {
+            points,
+            // Size + colour are shared with the freehand brush (Tool Options bar).
+            // Size is a comp-pixel diameter → convert to the layer's local units
+            // so a scaled-up layer doesn't turn one stroke into a giant blob.
+            color: drawToolOptions.brushColor,
+            size: localBrushSize(node, drawToolOptions.brushSize),
+            opacity: s.opacity,
+            hardness: s.hardness,
+            mode: s.mode,
+          });
+        }
+        controller.requestRender();
+        return;
       }
       // Finish a ruler-guide drag: commit (add/move) or cancel/delete on the ruler.
       const gd = guideDragRef.current;
@@ -529,10 +669,14 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       controller.ws.feedWheel(w);
     };
 
+    // Info readout: clear the pixel/position when the cursor leaves the canvas.
+    const onLeave = (): void => useInfoStore.getState().clear();
+
     overlay.addEventListener('pointerdown', onDown);
     overlay.addEventListener('pointermove', onMove);
     overlay.addEventListener('pointerup', onUp);
     overlay.addEventListener('pointercancel', onUp);
+    overlay.addEventListener('pointerleave', onLeave);
     overlay.addEventListener('dblclick', onDoubleClick);
     overlay.addEventListener('contextmenu', onContextMenu);
     overlay.addEventListener('wheel', onWheel, { passive: false });
@@ -542,6 +686,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       overlay.removeEventListener('pointermove', onMove);
       overlay.removeEventListener('pointerup', onUp);
       overlay.removeEventListener('pointercancel', onUp);
+      overlay.removeEventListener('pointerleave', onLeave);
       overlay.removeEventListener('dblclick', onDoubleClick);
       overlay.removeEventListener('contextmenu', onContextMenu);
       overlay.removeEventListener('wheel', onWheel);
@@ -556,6 +701,43 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
  * (DemoPanels.openNodeMenu), minus Rename: the tree's inline rename is local
  * ScenePanel state and window.prompt is unavailable in Electron.
  */
+/**
+ * The value a property has right now (sampled keyframes → component prop →
+ * type default) — what an added keyframe must capture so nothing jumps.
+ */
+function currentPropValue(id: string, prop: string): number {
+  const t = (() => {
+    const s = useProjectStore.getState();
+    return s.tabs[s.activeTabId ?? '']?.time ?? 0;
+  })();
+  const layerT = getRemappedTime(id, t);
+  const sampled = defaultAnimation.sample(id, prop, layerT);
+  if (sampled !== undefined) return sampled;
+  const node = defaultSceneGraph.getNode(id);
+  if (node) {
+    for (const c of node.components) {
+      const v = (c.props as Record<string, unknown>)[prop];
+      if (typeof v === 'number') return v;
+    }
+    if (prop === 'x') return node.transform.position.x;
+    if (prop === 'y') return node.transform.position.y;
+  }
+  const DEFAULTS: Record<string, number> = { scaleX: 1, scaleY: 1, opacity: 100 };
+  return DEFAULTS[prop] ?? 0;
+}
+
+/** Keyframe `props` at the playhead, capturing their current values. */
+function addKeyframesAtPlayhead(id: string, label: string, props: readonly string[]): void {
+  const s = useProjectStore.getState();
+  const t = s.tabs[s.activeTabId ?? '']?.time ?? 0;
+  const layerT = getRemappedTime(id, t);
+  runAnimEdit(`Add ${label} keyframe`, () => {
+    for (const p of props) {
+      defaultAnimation.setKeyframe(id, p, layerT, currentPropValue(id, p));
+    }
+  });
+}
+
 function nodeContextMenuItems(id: string): ContextMenuItem[] {
   const node = defaultSceneGraph.getNode(id);
   const hidden = node?.visible === false;
@@ -569,6 +751,17 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
     bumpScene();
   };
   return [
+    // AE-style quick keyframing straight from the canvas — this existed
+    // nowhere before (users had to find the stopwatch in the inspector or
+    // twirl the timeline), which made starting an animation feel complex.
+    { id: 'kf', label: 'Add Keyframe', children: [
+      { id: 'kf-pos', label: 'Position', onSelect: () => addKeyframesAtPlayhead(id, 'Position', ['x', 'y']) },
+      { id: 'kf-scale', label: 'Scale', onSelect: () => addKeyframesAtPlayhead(id, 'Scale', ['scaleX', 'scaleY']) },
+      { id: 'kf-rot', label: 'Rotation', onSelect: () => addKeyframesAtPlayhead(id, 'Rotation', ['rotation']) },
+      { id: 'kf-op', label: 'Opacity', onSelect: () => addKeyframesAtPlayhead(id, 'Opacity', ['opacity']) },
+      { id: 'kf-all', label: 'All Transform', onSelect: () => addKeyframesAtPlayhead(id, 'Transform', ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']) },
+    ] },
+    { id: 'sep0', separator: true },
     { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
     { id: 'sep1', separator: true },
     { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleVisible },
@@ -578,6 +771,22 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
     { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
     ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
     { id: 'precompose', label: 'Pre-compose…', onSelect: () => precomposeSelected() },
+    { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
+    ...(useSelectionStore.getState().ids.length >= 2
+      ? [
+          { id: 'sep_merge', separator: true },
+          {
+            id: 'merge-paths',
+            label: 'Merge Paths',
+            children: [
+              { id: 'merge-union', label: 'Union (Add)', onSelect: () => mergeSelectedPaths('union') },
+              { id: 'merge-subtract', label: 'Subtract', onSelect: () => mergeSelectedPaths('subtract') },
+              { id: 'merge-intersect', label: 'Intersect', onSelect: () => mergeSelectedPaths('intersect') },
+              { id: 'merge-exclude', label: 'Exclude (XOR)', onSelect: () => mergeSelectedPaths('exclude') },
+            ],
+          },
+        ]
+      : []),
     { id: 'sep3', separator: true },
     { id: 'delete', label: 'Delete', danger: true, onSelect: () => deleteSelectedLayers() },
   ];
@@ -605,6 +814,7 @@ function paintOverlay(
   dpr: number,
   guideDrag: GuideDrag | null = null,
   controller?: WorkspaceController,
+  paintStroke: Array<{ x: number; y: number }> | null = null,
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -613,6 +823,34 @@ function paintOverlay(
 
   const cssW = canvas.width / dpr;
   const cssH = canvas.height / dpr;
+
+  // Wet-stroke preview: the Brush's in-flight samples (screen space), drawn as
+  // round-capped ink at brush width so what you drag IS what commits on release.
+  if (paintStroke && paintStroke.length > 0) {
+    const s = usePaintStore.getState();
+    const zoom = controller?.getView().scale ?? 1;
+    const w = Math.max(1, drawToolOptions.brushSize * zoom);
+    ctx.save();
+    ctx.globalAlpha = s.mode === 'erase' ? 0.5 : s.opacity;
+    ctx.strokeStyle = s.mode === 'erase' ? '#ffffff' : drawToolOptions.brushColor;
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = w;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (s.mode === 'erase') ctx.setLineDash([Math.max(4, w / 2), Math.max(4, w / 2)]);
+    if (paintStroke.length === 1) {
+      const p = paintStroke[0]!;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, w / 2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(paintStroke[0]!.x, paintStroke[0]!.y);
+      for (let i = 1; i < paintStroke.length; i++) ctx.lineTo(paintStroke[i]!.x, paintStroke[i]!.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // Persistent ruler guides (screen-space, from the engine's overlay).
   if (overlay.guides.length) {
@@ -692,45 +930,47 @@ function paintOverlay(
     }
   }
 
-  // Selection bounding box.
-  if (overlay.selectionBounds) {
+  // Selection bounding box (hidden while actively painting a stroke).
+  if (!paintStroke && overlay.selectionBounds) {
     ctx.strokeStyle = ACCENT;
     ctx.lineWidth = 1.5;
     strokeRect(ctx, overlay.selectionBounds);
   }
 
-  // Handles.
-  for (const h of overlay.handles) {
-    if (h.kind === 'rotate') {
-      ctx.beginPath();
-      ctx.arc(h.position.x, h.position.y, 5, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
-      ctx.fill();
-      ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else if (h.kind === 'point') {
-      // Vertex anchor: filled square
-      ctx.fillStyle = ACCENT;
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 1.5;
-      ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
-      ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
-    } else if (h.kind === 'tangent-in' || h.kind === 'tangent-out') {
-      // Tangent handle: circle
-      ctx.beginPath();
-      ctx.arc(h.position.x, h.position.y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
-      ctx.fill();
-      ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = '#fff';
-      ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 1.5;
-      ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
-      ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
+  // Handles (hidden while actively painting a stroke).
+  if (!paintStroke) {
+    for (const h of overlay.handles) {
+      if (h.kind === 'rotate') {
+        ctx.beginPath();
+        ctx.arc(h.position.x, h.position.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.strokeStyle = ACCENT;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else if (h.kind === 'point') {
+        // Vertex anchor: filled square
+        ctx.fillStyle = ACCENT;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
+        ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
+      } else if (h.kind === 'tangent-in' || h.kind === 'tangent-out') {
+        // Tangent handle: circle
+        ctx.beginPath();
+        ctx.arc(h.position.x, h.position.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.strokeStyle = ACCENT;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = ACCENT;
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
+        ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
+      }
     }
   }
 

@@ -2,26 +2,24 @@
  * TopNav — the After Effects–style top chrome: a real menu bar (File / Edit /
  * … shown directly, no dropdown kebab) over a horizontal tool bar of the
  * motion-design tools. Replaces the old floating dropdown + left tool rail.
- *
- *   ┌───────────────────────────────────────────────────────────┐
- *   │ ← │ File Edit Composition Layer Effect … ·····  ✦ AI       │  menu row
- *   ├───────────────────────────────────────────────────────────┤
- *   │ ▸ ✥ ✎ T ▣ ○ │ ⬚ mask │ + layer │ 3D │ Animate │ align      │  tool row
- *   └───────────────────────────────────────────────────────────┘
  */
 
 import { useRef, useState, useEffect, type ChangeEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getCommandSystem } from '@core/commands/CommandSystem';
+import { performUndo, performRedo } from '@stores/historyStore';
 import { getEventBus } from '@core/events/EventBus';
 import { IconButton } from '@components/IconButton';
 import { Icon, type IconName } from '@components/Icon';
-import { AppMenuBar } from '@layout/Menu';
-import { openExportDialog } from '@layout/Export/ExportDialog';
+import { ToolOptionsBar } from './ToolOptionsBar';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
-import { usePresentationStore } from '@stores/presentationStore';
-import { useActiveWorkspace } from '@stores/projectStore';
+import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio } from '@core/scene/sceneInsert';
+import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance } from '@core/scene/sceneInsert';
+import { planLottieImport, type LottieJson } from '@core/lottie/lottieImport';
+import { applyImportPlan } from '@core/lottie/lottieImportApply';
+import { createToolContext } from '@core/ai/toolContext';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
@@ -30,60 +28,59 @@ import { addSliderControl } from '@core/animation/expressionControls';
 import { hasTextComponent } from '@core/text/textAnimators';
 import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
-import { useLayoutStore } from '@stores/layoutStore';
+import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { AppMenuButton } from '@layout/Menu';
 
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { isRiggableLeafNode } from '@core/scene/rigLogo';
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
-import { useContainerSize } from '@hooks/useContainerSize';
 import styles from './TopNav.module.css';
 
 interface ToolDef {
   id: Tool;
   icon: IconName;
   label: string;
-  /** Advertised only when a real keyboard binding exists (see buildToolCommands). */
   shortcut?: string;
 }
 
-/** Tool groups, separated by hairlines (AE tool-bar grouping). Every tool maps
- *  to a real engine tool (see TOOL_MAP); tooltips advertise a shortcut only when
- *  one is actually registered. AE-exact key assignments:
- *  V=Select, A=DirectSelect, W=Rotate, Y=PanBehind, H=Hand, Z=Zoom.
- *  The Select tool handles on-canvas drag (move), resize, and rotate via its handles. */
-const TOOL_GROUPS: ToolDef[][] = [
-  [
-    { id: 'select',        icon: 'mouse-pointer', label: 'Selection Tool (move, scale, rotate via handles)',    shortcut: 'V' },
-    { id: 'direct-select', icon: 'select-all',    label: 'Direct Selection Tool (path points)',                shortcut: 'A' },
-    { id: 'rotate',        icon: 'rotate',        label: 'Rotation Tool (constrained rotate)',                 shortcut: 'W' },
-    { id: 'pan-behind',    icon: 'anchor',        label: 'Pan Behind / Anchor Point Tool (reposition pivot)', shortcut: 'Y' },
-    { id: 'hand',          icon: 'drag',          label: 'Hand Tool (pan the view)',                          shortcut: 'H' },
-    { id: 'zoom',          icon: 'zoom-in',       label: 'Zoom Tool (click / Alt-click)',                     shortcut: 'Z' },
-  ],
-  [
-    { id: 'pen',      icon: 'pen',        label: 'Pen Tool (draw bezier paths)', shortcut: 'G' },
-    { id: 'pencil',   icon: 'pencil',     label: 'Pencil Tool (freehand draw)',  shortcut: 'Shift+P' },
-    { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen',               shortcut: 'Alt+P' },
-    { id: 'text',     icon: 'type',       label: 'Text Tool (click canvas to create)', shortcut: 'Ctrl+T' },
-    { id: 'line',     icon: 'line',       label: 'Line Segment',                shortcut: 'L' },
-    { id: 'shape',    icon: 'square',     label: 'Rectangle Tool (drag to draw)',shortcut: 'Q' },
-    { id: 'ellipse',  icon: 'circle',     label: 'Ellipse Tool (drag to draw)', shortcut: 'Shift+Q' },
-    { id: 'polygon',  icon: 'polygon',    label: 'Polygon Tool (drag to draw)' },
-    { id: 'star',     icon: 'star',       label: 'Star Tool (drag to draw)' },
-  ],
-  [
-    { id: 'mask-rect',    icon: 'mask-square', label: 'Rectangle Mask Tool (drag to draw)' },
-    { id: 'mask-ellipse', icon: 'mask-circle', label: 'Ellipse Mask Tool (drag to draw)' },
-  ]
+const POINTER_TOOLS: ToolDef[] = [
+  { id: 'select',        icon: 'mouse-pointer', label: 'Selection Tool', shortcut: 'V' },
+  { id: 'direct-select', icon: 'select-all',    label: 'Direct Selection Tool', shortcut: 'A' },
+  { id: 'rotate',        icon: 'rotate',        label: 'Rotation Tool', shortcut: 'W' },
+  { id: 'pan-behind',    icon: 'anchor',        label: 'Pan Behind Tool', shortcut: 'Y' },
+  { id: 'hand',          icon: 'hand',          label: 'Hand Tool', shortcut: 'H' },
+  { id: 'zoom',          icon: 'zoom-in',       label: 'Zoom Tool', shortcut: 'Z' },
 ];
 
+// Only advertise a shortcut a tool actually has (see buildToolCommands):
+// pencil/curvature/polygon/star/line have no binding, so they show none.
+const PEN_TOOLS: ToolDef[] = [
+  { id: 'pen',      icon: 'pen',        label: 'Pen Tool', shortcut: 'G' },
+  { id: 'pencil',   icon: 'pencil',     label: 'Pencil Tool' },
+  { id: 'brush',    icon: 'brush',      label: 'Brush Tool (pressure ink)' },
+  { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen' },
+];
 
-/**
- * The Animate menu — AE-style one-click animation actions, keyframe
- * assistants, and rig-building controls. Everything applies through the
- * command path, so every action is a single undoable step.
- */
+const SHAPE_TOOLS: ToolDef[] = [
+  { id: 'shape',    icon: 'square',     label: 'Rectangle Tool', shortcut: 'Q' },
+  { id: 'ellipse',  icon: 'circle',     label: 'Ellipse Tool', shortcut: 'Shift+Q' },
+  { id: 'polygon',  icon: 'polygon',    label: 'Polygon Tool' },
+  { id: 'star',     icon: 'star',       label: 'Star Tool' },
+  { id: 'line',     icon: 'line',       label: 'Line Segment' },
+];
+
+const TEXT_TOOL: ToolDef = { id: 'text', icon: 'type', label: 'Text Tool', shortcut: 'Ctrl+T' };
+
+const MASK_TOOLS: ToolDef[] = [
+  { id: 'mask-rect',    icon: 'mask-square', label: 'Rectangle Mask Tool' },
+  { id: 'mask-ellipse', icon: 'mask-circle', label: 'Ellipse Mask Tool' },
+];
+
+const PUPPET_TOOL: ToolDef = { id: 'puppet-pin', icon: 'puppet-pin', label: 'Puppet Position Pin Tool', shortcut: 'Ctrl+P' };
+const BONE_TOOL: ToolDef = { id: 'bone', icon: 'bone', label: 'Bone Tool', shortcut: 'Ctrl+B' };
+
 function buildAnimateItems(
   selectedIds: readonly string[],
   isTextLayer: boolean,
@@ -109,112 +106,60 @@ function buildAnimateItems(
   return [
     ...presetItems,
     { type: 'separator' },
-    {
-      type: 'item',
-      id: 'anim-typewriter',
-      label: 'Typewriter (text)',
-      icon: 'type',
-      disabled: !isTextLayer,
-      onSelect: () => {
-        if (applyTypewriter(id, playhead)) notify('Typewriter rig created');
-      },
-    },
-    {
-      type: 'item',
-      id: 'anim-bounce-in-words',
-      label: 'Bounce In Words (text)',
-      icon: 'type',
-      disabled: !isTextLayer,
-      onSelect: () => {
-        if (applyBounceInWords(id, playhead)) notify('Bounce In Words rig created');
-      },
-    },
-    {
-      type: 'item',
-      id: 'anim-spin-fade-chars',
-      label: 'Spin & Fade Characters (text)',
-      icon: 'type',
-      disabled: !isTextLayer,
-      onSelect: () => {
-        if (applySpinFadeCharacters(id, playhead)) notify('Spin & Fade Characters rig created');
-      },
-    },
-    {
-      type: 'item',
-      id: 'anim-tracking-reveal',
-      label: 'Tracking Reveal (text)',
-      icon: 'type',
-      disabled: !isTextLayer,
-      onSelect: () => {
-        if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created');
-      },
-    },
+    { type: 'item', id: 'anim-typewriter', label: 'Typewriter (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTypewriter(id, playhead)) notify('Typewriter rig created'); } },
+    { type: 'item', id: 'anim-bounce-in-words', label: 'Bounce In Words (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyBounceInWords(id, playhead)) notify('Bounce In Words rig created'); } },
+    { type: 'item', id: 'anim-spin-fade-chars', label: 'Spin & Fade Characters (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applySpinFadeCharacters(id, playhead)) notify('Spin & Fade Characters rig created'); } },
+    { type: 'item', id: 'anim-tracking-reveal', label: 'Tracking Reveal (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created'); } },
     { type: 'separator' },
-    {
-      type: 'item',
-      id: 'anim-ease-all',
-      label: 'Easy Ease All Keyframes',
-      icon: 'track',
-      onSelect: () => {
-        if (easyEaseAll(id)) notify('Eased all keyframes');
-        else notify('Layer has no keyframes yet', 'warning');
-      },
-    },
-    {
-      type: 'item',
-      id: 'anim-reverse',
-      label: 'Time-Reverse Keyframes',
-      icon: 'skip-back',
-      onSelect: () => {
-        if (timeReverseKeyframes(id)) notify('Keyframes reversed');
-        else notify('Layer has no keyframes yet', 'warning');
-      },
-    },
-    {
-      type: 'item',
-      id: 'anim-sequence',
-      label: 'Sequence Layers (stagger 0.3s)',
-      icon: 'layers',
-      disabled: selectedIds.length < 2,
-      onSelect: () => {
-        if (sequenceLayers(selectedIds, 0.3)) notify('Layers sequenced');
-        else notify('Select 2+ animated layers first', 'warning');
-      },
-    },
+    { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { if (easyEaseAll(id)) notify('Eased all keyframes'); else notify('Layer has no keyframes yet', 'warning'); } },
+    { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { if (timeReverseKeyframes(id)) notify('Keyframes reversed'); else notify('Layer has no keyframes yet', 'warning'); } },
+    { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers (bars, end-to-end)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (getTimelineController().sequenceLayerBars(selectedIds, 0)) notify('Layers sequenced end-to-end'); else notify('Select 2+ layers with timeline bars', 'warning'); } },
+    { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (sequenceLayers(selectedIds, 0.3)) notify('Animations staggered'); else notify('Select 2+ animated layers first', 'warning'); } },
     { type: 'separator' },
-    {
-      type: 'item',
-      id: 'anim-slider',
-      label: 'Add Slider Control (rig)',
-      icon: 'settings',
-      onSelect: () => {
-        const name = addSliderControl(id);
-        if (name) notify(`Added “${name}” — reference it anywhere with ctrl('${name}')`);
-      },
-    },
+    { type: 'item', id: 'anim-slider', label: 'Add Slider Control (rig)', icon: 'settings', onSelect: () => { const name = addSliderControl(id); if (name) notify(`Added “${name}” — reference it anywhere with ctrl('${name}')`); } },
   ];
 }
 
+const isElectron = typeof window !== 'undefined' && (!!window.motionEditor || !!window.electronAPI);
+
 export function TopNav(): JSX.Element {
+  const navigate = useNavigate();
   const activeTool = useUIStore((s) => s.activeTool);
   const setTool = useUIStore((s) => s.setActiveTool);
-  // Selected layer's 3D state, for the top-bar 3D toggle.
+  
   useSceneRevision((s) => s.rev);
   const selectedIds = useSelectionStore((s) => s.ids);
   const selectedId = selectedIds[0];
+  // Other compositions insertable as layers (comp instances). Excludes the
+  // active comp itself; the insert helper refuses deeper reference cycles.
+  const projComps = useProjectStore((s) => s.comps);
+  const activeCompId = useProjectStore((s) => s.tabs[s.activeTabId ?? '']?.compositionId);
+  const insertableComps = Object.values(projComps).filter(
+    (c) => c.id !== activeCompId && defaultSceneGraph.getNode(c.id),
+  );
   const selectedNode = selectedId ? defaultSceneGraph.getNode(selectedId) : undefined;
   const isTextLayer = !!selectedNode && hasTextComponent(selectedNode);
+  // Rig tools need ONE riggable leaf (shape/image/text). No selection, a
+  // multi-selection, or a group/precomp can't be rigged directly — the user
+  // should run "Rig Logo for Animation" (rasterize) instead.
+  const canRig = selectedIds.length === 1 && isRiggableLeafNode(selectedNode);
+  const rigHint = canRig ? '' : ' — select a shape or image layer (use Rig Logo for a group)';
+  
+  const compName = useCompositionStore((s) => s.name);
+  const compWidth = useCompositionStore((s) => s.width);
+  const compHeight = useCompositionStore((s) => s.height);
+  const compFps = useCompositionStore((s) => s.fps);
+  const wsTitle = useActiveWorkspace()?.title;
+  const title = wsTitle ?? compName ?? 'Untitled';
+  
   const playhead = useActiveWorkspace()?.time ?? 0;
   const snap = useUIStore((s) => s.snap);
   const toggleSnap = useUIStore((s) => s.toggleSnap);
   const canBe3D = !!selectedNode && selectedNode.components.some((c) => c.type === 'Transform');
   const is3D = canBe3D ? is3DEnabled(selectedNode) : false;
-  const enterPresentation = usePresentationStore((s) => s.enter);
+  
   const [canUndo, setCanUndo] = useState(() => getCommandSystem().getHistory().canUndo());
   const [canRedo, setCanRedo] = useState(() => getCommandSystem().getHistory().canRedo());
-  const leftCollapsed = useLayoutStore((s) => s.regions.leftSidebar?.collapsed);
-  const bottomCollapsed = useLayoutStore((s) => s.regions.bottomTimeline?.collapsed);
-  const rightCollapsed = useLayoutStore((s) => s.regions.rightInspector?.collapsed);
 
   useEffect(() => {
     const handleChanged = () => {
@@ -224,148 +169,188 @@ export function TopNav(): JSX.Element {
     const sub = getEventBus().on('UndoStackChanged', handleChanged);
     return () => sub.dispose();
   }, []);
+  
   const addAsset = useAssetStore((s) => s.addAsset);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const onPickAudio = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
-    e.target.value = ''; // allow re-picking the same file
     if (!file) return;
     const asset = await addAsset(file);
     insertAudio(asset);
   };
-  const wsTitle = useActiveWorkspace()?.title;
-  const compName = useCompositionStore((s) => s.name);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
-  const compFps = useCompositionStore((s) => s.fps);
-  const compDuration = useCompositionStore((s) => s.durationSeconds);
-  const title = wsTitle ?? compName ?? 'Untitled';
-
+  const seqInputRef = useRef<HTMLInputElement | null>(null);
+  const onPickSequence = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // allow re-picking the same set
+    if (files.length < 2) return;
+    await insertImageSequence(files);
+  };
+  const lottieInputRef = useRef<HTMLInputElement | null>(null);
+  const onPickLottie = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-picking the same file
+    if (!file) return;
+    const toast = (message: string, level: 'success' | 'warning'): void => {
+      useUIStore.getState().notify({ level, message, durationMs: 3200 });
+    };
+    try {
+      const json = JSON.parse(await file.text()) as LottieJson;
+      const plan = planLottieImport(json);
+      const { nodeIds, warnings } = applyImportPlan(plan, createToolContext(new AbortController().signal));
+      if (nodeIds.length === 0) {
+        toast('Lottie import: no layers could be created', 'warning');
+      } else {
+        const n = nodeIds.length;
+        const suffix = warnings.length ? ` (${warnings.length} warning${warnings.length > 1 ? 's' : ''})` : '';
+        toast(`Imported ${n} layer${n > 1 ? 's' : ''}${suffix}`, warnings.length ? 'warning' : 'success');
+      }
+    } catch {
+      toast('Lottie import failed: not valid JSON', 'warning');
+    }
+  };
+  
   const containerRef = useRef<HTMLDivElement>(null);
-  const { width: containerWidth } = useContainerSize(containerRef);
+  
+  const [lastPointerTool, setLastPointerTool] = useState<Tool>('select');
+  const [lastPenTool, setLastPenTool] = useState<Tool>('pen');
+  const [lastShapeTool, setLastShapeTool] = useState<Tool>('shape');
+
+  const isPointerActive = POINTER_TOOLS.some(t => t.id === activeTool);
+  const pointerDropdownTool = POINTER_TOOLS.find(t => t.id === (isPointerActive ? activeTool : lastPointerTool)) || POINTER_TOOLS[0]!;
+
+  const isPenActive = PEN_TOOLS.some(t => t.id === activeTool);
+  const penDropdownTool = PEN_TOOLS.find(t => t.id === (isPenActive ? activeTool : lastPenTool)) || PEN_TOOLS[0]!;
+
+  const isShapeActive = SHAPE_TOOLS.some(t => t.id === activeTool);
+  const shapeDropdownTool = SHAPE_TOOLS.find(t => t.id === (isShapeActive ? activeTool : lastShapeTool)) || SHAPE_TOOLS[0]!;
+
+  useEffect(() => {
+    if (isPointerActive) setLastPointerTool(activeTool);
+    if (isPenActive) setLastPenTool(activeTool);
+    if (isShapeActive) setLastShapeTool(activeTool);
+  }, [activeTool, isPointerActive, isPenActive, isShapeActive]);
 
   return (
     <div className={styles.root} ref={containerRef}>
-      {/* Row 1 — menu bar. */}
-      <div className={styles.menuRow}>
-        <IconButton aria-label="Back" size="sm" className={styles.back} onClick={() => window.history.back()}>
-          <Icon name="arrow-left" size={15} />
-        </IconButton>
-        <span className={styles.wordmark}>Motion&nbsp;Editor</span>
-        <span className={styles.menuDivider} aria-hidden />
-        <AppMenuBar />
-        <div className={styles.spacer} aria-hidden />
-        {/* Composition context — click to open Composition Settings. */}
-        <button
-          type="button"
-          className={styles.comp}
-          title="Composition settings"
-          onClick={() => openCompositionSettings()}
-        >
-          <Icon name="layers" size={12} className={styles.compIcon} />
-          <span className={styles.compName}>{title}</span>
-          <span className={styles.compMeta}>{compWidth}×{compHeight} · {compFps}fps</span>
-        </button>
-        <div className={styles.spacer} aria-hidden />
-
-        {containerWidth >= 600 && (
-          <>
-            <span className={styles.menuDivider} aria-hidden />
-            <IconButton
-              aria-label="Toggle Left Sidebar"
-              size="sm"
-              className={styles.layoutToggle}
-              active={!leftCollapsed}
-              title="Toggle Left Sidebar"
-              onClick={() => useLayoutStore.getState().toggleRegion('leftSidebar')}
-            >
-              <Icon name="panel-left" size={14} />
-            </IconButton>
-            <IconButton
-              aria-label="Toggle Bottom Timeline"
-              size="sm"
-              className={styles.layoutToggle}
-              active={!bottomCollapsed}
-              title="Toggle Bottom Timeline"
-              onClick={() => useLayoutStore.getState().toggleRegion('bottomTimeline')}
-            >
-              <Icon name="panel-bottom" size={14} />
-            </IconButton>
-            <IconButton
-              aria-label="Toggle Right Inspector"
-              size="sm"
-              className={styles.layoutToggle}
-              active={!rightCollapsed}
-              title="Toggle Right Inspector"
-              onClick={() => useLayoutStore.getState().toggleRegion('rightInspector')}
-            >
-              <Icon name="panel-right" size={14} />
-            </IconButton>
-          </>
-        )}
-
-        {containerWidth >= 800 ? (
-          <>
-            <span className={styles.menuDivider} aria-hidden />
-            <IconButton
-              aria-label="Preview"
-              size="sm"
-              className={styles.layoutToggle}
-              title="Preview"
-              onClick={() => enterPresentation()}
-            >
-              <Icon name="eye" size={14} />
-            </IconButton>
-            <IconButton
-              aria-label="Export"
-              size="sm"
-              className={styles.layoutToggle}
-              title="Export"
-              onClick={() => openExportDialog(compDuration, compFps)}
-            >
-              <Icon name="download" size={14} />
-            </IconButton>
-          </>
-        ) : (
-          <>
-            <span className={styles.menuDivider} aria-hidden />
-            <Dropdown
-              placement="bottom-end"
-              trigger={
-                <IconButton aria-label="More actions" size="sm" className={styles.layoutToggle}>
-                  <Icon name="more-horizontal" size={14} />
-                </IconButton>
-              }
-              items={[
-                ...(containerWidth < 600 ? [
-                  { type: 'item' as const, id: 'toggle-left', label: 'Toggle Left Sidebar', icon: 'panel-left' as const, onSelect: () => useLayoutStore.getState().toggleRegion('leftSidebar') },
-                  { type: 'item' as const, id: 'toggle-bottom', label: 'Toggle Bottom Timeline', icon: 'panel-bottom' as const, onSelect: () => useLayoutStore.getState().toggleRegion('bottomTimeline') },
-                  { type: 'item' as const, id: 'toggle-right', label: 'Toggle Right Inspector', icon: 'panel-right' as const, onSelect: () => useLayoutStore.getState().toggleRegion('rightInspector') },
-                  { type: 'separator' as const },
-                ] : []),
-                { type: 'item' as const, id: 'preview', label: 'Preview', icon: 'eye' as const, onSelect: () => enterPresentation() },
-                { type: 'item' as const, id: 'export', label: 'Export', icon: 'download' as const, onSelect: () => openExportDialog(compDuration, compFps) },
-              ]}
-            />
-          </>
-        )}
-      </div>
-
-      {/* Row 2 — tool bar. */}
       <div className={styles.toolRow} role="toolbar" aria-label="Tools">
-        {TOOL_GROUPS.map((group, gi) => (
-          <div key={gi} className={styles.toolGroup}>
-            {gi > 0 ? <span className={styles.toolDivider} aria-hidden /> : null}
-            {group.map((tool) => {
+        <div className={styles.inner}>
+          <IconButton
+            aria-label="Back to Dashboard"
+            size="sm"
+            className={styles.back}
+            style={{ marginRight: 8, marginLeft: -4 }}
+            onClick={() => navigate('/')}
+          >
+            <Icon name="arrow-left" size={15} />
+          </IconButton>
+
+          {!isElectron && (
+            <>
+              <AppMenuButton />
+              <span className={styles.toolDivider} aria-hidden />
+            </>
+          )}
+
+          <span className={styles.toolDivider} aria-hidden />
+
+          {/* Pointer Tools Dropdown */}
+          <div className={styles.toolGroup}>
+            <Dropdown
+              placement="bottom-start"
+              trigger={
+                <button
+                  type="button"
+                  className={isPointerActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+                  title={`${pointerDropdownTool.label}${pointerDropdownTool.shortcut ? ` (${pointerDropdownTool.shortcut})` : ''}`}
+                >
+                  <Icon name={pointerDropdownTool.icon} size={16} />
+                  <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                </button>
+              }
+              items={POINTER_TOOLS.map((t) => ({
+                type: 'item',
+                id: t.id,
+                label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
+                icon: t.icon,
+                onSelect: () => setTool(t.id),
+              }))}
+            />
+          </div>
+
+          <span className={styles.toolDivider} aria-hidden />
+
+          {/* Pen Tools Dropdown */}
+          <div className={styles.toolGroup}>
+            <Dropdown
+              placement="bottom-start"
+              trigger={
+                <button
+                  type="button"
+                  className={isPenActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+                  title={`${penDropdownTool.label}${penDropdownTool.shortcut ? ` (${penDropdownTool.shortcut})` : ''}`}
+                >
+                  <Icon name={penDropdownTool.icon} size={16} />
+                  <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                </button>
+              }
+              items={PEN_TOOLS.map((t) => ({
+                type: 'item',
+                id: t.id,
+                label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
+                icon: t.icon,
+                onSelect: () => setTool(t.id),
+              }))}
+            />
+          </div>
+
+          {/* Text Tool */}
+          <div className={styles.toolGroup}>
+            <button
+              type="button"
+              className={activeTool === TEXT_TOOL.id ? styles.toolActive : styles.tool}
+              title={`${TEXT_TOOL.label} (${TEXT_TOOL.shortcut})`}
+              onClick={() => setTool(TEXT_TOOL.id)}
+            >
+              <Icon name={TEXT_TOOL.icon} size={16} />
+            </button>
+          </div>
+
+          {/* Shape Tools Dropdown */}
+          <div className={styles.toolGroup}>
+            <Dropdown
+              placement="bottom-start"
+              trigger={
+                <button
+                  type="button"
+                  className={isShapeActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+                  title={`${shapeDropdownTool.label}${shapeDropdownTool.shortcut ? ` (${shapeDropdownTool.shortcut})` : ''}`}
+                >
+                  <Icon name={shapeDropdownTool.icon} size={16} />
+                  <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                </button>
+              }
+              items={SHAPE_TOOLS.map((t) => ({
+                type: 'item',
+                id: t.id,
+                label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
+                icon: t.icon,
+                onSelect: () => setTool(t.id),
+              }))}
+            />
+          </div>
+
+          <span className={styles.toolDivider} aria-hidden />
+
+          {/* Mask Tools */}
+          <div className={styles.toolGroup}>
+            {MASK_TOOLS.map((tool) => {
               const active = activeTool === tool.id;
               return (
                 <button
                   key={tool.id}
                   type="button"
                   className={active ? styles.toolActive : styles.tool}
-                  aria-label={tool.label}
-                  aria-pressed={active}
-                  title={tool.shortcut ? `${tool.label}  (${tool.shortcut})` : tool.label}
+                  title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
                   onClick={() => setTool(tool.id)}
                 >
                   <Icon name={tool.icon} size={16} />
@@ -373,120 +358,187 @@ export function TopNav(): JSX.Element {
               );
             })}
           </div>
-        ))}
 
-        {/* Undo / Redo — always visible, AE-style. */}
-        <div className={styles.toolGroup}>
-          <span className={styles.toolDivider} aria-hidden />
+          {/* Puppet Pin & Bone Tools */}
+          <div className={styles.toolGroup}>
+            <button
+              type="button"
+              className={activeTool === PUPPET_TOOL.id ? styles.toolActive : styles.tool}
+              title={`${PUPPET_TOOL.label} (${PUPPET_TOOL.shortcut})${rigHint}`}
+              disabled={!canRig}
+              onClick={() => setTool(PUPPET_TOOL.id)}
+            >
+              <Icon name={PUPPET_TOOL.icon} size={16} />
+            </button>
+            <button
+              type="button"
+              className={activeTool === BONE_TOOL.id ? styles.toolActive : styles.tool}
+              title={`${BONE_TOOL.label} (${BONE_TOOL.shortcut})${rigHint}`}
+              disabled={!canRig}
+              onClick={() => setTool(BONE_TOOL.id)}
+            >
+              <Icon name={BONE_TOOL.icon} size={16} />
+            </button>
+          </div>
+
+          {/* New layer */}
+          <div className={styles.toolGroup}>
+            <span className={styles.toolDivider} aria-hidden />
+            <Dropdown
+              placement="bottom-start"
+              trigger={
+                <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New layer…">
+                  <Icon name="plus" size={16} />
+                  <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                </button>
+              }
+              items={[
+                { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => insertPrimitive('shape', 'Shape') },
+                { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => insertPrimitive('text', 'Text') },
+                { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'panel-bottom', onSelect: () => insertSolid() },
+                { type: 'separator' },
+                { type: 'item', id: 'new-group', label: 'Group', icon: 'layers', onSelect: () => insertPrimitive('group', 'Group') },
+                { type: 'item', id: 'new-null', label: 'Null Object', icon: 'crosshair', onSelect: () => insertNull() },
+                { type: 'item', id: 'new-adjustment', label: 'Adjustment Layer', icon: 'adjustment', onSelect: () => insertAdjustmentLayer() },
+                ...(insertableComps.length > 0
+                  ? ([{
+                      type: 'item' as const,
+                      id: 'new-comp-instance',
+                      label: 'Composition',
+                      icon: 'component' as const,
+                      submenu: insertableComps.map((c) => ({
+                        type: 'item' as const,
+                        id: `new-ci-${c.id}`,
+                        label: c.name,
+                        icon: 'component' as const,
+                        onSelect: () => insertCompInstance(c.id),
+                      })),
+                    }] satisfies DropdownItem[])
+                  : []),
+                { type: 'separator' },
+                { type: 'item', id: 'new-camera', label: 'Camera', icon: 'camera', onSelect: () => insertCamera() },
+                { type: 'item', id: 'new-light', label: 'Light', icon: 'light', onSelect: () => insertLight() },
+                { type: 'item', id: 'new-particle', label: 'Particle System', icon: 'sparkles', onSelect: () => insertParticle() },
+                { type: 'separator' },
+                { type: 'item', id: 'new-audio', label: 'Audio…', icon: 'audio', onSelect: () => audioInputRef.current?.click() },
+                { type: 'item', id: 'new-image-sequence', label: 'Image Sequence…', icon: 'image', onSelect: () => seqInputRef.current?.click() },
+                { type: 'item', id: 'import-lottie', label: 'Lottie / Bodymovin JSON…', icon: 'image', onSelect: () => lottieInputRef.current?.click() },
+              ]}
+            />
+            <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={onPickAudio} />
+            <input ref={seqInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onPickSequence} />
+            <input ref={lottieInputRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={onPickLottie} />
+            <button
+              type="button"
+              className={styles.tool}
+              data-active={is3D || undefined}
+              aria-label="Toggle 3D layer"
+              aria-pressed={is3D}
+              title={canBe3D ? (is3D ? 'Disable 3D on the selected layer' : 'Enable 3D on the selected layer') : 'Select a layer to enable 3D'}
+              disabled={!canBe3D}
+              onClick={() => selectedId && set3DEnabled(selectedId, !is3D)}
+            >
+              <Icon name="3d" size={16} />
+            </button>
+          </div>
+
+          {/* Animate */}
+          <div className={styles.toolGroup}>
+            <span className={styles.toolDivider} aria-hidden />
+            <Dropdown
+              placement="bottom-start"
+              trigger={
+                <button
+                  type="button"
+                  className={styles.toolDropdownTrigger}
+                  aria-label="Animate"
+                  title={selectedId ? 'Animate the selected layer…' : 'Select a layer to animate'}
+                  disabled={!selectedId}
+                >
+                  <Icon name="keyframe" size={16} />
+                  <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                </button>
+              }
+              items={buildAnimateItems(selectedIds, isTextLayer, playhead)}
+            />
+          </div>
+
+          {/* Snap */}
+          <div className={styles.toolGroup}>
+            <span className={styles.toolDivider} aria-hidden />
+            <button
+              type="button"
+              className={snap ? styles.toolActive : styles.tool}
+              aria-label="Toggle snapping"
+              aria-pressed={snap}
+              title={snap ? 'Snapping ON — click to disable' : 'Snapping OFF — click to enable'}
+              onClick={toggleSnap}
+            >
+              <Icon name="magnet" size={16} />
+            </button>
+          </div>
+
+          <div className={styles.spacer} aria-hidden />
+
+          {/* Composition context */}
           <button
             type="button"
-            className={styles.tool}
-            aria-label="Undo"
-            title="Undo  (Ctrl+Z)"
-            disabled={!canUndo}
-            onClick={() => canUndo && getCommandSystem().getHistory().undo()}
+            className={styles.comp}
+            title="Composition settings"
+            onClick={() => openCompositionSettings()}
           >
-            <Icon name="undo" size={16} />
+            <Icon name="layers" size={12} className={styles.compIcon} />
+            <span className={styles.compName}>{title}</span>
+            <span className={styles.compMeta}>{compWidth}×{compHeight} · {compFps}fps</span>
           </button>
-          <button
-            type="button"
-            className={styles.tool}
-            aria-label="Redo"
-            title="Redo  (Ctrl+Shift+Z)"
-            disabled={!canRedo}
-            onClick={() => canRedo && getCommandSystem().getHistory().redo()}
-          >
-            <Icon name="redo" size={16} />
-          </button>
-        </div>
 
-        {/* New layer — ONE consolidated dropdown (AE "Layer ▸ New"), replacing
-            the old row of nine same-icon insert buttons. */}
-        <div className={styles.toolGroup}>
-          <span className={styles.toolDivider} aria-hidden />
-          <Dropdown
-            placement="bottom-start"
-            trigger={
-              <button type="button" className={styles.tool} aria-label="New layer" title="New layer…">
-                <Icon name="plus" size={16} />
-                <Icon name="chevron-down" size={10} />
-              </button>
-            }
-            items={[
-              { type: 'item', id: 'new-shape', label: 'Shape Layer', icon: 'shape', onSelect: () => insertPrimitive('shape', 'Shape') },
-              { type: 'item', id: 'new-text', label: 'Text Layer', icon: 'type', onSelect: () => insertPrimitive('text', 'Text') },
-              { type: 'item', id: 'new-solid', label: 'Solid…', icon: 'panel-bottom', onSelect: () => insertSolid() },
-              { type: 'separator' },
-              { type: 'item', id: 'new-group', label: 'Group', icon: 'folder', onSelect: () => insertPrimitive('group', 'Group') },
-              { type: 'item', id: 'new-null', label: 'Null Object', icon: 'crosshair', onSelect: () => insertNull() },
-              { type: 'item', id: 'new-adjustment', label: 'Adjustment Layer', icon: 'adjustment', onSelect: () => insertAdjustmentLayer() },
-              { type: 'separator' },
-              { type: 'item', id: 'new-camera', label: 'Camera', icon: 'camera', onSelect: () => insertCamera() },
-              { type: 'item', id: 'new-light', label: 'Light', icon: 'light', onSelect: () => insertLight() },
-              { type: 'separator' },
-              { type: 'item', id: 'new-audio', label: 'Audio…', icon: 'audio', onSelect: () => audioInputRef.current?.click() },
-            ]}
-          />
-          <input
-            ref={audioInputRef}
-            type="file"
-            accept="audio/*"
-            style={{ display: 'none' }}
-            onChange={onPickAudio}
-          />
-          <button
-            type="button"
-            className={styles.tool}
-            data-active={is3D || undefined}
-            aria-label="Toggle 3D layer"
-            aria-pressed={is3D}
-            title={canBe3D ? (is3D ? 'Disable 3D on the selected layer' : 'Enable 3D on the selected layer') : 'Select a layer to enable 3D'}
-            disabled={!canBe3D}
-            onClick={() => selectedId && set3DEnabled(selectedId, !is3D)}
-          >
-            <Icon name="3d" size={16} />
-          </button>
-        </div>
+          <div className={styles.spacer} aria-hidden />
 
-        {/* Animate — one-click animations, keyframe assistants, rig controls. */}
-        <div className={styles.toolGroup}>
-          <span className={styles.toolDivider} aria-hidden />
-          <Dropdown
-            placement="bottom-start"
-            trigger={
-              <button
-                type="button"
-                className={styles.tool}
-                aria-label="Animate"
-                title={selectedId ? 'Animate the selected layer…' : 'Select a layer to animate'}
-                disabled={!selectedId}
-              >
-                <Icon name="keyframe" size={16} />
-                <Icon name="chevron-down" size={10} />
-              </button>
-            }
-            items={buildAnimateItems(selectedIds, isTextLayer, playhead)}
-          />
-        </div>
+          {/* Zoom + view options moved to the composition's own header bar
+              (ViewportHeader), which sits directly above the canvas they act
+              on — the viewport controls now have a single home. */}
 
-        {/* ── Snap ─────────────────────────────────── */}
-        <div className={styles.toolGroup}>
-          <span className={styles.toolDivider} aria-hidden />
-          <button
-            type="button"
-            className={snap ? styles.toolActive : styles.tool}
-            aria-label="Toggle snapping"
-            aria-pressed={snap}
-            title={snap ? 'Snapping ON — click to disable' : 'Snapping OFF — click to enable'}
-            onClick={toggleSnap}
-          >
-            <Icon name="magnet" size={16} />
-          </button>
-        </div>
+          {/* Undo / Redo */}
+          <div className={styles.toolGroup}>
+            <button
+              type="button"
+              className={styles.tool}
+              aria-label="Undo"
+              title="Undo  (Ctrl+Z)"
+              disabled={!canUndo}
+              onClick={() => performUndo()}
+            >
+              <Icon name="undo" size={16} />
+            </button>
+            <button
+              type="button"
+              className={styles.tool}
+              aria-label="Redo"
+              title="Redo  (Ctrl+Shift+Z)"
+              disabled={!canRedo}
+              onClick={() => performRedo()}
+            >
+              <Icon name="redo" size={16} />
+            </button>
+          </div>
 
-        <div className={styles.spacer} aria-hidden />
-        <span className={styles.toolHint}>{activeTool}</span>
+          {/* Customize / Settings */}
+          <div className={styles.toolGroup}>
+            <button
+              type="button"
+              className={styles.tool}
+              aria-label="Customize"
+              title="Customize (Shortcuts, Workspaces, Appearance)"
+              onClick={() => openCustomizeDialog()}
+            >
+              <Icon name="settings" size={16} />
+            </button>
+          </div>
+
+          <span className={styles.toolHint}>{activeTool}</span>
+        </div>
       </div>
+      <ToolOptionsBar />
     </div>
   );
 }

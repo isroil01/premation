@@ -25,8 +25,8 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     title: 'Command Palette',
-    body: 'Press ⌘K to find anything — commands, layers, compositions, or a timecode. Prefixes: > commands, @ layers, # comps, : time.',
-    hint: 'Try it: press ⌘K and type ":3" to jump to 3 seconds.',
+    body: 'Press ⌘⇧P to find anything — commands, layers, compositions, or a timecode. Prefixes: > commands, @ layers, # comps, : time.',
+    hint: 'Try it: press ⌘⇧P and type ":3" to jump to 3 seconds.',
   },
   {
     title: 'The Motion Editor',

@@ -100,12 +100,17 @@ describe('snapshotToFrameScene', () => {
     expect(scene.renderables.map((r) => r.id)).toEqual(['n2']);
   });
 
-  test('drops consumed matte-source layers on the GPU path', () => {
+  test('emits matte-source layers flagged for the GPU matte pass (not dropped)', () => {
+    // The source is kept but flagged `matteSource` — CompositionPass renders it
+    // into MATTE_TARGET on demand instead of drawing it to the scene, so its
+    // pixels are available to build the matte for the matted layer.
     const scene = snapshotToFrameScene(snapshot([
       layer({ id: 'src', isMatteSource: true }),
       layer({ id: 'matted', matte: 'alpha' }),
     ]));
-    expect(scene.renderables.map((r) => r.id)).toEqual(['matted']);
+    expect(scene.renderables.map((r) => r.id)).toEqual(['src', 'matted']);
+    const src = scene.renderables.find((r) => r.id === 'src')!;
+    expect(src.matteSource).toBe(true);
   });
 
   test('drops adjustment layers on the GPU path', () => {
@@ -114,6 +119,34 @@ describe('snapshotToFrameScene', () => {
       layer({ id: 'adj', isAdjustment: true }),
     ]));
     expect(scene.renderables.map((r) => r.id)).toEqual(['below']);
+  });
+
+  describe('lights (screen-blended radial-gradient quad)', () => {
+    const lightLayer = (over: Partial<RenderLayer> = {}): RenderLayer =>
+      layer({ id: 'L', x: 300, y: 400, light: { color: '#ffffff', intensity: 80, radius: 100 }, ...over });
+
+    test('emits a light as a screen-blend textured quad (not dropped)', () => {
+      const scene = snapshotToFrameScene(snapshot([lightLayer()]));
+      expect(scene.renderables).toHaveLength(1);
+      const r = scene.renderables[0]!;
+      expect(r.kind).toBe('image');
+      expect(r.blend).toBe('screen');
+      expect(r.textureKey).toBe('light:L');
+    });
+
+    test('intensity drives opacity (80 → 0.8)', () => {
+      const r = snapshotToFrameScene(snapshot([lightLayer({ light: { color: '#fff', intensity: 80, radius: 100 } })])).renderables[0]!;
+      expect(r.opacity).toBeCloseTo(0.8, 5);
+    });
+
+    test('the quad is a 2·radius box centred at the light position', () => {
+      const r = snapshotToFrameScene(snapshot([lightLayer({ x: 300, y: 400, light: { color: '#fff', intensity: 100, radius: 100 } })])).renderables[0]!;
+      // 200×200 box centred at (300,400) → AABB origin (200,300), size 200².
+      expect(r.bounds.width).toBeCloseTo(200, 5);
+      expect(r.bounds.height).toBeCloseTo(200, 5);
+      expect(r.bounds.x).toBeCloseTo(200, 5);
+      expect(r.bounds.y).toBeCloseTo(300, 5);
+    });
   });
 
   test('maps kinds and assigns texture keys for textured kinds', () => {
@@ -131,9 +164,12 @@ describe('snapshotToFrameScene', () => {
     expect(byId.p!.kind).toBe('image');
     expect(byId.p!.textureKey).toBe('path:p');
     
-    // Masks are now passed directly as a mask texture
-    expect(byId.m!.kind).toBe('rect');
-    expect(byId.m!.textureKey).toBeUndefined();
+    // A masked SHAPE rasterizes to a `path:` texture: the mask shader only
+    // runs on textured renderables, so keeping it an SDF rect silently
+    // ignored the mask (verified with real pixels — the subtract hole never
+    // appeared on the GPU backend).
+    expect(byId.m!.kind).toBe('image');
+    expect(byId.m!.textureKey).toBe('path:m');
     expect(byId.m!.maskTextureKey).toBe('mask:m');
     
     // Mattes are temporarily treated as normal until phase 4.3
@@ -154,9 +190,20 @@ describe('snapshotToFrameScene', () => {
     expect(r!.blend).toBe('normal');
   });
 
-  test('maps the layer blend mode onto the renderable', () => {
+  test('routes an advanced blend mode through advancedBlend (blend stays normal)', () => {
+    // Advanced modes (fixed-function GL can't do them) composite via the
+    // BLEND_COMBINE shader: blend='normal', advancedBlend=<id>. multiply=1.
     const [r] = snapshotToFrameScene(snapshot([layer({ blend: 'multiply' })])).renderables;
-    expect(r!.blend).toBe('multiply');
+    expect(r!.blend).toBe('normal');
+    expect(r!.advancedBlend).toBe(1);
+    const [o] = snapshotToFrameScene(snapshot([layer({ blend: 'overlay' })])).renderables;
+    expect(o!.advancedBlend).toBe(3);
+  });
+
+  test('keeps a fixed-function blend mode on the renderable blend field', () => {
+    const [r] = snapshotToFrameScene(snapshot([layer({ blend: 'add' })])).renderables;
+    expect(r!.blend).toBe('add');
+    expect(r!.advancedBlend).toBeUndefined();
   });
 
   test('textured renderables (image/video/text) are untinted (white)', () => {
@@ -294,5 +341,54 @@ describe('headless parity: mapped scene renders through the GPU pipeline', () =>
     // dropped by the mapper so it never reaches the GPU.
     expect(backend.stats().draws).toBe(3);
     renderer.dispose();
+  });
+});
+
+describe('frame blending (Frame Mix) on the GPU path', () => {
+  test('a frame-blended video emits TWO renderables: bracket A full, B at weight', () => {
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'v', kind: 'video', opacity: 0.8, frameBlend: { a: 0.1, b: 0.1333, weight: 0.25 } }),
+    ]));
+    const a = scene.renderables.find((r) => r.id === 'v');
+    const b = scene.renderables.find((r) => r.id === 'v::fb');
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a!.textureKey).toBe('vfa:v');
+    expect(b!.textureKey).toBe('vfb:v');
+    expect(a!.opacity).toBeCloseTo(0.8);
+    expect(b!.opacity).toBeCloseTo(0.8 * 0.25);
+    // Same placement — B cross-dissolves over A.
+    expect([...b!.modelMatrix]).toEqual([...a!.modelMatrix]);
+  });
+
+  test('a video without frameBlend stays a single asset-keyed renderable', () => {
+    const scene = snapshotToFrameScene(snapshot([layer({ id: 'v', kind: 'video' })]));
+    expect(scene.renderables.filter((r) => r.id.startsWith('v')).length).toBe(1);
+    expect(scene.renderables.find((r) => r.id === 'v')!.textureKey).toBe('asset:v');
+  });
+});
+
+describe('motion-blur samples on the GPU path', () => {
+  test('samples become per-subframe model matrices at their sampled opacity', () => {
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'm', kind: 'shape', motionSamples: [
+        { x: 90, y: 100, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 },
+        { x: 110, y: 100, rotation: 0, scaleX: 1, scaleY: 1, opacity: 0.5 },
+      ] }),
+    ]));
+    const r = scene.renderables.find((x) => x.id === 'm')!;
+    expect(r.motionSamples).toHaveLength(2);
+    expect(r.motionSamples![1]!.opacity).toBe(0.5);
+    // The two samples sit at different x translations.
+    expect(r.motionSamples![0]!.modelMatrix[6]).not.toBe(r.motionSamples![1]!.modelMatrix[6]);
+  });
+
+  test('a single sample does not trigger the multi-sample path', () => {
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 's', kind: 'shape', motionSamples: [
+        { x: 100, y: 100, rotation: 0, scaleX: 1, scaleY: 1, opacity: 1 },
+      ] }),
+    ]));
+    expect(scene.renderables.find((x) => x.id === 's')!.motionSamples).toBeUndefined();
   });
 });

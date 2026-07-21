@@ -21,6 +21,7 @@ export type Tool =
   | 'move'
   | 'pen'
   | 'pencil'
+  | 'brush'
   | 'curvature'
   | 'line'
   | 'text'
@@ -29,7 +30,9 @@ export type Tool =
   | 'polygon'
   | 'star'
   | 'mask-rect'
-  | 'mask-ellipse';
+  | 'mask-ellipse'
+  | 'puppet-pin'
+  | 'bone';
 
 interface UIState {
   /** Active tool in the toolbar. */

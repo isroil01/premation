@@ -15,9 +15,17 @@ import type { HandleId } from './handles';
 /**
  * New axis-aligned bounds after dragging `handle` to `pointer` (world space),
  * holding the opposite edge/corner fixed. `rotate` handles return the input
- * unchanged (they don't resize).
+ * unchanged (they don't resize). `uniform` (Shift) locks the original aspect
+ * ratio, scaling both axes by the dominant axis's factor.
  */
-export function resizeBounds(orig: Rect, handle: HandleId, pointer: Vec2, center: boolean = false, minSize = 4): Rect {
+export function resizeBounds(
+  orig: Rect,
+  handle: HandleId,
+  pointer: Vec2,
+  center: boolean = false,
+  minSize = 4,
+  uniform = false,
+): Rect {
   let left = orig.x;
   let right = orig.x + orig.width;
   let top = orig.y;
@@ -62,7 +70,23 @@ export function resizeBounds(orig: Rect, handle: HandleId, pointer: Vec2, center
     if (movesBottom) bottom = Math.max(pointer.y, top + minSize);
   }
 
-  return { x: left, y: top, width: right - left, height: bottom - top };
+  const rect = { x: left, y: top, width: right - left, height: bottom - top };
+  if (!uniform || orig.width <= 0 || orig.height <= 0) return rect;
+
+  // Aspect lock: scale both axes by whichever axis the drag changed most,
+  // anchored at the fixed corner/edge (or the center in center mode).
+  const sx = rect.width / orig.width;
+  const sy = rect.height / orig.height;
+  const s = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy;
+  const w = Math.max(minSize, orig.width * s);
+  const h = Math.max(minSize, orig.height * s);
+  const cx = orig.x + orig.width / 2;
+  const cy = orig.y + orig.height / 2;
+  if (center) return { x: cx - w / 2, y: cy - h / 2, width: w, height: h };
+  // Fixed side per axis; edge handles keep the untouched axis centered.
+  const x = movesLeft ? orig.x + orig.width - w : movesRight ? orig.x : cx - w / 2;
+  const y = movesTop ? orig.y + orig.height - h : movesBottom ? orig.y : cy - h / 2;
+  return { x, y, width: w, height: h };
 }
 
 /** Signed angle (radians) swept from `start` to `current` around `pivot`. */

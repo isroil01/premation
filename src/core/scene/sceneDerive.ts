@@ -30,6 +30,28 @@ export function flattenScene(graph: SceneGraph): SceneNode[] {
 }
 
 /**
+ * The nodes belonging to ONE composition: `rootId` and its descendants.
+ *
+ * Compositions are separate root subtrees in a single scene graph, so anything
+ * that renders or lists "the comp" must scope to its root — `flattenScene`
+ * walks every root, which would draw all compositions on top of each other.
+ * Falls back to the whole scene when the root is missing, so a document with a
+ * stale/absent comp id still shows something rather than a blank canvas.
+ */
+export function flattenComposition(graph: SceneGraph, rootId: string | undefined): SceneNode[] {
+  if (!rootId) return flattenScene(graph);
+  const root = graph.getNode(rootId);
+  if (!root) return flattenScene(graph);
+  const out: SceneNode[] = [];
+  const walk = (n: SceneNode): void => {
+    out.push(n);
+    for (const child of graph.getChildren(n.id)) walk(child);
+  };
+  walk(root);
+  return out;
+}
+
+/**
  * Track color per node kind (the small stripe on the timeline track header).
  * Uses the spec's colorblind-safe layer-category tokens. Purple is NEVER used
  * here — it is reserved exclusively for AI (spec), so groups map to Null slate.
@@ -45,6 +67,8 @@ export const KIND_COLOR: Record<SceneKind, string> = {
   camera: 'var(--color-category-camera)',
   light: 'var(--color-category-light)',
   adjustment: 'var(--color-category-3d)',
+  particle: 'var(--color-category-shape)',
+  comp: 'var(--color-category-video)',
 };
 
 /**
@@ -62,6 +86,8 @@ export const KIND_FILL: Record<SceneKind, string> = {
   camera: '#38bdf8',
   light: '#fbbf24',
   adjustment: '#a78bfa',
+  particle: '#f472b6',
+  comp: '#f43f5e',
 };
 
 /**
@@ -79,4 +105,6 @@ export const KIND_ICON: Record<SceneKind, string> = {
   camera: 'camera',
   light: 'light',
   adjustment: 'adjustment',
+  particle: 'sparkles',
+  comp: 'component',
 };

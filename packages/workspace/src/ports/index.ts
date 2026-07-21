@@ -22,6 +22,12 @@ export type NodeId = string;
  * selection overlays, and snapping. The workspace treats nodes as data; the
  * binding decides how to derive these from the real graph.
  */
+/** One editable mask outline on a layer. */
+export interface WorkspaceMaskPath {
+  readonly id: string;
+  readonly points: readonly BezierPoint[];
+}
+
 export interface WorkspaceNode {
   readonly id: NodeId;
   /** Parent id, or null for a top-level node. */
@@ -40,6 +46,21 @@ export interface WorkspaceNode {
   readonly hitTestLocal?: (localPoint: Vec2) => boolean;
   /** Bezier path points in LOCAL space (only for shapes with custom paths). */
   readonly pathPoints?: readonly BezierPoint[];
+  /**
+   * The layer's mask outlines in LOCAL space, if any.
+   *
+   * Masks are bezier paths like `pathPoints`, but they live beside the layer's
+   * geometry rather than replacing it — a text or image layer has masks and no
+   * path points. Exposing them here is what lets the Direct Selection tool edit
+   * a mask's shape at all; without it a mask was frozen the moment it was drawn.
+   */
+  readonly maskPaths?: readonly WorkspaceMaskPath[];
+  /**
+   * The pivot rotation and scale happen around, in LOCAL space (0,0 = centre).
+   * Absent = centred. `worldMatrix` already folds it in, so the anchor's world
+   * position is `Mat.apply(worldMatrix, anchor)`.
+   */
+  readonly anchor?: Vec2;
 }
 
 /**
@@ -97,8 +118,8 @@ export interface WorkspaceOverlay {
 export interface OverlayHandle {
   id: string;
   position: Vec2;
-  /** 'resize' | 'rotate' = bounding box handle, 'point' = vertex, 'tangent-in' | 'tangent-out' = bezier handle */
-  kind: 'resize' | 'rotate' | 'point' | 'tangent-in' | 'tangent-out';
+  /** 'resize' | 'rotate' = bounding box handle, 'point' = vertex, 'tangent-in' | 'tangent-out' = bezier handle, 'anchor' = pan-behind pivot */
+  kind: 'resize' | 'rotate' | 'point' | 'tangent-in' | 'tangent-out' | 'anchor';
 }
 
 export interface OverlayGuide {

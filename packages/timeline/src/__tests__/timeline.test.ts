@@ -36,6 +36,23 @@ describe('Timeline tracks', () => {
     expect(t.trackCount).toBe(2);
   });
 
+  it('routes a layer-scoped marker onto its layer, not the timeline', () => {
+    const t = timeline();
+    const track = t.addTrack({ name: 'V1' });
+    const layer = t.addLayer(track.id, { name: 'L', clip: { start: 0, duration: 10 } });
+
+    const compMarker = t.addMarker({ frame: 5, name: 'chapter', scope: 'timeline' });
+    const layerMarker = t.addMarker({ frame: 3, name: 'beat', scope: 'layer', ownerId: layer.id });
+
+    // The layer marker lives on the layer; the comp marker on the timeline.
+    expect(layer.markers.get(layerMarker.id)).toBeDefined();
+    expect(layer.markers.get(compMarker.id)).toBeUndefined();
+    // Both are still findable/removable through the timeline (undo/serialize).
+    expect(t.getMarker(layerMarker.id)).toBe(layerMarker);
+    expect(t.removeMarker(layerMarker.id)).toBe(true);
+    expect(layer.markers.get(layerMarker.id)).toBeUndefined();
+  });
+
   it('groups and ungroups tracks', () => {
     const t = timeline();
     const a = t.addTrack();

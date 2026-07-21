@@ -9,7 +9,7 @@
  * scene engine registers its IO later without ProjectManager changing.
  */
 
-import type { ProjectFile } from '@core/types';
+import type { VersionedDocument } from '@core/types';
 import type { ProjectService } from '@core/persistence/ProjectService';
 import type { FileManager } from '@core/files/FileManager';
 import type { RecentProjects } from '@core/project/RecentProjects';
@@ -28,16 +28,24 @@ export interface ProjectState {
 }
 
 /** Bridge between the project file format and the live document (scene, etc.). */
-export interface ProjectDocumentIO {
-  createEmpty(name: string): ProjectFile;
-  capture(): ProjectFile;
-  restore(file: ProjectFile): void;
+/**
+ * How the app turns its live state into a saveable document and back.
+ *
+ * Typed to `VersionedDocument`, not to any concrete shape: this was
+ * `ProjectFile` (scene-only), so `Save` wrote the scene graph and nothing else
+ * — every keyframe, comp setting and timeline edit was dropped on the floor.
+ * The app registers `projectDocumentIO` (a full EditorDocument) at boot.
+ */
+export interface ProjectDocumentIO<T extends VersionedDocument = VersionedDocument> {
+  createEmpty(name: string): T;
+  capture(): T;
+  restore(file: T): void;
 }
 
-/** Default IO — an empty document. The scene engine replaces this at boot. */
+/** Default IO — an empty document. The app replaces this at boot. */
 const emptyDocumentIO: ProjectDocumentIO = {
-  createEmpty: () => ({ version: '1.0.0', nodes: [] }),
-  capture: () => ({ version: '1.0.0', nodes: [] }),
+  createEmpty: () => ({ version: '1.0.0' }),
+  capture: () => ({ version: '1.0.0' }),
   restore: () => { /* no-op */ },
 };
 

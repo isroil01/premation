@@ -28,6 +28,8 @@ import {
 } from 'react';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
+import { ValueField } from '@components/ValueField';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import { clamp } from '@utils/lang';
 import type {
@@ -50,12 +52,13 @@ import {
   type MarqueeRect,
   type MarqueeRow,
 } from './marqueeSelection';
+import { audioEngine } from '@core/audio/AudioEngine';
+import { waveformPath } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
 
 const RULER_HEIGHT_DEFAULT = 26;
 const TRACK_HEIGHT_DEFAULT = 30;
 const TRACK_HEADER_WIDTH_DEFAULT = 460;
-const CACHE_BAR_HEIGHT = 4;
 
 /** A virtualized row is either a track summary row or a property sub-row. */
 type Row =
@@ -65,6 +68,8 @@ type Row =
 export interface TimelineProps {
   model: TimelineModel;
   onScrub?: (time: number) => void;
+  /** Composition duration edit (seconds) from dragging the timeline end handle. */
+  onDurationChange?: (duration: number) => void;
   /** Work-area edit (seconds) from dragging the band's edges or body. */
   onWorkAreaChange?: (start: number, end: number) => void;
   /** Clip moved to a new absolute start (seconds). */
@@ -88,6 +93,7 @@ export interface TimelineProps {
   onTrackToggleLock?: (trackId: string) => void;
   onTrackToggleSolo?: (trackId: string) => void;
   onTrackBlendModeChange?: (trackId: string, mode: LayerBlendMode) => void;
+  onTrackMatteChange?: (trackId: string, matte: any) => void;
   onTrackParentChange?: (trackId: string, parentId: string | null) => void;
   onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
   /** Rename a layer (confirmed on blur/Enter). */
@@ -95,6 +101,24 @@ export interface TimelineProps {
   onKeyframeSeek?: (keyframeId: string) => void;
   onKeyframeMove?: (keyframeId: string, time: number) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
+  /**
+   * The keyframe navigator's diamond: add a keyframe at the playhead holding
+   * the property's current value, or remove the one already there.
+   */
+  onPropertyKeyframeToggle?: (trackId: string, prop: string) => void;
+  /**
+   * A static placeholder row's stopwatch: create the first keyframe(s) for
+   * the given engine props, enabling animation from the timeline (AE-style).
+   */
+  onPropertyStopwatch?: (trackId: string, props: ReadonlyArray<string>) => void;
+  /**
+   * The value to show in a property row's field, sampled at the playhead.
+   * Supplied by the app because only it owns the scene + animation engine —
+   * this component stays presentational.
+   */
+  onPropertyValue?: (trackId: string, prop: string) => number;
+  /** Set a property's value from the timeline (keyframes when animated). */
+  onPropertyValueChange?: (trackId: string, prop: string, value: number) => void;
   /** Called when user drags a track row to a new position. toIndex is 0-based. */
   onTrackReorder?: (fromId: string, toIndex: number) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
@@ -122,27 +146,84 @@ export function Timeline({
   onTrackToggleLock,
   onTrackToggleSolo,
   onTrackBlendModeChange,
+  onTrackMatteChange,
   onTrackParentChange,
   onTrackToggleFlag,
   onTrackRename,
   onKeyframeSeek,
   onKeyframeMove,
   onKeyframeContextMenu,
+  onPropertyKeyframeToggle,
+  onPropertyStopwatch,
+  onPropertyValue,
+  onPropertyValueChange,
   onTrackReorder,
   onTrackColorChange,
   className,
   searchQuery,
   globalShy,
+  onDurationChange,
 }: TimelineProps): JSX.Element {
   const rulerHeight = model.rulerHeight ?? RULER_HEIGHT_DEFAULT;
   const trackHeight = model.trackHeight ?? TRACK_HEIGHT_DEFAULT;
-  const headerWidth = model.trackHeaderWidth ?? TRACK_HEADER_WIDTH_DEFAULT;
+  // The header column is user-resizable: property names + their value fields
+  // need very different room depending on what's open, and a fixed column
+  // either truncates labels or wastes half the panel. The model can still
+  // pin a width (tests, embeds); otherwise it is the user's preference.
+  const prefHeaderWidth = usePreferenceStore((s) => s.timelineHeaderWidth);
+  const setPref = usePreferenceStore((s) => s.set);
+  const headerWidth = model.trackHeaderWidth ?? prefHeaderWidth ?? TRACK_HEADER_WIDTH_DEFAULT;
 
   const lanesRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
   const [scrollLeft, setScrollLeft] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
+
+  const [, forceUpdate] = useState({});
+  useEffect(() => {
+    return audioEngine.onChange(() => forceUpdate({}));
+  }, []);
+
+  // ── Header column: resize + scroll ─────────────────────────────
+  const resizeRef = useRef<{ startX: number; startW: number } | null>(null);
+  const onHeaderResizeDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = { startX: e.clientX, startW: headerWidth };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [headerWidth]);
+
+  const onHeaderResizeMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const st = resizeRef.current;
+    if (!st) return;
+    // Floor keeps the switch column reachable; ceiling keeps the lanes usable.
+    setPref('timelineHeaderWidth', clamp(st.startW + (e.clientX - st.startX), 220, 900));
+  }, [setPref]);
+
+  const onHeaderResizeUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    resizeRef.current = null;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, []);
+
+  /**
+   * Scrolling over the header column scrolls the rows.
+   *
+   * The header is `overflow: hidden` and follows the lanes' scrollTop, so with
+   * many rows a wheel over the names did nothing at all — you had to move the
+   * pointer into the lanes to scroll. Forwarding the wheel keeps ONE scrollbar
+   * (two would fight and drift) while making both halves scrollable.
+   */
+  const onHeaderWheel = useCallback((e: ReactWheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) return; // zoom gesture — leave it to the root
+    const lanes = lanesRef.current;
+    if (!lanes) return;
+    lanes.scrollTop += e.deltaY;
+  }, []);
 
   // ── Flatten tracks + expanded property sub-rows into a uniform row list ──
   const expanded = useMemo(() => new Set(expandedTrackIds ?? []), [expandedTrackIds]);
@@ -337,6 +418,47 @@ export function Timeline({
       window.removeEventListener('pointerup', onUp);
     };
   }, [pps, scrollLeft, totalSeconds, onWorkAreaChange, model.frameRate]);
+
+  // ── Composition duration drag (extend / shorten video length) ────
+  const startDurationDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!onDurationChange) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startDuration = model.duration;
+    const owner = e.currentTarget;
+    try {
+      owner.setPointerCapture(e.pointerId);
+    } catch {
+      // best-effort
+    }
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaSec = deltaX / pps;
+      const newDuration = Math.max(0.1, startDuration + deltaSec);
+      
+      // Snap to frames
+      const fps = model.frameRate || 30;
+      const frameIndex = Math.round(newDuration * fps);
+      const snappedDuration = Math.max(1 / fps, frameIndex / fps);
+      
+      onDurationChange?.(snappedDuration);
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => {
+      try {
+        owner.releasePointerCapture(upEvent.pointerId);
+      } catch {
+        // best-effort
+      }
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
 
   // ── Clip drag (body = move; edge handles = trim) ──────────────────
   // Live geometry lives on the ref (survives without a render); a preview state
@@ -716,8 +838,8 @@ export function Timeline({
 
   // ── Ruler ticks ────────────────────────────────────────────────
   const ticks = useMemo(
-    () => generateRulerTicks(totalSeconds, pps, model.frameRate),
-    [totalSeconds, pps, model.frameRate],
+    () => generateRulerTicks(totalSeconds, pps, model.frameRate, (model.startFrame ?? 0) / (model.frameRate || 30)),
+    [totalSeconds, pps, model.frameRate, model.startFrame],
   );
 
   // Layer number column (AE-style) — index within the track order.
@@ -730,14 +852,28 @@ export function Timeline({
 
   return (
     <div ref={containerRef} className={cn(styles.root, className)} onWheel={onWheel}>
-      <div className={styles.headerCol} style={{ width: headerWidth, height: '100%' }}>
+      <div
+        className={styles.headerCol}
+        style={{ width: headerWidth, height: '100%' }}
+        onWheel={onHeaderWheel}
+      >
         <div className={styles.ruler} style={{ height: rulerHeight }}>
           {/* Column heads for the switches and modes (AE layout). */}
           <div className={styles.colHeads} aria-hidden>
             <span className={styles.colHeadLayer}>Layer Name</span>
             <span className={styles.colHeadMode}>Mode</span>
+            <span className={styles.colHeadMatte}>Track Matte</span>
             <span className={styles.colHeadParent}>Parent & Link</span>
-            <span className={styles.colHeadAeSwitches}>S/F/M/A/3D</span>
+            <span className={styles.colHeadAeSwitches}>
+              {/* Legend for the per-layer switch column below (AE shows the
+                  same glyphs in its column head — five unlabeled dots were
+                  unguessable for new users). */}
+              <Icon name="shy" size={9} title="Shy" />
+              <span className={styles.fxText} title="Effects" style={{ fontSize: 8 }}>fx</span>
+              <Icon name="motion-blur" size={9} title="Motion Blur" />
+              <Icon name="adjustment" size={9} title="Adjustment Layer" />
+              <Icon name="3d" size={9} title="3D Layer" />
+            </span>
             <span className={styles.colHeadSwitches}>Switches</span>
           </div>
         </div>
@@ -772,6 +908,7 @@ export function Timeline({
                     onToggleLock={() => onTrackToggleLock?.(row.track.id)}
                     onToggleSolo={() => onTrackToggleSolo?.(row.track.id)}
                     onBlendModeChange={(mode) => onTrackBlendModeChange?.(row.track.id, mode)}
+                    onMatteChange={(matte) => onTrackMatteChange?.(row.track.id, matte)}
                     onParentChange={(parentId) => onTrackParentChange?.(row.track.id, parentId)}
                     onToggleFlag={(flag) => onTrackToggleFlag?.(row.track.id, flag)}
                     onRename={(name) => onTrackRename?.(row.track.id, name)}
@@ -789,6 +926,30 @@ export function Timeline({
                   key={`h_${row.track.id}_${row.prop.prop}`}
                   label={row.prop.label}
                   style={rowStyle}
+                  keyframes={row.prop.keyframes}
+                  currentTime={model.currentTime}
+                  animated={row.prop.animated !== false}
+                  onToggleKeyframe={
+                    onPropertyKeyframeToggle
+                      ? () => onPropertyKeyframeToggle(row.track.id, row.prop.prop)
+                      : undefined
+                  }
+                  onStopwatch={
+                    onPropertyStopwatch && row.prop.stopwatchProps
+                      ? () => onPropertyStopwatch(row.track.id, row.prop.stopwatchProps!)
+                      : undefined
+                  }
+                  valueProps={row.prop.valueProps}
+                  valueUnit={row.prop.valueUnit}
+                  propertyValue={
+                    onPropertyValue ? (p) => onPropertyValue(row.track.id, p) : undefined
+                  }
+                  onValueChange={
+                    onPropertyValueChange
+                      ? (p, v) => onPropertyValueChange(row.track.id, p, v)
+                      : undefined
+                  }
+                  onSeek={onScrub}
                 />
               );
             })}
@@ -804,6 +965,18 @@ export function Timeline({
         </div>
       </div>
 
+      {/* Drag the column edge to widen the header (AE-style). */}
+      <div
+        className={styles.headerResizer}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize track header column"
+        onPointerDown={onHeaderResizeDown}
+        onPointerMove={onHeaderResizeMove}
+        onPointerUp={onHeaderResizeUp}
+        onDoubleClick={() => setPref('timelineHeaderWidth', TRACK_HEADER_WIDTH_DEFAULT)}
+        title="Drag to resize · double-click to reset"
+      />
       <div ref={lanesRef} className={styles.lanes} onScroll={onLanesScroll}>
         <div
           style={{
@@ -815,20 +988,17 @@ export function Timeline({
         >
           <Ruler ticks={ticks} height={rulerHeight} width={laneWidth} />
 
-          {/* Cache bar — directly under the ruler; preserves AE muscle memory. */}
-          <div
-            className={styles.cacheBar}
-            style={{ top: rulerHeight - CACHE_BAR_HEIGHT, height: CACHE_BAR_HEIGHT, width: laneWidth }}
-            aria-hidden
-          >
-            {(model.cachedRanges ?? []).map((r, i) => (
-              <div
-                key={i}
-                className={styles.cacheSegment}
-                style={{ left: r.start * pps, width: Math.max(1, (r.end - r.start) * pps) }}
-              />
-            ))}
-          </div>
+          {/* RAM-preview cache bar — REAL this time: each green span is a run
+              of frames the viewport frame-cache actually holds pixels for
+              (blitted on playback instead of re-rendered). */}
+          {model.cachedRanges?.map((r, i) => (
+            <div
+              key={`cache_${i}`}
+              className={styles.cacheBar}
+              style={{ left: r.start * pps, width: Math.max(1, (r.end - r.start) * pps), top: rulerHeight - 3 }}
+              aria-hidden
+            />
+          ))}
 
           {/* Work-area band on the ruler (in/out region for looped playback).
               Drag the body to move it; drag an edge handle to trim in/out. */}
@@ -856,6 +1026,50 @@ export function Timeline({
                 data-edge="out"
                 aria-label="Work area out"
                 onPointerDown={onWorkAreaChange ? startWaDrag('out') : undefined}
+              />
+            </div>
+          ) : null}
+
+          {/* Composition duration drag handle on the ruler */}
+          {onDurationChange ? (
+            <div
+              className={styles.durationHandle}
+              style={{
+                position: 'absolute',
+                top: 0,
+                height: rulerHeight + totalLanesHeight,
+                left: model.duration * pps,
+                width: 8,
+                transform: 'translateX(-4px)',
+                cursor: 'ew-resize',
+                zIndex: 25,
+              }}
+              title="Drag to adjust composition duration"
+              onPointerDown={startDurationDrag}
+            >
+              {/* The visual line */}
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 3,
+                  top: 0,
+                  width: 2,
+                  height: '100%',
+                  backgroundColor: 'var(--color-primary)',
+                  opacity: 0.8,
+                }}
+              />
+              {/* The handle cap on the ruler */}
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: 8,
+                  height: 8,
+                  backgroundColor: 'var(--color-primary)',
+                  borderRadius: '0 0 4px 4px',
+                }}
               />
             </div>
           ) : null}
@@ -1113,6 +1327,7 @@ function TrackHeader({
   onToggleLock,
   onToggleSolo,
   onBlendModeChange,
+  onMatteChange,
   onParentChange,
   onToggleFlag,
   onRename,
@@ -1132,6 +1347,7 @@ function TrackHeader({
   onToggleLock: () => void;
   onToggleSolo: () => void;
   onBlendModeChange?: (mode: LayerBlendMode) => void;
+  onMatteChange?: (matte: any) => void;
   onParentChange?: (parentId: string | null) => void;
   onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
   onRename?: (newName: string) => void;
@@ -1164,6 +1380,19 @@ function TrackHeader({
   const currentParentName = currentParent
     ? parentOptions.find((o) => o.id === currentParent)?.name ?? 'Parent'
     : 'None';
+
+  const currentMatteMode = typeof track.matteMode === 'object' && track.matteMode !== null
+    ? track.matteMode.mode
+    : track.matteMode || 'none';
+
+  const MATTE_LABELS: Record<string, string> = {
+    none: 'None',
+    alpha: 'Alpha Matte',
+    'alpha-inv': 'Alpha Inv Matte',
+    luma: 'Luma Matte',
+    'luma-inv': 'Luma Inv Matte',
+  };
+  const currentMatteLabel = MATTE_LABELS[currentMatteMode] ?? 'None';
 
   const parentItems = [
     {
@@ -1289,6 +1518,30 @@ function TrackHeader({
         />
       </div>
 
+      <div className={styles.matteCol} onClick={(e) => e.stopPropagation()}>
+        <Dropdown
+          placement="bottom-start"
+          trigger={
+            <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte">
+              {currentMatteLabel}
+            </button>
+          }
+          items={[
+            { value: 'none', label: 'None' },
+            { value: 'alpha', label: 'Alpha' },
+            { value: 'alpha-inv', label: 'Alpha Inv' },
+            { value: 'luma', label: 'Luma' },
+            { value: 'luma-inv', label: 'Luma Inv' },
+          ].map((m) => ({
+            type: 'item',
+            id: m.value,
+            label: m.label,
+            icon: m.value === currentMatteMode ? ('check' as const) : undefined,
+            onSelect: () => onMatteChange?.(m.value as any),
+          }))}
+        />
+      </div>
+
       <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
         <Dropdown
           placement="bottom-start"
@@ -1330,7 +1583,7 @@ function TrackHeader({
           title="Toggle Motion Blur"
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
         >
-          <Icon name="refresh" size={10} />
+          <Icon name="motion-blur" size={10} />
         </button>
         <button
           type="button"
@@ -1393,10 +1646,152 @@ function TrackHeader({
   );
 }
 
-function PropertyHeader({ label, style }: { label: string; style: CSSProperties }): JSX.Element {
+/** Times within this many seconds of the playhead count as "at" it. */
+const KEYFRAME_EPSILON = 1e-4;
+
+/**
+ * A property sub-row: its name plus AE's keyframe navigator — `◀ ◆ ▶`. The
+ * diamond is filled when a keyframe sits at the playhead and hollow otherwise;
+ * clicking it adds or removes one *without changing the value*, which is the
+ * only way to anchor a property before animating it away.
+ */
+/**
+ * One property row in the timeline's track header column: the name, its live
+ * value field(s), and either the keyframe navigator or a stopwatch.
+ *
+ * Exported so its behaviour can be tested directly — driving it through the
+ * whole virtualized Timeline would test the scroller, not the row.
+ */
+export function PropertyHeader({
+  label,
+  style,
+  keyframes,
+  currentTime,
+  animated = true,
+  valueProps,
+  valueUnit,
+  propertyValue,
+  onValueChange,
+  onToggleKeyframe,
+  onStopwatch,
+  onSeek,
+}: {
+  label: string;
+  style: CSSProperties;
+  keyframes: ReadonlyArray<TimelineKeyframeRef>;
+  currentTime: number;
+  /** False for a static placeholder row — shows the stopwatch instead of ◀◆▶. */
+  animated?: boolean;
+  /** Engine props this row edits — one value field each (Position → x, y). */
+  valueProps?: ReadonlyArray<string>;
+  valueUnit?: string;
+  propertyValue?: (prop: string) => number;
+  onValueChange?: (prop: string, value: number) => void;
+  onToggleKeyframe?: () => void;
+  /** Enable animation for a static placeholder row (create first keyframe). */
+  onStopwatch?: () => void;
+  onSeek?: (time: number) => void;
+}): JSX.Element {
+  const sorted = useMemo(() => [...keyframes].sort((a, b) => a.time - b.time), [keyframes]);
+  const at = sorted.find((k) => Math.abs(k.time - currentTime) < KEYFRAME_EPSILON);
+  const prev = [...sorted].reverse().find((k) => k.time < currentTime - KEYFRAME_EPSILON);
+  const next = sorted.find((k) => k.time > currentTime + KEYFRAME_EPSILON);
+
+  // AE puts a live, scrubbable value beside every property here, so a whole
+  // animation can be built without leaving the timeline.
+  const fields =
+    valueProps && valueProps.length > 0 && propertyValue && onValueChange ? (
+      <div className={styles.propValues}>
+        {valueProps.map((p) => (
+          <ValueField
+            key={p}
+            value={propertyValue(p)}
+            unit={valueUnit}
+            onChange={(v) => onValueChange(p, v)}
+            aria-label={valueProps.length > 1 ? `${label} ${p}` : label}
+          />
+        ))}
+      </div>
+    ) : null;
+
+  /**
+   * The stopwatch sits on EVERY property row, left of its name, lit when the
+   * property is animated — that is where AE puts it and what it means there.
+   *
+   * It used to appear only on un-animated rows, so the timeline could turn
+   * animation ON but never OFF: removing a property's animation meant crossing
+   * to the inspector to find the same control.
+   */
+  const stopwatch = onStopwatch ? (
+    <button
+      type="button"
+      className={styles.propStopwatch}
+      data-on={animated || undefined}
+      aria-pressed={animated}
+      aria-label={`${animated ? 'Disable' : 'Enable'} ${label} animation`}
+      title={
+        animated
+          ? `Disable ${label} animation (removes its keyframes)`
+          : `Enable ${label} animation (create first keyframe at playhead)`
+      }
+      onClick={(e) => {
+        e.stopPropagation();
+        onStopwatch();
+      }}
+    >
+      <Icon name="stopwatch" size={11} />
+    </button>
+  ) : null;
+
+  if (!animated) {
+    // Static placeholder: the AE property tree before any keyframes exist.
+    return (
+      <div className={`${styles.propHeader} ${styles.propHeaderStatic}`} style={style}>
+        {stopwatch}
+        <span className={styles.propName} title={label}>{label}</span>
+        {fields}
+      </div>
+    );
+  }
+
   return (
     <div className={styles.propHeader} style={style}>
-      <span className={styles.propName}>{label}</span>
+      {stopwatch}
+      <span className={styles.propName} title={label}>{label}</span>
+      {fields}
+      <div className={styles.propNav}>
+        <button
+          type="button"
+          className={styles.propNavBtn}
+          disabled={!prev}
+          aria-label={`Previous ${label} keyframe`}
+          title="Previous keyframe"
+          onClick={(e) => { e.stopPropagation(); if (prev) onSeek?.(prev.time); }}
+        >
+          <Icon name="chevron-left" size={11} />
+        </button>
+        <button
+          type="button"
+          className={styles.propNavBtn}
+          data-on={at ? true : undefined}
+          aria-pressed={!!at}
+          aria-label={at ? `Remove ${label} keyframe at playhead` : `Add ${label} keyframe at playhead`}
+          title={at ? 'Remove keyframe at playhead' : 'Add keyframe at playhead'}
+          onClick={(e) => { e.stopPropagation(); onToggleKeyframe?.(); }}
+        >
+          <Icon name="keyframe" size={11} />
+        </button>
+        <button
+          type="button"
+          className={styles.propNavBtn}
+          disabled={!next}
+          aria-label={`Next ${label} keyframe`}
+          title="Next keyframe"
+          onClick={(e) => { e.stopPropagation(); if (next) onSeek?.(next.time); }}
+        >
+          <Icon name="chevron-right" size={11} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1428,14 +1823,18 @@ function TrackContent({
       {/* Clips — draggable body (move) + edge handles (trim). */}
       {track.clips?.map((clip) => {
         const view = clipPreview && clipPreview.id === clip.id ? clipPreview : clip;
+        const wave = clip.assetId ? audioEngine.getWaveform(clip.assetId) : undefined;
+        const width = Math.max(2, view.duration * pps);
+        const height = trackHeight - 6;
+        const pathD = wave ? waveformPath(wave.peaks, width, height) : '';
         return (
           <div
             key={clip.id}
             className={styles.clip}
             style={{
               transform: `translateX(${view.start * pps}px)`,
-              width: Math.max(2, view.duration * pps),
-              height: trackHeight - 6,
+              width,
+              height,
               // Category color as a subtle fill; the solid hue forms the border.
               background: clip.color
                 ? `color-mix(in srgb, ${clip.color} 26%, transparent)`
@@ -1455,6 +1854,21 @@ function TrackContent({
             }
             onDoubleClick={onActivate}
           >
+            {pathD && (
+              <svg
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: '100%',
+                  height: '100%',
+                  pointerEvents: 'none',
+                  opacity: 0.35,
+                }}
+              >
+                <path d={pathD} fill="currentColor" />
+              </svg>
+            )}
             {onClipDown ? (
               <>
                 <div
@@ -1549,7 +1963,7 @@ function Keyframes({
 
 
 
-function generateRulerTicks(durationSec: number, pps: number, fps: number): { x: number; major: boolean; label: string }[] {
+function generateRulerTicks(durationSec: number, pps: number, fps: number, startSec = 0): { x: number; major: boolean; label: string }[] {
   const targetPxBetweenMajor = 100;
   const candidateSec = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600];
   let majorSec = 1;
@@ -1561,7 +1975,10 @@ function generateRulerTicks(durationSec: number, pps: number, fps: number): { x:
   for (let t = 0; t <= durationSec + 1e-6; t += minorSec) {
     const snapped = Math.round(t / minorSec) * minorSec;
     const isMajor = Math.abs((snapped / majorSec) - Math.round(snapped / majorSec)) < 1e-6;
-    ticks.push({ x: snapped * pps, major: isMajor, label: formatTime(snapped, fps, majorSec) });
+    // The tick's POSITION is 0-based (pixel layout is the real time domain); its
+    // LABEL adds the comp's start offset so the ruler reads the same timecode
+    // the playhead readout does.
+    ticks.push({ x: snapped * pps, major: isMajor, label: formatTime(snapped + startSec, fps, majorSec) });
   }
   return ticks;
 }

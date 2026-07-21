@@ -1,7 +1,7 @@
 import { Color } from '../../core/math/Color';
 import { Rect } from '../../core/math/geometry';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, emitTextured, mvpFor, writeAttachment } from './passUtils';
+import { beginViewportPass, emitLayerTexture, writeAttachment } from './passUtils';
 import { EffectPass } from './EffectPass';
 
 /**
@@ -27,7 +27,7 @@ export class TextPass extends RenderPass {
       if (r.opacity <= 0 || !Rect.intersects(visible, r.bounds)) continue;
       const tex = services.textures.get(r.textureKey ?? `text:${r.id}`);
       if (!tex || !tex.ready) continue;
-      emitTextured(cmds, mvpFor(viewport, r.modelMatrix), r.color ?? Color.white(), r.opacity, r.blend, tex.texture, tex.sampler, r.uvRect ?? tex.uv, r.colorMatrix);
+      emitLayerTexture(ctx, r, tex, r.opacity);
     }
     if (cmds.length === 0) return;
 

@@ -8,9 +8,9 @@
  */
 
 import { create } from 'zustand';
-import { renderSequenceZip, renderWebMBlob, downloadBlob, type ExportOptions } from '@core/export/exportManager';
+import { renderSequenceZip, renderWebMBlob, renderGIFBlob, downloadBlob, type ExportOptions } from '@core/export/exportManager';
 import { api } from '@core/api/client';
-import { useUIStore } from './uiStore';
+import { DEFAULT_COMPOSITION } from './compositionStore';
 
 export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
 
@@ -19,6 +19,14 @@ export type OutputFormat = 'mp4' | 'webm' | 'gif' | 'png-sequence' | 'jpg-sequen
 export interface RenderJob {
   id: string;
   compositionName: string;
+  /**
+   * WHICH composition to render.
+   *
+   * Only `compositionName` existed — a label — so every job rendered whatever
+   * comp happened to be active. Queue three comps, get three copies of one,
+   * each correctly named.
+   */
+  compositionId?: string;
   outputPath: string;
   format: OutputFormat;
   status: RenderStatus;
@@ -33,6 +41,8 @@ export interface RenderJob {
   fps: number;
   durationSec: number;
   transparent: boolean;
+  /** The comp's own background. Was hardcoded '#101014' at render time. */
+  background?: string;
 }
 
 interface RenderQueueState {
@@ -54,6 +64,29 @@ interface RenderQueueState {
   skipJob: (id: string) => void;
 }
 
+/**
+ * The file extension a queued format produces.
+ *
+ * One home for this: the Export dialog hardcoded `.webm` for everything that
+ * wasn't a sequence, so a GIF job was *named* .webm — matching the queue's old
+ * behaviour of actually shipping a WebM. `renderJobBlob` returns the real
+ * extension it produced; this is for naming the job before it runs.
+ */
+export function outputExtFor(format: OutputFormat): string {
+  switch (format) {
+    case 'png-sequence':
+    case 'jpg-sequence':
+      return 'zip';
+    case 'gif':
+      return 'gif';
+    case 'mp4':
+      return 'mp4';
+    case 'webm':
+    default:
+      return 'webm';
+  }
+}
+
 let jobSeq = 1;
 
 /** Map a queue format + job to the exporter's options + the produced blob. */
@@ -70,7 +103,15 @@ async function renderJobBlob(
     fps: job.fps,
     duration: job.durationSec,
     time: 0,
-    comp: { width: job.width, height: job.height, transparent: job.transparent, background: '#101014' },
+    comp: {
+      width: job.width,
+      height: job.height,
+      transparent: job.transparent,
+      // The job's own comp and background — this rendered the ACTIVE comp on a
+      // hardcoded '#101014' regardless of what was queued.
+      background: job.background ?? DEFAULT_COMPOSITION.background,
+      ...(job.compositionId ? { rootId: job.compositionId } : {}),
+    },
   };
   switch (job.format) {
     case 'png-sequence':
@@ -78,48 +119,57 @@ async function renderJobBlob(
     case 'jpg-sequence':
       return { blob: await renderSequenceZip(opts, 'jpg', onProgress, signal), ext: 'zip' };
     case 'mp4': {
-      const renderJob = await api.createRender({
-        format: 'mp4',
-        width: opts.width,
-        height: opts.height,
-        fps: opts.fps,
-        duration: opts.duration,
-        transparent: job.transparent,
-      });
-      // Expose the backend job id so a pause/skip can cancel it server-side.
-      onBackendJob(renderJob.id);
       try {
-        const frameExt = job.transparent ? 'png' : 'jpg';
-        const zipBlob = await renderSequenceZip(opts, frameExt, (f) => onProgress(f * 0.5), signal);
-        if (signal.aborted) throw new Error('Aborted');
-        onProgress(0.5);
-        await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
-        while (true) {
+        const renderJob = await api.createRender({
+          format: 'mp4',
+          width: opts.width,
+          height: opts.height,
+          fps: opts.fps,
+          duration: opts.duration,
+          transparent: job.transparent,
+        });
+        // Expose the backend job id so a pause/skip can cancel it server-side.
+        onBackendJob(renderJob.id);
+        try {
+          const frameExt = job.transparent ? 'png' : 'jpg';
+          const zipBlob = await renderSequenceZip(opts, frameExt, (f) => onProgress(f * 0.5), signal);
           if (signal.aborted) throw new Error('Aborted');
-          const status = await api.getRender(renderJob.id);
-          if (status.status === 'completed' && status.resultUrl) {
-            onProgress(1.0);
-            const res = await fetch(status.resultUrl);
-            return { blob: await res.blob(), ext: 'mp4' };
+          onProgress(0.5);
+          await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
+          while (true) {
+            if (signal.aborted) throw new Error('Aborted');
+            const status = await api.getRender(renderJob.id);
+            if (status.status === 'completed' && status.resultUrl) {
+              onProgress(1.0);
+              const res = await fetch(status.resultUrl);
+              return { blob: await res.blob(), ext: 'mp4' };
+            }
+            if (status.status === 'failed') throw new Error(status.error || 'Backend render failed');
+            if (status.status === 'canceled') throw new Error('Aborted');
+            onProgress(0.5 + status.progress * 0.45);
+            await new Promise(r => setTimeout(r, 1000));
           }
-          if (status.status === 'failed') throw new Error(status.error || 'Backend render failed');
-          if (status.status === 'canceled') throw new Error('Aborted');
-          onProgress(0.5 + status.progress * 0.45);
-          await new Promise(r => setTimeout(r, 1000));
+        } finally {
+          onBackendJob(null);
         }
-      } finally {
-        onBackendJob(null);
+      } catch (err) {
+        const reason = (err as Error)?.message ?? String(err);
+        const offline = err instanceof TypeError || /fetch|network|ECONNREFUSED|Failed to fetch/i.test(reason);
+        if (offline) {
+          const { renderMP4Blob } = await import('@core/export/exportManager');
+          const blob = await renderMP4Blob(opts, onProgress, signal);
+          return { blob, ext: 'mp4' };
+        }
+        throw err;
       }
     }
+    case 'gif':
+      // Renders a real GIF. This used to warn "no local GIF encoder" and ship a
+      // .webm under a .gif request — while `renderGIFBlob` (a hand-written
+      // GIF89a + LZW encoder) was already powering the Export dialog.
+      return { blob: await renderGIFBlob({ ...opts, format: 'gif' }, onProgress, signal), ext: 'gif' };
     case 'webm':
     default:
-      return { blob: await renderWebMBlob(opts, onProgress, signal), ext: 'webm' };
-    case 'gif':
-      useUIStore.getState().notify({
-        level: 'warning',
-        message: 'GIF format falls back to WebM output (no local GIF encoder).',
-        durationMs: 4000
-      });
       return { blob: await renderWebMBlob(opts, onProgress, signal), ext: 'webm' };
   }
 }
@@ -164,6 +214,8 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
       _abort: abort,
       jobs: s.jobs.map((j) => (j.status === 'failed' ? { ...j, status: 'queued', error: undefined } : j)),
     }));
+
+
 
     // Serial async runner — renders each queued job for real, then downloads it.
     void (async () => {

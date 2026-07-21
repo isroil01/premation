@@ -38,14 +38,39 @@ export interface CoreServiceRefs {
 }
 
 let refs: CoreServiceRefs | null = null;
+const readyListeners = new Set<(r: CoreServiceRefs) => void>();
 
 export function setCoreServiceRefs(r: CoreServiceRefs): void {
   refs = r;
+  for (const listener of [...readyListeners]) listener(r);
 }
 
 export function coreServices(): CoreServiceRefs {
   if (!refs) throw new Error('Core services not registered — call registerCoreServices() during boot.');
   return refs;
+}
+
+/**
+ * Non-throwing peek, for UI that can mount *outside* the Providers boot gate —
+ * the global title bar renders on /login and /dashboard, where nothing has
+ * booted the core yet. Prefer coreServices() anywhere boot is guaranteed.
+ */
+export function tryCoreServices(): CoreServiceRefs | null {
+  return refs;
+}
+
+/**
+ * Observe registration. Fires immediately when the core is already booted, so
+ * callers get the refs whether they mount before or after boot. Returns an
+ * unsubscribe.
+ */
+export function onCoreServicesReady(listener: (r: CoreServiceRefs) => void): () => void {
+  if (refs) {
+    listener(refs);
+    return () => { /* already delivered */ };
+  }
+  readyListeners.add(listener);
+  return () => { readyListeners.delete(listener); };
 }
 
 export const getSettingsManager = (): SettingsManager => coreServices().settings;

@@ -26,7 +26,7 @@ function PluginsList(): JSX.Element {
         const installed = pluginHost.isInstalled(p.id);
         return (
           <div key={p.id} className={styles.row}>
-            <div className={styles.icon}><Icon name="settings" size={16} /></div>
+            <div className={styles.icon}><Icon name="plugin" size={16} /></div>
             <div className={styles.body}>
               <span className={styles.name}>{p.name}</span>
               <span className={styles.desc}>{p.description}</span>
@@ -42,7 +42,7 @@ function PluginsList(): JSX.Element {
         );
       })}
       <p className={styles.note}>
-        Installed plugins add commands you can run from the Command Palette (⌘K).
+        Installed plugins add commands you can run from the Command Palette (⌘⇧P).
       </p>
     </div>
   );

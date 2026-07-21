@@ -6,7 +6,7 @@
  */
 
 import { ResourceManager, NullBackend } from '@motion/renderer';
-import { AppTextureProvider, type ImageLoader, type VideoFactory } from './AppTextureProvider';
+import { AppTextureProvider, textCssFont, type ImageLoader, type VideoFactory } from './AppTextureProvider';
 
 /** A fake decoded bitmap (only width/height matter to the provider). */
 function fakeBitmap(w = 320, h = 240): ImageBitmap {
@@ -151,6 +151,73 @@ describe('AppTextureProvider', () => {
       const real = provider.get('text:t')!.texture.id;
       provider.retain(new Set());
       expect(provider.get('text:t')!.texture.id).not.toBe(real);
+    });
+
+    // The font is now part of the raster (was hardcoded 600 Inter). Each font
+    // field must invalidate the signature so the GPU text re-rasterizes — else a
+    // weight/family/alignment change would silently keep the old texture.
+    it.each([
+      ['fontFamily', { fontFamily: 'Roboto' }],
+      ['fontWeight', { fontWeight: '300' }],
+      ['fontStyle', { fontStyle: 'italic' }],
+      ['align', { align: 'right' }],
+      ['letterSpacing', { letterSpacing: 4 }],
+      ['lineHeight', { lineHeight: 2 }],
+    ])('re-rasterizes when %s changes', (_label, override) => {
+      const { provider } = setup();
+      provider.setText('text:t', spec);
+      const a = provider.get('text:t')!.texture.id;
+      provider.setText('text:t', { ...spec, ...override });
+      expect(provider.get('text:t')!.texture.id).not.toBe(a);
+    });
+
+    it('reuses the texture when all font fields are identical', () => {
+      const styled = { ...spec, fontFamily: 'Roboto', fontWeight: '700', fontStyle: 'italic', align: 'center', letterSpacing: 2, lineHeight: 1.5 };
+      const { provider } = setup();
+      provider.setText('text:t', styled);
+      const a = provider.get('text:t')!.texture.id;
+      provider.setText('text:t', { ...styled });
+      expect(provider.get('text:t')!.texture.id).toBe(a);
+    });
+  });
+
+  describe('textCssFont (Canvas2D parity)', () => {
+    it('matches Canvas2DBackend\'s font shorthand', () => {
+      expect(textCssFont({ fontSize: 24, fontFamily: 'Roboto', fontWeight: '700', fontStyle: 'italic' }))
+        .toBe('italic 700 24px "Roboto", Inter, system-ui, sans-serif');
+    });
+    it('defaults weight 600 / Inter / upright, like Canvas2D', () => {
+      expect(textCssFont({ fontSize: 48 }))
+        .toBe('600 48px "Inter", Inter, system-ui, sans-serif');
+    });
+  });
+
+  describe('light textures', () => {
+    it('rasterizes a light to a real (non-placeholder) texture', () => {
+      const { provider } = setup();
+      const placeholderId = provider.get('nope')!.texture.id;
+      provider.setLight('light:l', '#ffffff');
+      const tex = provider.get('light:l')!;
+      expect(tex.ready).toBe(true);
+      expect(tex.texture.id).not.toBe(placeholderId);
+    });
+
+    it('reuses the texture for the same colour, re-rasterizes on colour change', () => {
+      const { provider } = setup();
+      provider.setLight('light:l', '#ffffff');
+      const a = provider.get('light:l')!.texture.id;
+      provider.setLight('light:l', '#ffffff');
+      expect(provider.get('light:l')!.texture.id).toBe(a);
+      provider.setLight('light:l', '#ff8800');
+      expect(provider.get('light:l')!.texture.id).not.toBe(a);
+    });
+
+    it('retain() forgets light keys, falling back to the placeholder', () => {
+      const { provider } = setup();
+      provider.setLight('light:l', '#ffffff');
+      const real = provider.get('light:l')!.texture.id;
+      provider.retain(new Set());
+      expect(provider.get('light:l')!.texture.id).not.toBe(real);
     });
   });
 

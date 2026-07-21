@@ -39,6 +39,17 @@
   align-items: center;
 }
 
+.dashboardLogoMark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--color-primary, #2988ff);
+  color: #ffffff;
+}
+
 .appName {
   font-size: 11px;
   font-weight: 600;
@@ -98,4 +109,79 @@
 .btnClose:hover {
   background: #e81123 !important;
   color: #fff !important;
+}
+
+.editorControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+}
+
+.menuDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 8px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.layoutToggle {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+  padding: 0 !important;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.layoutToggle:hover {
+  background: transparent !important;
+  color: #fff !important;
+}
+
+.layoutToggle[data-active] {
+  background: transparent !important;
+  color: #38bdf8 !important;
+  border: none !important;
+}
+
+.layoutToggle[data-active]:hover {
+  background: transparent !important;
+  color: #7dd3fc !important;
+  border: none !important;
+}
+
+.appMenuBarWrapper {
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.userProfile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  -webkit-app-region: no-drag;
+}
+
+.avatarIcon {
+  color: #ffffff;
+  background: var(--color-primary, #2988ff);
+  border-radius: 2px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+}
+
+.userEmail {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

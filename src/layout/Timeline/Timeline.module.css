@@ -6,7 +6,11 @@
 .root {
   position: relative;
   display: grid;
-  grid-template-columns: auto 1fr;
+  /* Three in-flow children live here: header column, the drag resizer, and the
+     lanes. The grid MUST declare three columns — with only `auto 1fr` the 5px
+     resizer consumed the flexible column and the lanes wrapped to an implicit
+     second row (header stuck at the top, ruler + lanes shoved to the bottom). */
+  grid-template-columns: auto auto 1fr;
   /* Constrain the single row to the container height (min 0) so the lanes get
      a bounded box and scroll INTERNALLY instead of growing with content. */
   grid-template-rows: minmax(0, 1fr);
@@ -214,21 +218,6 @@
   z-index: 1;
 }
 
-/* ── Cache bar ─────────────────────────────────────────────────── */
-.cacheBar {
-  position: absolute;
-  left: 0;
-  z-index: 2;
-  pointer-events: none;
-}
-
-.cacheSegment {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  background: var(--color-cache-cached);
-  border-radius: var(--radius-xs);
-}
 
 /* ── Work area (in/out region) ─────────────────────────────────── */
 .workAreaBar {
@@ -498,6 +487,14 @@
   min-width: 0;
 }
 
+.matteCol {
+  width: 90px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .parentCol {
   width: 80px;
   flex: none;
@@ -538,11 +535,16 @@
   white-space: nowrap;
   max-width: 100%;
   text-align: left;
+  transition: transform var(--motion-duration-fast, 120ms) var(--motion-ease-standard, ease);
 }
 
 .timelineSelectTrigger:hover {
   background: var(--color-hover);
   color: var(--color-text-primary);
+}
+
+.timelineSelectTrigger:active {
+  transform: scale(0.95);
 }
 
 /* Column heads for the switch columns — sit in the ruler strip, right-aligned
@@ -576,6 +578,15 @@
   font-weight: var(--font-weight-medium);
 }
 
+.colHeadMatte {
+  width: 90px;
+  flex: none;
+  text-align: left;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
 .colHeadParent {
   width: 80px;
   flex: none;
@@ -588,9 +599,12 @@
 .colHeadAeSwitches {
   width: 90px;
   flex: none;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   font-weight: var(--font-weight-medium);
 }
 
@@ -619,7 +633,9 @@
 .trackColorPicker {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  /* Square, like AE's layer colour chip — a dot reads as a status light
+     (on/off/recording); a square chip reads as a swatch you can set. */
+  border-radius: var(--radius-xs);
   border: 1px solid var(--color-divider);
   padding: 0;
   cursor: pointer;
@@ -634,15 +650,16 @@
 }
 .trackColorPicker::-webkit-color-swatch {
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-xs);
 }
 
 .trackName {
   flex: 1;
   min-width: 0;
+  font-family: var(--font-family-sans);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -656,8 +673,8 @@
   min-width: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  font-family: inherit;
-  letter-spacing: 0.01em;
+  font-family: var(--font-family-sans);
+  letter-spacing: -0.01em;
   color: var(--color-text-primary);
   background: var(--color-surface-3);
   border: 1px solid var(--color-accent);
@@ -697,6 +714,10 @@
   opacity: 1;
   background: var(--color-hover);
   color: var(--color-text-primary);
+}
+
+.trackAction:active {
+  transform: scale(0.92);
 }
 
 .trackAction[data-on] {
@@ -821,6 +842,8 @@
 .propHeader {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
   /* Indent past index + chevron + icon chip so it reads as a child row. */
   padding-left: calc(var(--space-3) + 16px + var(--space-2) + 16px + var(--space-2) + 18px + var(--space-2));
   border-bottom: 1px solid var(--color-border-subtle);
@@ -834,6 +857,153 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* The value fields used to squeeze the name to an ellipsis, so rows read as
+     "P…"/"S…" and were indistinguishable. The name gets first call on the row's
+     width — the fields shrink first, and the column is resizable. */
+  flex: 0 1 auto;
+  min-width: 86px;
+}
+
+/* Live, scrubbable values beside each property (AE keeps them here so an
+   animation can be built without crossing to the inspector). They sit between
+   the name and the keyframe navigator, and shrink before the name does. */
+.propValues {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+/* Each value gets a real field wrapper — a well with a border, a tinted
+   background and a caret cursor. Bare numbers on the row background read as
+   LABELS, so nobody discovers they are editable; this is the affordance. The
+   accent tint separates "a number you can change" from the muted property name
+   next to it. */
+.propValues > * {
+  min-width: 46px;
+  max-width: 78px;
+  padding: 1px 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-2));
+  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+  cursor: ew-resize;
+  transition: var(--motion-hover-transition);
+}
+
+.propValues > *:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-surface-2));
+}
+
+.propValues > *:focus-within {
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
+}
+
+/* ── Header column resizer ─────────────────────────────────────── */
+/* The property names and their value fields need very different room depending
+   on what is twirled open; a fixed column either truncates names or wastes half
+   the panel. Sits on the column's edge, widened to a usable hit target. */
+.headerResizer {
+  position: relative;
+  z-index: 3;
+  width: 5px;
+  margin-left: -3px;
+  margin-right: -2px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.headerResizer:hover,
+.headerResizer:active {
+  background: color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+/* RAM-preview cache coverage — a thin green run under the ruler. */
+.cacheBar {
+  position: absolute;
+  height: 3px;
+  background: var(--color-success, #34d399);
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Static placeholder rows (property tree before any keyframes): slightly
+   dimmed, with a leading stopwatch that enables animation. */
+.propHeaderStatic {
+  gap: var(--space-2);
+}
+
+.propHeaderStatic .propName {
+  color: var(--color-text-muted);
+}
+
+.propStopwatch[data-on] {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+.propStopwatch {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: var(--motion-hover-transition);
+}
+
+.propStopwatch:hover {
+  opacity: 1;
+  background: var(--color-hover);
+  color: var(--color-primary);
+}
+
+/* ── Keyframe navigator (AE's ◀ ◆ ▶) ───────────────────────────── */
+.propNav {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  padding-right: var(--space-2);
+}
+
+.propNavBtn {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: var(--motion-hover-transition);
+}
+
+.propNavBtn:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.propNavBtn:disabled {
+  opacity: 0.18;
+  cursor: default;
+}
+
+/* Filled diamond = a keyframe sits at the playhead. */
+.propNavBtn[data-on] {
+  opacity: 1;
+  color: var(--color-primary);
 }
 
 .lanePropBg {

@@ -38,6 +38,9 @@ export interface MotionEditorApi {
   };
   /** Subscribe to native menu command ids. Returns an unsubscribe fn. */
   onMenuCommand?(handler: (commandId: string) => void): () => void;
+  // NOTE: there is deliberately no `ai` surface any more. AI runs through the
+  // backend gateway (POST /ai/stream) — keys are stored server-side, so the
+  // desktop shell holds no AI privileges at all.
 }
 
 declare global {

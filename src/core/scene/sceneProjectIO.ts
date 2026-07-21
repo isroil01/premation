@@ -33,7 +33,7 @@ function clearGraph(): void {
   for (const id of ids) defaultSceneGraph.removeNode(id);
 }
 
-export const sceneProjectIO: ProjectDocumentIO = {
+export const sceneProjectIO: ProjectDocumentIO<ProjectFile> = {
   createEmpty: () => ({ version: '1.0.0', nodes: [defaultComposition()] }),
 
   capture: () => {

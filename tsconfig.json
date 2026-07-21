@@ -63,7 +63,8 @@
       "@motion/workspace": ["./packages/workspace/src/index.ts"],
       "@motion/timeline": ["./packages/timeline/src/index.ts"],
       "@motion/animation": ["./packages/animation/src/index.ts"],
-      "@motion/renderer": ["./packages/renderer/src/index.ts"]
+      "@motion/renderer": ["./packages/renderer/src/index.ts"],
+      "@motion/ai-tools": ["./packages/ai-tools/src/index.ts"]
     }
   },
   "include": ["src", "src/**/*.ts", "src/**/*.tsx"],

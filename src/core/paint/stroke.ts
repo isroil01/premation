@@ -16,6 +16,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
 import { bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
+import type { FillPaint } from './fill';
 
 export type StrokeAlign = 'inside' | 'center' | 'outside';
 export type StrokeCap = 'butt' | 'round' | 'square';
@@ -33,6 +34,9 @@ export interface Stroke {
   dash: number[];
   cap: StrokeCap;
   join: StrokeJoin;
+  /** Optional gradient paint — when set (linear/radial) it overrides `color`;
+   *  `color` remains the fallback for renderers without gradient strokes. */
+  paint?: FillPaint;
 }
 
 export const STROKE_ALIGNS: ReadonlyArray<{ value: StrokeAlign; label: string }> = [
@@ -65,6 +69,9 @@ export function normalizeStroke(v: unknown): Stroke {
   const base = defaultStroke();
   if (!isStroke(v)) return base;
   const s = v as Partial<Stroke>;
+  const paint = s.paint;
+  const validPaint =
+    !!paint && typeof paint === 'object' && (paint.type === 'linear' || paint.type === 'radial' || paint.type === 'solid');
   return {
     enabled: s.enabled !== false,
     color: typeof s.color === 'string' ? s.color : base.color,
@@ -74,6 +81,7 @@ export function normalizeStroke(v: unknown): Stroke {
     dash: Array.isArray(s.dash) ? s.dash.filter((n) => Number.isFinite(n) && n >= 0) : [],
     cap: s.cap === 'round' || s.cap === 'square' ? s.cap : 'butt',
     join: s.join === 'round' || s.join === 'bevel' ? s.join : 'miter',
+    ...(validPaint ? { paint } : {}),
   };
 }
 
@@ -96,14 +104,60 @@ export function getNodeStroke(nodeId: string): Stroke | undefined {
   return fx && isStroke(fx.props.stroke) ? normalizeStroke(fx.props.stroke) : undefined;
 }
 
-/** Set (or clear, when undefined) the node's stroke. */
+// ── Multi-stroke (stroke STACK, drawn bottom→top) ────────────────────
+
+function rawStrokes(node: SceneNode): Stroke[] | null {
+  const fx = node.components.find((c) => c.type === 'fx');
+  const arr = fx?.props.strokes;
+  if (!Array.isArray(arr)) return null;
+  const valid = arr.filter(isStroke).map(normalizeStroke);
+  return valid.length > 0 ? valid : null;
+}
+
+/** The node's full stroke stack (normalized, INCLUDING disabled entries — the
+ *  UI needs them; renderers filter). Legacy single strokes report as [stroke]. */
+export function readNodeStrokes(node: SceneNode): Stroke[] {
+  const arr = rawStrokes(node);
+  if (arr) return arr;
+  const fx = node.components.find((c) => c.type === 'fx');
+  return fx && isStroke(fx.props.stroke) ? [normalizeStroke(fx.props.stroke)] : [];
+}
+
+export function getNodeStrokes(nodeId: string): Stroke[] {
+  const node = defaultSceneGraph.getNode(nodeId);
+  return node ? readNodeStrokes(node) : [];
+}
+
+/** The renderable subset of the stack (enabled, width > 0). */
+export function readNodeRenderStrokes(node: SceneNode): Stroke[] {
+  return readNodeStrokes(node).filter((s) => s.enabled && s.width > 0);
+}
+
+/** Replace the whole stroke stack; the legacy single-stroke slot mirrors
+ *  strokes[0] so older readers keep working. */
+export function setNodeStrokes(nodeId: string, strokes: Stroke[]): void {
+  const normalized = strokes.map(normalizeStroke);
+  defaultSceneGraph.setStrokes(nodeId, normalized.length > 1 ? normalized : undefined);
+  defaultSceneGraph.setStroke(nodeId, normalized[0]);
+  bumpScene();
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/** Set (or clear, when undefined) the node's PRIMARY stroke. Routes through
+ *  the stack when one exists so single-stroke controls stay truthful. */
 export function setNodeStroke(nodeId: string, stroke: Stroke | undefined): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const arr = node ? rawStrokes(node) : null;
+  if (arr) {
+    setNodeStrokes(nodeId, stroke ? [normalizeStroke(stroke), ...arr.slice(1)] : arr.slice(1));
+    return;
+  }
   defaultSceneGraph.setStroke(nodeId, stroke);
   bumpScene();
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 
-/** Patch the current stroke (creating a default first if none exists). */
+/** Patch the current PRIMARY stroke (creating a default first if none exists). */
 export function updateNodeStroke(nodeId: string, patch: Partial<Stroke>): void {
   const current = getNodeStroke(nodeId) ?? defaultStroke();
   setNodeStroke(nodeId, normalizeStroke({ ...current, ...patch }));

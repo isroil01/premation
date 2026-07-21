@@ -15,16 +15,21 @@ import {
 } from '@stores/preferenceStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { cutSelection, copySelection, pasteSelection, hasClipboardContent } from '@core/commands/clipboard';
+import { getTimelineController } from '@core/timeline/TimelineController';
+import { buildSaaSAd } from '@core/scene/seedSaaSAd';
+import { buildComplexShowcase } from '@core/scene/seedComplexShowcase';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openModal } from '@stores/modalStore';
-import { useHistoryStore } from '@stores/historyStore';
+import { customConfirm } from '@components/Modal';
+import { useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
 import { Button } from '@components/Button';
-import { TooltipProvider } from '@components/Tooltip';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
 import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
-import renderCache from '@core/rendering/renderCache';
 import pluginHost from '@core/plugins/PluginHost';
 import { openPluginsModal } from '@layout/Plugins/PluginsModal';
 import { openExportDialog } from '@layout/Export/ExportDialog';
@@ -34,14 +39,20 @@ import { getCommandRegistry, BuiltinCommands, type Command } from '@core/command
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
-import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager } from '@core/services/coreServices';
+import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
-import { asThemeId, asCommandId } from '@app-types/common';
+import { projectDocumentIO } from '@core/project/projectDocumentIO';
+import { incrementName } from '@core/project/incrementName';
+import { renderStillFrame } from '@core/export/offlineRenderer';
+import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
+import { type EasingPreset } from '@core/animation/keyframeAssistants';
+import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
 import { hydrateComposition } from '@stores/compositionStore';
 import { useAssetStore } from '@stores/assetStore';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
+import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
@@ -51,14 +62,13 @@ import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioPlaybackBridge } from '@core/audio/useAudioPlayback';
 import { controlValue } from '@core/animation/expressionControls';
 import { ProjectCommands } from '@layout/Menu';
-import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
 import { CommandPalette } from '@layout/CommandPalette';
 import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
 import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
-import { insertNull } from '@core/scene/parenting';
+import { insertNull, moveNodeInStack } from '@core/scene/parenting';
+import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
-import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 
 interface ProvidersProps {
@@ -73,35 +83,118 @@ function notify(message: string, level: 'info' | 'success' | 'warning' | 'error'
  *  Going through the CommandSystem makes them remappable in Customize…. The
  *  ShortcutManager already ignores keys typed into inputs/textareas. */
 function buildToolCommands(): ReadonlyArray<Command> {
-  const tools: Array<{ tool: import('@stores/uiStore').Tool; label: string; key: string }> = [
-    { tool: 'select', label: 'Select Tool', key: 'v' },
-    { tool: 'direct-select', label: 'Direct Selection Tool', key: 'a' },
-    { tool: 'hand', label: 'Hand Tool', key: 'h' },
-    { tool: 'zoom', label: 'Zoom Tool', key: 'z' },
-    { tool: 'move', label: 'Move Tool', key: 'w' },
-    { tool: 'rotate', label: 'Rotate Tool', key: 'r' },
-    { tool: 'pen', label: 'Pen Tool', key: 'p' },
-    { tool: 'text', label: 'Text Tool', key: 't' },
-    { tool: 'shape', label: 'Rectangle Tool', key: 'u' },
-    { tool: 'ellipse', label: 'Ellipse Tool', key: 'e' },
+  // `chord` is the default; AE_PRESET in shortcutOverrides may rebind it.
+  // Move has none — AE has no Move tool (Select drags), and W is Rotation.
+  //
+  // These follow After Effects exactly, which also resolves a set of collisions:
+  // Pen was on P and Text on T, shadowing the P/T property-reveal shortcuts
+  // (ShortcutManager captures and stops propagation, so the reveal listener
+  // never ran); Rectangle was on U, shadowed in turn by `timeline.revealAnimated`.
+  // AE puts them on G / Ctrl+T / Q — which is what the toolbar tooltips have
+  // been advertising all along — leaving P, T and U free to reveal.
+  const tools: Array<{ tool: import('@stores/uiStore').Tool; label: string; chord?: KeyChord }> = [
+    { tool: 'select', label: 'Select Tool', chord: { key: 'v' } },
+    { tool: 'direct-select', label: 'Direct Selection Tool', chord: { key: 'a' } },
+    { tool: 'hand', label: 'Hand Tool', chord: { key: 'h' } },
+    { tool: 'zoom', label: 'Zoom Tool', chord: { key: 'z' } },
+    { tool: 'move', label: 'Move Tool' },
+    { tool: 'rotate', label: 'Rotate Tool', chord: { key: 'w' } },
+    { tool: 'pan-behind', label: 'Pan Behind (Anchor Point) Tool', chord: { key: 'y' } },
+    { tool: 'pen', label: 'Pen Tool', chord: { key: 'g' } },
+    { tool: 'brush', label: 'Brush Tool' },
+    { tool: 'text', label: 'Text Tool', chord: { key: 't', meta: true } },
+    { tool: 'shape', label: 'Rectangle Tool', chord: { key: 'q' } },
+    { tool: 'ellipse', label: 'Ellipse Tool', chord: { key: 'q', shift: true } },
+    { tool: 'puppet-pin', label: 'Puppet Position Pin Tool', chord: { key: 'p', meta: true } },
+    { tool: 'bone', label: 'Bone Tool', chord: { key: 'b', meta: true } },
   ];
-  return tools.map(({ tool, label, key }) => ({
+  // Every tool used 'crosshair', so the palette/menus showed eleven identical
+  // icons — give each tool its actual glyph.
+  const TOOL_ICONS: Record<string, import('@components/Icon').IconName> = {
+    select: 'select-arrow',
+    'direct-select': 'mouse-pointer',
+    hand: 'hand',
+    zoom: 'zoom-in',
+    move: 'move',
+    rotate: 'rotate-cw',
+    'pan-behind': 'anchor',
+    pen: 'pen',
+    brush: 'brush',
+    text: 'type',
+    shape: 'square',
+    ellipse: 'circle',
+    'puppet-pin': 'puppet-pin',
+    bone: 'bone',
+  };
+  return tools.map(({ tool, label, chord }) => ({
     id: asCommandId(`tool.${tool}`),
     label,
-    icon: 'crosshair' as const,
-    shortcut: { key },
+    icon: TOOL_ICONS[tool] ?? ('crosshair' as const),
+    ...(chord ? { shortcut: chord } : {}),
     enabled: () => true,
     execute: () => useUIStore.getState().setActiveTool(tool),
+  }));
+}
+
+/**
+ * Keyframe-assistant commands (AE's F9 family + interpolation).
+ *
+ * These already existed and worked, but had NO menu home — the audit's "F9
+ * commands exist with no menu home". They live in the Animation menu now (see
+ * menuModel), so they're discoverable rather than shortcut-only.
+ */
+import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+
+function buildMergePathCommands(): ReadonlyArray<Command> {
+  const ops: Array<{ id: string; label: string; op: MergeOp }> = [
+    { id: 'shape.mergeUnion', label: 'Merge Paths: Union', op: 'union' },
+    { id: 'shape.mergeSubtract', label: 'Merge Paths: Subtract', op: 'subtract' },
+    { id: 'shape.mergeIntersect', label: 'Merge Paths: Intersect', op: 'intersect' },
+    { id: 'shape.mergeExclude', label: 'Merge Paths: Exclude (XOR)', op: 'exclude' },
+  ];
+  return ops.map(({ id, label, op }) => ({
+    id: asCommandId(id),
+    label,
+    icon: 'layers' as const,
+    enabled: () => useSelectionStore.getState().ids.length >= 2,
+    execute: () => {
+      const ids = mergeSelectedPaths(op);
+      if (ids.length > 0) notify(`Merged paths (${op})`, 'success');
+      else notify('Select at least two shape layers to merge', 'warning');
+    },
+  }));
+}
+
+function buildEasingCommands(): ReadonlyArray<Command> {
+  const presets: Array<{ id: string; label: string; preset: EasingPreset; shortcut?: KeyChord }> = [
+    { id: 'anim.easyEase', label: 'Easy Ease', preset: 'Ease', shortcut: { key: 'F9' } },
+    { id: 'anim.easyEaseIn', label: 'Easy Ease In', preset: 'EaseIn', shortcut: { key: 'F9', shift: true } },
+    { id: 'anim.easyEaseOut', label: 'Easy Ease Out', preset: 'EaseOut', shortcut: { key: 'F9', meta: true, shift: true } },
+    // Interpolation types — AE's Keyframe Interpolation submenu. No shortcuts,
+    // to avoid colliding with the tool/reveal keymap.
+    { id: 'anim.interpLinear', label: 'Keyframe Interpolation: Linear', preset: 'Linear' },
+    { id: 'anim.interpHold', label: 'Keyframe Interpolation: Hold', preset: 'Hold' },
+  ];
+  return presets.map(({ id, label, preset, shortcut }) => ({
+    id: asCommandId(id),
+    label,
+    icon: 'ease' as const,
+    ...(shortcut ? { shortcut } : {}),
+    // Keep the chord live only when it can act, so it falls through otherwise.
+    enabled: () => easingTargetKeyframes().length > 0,
+    execute: () => {
+      if (applyEasingToSelection(preset)) notify(`${label} applied`, 'success');
+    },
   }));
 }
 
 function buildBuiltinCommands(): ReadonlyArray<Command> {
   return [
     {
-      // The palette owns the Cmd/Ctrl+K key itself (so it fires even while a
-      // field is focused); this command is for menus/discoverability. No
+      // The palette owns Cmd/Ctrl+Shift+P via its own listener (so it fires even
+      // while a field is focused); this command is for menus/discoverability. No
       // shortcut here on purpose — binding it would double-fire with the
-      // palette's own listener.
+      // palette's own listener and the two toggles would cancel out.
       id: asCommandId('view.commandPalette'),
       label: 'Command Palette',
       icon: 'search',
@@ -206,20 +299,90 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         notify('Duplicated layers', 'success');
       },
     },
+    // Cut/Copy/Paste were in the Edit menu but never registered, so all three
+    // rendered enabled and did nothing — while a working clipboard module sat
+    // uncalled in core/commands.
+    {
+      id: BuiltinCommands.Cut,
+      label: 'Cut',
+      shortcut: { key: 'x', meta: true },
+      enabled: () => hasCutCopyTarget(),
+      execute: () => {
+        cutSelection();
+        notify('Cut', 'info');
+      },
+    },
+    {
+      id: BuiltinCommands.Copy,
+      label: 'Copy',
+      shortcut: { key: 'c', meta: true },
+      enabled: () => hasCutCopyTarget(),
+      execute: () => {
+        copySelection();
+        notify('Copied', 'info');
+      },
+    },
+    {
+      id: BuiltinCommands.Paste,
+      label: 'Paste',
+      shortcut: { key: 'v', meta: true },
+      enabled: () => hasClipboardContent(),
+      execute: () => {
+        pasteSelection();
+        notify('Pasted', 'success');
+      },
+    },
+  ];
+}
+
+/** Cut/Copy act on selected keyframes if any, else on selected layers. */
+function hasCutCopyTarget(): boolean {
+  return useKeyframeSelectionStore.getState().ids.size > 0 || useSelectionStore.getState().count() > 0;
+}
+
+/**
+ * The Examples menu. Both builders exist and are tested; the commands behind
+ * the menu items were simply never registered, so both items rendered enabled
+ * and did nothing.
+ *
+ * Each REPLACES the current scene (they call defaultSceneGraph.clear()), so
+ * they confirm first — silently discarding the user's work would be worse than
+ * the no-op they replace.
+ */
+function buildExampleCommands(): ReadonlyArray<Command> {
+  const load = (label: string, build: () => void) => async (): Promise<void> => {
+    const dirty = useProjectStore.getState().activeTabId
+      ? useProjectStore.getState().tabs[useProjectStore.getState().activeTabId!]?.dirty
+      : false;
+    if (dirty && !await customConfirm('Load Example', `Load "${label}"? This replaces the current scene and your unsaved changes will be lost.`, { isDanger: true, confirmLabel: 'Load' })) {
+      return;
+    }
+    build();
+    getTimelineController().syncFromScene();
+    bumpScene();
+    notify(`Loaded ${label}`, 'success');
+  };
+
+  return [
+    {
+      id: asCommandId('scene.loadSaaSAd'),
+      label: 'Load: Nova AI — SaaS Ad',
+      enabled: () => true,
+      execute: load('Nova AI — SaaS Ad', () => { buildSaaSAd(); }),
+    },
+    {
+      id: asCommandId('scene.loadShowcase'),
+      label: 'Load: Complex Showcase',
+      enabled: () => true,
+      execute: load('Complex Showcase', () => { buildComplexShowcase(); }),
+    },
   ];
 }
 
 function buildProjectCommands(): ReadonlyArray<Command> {
   return [
-    {
-      id: asCommandId('comp.new'),
-      label: 'New Composition…',
-      shortcut: { key: 'n', meta: true, ctrl: true },
-      enabled: () => true,
-      execute: () => {
-        openNewCompositionDialog();
-      },
-    },
+    // "New Composition…" was removed — compositions are created from the
+    // dashboard (one project per composition), so there's no in-editor add path.
     {
       id: asCommandId('comp.settings'),
       label: 'Composition Settings…',
@@ -275,6 +438,65 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'c', meta: true, shift: true },
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => precomposeSelected(),
+    },
+    {
+      // Flatten a multi-part logo (group / precomp / multi-selection) to one
+      // image layer and drop a starter puppet rig on it — a single riggable
+      // image/shape leaf is rigged in place instead. See rigLogo.ts.
+      id: asCommandId('layer.rigLogo'),
+      label: 'Rig Logo for Animation',
+      icon: 'puppet-pin',
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        void rigLogoForAnimation();
+      },
+    },
+    // Arrange (z-order): a layer draws on top of the ones added before it, so a
+    // newly-imported background lands in front and hides everything. These give
+    // explicit stacking control (Figma/Illustrator chords: Ctrl/Cmd+] / [).
+    {
+      id: asCommandId('layer.bringToFront'),
+      label: 'Bring to Front',
+      icon: 'arrow-up',
+      shortcut: { key: ']', meta: true, shift: true },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'front');
+        notify('Brought to front', 'info');
+      },
+    },
+    {
+      id: asCommandId('layer.bringForward'),
+      label: 'Bring Forward',
+      icon: 'chevron-up',
+      shortcut: { key: ']', meta: true },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'forward');
+        notify('Brought forward', 'info');
+      },
+    },
+    {
+      id: asCommandId('layer.sendBackward'),
+      label: 'Send Backward',
+      icon: 'chevron-down',
+      shortcut: { key: '[', meta: true },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'backward');
+        notify('Sent backward', 'info');
+      },
+    },
+    {
+      id: asCommandId('layer.sendToBack'),
+      label: 'Send to Back',
+      icon: 'arrow-down',
+      shortcut: { key: '[', meta: true, shift: true },
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'back');
+        notify('Sent to back', 'info');
+      },
     },
     {
       id: asCommandId('effect.blur'),
@@ -365,6 +587,13 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'o', meta: true },
       enabled: () => true,
       execute: async () => {
+        // Cloud projects have no file picker — send the user to the dashboard,
+        // which is the real "choose a project" surface.
+        if (getFileManager().environment === 'api') {
+          notify('Choose a project from your dashboard', 'info');
+          window.location.hash = '#/';
+          return;
+        }
         const ref = await getProjectManager().open();
         if (ref) {
           bumpScene();
@@ -396,6 +625,19 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: async () => {
         const ok = await getProjectManager().saveAs('Untitled');
         notify(ok ? 'Project saved' : 'Save cancelled', ok ? 'success' : 'info');
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.IncrementAndSave),
+      label: 'Increment and Save',
+      // AE: Cmd/Ctrl+Alt+Shift+S — save a fresh copy with the next number.
+      shortcut: { key: 's', meta: true, alt: true, shift: true },
+      enabled: () => true,
+      execute: async () => {
+        const current = getProjectManager().getState().current?.name ?? 'Untitled';
+        const next = incrementName(current);
+        const ok = await getProjectManager().saveAs(next);
+        notify(ok ? `Saved “${next}”` : 'Save cancelled', ok ? 'success' : 'info');
       },
     },
     {
@@ -477,30 +719,25 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         const registry = getCommandRegistry();
         for (const cmd of buildBuiltinCommands()) registry.register(cmd);
         for (const cmd of buildToolCommands()) registry.register(cmd);
+        for (const cmd of buildEasingCommands()) registry.register(cmd);
+        for (const cmd of buildMergePathCommands()) registry.register(cmd);
         registry.register({
           id: asCommandId(BuiltinCommands.Undo),
           label: 'Undo',
           shortcut: { key: 'z', meta: true },
           enabled: () => getCommandSystem().getHistory().canUndo(),
-          execute: () => {
-            if (getCommandSystem().getHistory().canUndo()) {
-              getCommandSystem().getHistory().undo();
-            }
-          },
+          execute: () => performUndo(),
         });
         registry.register({
           id: asCommandId(BuiltinCommands.Redo),
           label: 'Redo',
           shortcut: { key: 'z', meta: true, shift: true },
           enabled: () => getCommandSystem().getHistory().canRedo(),
-          execute: () => {
-            if (getCommandSystem().getHistory().canRedo()) {
-              getCommandSystem().getHistory().redo();
-            }
-          },
+          execute: () => performRedo(),
         });
 
         for (const cmd of buildProjectCommands()) registry.register(cmd);
+        for (const cmd of buildExampleCommands()) registry.register(cmd);
 
         getShortcutManager().rehydrateFromRegistry();
 
@@ -516,7 +753,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Project: bridge to the scene document and refresh scene UI on load.
         const project = getProjectManager();
-        project.setDocumentIO(sceneProjectIO);
+        // The FULL document (scene + animation + comps + timelines + render
+        // settings). This was `sceneProjectIO` — scene-only — so every local
+        // save silently dropped the entire animation.
+        project.setDocumentIO(projectDocumentIO);
         getEventBus().on('ProjectLoaded', () => bumpScene());
         getEventBus().on('ProjectUnloaded', () => bumpScene());
         // Bind the (framework-independent) animation engine's change sink onto
@@ -529,9 +769,52 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         defaultAnimation.setAudioLevelProvider(() => audioEngine.currentLevel());
         // ctrl('name') expressions read slider-control rigs from the scene.
         defaultAnimation.setControlProvider((name, t) => controlValue(name, t));
-        // Keyframe edits refresh the timeline tracks + inspector + viewport,
-        // and invalidate the render cache (cached frames are now stale).
-        getEventBus().on('AnimationChanged', () => { renderCache.invalidate(); bumpScene(); });
+        // The remaining four providers had NO callers, so the engine kept its
+        // placeholder defaults and the expression API quietly lied: layer()
+        // always returned 0, thisComp.width was a hardcoded 1920 regardless of
+        // the real comp, and thisLayer.name was the string 'Layer'. A plausible
+        // wrong number is worse than an error — it fails silently on exactly
+        // the comps where people rely on it.
+        defaultAnimation.setLayerResolver((name) => {
+          let found: string | null = null;
+          defaultSceneGraph.traverse((n) => {
+            if (found === null && n.name === name) found = n.id;
+          });
+          return found;
+        });
+        defaultAnimation.setBaseValueProvider((nodeId, prop) => {
+          const node = defaultSceneGraph.getNode(nodeId);
+          if (!node) return undefined;
+          const t = node.components.find((c) => c.type === 'Transform');
+          const v = t?.props[prop as string];
+          return typeof v === 'number' ? v : undefined;
+        });
+        defaultAnimation.setCompInfoProvider(() => {
+          const comp = useCompositionStore.getState().comp();
+          let numLayers = 0;
+          defaultSceneGraph.traverse(() => { numLayers += 1; });
+          return {
+            width: comp.width,
+            height: comp.height,
+            duration: comp.durationSeconds,
+            fps: comp.fps,
+            numLayers,
+          };
+        });
+        defaultAnimation.setLayerInfoProvider((nodeId) => {
+          const comp = useCompositionStore.getState().comp();
+          const node = defaultSceneGraph.getNode(nodeId);
+          const t = node?.components.find((c) => c.type === 'Transform');
+          const w = t?.props.width;
+          const h = t?.props.height;
+          return {
+            name: node?.name ?? 'Layer',
+            width: typeof w === 'number' ? w : comp.width,
+            height: typeof h === 'number' ? h : comp.height,
+          };
+        });
+        // Keyframe edits refresh the timeline tracks + inspector + viewport.
+        getEventBus().on('AnimationChanged', () => { bumpScene(); });
 
         // Native (Electron) menu items dispatch through the same CommandSystem.
         window.motionEditor?.onMenuCommand?.((id) => {
@@ -550,11 +833,33 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true, execute: () => openExportDialog(10, 30),
           });
           registry.register({
+            id: asCommandId('comp.saveFrame'), label: 'Save Frame As PNG', icon: 'image',
+            // AE: Composition > Save Frame As. Renders the current playhead frame
+            // at comp resolution through the deterministic offline path.
+            enabled: () => true,
+            execute: async () => {
+              const c = useCompositionStore.getState().comp();
+              const frame = Math.round(getTimelineController().timeline.currentFrame);
+              const blob = await renderStillFrame(
+                { width: c.width, height: c.height, fps: c.fps, durationSec: c.durationSeconds, comp: { ...c, rootId: c.id } },
+                frame,
+              );
+              if (!blob) { notify('Could not render the frame', 'warning'); return; }
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${(c.name ?? 'comp').replace(/\s+/g, '_')}_frame${frame}.png`;
+              a.click();
+              URL.revokeObjectURL(url);
+              notify(`Saved frame ${frame}`, 'success');
+            },
+          });
+          registry.register({
             id: asCommandId('view.presentation'), label: 'Present (Preview)', icon: 'eye',
             enabled: () => true, execute: () => usePresentationStore.getState().enter(),
           });
           registry.register({
-            id: asCommandId('view.plugins'), label: 'Plugins…', icon: 'settings',
+            id: asCommandId('view.plugins'), label: 'Plugins…', icon: 'plugin',
             enabled: () => true, execute: () => openPluginsModal(),
           });
           registry.register({
@@ -562,19 +867,27 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true, execute: () => useOnboardingStore.getState().start(),
           });
           registry.register({
-            id: asCommandId('view.safeAreas'), label: 'Toggle Safe Areas', icon: 'crosshair',
+            id: asCommandId('view.safeAreas'), label: 'Toggle Safe Areas', icon: 'frame',
             enabled: () => true, execute: () => useGuidesStore.getState().toggleSafeArea(),
           });
           registry.register({
-            id: asCommandId('view.grid'), label: 'Toggle Grid', icon: 'layout',
+            id: asCommandId('view.grid'), label: 'Toggle Grid', icon: 'grid',
             enabled: () => true, execute: () => useGuidesStore.getState().toggleGrid(),
           });
           registry.register({
-            id: asCommandId('view.rulers'), label: 'Toggle Rulers', icon: 'layout',
+            id: asCommandId('view.rulers'), label: 'Toggle Rulers', icon: 'ruler',
             enabled: () => true, execute: () => useGuidesStore.getState().toggleRulers(),
           });
           registry.register({
-            id: asCommandId('view.renderQueue'), label: 'Render Queue', icon: 'layers',
+            // The ViewportHeader tooltip has advertised this chord all along —
+            // it just was never bound. Motion paths draw for selected layers
+            // with position keyframes; this hides/shows them globally.
+            id: asCommandId('view.motionPath'), label: 'Toggle Motion Paths', icon: 'path',
+            shortcut: { key: 'm', meta: true, alt: true },
+            enabled: () => true, execute: () => useGuidesStore.getState().toggleMotionPath(),
+          });
+          registry.register({
+            id: asCommandId('view.renderQueue'), label: 'Render Queue', icon: 'queue',
             shortcut: { key: 'F6' },
             enabled: () => true,
             execute: () => {
@@ -588,24 +901,73 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             },
           });
           registry.register({
+            // AE's Project panel: the list of compositions.
+            id: asCommandId('view.project'), label: 'Project', icon: 'folder',
+            enabled: () => true,
+            execute: () => useLayoutStore.getState().openPanel('project'),
+          });
+          registry.register({
+            // Targets the 'effects' panel registered in App.tsx. This used to
+            // open 'effectControls', an id that is never registered — and both
+            // openPanel and togglePanel bail on an unknown id, so the menu item
+            // and F3 silently did nothing.
             id: asCommandId('view.effectControls'), label: 'Effect Controls', icon: 'keyframe',
             shortcut: { key: 'F3' },
             enabled: () => true,
-            execute: () => {
-              const ls = useLayoutStore.getState();
-              if (!ls.panels['effectControls']) ls.openPanel('effectControls');
-              else ls.togglePanel('effectControls');
-            },
+            execute: () => useLayoutStore.getState().openPanel('effects'),
           });
           registry.register({
+            // Toggles the graph editor itself. This used to collapse the whole
+            // bottom timeline region — the one thing the graph editor lives in.
             id: asCommandId('view.graphEditor'), label: 'Graph Editor', icon: 'track',
             shortcut: { key: 'g', shift: true },
             enabled: () => true,
-            execute: () => useLayoutStore.getState().toggleRegion('bottomTimeline'),
+            execute: () => {
+              const ui = useUIStore.getState();
+              ui.setGraphEditorOpen(!ui.graphEditorOpen);
+            },
           });
           registry.register({
             id: asCommandId('view.customize'), label: 'Customize…', icon: 'settings',
             enabled: () => true, execute: () => openCustomizeDialog(),
+          });
+          // File → Version History. The menu item has always existed; this
+          // command did not, so clicking it did nothing — meanwhile every
+          // autosave has been quietly snapshotting the project, with no way
+          // to see or restore any of it. Only meaningful for a cloud project:
+          // snapshots live on the backend, keyed by project id.
+          registry.register({
+            id: asCommandId('file.versionHistory'), label: 'Version History…', icon: 'undo',
+            enabled: () => useCloudProjectStore.getState().projectId !== null,
+            execute: () => openVersionHistory(),
+          });
+          // AE reveal shortcuts. U reveals animated properties on the selected
+          // layers; a second U within the double-tap window upgrades to
+          // 'revealModified' (dispatched by ShortcutManager, which is why that
+          // one carries no chord of its own). Both are consumed by the
+          // RevealAnimatedProps listener in App.tsx.
+          registry.register({
+            id: asCommandId('timeline.revealAnimated'),
+            label: 'Reveal Animated Properties',
+            icon: 'keyframe',
+            shortcut: { key: 'u' },
+            enabled: () => true,
+            execute: () => {
+              getEventBus().emit('RevealAnimatedProps', {
+                nodeIds: [...useSelectionStore.getState().ids],
+                mode: 'animated',
+              });
+            },
+          });
+          registry.register({
+            id: asCommandId('timeline.revealModified'),
+            label: 'Reveal Modified Properties',
+            icon: 'keyframe',
+            enabled: () => true,
+            execute: () => {
+              // Empty nodeIds = every layer, per the listener's contract.
+              getEventBus().emit('RevealAnimatedProps', { nodeIds: [], mode: 'modified' });
+            },
           });
           getShortcutManager().rehydrateFromRegistry();
         } catch { /* ignore */ }
@@ -627,15 +989,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         try {
           useHistoryStore.getState().reset();
           useHistoryStore.getState().record('Open', true);
-          let recordTimer: ReturnType<typeof setTimeout> | undefined;
-          const scheduleRecord = (): void => {
-            if (useHistoryStore.getState().restoring) return;
-            clearTimeout(recordTimer);
-            recordTimer = setTimeout(() => {
-              if (useHistoryStore.getState().restoring) return;
-              useHistoryStore.getState().record();
-            }, 700);
-          };
+          // The debounce lives in the store so undo/redo can flush it — a
+          // pending snapshot that only exists in a local closure is why Ctrl+Z
+          // inside the window used to eat two actions.
+          const scheduleRecord = (): void => useHistoryStore.getState().schedule();
           getEventBus().on('AnimationChanged', scheduleRecord);
           getEventBus().on('NodeUpdated', scheduleRecord);
           getEventBus().on('SceneGraphChanged', scheduleRecord);
@@ -730,16 +1087,15 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
     );
   }
 
+  // TooltipProvider is mounted at the app root (main.tsx) so it also covers the
+  // global TitleBar on the pre-boot routes — don't re-wrap here.
   return (
-    <TooltipProvider>
+    <>
       {children}
       <AudioPlaybackBridge />
       <CommandPalette />
       <PresentationMode />
       <OnboardingOverlay onDone={() => getSettingsManager().set('onboarding.seen', true)} />
-      <ModalHost />
-      <ContextMenuHost />
-      <NotificationHost />
-    </TooltipProvider>
+    </>
   );
 }

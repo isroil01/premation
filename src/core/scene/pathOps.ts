@@ -15,7 +15,7 @@ import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 
-export type PathOpType = 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist';
+export type PathOpType = 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen';
 
 export interface PathOp {
   type: PathOpType;
@@ -192,6 +192,73 @@ export function twist(pts: readonly Pt[], angleDeg: number): Pt[] {
   });
 }
 
+/**
+ * Offset Paths — move every point along its averaged-edge normal. Sign flips
+ * expand vs contract (which is which depends on the outline's winding). Naive
+ * normal offset with no self-intersection cleanup — AE's is fancier, but this
+ * covers the classic "grow/shrink the shape" use. Pure.
+ */
+export function offsetPath(pts: readonly Pt[], closed: boolean, amount: number): Pt[] {
+  const n = pts.length;
+  if (n < 2 || amount === 0) return [...pts];
+  const normalOf = (a: Pt, b: Pt): Pt => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: -dy / len, y: dx / len };
+  };
+  return pts.map((p, i) => {
+    const hasPrev = closed || i > 0;
+    const hasNext = closed || i < n - 1;
+    const np = hasPrev ? normalOf(pts[(i - 1 + n) % n]!, p) : null;
+    const nn = hasNext ? normalOf(p, pts[(i + 1) % n]!) : null;
+    let nx = (np?.x ?? 0) + (nn?.x ?? 0);
+    let ny = (np?.y ?? 0) + (nn?.y ?? 0);
+    const len = Math.hypot(nx, ny) || 1;
+    nx /= len;
+    ny /= len;
+    return { x: p.x + nx * amount, y: p.y + ny * amount };
+  });
+}
+
+/**
+ * Roughen — subdivide each edge `detail` times, then displace every point
+ * along its normal by a DETERMINISTIC per-index hash scaled by `amount`
+ * (stable across frames, so animating amount wobbles smoothly instead of
+ * boiling). AE's Roughen Edges, the vector version. Pure.
+ */
+export function roughen(pts: readonly Pt[], closed: boolean, amount: number, detail: number): Pt[] {
+  const n = pts.length;
+  if (n < 2 || amount === 0) return [...pts];
+  const sub = Math.max(1, Math.min(10, Math.round(detail)));
+  const dense: Pt[] = [];
+  const segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i++) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % n]!;
+    for (let s = 0; s < sub; s++) {
+      const t = s / sub;
+      dense.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  if (!closed) dense.push(pts[n - 1]!);
+  const m = dense.length;
+  const rnd = (i: number): number => {
+    let h = (i + 1) * 374761393;
+    h = (h ^ (h >>> 13)) * 1274126177;
+    return (((h ^ (h >>> 16)) >>> 0) / 4294967296) * 2 - 1;
+  };
+  return dense.map((p, i) => {
+    const prev = dense[(i - 1 + m) % m]!;
+    const next = dense[(i + 1) % m]!;
+    const dx = next.x - prev.x;
+    const dy = next.y - prev.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const d = amount * rnd(i);
+    return { x: p.x + (-dy / len) * d, y: p.y + (dx / len) * d };
+  });
+}
+
 /** Apply the configured operator to an outline. Pure. */
 export function applyPathOp(pts: readonly Pt[], closed: boolean, op: PathOp): Pt[] {
   switch (op.type) {
@@ -203,6 +270,10 @@ export function applyPathOp(pts: readonly Pt[], closed: boolean, op: PathOp): Pt
       return puckerBloat(pts, op.amount);
     case 'twist':
       return twist(pts, op.amount);
+    case 'offset':
+      return offsetPath(pts, closed, op.amount);
+    case 'roughen':
+      return roughen(pts, closed, op.amount, op.detail);
     default:
       return [...pts];
   }
@@ -215,12 +286,22 @@ function fxProps(node: SceneNode): Record<string, unknown> | undefined {
   return node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
 }
 
+const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen'];
+
+function isPathOpType(v: unknown): v is PathOpType {
+  return typeof v === 'string' && (PATH_OP_TYPES as readonly string[]).includes(v);
+}
+
 export function readPathOpConfig(node: SceneNode): PathOp | null {
   const raw = fxProps(node)?.pathOp;
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Partial<PathOp>;
   const d = defaultPathOp();
-  const type: PathOpType = o.type === 'roundCorners' || o.type === 'none' ? o.type : 'zigzag';
+  // Validate against the whole union. This used to allowlist only
+  // roundCorners/none and coerce EVERYTHING else to 'zigzag', so Pucker & Bloat
+  // and Twist could be selected but never read back — the dropdown snapped
+  // straight back and `applyPathOp`'s pucker/twist branches were unreachable.
+  const type: PathOpType = isPathOpType(o.type) ? o.type : d.type;
   return { type, amount: num(o.amount, d.amount), detail: num(o.detail, d.detail) };
 }
 

@@ -43,7 +43,6 @@ export class QuadRenderer {
     for (const batch of batches) {
       const pipeline = this.materials.pipeline(batch.material, batch.blend, this.colorFormat);
       encoder.setPipeline(pipeline);
-      encoder.setVertexBuffer(0, quad);
       binds += 1;
 
       for (const item of batch.items) {
@@ -66,7 +65,15 @@ export class QuadRenderer {
           { pipeline, entries },
         );
         encoder.setBindGroup(0, bg);
-        encoder.draw(QUAD_VERTEX_COUNT);
+
+        if (item.vertexBuffer && item.indexBuffer && item.indexCount !== undefined) {
+          encoder.setVertexBuffer(0, item.vertexBuffer);
+          encoder.setIndexBuffer(item.indexBuffer, 'uint16');
+          encoder.drawIndexed(item.indexCount);
+        } else {
+          encoder.setVertexBuffer(0, quad);
+          encoder.draw(QUAD_VERTEX_COUNT);
+        }
         draws += 1;
       }
     }

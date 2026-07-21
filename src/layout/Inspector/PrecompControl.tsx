@@ -8,9 +8,9 @@ import { getTimelineController } from '@core/timeline/TimelineController';
  */
 
 import { Switch } from '@components/Switch';
-import { Icon } from '@components/Icon';
+
 import { ValueField } from '@components/ValueField';
-import { cn } from '@utils/cn';
+
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -20,6 +20,7 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { isPrecomp, setPrecomp } from '@core/scene/precomp';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
+import { Checkbox } from '@components/Checkbox';
 
 const REMAP = 'timeRemap';
 const LEGACY_REMAP = 'precompTime';
@@ -48,16 +49,14 @@ export function TimeRemapRow({ nodeId }: { nodeId: string }): JSX.Element {
 
   return (
     <div className={ta.paramRow}>
-      <button
-        type="button"
-        className={cn(ta.stopwatch, animated && ta.stopwatchOn)}
-        onClick={toggle}
-        aria-pressed={animated}
-        aria-label={animated ? 'Remove time remap' : 'Enable time remap'}
-        title={animated ? 'Remove time remap' : 'Enable time remap (keyframe the inner time)'}
-      >
-        <Icon name="keyframe" size={11} />
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+          <Checkbox 
+            checked={animated} 
+            onChange={toggle} 
+            title="Toggle Animation"
+            style={{ width: 14, height: 14 }}
+          />
+        </div>
       <span className={ta.paramLabel}>Time Remap</span>
       <ValueField value={display} onChange={onChange} unit="s" precision={2} min={0} disabled={!animated} aria-label="Time remap" />
     </div>

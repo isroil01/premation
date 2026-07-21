@@ -1,29 +1,160 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { useMemo, useState } from 'react';
+
 import { ValueField } from '@components/ValueField';
-import { InspectorRow } from '@components/Inspector';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
-import { getNodeFill, setNodeFill, convertFill, makeStop, sortedStops, type FillType, type FillPaint, type ColorStop } from '@core/paint/fill';
-import { getNodeStroke, updateNodeStroke, type StrokeAlign, type StrokeCap, type StrokeJoin } from '@core/paint/stroke';
+import { getNodeFill, setNodeFill, getNodeFills, setNodeFills, convertFill, makeStop, sortedStops, solidFill, type FillType, type FillPaint, type ColorStop } from '@core/paint/fill';
+import { getNodeStroke, updateNodeStroke, getNodeStrokes, setNodeStrokes, defaultStroke, normalizeStroke, type StrokeAlign, type StrokeCap, type StrokeJoin } from '@core/paint/stroke';
 import { Icon } from '@components/Icon';
 import { ColorPicker } from '@components/ColorPicker';
+import { Checkbox } from '@components/Checkbox';
 import { ColorKfRow } from './ColorKfRow';
 import styles from './TransformSection.module.css';
 import effStyles from '../Effects/EffectsPanel.module.css';
-import { useActiveWorkspace } from '@stores/projectStore';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
+import { useActiveWorkspace } from '@stores/projectStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
+
+/**
+ * One gradient-geometry row (angle / center / radius) — a ValueField plus a
+ * keyframe toggle. The engine tracks (fillAngle, fillCenterX/Y, fillRadius)
+ * have always been honored by the renderer (buildSnapshot samples them); this
+ * row is the UI that was missing. `scale` converts between the display unit
+ * and the engine/paint value (e.g. % ↔ 0..1).
+ */
+function GradientGeomRow({
+  nodeId,
+  prop,
+  label,
+  value,
+  unit,
+  min,
+  max,
+  scale = 1,
+  onStatic,
+}: {
+  nodeId: string;
+  prop: 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius';
+  label: string;
+  /** Current PAINT value (engine units). */
+  value: number;
+  unit: string;
+  min?: number;
+  max?: number;
+  /** displayValue = engineValue × scale. */
+  scale?: number;
+  onStatic: (engineValue: number) => void;
+}): JSX.Element {
+  const time = useActiveWorkspace()?.time ?? 0;
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
+  const animated = defaultAnimation.isAnimated(nodeId, prop);
+  const layerT = getTimelineController().toLayerTime(nodeId, time);
+  const engineVal = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
+
+  const handleChange = (display: number) => {
+    const engine = display / scale;
+    if (animated || autoKeyframe) {
+      runAnimEdit(
+        `Set ${prop}`,
+        () => defaultAnimation.setKeyframe(nodeId, prop, layerT, engine),
+        `set:${nodeId}:${prop}:${time}`,
+      );
+    } else {
+      onStatic(engine);
+    }
+  };
+
+  return (
+    <div className={styles.popoverRow}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+        <Checkbox
+          checked={animated}
+          onChange={() => {
+            if (animated) {
+              runAnimEdit(`Remove ${prop} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
+            } else {
+              runAnimEdit(`Animate ${prop}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
+            }
+          }}
+          title="Toggle Keyframes"
+          style={{ width: 13, height: 13 }}
+        />
+        <span className={styles.popoverLabel}>{label}</span>
+      </div>
+      <ValueField
+        value={Math.round((engineVal ?? 0) * scale)}
+        unit={unit}
+        {...(min !== undefined ? { min } : {})}
+        {...(max !== undefined ? { max } : {})}
+        onChange={(v) => handleChange(Number(v))}
+        aria-label={label}
+      />
+    </div>
+  );
+}
+
 
 /** Editor for a gradient's stop list (shared by linear + radial fills). */
 function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.Element | null {
+  const time = useActiveWorkspace()?.time ?? 0;
   if (paint.type === 'solid') return null;
-  const stops = sortedStops(paint.stops);
-  const write = (next: ColorStop[]): void => setNodeFill(nodeId, { ...paint, stops: next });
+  const layerT = getRemappedTime(nodeId, time);
+
+  // Gradient-stop keyframes (data track): when live, the rows show the
+  // SAMPLED stop list at the playhead and every edit writes a keyframe there —
+  // the renderer reads the track, so writing the static paint would be an
+  // edit that changes nothing on screen.
+  const stopsAnimated = defaultAnimation.isDataAnimated(nodeId, 'fill.stops');
+  const sampled = stopsAnimated
+    ? (defaultAnimation.sampleData(nodeId, 'fill.stops', layerT) as Array<{ pos: number; color: string }> | undefined)
+    : undefined;
+  const stops = sampled
+    ? sortedStops(sampled.map((s, i) => ({ id: `anim_${i}`, offset: s.pos, color: s.color })))
+    : sortedStops(paint.stops);
+  const write = (next: ColorStop[]): void => {
+    if (stopsAnimated) {
+      runAnimEdit('Edit gradient stops keyframe', () => {
+        defaultAnimation.setDataKeyframe(
+          nodeId, 'fill.stops', 'gradientStops', layerT,
+          sortedStops(next).map((s) => ({ pos: s.offset, color: s.color })),
+        );
+      }, `gradStops:${nodeId}`);
+    } else {
+      setNodeFill(nodeId, { ...paint, stops: next });
+    }
+  };
+  const toggleStopwatch = (): void => {
+    if (stopsAnimated) {
+      runAnimEdit('Remove gradient stop keyframes', () => {
+        defaultAnimation.setDataTrack(nodeId, 'fill.stops', null);
+      });
+    } else {
+      runAnimEdit('Animate gradient stops', () => {
+        defaultAnimation.setDataKeyframe(
+          nodeId, 'fill.stops', 'gradientStops', layerT,
+          stops.map((s) => ({ pos: s.offset, color: s.color })),
+        );
+      });
+    }
+  };
 
   return (
     <div className={effStyles.list}>
+      <button
+        type="button"
+        className={effStyles.addChip}
+        onClick={toggleStopwatch}
+        aria-pressed={stopsAnimated}
+        title={stopsAnimated
+          ? 'Gradient stops are keyframed — click to remove all stop keyframes'
+          : 'Keyframe the gradient stops at the playhead (positions and colors tween)'}
+        style={stopsAnimated ? { color: 'var(--color-primary, #4c8dff)' } : undefined}
+      >
+        <Icon name="keyframe" size={11} /> {stopsAnimated ? 'Stops keyframed' : 'Animate stops'}
+      </button>
       {stops.map((s, i) => (
         <div key={s.id} className={effStyles.stopRow}>
           <ColorPicker
@@ -68,70 +199,19 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
   if (!node) return null;
 
-  const time = useActiveWorkspace()?.time ?? 0;
-  // Shape/media layers carry a Style component; text layers carry a Text
-  // component. Fill & stroke live on the paint (`fx`) module either way, so the
-  // section renders for both — only Corner Radius is Style-specific.
   const styleComp = useMemo(() => node.components.find((c) => c.type === 'Style'), [node]);
   const textComp = useMemo(() => node.components.find((c) => c.type === 'Text'), [node]);
   const sComp = styleComp ?? textComp;
 
-  const renderKeyframeableProp = (
-    prop: string,
-    label: string,
-    baseVal: number,
-    setBaseVal: (v: number) => void,
-    unit = '',
-  ) => {
-    const animated = defaultAnimation.isAnimated(nodeId, prop);
-    const displayVal = animated ? defaultAnimation.sample(nodeId, prop, time) ?? baseVal : baseVal;
-
-    const toggleAnim = () => {
-      if (animated) {
-        runAnimEdit(`Remove ${label} animation`, () => {
-          defaultAnimation.removeTrack(nodeId, prop);
-        });
-      } else {
-        runAnimEdit(`Animate ${label}`, () => {
-          defaultAnimation.setKeyframe(nodeId, prop, getTimelineController().toLayerTime(nodeId, time), baseVal);
-        });
-      }
-    };
-
-    const handleChange = (v: number) => {
-      if (animated) {
-        runAnimEdit(`Change ${label}`, () => {
-          defaultAnimation.setKeyframe(nodeId, prop, getTimelineController().toLayerTime(nodeId, time), v);
-        });
-      } else {
-        setBaseVal(v);
-      }
-    };
-
-    return (
-      <InspectorRow label={label} align="center" key={prop}>
-        <div className={styles.control}>
-          <button
-            type="button"
-            className={`${styles.stopwatch} ${animated ? styles.stopwatchOn : ''}`}
-            onClick={toggleAnim}
-            title={animated ? 'Disable keyframe animation' : 'Enable keyframe animation'}
-          >
-            <Icon name="keyframe" size={11} />
-          </button>
-          <div className={styles.field}>
-            <ValueField value={displayVal} unit={unit} onChange={handleChange} />
-          </div>
-        </div>
-      </InspectorRow>
-    );
-  };
-  const [cornerRadius, setCornerRadius] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadius');
+  const [cornerRadiusRaw, setCornerRadius] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadius');
+  const cornerRadius = typeof cornerRadiusRaw === 'number' ? cornerRadiusRaw : 0;
 
   const fill = getNodeFill(nodeId);
+  const fills = getNodeFills(nodeId);
   const stroke = getNodeStroke(nodeId);
+  const strokes = getNodeStrokes(nodeId);
 
-  const [savedFill, setSavedFill] = useState<FillPaint | null>(null);
+  const [, setSavedFill] = useState<FillPaint | null>(null);
 
   const handleFillTypeChange = (type: FillType | 'none') => {
     if (type === 'none') {
@@ -143,25 +223,10 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
     }
   };
 
-  const toggleFill = () => {
-    if (fill) {
-      setSavedFill(fill);
-      setNodeFill(nodeId, undefined);
-    } else {
-      setNodeFill(nodeId, savedFill ?? { type: 'solid', color: '#ffffff' });
-      setSavedFill(null);
-    }
-  };
-
-  const toggleStroke = () => {
-    updateNodeStroke(nodeId, { enabled: !(stroke?.enabled ?? false) });
-  };
-
   const handleFillColorChange = (color: string) => {
     if (fill && fill.type === 'solid') {
       setNodeFill(nodeId, { ...fill, color });
     } else if (fill) {
-      // For gradients, update the first stop's color
       const newStops = [...fill.stops];
       if (newStops[0]) {
         newStops[0] = { ...newStops[0], color };
@@ -202,181 +267,362 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
     });
   };
 
-  const handleAngleChange = (angle: number) => {
-    if (fill && fill.type === 'linear') {
-      setNodeFill(nodeId, { ...fill, angle });
-    }
-  };
-
-  const handleCxChange = (cx: number) => {
-    if (fill && fill.type === 'radial') {
-      setNodeFill(nodeId, { ...fill, cx });
-    }
-  };
-
-  const handleCyChange = (cy: number) => {
-    if (fill && fill.type === 'radial') {
-      setNodeFill(nodeId, { ...fill, cy });
-    }
-  };
-
-  const handleRadiusChange = (radius: number) => {
-    if (fill && fill.type === 'radial') {
-      setNodeFill(nodeId, { ...fill, radius });
-    }
-  };
-
   if (!sComp) return null;
+
+  const isFillAnimated = defaultAnimation.isAnimated(nodeId, 'fill') || defaultAnimation.isAnimated(nodeId, 'fill_r') || defaultAnimation.isAnimated(nodeId, 'fill_g') || defaultAnimation.isAnimated(nodeId, 'fill_b');
+  const isStrokeAnimated = defaultAnimation.isAnimated(nodeId, 'stroke') || defaultAnimation.isAnimated(nodeId, 'stroke_r') || defaultAnimation.isAnimated(nodeId, 'stroke_g') || defaultAnimation.isAnimated(nodeId, 'stroke_b');
+  const isCornerAnimated = defaultAnimation.isAnimated(nodeId, 'cornerRadius');
 
   return (
     <div className={styles.section}>
       <h4 className={styles.title}>Appearance</h4>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: '8px' }}>
-        <div style={{ flex: 1, borderBottom: 'none' }}>
-          <InspectorRow label="Fill Type" align="center">
-            <select
-              value={fill?.type ?? 'none'}
-              onChange={(e) => handleFillTypeChange(e.target.value as FillType | 'none')}
-              className={styles.select}
-            >
-              <option value="none">None</option>
-              <option value="solid">Solid</option>
-              <option value="linear">Linear Gradient</option>
-              <option value="radial">Radial Gradient</option>
-            </select>
-          </InspectorRow>
+
+      {/* Flattened, always-visible rows (the popover-in-grid pattern hid every
+          control behind two clicks — the #1 reason the style system felt thin). */}
+      <div className={styles.inlineRows}>
+        <div className={styles.subhead}>
+          Fill
+          {isFillAnimated && <span className={styles.animatedDot} />}
         </div>
-        <button
-          type="button"
-          onClick={toggleFill}
-          className={styles.stopwatch}
-          style={{ opacity: fill ? 1 : 0.4 }}
-          title={fill ? 'Disable Fill' : 'Enable Fill'}
-        >
-          <Icon name={fill ? 'eye' : 'eye-off'} size={14} />
-        </button>
-      </div>
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Type</span>
+              <select
+                value={fill?.type ?? 'none'}
+                onChange={(e) => handleFillTypeChange(e.target.value as FillType | 'none')}
+                className={styles.select}
+                style={{ width: 110 }}
+              >
+                <option value="none">None</option>
+                <option value="solid">Solid</option>
+                <option value="linear">Linear</option>
+                <option value="radial">Radial</option>
+              </select>
+            </div>
 
-      {fill && fill.type === 'solid' && (
-        <ColorKfRow
-          nodeId={nodeId}
-          propPrefix="fill"
-          label="Fill Color"
-          value={fill.color}
-          setValue={handleFillColorChange}
-        />
-      )}
+            {fill && fill.type === 'solid' && (
+              <ColorKfRow
+                nodeId={nodeId}
+                propPrefix="fill"
+                label="Color"
+                value={fill.color}
+                setValue={handleFillColorChange}
+              />
+            )}
 
-      {fill && (fill.type === 'linear' || fill.type === 'radial') && (
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-subtle)' }}>
-          <div style={{ marginBottom: '8px', fontSize: '11px', color: 'var(--color-text-secondary)' }}>Gradient Stops</div>
-          <StopList nodeId={nodeId} paint={fill} />
-          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {fill.type === 'linear' && renderKeyframeableProp('fillAngle', 'Angle', fill.angle, handleAngleChange, '°')}
-            {fill.type === 'radial' && (
+            {fill && fill.type === 'linear' && (
+              <GradientGeomRow
+                nodeId={nodeId}
+                prop="fillAngle"
+                label="Angle"
+                value={fill.angle}
+                unit="°"
+                onStatic={(angle) => setNodeFill(nodeId, { ...fill, angle })}
+              />
+            )}
+
+            {fill && fill.type === 'radial' && (
               <>
-                {renderKeyframeableProp('fillCenterX', 'Center X', fill.cx, handleCxChange)}
-                {renderKeyframeableProp('fillCenterY', 'Center Y', fill.cy, handleCyChange)}
-                {renderKeyframeableProp('fillRadius', 'Radius', fill.radius, handleRadiusChange)}
+                <GradientGeomRow
+                  nodeId={nodeId}
+                  prop="fillCenterX"
+                  label="Center X"
+                  value={fill.cx}
+                  unit="%"
+                  min={0}
+                  max={100}
+                  scale={100}
+                  onStatic={(cx) => setNodeFill(nodeId, { ...fill, cx })}
+                />
+                <GradientGeomRow
+                  nodeId={nodeId}
+                  prop="fillCenterY"
+                  label="Center Y"
+                  value={fill.cy}
+                  unit="%"
+                  min={0}
+                  max={100}
+                  scale={100}
+                  onStatic={(cy) => setNodeFill(nodeId, { ...fill, cy })}
+                />
+                <GradientGeomRow
+                  nodeId={nodeId}
+                  prop="fillRadius"
+                  label="Radius"
+                  value={fill.radius}
+                  unit="%"
+                  min={1}
+                  max={200}
+                  scale={100}
+                  onStatic={(radius) => setNodeFill(nodeId, { ...fill, radius })}
+                />
               </>
             )}
+
+            {fill && (fill.type === 'linear' || fill.type === 'radial') && (
+              <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span className={styles.popoverLabel} style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>Stops:</span>
+                <StopList nodeId={nodeId} paint={fill} />
+              </div>
+            )}
+
+        {/* Extra fills (multi-fill stack, drawn over the primary). Animated
+            fill tracks bind to the primary only, so extras stay simple rows. */}
+        {fills.slice(1).map((f, i) => (
+          <div key={`xfill_${i}`} className={styles.popoverRow}>
+            <span className={styles.popoverLabel}>Fill {i + 2}</span>
+            <select
+              className={styles.select}
+              style={{ width: 74 }}
+              value={f.type}
+              onChange={(e) => {
+                const next = [...fills];
+                next[i + 1] = convertFill(f, e.target.value as FillType);
+                setNodeFills(nodeId, next);
+              }}
+              aria-label={`Fill ${i + 2} type`}
+            >
+              <option value="solid">Solid</option>
+              <option value="linear">Linear</option>
+              <option value="radial">Radial</option>
+            </select>
+            <ColorPicker
+              compact
+              value={f.type === 'solid' ? f.color : sortedStops(f.stops)[0]?.color ?? '#ffffff'}
+              onChange={(hex) => {
+                const next = [...fills];
+                next[i + 1] =
+                  f.type === 'solid'
+                    ? solidFill(hex)
+                    : { ...f, stops: f.stops.map((s, si) => (si === 0 ? { ...s, color: hex } : s)) };
+                setNodeFills(nodeId, next);
+              }}
+              aria-label={`Fill ${i + 2} color`}
+            />
+            <button
+              type="button"
+              className={effStyles.remove}
+              aria-label={`Remove fill ${i + 2}`}
+              onClick={() => setNodeFills(nodeId, fills.filter((_, fi) => fi !== i + 1))}
+            >
+              <Icon name="close" size={12} />
+            </button>
           </div>
+        ))}
+        {fill && (
+          <button
+            type="button"
+            className={effStyles.addChip}
+            onClick={() => setNodeFills(nodeId, [...fills, solidFill('#ffffff')])}
+          >
+            <Icon name="plus" size={11} /> Add fill
+          </button>
+        )}
+
+        <div className={styles.subhead} style={{ marginTop: 10 }}>
+          Stroke
+          {isStrokeAnimated && <span className={styles.animatedDot} />}
         </div>
-      )}
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Enabled</span>
+              <Checkbox
+                checked={stroke?.enabled ?? false}
+                onChange={() => updateNodeStroke(nodeId, { enabled: !(stroke?.enabled ?? false) })}
+              />
+            </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: '8px' }}>
-        <div style={{ flex: 1, borderBottom: 'none' }}>
-          <InspectorRow label="Stroke Width" align="center">
-            <ValueField value={stroke?.width ?? 0} unit="px" onChange={handleStrokeWidthChange} />
-          </InspectorRow>
-        </div>
-        <button
-          type="button"
-          onClick={toggleStroke}
-          className={styles.stopwatch}
-          style={{ opacity: stroke?.enabled ? 1 : 0.4 }}
-          title={stroke?.enabled ? 'Disable Stroke' : 'Enable Stroke'}
-        >
-          <Icon name={stroke?.enabled ? 'eye' : 'eye-off'} size={14} />
-        </button>
-      </div>
+            {(stroke?.enabled ?? false) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Width</span>
+                  <ValueField value={stroke?.width ?? 0} unit="px" onChange={handleStrokeWidthChange} />
+                </div>
 
-      {(stroke?.enabled ?? false) && (stroke?.width ?? 0) > 0 && (
-        <>
-          <ColorKfRow
-            nodeId={nodeId}
-            propPrefix="stroke"
-            label="Stroke Color"
-            value={stroke?.color ?? '#ffffff'}
-            setValue={handleStrokeColorChange}
-          />
+                <ColorKfRow
+                  nodeId={nodeId}
+                  propPrefix="stroke"
+                  label="Color"
+                  value={stroke?.color ?? '#ffffff'}
+                  setValue={handleStrokeColorChange}
+                />
 
-          <InspectorRow label="Stroke Opacity" align="center">
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Opacity</span>
+                  <ValueField
+                    value={Math.round((stroke?.opacity ?? 1) * 100)}
+                    min={0} max={100} precision={0} unit="%"
+                    onChange={handleStrokeOpacityChange}
+                  />
+                </div>
+
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Align</span>
+                  <select
+                    value={stroke?.align ?? 'center'}
+                    onChange={(e) => handleStrokeAlignChange(e.target.value as StrokeAlign)}
+                    className={styles.select}
+                    style={{ width: 100 }}
+                  >
+                    <option value="center">Center</option>
+                    <option value="inside">Inside</option>
+                    <option value="outside">Outside</option>
+                  </select>
+                </div>
+
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Cap</span>
+                  <select
+                    value={stroke?.cap ?? 'round'}
+                    onChange={(e) => handleStrokeCapChange(e.target.value as StrokeCap)}
+                    className={styles.select}
+                    style={{ width: 100 }}
+                  >
+                    <option value="butt">Butt</option>
+                    <option value="round">Round</option>
+                    <option value="square">Square</option>
+                  </select>
+                </div>
+
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Join</span>
+                  <select
+                    value={stroke?.join ?? 'round'}
+                    onChange={(e) => handleStrokeJoinChange(e.target.value as StrokeJoin)}
+                    className={styles.select}
+                    style={{ width: 100 }}
+                  >
+                    <option value="miter">Miter</option>
+                    <option value="round">Round</option>
+                    <option value="bevel">Bevel</option>
+                  </select>
+                </div>
+
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Dash</span>
+                  <input
+                    type="text"
+                    value={(stroke?.dash ?? []).join(', ')}
+                    placeholder="8, 4"
+                    onChange={(e) => handleStrokeDashChange(e.currentTarget.value)}
+                    className={styles.textInput}
+                    style={{ width: 100, height: 24, padding: '2px 6px' }}
+                  />
+                </div>
+
+                {/* Gradient stroke: an optional paint that overrides the solid
+                    colour (Canvas2D builds the gradient in layer space). */}
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Paint</span>
+                  <select
+                    className={styles.select}
+                    style={{ width: 100 }}
+                    value={stroke?.paint && stroke.paint.type !== 'solid' ? stroke.paint.type : 'solid'}
+                    onChange={(e) => {
+                      const t = e.target.value as FillType;
+                      if (t === 'solid') {
+                        updateNodeStroke(nodeId, { paint: undefined });
+                      } else {
+                        updateNodeStroke(nodeId, { paint: convertFill(stroke?.paint, t) });
+                      }
+                    }}
+                    aria-label="Stroke paint type"
+                  >
+                    <option value="solid">Solid color</option>
+                    <option value="linear">Linear gradient</option>
+                    <option value="radial">Radial gradient</option>
+                  </select>
+                </div>
+                {stroke?.paint && stroke.paint.type !== 'solid' && (
+                  <div className={styles.popoverRow}>
+                    <span className={styles.popoverLabel}>Grad</span>
+                    <ColorPicker
+                      compact
+                      value={sortedStops(stroke.paint.stops)[0]?.color ?? '#ffffff'}
+                      onChange={(hex) => {
+                        const p = stroke.paint!;
+                        if (p.type === 'solid') return;
+                        updateNodeStroke(nodeId, {
+                          paint: { ...p, stops: p.stops.map((s, si) => (si === 0 ? { ...s, color: hex } : s)) },
+                        });
+                      }}
+                      aria-label="Stroke gradient start color"
+                    />
+                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>→</span>
+                    <ColorPicker
+                      compact
+                      value={sortedStops(stroke.paint.stops).slice(-1)[0]?.color ?? '#000000'}
+                      onChange={(hex) => {
+                        const p = stroke.paint!;
+                        if (p.type === 'solid') return;
+                        const last = p.stops.length - 1;
+                        updateNodeStroke(nodeId, {
+                          paint: { ...p, stops: p.stops.map((s, si) => (si === last ? { ...s, color: hex } : s)) },
+                        });
+                      }}
+                      aria-label="Stroke gradient end color"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+        {/* Extra strokes (multi-stroke stack). */}
+        {strokes.slice(1).map((s, i) => (
+          <div key={`xstroke_${i}`} className={styles.popoverRow}>
+            <span className={styles.popoverLabel}>Stroke {i + 2}</span>
             <ValueField
-              value={Math.round((stroke?.opacity ?? 1) * 100)}
+              value={s.width}
+              unit="px"
               min={0}
-              max={100}
-              precision={0}
-              unit="%"
-              onChange={handleStrokeOpacityChange}
-              aria-label="Stroke opacity"
+              onChange={(v) => {
+                const next = [...strokes];
+                next[i + 1] = normalizeStroke({ ...s, width: Number(v) });
+                setNodeStrokes(nodeId, next);
+              }}
+              aria-label={`Stroke ${i + 2} width`}
             />
-          </InspectorRow>
-
-          <InspectorRow label="Stroke Align" align="center">
-            <select
-              value={stroke?.align ?? 'center'}
-              onChange={(e) => handleStrokeAlignChange(e.target.value as StrokeAlign)}
-              style={{ width: '100%', background: '#1c1c1f', border: '1px solid #333', color: '#fff', fontSize: 11, padding: '2px 4px', borderRadius: 2 }}
-            >
-              <option value="center">Center</option>
-              <option value="inside">Inside</option>
-              <option value="outside">Outside</option>
-            </select>
-          </InspectorRow>
-
-          <InspectorRow label="Stroke Cap" align="center">
-            <select
-              value={stroke?.cap ?? 'round'}
-              onChange={(e) => handleStrokeCapChange(e.target.value as StrokeCap)}
-              style={{ width: '100%', background: '#1c1c1f', border: '1px solid #333', color: '#fff', fontSize: 11, padding: '2px 4px', borderRadius: 2 }}
-            >
-              <option value="butt">Butt</option>
-              <option value="round">Round</option>
-              <option value="square">Square</option>
-            </select>
-          </InspectorRow>
-
-          <InspectorRow label="Stroke Join" align="center">
-            <select
-              value={stroke?.join ?? 'round'}
-              onChange={(e) => handleStrokeJoinChange(e.target.value as StrokeJoin)}
-              style={{ width: '100%', background: '#1c1c1f', border: '1px solid #333', color: '#fff', fontSize: 11, padding: '2px 4px', borderRadius: 2 }}
-            >
-              <option value="miter">Miter</option>
-              <option value="round">Round</option>
-              <option value="bevel">Bevel</option>
-            </select>
-          </InspectorRow>
-
-          <InspectorRow label="Stroke Dashes" align="center">
-            <input
-              type="text"
-              value={(stroke?.dash ?? []).join(', ')}
-              placeholder="e.g. 8, 4"
-              onChange={(e) => handleStrokeDashChange(e.currentTarget.value)}
-              style={{ width: '100%', background: '#1c1c1f', border: '1px solid #333', color: '#fff', fontSize: 11, padding: '2px 4px', borderRadius: 2 }}
-              aria-label="Stroke dashes"
+            <ColorPicker
+              compact
+              value={s.color}
+              onChange={(hex) => {
+                const next = [...strokes];
+                next[i + 1] = normalizeStroke({ ...s, color: hex });
+                setNodeStrokes(nodeId, next);
+              }}
+              aria-label={`Stroke ${i + 2} color`}
             />
-          </InspectorRow>
-        </>
-      )}
+            <button
+              type="button"
+              className={effStyles.remove}
+              aria-label={`Remove stroke ${i + 2}`}
+              onClick={() => setNodeStrokes(nodeId, strokes.filter((_, si) => si !== i + 1))}
+            >
+              <Icon name="close" size={12} />
+            </button>
+          </div>
+        ))}
+        {(stroke?.enabled ?? false) && (
+          <button
+            type="button"
+            className={effStyles.addChip}
+            onClick={() => setNodeStrokes(nodeId, [...(strokes.length ? strokes : [defaultStroke()]), normalizeStroke({ ...defaultStroke('#ffffff'), width: 2 })])}
+          >
+            <Icon name="plus" size={11} /> Add stroke
+          </button>
+        )}
 
-      {styleComp && (
-        <InspectorRow label="Corner Radius" align="center">
-          <ValueField value={Number(cornerRadius ?? 0)} unit="px" onChange={(v) => setCornerRadius(v)} />
-        </InspectorRow>
-      )}
+        {styleComp && (
+          <>
+            <div className={styles.subhead} style={{ marginTop: 10 }}>
+              Corners
+              {isCornerAnimated && <span className={styles.animatedDot} />}
+            </div>
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Radius</span>
+              <ValueField value={cornerRadius} unit="px" onChange={(v) => setCornerRadius(v)} />
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

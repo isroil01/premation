@@ -21,6 +21,12 @@
   --color-statusbar:         #1d1d1d;
   --color-titlebar:          #161616;
   --color-workspace:         #181818; /* canvas void          */
+  --color-pasteboard:        #202020; /* comp surround — one fixed NEUTRAL (zero blue
+                                          tint, per theme rule), a step above the void
+                                          (#181818) and below the panels (#232323) so
+                                          the comp page reads distinct yet the surround
+                                          recedes into the chrome family. Shared across
+                                          themes; not user-customizable. */
 
   /* ── Borders & dividers ───────────────────────────────────────── */
   /* Rule: `border` only where two REGIONS meet. Inside panels use
@@ -58,6 +64,15 @@
   /* ── Selection (AE Royal Blue highlight) ───────────────────────── */
   --color-selection:         #2988ff;
   --color-selection-hover:   #4097ff;
+  /* Canvas motion-path trail (frame dots, keyframe vertices, tangents). */
+  --color-motion-path:       #6aa8ff;
+  /* Canvas overlay chrome (snap lines, camera/light guides, HUD pills). */
+  --color-snap-line:         #ff3ba7;
+  --color-camera-guide:      #38bdf8;
+  --color-light-guide:       #f59e0b;
+  --color-hud-bg:            rgba(20, 22, 30, 0.85);
+  --color-hud-border:        rgba(100, 130, 255, 0.5);
+  --color-hud-text:          rgba(200, 210, 255, 0.92);
 
   /* ── Primary === selection. Blue fill, white text. ─────────────── */
   --color-primary:           #2988ff;

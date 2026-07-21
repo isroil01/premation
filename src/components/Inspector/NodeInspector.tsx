@@ -1,4 +1,3 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { InspectorRow } from './Inspector';
 import { propertyRegistry } from '@core/inspector/PropertyRegistry';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -9,9 +8,10 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { useSceneRevision } from '@stores/sceneStore';
 import { Color } from '@motion/renderer';
-import { Icon } from '@components/Icon';
-import { cn } from '@utils/cn';
+
+
 import styles from './NodeInspector.module.css';
+import { Checkbox } from '../Checkbox';
 
 /**
  * A single editable property row with keyframe authoring.
@@ -36,6 +36,9 @@ function PropertyRow({
 }): JSX.Element {
   const [baseVal, setBaseVal] = useNodeComponentProp(defaultSceneGraph, nodeId, componentId, propName);
   const rawTime = useActiveWorkspace()?.time ?? 0;
+  // Already layer-local: this is the axis the renderer samples on, and the
+  // axis every write below must use. Calling toLayerTime on top of it
+  // subtracted the clip start twice (the ghost-drag bug's root cause).
   const time = getRemappedTime(nodeId, rawTime);
   // Subscribe to the revision so the row re-renders on keyframe/scene changes.
   useSceneRevision((s) => s.rev);
@@ -67,7 +70,7 @@ function PropertyRow({
       // (node, prop, time); the merge key collapses them into one undo step.
       runAnimEdit(
         `Set ${propName}`,
-        () => defaultAnimation.setKeyframe(nodeId, propName, getTimelineController().toLayerTime(nodeId, time), v),
+        () => defaultAnimation.setKeyframe(nodeId, propName, time, v),
         `set:${nodeId}:${propName}:${time}`,
       );
     } else if (animated && isColor && typeof v === 'string') {
@@ -75,10 +78,10 @@ function PropertyRow({
       runAnimEdit(
         `Set ${propName}`,
         () => {
-          defaultAnimation.setKeyframe(nodeId, `${propName}_r`, getTimelineController().toLayerTime(nodeId, time), c.r);
-          defaultAnimation.setKeyframe(nodeId, `${propName}_g`, getTimelineController().toLayerTime(nodeId, time), c.g);
-          defaultAnimation.setKeyframe(nodeId, `${propName}_b`, getTimelineController().toLayerTime(nodeId, time), c.b);
-          defaultAnimation.setKeyframe(nodeId, `${propName}_a`, getTimelineController().toLayerTime(nodeId, time), c.a);
+          defaultAnimation.setKeyframe(nodeId, `${propName}_r`, time, c.r);
+          defaultAnimation.setKeyframe(nodeId, `${propName}_g`, time, c.g);
+          defaultAnimation.setKeyframe(nodeId, `${propName}_b`, time, c.b);
+          defaultAnimation.setKeyframe(nodeId, `${propName}_a`, time, c.a);
         },
         `set:${nodeId}:${propName}:${time}`,
       );
@@ -103,15 +106,15 @@ function PropertyRow({
       }
     } else if (numeric) {
       runAnimEdit(`Animate ${propName}`, () =>
-        defaultAnimation.setKeyframe(nodeId, propName, getTimelineController().toLayerTime(nodeId, time), Number(baseVal)),
+        defaultAnimation.setKeyframe(nodeId, propName, time, Number(baseVal)),
       );
     } else if (isColor) {
       const c = Color.fromHex(String(baseVal));
       runAnimEdit(`Animate ${propName}`, () => {
-        defaultAnimation.setKeyframe(nodeId, `${propName}_r`, getTimelineController().toLayerTime(nodeId, time), c.r);
-        defaultAnimation.setKeyframe(nodeId, `${propName}_g`, getTimelineController().toLayerTime(nodeId, time), c.g);
-        defaultAnimation.setKeyframe(nodeId, `${propName}_b`, getTimelineController().toLayerTime(nodeId, time), c.b);
-        defaultAnimation.setKeyframe(nodeId, `${propName}_a`, getTimelineController().toLayerTime(nodeId, time), c.a);
+        defaultAnimation.setKeyframe(nodeId, `${propName}_r`, time, c.r);
+        defaultAnimation.setKeyframe(nodeId, `${propName}_g`, time, c.g);
+        defaultAnimation.setKeyframe(nodeId, `${propName}_b`, time, c.b);
+        defaultAnimation.setKeyframe(nodeId, `${propName}_a`, time, c.a);
       });
     }
   };
@@ -120,16 +123,14 @@ function PropertyRow({
     <InspectorRow label={propName} align="center">
       <div className={styles.control}>
         {numeric || isColor ? (
-          <button
-            type="button"
-            className={cn(styles.stopwatch, animated && styles.stopwatchOn)}
-            onClick={toggleAnim}
-            aria-label={animated ? `Remove ${propName} animation` : `Animate ${propName}`}
-            aria-pressed={animated}
-            title={animated ? 'Remove animation' : 'Animate (add keyframes)'}
-          >
-            <Icon name="keyframe" size={11} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+          <Checkbox 
+            checked={animated} 
+            onChange={toggleAnim} 
+            title="Toggle Animation"
+            style={{ width: 14, height: 14 }}
+          />
+        </div>
         ) : (
           <span className={styles.stopwatchSpacer} />
         )}

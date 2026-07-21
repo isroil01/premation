@@ -12,9 +12,11 @@
  *   3. When a decode completes we flip the entry to ready and fire `onChange`,
  *      which the app turns into a re-render so the real pixels appear next frame.
  *
- * Text and video still resolve to the placeholder for now (documented S2b gap):
- * text needs glyph rasterization parity and video needs per-frame element
- * management — both require browser verification we can't do headlessly yet.
+ * Text rasterizes synchronously with the layer's full font (family/weight/style/
+ * size, letter spacing, alignment, multi-line) — parity with Canvas2DBackend,
+ * verified with real pixels through the WebGL2 backend. Video resolves to the
+ * placeholder until the element decodes a frame. (Per-glyph text animators
+ * remain Canvas2D-only — a documented gap, not part of font styling.)
  */
 
 import type {
@@ -25,7 +27,12 @@ import type {
   SamplerHandle,
 } from '@motion/renderer';
 import type { RenderLayer } from './RenderBackend';
-import { maskSegments } from '@core/effects/mask';
+import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
+import { rasterPadding } from './raster/vectorDraw';
+import { resolutionTier, paddingClass } from '@motion/renderer';
+import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
+import { type RichRun } from '@core/text/textLayout';
+import { effectsNeedCpuBake } from '@core/effects/effectBake';
 
 interface PathEntry {
   kind: 'path';
@@ -58,13 +65,45 @@ interface ImageEntry {
   ready: boolean;
 }
 
-/** What a text layer needs rasterized: string + font + colour + box size. */
+/** What a text layer needs rasterized: string + full font + colour + box size.
+ *  The font fields mirror `RenderLayer`'s text props so the GPU raster matches
+ *  Canvas2DBackend's text exactly (was: hardcoded 600 Inter, centred). */
 export interface TextSpec {
   text: string;
   fontSize: number;
   color: string;
   width: number;
   height: number;
+  scaleX?: number;
+  scaleY?: number;
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+  /** 'left' | 'center' | 'right' | 'justify' — horizontal anchor in the box. */
+  align?: string;
+  letterSpacing?: number;
+  /** Multiple of font size between lines (defaults 1.2). */
+  lineHeight?: number;
+  /** Extra px between paragraphs (every newline starts one). */
+  paragraphSpacing?: number;
+  /** Per-character style overrides. Free on the GPU path: the runs are baked
+   *  into the texture, so the shader never learns text had more than one font. */
+  runs?: ReadonlyArray<RichRun>;
+  /** A Canvas2D-only effect stack (Fill/Stroke/Sharpen/Noise/…) baked into the
+   *  text texture — those effects have no GPU shader form. Undefined when the
+   *  layer has none (the common case). */
+  effects?: ReadonlyArray<import('@core/effects/effects').Effect>;
+  /** The layer's mask, baked before the effects (AE order) when baking. */
+  mask?: import('@core/effects/mask').LayerMask;
+}
+
+/** The CSS `font` shorthand for a text spec — identical to the string
+ *  Canvas2DBackend builds, so both backends resolve the same face. */
+export function textCssFont(spec: Pick<TextSpec, 'fontSize' | 'fontFamily' | 'fontWeight' | 'fontStyle'>): string {
+  const style = spec.fontStyle === 'italic' ? 'italic ' : '';
+  const weight = spec.fontWeight ?? '600';
+  const family = spec.fontFamily ?? 'Inter';
+  return `${style}${weight} ${spec.fontSize}px "${family}", Inter, system-ui, sans-serif`;
 }
 
 interface TextEntry {
@@ -72,6 +111,33 @@ interface TextEntry {
   signature: string;
   texture: TextureHandle;
 }
+
+interface LightEntry {
+  kind: 'light';
+  signature: string;
+  texture: TextureHandle;
+}
+
+interface GradientEntry {
+  kind: 'gradient';
+  signature: string;
+  texture: TextureHandle;
+}
+
+interface LutEntry {
+  kind: 'lut';
+  signature: string;
+  texture: TextureHandle;
+}
+
+/** Fixed raster size for a light's radial-gradient texture — scale-invariant, so
+ *  the renderable stretches this to the light's actual 2·radius box. */
+const LIGHT_TEX_SIZE = 128;
+
+/** Longest edge of a baked gradient-background texture. Gradients are smooth
+ *  (low-frequency), so a modest raster upscales across the comp quad with no
+ *  visible banding, while keeping the upload cheap. */
+const GRADIENT_TEX_MAX = 512;
 
 /** Creates the HTMLVideoElement backing a video layer. Injectable for tests. */
 export type VideoFactory = (src: string) => HTMLVideoElement;
@@ -98,8 +164,8 @@ interface VideoEntry {
   h: number;
 }
 
-/** Supersample factor for the text raster so it stays crisp when zoomed in. */
-const TEXT_SUPERSAMPLE = 2;
+
+
 /** HTMLMediaElement.HAVE_CURRENT_DATA — enough decoded to sample a frame. */
 const HAVE_CURRENT_DATA = 2;
 /** Only re-seek a video when the playhead drifts past this (seconds). */
@@ -109,14 +175,67 @@ export class AppTextureProvider implements TextureProvider {
   /** Fired when an async decode finishes and a texture becomes ready. */
   onChange: (() => void) | null = null;
 
+  private exactMediaTiming = false;
+  private mediaWaits: Promise<void>[] = [];
+
+  setExactMediaTiming(on: boolean): void {
+    this.exactMediaTiming = on;
+    if (!on) this.mediaWaits = [];
+  }
+
+  takeMediaWaits(): Promise<void>[] {
+    const out = this.mediaWaits;
+    this.mediaWaits = [];
+    return out;
+  }
+
+  private static eventWait(el: EventTarget, event: string, timeoutMs = 4000): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        el.removeEventListener(event, done);
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      el.addEventListener(event, done);
+    });
+  }
+
   private readonly entries = new Map<string, ImageEntry>();
   private readonly textEntries = new Map<string, TextEntry>();
   private readonly videoEntries = new Map<string, VideoEntry>();
   private readonly pathEntries = new Map<string, PathEntry>();
   private readonly maskEntries = new Map<string, MaskEntry>();
+  private readonly lightEntries = new Map<string, LightEntry>();
+  private readonly gradientEntries = new Map<string, GradientEntry>();
+  private readonly lutEntries = new Map<string, LutEntry>();
+  /** Externally-rasterized frames (decoded video frames for Frame Mix). */
+  private readonly frameEntries = new Map<string, { signature: string; texture: TextureHandle }>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
   private hasInitWhite = false;
+  /** Device px per comp unit for THIS frame (view.scale × dpr). Vector rasters
+   *  are sized at their box × resolutionTier(scale) × supersample, so a 4K
+   *  export re-rasters at native instead of upscaling a viewport-res texture.
+   *  Set once per frame by MotionRendererBackend before feeding layers. */
+  private rasterScale = 1;
+
+  /** Set the per-frame target device scale for vector rasterization. */
+  setRasterScale(scale: number): void {
+    this.rasterScale = scale > 0 && Number.isFinite(scale) ? scale : 1;
+  }
+
+  /** Vector-raster cache hit/miss counters. A hit = a set*() call whose content
+   *  signature was unchanged (no re-rasterization) — the transform-only-animation
+   *  fast path. Exposed so the hot path can be asserted (Phase 1 cache gate). */
+  private readonly rasterizer: Canvas2DVectorRasterizer;
+
+  /** Cumulative vector-raster cache stats (path + text). */
+  rasterStats(): { hits: number; misses: number; hitRate: number } {
+    const stats = this.rasterizer.stats();
+    const total = stats.hits + stats.misses;
+    return { hits: stats.hits, misses: stats.misses, hitRate: total === 0 ? 0 : stats.hits / total };
+  }
 
   constructor(
     private readonly resources: ResourceManager,
@@ -127,6 +246,7 @@ export class AppTextureProvider implements TextureProvider {
   ) {
     this.loader = opts.loader ?? defaultLoader;
     this.videoFactory = opts.videoFactory ?? defaultVideoFactory;
+    this.rasterizer = new Canvas2DVectorRasterizer(this.resources);
   }
 
   /**
@@ -142,22 +262,120 @@ export class AppTextureProvider implements TextureProvider {
   }
 
   /**
-   * Register/refresh the text behind a renderable key. Rasterizes synchronously
-   * (so it's ready the same frame) and re-rasterizes only when the string, font,
-   * colour, or box size changes (signature-keyed).
+   * Register/refresh the text behind a renderable key.
    */
   setText(key: string, spec: TextSpec): void {
-    const signature = `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}`;
-    const existing = this.textEntries.get(key);
+    const layerScale = Math.max(1, Math.abs(spec.scaleX || 1), Math.abs(spec.scaleY || 1));
+    const effectiveScale = this.rasterScale * layerScale;
+    const fxSig = effectsNeedCpuBake(spec.effects)
+      ? `|fx:${JSON.stringify(spec.effects)}|mask:${spec.mask ? JSON.stringify(spec.mask.paths) : 0}`
+      : '';
+    const signature =
+      `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}` +
+      `|${spec.fontFamily ?? ''}|${spec.fontWeight ?? ''}|${spec.fontStyle ?? ''}` +
+      `|${spec.align ?? ''}|${spec.letterSpacing ?? 0}|${spec.lineHeight ?? ''}` +
+      `|${spec.paragraphSpacing ?? 0}|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}` +
+      `|t${resolutionTier(effectiveScale)}`;
+
+    const result = this.rasterizer.rasterize({
+      drawable: {
+        ...spec,
+        kind: 'text',
+        contentHash: signature,
+      },
+      resolutionScale: effectiveScale,
+      padding: 0,
+    });
+
+    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~0`;
+    const texture = this.resources.texture(texKey, {
+      label: `raster:${signature}`,
+      width: result.texture.width,
+      height: result.texture.height,
+      format: 'rgba8unorm',
+    });
+    this.textEntries.set(key, { kind: 'text', signature, texture });
+  }
+
+  /**
+   * Register/refresh a 2D light's radial-gradient texture behind a renderable
+   * key. The gradient (colour at centre → transparent at the edge) is
+   * scale-invariant, so it depends only on the colour; the renderable stretches
+   * it to the light's 2·radius box and screen-blends it (see snapshotToFrameScene).
+   */
+  setLight(key: string, color: string): void {
+    const signature = color;
+    const existing = this.lightEntries.get(key);
     if (existing && existing.signature === signature) return;
-    const canvas = rasterizeText(spec);
+    if (existing) {
+      this.resources.freeTexture(`light:${key}:${existing.signature}`);
+    }
+    const canvas = rasterizeLight(color);
     const tex = this.resources.texture(
-      `text:${key}:${signature}`,
-      { label: `text:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      `light:${key}:${signature}`,
+      { label: `light:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
-    this.textEntries.set(key, { kind: 'text', signature, texture: tex });
+    this.lightEntries.set(key, { kind: 'light', signature, texture: tex });
+  }
+
+  /**
+   * Register/refresh the composition's gradient background texture. Baked on the
+   * CPU (same gradient maths as the Canvas2D backend) and stretched across a
+   * full-comp quad by snapshotToFrameScene — the GPU parity for a gradient
+   * `background`. Signature-keyed on the paint + comp aspect so it only re-bakes
+   * when the gradient (or the comp shape) actually changes.
+   */
+  setGradient(key: string, paint: LinearFill | RadialFill, w: number, h: number): void {
+    const signature = `${JSON.stringify(paint)}:${Math.round(w)}x${Math.round(h)}`;
+    const existing = this.gradientEntries.get(key);
+    if (existing && existing.signature === signature) return;
+    if (existing) {
+      this.resources.freeTexture(`gradient:${key}:${existing.signature}`);
+    }
+    const canvas = rasterizeGradient(paint, w, h);
+    const tex = this.resources.texture(
+      `gradient:${key}:${signature}`,
+      { label: `gradient:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      /* pinned */ true,
+    );
+    this.resources.writeTexture(tex, { type: 'canvas', canvas });
+    this.gradientEntries.set(key, { kind: 'gradient', signature, texture: tex });
+  }
+
+  /**
+   * Register/refresh a per-channel colour LUT (Levels/Curves/Posterize) as a
+   * 256×1 RGBA texture: texel i packs (r[i], g[i], b[i]). The `lut-textured`
+   * shader samples it at U = channel value to remap that channel. Signature-keyed
+   * on the table bytes so it only re-uploads when the effect actually changes.
+   */
+  setLut(key: string, lut: { r: Uint8Array; g: Uint8Array; b: Uint8Array }, signature: string): void {
+    const existing = this.lutEntries.get(key);
+    if (existing && existing.signature === signature) return;
+    if (existing) {
+      this.resources.freeTexture(`lut:${key}:${existing.signature}`);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const img = ctx.createImageData(256, 1);
+    for (let i = 0; i < 256; i++) {
+      img.data[i * 4] = lut.r[i]!;
+      img.data[i * 4 + 1] = lut.g[i]!;
+      img.data[i * 4 + 2] = lut.b[i]!;
+      img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = this.resources.texture(
+      `lut:${key}:${signature}`,
+      { label: `lut:${key}`, width: 256, height: 1, format: 'rgba8unorm', externalCopy: true },
+      /* pinned */ true,
+    );
+    this.resources.writeTexture(tex, { type: 'canvas', canvas });
+    this.lutEntries.set(key, { kind: 'lut', signature, texture: tex });
   }
 
   /**
@@ -165,21 +383,35 @@ export class AppTextureProvider implements TextureProvider {
    * Rasterizes synchronously and uploads the generated path texture to the GPU.
    */
   setPath(key: string, layer: RenderLayer): void {
+    const layerScale = Math.max(1, Math.abs(layer.scaleX || 1), Math.abs(layer.scaleY || 1));
+    const effectiveScale = this.rasterScale * layerScale;
     const ptsSig = layer.pathPoints ? layer.pathPoints.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') : '';
     const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
-    const signature = `${layer.width}x${layer.height}|${ptsSig}|${layer.fill}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}`;
-    
-    const existing = this.pathEntries.get(key);
-    if (existing && existing.signature === signature) return;
+    const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';
+    const fxSig = effectsNeedCpuBake(layer.effects)
+      ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
+      : '';
+    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}|t${resolutionTier(effectiveScale)}`;
 
-    const canvas = rasterizePath(layer);
-    const tex = this.resources.texture(
-      `path:${key}:${signature}`,
-      { label: `path:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
-      /* pinned */ true,
-    );
-    this.resources.writeTexture(tex, { type: 'canvas', canvas });
-    this.pathEntries.set(key, { kind: 'path', signature, texture: tex });
+    const pad = rasterPadding(layer);
+    const result = this.rasterizer.rasterize({
+      drawable: {
+        ...layer,
+        kind: 'path',
+        contentHash: signature,
+      },
+      resolutionScale: effectiveScale,
+      padding: pad,
+    });
+
+    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~${paddingClass(pad)}`;
+    const texture = this.resources.texture(texKey, {
+      label: `raster:${signature}`,
+      width: result.texture.width,
+      height: result.texture.height,
+      format: 'rgba8unorm',
+    });
+    this.pathEntries.set(key, { kind: 'path', signature, texture });
   }
 
   /**
@@ -200,8 +432,19 @@ export class AppTextureProvider implements TextureProvider {
       entry.video.addEventListener('seeked', notifyReady);
     }
     const v = entry.video;
-    if (v.readyState < HAVE_CURRENT_DATA) return; // not decoded yet → placeholder
-    if (Math.abs(v.currentTime - timeSec) > SEEK_EPSILON) v.currentTime = timeSec;
+    if (v.readyState < HAVE_CURRENT_DATA) {
+      if (this.exactMediaTiming) {
+        this.mediaWaits.push(AppTextureProvider.eventWait(v, 'loadeddata', 8000));
+      }
+      return; // not decoded yet → placeholder
+    }
+    const deadband = this.exactMediaTiming ? 1e-4 : SEEK_EPSILON;
+    if (Math.abs(v.currentTime - timeSec) > deadband) {
+      v.currentTime = timeSec;
+      if (this.exactMediaTiming) {
+        this.mediaWaits.push(AppTextureProvider.eventWait(v, 'seeked'));
+      }
+    }
     const w = v.videoWidth || 1;
     const h = v.videoHeight || 1;
     if (entry.texture === null || entry.w !== w || entry.h !== h) {
@@ -214,6 +457,24 @@ export class AppTextureProvider implements TextureProvider {
       entry.h = h;
     }
     this.resources.writeTexture(entry.texture, { type: 'video', video: v });
+  }
+
+  /**
+   * Upload an externally-rasterized canvas under `key` (decoded video frames
+   * for Frame Mix). The signature dedupes uploads — pass the source time so a
+   * new frame re-uploads and a repeat render doesn't.
+   */
+  setFrame(key: string, canvas: HTMLCanvasElement, signature: string): void {
+    if (canvas.width < 1 || canvas.height < 1) return;
+    const existing = this.frameEntries.get(key);
+    if (existing && existing.signature === signature) return;
+    const tex = this.resources.texture(
+      `frame:${key}:${signature}`,
+      { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      /* pinned */ true,
+    );
+    this.resources.writeTexture(tex, { type: 'canvas', canvas });
+    this.frameEntries.set(key, { signature, texture: tex });
   }
 
   /** Forget keys no longer present in the scene (frees the GPU textures via GC). */
@@ -232,6 +493,15 @@ export class AppTextureProvider implements TextureProvider {
     }
     for (const key of this.maskEntries.keys()) {
       if (!activeKeys.has(key)) this.maskEntries.delete(key);
+    }
+    for (const key of this.lightEntries.keys()) {
+      if (!activeKeys.has(key)) this.lightEntries.delete(key);
+    }
+    for (const key of this.gradientEntries.keys()) {
+      if (!activeKeys.has(key)) this.gradientEntries.delete(key);
+    }
+    for (const key of this.frameEntries.keys()) {
+      if (!activeKeys.has(key)) this.frameEntries.delete(key);
     }
   }
 
@@ -293,6 +563,22 @@ export class AppTextureProvider implements TextureProvider {
     if (text) {
       return { texture: text.texture, sampler: this.sampler(), ready: true };
     }
+    const light = this.lightEntries.get(key);
+    if (light) {
+      return { texture: light.texture, sampler: this.sampler(), ready: true };
+    }
+    const gradient = this.gradientEntries.get(key);
+    if (gradient) {
+      return { texture: gradient.texture, sampler: this.sampler(), ready: true };
+    }
+    const lut = this.lutEntries.get(key);
+    if (lut) {
+      return { texture: lut.texture, sampler: this.sampler(), ready: true };
+    }
+    const frame = this.frameEntries.get(key);
+    if (frame) {
+      return { texture: frame.texture, sampler: this.sampler(), ready: true };
+    }
     const video = this.videoEntries.get(key);
     if (video && video.texture) {
       return { texture: video.texture, sampler: this.sampler(), ready: true };
@@ -308,155 +594,85 @@ export class AppTextureProvider implements TextureProvider {
 
   setMask(key: string, layer: RenderLayer): void {
     if (!layer.mask || layer.mask.paths.length === 0) return;
-    
-    const ptsSig = layer.mask.paths.map(path => 
-      path.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') + `|inv:${path.inverted}`
+
+    // The signature must cover EVERYTHING that changes matte pixels — the old
+    // one omitted mode/feather/opacity/expansion, so editing any of them
+    // couldn't even trigger a re-rasterize (on top of the paint ignoring them).
+    const ptsSig = layer.mask.paths.map((path) =>
+      path.points.map((p) => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') +
+      `|inv:${path.inverted}|m:${path.mode}|f:${path.feather}|o:${path.opacity ?? 1}|e:${path.expansion ?? 0}|c:${path.closed}`,
     ).join('||');
     const signature = `${layer.width}x${layer.height}|mask:${ptsSig}`;
 
     const existing = this.maskEntries.get(key);
     if (existing && existing.signature === signature) return;
 
-    const w = Math.max(1, Math.round(layer.width * TEXT_SUPERSAMPLE));
-    const h = Math.max(1, Math.round(layer.height * TEXT_SUPERSAMPLE));
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const result = this.rasterizer.rasterize({
+      drawable: {
+        ...layer,
+        kind: 'mask',
+        contentHash: signature,
+      },
+      resolutionScale: 1,
+      padding: 0,
+    });
 
-    ctx.scale(TEXT_SUPERSAMPLE, TEXT_SUPERSAMPLE);
-    ctx.translate(layer.width / 2, layer.height / 2);
-
-    ctx.fillStyle = 'white';
-    const p = new Path2D();
-    const inverted = layer.mask.paths.some((m) => m.inverted);
-    if (inverted) p.rect(-layer.width / 2, -layer.height / 2, layer.width, layer.height);
-
-    for (const path of layer.mask.paths) {
-      const segs = maskSegments(path);
-      if (segs.length === 0) continue;
-      p.moveTo(segs[0]!.x0, segs[0]!.y0);
-      for (const s of segs) p.bezierCurveTo(s.cx1, s.cy1, s.cx2, s.cy2, s.x1, s.y1);
-      p.closePath();
-    }
-    ctx.fill(p, 'evenodd');
-
-    const tex = this.resources.texture(
-      `mask:${key}:${signature}`,
-      { label: `mask:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
-      /* pinned */ true,
-    );
-    this.resources.writeTexture(tex, { type: 'canvas', canvas });
-    this.maskEntries.set(key, { kind: 'mask', signature, texture: tex });
+    const texKey = `raster:${signature}@1~0`;
+    const texture = this.resources.texture(texKey, {
+      label: `raster:${signature}`,
+      width: result.texture.width,
+      height: result.texture.height,
+      format: 'rgba8unorm',
+    });
+    this.maskEntries.set(key, { kind: 'mask', signature, texture });
   }
 
 
 }
 
-/** Rasterize a text layer to a canvas matching Canvas2DBackend's text rendering
- *  (600-weight Inter, centred, middle baseline), supersampled for crispness. The
- *  quad the renderer maps this onto is the layer's box, so text is drawn centred
- *  in a box-sized canvas. */
-function rasterizeText(spec: TextSpec): HTMLCanvasElement {
-  const w = Math.max(1, Math.round(spec.width * TEXT_SUPERSAMPLE));
-  const h = Math.max(1, Math.round(spec.height * TEXT_SUPERSAMPLE));
+/** Rasterize a text layer to a canvas, mirroring Canvas2DBackend's text render
+ *  path exactly — font family/weight/style, letter spacing, per-line alignment
+ *  and multi-line layout — supersampled for crispness. The quad the renderer
+ *  maps this onto is the layer's box, so text is laid out in a box-sized canvas
+ *  with the same anchors Canvas2D uses (which draws centred at the box origin). */
+
+
+/** Rasterize a 2D light to a square radial-gradient texture: `color` at the
+ *  centre fading to transparent at the edge — the same gradient Canvas2DBackend
+ *  paints in `drawLight`, baked once at a fixed size and stretched to the light's
+ *  box by the renderable (intensity drives the renderable opacity, not the texel). */
+function rasterizeLight(color: string): HTMLCanvasElement {
+  const s = LIGHT_TEX_SIZE;
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = s;
+  canvas.height = s;
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
-  ctx.scale(TEXT_SUPERSAMPLE, TEXT_SUPERSAMPLE);
-  ctx.font = `600 ${spec.fontSize}px Inter, system-ui, sans-serif`;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = spec.color;
-  ctx.fillText(spec.text || 'Text', spec.width / 2, spec.height / 2);
+  const c = s / 2;
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c);
+  g.addColorStop(0, color);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
   return canvas;
 }
 
-/** Rasterize a custom vector path shape layer onto a supersampled canvas. */
-function rasterizePath(layer: RenderLayer): HTMLCanvasElement {
-  const w = Math.max(1, Math.round(layer.width * TEXT_SUPERSAMPLE));
-  const h = Math.max(1, Math.round(layer.height * TEXT_SUPERSAMPLE));
+/** Bake a linear/radial background gradient into a canvas the GPU can upload.
+ *  Rasterized at the comp aspect ratio (longest edge capped) and filled from the
+ *  centre so the gradient geometry matches the Canvas2D backend exactly. */
+function rasterizeGradient(paint: LinearFill | RadialFill, w: number, h: number): HTMLCanvasElement {
+  const scale = Math.min(1, GRADIENT_TEX_MAX / Math.max(w, h, 1));
+  const tw = Math.max(2, Math.round(w * scale));
+  const th = Math.max(2, Math.round(h * scale));
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = tw;
+  canvas.height = th;
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
-
-  ctx.scale(TEXT_SUPERSAMPLE, TEXT_SUPERSAMPLE);
-  // Center coordinates inside canvas bounds
-  ctx.translate(layer.width / 2, layer.height / 2);
-
-  ctx.beginPath();
-  const pts = layer.pathPoints || [];
-  // Open strokes (line / freehand pencil) stop at the last point; closed shapes
-  // (polygon / star / mask) wrap the final segment back to the first point.
-  const open = layer.pathOpen === true;
-  if (pts.length > 0) {
-    ctx.moveTo(pts[0]!.x, pts[0]!.y);
-    const lastSeg = open ? pts.length - 1 : pts.length;
-    for (let i = 0; i < lastSeg; i++) {
-      const curr = pts[i]!;
-      const next = pts[(i + 1) % pts.length]!;
-      ctx.bezierCurveTo(
-        curr.outX, curr.outY,
-        next.inX, next.inY,
-        next.x, next.y
-      );
-    }
-    if (!open) ctx.closePath();
-  }
-
-  // Draw fill (open strokes enclose no area — skip the fill entirely).
-  if (!open) {
-    ctx.fillStyle = layer.fill;
-    ctx.fill();
-  }
-
-  // Draw stroke if specified
-  if (layer.stroke && layer.stroke.width > 0) {
-    ctx.lineWidth = layer.stroke.width;
-    ctx.strokeStyle = layer.stroke.color;
-    ctx.lineCap = layer.stroke.cap || 'butt';
-    ctx.lineJoin = layer.stroke.join || 'miter';
-    if (layer.stroke.dash && layer.stroke.dash.length > 0) {
-      ctx.setLineDash(layer.stroke.dash);
-    }
-
-    if (layer.stroke.align === 'inside') {
-      ctx.save();
-      ctx.clip();
-      ctx.lineWidth = layer.stroke.width * 2;
-      ctx.stroke();
-      ctx.restore();
-    } else if (layer.stroke.align === 'outside') {
-      ctx.save();
-      const outClip = new Path2D();
-      outClip.rect(-layer.width, -layer.height, layer.width * 2, layer.height * 2);
-      if (pts.length > 0) {
-        outClip.moveTo(pts[0]!.x, pts[0]!.y);
-        for (let i = 0; i < pts.length; i++) {
-          const curr = pts[i]!;
-          const next = pts[(i + 1) % pts.length]!;
-          outClip.bezierCurveTo(
-            curr.outX, curr.outY,
-            next.inX, next.inY,
-            next.x, next.y
-          );
-        }
-        outClip.closePath();
-      }
-      ctx.clip(outClip, 'evenodd');
-      ctx.lineWidth = layer.stroke.width * 2;
-      ctx.stroke();
-      ctx.restore();
-    } else {
-      ctx.stroke();
-    }
-  }
-
+  ctx.fillStyle = makeCanvasGradient(ctx, paint, tw, th, tw / 2, th / 2);
+  ctx.fillRect(0, 0, tw, th);
   return canvas;
 }
+
+
 

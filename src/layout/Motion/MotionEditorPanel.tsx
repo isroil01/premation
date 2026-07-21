@@ -10,7 +10,7 @@
  * value/time inputs.
  */
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
@@ -20,7 +20,24 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { defaultAnimation, sampleTrack, sampleSpeed, EASY_EASE_BEZIER, type EasingKind, type PropertyTrack } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { ExpressionEditor } from './ExpressionEditor';
+import { MotionControls } from '@layout/Inspector/MotionControls';
 import styles from './MotionEditorPanel.module.css';
+
+/**
+ * Motion-path options (auto-orient, smooth/straighten, separate dimensions).
+ * Moved here from the Properties inspector so the Motion tab is the single home
+ * for a layer's motion — Properties now covers style only.
+ */
+function MotionPathBlock({ nodeId }: { nodeId: string }): JSX.Element {
+  return (
+    <>
+      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+        Motion Path &amp; Orientation
+      </div>
+      <MotionControls nodeId={nodeId} />
+    </>
+  );
+}
 
 const VIEW_W = 320;
 const VIEW_H = 200;
@@ -158,7 +175,14 @@ export function MotionEditorPanel(): JSX.Element {
       const py = ((ev.clientY - rect.top) / rect.height) * VIEW_H;
       const nt = bounds.t0 + ((px - PAD) / (VIEW_W - 2 * PAD)) * (bounds.t1 - bounds.t0);
       const nv = bounds.vmin + ((VIEW_H - PAD - py) / (VIEW_H - 2 * PAD)) * (bounds.vmax - bounds.vmin);
-      const clampedT = Math.max(bounds.t0, Math.min(bounds.t1, nt));
+      
+      const currentTrack = defaultAnimation.tracksFor(primary).find((t) => t.prop === prop);
+      const currentKfs = currentTrack?.keyframes ?? [];
+      const currentIdx = currentKfs.findIndex((k) => k.t === d.oldT);
+      const minT = currentIdx > 0 ? currentKfs[currentIdx - 1]!.t + 0.02 : bounds.t0;
+      const maxT = currentIdx < currentKfs.length - 1 ? currentKfs[currentIdx + 1]!.t - 0.02 : bounds.t1;
+      
+      const clampedT = Math.max(minT, Math.min(maxT, nt));
       defaultAnimation.updateKeyframe(primary, prop, d.oldT, { t: clampedT, value: nv });
       d.oldT = clampedT;
       setSelT(clampedT);
@@ -214,19 +238,9 @@ export function MotionEditorPanel(): JSX.Element {
     );
   };
 
-  // F9 → Easy Ease the selected keyframe (After Effects parity).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'F9' && primary && prop && selectedKf) {
-        e.preventDefault();
-        runAnimEdit('Easy ease', () =>
-          defaultAnimation.setBezier(primary, prop, selectedKf.t, EASY_EASE_BEZIER),
-        );
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [primary, prop, selectedKf]);
+  // F9 / Shift+F9 / Cmd+Shift+F9 (Easy Ease / In / Out) are registry commands —
+  // see buildEasingCommands in Providers. They work from anywhere, not just
+  // while this panel happens to be mounted.
 
   // ── Bezier handle drag (custom easing) ──────────────────────────
   const selIdx = track ? track.keyframes.findIndex((k) => k.t === selT) : -1;
@@ -282,6 +296,7 @@ export function MotionEditorPanel(): JSX.Element {
     return (
       <div className={styles.root}>
         <PresetsBar />
+        <MotionPathBlock nodeId={primary} />
         <EmptyState icon="keyframe" message="No animation yet — apply a preset above, or add a keyframe." />
       </div>
     );
@@ -290,6 +305,7 @@ export function MotionEditorPanel(): JSX.Element {
   return (
     <div className={styles.root}>
       <PresetsBar />
+      <MotionPathBlock nodeId={primary} />
       {/* Property picker + graph-mode toggle */}
       <div className={styles.topRow}>
         <div className={styles.props}>
@@ -373,9 +389,34 @@ export function MotionEditorPanel(): JSX.Element {
         ))}
       </svg>
 
+      {/* Easing Presets (Always Visible) */}
+      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>Easing Presets</div>
+      <div className={styles.easings} role="radiogroup" aria-label="Easing">
+        {EASINGS.map((e) => {
+          const isActive = selectedKf && (selectedKf.easing ?? 'linear') === e.kind;
+          return (
+            <button
+              key={e.kind}
+              type="button"
+              role="radio"
+              aria-checked={!!isActive}
+              className={cn(styles.easeChip, isActive && styles.easeChipOn)}
+              onClick={() => setEasing(e.kind)}
+              disabled={!selectedKf}
+              title={selectedKf ? `Apply ${e.label} easing` : "Select a keyframe on the graph above to shape its easing"}
+            >
+              <svg className={styles.easePreview} viewBox="0 0 24 16" aria-hidden>
+                <path d={EASE_PREVIEW[e.kind]} />
+              </svg>
+              <span>{e.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Selected keyframe controls */}
-      {selectedKf ? (
-        <div className={styles.controls}>
+      {selectedKf && (
+        <div className={styles.controls} style={{ marginTop: 8 }}>
           <div className={styles.numeric}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Value</span>
@@ -412,23 +453,6 @@ export function MotionEditorPanel(): JSX.Element {
                 aria-label="keyframe time"
               />
             </label>
-          </div>
-          <div className={styles.easings} role="radiogroup" aria-label="Easing">
-            {EASINGS.map((e) => (
-              <button
-                key={e.kind}
-                type="button"
-                role="radio"
-                aria-checked={(selectedKf.easing ?? 'linear') === e.kind}
-                className={cn(styles.easeChip, (selectedKf.easing ?? 'linear') === e.kind && styles.easeChipOn)}
-                onClick={() => setEasing(e.kind)}
-              >
-                <svg className={styles.easePreview} viewBox="0 0 24 16" aria-hidden>
-                  <path d={EASE_PREVIEW[e.kind]} />
-                </svg>
-                <span>{e.label}</span>
-              </button>
-            ))}
           </div>
 
           {/* Quick actions: Easy Ease (F9) + Roving toggle. */}
@@ -472,8 +496,6 @@ export function MotionEditorPanel(): JSX.Element {
             </div>
           ) : null}
         </div>
-      ) : (
-        <div className={styles.hint}>Click a keyframe to shape its easing.</div>
       )}
       </>
       ) : (

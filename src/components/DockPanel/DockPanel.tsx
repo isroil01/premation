@@ -74,7 +74,11 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
 
   if (items.length === 0) return null;
 
-  const activeRenderer = activeTabId ? renderers[activeTabId] : undefined;
+  // Guard against a stale persisted active id that no longer has a tab (e.g. the
+  // removed "Project"/Compositions panel lingering in localStorage): fall back to
+  // the first real tab so the content pane never renders an orphaned panel.
+  const effectiveActiveId = items.some((i) => i.id === activeTabId) ? activeTabId : items[0]?.id;
+  const activeRenderer = effectiveActiveId ? renderers[effectiveActiveId] : undefined;
   const isRightInspector = region === 'rightInspector';
   const isLeftSidebar = region === 'leftSidebar';
 
@@ -215,7 +219,10 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
                 id: item.id,
                 label: '',
                 icon: item.icon ? <Icon name={item.icon} size={14} /> : undefined,
-                closable: false,
+                // Honour the panel's own flag. Every panel registers
+                // `closable: true` and this hardcoded `false` threw it away, so
+                // `Tabs` never rendered the button and `onClose` was dead.
+                closable: item.closable,
                 onClose: () => closePanel(item.id),
               }]}
               size="sm"

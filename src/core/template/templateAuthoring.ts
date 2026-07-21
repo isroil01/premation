@@ -1,0 +1,105 @@
+/**
+ * Template authoring — turn the CURRENT composition into a template by exposing
+ * specific layers as editable fields, without writing code. The field manifest
+ * is stored as a `__templateFields` prop on the comp root's meta component (via
+ * writeProp), so it travels with the scene like any other node data and stays
+ * hidden from the generic inspector (same `__` convention as audio props).
+ *
+ * A field is inferred from the selected layer's kind:
+ *   text layer  → Text.content   (text)
+ *   image layer → Transform.src  (image)
+ *   shape layer → Style.fill     (colour)
+ */
+
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { activeCompRootId } from '@core/scene/activeComp';
+import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { bumpScene } from '@stores/sceneStore';
+import type { TemplateField } from './templateTypes';
+
+const FIELDS_PROP = '__templateFields';
+
+/** The comp root's first (meta) component — where we stash the manifest. */
+function metaComponentId(rootId: string): string | null {
+  const node = defaultSceneGraph.getNode(rootId);
+  return node?.components[0]?.id ?? null;
+}
+
+/** The template fields authored on a composition (empty when none). */
+export function readAuthoredFields(rootId: string = activeCompRootId()): TemplateField[] {
+  const node = defaultSceneGraph.getNode(rootId);
+  if (!node) return [];
+  for (const c of node.components) {
+    const v = (c.props as Record<string, unknown>)[FIELDS_PROP];
+    if (Array.isArray(v)) return v as TemplateField[];
+  }
+  return [];
+}
+
+function writeAuthoredFields(rootId: string, fields: TemplateField[]): void {
+  const componentId = metaComponentId(rootId);
+  if (!componentId) return;
+  defaultSceneGraph.writeProp(rootId, componentId, FIELDS_PROP, fields);
+  bumpScene();
+}
+
+/** Build a field that exposes the primary editable prop of `nodeId`, or null if
+ *  the node has nothing obviously editable. Default value = its current value. */
+export function inferFieldForNode(nodeId: string): TemplateField | null {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return null;
+  const label = node.name || 'Field';
+
+  const text = node.components.find((c) => c.type === 'Text');
+  if (text) {
+    return {
+      id: `f_${nodeId}_content`, label, kind: 'text', group: 'Text',
+      default: String((text.props as Record<string, unknown>).content ?? ''),
+      target: { nodeId, componentType: 'Text', prop: 'content' },
+    };
+  }
+
+  const transform = node.components.find((c) => c.type === 'Transform');
+  const sceneKind = transform && (transform.props as Record<string, unknown>)[SCENE_KIND_PROP];
+  if (transform && sceneKind === 'image') {
+    return {
+      id: `f_${nodeId}_src`, label, kind: 'image', group: 'Media',
+      default: String((transform.props as Record<string, unknown>).src ?? ''),
+      target: { nodeId, componentType: 'Transform', prop: 'src' },
+    };
+  }
+
+  const style = node.components.find((c) => c.type === 'Style');
+  if (style) {
+    return {
+      id: `f_${nodeId}_fill`, label, kind: 'color', group: 'Colours',
+      default: String((style.props as Record<string, unknown>).fill ?? '#000000'),
+      target: { nodeId, componentType: 'Style', prop: 'fill' },
+    };
+  }
+
+  return null;
+}
+
+/** Expose a node as a template field on the current comp. Returns the field, or
+ *  null when the node isn't exposable. Re-exposing the same target is idempotent
+ *  (updates in place rather than duplicating). */
+export function exposeNodeAsField(nodeId: string): TemplateField | null {
+  const field = inferFieldForNode(nodeId);
+  if (!field) return null;
+  const rootId = activeCompRootId();
+  const fields = readAuthoredFields(rootId).filter((f) => f.id !== field.id);
+  fields.push(field);
+  writeAuthoredFields(rootId, fields);
+  return field;
+}
+
+export function removeAuthoredField(fieldId: string): void {
+  const rootId = activeCompRootId();
+  writeAuthoredFields(rootId, readAuthoredFields(rootId).filter((f) => f.id !== fieldId));
+}
+
+export function renameAuthoredField(fieldId: string, label: string): void {
+  const rootId = activeCompRootId();
+  writeAuthoredFields(rootId, readAuthoredFields(rootId).map((f) => (f.id === fieldId ? { ...f, label } : f)));
+}

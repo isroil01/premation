@@ -9,16 +9,21 @@
   padding: 0 var(--space-2);
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 0;
+  border-radius: var(--radius-sm, 4px);
   color: var(--color-text-primary);
   cursor: pointer;
   transition:
     border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .trigger:hover {
   border-color: var(--color-border-strong);
+}
+
+.trigger:active {
+  transform: scale(0.98);
 }
 
 .trigger:focus-visible {
@@ -31,7 +36,7 @@
   width: 16px;
   height: 16px;
   flex: none;
-  border-radius: 1px;
+  border-radius: 3px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
@@ -49,7 +54,7 @@
   padding: var(--space-3);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-strong);
-  border-radius: 0;
+  border-radius: var(--radius-md, 6px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65);
 }
 
@@ -86,8 +91,110 @@
   height: 16px;
 }
 
+/* Alpha slider matches the hue bar. */
+.picker :global(.react-colorful__alpha) {
+  height: 12px;
+  border-radius: var(--radius-full);
+}
+
+/* Eyedropper + hex on one line. */
+.inputsRow {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.eyedropBtn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  flex: none;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.eyedropBtn:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.eyedropBtn:active {
+  transform: scale(0.92);
+}
+
+/* Numeric channel fields (R/G/B/A). */
+.channels {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.channel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.channelInput {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 var(--space-1);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  outline: none;
+}
+
+.channelInput:focus {
+  border-color: var(--color-primary);
+}
+
+.channelLabel {
+  font-size: 9px;
+  text-align: center;
+  color: var(--color-text-muted);
+  user-select: none;
+}
+
+/* Recent colors. */
+.recents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.recentSwatch {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 2px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.recentSwatch:hover {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 0 0 1px var(--color-primary);
+}
+
 /* Hex input row — inset field. */
 .hexRow {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -95,7 +202,7 @@
   padding: 0 var(--space-2);
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 0;
+  border-radius: var(--radius-sm, 4px);
 }
 
 .hexRow:focus-within {
@@ -132,15 +239,20 @@
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 50%;
+  border-radius: 3px;
   cursor: pointer;
   outline: none;
   flex: none;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.compactTrigger:active {
+  transform: scale(0.92);
 }
 
 .compactSwatch {
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 3px;
   border: 1px solid var(--color-divider);
 }

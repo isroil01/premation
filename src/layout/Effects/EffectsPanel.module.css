@@ -121,6 +121,19 @@
   color: var(--color-text-primary);
 }
 
+/* GPU-only effect on the Canvas2D renderer: it would render nothing, so it
+   reads as unavailable rather than silently doing nothing when clicked. */
+.addChipUnavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+.addChipUnavailable:hover {
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -238,4 +251,103 @@
 
 .stopwatchOn:hover {
   background: var(--color-primary-subtle, rgba(0, 136, 255, 0.15));
+}
+
+.effectRowsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.effectRowCard {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+  transition: all 150ms ease;
+  text-align: left;
+}
+
+.effectRowCard:hover:not(:disabled) {
+  background: var(--color-surface-3);
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+.effectRowCardUnavailable {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+.effectIconWrapper {
+  width: 24px;
+  height: 24px;
+  background: var(--color-surface-1);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.effectInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.effectLabelText {
+  font-size: 11px;
+  color: var(--color-text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gpuBadge {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: rgba(0, 136, 255, 0.12);
+  color: var(--color-primary);
+  border: 1px solid rgba(0, 136, 255, 0.24);
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+}
+
+.effectAddIcon {
+  color: var(--color-text-tertiary);
+  transition: color 150ms ease;
+  margin-left: auto;
+}
+
+.effectRowCard:hover:not(:disabled) .effectAddIcon {
+  color: var(--color-primary);
+}
+
+.catBadge {
+  margin-left: auto;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 600;
+  background: var(--color-surface-3);
+  border-radius: 10px;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
 }

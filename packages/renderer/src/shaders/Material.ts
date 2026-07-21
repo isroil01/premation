@@ -13,6 +13,7 @@ import type {
   PipelineHandle,
   PrimitiveTopology,
   TextureFormat,
+  VertexBufferLayout,
 } from '../gpu/types';
 import { makeKey } from '../utils/ids';
 import { QUAD_LAYOUT } from '../resources/Geometry';
@@ -24,6 +25,8 @@ export interface MaterialDescriptor {
   shader: string;
   topology: PrimitiveTopology;
   layout: BindGroupLayoutEntry[];
+  /** Optional custom vertex buffer layouts. If omitted, defaults to QUAD_LAYOUT. */
+  buffers?: VertexBufferLayout[];
 }
 
 /** Built-in material: solid-colored quad. Uniform block at binding 0. */
@@ -47,6 +50,43 @@ export const TEXTURED_MATERIAL: MaterialDescriptor = {
 /** Built-in material: masked textured quad. Uniform + texture + sampler + mask texture. */
 export const MASKED_TEXTURED_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: textured quad with a colour LUT (Levels/Curves/Posterize).
+ *  Uniform + layer texture + sampler + LUT texture (binding 3). */
+export const LUT_TEXTURED_MATERIAL: MaterialDescriptor = {
+  shader: 'lut-textured',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: track-matte combine (matted layer + matte source texture). */
+export const MATTE_COMBINE_MATERIAL: MaterialDescriptor = {
+  shader: 'matte-combine',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: advanced blend combine (layer src + backdrop dst). */
+export const BLEND_COMBINE_MATERIAL: MaterialDescriptor = {
+  shader: 'blend-combine',
   topology: 'triangle-list',
   layout: [
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
@@ -108,6 +148,66 @@ export const MOTION_TILE_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+export const FILL_MATERIAL: MaterialDescriptor = {
+  shader: 'fill',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+export const STROKE_MATERIAL: MaterialDescriptor = {
+  shader: 'stroke',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+export const SHARPEN_MATERIAL: MaterialDescriptor = {
+  shader: 'sharpen',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+export const NOISE_MATERIAL: MaterialDescriptor = {
+  shader: 'noise',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+export const DEFORMED_MESH_LAYOUT: VertexBufferLayout = {
+  strideBytes: 16,
+  stepMode: 'vertex',
+  attributes: [
+    { shaderLocation: 0, offsetBytes: 0, format: 'float32x2' },
+    { shaderLocation: 1, offsetBytes: 8, format: 'float32x2' },
+  ],
+};
+
+export const DEFORMED_MESH_MATERIAL: MaterialDescriptor = {
+  shader: 'deformed-mesh',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+  buffers: [DEFORMED_MESH_LAYOUT],
+};
+
 export class MaterialSystem {
   constructor(
     private readonly resources: ResourceManager,
@@ -123,7 +223,7 @@ export class MaterialSystem {
     return this.resources.pipeline(key, {
       label: `${material.shader}/${blend}`,
       shader,
-      buffers: [QUAD_LAYOUT],
+      buffers: material.buffers ?? [QUAD_LAYOUT],
       layout: material.layout,
       topology: material.topology,
       blend,

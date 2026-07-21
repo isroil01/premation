@@ -104,8 +104,8 @@ export class Clip {
    * starting at `frame` with the correct `sourceIn`. Returns null when the frame
    * is outside the clip's interior.
    */
-  split(frame: number): ClipData | null {
-    if (frame <= this.start || frame >= this.end) return null;
+  split(frame: number, minDuration = 1): ClipData | null {
+    if (frame - this.start < minDuration || this.end - frame < minDuration) return null;
     const rightStart = frame;
     const rightDuration = this.end - frame;
     const rightSourceIn = this.sourceFrameAt(frame);

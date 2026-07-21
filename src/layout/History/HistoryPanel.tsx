@@ -11,7 +11,7 @@ import { useState, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
-import { useHistoryStore } from '@stores/historyStore';
+import { useHistoryStore, performJumpTo } from '@stores/historyStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getEventBus } from '@core/events/EventBus';
 import styles from './HistoryPanel.module.css';
@@ -31,7 +31,9 @@ export function HistoryPanel(): JSX.Element {
     return () => sub.dispose();
   }, []);
 
-  const jumpTo = (i: number) => getCommandSystem().getHistory().jumpTo(i);
+  // Via performJumpTo, not the history service directly — it flushes the
+  // pending debounced snapshot so a jump can't discard an in-flight edit.
+  const jumpTo = (i: number) => performJumpTo(i);
 
   const rename = (i: number, label: string) => {
     getCommandSystem().getHistory().setLabel(i, label);
@@ -93,9 +95,9 @@ export function HistoryPanel(): JSX.Element {
                 }}
               >
                 <Icon
-                  name={(e as any).named ? 'marker' : 'keyframe'}
+                  name={e.named ? 'marker' : 'keyframe'}
                   size={13}
-                  className={cn(styles.rowIcon, (e as any).named && styles.rowIconNamed)}
+                  className={cn(styles.rowIcon, e.named && styles.rowIconNamed)}
                 />
                 {editing === i ? (
                   <input

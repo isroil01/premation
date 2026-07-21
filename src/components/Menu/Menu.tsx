@@ -131,6 +131,24 @@ export function MenuItem({
   const [subCoords, setSubCoords] = useState<{ top: number; left: number; placement: Placement } | null>(null);
   const [subOpen, setSubOpen] = useState(false);
 
+  // Closing the submenu on a bare pointer-leave is too eager: there's a small
+  // gap between the trigger and the submenu (see positionPopover GAP), and
+  // crossing it fires pointerleave before the cursor reaches the submenu.
+  // Defer the close so an incoming pointer (on the item OR the submenu) cancels it.
+  const closeTimer = useRef<number | null>(null);
+  const cancelClose = (): void => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const openSub = (): void => { cancelClose(); setSubOpen(true); };
+  const scheduleCloseSub = (): void => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setSubOpen(false), 140);
+  };
+  useEffect(() => cancelClose, []);
+
   useEffect(() => {
     if (!subOpen || !triggerRef.current || !subRef.current) return;
     setSubCoords(positionPopover(triggerRef.current, subRef.current, 'right-start'));
@@ -184,8 +202,8 @@ export function MenuItem({
         className={cn(styles.item, danger && styles.danger, subOpen && styles.subOpen)}
         onClick={onClick}
         onKeyDown={onKey}
-        onPointerEnter={() => { if (children) setSubOpen(true); }}
-        onPointerLeave={() => { if (children) setSubOpen(false); }}
+        onPointerEnter={() => { if (children) openSub(); }}
+        onPointerLeave={() => { if (children) scheduleCloseSub(); }}
       >
         {icon ? <Icon name={icon} size={14} className={styles.itemIcon} /> : <span className={styles.itemIconSpacer} />}
         <span className={styles.itemLabel}>{label}</span>
@@ -196,10 +214,11 @@ export function MenuItem({
         <div
           ref={subRef}
           className={styles.subMenuWrapper}
+          data-menu-portal=""
           data-placement={subCoords?.placement ?? 'right-start'}
           style={subCoords ? { top: subCoords.top, left: subCoords.left } : undefined}
-          onPointerEnter={() => setSubOpen(true)}
-          onPointerLeave={() => setSubOpen(false)}
+          onPointerEnter={openSub}
+          onPointerLeave={scheduleCloseSub}
         >
           <Menu ariaLabel={typeof label === 'string' ? label : undefined} onItemActivate={() => { setSubOpen(false); ctx?.closeParent(); }}>
             {children}
@@ -325,6 +344,7 @@ export function ContextMenu({ children, menu, className }: ContextMenuProps): JS
       {coords ? createPortal(
         <div
           ref={subRef}
+          data-menu-portal=""
           className={cn(styles.contextWrapper, className)}
           style={pos ? { top: pos.top, left: pos.left } : { top: coords.y, left: coords.x, visibility: 'hidden' }}
         >

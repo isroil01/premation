@@ -12,13 +12,20 @@
  *   • shape ellipses / rounded corners  → renderer draws plain rects (Prompt 5)
  *   • text glyphs, image/video textures → white-texel until a real provider /
  *     asset pipeline exists (Prompt 7); they render as tinted quads
- *   • per-layer CSS filters (RenderLayer.filter) → EffectPass is inert (Prompt 5)
+ *   • RenderLayer.filter (a CSS string) is NOT read here — it only ever fed the
+ *     deleted Canvas2D backend. Everything spatial (user effects, DOF blur,
+ *     light-cast shadows) arrives as structured `layer.effects` entries, which
+ *     extractSpatialEffects routes through the GPU effect passes.
  */
 
 import { Mat3, Color, type BlendMode, type FrameScene, type Renderable, type RenderableKind, type RenderableSdf } from '@motion/renderer';
-import { sortedStops } from '@core/paint/fill';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
+import { isLutEffect } from '@core/effects/colorLut';
+import { getMatteMode } from '@core/effects/matte';
+import { effectNumber, effectParam, withAlpha } from '@core/effects/effects';
+import { effectsNeedCpuBake } from '@core/effects/effectBake';
+import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
 /**
@@ -51,6 +58,34 @@ export function layerBlendToGpu(mode: LayerBlendMode | undefined): BlendMode {
   }
 }
 
+/**
+ * Advanced blend-mode id (1..15) for modes fixed-function GL can't do correctly
+ * (they need the backdrop as a shader input). 0 = a mode the fixed-function
+ * `blend` path handles (normal/add). Multiply/screen/darken/lighten ARE routed
+ * through the combine too, because the fixed-function versions mishandle source
+ * alpha. Ids match the BLEND_COMBINE shader's mode selector (builtin.ts).
+ */
+function advancedBlendId(mode: LayerBlendMode | undefined): number {
+  switch (mode) {
+    case 'multiply': return 1;
+    case 'screen': return 2;
+    case 'overlay': return 3;
+    case 'darken': return 4;
+    case 'lighten': return 5;
+    case 'color-dodge': return 6;
+    case 'color-burn': return 7;
+    case 'hard-light': return 8;
+    case 'soft-light': return 9;
+    case 'difference': return 10;
+    case 'exclusion': return 11;
+    case 'hue': return 12;
+    case 'saturation': return 13;
+    case 'color': return 14;
+    case 'luminosity': return 15;
+    default: return 0; // normal / add → simple fixed-function blend
+  }
+}
+
 const KIND_MAP: Record<RenderLayer['kind'], RenderableKind> = {
   shape: 'rect',
   text: 'text',
@@ -58,11 +93,15 @@ const KIND_MAP: Record<RenderLayer['kind'], RenderableKind> = {
   video: 'video',
 };
 
-/** Center-pivot model matrix: unit-quad centre → (x,y), rotated/scaled in place. */
+/** Center-pivot model matrix: unit-quad centre → (x,y), rotated/scaled in place.
+ *  The quad grows by the layer's raster padding so a stroked shape's padded
+ *  texture (which includes the outer stroke band) places 1:1 without stretching;
+ *  padding is 0 for unstroked shapes/text/image, so those are unaffected. */
 function centerModel(layer: RenderLayer): Mat3 {
   const rad = (layer.rotation * Math.PI) / 180;
-  const w = layer.width * (layer.scaleX || 1);
-  const h = layer.height * (layer.scaleY || 1);
+  const pad = rasterPadding(layer);
+  const w = (layer.width + 2 * pad) * (layer.scaleX || 1);
+  const h = (layer.height + 2 * pad) * (layer.scaleY || 1);
   // translate(x,y)·rotate·scale(w,h) · translate(-0.5,-0.5)
   return Mat3.multiply(Mat3.compose(layer.x, layer.y, rad, w, h), Mat3.translation(-0.5, -0.5));
 }
@@ -83,13 +122,14 @@ function boundsOf(m: Mat3): { x: number; y: number; width: number; height: numbe
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-/** Representative flat colour for the GPU path: solid colour, or the first
- *  gradient stop (gradients + strokes are Canvas2D-only for now — documented). */
+/** Flat colour for the GPU SDF (non-textured) path: the layer's solid fill.
+ *  Gradient / multi-stop fills force a rasterized texture via needsShapeRaster,
+ *  so a non-solid fill never reaches the SDF path — the old "first gradient
+ *  stop" fallback here was dead and has been removed (engine-unification Ph2;
+ *  gradients are now fully rasterized, never flattened to one stop). */
 function representativeColor(layer: RenderLayer): string {
   const p = layer.fillPaint;
-  if (!p) return layer.fill;
-  if (p.type === 'solid') return p.color;
-  return sortedStops(p.stops)[0]?.color ?? layer.fill;
+  return !p || p.type !== 'solid' ? layer.fill : p.color;
 }
 
 /** The layer's solid fill graded by its colour effects (brightness/contrast/…),
@@ -116,23 +156,125 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   return { shape: 'rounded', radiusPx: layer.cornerRadius ?? 0, width: layer.width, height: layer.height };
 }
 
+// effectsNeedCpuBake imported for both needsShapeRaster and layerToRenderable.
 function extractSpatialEffects(layer: RenderLayer): import('@motion/renderer').RenderableEffect[] | undefined {
   if (!layer.effects || layer.effects.length === 0) return undefined;
   const spatial: import('@motion/renderer').RenderableEffect[] = [];
   for (const e of layer.effects) {
     if (e.enabled === false) continue;
-    if (e.type === 'blur') spatial.push({ type: 'blur', radiusPx: e.amount });
-    if (e.type === 'glow') spatial.push({ type: 'glow', radiusPx: e.amount, color: Color.fromHex('rgba(120,180,255,0.9)') });
-    if (e.type === 'drop-shadow') spatial.push({ type: 'drop-shadow', radiusPx: e.amount, offsetX: e.amount * 0.45, offsetY: e.amount * 0.45, color: Color.fromHex('rgba(0,0,0,0.55)') });
-    if (e.type === 'gradient-ramp') spatial.push({ type: 'gradient-ramp', blend: e.amount / 100, colorA: Color.fromHex('#ff0000'), colorB: Color.fromHex('#0000ff') });
-    if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: e.amount });
-    if (e.type === 'displacement-map') spatial.push({ type: 'displacement-map', amount: e.amount });
-    if (e.type === 'motion-tile') spatial.push({ type: 'motion-tile', scale: e.amount });
+    // Read each effect's own params. Glow's colour, Drop Shadow's angle and
+    // Gradient Ramp's endpoints were hardcoded here and unreachable from the UI.
+    const n = (k: string): number => effectNumber(e, k);
+    const c = (k: string, alpha = 1): Color =>
+      Color.fromHex(withAlpha(String(effectParam(e, k) ?? '#000000'), alpha));
+
+    if (e.type === 'blur') spatial.push({ type: 'blur', radiusPx: n('amount') });
+    if (e.type === 'glow') {
+      spatial.push({ type: 'glow', radiusPx: n('radius'), color: c('color', n('intensity') / 100) });
+    }
+    if (e.type === 'drop-shadow') {
+      const rad = (n('angle') * Math.PI) / 180;
+      spatial.push({
+        type: 'drop-shadow',
+        radiusPx: n('softness'),
+        offsetX: Math.cos(rad) * n('distance'),
+        offsetY: Math.sin(rad) * n('distance'),
+        color: c('color', n('opacity') / 100),
+      });
+    }
+    if (e.type === 'gradient-ramp') {
+      spatial.push({ type: 'gradient-ramp', blend: n('blend') / 100, colorA: c('colorA'), colorB: c('colorB') });
+    }
+    if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
+    if (e.type === 'displacement-map') {
+      // Map source layer (node id === renderable id). '' / non-string = unset →
+      // CompositionPass falls back to self-displacement.
+      const mapRaw = effectParam(e, 'mapLayerId');
+      const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
+      spatial.push({ type: 'displacement-map', amount: n('amount'), ...(mapLayerId ? { mapLayerId } : {}) });
+    }
+    if (e.type === 'motion-tile') spatial.push({ type: 'motion-tile', scale: n('scale') });
+    if (e.type === 'fill') {
+      spatial.push({ type: 'fill', color: c('color', n('opacity') / 100) });
+    }
+    if (e.type === 'stroke') {
+      spatial.push({ type: 'stroke', widthPx: n('width'), color: c('color', n('opacity') / 100) });
+    }
+    if (e.type === 'sharpen') {
+      spatial.push({ type: 'sharpen', amount: n('amount') / 100 });
+    }
+    if (e.type === 'noise') {
+      spatial.push({ type: 'noise', amount: n('amount') / 100, evolution: n('evolution'), monochrome: e.params?.monochrome !== false });
+    }
   }
   return spatial.length > 0 ? spatial : undefined;
 }
 
+/**
+ * Deformed-mesh (puppet / skeleton) vertices arrive in CENTERED LOCAL PIXELS
+ * (−w/2..w/2), but the GPU draws them through the layer's model matrix, which —
+ * like every textured quad — maps a [0,1] UNIT QUAD to comp space. Feeding raw
+ * pixels to that matrix throws the geometry far off-screen (a plain rig makes
+ * the layer vanish). Normalise XY to unit-quad space here so the SAME model
+ * matrix places every vertex correctly: n = v/(dim+2·pad) + 0.5, which the
+ * matrix's scale(dim·scale)·translate(−0.5) maps back to `v·scale` in comp
+ * space (layer scale/rotation/position then follow). UVs already sample the
+ * `path:` texture in [0,1] and pass through untouched. (The old Canvas2D
+ * backend applied the pixel-space matrix itself; the unified GPU path did not,
+ * so this normalisation restores puppet/bone deformation on screen.)
+ */
+function normalizeDeformedMesh(
+  mesh: { vertices: Float32Array; triangles: Uint16Array },
+  width: number,
+  height: number,
+  pad: number,
+): { vertices: Float32Array; triangles: Uint16Array } {
+  const W = width + 2 * pad;
+  const H = height + 2 * pad;
+  const src = mesh.vertices;
+  const out = new Float32Array(src.length);
+  for (let i = 0; i < src.length; i += 4) {
+    out[i] = src[i]! / W + 0.5;
+    out[i + 1] = src[i + 1]! / H + 0.5;
+    out[i + 2] = src[i + 2]!; // u
+    out[i + 3] = src[i + 3]!; // v
+  }
+  return { vertices: out, triangles: mesh.triangles };
+}
+
+/**
+ * Shape layers that must rasterize to a `path:` texture on the GPU path:
+ * custom paths (no SDF form), gradient fills (the SDF solid flattens a
+ * gradient to one colour — centre of a black→white ramp rendered black), and
+ * masked solids (the mask shader runs only on TEXTURED renderables, so a
+ * masked SDF rect simply ignored its mask). Shared with the texture-feeding
+ * loop in MotionRendererBackend — both sides must agree or the renderable
+ * points at a texture nobody uploaded.
+ */
+export function needsShapeRaster(layer: RenderLayer): boolean {
+  if (layer.kind !== 'shape') return false;
+  if (layer.deformedMesh) return true;
+  if (layer.primitive === 'path') return true;
+  if (layer.fillPaint && layer.fillPaint.type !== 'solid') return true;
+  if (layer.fillPaints && layer.fillPaints.some((p) => p.type !== 'solid')) return true;
+  if (layer.stroke && layer.stroke.width > 0) return true;
+  if (layer.strokes && layer.strokes.some((s) => s.width > 0)) return true;
+  if (layer.mask && layer.mask.paths.length > 0) return true;
+  if (layer.paint && layer.paint.strokes.length > 0) return true;
+  // A shape carrying a Canvas2D-only effect is CPU-baked (content + mask +
+  // full effect chain) into its `path:` texture — those effects have no GPU
+  // shader form and otherwise silently no-op.
+  if (effectsNeedCpuBake(layer.effects)) return true;
+  return false;
+}
+
 export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, parentOpacity?: number): Renderable {
+  // Raster padding grows the placement quad to match the padded stroke texture
+  // (0 for unstroked shapes/text/image). Used by every matrix branch below.
+  const pad = rasterPadding(layer);
+  // Advanced blend modes composite through the BLEND_COMBINE shader (needs the
+  // backdrop), so their `blend` stays 'normal' and `advancedBlend` carries the id.
+  const advBlend = advancedBlendId(layer.blend);
   let model: Mat3;
   if (layer.matrix) {
     const [a, b, c, d, e, f] = layer.matrix;
@@ -146,36 +288,127 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     model[6] = e;
     model[7] = f;
     model[8] = 1;
-    model = Mat3.multiply(model, Mat3.translation(-0.5, -0.5));
+    // The projected affine maps layer-local PIXELS → comp space (Canvas2D
+    // applies it and then draws at (-w/2..w/2)). The renderer's input is the
+    // unit quad [0,1]², so scale it up to w×h and centre it BEFORE the affine —
+    // without this every 3D layer collapses to a ~1px dot on the GPU path.
+    model = Mat3.multiply(
+      model,
+      Mat3.multiply(Mat3.scaling(layer.width + 2 * pad, layer.height + 2 * pad), Mat3.translation(-0.5, -0.5)),
+    );
+    if (parentMatrix) model = Mat3.multiply(parentMatrix, model);
   } else {
     const localModel = centerModel(layer);
     model = parentMatrix ? Mat3.multiply(parentMatrix, localModel) : localModel;
   }
   const opacity = (parentOpacity !== undefined ? parentOpacity * layer.opacity : layer.opacity);
   
-  const isCustomPath = layer.kind === 'shape' && layer.primitive === 'path';
-  // Note: hasMask/hasMatte no longer force 'image' for CPU rasterization
+  const isCustomPath = needsShapeRaster(layer);
   const kind = isCustomPath ? 'image' : KIND_MAP[layer.kind];
+
+  // Motion-blur sub-frame samples → fully-composed model matrices, one per
+  // sample. 3D samples carry their own projected affine; 2D samples rebuild
+  // the layer model with the sampled transform (exactly what Canvas2D's
+  // drawComposited does with them).
+  let motionSamples: Array<{ modelMatrix: Mat3; opacity: number }> | undefined;
+  if (layer.motionSamples && layer.motionSamples.length > 1) {
+    motionSamples = layer.motionSamples.map((s) => {
+      let m: Mat3;
+      if (s.matrix) {
+        const [a, b, c, d, e, f] = s.matrix;
+        m = Mat3.create();
+        m[0] = a; m[1] = b; m[2] = 0;
+        m[3] = c; m[4] = d; m[5] = 0;
+        m[6] = e; m[7] = f; m[8] = 1;
+        // Same pixel-space → unit-quad bridge as the layer matrix above.
+        m = Mat3.multiply(
+          m,
+          Mat3.multiply(Mat3.scaling(layer.width + 2 * pad, layer.height + 2 * pad), Mat3.translation(-0.5, -0.5)),
+        );
+      } else {
+        const rad = (s.rotation * Math.PI) / 180;
+        const w = (layer.width + 2 * pad) * (s.scaleX || 1);
+        const h = (layer.height + 2 * pad) * (s.scaleY || 1);
+        m = Mat3.multiply(Mat3.compose(s.x, s.y, rad, w, h), Mat3.translation(-0.5, -0.5));
+        if (parentMatrix) m = Mat3.multiply(parentMatrix, m);
+      }
+      return { modelMatrix: m, opacity: s.opacity };
+    });
+  }
 
   // Textured kinds sample a texture that already carries their colour (photo, or
   // text rasterized in its own fill), so they must not be multiplied by a fill.
   // Only shapes use their solid/representative colour.
   const textured = kind === 'image' || kind === 'video' || kind === 'text';
+  // A CPU-baked SHAPE or TEXT layer carries content + mask + the FULL effect
+  // chain in its texture (`path:`/`text:`), so it is drawn plain — every
+  // GPU-side effect input (mask, LUT, colour matrix, spatial effects) is
+  // dropped to avoid double-applying. A track matte is a compositing
+  // relationship, not baked, so it survives. (Image/video are not baked:
+  // dynamic/large content; those still route to Canvas2D.)
+  const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text') && effectsNeedCpuBake(layer.effects);
   return {
     id: layer.id,
     kind,
     modelMatrix: model,
     bounds: boundsOf(model),
     opacity,
-    blend: layerBlendToGpu(layer.blend),
+    blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
+    ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
     color: textured ? Color.white() : gradedSolidColor(layer),
     // Texture-backed kinds resolve via the provider
     ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
     ...(!isCustomPath && (kind === 'image' || kind === 'video') ? { textureKey: `asset:${layer.id}` } : {}),
     ...(kind === 'text' ? { textureKey: `text:${layer.id}` } : {}),
-    ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
-    ...(textured ? { colorMatrix: texturedColorMatrix(layer) } : { sdf: sdfFor(layer) }),
-    effects: extractSpatialEffects(layer),
+    ...(!cpuBaked && layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
+    // Colour LUT (Levels/Curves/Posterize) on a textured layer: the provider
+    // uploads `lut:<id>` and the LUT shader remaps through it after the grade.
+    ...(!cpuBaked && textured && hasLutEffect(layer) ? { lutTextureKey: `lut:${layer.id}` } : {}),
+    ...(matteOf(layer) ? { matte: matteOf(layer)! } : {}),
+    ...(textured ? { colorMatrix: cpuBaked ? undefined : texturedColorMatrix(layer) } : { sdf: sdfFor(layer) }),
+    ...(motionSamples ? { motionSamples } : {}),
+    effects: cpuBaked ? undefined : extractSpatialEffects(layer),
+    ...(layer.deformedMesh ? { deformedMesh: normalizeDeformedMesh(layer.deformedMesh, layer.width, layer.height, pad) } : {}),
+  };
+}
+
+/** Parse a layer's track matte into the renderable's matte descriptor, or null
+ *  when it has no matte (or its source wasn't resolved). */
+function matteOf(layer: RenderLayer): { mode: 'alpha' | 'luma'; inverted: boolean; sourceId: string } | null {
+  const mode = getMatteMode(layer.matte);
+  if (!mode || !layer.matteSourceId) return null;
+  const luma = mode === 'luma' || mode === 'luma-inv';
+  const inverted = mode === 'alpha-inv' || mode === 'luma-inv';
+  return { mode: luma ? 'luma' : 'alpha', inverted, sourceId: layer.matteSourceId };
+}
+
+/** True when a layer carries an enabled per-channel LUT colour effect. */
+function hasLutEffect(layer: RenderLayer): boolean {
+  return !!layer.effects?.some((e) => e.enabled !== false && isLutEffect(e.type));
+}
+
+/** An adjustment layer → a full-frame grade marker, or null when its grade is
+ *  identity (nothing to apply). The grade is an affine colour matrix and/or a
+ *  per-channel LUT; CompositionPass re-composites everything beneath through it. */
+function adjustmentToRenderable(layer: RenderLayer): Renderable | null {
+  const cm = layer.effects && layer.effects.length > 0 ? effectColorMatrix(layer.effects) : IDENTITY_COLOR_MATRIX;
+  const lut = hasLutEffect(layer);
+  const spatial = extractSpatialEffects(layer);
+  const hasGrade = cm !== IDENTITY_COLOR_MATRIX || lut;
+  const hasSpatial = spatial && spatial.length > 0;
+  if (!hasGrade && !hasSpatial) return null;
+  return {
+    id: layer.id,
+    kind: 'group',
+    modelMatrix: Mat3.identity(),
+    bounds: { x: 0, y: 0, width: 1, height: 1 },
+    opacity: 1,
+    blend: 'normal',
+    adjustment: {
+      ...(cm !== IDENTITY_COLOR_MATRIX ? { colorMatrix: cm } : {}),
+      ...(lut ? { lutTextureKey: `lut:${layer.id}` } : {}),
+    },
+    effects: spatial,
   };
 }
 
@@ -187,6 +420,29 @@ function texturedColorMatrix(layer: RenderLayer): { m: readonly number[]; offset
   return cm === IDENTITY_COLOR_MATRIX ? undefined : cm;
 }
 
+/** A 2D light as a screen-blended radial-gradient quad — the same technique
+ *  Canvas2DBackend.drawLight uses (a real light model is out of scope for a 2D
+ *  compositor). The gradient texture (`light:<id>`) is fed by AppTextureProvider;
+ *  here we place a 2·radius quad at the light's centre, screen-blend it, and use
+ *  intensity as the opacity. */
+function lightToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpacity: number): Renderable {
+  const radius = Math.max(1, layer.light!.radius);
+  const size = radius * 2;
+  const local = Mat3.multiply(Mat3.compose(layer.x, layer.y, 0, size, size), Mat3.translation(-0.5, -0.5));
+  const model = Mat3.multiply(parentMatrix, local);
+  const intensity = Math.max(0, Math.min(1, layer.light!.intensity / 100));
+  return {
+    id: layer.id,
+    kind: 'image',
+    modelMatrix: model,
+    bounds: boundsOf(model),
+    opacity: parentOpacity * intensity,
+    blend: 'screen',
+    color: Color.white(),
+    textureKey: `light:${layer.id}`,
+  };
+}
+
 function flattenLayers(
   layers: ReadonlyArray<RenderLayer>,
   parentMatrix: Mat3,
@@ -195,11 +451,29 @@ function flattenLayers(
 ): Renderable[] {
   for (const layer of layers) {
     if (!layer.visible) continue;
-    if (layer.isMatteSource || layer.isAdjustment) continue;
-    // 2D lights are a Canvas2D screen-blend gradient; the GPU graph has no
-    // light pass yet. Without this skip the light's carrier layer (a full-comp
-    // black shape) rasterized as an opaque black rectangle over the frame.
-    if (layer.light) continue;
+    if (layer.isMatteSource) {
+      // Emit the source flagged — CompositionPass renders it into MATTE_TARGET on
+      // demand for its matted layer, and skips drawing it to the scene.
+      const src = layerToRenderable(layer, parentMatrix, parentOpacity);
+      src.matteSource = true;
+      result.push(src);
+      continue;
+    }
+    if (layer.isAdjustment) {
+      // Adjustment layer: emit a grade marker that re-composites everything below
+      // it (GPU parity with Canvas2D applyAdjustment). Skipped only when its grade
+      // is identity (no colour/LUT effect) — then it would be a no-op copy.
+      const adj = adjustmentToRenderable(layer);
+      if (adj) result.push(adj);
+      continue;
+    }
+    // 2D lights: a screen-blended radial-gradient quad (parity with Canvas2D's
+    // drawLight). Without this the light's carrier layer (a full-comp black
+    // shape) would rasterize as an opaque black rectangle over the frame.
+    if (layer.light) {
+      result.push(lightToRenderable(layer, parentMatrix, parentOpacity));
+      continue;
+    }
 
     if (layer.precompLayers && layer.precompLayers.length > 0) {
       // Precomp container: accumulate transformation matrix and opacity for child layers
@@ -212,6 +486,21 @@ function flattenLayers(
       const nextOpacity = parentOpacity * layer.opacity;
 
       flattenLayers(layer.precompLayers, nextParent, nextOpacity, result);
+    } else if (layer.kind === 'video' && layer.frameBlend) {
+      // Frame blending (Frame Mix): the two decoded frames bracketing the
+      // playhead cross-dissolve — frame A full, frame B at the sub-frame
+      // weight on top, exactly Canvas2D's drawBlendedVideo. The feed uploads
+      // `vfa:`/`vfb:` from the decoded-frame cache (falling back to the live
+      // element's frame for both until the cache lands, which degrades to
+      // nearest-frame instead of showing nothing).
+      const a = layerToRenderable(layer, parentMatrix, parentOpacity);
+      a.textureKey = `vfa:${layer.id}`;
+      result.push(a);
+      const b = layerToRenderable(layer, parentMatrix, parentOpacity);
+      b.id = `${layer.id}::fb`;
+      b.textureKey = `vfb:${layer.id}`;
+      b.opacity = a.opacity * layer.frameBlend.weight;
+      result.push(b);
     } else {
       // Leaf layer: map to renderable with parent transformations applied
       result.push(layerToRenderable(layer, parentMatrix, parentOpacity));
@@ -220,8 +509,34 @@ function flattenLayers(
   return result;
 }
 
+/** A gradient composition background as a full-comp quad sampling the baked
+ *  `bg-gradient` texture (fed by AppTextureProvider). Drawn first so every layer
+ *  composites over it — the GPU parity for a gradient `background`. */
+function gradientBackgroundRenderable(width: number, height: number): Renderable {
+  const model = Mat3.multiply(
+    Mat3.compose(width / 2, height / 2, 0, width, height),
+    Mat3.translation(-0.5, -0.5),
+  );
+  return {
+    id: 'bg-gradient',
+    kind: 'image',
+    modelMatrix: model,
+    bounds: boundsOf(model),
+    opacity: 1,
+    blend: 'normal',
+    color: Color.white(),
+    textureKey: 'bg-gradient',
+  };
+}
+
 export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   const renderables = flattenLayers(snapshot.layers, Mat3.identity(), 1);
+  // Gradient background sits behind everything (solids stay on the flat
+  // composition.background below, which also serves as the fallback plate).
+  const bgPaint = snapshot.backgroundPaint;
+  if (bgPaint && bgPaint.type !== 'solid' && !snapshot.transparent) {
+    renderables.unshift(gradientBackgroundRenderable(snapshot.width, snapshot.height));
+  }
   const checkEffects = (layers: ReadonlyArray<RenderLayer>): boolean => {
     for (const l of layers) {
       if (l.effects && l.effects.length > 0) return true;
@@ -229,7 +544,10 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
     }
     return false;
   };
-  const hasEffects = checkEffects(snapshot.layers);
+  // Advanced blend layers need the samplable SCENE_COLOR_TARGET (they sample the
+  // backdrop), same precondition as effects — force it on when any are present.
+  const hasAdvancedBlend = renderables.some((r) => (r.advancedBlend ?? 0) > 0);
+  const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend;
   return {
     composition: {
       id: 'composition',

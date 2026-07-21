@@ -17,6 +17,17 @@ export { WebGPUBackend } from './gpu/backends/WebGPUBackend';
 export { WebGL2Backend } from './gpu/backends/WebGL2Backend';
 export * from './gpu/types';
 
+// ── Vector rasterizer seam (Phase 1) ──────────────────────────────
+export {
+  resolutionTier,
+  paddingClass,
+  rasterCacheKey,
+  RESOLUTION_TIERS,
+  type VectorRasterizer,
+  type RasterRequest,
+  type RasterResult,
+} from './raster/VectorRasterizer';
+
 // ── GPU resource management ───────────────────────────────────────
 export {
   ResourceManager,

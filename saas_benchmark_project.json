@@ -1,0 +1,1717 @@
+{
+  "id": "project_saas_benchmark",
+  "name": "SaaS Advertisement Benchmark",
+  "version": 1,
+  "createdAt": "2026-07-13T15:59:01.741Z",
+  "updatedAt": "2026-07-13T15:59:01.742Z",
+  "revision": 1,
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "duration": 25,
+  "nodes": {
+    "comp_root": {
+      "id": "comp_root",
+      "name": "Root",
+      "parent": null,
+      "children": [
+        "camera_nqnsuc",
+        "node_sl4tr8",
+        "group_6o0vqa",
+        "group_evv1l9",
+        "group_wfchls",
+        "group_1w6rhm"
+      ],
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": []
+    },
+    "camera_nqnsuc": {
+      "id": "camera_nqnsuc",
+      "name": "Main Camera",
+      "parent": "comp_root",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 540
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_c1698a",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 540,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "z": -2666,
+            "focalLength": 2666
+          }
+        }
+      ]
+    },
+    "node_sl4tr8": {
+      "id": "node_sl4tr8",
+      "name": "Background",
+      "parent": "comp_root",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 540
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_qvnj2n",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 540,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "rect",
+            "width": 1920,
+            "height": 1080
+          }
+        },
+        {
+          "id": "Style_rorvy9",
+          "type": "Style",
+          "props": {
+            "fill": "#0a0a0d",
+            "opacity": 100
+          }
+        },
+        {
+          "id": "fx_jws5qe",
+          "type": "fx",
+          "props": {
+            "solid": true
+          }
+        }
+      ]
+    },
+    "group_6o0vqa": {
+      "id": "group_6o0vqa",
+      "name": "Scene 1: Opening",
+      "parent": "comp_root",
+      "children": [
+        "node_04s3gm",
+        "node_uhdyr9",
+        "node_kqbuvy"
+      ],
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "group_fwvxkj",
+          "type": "group",
+          "props": {
+            "group": "group",
+            "precomp": false
+          }
+        }
+      ]
+    },
+    "node_04s3gm": {
+      "id": "node_04s3gm",
+      "name": "Opening Text 1",
+      "parent": "group_6o0vqa",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 490
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_2bm1al",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 490,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text",
+            "z": 200
+          }
+        },
+        {
+          "id": "Text_l7ooem",
+          "type": "Text",
+          "props": {
+            "content": "The Future of Motion",
+            "fontSize": 96,
+            "fill": "#ffffff",
+            "fontFamily": "Inter",
+            "fontWeight": "800"
+          }
+        }
+      ]
+    },
+    "node_uhdyr9": {
+      "id": "node_uhdyr9",
+      "name": "Opening Text 2",
+      "parent": "group_6o0vqa",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 590
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_548z07",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 590,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text",
+            "z": 200
+          }
+        },
+        {
+          "id": "Text_hxss33",
+          "type": "Text",
+          "props": {
+            "content": "Generated instantly by AI.",
+            "fontSize": 48,
+            "fill": "#a0a0a5",
+            "fontFamily": "Inter",
+            "fontWeight": "400"
+          }
+        }
+      ]
+    },
+    "node_kqbuvy": {
+      "id": "node_kqbuvy",
+      "name": "Glow Orb",
+      "parent": "group_6o0vqa",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 540
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_iawyub",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 540,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "ellipse",
+            "width": 800,
+            "height": 800
+          }
+        },
+        {
+          "id": "Style_ujf2eo",
+          "type": "Style",
+          "props": {
+            "fill": "rgba(102, 51, 255, 0.15)",
+            "opacity": 100
+          }
+        },
+        {
+          "id": "fx_7mhjpl",
+          "type": "fx",
+          "props": {
+            "effects": [
+              {
+                "type": "blur",
+                "amount": 200,
+                "enabled": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "group_evv1l9": {
+      "id": "group_evv1l9",
+      "name": "Scene 2: UI Demo",
+      "parent": "comp_root",
+      "children": [
+        "group_8zapbb"
+      ],
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "group_vw73i0",
+          "type": "group",
+          "props": {
+            "group": "group",
+            "precomp": false
+          }
+        }
+      ]
+    },
+    "group_8zapbb": {
+      "id": "group_8zapbb",
+      "name": "Browser Window",
+      "parent": "group_evv1l9",
+      "children": [
+        "node_xe3170",
+        "node_yh5j2s",
+        "node_8jgrbc",
+        "node_ky4wsn",
+        "node_9idt04",
+        "node_ees0c7",
+        "node_nmtiyl",
+        "node_vz37yu",
+        "node_xp3rvx",
+        "node_z66srk",
+        "node_vql94k"
+      ],
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "group_jt154e",
+          "type": "group",
+          "props": {
+            "group": "group",
+            "precomp": true
+          }
+        }
+      ]
+    },
+    "node_xe3170": {
+      "id": "node_xe3170",
+      "name": "Browser Base",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 540
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_9i9nj2",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 540,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "rect",
+            "width": 1400,
+            "height": 800
+          }
+        },
+        {
+          "id": "Style_b5ycbn",
+          "type": "Style",
+          "props": {
+            "fill": "#14141a",
+            "opacity": 100
+          }
+        },
+        {
+          "id": "fx_j31lzc",
+          "type": "fx",
+          "props": {
+            "effects": [
+              {
+                "type": "drop-shadow",
+                "amount": 80,
+                "enabled": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "node_yh5j2s": {
+      "id": "node_yh5j2s",
+      "name": "Browser Header",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 170
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_8w6jog",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 170,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "rect",
+            "width": 1400,
+            "height": 60
+          }
+        },
+        {
+          "id": "Style_fotfje",
+          "type": "Style",
+          "props": {
+            "fill": "#1c1c24",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_8jgrbc": {
+      "id": "node_8jgrbc",
+      "name": "Dot 0",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 300,
+          "y": 170
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_nmkgan",
+          "type": "Transform",
+          "props": {
+            "x": 300,
+            "y": 170,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "ellipse",
+            "width": 16,
+            "height": 16
+          }
+        },
+        {
+          "id": "Style_gyen8e",
+          "type": "Style",
+          "props": {
+            "fill": "#ff5f56",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_ky4wsn": {
+      "id": "node_ky4wsn",
+      "name": "Dot 1",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 330,
+          "y": 170
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_2n4gue",
+          "type": "Transform",
+          "props": {
+            "x": 330,
+            "y": 170,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "ellipse",
+            "width": 16,
+            "height": 16
+          }
+        },
+        {
+          "id": "Style_z0zhpu",
+          "type": "Style",
+          "props": {
+            "fill": "#ffbd2e",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_9idt04": {
+      "id": "node_9idt04",
+      "name": "Dot 2",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 360,
+          "y": 170
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_35kxcy",
+          "type": "Transform",
+          "props": {
+            "x": 360,
+            "y": 170,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "ellipse",
+            "width": 16,
+            "height": 16
+          }
+        },
+        {
+          "id": "Style_bj9ytt",
+          "type": "Style",
+          "props": {
+            "fill": "#27c93f",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_ees0c7": {
+      "id": "node_ees0c7",
+      "name": "UI Card 0",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 610,
+          "y": 590
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_1jsilo",
+          "type": "Transform",
+          "props": {
+            "x": 610,
+            "y": 590,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "rect",
+            "width": 300,
+            "height": 400,
+            "z": -50
+          }
+        },
+        {
+          "id": "Style_ttrdw3",
+          "type": "Style",
+          "props": {
+            "fill": "#1f1f29",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_nmtiyl": {
+      "id": "node_nmtiyl",
+      "name": "Card Text 0",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 610,
+          "y": 460
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_86f87y",
+          "type": "Transform",
+          "props": {
+            "x": 610,
+            "y": 460,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text",
+            "z": -50
+          }
+        },
+        {
+          "id": "Text_5scvia",
+          "type": "Text",
+          "props": {
+            "content": "Feature 1",
+            "fontSize": 32,
+            "fill": "#ffffff",
+            "fontWeight": "600"
+          }
+        }
+      ]
+    },
+    "node_vz37yu": {
+      "id": "node_vz37yu",
+      "name": "UI Card 1",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 590
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_cqjvsi",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 590,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "rect",
+            "width": 300,
+            "height": 400,
+            "z": -50
+          }
+        },
+        {
+          "id": "Style_zhnk1d",
+          "type": "Style",
+          "props": {
+            "fill": "#1f1f29",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_xp3rvx": {
+      "id": "node_xp3rvx",
+      "name": "Card Text 1",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 460
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_hottk0",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 460,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text",
+            "z": -50
+          }
+        },
+        {
+          "id": "Text_74wugm",
+          "type": "Text",
+          "props": {
+            "content": "Feature 2",
+            "fontSize": 32,
+            "fill": "#ffffff",
+            "fontWeight": "600"
+          }
+        }
+      ]
+    },
+    "node_z66srk": {
+      "id": "node_z66srk",
+      "name": "UI Card 2",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 1310,
+          "y": 590
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_wmed37",
+          "type": "Transform",
+          "props": {
+            "x": 1310,
+            "y": 590,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "rect",
+            "width": 300,
+            "height": 400,
+            "z": -50
+          }
+        },
+        {
+          "id": "Style_vh0rbj",
+          "type": "Style",
+          "props": {
+            "fill": "#1f1f29",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_vql94k": {
+      "id": "node_vql94k",
+      "name": "Card Text 2",
+      "parent": "group_8zapbb",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 1310,
+          "y": 460
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_rp8d2t",
+          "type": "Transform",
+          "props": {
+            "x": 1310,
+            "y": 460,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text",
+            "z": -50
+          }
+        },
+        {
+          "id": "Text_f7ee09",
+          "type": "Text",
+          "props": {
+            "content": "Feature 3",
+            "fontSize": 32,
+            "fill": "#ffffff",
+            "fontWeight": "600"
+          }
+        }
+      ]
+    },
+    "group_wfchls": {
+      "id": "group_wfchls",
+      "name": "Scene 3: Highlights",
+      "parent": "comp_root",
+      "children": [
+        "node_rf30tv",
+        "node_z2cj1h"
+      ],
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "group_rhywiu",
+          "type": "group",
+          "props": {
+            "group": "group",
+            "precomp": false
+          }
+        }
+      ]
+    },
+    "node_rf30tv": {
+      "id": "node_rf30tv",
+      "name": "Graph Line",
+      "parent": "group_wfchls",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 540
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_b9wse7",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 540,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "line",
+            "width": 1000,
+            "height": 400
+          }
+        },
+        {
+          "id": "Style_2kwzio",
+          "type": "Style",
+          "props": {
+            "fill": "rgba(0,0,0,0)",
+            "opacity": 100,
+            "stroke": {
+              "color": "#6a4bff",
+              "width": 12,
+              "opacity": 1,
+              "cap": "round",
+              "join": "round"
+            }
+          }
+        },
+        {
+          "id": "Geometry_rh5r6m",
+          "type": "Geometry",
+          "props": {
+            "points": [
+              {
+                "x": -500,
+                "y": 150
+              },
+              {
+                "x": -200,
+                "y": -50
+              },
+              {
+                "x": 100,
+                "y": 50
+              },
+              {
+                "x": 500,
+                "y": -150
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "node_z2cj1h": {
+      "id": "node_z2cj1h",
+      "name": "Graph Heading",
+      "parent": "group_wfchls",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 290
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_47yud3",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 290,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text"
+          }
+        },
+        {
+          "id": "Text_dnryfv",
+          "type": "Text",
+          "props": {
+            "content": "Accelerated Growth",
+            "fontSize": 72,
+            "fill": "#ffffff",
+            "fontWeight": "700"
+          }
+        }
+      ]
+    },
+    "group_1w6rhm": {
+      "id": "group_1w6rhm",
+      "name": "Scene 4: CTA",
+      "parent": "comp_root",
+      "children": [
+        "node_wyq4hw",
+        "node_czu7n6",
+        "node_ax8104"
+      ],
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "group_rpemgw",
+          "type": "group",
+          "props": {
+            "group": "group",
+            "precomp": false
+          }
+        }
+      ]
+    },
+    "node_wyq4hw": {
+      "id": "node_wyq4hw",
+      "name": "CTA Heading",
+      "parent": "group_1w6rhm",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 480
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_dmerib",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 480,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text"
+          }
+        },
+        {
+          "id": "Text_t7ow53",
+          "type": "Text",
+          "props": {
+            "content": "Ready to ship faster?",
+            "fontSize": 96,
+            "fill": "#ffffff",
+            "fontWeight": "800"
+          }
+        }
+      ]
+    },
+    "node_czu7n6": {
+      "id": "node_czu7n6",
+      "name": "CTA Button",
+      "parent": "group_1w6rhm",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 620
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_2tt1bi",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 620,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "rect",
+            "width": 300,
+            "height": 80
+          }
+        },
+        {
+          "id": "Style_b0z9hb",
+          "type": "Style",
+          "props": {
+            "fill": "#6a4bff",
+            "opacity": 100
+          }
+        }
+      ]
+    },
+    "node_ax8104": {
+      "id": "node_ax8104",
+      "name": "CTA Button Text",
+      "parent": "group_1w6rhm",
+      "children": [],
+      "transform": {
+        "position": {
+          "x": 960,
+          "y": 620
+        },
+        "rotation": 0,
+        "scale": {
+          "x": 1,
+          "y": 1
+        }
+      },
+      "visible": true,
+      "locked": false,
+      "components": [
+        {
+          "id": "Transform_lnv7h1",
+          "type": "Transform",
+          "props": {
+            "x": 960,
+            "y": 620,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "shapeType": "text"
+          }
+        },
+        {
+          "id": "Text_7jmm0t",
+          "type": "Text",
+          "props": {
+            "content": "Get Started",
+            "fontSize": 32,
+            "fill": "#ffffff",
+            "fontWeight": "600"
+          }
+        }
+      ]
+    }
+  },
+  "tracks": {
+    "camera_nqnsuc": {
+      "z": [
+        {
+          "time": 0,
+          "value": -1000,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 4,
+          "value": -2666,
+          "easing": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        },
+        {
+          "time": 12,
+          "value": -2666,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 14,
+          "value": -1500,
+          "easing": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        },
+        {
+          "time": 18,
+          "value": -1500,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 20,
+          "value": -2666,
+          "easing": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        }
+      ],
+      "rotationX": [
+        {
+          "time": 4,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 12,
+          "value": 15,
+          "easing": [
+            0.4,
+            0,
+            0.2,
+            1
+          ]
+        },
+        {
+          "time": 14,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ],
+      "rotationY": [
+        {
+          "time": 4,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 12,
+          "value": -10,
+          "easing": [
+            0.4,
+            0,
+            0.2,
+            1
+          ]
+        },
+        {
+          "time": 14,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ]
+    },
+    "group_6o0vqa": {
+      "opacity": [
+        {
+          "time": 0,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 1,
+          "value": 100,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 3.5,
+          "value": 100,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 4,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ]
+    },
+    "node_04s3gm": {
+      "y": [
+        {
+          "time": 0,
+          "value": 590,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 1,
+          "value": 490,
+          "easing": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        }
+      ]
+    },
+    "node_uhdyr9": {
+      "y": [
+        {
+          "time": 0.2,
+          "value": 690,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 1.2,
+          "value": 590,
+          "easing": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        }
+      ]
+    },
+    "group_evv1l9": {
+      "opacity": [
+        {
+          "time": 0,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 3.8,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 4.5,
+          "value": 100,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 11.5,
+          "value": 100,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 12,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ]
+    },
+    "group_8zapbb": {
+      "z": [
+        {
+          "time": 3.8,
+          "value": -1000,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 5,
+          "value": 0,
+          "easing": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        }
+      ],
+      "rotationX": [
+        {
+          "time": 3.8,
+          "value": -20,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 5,
+          "value": 0,
+          "easing": [
+            0.16,
+            1,
+            0.3,
+            1
+          ]
+        }
+      ]
+    },
+    "group_wfchls": {
+      "opacity": [
+        {
+          "time": 0,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 11.8,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 12.5,
+          "value": 100,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 17.5,
+          "value": 100,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 18,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ]
+    },
+    "group_1w6rhm": {
+      "opacity": [
+        {
+          "time": 0,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 17.8,
+          "value": 0,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 18.5,
+          "value": 100,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ]
+    },
+    "node_czu7n6": {
+      "scale": [
+        {
+          "time": 20,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 20.2,
+          "value": 1.1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 20.6,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 22,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 22.2,
+          "value": 1.1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 22.6,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ]
+    },
+    "node_ax8104": {
+      "scale": [
+        {
+          "time": 20,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 20.2,
+          "value": 1.1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 20.6,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 22,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 22.2,
+          "value": 1.1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        },
+        {
+          "time": 22.6,
+          "value": 1,
+          "easing": [
+            0.25,
+            0.1,
+            0.25,
+            1
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -146,9 +146,15 @@ export class Renderer {
       const needsEffect = !!scene.hasEffects;
       if (effectPass.enabled !== needsEffect) {
         effectPass.enabled = needsEffect;
-        EffectPass.activeColorTarget = needsEffect ? SCENE_COLOR_TARGET : SURFACE;
         this.graph.invalidate();
       }
+      // ALWAYS re-assert the routing target: `activeColorTarget` is a static
+      // shared by every Renderer instance in the page. Setting it only on the
+      // enabled-flip let another instance (the live viewport vs a headless
+      // export renderer) leave it pointing at scene-color — this renderer's
+      // passes then drew into a texture its own (disabled) EffectPass never
+      // blitted, and the frame came out blank.
+      EffectPass.activeColorTarget = needsEffect ? SCENE_COLOR_TARGET : SURFACE;
     }
 
     this.graph.execute({ services: this.services, frame, viewport, scene });

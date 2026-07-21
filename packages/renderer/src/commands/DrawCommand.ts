@@ -6,7 +6,7 @@
  * (executor) is what makes batching, sorting, and instancing pluggable.
  */
 
-import type { BlendMode, SamplerHandle, TextureHandle } from '../gpu/types';
+import type { BlendMode, SamplerHandle, TextureHandle, BufferHandle } from '../gpu/types';
 import type { MaterialDescriptor } from '../shaders/Material';
 
 export interface DrawItem {
@@ -20,6 +20,10 @@ export interface DrawItem {
   texture?: TextureHandle;
   sampler?: SamplerHandle;
   maskTexture?: TextureHandle;
+  /** Optional custom geometry for mesh rendering. */
+  vertexBuffer?: BufferHandle;
+  indexBuffer?: BufferHandle;
+  indexCount?: number;
 }
 
 export interface CommandBatch {

@@ -38,12 +38,16 @@ describe('isMatteType / isTrackMatteConfig / helpers', () => {
 });
 
 describe('resolveMatteSources', () => {
-  test('marks the layer directly above a matted layer as its source (positional fallback)', () => {
-    const layers = [layer('src'), layer('matted', { matte: 'alpha' }), layer('plain')];
+  // Layers arrive in PAINT order (back → front). AE's positional matte source
+  // is the layer directly ABOVE in the stack — the front-most neighbour, i.e.
+  // the NEXT layer in paint order.
+  test('marks the layer directly above (next in paint order) as the positional source', () => {
+    const layers = [layer('plain'), layer('matted', { matte: 'alpha' }), layer('src')];
     resolveMatteSources(layers);
-    expect(layers[0]!.isMatteSource).toBe(true);
+    expect(layers[0]!.isMatteSource).toBeUndefined();
     expect(layers[1]!.isMatteSource).toBeUndefined();
-    expect(layers[2]!.isMatteSource).toBeUndefined();
+    expect(layers[2]!.isMatteSource).toBe(true);
+    expect(layers[1]!.matteSourceId).toBe('src');
   });
 
   test('marks the explicit sourceId layer when matte object is used', () => {
@@ -58,8 +62,8 @@ describe('resolveMatteSources', () => {
     expect(layers[2]!.isMatteSource).toBe(true);
   });
 
-  test('a matte on the first layer has no source (nothing above) if positional', () => {
-    const layers = [layer('a', { matte: 'alpha' }), layer('b')];
+  test('a positional matte on the front-most layer has no source (nothing above)', () => {
+    const layers = [layer('b'), layer('a', { matte: 'alpha' })];
     resolveMatteSources(layers);
     expect(layers[0]!.isMatteSource).toBeUndefined();
     expect(layers[1]!.isMatteSource).toBeUndefined();

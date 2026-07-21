@@ -79,7 +79,10 @@ export function AppMenuBar(): JSX.Element {
                 {group.items.map((it, i) => {
                   if (it.separator) return <MenuSeparator key={`sep-${i}`} />;
                   const cmd = it.commandId ? getCommandRegistry().get(asCommandId(it.commandId)) : undefined;
-                  const enabled = cmd?.enabled ? cmd.enabled() : true;
+                  // An UNREGISTERED command renders disabled — an enabled item
+                  // whose click silently no-ops (execute on an unknown id)
+                  // reads as broken; greyed-out reads as "not available".
+                  const enabled = cmd ? (cmd.enabled ? cmd.enabled() : true) : false;
                   const label = it.label ?? cmd?.label ?? it.commandId ?? '';
                   const resolvedChord = cmd ? resolveChord(cmd.id as unknown as string, cmd.shortcut, getShortcutOverrides()) : undefined;
                   const shortcut = resolvedChord ? formatChord(resolvedChord) : undefined;

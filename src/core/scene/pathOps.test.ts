@@ -94,3 +94,68 @@ describe('applyPathOp', () => {
     expect(applyPathOp(square, true, { type: 'twist', amount: 0, detail: 0 })).toEqual(square);
   });
 });
+
+describe('offsetPath', () => {
+  const { offsetPath } = require('./pathOps');
+  const sq: Pt[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+
+  it('amount 0 is a no-op', () => {
+    expect(offsetPath(sq, true, 0)).toEqual(sq);
+  });
+
+  it('moves every corner diagonally by the same distance', () => {
+    const out = offsetPath(sq, true, 2);
+    // Uniform offset: every point moves the same distance.
+    const dists = out.map((p: Pt, i: number) => Math.hypot(p.x - sq[i]!.x, p.y - sq[i]!.y));
+    for (const d of dists) expect(d).toBeCloseTo(dists[0]!, 6);
+    expect(dists[0]).toBeGreaterThan(0);
+  });
+
+  it('negative amount moves points the opposite way', () => {
+    const grow = offsetPath(sq, true, 2);
+    const shrink = offsetPath(sq, true, -2);
+    expect(shrink[0]!.x).toBeCloseTo(2 * sq[0]!.x - grow[0]!.x, 6);
+    expect(shrink[0]!.y).toBeCloseTo(2 * sq[0]!.y - grow[0]!.y, 6);
+  });
+
+  it('open paths offset endpoints along their single edge normal', () => {
+    const line: Pt[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }];
+    const out = offsetPath(line, false, 3);
+    expect(out[0]!.y).toBeCloseTo(3);
+    expect(out[1]!.y).toBeCloseTo(3);
+    expect(out[0]!.x).toBeCloseTo(0);
+  });
+});
+
+describe('roughen', () => {
+  const { roughen } = require('./pathOps');
+  const sq: Pt[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+
+  it('amount 0 is a no-op', () => {
+    expect(roughen(sq, true, 0, 4)).toEqual(sq);
+  });
+
+  it('subdivides: closed shape gains detail× points', () => {
+    const out = roughen(sq, true, 1, 3);
+    expect(out).toHaveLength(4 * 3);
+  });
+
+  it('is deterministic (same input → identical output)', () => {
+    expect(roughen(sq, true, 2, 4)).toEqual(roughen(sq, true, 2, 4));
+  });
+
+  it('displacement scales with amount', () => {
+    const small = roughen(sq, true, 1, 4);
+    const big = roughen(sq, true, 5, 4);
+    // Different amounts must land the same subdivided point differently.
+    const dSmall = Math.hypot(small[1]!.x - big[1]!.x, small[1]!.y - big[1]!.y);
+    expect(dSmall).toBeGreaterThan(0);
+  });
+
+  it('applyPathOp routes offset and roughen', () => {
+    const off: PathOp = { type: 'offset', amount: 2, detail: 0 };
+    const rough: PathOp = { type: 'roughen', amount: 2, detail: 3 };
+    expect(applyPathOp(sq, true, off)).toHaveLength(4);
+    expect(applyPathOp(sq, true, rough)).toHaveLength(12);
+  });
+});

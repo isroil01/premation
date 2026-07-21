@@ -78,6 +78,8 @@ class NullPassEncoder implements RenderPassEncoder {
 
 export class NullBackend implements RenderBackend {
   readonly kind = 'null' as const;
+  /** No pixels are produced; value is irrelevant but must exist. */
+  readonly renderTargetFlipV = false;
   readonly capabilities: BackendCapabilities = {
     kind: 'null',
     maxTextureSize: 16384,

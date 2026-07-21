@@ -28,6 +28,10 @@ export function AppMenuButton(): JSX.Element {
       const target = e.target as Node;
       if (ref.current?.contains(target)) return;
       if (document.getElementById('app-menu-dropdown')?.contains(target)) return;
+      // Submenus render in their own portal on document.body (a sibling of the
+      // dropdown, not a descendant), so contains() misses them. Without this,
+      // pressing a submenu item closes the menu before its click can fire.
+      if ((target as Element).closest?.('[data-menu-portal]')) return;
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false); };

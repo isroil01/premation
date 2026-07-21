@@ -3,7 +3,7 @@
 import { RenderGraph } from '../RenderGraph';
 import { ClearPass } from './ClearPass';
 import { BackgroundPass } from './BackgroundPass';
-import { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2 } from './CompositionPass';
+import { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET } from './CompositionPass';
 import { SelectionPass } from './SelectionPass';
 import { OverlayPass } from './OverlayPass';
 import { MaskPass, MASK_TARGET } from './MaskPass';
@@ -11,7 +11,7 @@ import { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
 
 export { ClearPass } from './ClearPass';
 export { BackgroundPass } from './BackgroundPass';
-export { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2 } from './CompositionPass';
+export { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET } from './CompositionPass';
 export { SelectionPass } from './SelectionPass';
 export { OverlayPass } from './OverlayPass';
 export { MaskPass, MASK_TARGET } from './MaskPass';
@@ -61,6 +61,12 @@ export function buildDefaultGraph(): RenderGraph {
   }));
   graph.declareTarget(BLUR_TARGET2, (vp) => ({
     label: BLUR_TARGET2,
+    width: vp.pixelSize.width,
+    height: vp.pixelSize.height,
+    format: 'rgba8unorm',
+  }));
+  graph.declareTarget(MATTE_TARGET, (vp) => ({
+    label: MATTE_TARGET,
     width: vp.pixelSize.width,
     height: vp.pixelSize.height,
     format: 'rgba8unorm',

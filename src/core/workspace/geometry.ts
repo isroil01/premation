@@ -10,6 +10,7 @@
 import type { SceneNode } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SIZE } from '@core/rendering/buildSnapshot';
+import { measureTextNodeSize } from '@core/text/measureText';
 import { Mat, Rect, type Vec2, type Mat2D } from '@motion/workspace';
 
 /** The workspace's plain rectangle value type. */
@@ -58,7 +59,12 @@ export function readGeometry(node: SceneNode): NodeGeometry | null {
     if (typeof p.height === 'number') height = p.height;
     if (typeof p.shapeType === 'string') shapeType = p.shapeType;
   }
-  const size = kind === 'light' ? { w: 100, h: 100 }
+  // Text layers size to their MEASURED content (point text, AE-style): the
+  // fixed SIZE.text fallback left the outline/hit box at 320×80 while long or
+  // large text drew far past it.
+  const measured = kind === 'text' ? measureTextNodeSize(node) : null;
+  const size = measured ? { w: measured.w, h: measured.h }
+             : kind === 'light' ? { w: 100, h: 100 }
              : kind === 'camera' ? { w: 80, h: 80 }
              : (SIZE as any)[kind] ?? { w: 100, h: 100 };
   const name = (node.name ?? '').toLowerCase();

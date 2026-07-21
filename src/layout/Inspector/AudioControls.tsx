@@ -14,6 +14,8 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { audioComponent, isAudioNode } from '@core/audio/audioScene';
+import { convertAudioToKeyframes, AUDIO_AMPLITUDE_PROP } from '@core/audio/audioKeyframes';
+import { useUIStore } from '@stores/uiStore';
 import { waveformPath } from '@core/audio/waveform';
 import { InspectorRow } from '@components/Inspector';
 import styles from './AudioControls.module.css';
@@ -104,6 +106,35 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
 
       <InspectorRow label="Mute" align="center">
         <Switch checked={muted} onChange={(e) => write('__muted', e.currentTarget.checked)} aria-label="Mute audio" />
+      </InspectorRow>
+
+      <InspectorRow label="Keyframes" align="center">
+        <button
+          type="button"
+          onClick={() => {
+            const n = convertAudioToKeyframes(nodeId);
+            useUIStore.getState().notify(
+              n > 0
+                ? { level: 'success', message: `Audio → ${n} keyframes on “${AUDIO_AMPLITUDE_PROP}”`, durationMs: 3200 }
+                : { level: 'warning', message: 'Audio not decoded yet — play it once, then retry.', durationMs: 3200 },
+            );
+          }}
+          title="Write the loudness envelope as keyframes (audioAmplitude, 0–100) — drive any property from it"
+          style={{
+            height: 22,
+            padding: '0 10px',
+            fontSize: 10,
+            fontWeight: 600,
+            background: 'var(--color-primary-subtle)',
+            color: 'var(--color-primary)',
+            border: '1px solid var(--color-primary)',
+            borderRadius: 3,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Convert audio to keyframes
+        </button>
       </InspectorRow>
     </div>
   );

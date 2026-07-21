@@ -15,7 +15,7 @@
  */
 
 import { defaultAnimation, EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER, type AnimationEngine } from '@motion/animation';
-import { parseKeyframeId } from '@motion/animation';
+import { parseKeyframeId, expandKeyframeProp } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import type { PresetTrack } from '@core/animation/animationPresets';
 import {
@@ -180,8 +180,9 @@ export function applyBounceInWords(
   });
   const path = animatorPropPath(index, 'offset');
   runAnimEdit('Bounce In Words', () => {
-    engine.setKeyframe(nodeId, path, atTime, -100, 'easeOut');
-    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'easeOut');
+    engine.setKeyframe(nodeId, path, atTime, -100, 'bezier');
+    engine.setBezier(nodeId, path, atTime, [0.175, 0.885, 0.32, 1.275]);
+    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
   });
   return true;
 }
@@ -207,8 +208,9 @@ export function applySpinFadeCharacters(
   });
   const path = animatorPropPath(index, 'offset');
   runAnimEdit('Spin & Fade Characters', () => {
-    engine.setKeyframe(nodeId, path, atTime, -100, 'easeOut');
-    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'easeOut');
+    engine.setKeyframe(nodeId, path, atTime, -100, 'bezier');
+    engine.setBezier(nodeId, path, atTime, [0.16, 1, 0.3, 1]);
+    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
   });
   return true;
 }
@@ -233,15 +235,17 @@ export function applyTrackingReveal(
   });
   const path = animatorPropPath(index, 'start');
   runAnimEdit('Tracking Reveal', () => {
-    engine.setKeyframe(nodeId, path, atTime, 0, 'easeInOut');
-    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'easeInOut');
+    engine.setKeyframe(nodeId, path, atTime, 0, 'bezier');
+    engine.setBezier(nodeId, path, atTime, [0.4, 0, 0.2, 1]);
+    engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
   });
   return true;
 }
 
 /**
  * Apply a named easing preset to a set of keyframes (identified by their
- * compound ID `nodeId::prop@time` from `makeKeyframeId`).
+ * compound ID `nodeId::prop::t` from `makeKeyframeId` — decode with
+ * `parseKeyframeId`, never by hand).
  *
  *   Linear  → easing: 'linear'
  *   Ease    → easing: 'bezier', EASY_EASE_BEZIER     (33%/33% in+out)
@@ -261,7 +265,9 @@ export function applyEasingToKeyframes(
     for (const kfId of kfIds) {
       const ref = parseKeyframeId(kfId);
       if (!ref) continue;
-      const { nodeId, prop, t } = ref;
+      const { nodeId, t } = ref;
+      // A selected Position keyframe is the merged x/y/z row — ease all three.
+      for (const prop of expandKeyframeProp(ref.prop)) {
       const kfs = engine.getTrackKeyframes(nodeId, prop);
       const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
       if (!kf) continue;
@@ -286,32 +292,37 @@ export function applyEasingToKeyframes(
           engine.setKeyframe(nodeId, prop, t, value, 'step');
           break;
       }
+      }
     }
   });
 }
 
 /**
- * Apply custom symmetric Bezier influence to a set of keyframes.
- * E.g. influence = 75% -> bezier = [0.75, 0, 0.25, 1.0].
+ * Apply custom asymmetric Bezier influence to a set of keyframes.
+ * inflOut affects the outgoing curve (x1), inflIn affects the incoming curve (x2).
  */
-export function applyInfluenceToKeyframes(
+export function applyVelocityToKeyframes(
   kfIds: ReadonlyArray<string>,
-  influence: number,
+  inflOut: number,
+  inflIn: number,
   engine: AnimationEngine = defaultAnimation,
 ): void {
   if (!kfIds.length) return;
-  const inflVal = Math.max(0.01, Math.min(0.99, influence / 100));
-  const bezier: [number, number, number, number] = [inflVal, 0, 1 - inflVal, 1];
-  runAnimEdit(`Set keyframe velocity influence: ${influence}%`, () => {
+  const outVal = Math.max(0.01, Math.min(0.99, inflOut / 100));
+  const inVal = Math.max(0.01, Math.min(0.99, inflIn / 100));
+  const bezier: [number, number, number, number] = [outVal, 0, 1 - inVal, 1];
+  runAnimEdit(`Set keyframe velocity (Out: ${inflOut}%, In: ${inflIn}%)`, () => {
     for (const kfId of kfIds) {
       const ref = parseKeyframeId(kfId);
       if (!ref) continue;
-      const { nodeId, prop, t } = ref;
-      const kfs = engine.getTrackKeyframes(nodeId, prop);
-      const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-      if (!kf) continue;
-      engine.setKeyframe(nodeId, prop, t, kf.value, 'bezier');
-      engine.setBezier(nodeId, prop, t, bezier);
+      const { nodeId, t } = ref;
+      for (const prop of expandKeyframeProp(ref.prop)) {
+        const kfs = engine.getTrackKeyframes(nodeId, prop);
+        const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
+        if (!kf) continue;
+        engine.setKeyframe(nodeId, prop, t, kf.value, 'bezier');
+        engine.setBezier(nodeId, prop, t, bezier);
+      }
     }
   });
 }

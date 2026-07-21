@@ -11,7 +11,7 @@ import { openModal } from '@stores/modalStore';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
-import { useRenderQueueStore, type OutputFormat } from '@stores/renderQueueStore';
+import { useRenderQueueStore, outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { runExport, EXPORT_PRESETS, type ExportFormat } from '@core/export/exportManager';
 import styles from './ExportDialog.module.css';
@@ -36,10 +36,17 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   const height = Math.round(comp.height * scale);
   const busy = progress !== null;
 
+
   const doExport = async (): Promise<void> => {
     setProgress(0);
     try {
-      await runExport({ format, width, height, fps, duration, time, comp, onProgress: (f) => setProgress(f) });
+      await runExport({
+        format, width, height, fps, duration, time,
+        // rootId scopes the export to this comp — without it every composition
+        // in the project renders into the same frame.
+        comp: { ...comp, rootId: comp.id },
+        onProgress: (f) => setProgress(f),
+      });
       notify({ level: 'success', message: 'Export complete — downloading', durationMs: 2600 });
     } catch {
       notify({ level: 'error', message: 'Export failed', durationMs: 3000 });
@@ -49,10 +56,14 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   };
 
   const queueJob = (): void => {
-    const ext = format === 'png-sequence' || format === 'jpg-sequence' ? 'zip' : 'webm';
+    const ext = outputExtFor(format as OutputFormat);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     useRenderQueueStore.getState().addJob({
       compositionName: compName ?? 'Comp 1',
+      // Bind the job to the comp it was queued FROM, so the queue renders what
+      // was asked for rather than whatever is active when it runs.
+      compositionId: comp.id,
+      background: comp.background,
       outputPath: `${compName ?? 'output'}_${ts}.${ext}`,
       format: format as OutputFormat,
       width,
@@ -112,12 +123,14 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         </div>
       ) : null}
 
+
+
       <div className={styles.footer}>
         {(format === 'webm' || format === 'png-sequence' || format === 'jpg-sequence') && (
           <Button
             variant="secondary"
             size="md"
-            leftIcon={<Icon name="layers" size={14} />}
+            leftIcon={<Icon name="queue" size={14} />}
             onClick={queueJob}
             disabled={busy}
             title="Queue this render in the Render Queue (F6) instead of exporting now"

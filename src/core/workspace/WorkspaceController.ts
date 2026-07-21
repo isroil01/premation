@@ -8,7 +8,7 @@
  * zoom bar, tool bar — drives the same engine.
  */
 
-import { Workspace, Rect, commands, type CommandPort } from '@motion/workspace';
+import { Workspace, Rect, commands, type CommandPort, type SceneGraphPort } from '@motion/workspace';
 import type { Tool as UITool } from '@stores/uiStore';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -19,12 +19,13 @@ import { createSceneGraphPort, createSelectionPort, createCommandPort } from './
 const TOOL_MAP: Record<UITool, string> = {
   select: 'select', // Select also rotates (rotate handle) and scales (resize handles)
   move: 'move',
-  rotate: 'rotate',       // AE W — dedicated rotate interaction (engine falls back to select if unavailable)
+  rotate: 'rotate',           // AE W — spin the selection about its anchor
   'pan-behind': 'pan-behind', // AE Y — reposition anchor point without moving layer
   hand: 'hand',
   zoom: 'zoom',
   pen: 'pen',
   pencil: 'pencil',
+  brush: 'brush',
   curvature: 'curvature',
   line: 'line',
   text: 'text',
@@ -35,19 +36,32 @@ const TOOL_MAP: Record<UITool, string> = {
   'direct-select': 'direct-select',
   'mask-rect': 'mask-rect',
   'mask-ellipse': 'mask-ellipse',
+  'puppet-pin': 'select',
+  bone: 'select',
 };
 
 export class WorkspaceController {
   readonly ws: Workspace;
 
   private readonly commandPort: CommandPort;
+  private readonly scenePort: SceneGraphPort;
   private renderCb: (() => void) | null = null;
   private rafId: number | null = null;
 
+  /** AE-style auto-fit: when on, the comp is re-framed to fill the viewport on
+   *  every viewport resize (panel collapse/expand) and comp-size change. A manual
+   *  zoom or pan turns it off so the user's chosen zoom sticks; "Fit in view"
+   *  turns it back on. */
+  private autoFitEnabled = true;
+  /** Guards a programmatic fit so its own CameraChanged doesn't read as a user
+   *  gesture and disable auto-fit. */
+  private fitting = false;
+
   constructor() {
     this.commandPort = createCommandPort();
+    this.scenePort = createSceneGraphPort();
     this.ws = new Workspace({
-      scene: createSceneGraphPort(),
+      scene: this.scenePort,
       selection: createSelectionPort(),
       commands: this.commandPort,
       renderer: { markDirty: () => this.scheduleRender() },
@@ -55,6 +69,39 @@ export class WorkspaceController {
       camera: { minZoom: 0.05, maxZoom: 32 },
     });
     this.ws.initialize();
+
+    // Any camera change the app didn't drive via fitComposition is a user
+    // zoom/pan → stop auto-fitting so their framing is preserved.
+    this.ws.events.on('CameraChanged', () => {
+      if (!this.fitting) this.autoFitEnabled = false;
+    });
+  }
+
+  /** Whether the viewport should re-fit the comp on the next resize. */
+  get autoFit(): boolean {
+    return this.autoFitEnabled;
+  }
+
+  /**
+   * Where a node's anchor sits on screen, and the current zoom.
+   *
+   * Backs the on-canvas text editor, which overlays a DOM element on the
+   * canvas at the layer's position. Returns null when the node isn't known to
+   * the workspace (e.g. it was just deleted).
+   */
+  getNodeScreenPlacement(nodeId: string): { x: number; y: number; zoom: number; rotationDeg: number } | null {
+    const node = this.scenePort.getNode(nodeId as never);
+    if (!node) return null;
+    // worldMatrix e/f are the node's world-space origin; its on-screen angle is
+    // the matrix's rotation (camera never rotates, only pans/zooms).
+    const m = node.worldMatrix;
+    const screen = this.ws.camera.worldToScreen({ x: m.e, y: m.f });
+    return {
+      x: screen.x,
+      y: screen.y,
+      zoom: this.ws.camera.zoom,
+      rotationDeg: (Math.atan2(m.b, m.a) * 180) / Math.PI,
+    };
   }
 
   // ── Render scheduling ────────────────────────────────────────────
@@ -114,10 +161,20 @@ export class WorkspaceController {
     return Math.round(this.ws.camera.zoom * 100);
   }
 
-  /** Frame the whole composition in the viewport. */
-  fitComposition(padding = 48): void {
+  /** Frame the whole composition in the viewport, and (re-)enable auto-fit so it
+   *  keeps tracking viewport/comp-size changes until the user zooms or pans.
+   *  Zero padding = AE-style fit: the contain-fit is computed from the viewport
+   *  and comp sizes, so the comp touches the viewport on the binding axis
+   *  (top/bottom for wide comps) instead of floating in a 48px margin. */
+  fitComposition(padding = 0): void {
     const { width, height } = useCompositionStore.getState();
-    this.ws.zoomToFit(Rect.rect(0, 0, width, height), padding);
+    this.fitting = true;
+    this.autoFitEnabled = true;
+    try {
+      this.ws.zoomToFit(Rect.rect(0, 0, width, height), padding);
+    } finally {
+      this.fitting = false;
+    }
   }
 
   /** Frame the current selection (falls back to fit-all). */

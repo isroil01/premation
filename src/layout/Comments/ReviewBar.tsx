@@ -48,7 +48,7 @@ export function ReviewBar(): JSX.Element {
         ))}
       </div>
       <button type="button" className={styles.share} onClick={share} title="Copy a shareable review link">
-        <Icon name="arrow-up" size={12} /> Share
+        <Icon name="share" size={12} /> Share
       </button>
     </div>
   );

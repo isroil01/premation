@@ -1,14 +1,15 @@
 import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * PathOpControls (MG Phase C) — "Path Operator" inspector section for shape
- * layers. Deform the outline with Zig-Zag or Round Corners; Amount/Detail are
- * keyframeable (animate Zig-Zag amount for a wobbling squiggle).
+ * layers. Deform the outline with Zig-Zag, Round Corners, Pucker & Bloat or
+ * Twist; Amount/Detail are keyframeable (animate Zig-Zag amount for a wobbling
+ * squiggle).
  */
 
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { cn } from '@utils/cn';
+
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -25,12 +26,15 @@ import {
   type PathOpParam,
 } from '@core/scene/pathOps';
 import styles from './TextAnimatorControls.module.css';
+import { Checkbox } from '@components/Checkbox';
 
 const TYPES: { id: PathOpType; label: string }[] = [
   { id: 'zigzag', label: 'Zig-Zag' },
   { id: 'roundCorners', label: 'Round Corners' },
   { id: 'pucker', label: 'Pucker & Bloat' },
   { id: 'twist', label: 'Twist' },
+  { id: 'offset', label: 'Offset Paths' },
+  { id: 'roughen', label: 'Roughen' },
 ];
 
 /** Per-operator labels for the two numeric params (detail is unused by some). */
@@ -42,9 +46,27 @@ function paramLabels(type: PathOpType): { amount: string; detail: string | null 
       return { amount: 'Amount', detail: null };
     case 'twist':
       return { amount: 'Angle', detail: null };
+    case 'offset':
+      return { amount: 'Offset', detail: null };
+    case 'roughen':
+      return { amount: 'Size', detail: 'Detail' };
     default:
       return { amount: 'Amount', detail: 'Ridges' };
   }
+}
+
+/**
+ * The lower bound for an operator's parameter.
+ *
+ * Not every parameter is non-negative: Pucker & Bloat is puckered below zero
+ * and bloated above it, and Twist takes signed angles — clamping both to 0 hid
+ * half of each operator. Counts (ridges, steps) genuinely can't go negative.
+ */
+function paramMin(type: PathOpType, param: PathOpParam): number | undefined {
+  if (param === 'detail') return 0;
+  // Signed amounts: pucker (pucker/bloat), twist (either direction), offset
+  // (contract/expand). Sizes and counts stay non-negative.
+  return type === 'pucker' || type === 'twist' || type === 'offset' ? undefined : 0;
 }
 
 function ParamRow({
@@ -52,11 +74,13 @@ function ParamRow({
   param,
   label,
   value,
+  min,
 }: {
   nodeId: string;
   param: PathOpParam;
   label: string;
   value: number;
+  min?: number;
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
@@ -78,17 +102,16 @@ function ParamRow({
 
   return (
     <div className={styles.paramRow}>
-      <button
-        type="button"
-        className={cn(styles.stopwatch, animated && styles.stopwatchOn)}
-        onClick={toggle}
-        aria-pressed={animated}
-        aria-label={animated ? `Remove ${label} animation` : `Animate ${label}`}
-      >
-        <Icon name="keyframe" size={11} />
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+          <Checkbox 
+            checked={animated} 
+            onChange={toggle} 
+            title="Toggle Animation"
+            style={{ width: 14, height: 14 }}
+          />
+        </div>
       <span className={styles.paramLabel}>{label}</span>
-      <ValueField value={display} onChange={onChange} min={0} aria-label={label} />
+      <ValueField value={display} onChange={onChange} min={min} aria-label={label} />
     </div>
   );
 }
@@ -121,7 +144,7 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       <div className={styles.selectorRow}>
         <span className={styles.paramLabel}>Type</span>
         <Dropdown
-          placement="bottom-end"
+          placement="left-start"
           trigger={
             <button type="button" className={styles.pick}>
               <span>{typeLabel}</span>
@@ -131,9 +154,21 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           items={items}
         />
       </div>
-      <ParamRow nodeId={nodeId} param="amount" label={paramLabels(op.type).amount} value={op.amount} />
+      <ParamRow
+        nodeId={nodeId}
+        param="amount"
+        label={paramLabels(op.type).amount}
+        value={op.amount}
+        min={paramMin(op.type, 'amount')}
+      />
       {paramLabels(op.type).detail && (
-        <ParamRow nodeId={nodeId} param="detail" label={paramLabels(op.type).detail!} value={op.detail} />
+        <ParamRow
+          nodeId={nodeId}
+          param="detail"
+          label={paramLabels(op.type).detail!}
+          value={op.detail}
+          min={paramMin(op.type, 'detail')}
+        />
       )}
     </div>
   );

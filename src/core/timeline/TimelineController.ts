@@ -15,7 +15,17 @@
  *                            workspaceStore (seconds) ──▶ existing UI
  */
 
-import { Timeline, frameRate, framesToSeconds, secondsToFrames, type Layer } from '@motion/timeline';
+import {
+  Timeline,
+  frameRate,
+  framesToSeconds,
+  secondsToFrames,
+  serializeTimeline,
+  applySerializedTimeline,
+  Marker,
+  type SerializedTimeline,
+  type Layer,
+} from '@motion/timeline';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -26,6 +36,7 @@ import type { SceneNode } from '@core/types';
 import { defaultAnimation } from '@motion/animation';
 
 
+import { getEventBus } from '@core/events/EventBus';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import type { Command as TimelineCommand } from '@motion/timeline';
@@ -83,24 +94,28 @@ class TimelineCommandAdapter implements IUndoableCommand {
 export class TimelineController {
   private registries = new Map<string, Timeline>();
   private compositionTrackIds = new Map<string, string>();
+  /**
+   * True while loading a document or mirroring the scene. Both replay the
+   * engine's structural events, which must not be mistaken for user edits and
+   * re-saved (a load would immediately dirty the project it just loaded).
+   */
+  private reconciling = false;
+  /** Per-composition loop toggle; absent means the default (looping on). */
+  private loopingByComp = new Map<string, boolean>();
+
+  /** The composition the active tab is showing. */
+  private get activeCompId(): string {
+    const ws = useWorkspaceStore.getState();
+    const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : null;
+    return tab?.compositionId || 'comp_default';
+  }
 
   get timeline(): Timeline {
-    const ws = useWorkspaceStore.getState();
-    const activeTabId = ws.activeTabId;
-    const tab = activeTabId ? ws.tabs[activeTabId] : null;
-    const compId = tab?.compositionId || 'comp_default';
+    const compId = this.activeCompId;
     if (!this.registries.has(compId)) {
       this.initTimeline(compId);
     }
     return this.registries.get(compId)!;
-  }
-
-  private get compositionTrackId(): string {
-    const ws = useWorkspaceStore.getState();
-    const activeTabId = ws.activeTabId;
-    const tab = activeTabId ? ws.tabs[activeTabId] : null;
-    const compId = tab?.compositionId || 'comp_default';
-    return this.compositionTrackIds.get(compId)!;
   }
 
   constructor() {
@@ -108,7 +123,11 @@ export class TimelineController {
   }
 
   private initTimeline(compId: string) {
-    const compSettings = useCompositionStore.getState();
+    // Read the comp being initialized — not the active tab's. These differ
+    // whenever a timeline is created for a comp the user isn't looking at
+    // (project load, precompose), which would otherwise seed the wrong fps.
+    const compSettings =
+      useWorkspaceStore.getState().comps[compId] ?? useCompositionStore.getState().comp();
     const timeline = Timeline.create({
       name: 'Composition',
       frameRate: frameRate(compSettings.fps),
@@ -147,6 +166,23 @@ export class TimelineController {
         ws.actions.setPlaying(playing);
       }
     });
+
+    // The time domain is persisted state, but none of it moves the scene graph,
+    // so autosave would never hear about a trim, split, marker or work area.
+    // Deliberately excludes playhead/zoom/scroll — those are view state and
+    // would make autosave fire on every frame of playback.
+    const persisted = [
+      'LayerAdded', 'LayerRemoved', 'LayerMoved', 'LayerTrimmed', 'LayerSplit', 'LayerUpdated',
+      'TrackAdded', 'TrackRemoved', 'TrackMoved', 'TrackUpdated', 'TrackFlagsChanged',
+      'MarkerAdded', 'MarkerRemoved', 'MarkerUpdated',
+      'RangeChanged', 'DurationChanged', 'FrameRateChanged',
+    ] as const;
+    for (const evt of persisted) {
+      timeline.events.on(evt, () => {
+        if (this.reconciling) return;
+        getEventBus().emit('DocumentChanged', { source: 'timeline' });
+      });
+    }
 
     this.registries.set(compId, timeline);
     this.syncFromScene(compId);
@@ -230,17 +266,175 @@ export class TimelineController {
   }
 
   // ── Clips (a node's engine layers) ───────────────────────────────
-  /** All engine layers backing a scene node (its clips), left→right. */
+  /**
+   * The timeline that OWNS a node's clips: the registry keyed by the node's
+   * parent (a comp root or an opened precomp group). Falls back to the active
+   * comp for parents with no registry — plain groups, whose children have no
+   * clips of their own.
+   *
+   * This used to be hardwired to the ACTIVE comp, which had two consequences:
+   * precomposing a layer orphaned its clips (the node was no longer an
+   * immediate child of the active root, so syncFromScene deleted its trims),
+   * and rendering a non-active comp (render queue) ignored that comp's trims
+   * entirely.
+   */
+  private registryForNode(nodeId: string): { timeline: Timeline; trackId: string } | null {
+    const parentId = defaultSceneGraph.getNode(nodeId)?.parent;
+    if (parentId && this.registries.has(parentId)) {
+      const trackId = this.compositionTrackIds.get(parentId);
+      const timeline = this.registries.get(parentId);
+      if (trackId && timeline) return { timeline, trackId };
+    }
+    const compId = this.activeCompId;
+    if (!this.registries.has(compId)) this.initTimeline(compId);
+    const timeline = this.registries.get(compId);
+    const trackId = this.compositionTrackIds.get(compId);
+    return timeline && trackId ? { timeline, trackId } : null;
+  }
+
+  /** Frame rate of the timeline that owns a node's clips. */
+  fpsForNode(nodeId: string): number {
+    return this.registryForNode(nodeId)?.timeline.getFrameRate().fps ?? this.fps;
+  }
+
+  /**
+   * Memoized per-track sourceId → layers indexes. `getLayersForNode` is called
+   * PER NODE by the renderer (remapOf), the workspace ports and the timeline
+   * model — a full `layers.filter()` per call made every frame O(n²) in layer
+   * count. Membership only changes when clips are added/removed/split, which
+   * shows up as an array/length change (and syncFromScene clears the indexes
+   * explicitly); per-clip start edits don't affect membership, and the tiny
+   * per-node arrays are re-sorted on read. Keyed per track because clips now
+   * resolve to the OWNING comp's track, not always the active one.
+   */
+  private layerIndexes = new WeakMap<object, { arr: unknown; len: number; idx: Map<string, Layer[]> }>();
+
+  /** Drop the memoized layer indexes (call after structural clip changes). */
+  invalidateLayerIndex(): void {
+    this.layerIndexes = new WeakMap();
+  }
+
   getLayersForNode(nodeId: string): Layer[] {
-    const track = this.timeline.getTrack(this.compositionTrackId);
+    const reg = this.registryForNode(nodeId);
+    if (!reg) return [];
+    const track = reg.timeline.getTrack(reg.trackId);
     if (!track) return [];
-    return track.layers.filter((l) => l.sourceId === nodeId).sort((a, b) => a.start - b.start);
+    let entry = this.layerIndexes.get(track);
+    if (!entry || entry.arr !== track.layers || entry.len !== track.layers.length) {
+      const idx = new Map<string, Layer[]>();
+      for (const l of track.layers) {
+        if (!l.sourceId) continue; // sourceless clips can't be looked up by node
+        const arr = idx.get(l.sourceId);
+        if (arr) arr.push(l);
+        else idx.set(l.sourceId, [l]);
+      }
+      entry = { arr: track.layers, len: track.layers.length, idx };
+      this.layerIndexes.set(track, entry);
+    }
+    const arr = entry.idx.get(nodeId);
+    return arr ? [...arr].sort((a, b) => a.start - b.start) : [];
+  }
+
+  /**
+   * Move the clip geometry (trims, splits, positions, markers) that backs
+   * `nodeIds` from one comp's timeline to another's. Used by precompose: the
+   * nodes become children of the precomp group, so their clips must follow
+   * them into the precomp's timeline — before this existed, syncFromScene
+   * dropped them as orphans and every trim/split was silently lost.
+   *
+   * Replaces any clips the destination already holds for those nodes (its
+   * initTimeline sync seeds full-length ones). Not undoable: it accompanies a
+   * structural scene change, mirroring syncFromScene's contract.
+   */
+  transferNodeClips(nodeIds: ReadonlyArray<string>, fromCompId: string, toCompId: string): void {
+    const from = this.registries.get(fromCompId);
+    if (!from) return; // source timeline never existed — nothing to preserve
+    const fromTrackId = this.compositionTrackIds.get(fromCompId);
+    const fromTrack = fromTrackId ? from.getTrack(fromTrackId) : null;
+    if (!fromTrack) return;
+
+    if (!this.registries.has(toCompId)) this.initTimeline(toCompId);
+    const to = this.registries.get(toCompId);
+    const toTrackId = this.compositionTrackIds.get(toCompId);
+    const toTrack = toTrackId ? to?.getTrack(toTrackId) : null;
+    if (!to || !toTrackId || !toTrack) return;
+
+    const wanted = new Set(nodeIds);
+    const moving = fromTrack.layers.filter((l) => l.sourceId && wanted.has(l.sourceId));
+    if (moving.length === 0) return;
+
+    const wasReconciling = this.reconciling;
+    this.reconciling = true;
+    try {
+      to.history.silently(() => {
+        // Drop the full-length clips initTimeline's sync seeded for these
+        // nodes, then recreate the real geometry.
+        for (const stale of [...toTrack.layers]) {
+          if (stale.sourceId && wanted.has(stale.sourceId)) to.removeLayer(stale.id);
+        }
+        for (const l of moving) {
+          const added = to.addLayer(toTrackId, {
+            name: l.name,
+            sourceId: l.sourceId,
+            enabled: l.enabled,
+            locked: l.locked,
+            clip: l.clip.toJSON(),
+            metadata: { ...l.metadata },
+          });
+          if (added) {
+            for (const m of l.markers.list()) {
+              added.markers.add(new Marker({
+                frame: m.frame,
+                duration: m.duration,
+                name: m.name,
+                color: m.color,
+                comment: m.comment,
+                scope: m.scope,
+                ownerId: added.id,
+              }));
+            }
+          }
+        }
+      });
+      from.history.silently(() => {
+        for (const l of moving) from.removeLayer(l.id);
+      });
+    } finally {
+      this.reconciling = wasReconciling;
+      this.invalidateLayerIndex();
+    }
   }
 
   /** Move a clip to an absolute timeline start (seconds). Undoable (one entry
    *  per drag gesture — the UI commits only on release). */
   setClipStart(layerId: string, startSeconds: number): void {
     this.timeline.setLayerStart(layerId, secondsToFrames(startSeconds, this.timeline.getFrameRate()));
+  }
+
+  /**
+   * After Effects "Sequence Layers": lay the given layers' BARS end-to-end in
+   * time, in the order supplied — each layer starts where the previous one ends
+   * (minus `overlapSeconds` for a cross-dissolve-style overlap). The first layer
+   * stays put. This offsets the clip bars, unlike the keyframe-stagger assistant
+   * `sequenceLayers` (which only shifts animation in place). Returns false with
+   * fewer than two timeline layers among the nodes.
+   */
+  sequenceLayerBars(nodeIds: ReadonlyArray<string>, overlapSeconds = 0): boolean {
+    const fr = this.timeline.getFrameRate();
+    const layers = nodeIds
+      .map((id) => this.getLayersForNode(id)[0])
+      .filter((l): l is Layer => !!l);
+    if (layers.length < 2) return false;
+    const overlap = Math.round(secondsToFrames(overlapSeconds, fr));
+    // The first layer anchors the sequence; each next bar butts against it.
+    let cursor = Math.max(0, layers[0]!.start + layers[0]!.duration - overlap);
+    for (let i = 1; i < layers.length; i++) {
+      const L = layers[i]!;
+      this.timeline.setLayerStart(L.id, cursor);
+      cursor = Math.max(0, cursor + L.duration - overlap);
+    }
+    this.invalidateLayerIndex();
+    return true;
   }
 
   /** Trim a clip edge to an absolute time (seconds). Undoable. */
@@ -250,7 +444,17 @@ export class TimelineController {
 
   // ── Time Mapping (Absolute ↔ Layer-Relative) ────────────────────
 
-  /** Convert an absolute timeline time (seconds) to layer-relative time. */
+  /**
+   * Convert an absolute timeline time (seconds) to layer-relative time.
+   *
+   * **Do not use this to read or write keyframes** — use {@link getRemappedTime}.
+   * This is a naive "subtract the first clip's start": it ignores `sourceIn`,
+   * ignores which clip is actually under the playhead, and answers for a time
+   * the layer may not even occupy. `getRemappedTime` is what the RENDERER uses
+   * (via `buildSnapshot`'s `remapOf`), so it is the only conversion that makes
+   * the inspector agree with the pixels. Mixing the two is what made a value
+   * typed at 5s change the keyframe the user set at 1s.
+   */
   toLayerTime(nodeId: string, absoluteSeconds: number): number {
     const clips = this.getLayersForNode(nodeId);
     const firstClip = clips[0];
@@ -358,6 +562,28 @@ export class TimelineController {
   addMarkerAtPlayhead(label = 'Marker', color: string | null = '#3b82f6'): void {
     this.timeline.addMarker({ frame: Math.round(this.timeline.currentFrame), name: label, color, scope: 'timeline' });
   }
+  /**
+   * Add a LAYER marker on the given node's layer at the playhead (AE: layer
+   * markers travel with the layer). The frame is stored layer-relative (0 = the
+   * layer's in-point), so trimming or sliding the layer carries its markers
+   * along. The Marker model, `layerIndex` routing and serialization already
+   * support `scope:'layer'`; this fills the missing controller entry point.
+   * Returns false when the node has no timeline layer.
+   */
+  addLayerMarkerAtPlayhead(nodeId: string, label = 'Marker', color: string | null = '#a855f7'): boolean {
+    const layer = this.getLayersForNode(nodeId)[0];
+    if (!layer) return false;
+    const fps = this.timeline.getFrameRate().fps;
+    const layerSeconds = this.toLayerTime(nodeId, this.timeline.currentFrame / fps);
+    this.timeline.addMarker({
+      frame: Math.round(layerSeconds * fps),
+      name: label,
+      color,
+      scope: 'layer',
+      ownerId: layer.id,
+    });
+    return true;
+  }
   removeMarker(id: string): void {
     this.timeline.removeMarker(id);
   }
@@ -390,10 +616,10 @@ export class TimelineController {
     this.syncLoopToWorkArea();
   }
 
-  /** Clear the work area; playback loops the whole composition again. */
+  /** Clear the work area; playback covers the whole composition again. */
   clearWorkArea(): void {
     this.timeline.setRange('workArea', null);
-    this.timeline.setRange('loop', { start: 0, duration: this.timeline.duration });
+    this.syncLoopToWorkArea();
   }
   /** Work area in seconds, or null when unset. */
   getWorkArea(): { start: number; end: number } | null {
@@ -405,7 +631,30 @@ export class TimelineController {
       end: framesToSeconds(wa.start + wa.duration, rate),
     };
   }
+  // ── Looping (a preview setting, NOT the work area) ────────────────
+  /**
+   * Whether playback loops. Independent of the work area: the two are separate
+   * concepts in After Effects, and conflating them meant the Loop button
+   * silently destroyed a work area set with B/N (and cleared it on mount).
+   *
+   * The loop RANGE follows the work area when one is set, which is what makes
+   * B/N define a preview region.
+   */
+  isLooping(): boolean {
+    return this.loopingByComp.get(this.activeCompId) ?? true;
+  }
+
+  setLooping(on: boolean): void {
+    this.loopingByComp.set(this.activeCompId, on);
+    this.syncLoopToWorkArea();
+  }
+
   private syncLoopToWorkArea(): void {
+    if (!this.isLooping()) {
+      // No loop range ⇒ the engine parks the playhead at the end.
+      this.timeline.setRange('loop', null);
+      return;
+    }
     const wa = this.timeline.getRanges().workArea;
     this.timeline.setRange('loop', wa ? { ...wa } : { start: 0, duration: this.timeline.duration });
   }
@@ -473,6 +722,61 @@ export class TimelineController {
     }));
   }
 
+  // ── Persistence ──────────────────────────────────────────────────
+  /**
+   * Serialize every live composition timeline, keyed by composition id.
+   *
+   * This is the time domain's only route into the project file. Without it the
+   * scene graph saves but every trim, split, clip position, marker and the work
+   * area are discarded on reload and regenerated from scratch by syncFromScene.
+   */
+  capture(): Record<string, SerializedTimeline> {
+    const out: Record<string, SerializedTimeline> = {};
+    for (const [compId, timeline] of this.registries) {
+      out[compId] = serializeTimeline(timeline);
+    }
+    return out;
+  }
+
+  /**
+   * Rebuild the composition timelines from a captured document.
+   *
+   * Restores into instances created by `initTimeline` so the history hook and
+   * event wiring survive, then reconciles against the scene: `syncFromScene`
+   * only adds clips for nodes that have none and drops orphans, so restored
+   * clip geometry is left intact. Call AFTER the scene graph is restored.
+   */
+  restore(docs: Record<string, SerializedTimeline> | undefined | null): void {
+    if (!docs) return;
+    const wasReconciling = this.reconciling;
+    this.reconciling = true;
+    try {
+      for (const [compId, doc] of Object.entries(docs)) {
+        if (!doc) continue;
+        if (!this.registries.has(compId)) this.initTimeline(compId);
+        const timeline = this.registries.get(compId);
+        if (!timeline) continue;
+
+        applySerializedTimeline(timeline, doc);
+
+        // Track identity is re-established from the restored document — the id
+        // minted by initTimeline belonged to a track we just replaced.
+        const tracks = timeline._internal().tracks;
+        const compTrack = tracks.find((t) => t.name === 'Composition') ?? tracks[0];
+        if (compTrack) {
+          this.compositionTrackIds.set(compId, compTrack.id);
+        } else {
+          const fresh = timeline.addTrack({ name: 'Composition', kind: 'group' });
+          this.compositionTrackIds.set(compId, fresh.id);
+        }
+
+        this.syncFromScene(compId);
+      }
+    } finally {
+      this.reconciling = wasReconciling;
+    }
+  }
+
   // ── Scene → layers mirror ────────────────────────────────────────
   /**
    * Reconcile timeline layers to the current scene nodes: one layer per node on
@@ -504,6 +808,11 @@ export class TimelineController {
       bySource.set(layer.sourceId, arr);
     }
 
+    // Structural mirror of the scene, not a user edit — SceneGraphChanged has
+    // already told autosave about whatever caused this.
+    const wasReconciling = this.reconciling;
+    this.reconciling = true;
+    try {
     timeline.history.silently(() => {
       // Add one clip for new nodes; refresh props on existing clips (don't touch
       // geometry — that's user-edited).
@@ -545,6 +854,12 @@ export class TimelineController {
         if (!wantIds.has(sourceId)) for (const l of layers) timeline.removeLayer(l.id);
       }
     });
+    } finally {
+      this.reconciling = wasReconciling;
+      // Clip membership may have changed (adds/removes above) — drop the
+      // memoized sourceId→layers index.
+      this.invalidateLayerIndex();
+    }
   }
 }
 
@@ -564,7 +879,9 @@ export function getTimelineController(): TimelineController {
 
 export function getRemappedTime(nodeId: string, time: number): number {
   const controller = getTimelineController();
-  const fps = controller.timeline.getFrameRate().fps;
+  // The OWNING comp's fps — a node nested in a precomp keeps its clips in the
+  // precomp's timeline, which may run at a different rate than the active tab.
+  const fps = controller.fpsForNode(nodeId);
   const currentFrame = Math.round(time * fps);
   const clips = controller.getLayersForNode(nodeId);
   if (clips.length > 0) {

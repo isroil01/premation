@@ -27,9 +27,12 @@ import { bumpScene } from '@stores/sceneStore';
 export type RangeBasedOn = 'characters' | 'words' | 'lines';
 export type SelectorShape = 'square' | 'rampUp' | 'rampDown' | 'triangle' | 'round' | 'smooth';
 
+export type SelectorMode = 'range' | 'wiggly';
+
 /** The numeric parameters of an animator, each keyframeable by prop-path. */
 export const ANIMATOR_PARAMS = [
   'start', 'end', 'offset', 'x', 'y', 'scale', 'rotation', 'opacity', 'tracking',
+  'skew', 'wiggleFreq',
 ] as const;
 export type AnimatorParam = (typeof ANIMATOR_PARAMS)[number];
 
@@ -59,6 +62,12 @@ export interface TextAnimatorData {
   opacity: number;
   /** Extra tracking, px. */
   tracking: number;
+  /** Skew, degrees (italic-style shear per glyph). */
+  skew?: number;
+  /** Selector mode: 'range' (static window) or 'wiggly' (per-unit noise over time). */
+  mode?: SelectorMode;
+  /** Wiggly selector frequency, Hz. */
+  wiggleFreq?: number;
   /** Optional fill colour the covered glyphs blend toward. */
   color?: string;
 }
@@ -67,6 +76,7 @@ export interface TextAnimatorData {
 export interface ResolvedAnimator {
   basedOn: RangeBasedOn;
   shape: SelectorShape;
+  mode: SelectorMode;
   start: number;
   end: number;
   offset: number;
@@ -76,6 +86,8 @@ export interface ResolvedAnimator {
   rotation: number;
   opacity: number;
   tracking: number;
+  skew: number;
+  wiggleFreq: number;
   color?: string;
 }
 
@@ -93,6 +105,8 @@ export interface GlyphTransform {
   opacity: number;
   /** Extra advance width, px. */
   tracking: number;
+  /** Shear, degrees (applied as a horizontal skew transform per glyph). */
+  skew: number;
   /** Colour to blend toward, with `colorMix` as the blend amount. */
   color?: string;
   colorMix?: number;
@@ -113,6 +127,9 @@ export function defaultAnimator(): TextAnimatorData {
     rotation: 0,
     opacity: 100,
     tracking: 0,
+    skew: 0,
+    mode: 'range',
+    wiggleFreq: 2,
   };
 }
 
@@ -190,14 +207,39 @@ export function unitPositions(
   return { count: wordIdx < 0 ? Math.max(1, chars.length) : wordIdx + 1, unitOfChar };
 }
 
+/** Integer lattice hash → [0, 1). Deterministic — wiggly must not boil between
+ *  renders of the same frame. */
+function hash01(a: number, b: number): number {
+  let n = ((a | 0) + 1) * 374761393 + ((b | 0) + 1) * 668265263;
+  n = (n ^ (n >>> 13)) * 1274126177;
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * Wiggly-selector weight for a unit at time `t`: smooth per-unit noise cycling
+ * at `freq` Hz. Deterministic per (unit, frame) so scrubbing is stable; every
+ * unit wiggles on its own rhythm (that's what makes AE's wiggly read organic).
+ */
+export function wigglyWeight(unit: number, t: number, freq: number): number {
+  const ts = t * Math.max(0.01, freq);
+  const i = Math.floor(ts);
+  const f = ts - i;
+  const s = f * f * (3 - 2 * f);
+  const a = hash01(unit, i);
+  const b = hash01(unit, i + 1);
+  return a + (b - a) * s;
+}
+
 /**
  * Evaluate the animator stack into per-glyph transforms. Pure: given the same
- * text and resolved animators it always yields the same result. Multiple
- * animators accumulate (position/rotation/tracking add; scale/opacity multiply).
+ * text, resolved animators and time it always yields the same result. Multiple
+ * animators accumulate (position/rotation/tracking/skew add; scale/opacity
+ * multiply). `time` only matters to wiggly-mode selectors.
  */
 export function evaluateTextAnimators(
   text: string,
   animators: readonly ResolvedAnimator[],
+  time = 0,
 ): GlyphTransform[] {
   const chars = [...text];
   const glyphs: GlyphTransform[] = chars.map((ch) => ({
@@ -208,19 +250,22 @@ export function evaluateTextAnimators(
     rotation: 0,
     opacity: 1,
     tracking: 0,
+    skew: 0,
   }));
   for (const a of animators) {
     const { count, unitOfChar } = unitPositions(text, a.basedOn);
     for (let i = 0; i < chars.length; i++) {
       const unit = unitOfChar[i] ?? 0;
       const u = count <= 0 ? 0.5 : (unit + 0.5) / count;
-      const w = rangeSelectorWeight(u, a.start, a.end, a.offset, a.shape);
+      let w = rangeSelectorWeight(u, a.start, a.end, a.offset, a.shape);
+      if (a.mode === 'wiggly') w *= wigglyWeight(unit, time, a.wiggleFreq);
       if (w <= 0) continue;
       const g = glyphs[i]!;
       g.dx += a.x * w;
       g.dy += a.y * w;
       g.rotation += a.rotation * w;
       g.tracking += a.tracking * w;
+      g.skew += a.skew * w;
       g.scale *= 1 + (a.scale / 100 - 1) * w; // lerp(1, scale/100, w)
       g.opacity *= 1 + (a.opacity / 100 - 1) * w; // lerp(1, opacity/100, w)
       if (a.color) {
@@ -271,6 +316,7 @@ export function resolveAnimators(
     return {
       basedOn: d.basedOn,
       shape: d.shape,
+      mode: d.mode === 'wiggly' ? 'wiggly' : 'range',
       start: val('start', d.start),
       end: val('end', d.end),
       offset: val('offset', d.offset),
@@ -280,6 +326,8 @@ export function resolveAnimators(
       rotation: val('rotation', d.rotation),
       opacity: val('opacity', d.opacity),
       tracking: val('tracking', d.tracking),
+      skew: val('skew', d.skew ?? 0),
+      wiggleFreq: val('wiggleFreq', d.wiggleFreq ?? 2),
       color: d.color,
     };
   });

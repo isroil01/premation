@@ -10,7 +10,7 @@ export * from './Tooltip/Tooltip';
 export * from './Popover/Popover';
 export * from './Menu/Menu';
 export * from './Dropdown/Dropdown';
-export * from './Modal/Modal';
+export * from './Modal';
 export * from './Tabs/Tabs';
 export * from './Panel/Panel';
 export * from './DockPanel/DockPanel';

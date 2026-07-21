@@ -15,7 +15,10 @@ export function ModalHost(): JSX.Element | null {
   return (
     <>
       {stack.map((m) => {
-        const doClose = (): void => close(m.id);
+        const doClose = (): void => {
+          m.onClose?.();
+          close(m.id);
+        };
         return (
           <Modal
             key={m.id}
@@ -25,6 +28,7 @@ export function ModalHost(): JSX.Element | null {
             description={m.description}
             size={m.size}
             persistent={m.persistent}
+            hideCloseButton={m.hideCloseButton}
             footer={m.footer ? m.footer(doClose) : undefined}
           >
             {m.render(doClose)}

@@ -99,11 +99,67 @@
 .toolRow {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  height: 36px;
-  padding: 0 var(--space-3);
-  border-top: 1px solid var(--color-border-subtle);
+  min-height: 36px;
+  height: auto;
+  padding: 4px var(--space-3);
   background: var(--color-surface-1);
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  width: 100%;
+  gap: var(--space-1);
+}
+
+.zoomGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.toolDropdownTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 0;
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+}
+
+.toolDropdownTrigger:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.toolDropdownTriggerActive {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 0;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid transparent;
+  position: relative;
+}
+
+.toolDropdownTriggerActive::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-primary);
 }
 
 .toolGroup {

@@ -1,33 +1,41 @@
 /**
  * ApiFileAdapter — routes the FileManager (Open/Save) to the motion-back cloud.
  *
- * `path` is a backend project id. The editor's Save path serializes a scene-only
- * ProjectFile; this adapter augments it into a full EditorDocument (scene +
- * animation + comp) on write, and restores animation/comp as a side effect on
- * read — so cloud projects round-trip the whole document while the rest of the
- * app keeps speaking ProjectFile.
+ * `path` is a backend project id. The editor's Save path serializes the
+ * full EditorDocument (see projectDocumentIO), so this adapter is a pure
+ * transport: read fetches the document, write PUTs it. It used to hand back
+ * only `doc.scene` and restore animation/comp as a hidden side effect, because
+ * the IO layer spoke scene-only.
  */
 
 import type { FileAdapter, StoredFile, OpenOptions } from './FileManager';
 import { api, isAuthenticated } from '@core/api/client';
-import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
+import { captureDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 
 export class ApiFileAdapter implements FileAdapter {
   readonly kind = 'api' as const;
 
-  /** Open the most recently updated cloud project (no native picker in-browser). */
+  /**
+   * Cloud projects are chosen from the dashboard, not a file picker.
+   *
+   * This used to ignore the picker and return whichever project was updated
+   * most recently — so "Open…" silently loaded the wrong project. Returning
+   * null lets the caller route to the dashboard instead; opening the wrong
+   * document is worse than opening none.
+   */
   async open(_opts?: OpenOptions): Promise<StoredFile | null> {
-    if (!isAuthenticated()) return null;
-    const projects = await api.listProjects().catch(() => []);
-    const latest = projects[0];
-    if (!latest) return null;
-    const contents = await this.read(latest.id);
-    if (contents == null) return null;
-    return { path: latest.id, name: latest.name, contents };
+    return null;
   }
 
-  /** Load a project by id, restore anim/comp, and hand the scene back as JSON. */
+  /**
+   * Load a project by id and hand the WHOLE document back as JSON.
+   *
+   * It used to return only `doc.scene` and restore animation/comp as a side
+   * effect, because the ProjectManager's IO spoke scene-only. The IO now takes
+   * the full document (see projectDocumentIO), so the adapter can just be a
+   * transport — no hidden restore, one restore path for cloud and local files.
+   */
   async read(path: string): Promise<string | null> {
     if (!isAuthenticated()) return null;
     try {
@@ -41,27 +49,23 @@ export class ApiFileAdapter implements FileAdapter {
       // missing project (getProject throws) should error.
       if (!doc?.scene?.nodes?.length) {
         const seeded: EditorDocument = {
+          ...doc,
           version: doc?.version ?? '1.0.0',
           scene: sceneProjectIO.createEmpty('Untitled'),
           animation: doc?.animation ?? { tracks: {}, expressions: {} },
-          comp: doc?.comp,
         };
-        restoreDocument(seeded);
-        return JSON.stringify(seeded.scene);
+        return JSON.stringify(seeded);
       }
-      // Side-effect: bring animation + comp back into the live engines.
-      restoreDocument(doc);
-      return JSON.stringify(doc.scene);
+      return JSON.stringify(doc);
     } catch {
       return null;
     }
   }
 
-  /** Persist: merge the scene ProjectFile with the current anim + comp. */
+  /** Persist the document the ProjectManager captured. */
   async write(path: string, contents: string): Promise<void> {
     if (!isAuthenticated()) throw new Error('Sign in to save to the cloud');
-    const full = this.mergeContents(contents);
-    await api.updateProject(path, { document: full });
+    await api.updateProject(path, { document: JSON.parse(contents) as EditorDocument });
   }
 
   /** Create a new cloud project and return its id as the "path". */
@@ -74,7 +78,7 @@ export class ApiFileAdapter implements FileAdapter {
 
   async list(): Promise<string[]> {
     if (!isAuthenticated()) return [];
-    const projects = await api.listProjects().catch(() => []);
+    const projects = (await api.listProjects({ limit: 100 }).catch(() => null))?.items ?? [];
     return projects.map((p) => p.id);
   }
 
@@ -88,17 +92,4 @@ export class ApiFileAdapter implements FileAdapter {
     }
   }
 
-  /** Combine an incoming scene ProjectFile string with live animation + comp. */
-  private mergeContents(contents: string): EditorDocument {
-    const full = captureDocument();
-    try {
-      const scene = JSON.parse(contents);
-      if (scene && typeof scene === 'object' && Array.isArray(scene.nodes)) {
-        full.scene = scene;
-      }
-    } catch {
-      /* keep captured scene */
-    }
-    return full;
-  }
 }

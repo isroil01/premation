@@ -26,24 +26,37 @@
 /* ── Timecode ──────────────────────────────────────────────────────── */
 .timecode {
   display: flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 2px 10px 2px 6px;
-  border-right: 1px solid var(--color-border);
-  font-family: 'JetBrains Mono', 'Fira Mono', 'Courier New', monospace;
-  font-size: 15px;
-  font-weight: 500;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.02em;
   color: var(--color-text-primary);
   cursor: default;
   white-space: nowrap;
+  height: 24px;
+  box-sizing: border-box;
+  margin-right: 4px;
+  transition: all 120ms ease;
+}
+
+.timecode:hover {
+  background: var(--color-surface-0);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .timecodeTotal {
-  font-size: 10px;
+  font-size: 11px;
+  font-family: var(--font-family-mono);
   color: var(--color-text-muted);
-  letter-spacing: 0.04em;
+  font-weight: 400;
 }
 
 /* ── Timeline Search/Filter Bar ────────────────────────────────────── */
@@ -51,15 +64,22 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-2, 8px);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-field-border);
-  border-radius: 4px;
+  gap: 6px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
   padding: 0 8px;
   height: 24px;
-  width: 220px;
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 220px;
   margin: 0 4px;
-  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
+  transition: all 120ms ease;
+}
+
+.searchContainer:hover {
+  background: var(--color-surface-0);
+  border-color: var(--color-border-strong);
 }
 
 .searchContainer:focus-within {
@@ -145,64 +165,58 @@ button.play:hover {
 .toggleBtn {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: 22px;
-  padding: 0 7px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--color-text-tertiary);
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text-secondary);
   font-size: 10px;
-  font-family: 'Inter', system-ui, sans-serif;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-family: var(--font-family-sans);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
   cursor: pointer;
-  transition: color 0.1s, background 0.1s, border-color 0.1s;
+  transition: all 120ms ease;
   white-space: nowrap;
 }
 .toggleBtn:hover {
   color: var(--color-text-primary);
-  background: var(--color-surface-3);
+  background: var(--color-surface-0);
   border-color: var(--color-border-strong);
+}
+.toggleBtn:active {
+  transform: scale(0.95);
+}
+.toggleBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 .toggleBtnActive {
   composes: toggleBtn;
   color: var(--color-primary);
   background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  border-color: var(--color-primary);
 }
 
-/* ── Graph Editor toggle ──────────────────────────────────────────── */
-.graphBtn,
-.graphBtnActive {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-family: 'Inter', system-ui, sans-serif;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+/* Icon-only variant — square, no text label (tooltip carries the name). The
+   toggle cluster used to pair each icon with a redundant word ("Loop", "Shy",
+   "Motion Blur", …), which read as noisy; the glyph + title is enough. */
+.toggleIcon {
+  composes: toggleBtn;
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
 }
-
-.graphBtn:hover {
-  background: var(--color-surface-3);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
-}
-
-.graphBtnActive {
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
-  color: var(--color-primary);
-}
-
-.graphBtnActive:hover {
-  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
+.toggleIconActive {
+  composes: toggleBtnActive;
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
 }
 
 /* ── Zoom cluster ─────────────────────────────────────────────────── */
@@ -215,23 +229,27 @@ button.play:hover {
 
 .zoomLabel {
   min-width: 44px;
-  height: 22px;
+  height: 24px;
   padding: 0 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  font-family: 'Inter', system-ui, monospace;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-3);
+  font-family: var(--font-family-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   cursor: pointer;
   text-align: center;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  transition: all 120ms ease;
   letter-spacing: 0.02em;
 }
 .zoomLabel:hover:not(:disabled) {
-  background: var(--color-surface-3);
+  background: var(--color-surface-0);
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
+}
+.zoomLabel:active:not(:disabled) {
+  transform: scale(0.95);
 }
 .zoomLabel:disabled {
   opacity: 0.4;
@@ -242,25 +260,29 @@ button.play:hover {
 .rowHeightBtn {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: 22px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-tertiary);
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 11px;
-  font-family: 'Inter', system-ui, sans-serif;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  font-family: var(--font-family-sans);
+  transition: all 120ms ease;
 }
 .rowHeightBtn:hover {
-  background: var(--color-surface-3);
+  background: var(--color-surface-0);
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
 }
+.rowHeightBtn:active {
+  transform: scale(0.95);
+}
 
 .rowHeightKey {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-family-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -299,31 +321,33 @@ button.play:hover {
   display: flex;
   align-items: center;
   gap: 1px;
-  padding: 0 6px;
-  border-left: 1px solid var(--color-border);
-  border-right: 1px solid var(--color-border);
+  padding: 1px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  margin: 0 4px;
 }
 
 .interpBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 22px;
-  padding: 0 8px;
+  height: 20px;
+  padding: 0 6px;
   background: transparent;
-  border: 1px solid transparent;
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-  font-family: 'JetBrains Mono', monospace;
+  border: none;
+  border-radius: 3px;
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: color 0.1s, background 0.1s, border-color 0.1s;
+  transition: all var(--motion-duration-fast, 120ms) var(--motion-ease-standard, ease);
   white-space: nowrap;
-  letter-spacing: 0.02em;
 }
 .interpBtn:hover {
   color: var(--color-text-primary);
-  background: var(--color-surface-3);
-  border-color: var(--color-border-strong);
+  background: var(--color-surface-0);
+}
+.interpBtn:active {
+  transform: scale(0.92);
 }
 
 /* ── Timeline Tabs ──────────────────────────────────────────────── */

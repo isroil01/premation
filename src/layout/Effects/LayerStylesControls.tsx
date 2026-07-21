@@ -6,7 +6,7 @@
 
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
-import { Switch } from '@components/Switch';
+import { Checkbox } from '@components/Checkbox';
 import {
   getNodeLayerStyles,
   toggleDropShadow,
@@ -26,8 +26,12 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
       <div className={styles.sectionTitle}>Layer styles</div>
 
       <div className={styles.blendRow}>
-        <span className={styles.blendLabel}>Drop shadow</span>
-        <Switch checked={!!ds} onChange={() => toggleDropShadow(nodeId)} aria-label="Drop shadow" />
+        <Checkbox 
+          checked={!!ds} 
+          onChange={() => toggleDropShadow(nodeId)} 
+          label={<span className={styles.blendLabel} style={{ marginLeft: 6 }}>Drop shadow</span>} 
+          aria-label="Drop shadow" 
+        />
       </div>
       {ds ? (
         <>
@@ -63,8 +67,12 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
       ) : null}
 
       <div className={styles.blendRow}>
-        <span className={styles.blendLabel}>Outer glow</span>
-        <Switch checked={!!og} onChange={() => toggleOuterGlow(nodeId)} aria-label="Outer glow" />
+        <Checkbox 
+          checked={!!og} 
+          onChange={() => toggleOuterGlow(nodeId)} 
+          label={<span className={styles.blendLabel} style={{ marginLeft: 6 }}>Outer glow</span>} 
+          aria-label="Outer glow" 
+        />
       </div>
       {og ? (
         <>

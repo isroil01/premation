@@ -45,7 +45,7 @@ export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | nul
     <div className={styles.row}>
       <span className={styles.label}>Parent</span>
       <Dropdown
-        placement="bottom-end"
+        placement="left-start"
         trigger={
           <button type="button" className={styles.trigger} aria-label="Parent layer">
             <span className={styles.value}>{currentName}</span>

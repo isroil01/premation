@@ -29,8 +29,8 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
     name: 'Default',
     builtin: true,
     regions: {
-      leftSidebar: { size: 280, collapsed: false },
-      rightInspector: { size: 320, collapsed: false },
+      leftSidebar: { size: 340, collapsed: false },
+      rightInspector: { size: 340, collapsed: false },
       bottomTimeline: { size: 260, collapsed: false },
     },
   },
@@ -38,8 +38,8 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
     name: 'Animation',
     builtin: true,
     regions: {
-      leftSidebar: { size: 240, collapsed: false },
-      rightInspector: { size: 300, collapsed: false },
+      leftSidebar: { size: 320, collapsed: false },
+      rightInspector: { size: 320, collapsed: false },
       bottomTimeline: { size: 420, collapsed: false }, // tall timeline for keyframes
     },
   },
@@ -47,7 +47,7 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
     name: 'Effects',
     builtin: true,
     regions: {
-      leftSidebar: { size: 220, collapsed: false },
+      leftSidebar: { size: 320, collapsed: false },
       rightInspector: { size: 460, collapsed: false }, // wide inspector for controls
       bottomTimeline: { size: 180, collapsed: false },
     },
@@ -56,16 +56,16 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
     name: 'Minimal',
     builtin: true,
     regions: {
-      leftSidebar: { size: 280, collapsed: true },
-      rightInspector: { size: 320, collapsed: true },
+      leftSidebar: { size: 340, collapsed: true },
+      rightInspector: { size: 340, collapsed: true },
       bottomTimeline: { size: 260, collapsed: true }, // canvas-only
     },
   },
 ];
 
 const DEFAULT_PANEL_ORDER: Record<RegionId, ReadonlyArray<string>> = {
-  leftSidebar: ['scene', 'assets', 'libraries'],
-  rightInspector: ['properties', 'motion', 'effects', 'motionTools', 'comments', 'history', 'renderQueue'],
+  leftSidebar: ['scene', 'assets', 'components', 'shapes', 'text'],
+  rightInspector: ['properties', 'style', 'rig', 'effects', 'motion', 'presets', 'misc', 'comments', 'history', 'renderQueue'],
   centerWorkspace: [],
   bottomTimeline: [],
 };

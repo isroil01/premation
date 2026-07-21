@@ -10,7 +10,7 @@ beforeEach(() => {
 describe('captureRegions', () => {
   test('snapshots size + collapsed and skips the center workspace', () => {
     const snap = captureRegions(regions());
-    expect(snap.leftSidebar).toEqual({ size: 280, collapsed: false });
+    expect(snap.leftSidebar).toEqual({ size: 340, collapsed: false });
     expect(snap.bottomTimeline?.size).toBe(260);
     expect(snap).not.toHaveProperty('centerWorkspace');
   });
@@ -52,7 +52,7 @@ describe('layoutStore.applyWorkspaceLayout', () => {
         leftSidebar: { size: 9999, collapsed: false }
       }
     });
-    // leftSidebar maxSize is 480.
-    expect(regions().leftSidebar.size).toBe(480);
+    // leftSidebar maxSize is 640.
+    expect(regions().leftSidebar.size).toBe(640);
   });
 });

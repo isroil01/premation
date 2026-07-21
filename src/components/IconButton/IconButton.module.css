@@ -38,6 +38,7 @@
 .root:focus-visible {
   outline: none;
   border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
 }
 
 /* Toggled/active state — blue fill, white icon. */

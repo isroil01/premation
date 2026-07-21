@@ -37,6 +37,7 @@ export class Camera {
   private maxZoom = 256;
   private viewW = 1;
   private viewH = 1;
+  private locked = false;
 
   constructor(opts: CameraOptions = {}) {
     if (opts.center) {
@@ -86,6 +87,20 @@ export class Camera {
     return { min: this.minZoom, max: this.maxZoom };
   }
 
+  // ── Lock (fixed workspace) ───────────────────────────────────────
+  /**
+   * When locked ("fixed workspace" mode), interactive panning is a no-op and
+   * zoom stays anchored on the viewport centre, so the composition never drifts
+   * off-screen. Programmatic framing (fit, centerOn, setState) is unaffected.
+   */
+  setLocked(locked: boolean): void {
+    this.locked = locked;
+  }
+
+  get isLocked(): boolean {
+    return this.locked;
+  }
+
   // ── Pan ──────────────────────────────────────────────────────────
   /** Set the world point shown at the viewport center. */
   setCenter(center: Vec2): void {
@@ -95,12 +110,14 @@ export class Camera {
 
   /** Pan by a delta expressed in **screen pixels** (drag with the hand tool). */
   panByScreen(dxPx: number, dyPx: number): void {
+    if (this.locked) return;
     this.centerX -= dxPx / this.zoomLevel;
     this.centerY -= dyPx / this.zoomLevel;
   }
 
   /** Pan by a delta expressed in **world units**. */
   panByWorld(dx: number, dy: number): void {
+    if (this.locked) return;
     this.centerX += dx;
     this.centerY += dy;
   }
@@ -108,7 +125,11 @@ export class Camera {
   // ── Zoom ─────────────────────────────────────────────────────────
   /** Multiply zoom by `factor`, keeping the given screen anchor fixed. */
   zoomBy(factor: number, anchorScreen?: Vec2): void {
-    const anchor = anchorScreen ?? { x: this.viewW / 2, y: this.viewH / 2 };
+    // In fixed mode, always anchor on the viewport centre so zooming keeps the
+    // composition centred instead of walking it toward the cursor.
+    const anchor = this.locked
+      ? { x: this.viewW / 2, y: this.viewH / 2 }
+      : anchorScreen ?? { x: this.viewW / 2, y: this.viewH / 2 };
     const before = this.screenToWorld(anchor);
     this.zoomLevel = this.clampZoom(this.zoomLevel * factor);
     const after = this.screenToWorld(anchor);

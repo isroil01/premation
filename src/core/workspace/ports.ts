@@ -23,14 +23,18 @@ import {
   type DeleteNodesPayload,
   type ResizeNodePayload,
   type RotateNodePayload,
+  type MoveAnchorPayload,
   type UpdateNodePathPayload,
+  type UpdateMaskPathPayload,
   Mat,
   Rect,
 } from '@motion/workspace';
+import { readNodeAnchor, moveAnchorCompensated } from '@core/scene/anchor';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/seedDefaultScene';
 import { flattenScene } from '@core/scene/sceneDerive';
@@ -41,12 +45,15 @@ import { getEventBus } from '@core/events/EventBus';
 import { readGeometry, localBounds, makeHitTestLocal, isDrawableKind as drawable } from './geometry';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { defaultAnimation } from '@motion/animation';
+import { drawToolOptions } from '@motion/workspace';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useProjectStore } from '@stores/projectStore';
 import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
 import { is3DEnabled } from '@core/scene/threeD';
+import { readSceneCamera } from '@core/scene/camera3d';
 import { Project3D, Matrix4Math } from '@motion/scene';
 import { useGuidesStore } from '@stores/guidesStore';
+import { addMaskPath, rectangleMask, ellipseMask, readNodeMask, setMaskPoints, MaskPath, MaskPoint } from '@core/effects/mask';
 
 // ── SceneGraphPort ────────────────────────────────────────────────
 function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null {
@@ -72,6 +79,12 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
   const scaleX = av.get('scaleX') ?? av.get('scale') ?? g.scaleX;
   const scaleY = av.get('scaleY') ?? av.get('scale') ?? g.scaleY;
   const rotationDeg = av.get('rotation') ?? g.rotationDeg;
+  // The pivot, in local space. The renderer places content at
+  // position + R·S·(local − anchor), so the world matrix must carry T(−anchor)
+  // or the selection chrome drifts off anchored layers.
+  const nodeAnchor = readNodeAnchor(node);
+  const anchorX = av.get('anchorX') ?? nodeAnchor.x;
+  const anchorY = av.get('anchorY') ?? nodeAnchor.y;
 
   // Find the first camera layer to compute 3D camera projection
   let cameraNode: SceneNode | undefined;
@@ -82,34 +95,28 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
     }
   }
 
-  let camera: import('@motion/scene').Project3D.Camera3D;
-  if (cameraMode === 'front') {
-    camera = Project3D.defaultCamera(width, height);
-  } else if (cameraNode) {
-    const camTime = getRemappedTime(cameraNode.id, rawTime);
-    const camValues = defaultAnimation.evaluateNode(cameraNode.id, camTime);
-    const def = Project3D.defaultCamera(width, height);
-    let cx: number | undefined, cy: number | undefined, cz: number | undefined, cfocal: number | undefined;
-    for (const c of cameraNode.components) {
-      if (c.type === 'Transform') {
-        const p = c.props as Record<string, unknown>;
-        if (typeof p.x === 'number') cx = p.x;
-        if (typeof p.y === 'number') cy = p.y;
-        if (typeof p.z === 'number') cz = p.z;
-        if (typeof p.focalLength === 'number') cfocal = p.focalLength;
-      }
-    }
-    cx = camValues.get('x') ?? cx;
-    cy = camValues.get('y') ?? cy;
-    cz = camValues.get('z') ?? cz;
-    cfocal = camValues.get('focalLength') ?? cfocal;
-    const focalLength = cfocal ?? def.focalLength;
-    camera = {
-      focalLength,
-      position: { x: cx ?? def.position.x, y: cy ?? def.position.y, z: cz ?? -focalLength },
-    };
+  // The projection MUST match the renderer's (buildSnapshot) exactly, or the
+  // selection outline drifts off the layer. Both branch on the same view mode.
+  const orthoView: import('@motion/scene').Project3D.OrthoView | null =
+    cameraMode === 'active' ? null : (cameraMode as import('@motion/scene').Project3D.OrthoView);
+  let project: (p: { x: number; y: number; z: number }) => import('@motion/scene').Project3D.Projected;
+  if (orthoView) {
+    project = (p) => Project3D.projectOrtho(p, orthoView, width, height);
   } else {
-    camera = Project3D.defaultCamera(width, height);
+    let camera: import('@motion/scene').Project3D.Camera3D;
+    if (!cameraNode) {
+      camera = Project3D.defaultCamera(width, height);
+    } else {
+      // Same resolver the renderer uses (position, focal AND orbit) — a private
+      // rebuild here ignored orbitYaw/orbitPitch, so under an orbited camera the
+      // selection outlines drifted off the rendered layers.
+      const camTime = getRemappedTime(cameraNode.id, rawTime);
+      const camValues = defaultAnimation.evaluateNode(cameraNode.id, camTime);
+      camera = readSceneCamera(defaultSceneGraph, width, height, (id, p) =>
+        id === cameraNode!.id ? camValues.get(p) : undefined,
+      );
+    }
+    project = (p) => Project3D.projectPoint(p, camera);
   }
 
   // Calculate the world matrix based on whether 3D is active
@@ -127,12 +134,12 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
       position: { x, y, z: z3 },
       rotation: { x: rotX * DEG, y: rotY * DEG, z: rotationDeg * DEG },
       scale: { x: scaleX, y: scaleY, z: 1 },
-      anchor: { x: 0, y: 0, z: 0 },
+      anchor: { x: anchorX, y: anchorY, z: 0 },
     });
 
-    const O = Project3D.projectPoint(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }), camera);
-    const X = Project3D.projectPoint(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }), camera);
-    const Y = Project3D.projectPoint(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }), camera);
+    const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+    const X = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+    const Y = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
 
     const ax = X.x - O.x;
     const ay = X.y - O.y;
@@ -142,7 +149,8 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
     worldMatrixVal = { a: ax, b: ay, c: cx_coeff, d: cy_coeff, e: O.x, f: O.y };
   } else {
     const tr = Mat.multiply(Mat.translation(x, y), Mat.rotation((rotationDeg * Math.PI) / 180));
-    worldMatrixVal = Mat.multiply(tr, Mat.scaling(scaleX, scaleY));
+    const rs = Mat.multiply(tr, Mat.scaling(scaleX, scaleY));
+    worldMatrixVal = Mat.multiply(rs, Mat.translation(-anchorX, -anchorY));
   }
 
   const localBoundsVal = localBounds(g);
@@ -172,6 +180,10 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
     zIndex,
     hitTestLocal: hitTestLocalVal,
     pathPoints: node.components.find((c) => c.type === 'Geometry')?.props.points as import('@motion/workspace').BezierPoint[] | undefined,
+    // Masks are editable outlines too — without these the Direct Selection tool
+    // can't see them, which is why a mask's shape was frozen once drawn.
+    maskPaths: readNodeMask(node)?.paths.map((p) => ({ id: p.id, points: p.points })),
+    anchor: { x: anchorX, y: anchorY },
   };
 }
 
@@ -240,6 +252,7 @@ const KIND_FOR_CREATE: Record<string, SceneKind> = {
   Star: 'shape',
   Line: 'shape',
   Pencil: 'shape',
+  Brush: 'shape',
   Text: 'text',
   Image: 'image',
   Video: 'video',
@@ -264,11 +277,24 @@ function makeNodeAt(
   const displayName = ellipse ? 'Circle' : name;
   const transform = { position: { x: cx, y: cy }, rotation: 0, scale: { x: 1, y: 1 } };
   // Open strokes (line / pencil) enclose no area, so a fill is invisible —
-  // give them a visible stroke and a transparent fill instead.
+  // give them a visible stroke and a transparent fill instead. Colours/widths
+  // come from the tool-options bar (drawToolOptions singleton).
   const stroked = STROKED_KINDS.has(name);
   const styleProps = stroked
-    ? { opacity: 100, fill: 'rgba(0,0,0,0)', stroke: { color: '#2b7eff', width: 4, opacity: 1, cap: 'round', join: 'round', align: 'center', dash: [] } }
-    : { opacity: 100, fill: '#2b7eff' };
+    ? {
+        opacity: 100,
+        fill: 'rgba(0,0,0,0)',
+        stroke: {
+          color: drawToolOptions.pencilColor,
+          width: drawToolOptions.pencilWidth,
+          opacity: 1,
+          cap: 'round',
+          join: 'round',
+          align: 'center',
+          dash: [],
+        },
+      }
+    : { opacity: 100, fill: name === 'Brush' ? drawToolOptions.brushColor : '#2b7eff' };
 
   const transformProps: Record<string, unknown> = {
     [SCENE_KIND_PROP]: kind,
@@ -322,35 +348,99 @@ function transformComponentId(node: SceneNode): ID | null {
   return null;
 }
 
+import { worldMatrixOf } from '@core/scene/worldTransform';
+import { Matrix } from '@motion/scene';
+
+function getLocalTransformForPorts(id: string) {
+  const node = defaultSceneGraph.getNode(id as ID);
+  if (!node) return null;
+  const g = readGeometry(node);
+  if (!g) return null;
+  return { x: g.x, y: g.y, rotation: g.rotationDeg, scaleX: g.scaleX, scaleY: g.scaleY };
+}
+
+function getParentIdForPorts(id: string) {
+  const node = defaultSceneGraph.getNode(id as ID);
+  return node?.parent ?? null;
+}
+
+function cidOf(node: SceneNode, prop: string): string {
+  const c = node.components.find((comp) => comp.props[prop] !== undefined);
+  return c?.id ?? node.components[0]?.id ?? '';
+}
+
+/**
+ * AE keyframing contract: a property with a lit stopwatch (an existing track)
+ * ALWAYS keyframes on direct manipulation — the global Auto-Keyframe mode only
+ * decides whether *un-animated* properties start recording. Writing a static
+ * value to a tracked property is useless: the renderer reads animated values
+ * first (`av.get(...) ?? g.x`), so the write would silently do nothing.
+ */
+function hasAnyTrack(nodeId: ID, props: readonly string[]): boolean {
+  return defaultAnimation.tracksFor(nodeId).some((t) => props.includes(t.prop as string));
+}
+
 function moveNodes(payload: MoveNodesPayload): void {
   const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
   const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  let changed = false;
-  
-  if (autoKeyframe) {
-    runAnimEdit('Auto-Keyframe Position', () => {
-      for (const id of payload.ids) {
-        const node = defaultSceneGraph.getNode(id as ID);
-        if (!node || node.locked) continue;
-        const g = readGeometry(node);
-        if (!g) continue;
-        const time = getRemappedTime(id, rawTime);
-        defaultAnimation.setKeyframe(id, 'x', getTimelineController().toLayerTime(id, time), g.x + payload.delta.x);
-        defaultAnimation.setKeyframe(id, 'y', getTimelineController().toLayerTime(id, time), g.y + payload.delta.y);
-      }
-    });
-    return;
-  }
-
+  const toKey: SceneNode[] = [];
+  const toWrite: SceneNode[] = [];
   for (const id of payload.ids) {
     const node = defaultSceneGraph.getNode(id as ID);
     if (!node || node.locked) continue;
-    const cid = transformComponentId(node);
-    if (!cid) continue;
+    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y'])) toKey.push(node);
+    else toWrite.push(node);
+  }
+
+  let changed = false;
+  if (toKey.length > 0) {
+    runAnimEdit(
+      'Keyframe Position',
+      () => {
+        for (const node of toKey) {
+          const g = readGeometry(node);
+          if (!g) continue;
+          let delta = payload.delta;
+          if (node.parent) {
+            const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts);
+            const inv = Matrix.invert(pw);
+            delta = {
+              x: inv.a * payload.delta.x + inv.c * payload.delta.y,
+              y: inv.b * payload.delta.x + inv.d * payload.delta.y,
+            };
+          }
+          const lt = getRemappedTime(node.id, rawTime);
+          const curX = defaultAnimation.sample(node.id, 'x', lt) ?? g.x;
+          const curY = defaultAnimation.sample(node.id, 'y', lt) ?? g.y;
+          defaultAnimation.setKeyframe(node.id, 'x', lt, curX + delta.x);
+          defaultAnimation.setKeyframe(node.id, 'y', lt, curY + delta.y);
+          const cx = cidOf(node, 'x');
+          const cy = cidOf(node, 'y');
+          defaultSceneGraph.writeProp(node.id, cx, 'x', curX + delta.x);
+          defaultSceneGraph.writeProp(node.id, cy, 'y', curY + delta.y);
+          changed = true;
+        }
+      },
+      `drag:move:${rawTime}:${toKey.map((n) => n.id).join(',')}`,
+    );
+  }
+
+  for (const node of toWrite) {
     const g = readGeometry(node);
     if (!g) continue;
-    defaultSceneGraph.writeProp(node.id, cid, 'x', g.x + payload.delta.x);
-    defaultSceneGraph.writeProp(node.id, cid, 'y', g.y + payload.delta.y);
+    let delta = payload.delta;
+    if (node.parent) {
+      const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts);
+      const inv = Matrix.invert(pw);
+      delta = {
+        x: inv.a * payload.delta.x + inv.c * payload.delta.y,
+        y: inv.b * payload.delta.x + inv.d * payload.delta.y,
+      };
+    }
+    const cidX = cidOf(node, 'x');
+    const cidY = cidOf(node, 'y');
+    defaultSceneGraph.writeProp(node.id, cidX, 'x', g.x + delta.x);
+    defaultSceneGraph.writeProp(node.id, cidY, 'y', g.y + delta.y);
     changed = true;
   }
   if (changed) bumpScene();
@@ -365,24 +455,52 @@ function createNode(payload: CreateNodePayload): void {
   
   const width = payload.bounds.width;
   const height = payload.bounds.height;
-  const node = makeNodeAt(kind, payload.kind, cx, cy, ellipse, payload.points, width, height);
   
   if (payload.maskTargetId) {
     const parentId = payload.maskTargetId as string;
-    // Remove stroke fx if present, and force white solid fill
-    node.components = node.components.filter((c) => c.type !== 'fx');
-    const sComp = node.components.find((c) => c.type === 'Style');
-    if (sComp && sComp.props) {
-      sComp.props.fill = '#ffffff';
+    const parentNode = defaultSceneGraph.getNode(parentId as ID);
+    if (!parentNode) return;
+
+    const parentWorldMat = worldMatrixOf(parentId, getLocalTransformForPorts, getParentIdForPorts);
+    const invParentWorldMat = Matrix.invert(parentWorldMat);
+
+    let newMask: MaskPath;
+    if (payload.points && payload.points.length > 0) {
+      const points: MaskPoint[] = payload.points.map((p: any) => {
+        // Convert drawn point (relative to bounds center) to world space
+        const wp = { x: p.x + cx, y: p.y + cy };
+        const win = { x: p.inX + cx, y: p.inY + cy };
+        const wout = { x: p.outX + cx, y: p.outY + cy };
+        // Transform to parent's local space
+        const lp = Matrix.transformPoint(invParentWorldMat, wp);
+        const lin = Matrix.transformPoint(invParentWorldMat, win);
+        const lout = Matrix.transformPoint(invParentWorldMat, wout);
+        return { x: lp.x, y: lp.y, inX: lin.x, inY: lin.y, outX: lout.x, outY: lout.y };
+      });
+      newMask = {
+        id: `mask_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        mode: 'add',
+        closed: true,
+        feather: 0,
+        opacity: 1,
+        expansion: 0,
+        inverted: false,
+        points,
+      };
+    } else {
+      // Fallback if points were missing, though workspace tools should provide them.
+      newMask = ellipse ? ellipseMask(width, height) : rectangleMask(width, height);
     }
-    // Add Mask component so it's recognized as a mask instead of a normal shape
-    node.components.push({ id: `${node.id}_mask`, type: 'mask', props: { mode: 'alpha', inverted: false, feather: 0 } });
-    node.name = 'Mask';
-    defaultSceneGraph.addChild(parentId, node);
-  } else {
-    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? ('comp_root' as ID);
-    defaultSceneGraph.addChild(rootId, node);
+    
+    addMaskPath(parentId, newMask);
+    useSelectionStore.getState().set([parentId]);
+    bumpScene();
+    return;
   }
+
+  const node = makeNodeAt(kind, payload.kind, cx, cy, ellipse, payload.points, width, height);
+  const rootId = activeCompRootId() as ID;
+  defaultSceneGraph.addChild(rootId, node);
   
   useSelectionStore.getState().set([node.id]);
   bumpScene();
@@ -409,18 +527,35 @@ function resizeNode(payload: ResizeNodePayload): void {
   
   const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
   const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const time = getRemappedTime(node.id, rawTime);
-  
-  if (autoKeyframe) {
-    runAnimEdit('Auto-Keyframe Resize', () => {
-      defaultAnimation.setKeyframe(node.id, 'x', getTimelineController().toLayerTime(node.id, time), b.x + b.width / 2);
-      defaultAnimation.setKeyframe(node.id, 'y', getTimelineController().toLayerTime(node.id, time), b.y + b.height / 2);
-      defaultAnimation.setKeyframe(node.id, 'scaleX', getTimelineController().toLayerTime(node.id, time), scaleX);
-      defaultAnimation.setKeyframe(node.id, 'scaleY', getTimelineController().toLayerTime(node.id, time), scaleY);
-    });
-    return;
+  // Layer-local sampling time — see moveNodes for why toLayerTime must NOT be
+  // applied on top (it double-subtracts the clip start).
+  const lt = getRemappedTime(node.id, rawTime);
+
+  // Per-property stopwatch contract (see hasAnyTrack): position and scale
+  // decide independently, so scaling an animated-scale layer keyframes scale
+  // while its un-animated position stays a static write.
+  const keyPos = autoKeyframe || hasAnyTrack(node.id, ['x', 'y']);
+  const keyScale = autoKeyframe || hasAnyTrack(node.id, ['scaleX', 'scaleY', 'scale']);
+
+  if (keyPos || keyScale) {
+    runAnimEdit(
+      'Keyframe Resize',
+      () => {
+        if (keyPos) {
+          defaultAnimation.setKeyframe(node.id, 'x', lt, b.x + b.width / 2);
+          defaultAnimation.setKeyframe(node.id, 'y', lt, b.y + b.height / 2);
+        }
+        if (keyScale) {
+          defaultAnimation.setKeyframe(node.id, 'scaleX', lt, scaleX);
+          defaultAnimation.setKeyframe(node.id, 'scaleY', lt, scaleY);
+        }
+      },
+      `drag:resize:${rawTime}:${node.id}`,
+    );
   }
 
+  // Static base always follows the manipulation (harmless when animated —
+  // animated reads win — and it keeps every consumer in agreement).
   defaultSceneGraph.writeProp(node.id, cid, 'x', b.x + b.width / 2);
   defaultSceneGraph.writeProp(node.id, cid, 'y', b.y + b.height / 2);
   defaultSceneGraph.writeProp(node.id, cid, 'scaleX', scaleX);
@@ -436,17 +571,28 @@ function rotateNode(payload: RotateNodePayload): void {
 
   const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
   const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const time = getRemappedTime(node.id, rawTime);
-  
-  if (autoKeyframe) {
-    runAnimEdit('Auto-Keyframe Rotate', () => {
-      defaultAnimation.setKeyframe(node.id, 'rotation', getTimelineController().toLayerTime(node.id, time), (payload.rotation * 180) / Math.PI);
-    });
-    return;
+  const deg = (payload.rotation * 180) / Math.PI;
+
+  if (autoKeyframe || hasAnyTrack(node.id, ['rotation'])) {
+    runAnimEdit(
+      'Keyframe Rotate',
+      () => {
+        // Layer-local time — no toLayerTime on top (see moveNodes).
+        defaultAnimation.setKeyframe(node.id, 'rotation', getRemappedTime(node.id, rawTime), deg);
+      },
+      `drag:rotate:${rawTime}:${node.id}`,
+    );
   }
 
-  defaultSceneGraph.writeProp(node.id, cid, 'rotation', (payload.rotation * 180) / Math.PI);
+  defaultSceneGraph.writeProp(node.id, cid, 'rotation', deg);
   bumpScene();
+}
+
+function moveAnchor(payload: MoveAnchorPayload): void {
+  const node = defaultSceneGraph.getNode(payload.id as ID);
+  if (!node || node.locked) return;
+  // moveAnchorCompensated re-pivots and shifts x/y so the layer stays put.
+  moveAnchorCompensated(node.id, payload.anchor.x, payload.anchor.y);
 }
 
 function deleteNodes(payload: DeleteNodesPayload): void {
@@ -467,6 +613,22 @@ function updateNodePath(payload: UpdateNodePathPayload): void {
   }
 }
 
+/**
+ * Reshape one of a layer's masks (the Direct Selection drag on canvas).
+ *
+ * Routes through `setMaskPoints` with the playhead, so reshaping an ANIMATED
+ * mask writes a keyframe at the current time instead of the static shape that
+ * nothing renders.
+ */
+function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
+  const node = defaultSceneGraph.getNode(payload.id as ID);
+  if (!node || node.locked) return;
+  // Comp time — the same base `keyframeMask` uses from the Effects panel, so
+  // canvas edits and the panel's keyframe button land on the same keyframes.
+  setMaskPoints(payload.id as string, payload.maskId, payload.points as MaskPoint[], getTimelineController().currentSeconds);
+  bumpScene();
+}
+
 export function createCommandPort(): CommandPort {
   return {
     execute(command: WorkspaceCommand): void {
@@ -483,11 +645,17 @@ export function createCommandPort(): CommandPort {
         case WorkspaceCommandType.RotateNode:
           rotateNode(command.payload as RotateNodePayload);
           break;
+        case WorkspaceCommandType.MoveAnchor:
+          moveAnchor(command.payload as MoveAnchorPayload);
+          break;
         case WorkspaceCommandType.DeleteNodes:
           deleteNodes(command.payload as DeleteNodesPayload);
           break;
         case WorkspaceCommandType.UpdateNodePath:
           updateNodePath(command.payload as UpdateNodePathPayload);
+          break;
+        case WorkspaceCommandType.UpdateMaskPath:
+          updateMaskPathCmd(command.payload as UpdateMaskPathPayload);
           break;
         default:
           break;

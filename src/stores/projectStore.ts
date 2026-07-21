@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { getEventBus } from '@core/events/EventBus';
 import { shortId } from '@utils/lang';
+import type { FillPaint } from '@core/paint/fill';
 
 export interface TabInfo {
   id: string; // The UI tab ID
@@ -26,8 +27,23 @@ export interface CompositionSettings {
   height: number;
   fps: number;
   durationSeconds: number;
+  /** Solid background colour AND the fallback for GPU/export + gradient first
+   *  stop. Always kept in sync with `backgroundPaint` when the latter is set. */
   background: string;
+  /**
+   * Rich background paint (solid / linear / radial gradient). When present the
+   * Canvas2D viewport paints this instead of the flat `background` colour;
+   * `background` still mirrors its representative colour so exports and the GPU
+   * backend keep working. Undefined = plain solid `background` (back-compat).
+   */
+  backgroundPaint?: FillPaint;
   transparent: boolean;
+  /**
+   * Frame the composition's DISPLAYED timecode starts from (AE's "Start
+   * Timecode"). Display-only: keyframes and playback stay 0-based; this just
+   * labels frame 0. Default 0.
+   */
+  startFrame: number;
 }
 
 export interface ProjectStoreShape {
@@ -52,8 +68,32 @@ export interface ProjectStoreShape {
 
     // Composition management
     updateComp: (id: string, patch: Partial<CompositionSettings>) => void;
+    /** Create a composition if absent; returns the settings either way. */
+    ensureComp: (id: string, init?: Partial<CompositionSettings>) => CompositionSettings;
+    /**
+     * Add a NEW composition and return its id.
+     *
+     * Nothing ever inserted into `comps` before this: the table was seeded with
+     * one entry and `updateComp` only patched existing keys, so "New
+     * Composition" could only ever overwrite the one comp and wipe the scene.
+     */
+    createComp: (init?: Partial<CompositionSettings>) => string;
+    /** Drop a composition's settings. Use `deleteComposition` for the whole thing. */
+    removeComp: (id: string) => void;
+    /** Replace the whole comp table (project load). */
+    replaceComps: (comps: Record<string, CompositionSettings>) => void;
   };
 }
+
+export const DEFAULT_COMP_SETTINGS: Omit<CompositionSettings, 'id' | 'name'> = {
+  width: 1920,
+  height: 1080,
+  fps: 30,
+  durationSeconds: 10,
+  background: '#101014',
+  transparent: false,
+  startFrame: 0,
+};
 
 export const useProjectStore = create<ProjectStoreShape>()(
   immer((set, get) => {
@@ -75,12 +115,7 @@ export const useProjectStore = create<ProjectStoreShape>()(
     const initialComp: CompositionSettings = {
       id: defaultCompId,
       name: 'Main Comp',
-      width: 1920,
-      height: 1080,
-      fps: 30,
-      durationSeconds: 10,
-      background: '#101014',
-      transparent: false,
+      ...DEFAULT_COMP_SETTINGS,
     };
 
     return {
@@ -124,6 +159,19 @@ export const useProjectStore = create<ProjectStoreShape>()(
             title: title ?? 'New Comp',
             dirty: false,
           };
+          // A tab without a comp entry falls back to DEFAULT_COMPOSITION and
+          // drops every settings edit. Seed one, inheriting the comp the user
+          // drilled down from so a precomp opens at the project's real size/fps.
+          const parentId = tab.breadcrumbPath[tab.breadcrumbPath.length - 2];
+          const parent = parentId ? get().comps[parentId] : undefined;
+          const inherited = get().activeTabId
+            ? get().comps[get().tabs[get().activeTabId!]?.compositionId ?? '']
+            : undefined;
+          const base = parent ?? inherited;
+          get().actions.ensureComp(compositionId, {
+            name: title ?? 'Composition',
+            ...(base ? { width: base.width, height: base.height, fps: base.fps, durationSeconds: base.durationSeconds } : {}),
+          });
           set((s) => {
             s.tabs[tabId] = tab;
             s.tabOrder.push(tabId);
@@ -183,9 +231,57 @@ export const useProjectStore = create<ProjectStoreShape>()(
         },
         updateComp: (id, patch) => {
           set((s) => {
-            if (s.comps[id]) {
-              Object.assign(s.comps[id], patch);
-            }
+            // Auto-create rather than drop the edit. Comp tabs are opened with a
+            // scene node id (precomps/groups), which has no comps entry until
+            // something makes one — the old `if (exists)` guard silently
+            // swallowed every settings change inside such a tab.
+            const existing = s.comps[id];
+            if (existing) Object.assign(existing, patch);
+            else s.comps[id] = { id, name: id, ...DEFAULT_COMP_SETTINGS, ...patch };
+          });
+          getEventBus().emit('DocumentChanged', { source: 'composition' });
+        },
+        ensureComp: (id, init) => {
+          const found = get().comps[id];
+          if (found) return found;
+          const { id: _ignored, ...rest } = init ?? {};
+          const created: CompositionSettings = {
+            name: 'Composition',
+            ...DEFAULT_COMP_SETTINGS,
+            ...rest,
+            id,
+          };
+          set((s) => {
+            s.comps[id] = created;
+          });
+          return created;
+        },
+        createComp: (init) => {
+          // An explicit id keeps redo stable: re-creating a comp under a fresh
+          // id would orphan every later history entry that targets it.
+          const id = init?.id ?? `comp_${shortId()}`;
+          const { id: _ignored, ...rest } = init ?? {};
+          const created: CompositionSettings = {
+            name: 'Composition',
+            ...DEFAULT_COMP_SETTINGS,
+            ...rest,
+            id,
+          };
+          set((s) => {
+            s.comps[id] = created;
+          });
+          getEventBus().emit('DocumentChanged', { source: 'composition' });
+          return id;
+        },
+        removeComp: (id) => {
+          set((s) => {
+            delete s.comps[id];
+          });
+          getEventBus().emit('DocumentChanged', { source: 'composition' });
+        },
+        replaceComps: (comps) => {
+          set((s) => {
+            s.comps = { ...comps };
           });
         },
       },

@@ -26,6 +26,7 @@ describe('compositionStore', () => {
       durationSeconds: 10,
       background: '#101014',
       transparent: false,
+      startFrame: 0,
     });
   });
 

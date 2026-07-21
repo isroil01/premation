@@ -64,6 +64,11 @@ export interface WorkspaceService {
 /** What every undoable action must implement for the global stack. */
 export interface IUndoableCommand {
   readonly label: string;
+  /**
+   * Display hint for the History panel: a deliberate, user-meaningful entry (a
+   * pinned snapshot, the "Open" baseline) rather than an auto-captured edit.
+   */
+  readonly named?: boolean;
   execute(ctx: CommandContext): void | Promise<void>;
   undo(ctx: CommandContext): void | Promise<void>;
 }
@@ -166,6 +171,9 @@ export const BuiltinCommands = {
   Deselect:             asCommandId('edit.deselect'),
   DeleteSelected:       asCommandId('edit.deleteSelected'),
   DuplicateSelected:    asCommandId('edit.duplicateSelected'),
+  Cut:                  asCommandId('edit.cut'),
+  Copy:                 asCommandId('edit.copy'),
+  Paste:                asCommandId('edit.paste'),
 } as const;
 
 export class CompositeCommand implements IUndoableCommand {

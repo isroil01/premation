@@ -4,7 +4,7 @@
  *
  *   <Tooltip label="Play">{trigger}</Tooltip>
  *
- * A single <TooltipProvider> must sit near the app root (see Providers).
+ * A single <TooltipProvider> must sit near the app root (see main.tsx).
  */
 
 import * as RTooltip from '@radix-ui/react-tooltip';

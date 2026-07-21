@@ -14,6 +14,7 @@
  */
 
 import { computePeaks, mixToMono, amplitudeAt, type WaveformPeaks } from './waveform';
+import { rmsPeak, type Levels } from './audioLevels';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
 export interface AudioLayerState {
@@ -81,6 +82,15 @@ class AudioEngine {
   private timeSec = 0;
   private readonly listeners = new Set<() => void>();
 
+  // Master metering chain: every voice routes through `master` → destination,
+  // and `master` also feeds a splitter → per-channel analysers so the VU meter
+  // reads the full stereo mix. Built lazily with the context.
+  private master: GainNode | null = null;
+  private analyserL: AnalyserNode | null = null;
+  private analyserR: AnalyserNode | null = null;
+  private meterBufL: Float32Array<ArrayBuffer> | null = null;
+  private meterBufR: Float32Array<ArrayBuffer> | null = null;
+
   private context(): AudioContext | null {
     if (this.ctx) return this.ctx;
     const Ctor =
@@ -89,7 +99,42 @@ class AudioEngine {
         : undefined;
     if (!Ctor) return null;
     this.ctx = new Ctor();
+    this.buildMasterChain(this.ctx);
     return this.ctx;
+  }
+
+  /** Master gain → destination, plus a stereo splitter → L/R analysers for the
+   *  VU meter. Voices connect to `master` (see startVoice). */
+  private buildMasterChain(ctx: AudioContext): void {
+    const master = ctx.createGain();
+    master.connect(ctx.destination);
+    try {
+      const splitter = ctx.createChannelSplitter(2);
+      master.connect(splitter);
+      const aL = ctx.createAnalyser();
+      const aR = ctx.createAnalyser();
+      aL.fftSize = 1024;
+      aR.fftSize = 1024;
+      splitter.connect(aL, 0);
+      splitter.connect(aR, 1);
+      this.analyserL = aL;
+      this.analyserR = aR;
+      this.meterBufL = new Float32Array(aL.fftSize);
+      this.meterBufR = new Float32Array(aR.fftSize);
+    } catch {
+      /* metering is best-effort; playback still works without analysers */
+    }
+    this.master = master;
+  }
+
+  /** Live L/R levels for the VU meter, or null when no analyser exists
+   *  (Web Audio unavailable / not yet started). Reads the current time-domain
+   *  block from each channel analyser. */
+  getLevels(): { l: Levels; r: Levels } | null {
+    if (!this.analyserL || !this.analyserR || !this.meterBufL || !this.meterBufR) return null;
+    this.analyserL.getFloatTimeDomainData(this.meterBufL);
+    this.analyserR.getFloatTimeDomainData(this.meterBufR);
+    return { l: rmsPeak(this.meterBufL), r: rmsPeak(this.meterBufR) };
   }
 
   /** Subscribe to load/level changes (so the waveform UI can re-render). */
@@ -209,13 +254,19 @@ class AudioEngine {
     }
   }
 
+  /** The decoded buffer for an asset, or undefined until `load` completes.
+   *  Used by the offline export mixdown (see audioMixdown). */
+  decodedBuffer(assetId: string): AudioBuffer | undefined {
+    return this.assets.get(assetId)?.buffer;
+  }
+
   private startVoice(nodeId: string, l: AudioLayerState, asset: LoadedAsset, offset: number): void {
     const ctx = this.ctx!;
     const source = ctx.createBufferSource();
     source.buffer = asset.buffer;
     const gain = ctx.createGain();
     gain.gain.value = Math.max(0, l.level / 100);
-    source.connect(gain).connect(ctx.destination);
+    source.connect(gain).connect(this.master ?? ctx.destination);
     const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
     const remaining = Math.max(0, outSec - offset);
     const startAt = Math.max(0, offset);

@@ -8,8 +8,8 @@
  *
  * Coordinates are LAYER-LOCAL and relative: gradient geometry is expressed in
  * the centred [-0.5..0.5] box, so it composes with any layer size/transform.
- * The Canvas2D backend maps them to pixels; the GPU backend uses the first stop
- * (documented gap) until gradient paints land in @motion/renderer.
+ * Both solid and gradient fills render through the Canvas2DVectorRasterizer in
+ * the unified GPU engine — no fallback to first-stop approximation.
  *
  * Deferred (like Prompt 5's keyframeable mask points): per-stop colour / angle
  * KEYFRAME animation — the AnimationEngine is scalar-only in v1, so animatable
@@ -166,11 +166,92 @@ export function getNodeFill(nodeId: string): FillPaint | undefined {
   return node ? readNodeFill(node) : undefined;
 }
 
-/** Set (or clear, when undefined) the node's fill paint. */
+// ── Multi-fill (fill STACK, drawn bottom→top) ────────────────────────
+
+function rawFills(node: SceneNode): FillPaint[] | null {
+  const fx = node.components.find((c) => c.type === 'fx');
+  const arr = fx?.props.fills;
+  if (!Array.isArray(arr)) return null;
+  const valid = arr.filter(isFillPaint);
+  return valid.length > 0 ? valid : null;
+}
+
+/**
+ * The node's full fill stack. Nodes saved before multi-fill (or edited only
+ * through the single-fill API) report their one legacy fill as a 1-element
+ * stack, so every consumer can treat fills as an array.
+ */
+export function readNodeFills(node: SceneNode): FillPaint[] {
+  const arr = rawFills(node);
+  if (arr) return arr;
+  const single = readNodeFill(node);
+  return single ? [single] : [];
+}
+
+export function getNodeFills(nodeId: string): FillPaint[] {
+  const node = defaultSceneGraph.getNode(nodeId);
+  return node ? readNodeFills(node) : [];
+}
+
+/**
+ * Replace the whole fill stack. The legacy single-fill slot mirrors fills[0]
+ * so older readers (text finalFill, GPU backend, exports) keep working.
+ */
+export function setNodeFills(nodeId: string, fills: FillPaint[]): void {
+  defaultSceneGraph.setFills(nodeId, fills.length > 1 ? fills : undefined);
+  defaultSceneGraph.setFill(nodeId, fills[0]);
+  bumpScene();
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/** Set (or clear, when undefined) the node's PRIMARY fill. When a fill stack
+ *  exists this edits its first entry (clearing drops it from the stack), so
+ *  the single-fill inspector controls and the gradient gizmo stay truthful. */
 export function setNodeFill(nodeId: string, paint: FillPaint | undefined): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const arr = node ? rawFills(node) : null;
+  if (arr) {
+    setNodeFills(nodeId, paint ? [paint, ...arr.slice(1)] : arr.slice(1));
+    return;
+  }
   defaultSceneGraph.setFill(nodeId, paint);
   bumpScene();
   getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/**
+ * Build a Canvas2D gradient for a linear/radial paint over a `w`×`h` box.
+ *
+ * Geometry is expressed relative to an origin `(ox, oy)`: pass `(0, 0)` when the
+ * context is already translated to the box centre (layer fills), or the box
+ * centre `(w/2, h/2)` when filling a canvas from its top-left (the GPU
+ * background texture). Shared by the Canvas2D backend and the GPU texture
+ * rasterizer so both paths produce identical gradients.
+ */
+export function makeCanvasGradient(
+  ctx: CanvasRenderingContext2D,
+  paint: LinearFill | RadialFill,
+  w: number,
+  h: number,
+  ox = 0,
+  oy = 0,
+): CanvasGradient {
+  let grad: CanvasGradient;
+  if (paint.type === 'linear') {
+    // Endpoints span the box along the angle (0°=→, 90°=↓).
+    const a = (paint.angle * Math.PI) / 180;
+    const dx = Math.cos(a);
+    const dy = Math.sin(a);
+    const half = (Math.abs(dx) * w + Math.abs(dy) * h) / 2;
+    grad = ctx.createLinearGradient(ox - dx * half, oy - dy * half, ox + dx * half, oy + dy * half);
+  } else {
+    const cx = ox + (paint.cx - 0.5) * w;
+    const cy = oy + (paint.cy - 0.5) * h;
+    const r = (Math.max(0.01, paint.radius) * Math.hypot(w, h)) / 2;
+    grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  }
+  for (const s of sortedStops(paint.stops)) grad.addColorStop(clamp01(s.offset), s.color);
+  return grad;
 }
 
 /** Switch fill type, preserving colour/stops where sensible. */

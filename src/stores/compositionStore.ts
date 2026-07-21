@@ -13,8 +13,24 @@
  */
 
 import { useProjectStore, type CompositionSettings } from './projectStore';
+import { sortedStops, type FillPaint } from '@core/paint/fill';
 
 export type { CompositionSettings };
+
+/** The representative flat colour of a paint — the solid colour, or a
+ *  gradient's first stop. Mirrored into `background` so the GPU engine's
+ *  solid-color fallback and export solid-color fallback remain correct. */
+function paintColor(p: FillPaint): string {
+  return p.type === 'solid' ? p.color : sortedStops(p.stops)[0]?.color ?? '#000000';
+}
+
+/** Render/cache key — changes whenever anything that affects pixels changes.
+ *  The gradient paint is serialized so the viewport repaints on any stop/angle
+ *  edit (a flat `background` string alone would miss gradient changes). */
+function compKeyFor(c: CompositionSettings): string {
+  const paint = c.backgroundPaint ? JSON.stringify(c.backgroundPaint) : '';
+  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}`;
+}
 
 export const DEFAULT_COMPOSITION: CompositionSettings = {
   id: 'comp_default',
@@ -25,11 +41,15 @@ export const DEFAULT_COMPOSITION: CompositionSettings = {
   durationSeconds: 10,
   background: '#101014',
   transparent: false,
+  startFrame: 0,
 };
 
 interface CompositionStore extends CompositionSettings {
   update: (patch: Partial<CompositionSettings>) => void;
   setBackground: (hex: string) => void;
+  /** Set the rich background paint (solid/linear/radial). A solid clears the
+   *  paint and keeps the back-compat flat `background` colour. */
+  setBackgroundPaint: (paint: FillPaint) => void;
   setTransparent: (v: boolean) => void;
   comp: () => CompositionSettings;
   key: () => string;
@@ -49,6 +69,7 @@ function sanitize(patch: Partial<CompositionSettings>): Partial<CompositionSetti
       ? Math.max(0.1, patch.durationSeconds)
       : DEFAULT_COMPOSITION.durationSeconds;
   }
+  if (patch.startFrame !== undefined) out.startFrame = clampInt(patch.startFrame, 0, 24 * 3600 * 240, 0);
   return out;
 }
 
@@ -70,10 +91,15 @@ export const useCompositionStore = function <T>(selector?: (state: CompositionSt
   const state: CompositionStore = {
     ...compData,
     update: (patch) => { if (compId) updateComp(compId, sanitize(patch)); },
-    setBackground: (hex) => { if (compId) updateComp(compId, { background: hex }); },
+    setBackground: (hex) => { if (compId) updateComp(compId, { background: hex, backgroundPaint: undefined }); },
+    setBackgroundPaint: (paint) => {
+      if (!compId) return;
+      if (paint.type === 'solid') updateComp(compId, { background: paint.color, backgroundPaint: undefined });
+      else updateComp(compId, { background: paintColor(paint), backgroundPaint: paint });
+    },
     setTransparent: (v) => { if (compId) updateComp(compId, { transparent: v }); },
     comp: () => compData,
-    key: () => `${compData.width}x${compData.height}:${compData.fps}:${compData.durationSeconds}:${compData.background}:${compData.transparent ? 1 : 0}`
+    key: () => compKeyFor(compData),
   };
 
   return selector ? selector(state) : state;
@@ -90,10 +116,15 @@ Object.assign(useCompositionStore, {
     return {
       ...compData,
       update: (patch) => { if (compId) s.actions.updateComp(compId, sanitize(patch)); },
-      setBackground: (hex) => { if (compId) s.actions.updateComp(compId, { background: hex }); },
+      setBackground: (hex) => { if (compId) s.actions.updateComp(compId, { background: hex, backgroundPaint: undefined }); },
+      setBackgroundPaint: (paint) => {
+        if (!compId) return;
+        if (paint.type === 'solid') s.actions.updateComp(compId, { background: paint.color, backgroundPaint: undefined });
+        else s.actions.updateComp(compId, { background: paintColor(paint), backgroundPaint: paint });
+      },
       setTransparent: (v) => { if (compId) s.actions.updateComp(compId, { transparent: v }); },
       comp: () => compData,
-      key: () => `${compData.width}x${compData.height}:${compData.fps}:${compData.durationSeconds}:${compData.background}:${compData.transparent ? 1 : 0}`
+      key: () => compKeyFor(compData),
     };
   },
   setState: (patch: Partial<CompositionSettings>) => {

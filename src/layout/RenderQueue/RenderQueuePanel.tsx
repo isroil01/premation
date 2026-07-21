@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { Icon } from '@components/Icon';
 import { useCompositionStore } from '@stores/compositionStore';
-import { useRenderQueueStore, type OutputFormat, type RenderJob } from '@stores/renderQueueStore';
+import { useRenderQueueStore, outputExtFor, type OutputFormat, type RenderJob } from '@stores/renderQueueStore';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
 import styles from './RenderQueuePanel.module.css';
 
@@ -47,6 +47,7 @@ function statusLabel(s: RenderJob['status']): string {
 }
 
 export function RenderQueuePanel(): JSX.Element {
+  const comp = useCompositionStore((s) => s.comp());
   const compName = useCompositionStore((s) => s.name);
   const compW = useCompositionStore((s) => s.width);
   const compH = useCompositionStore((s) => s.height);
@@ -60,14 +61,14 @@ export function RenderQueuePanel(): JSX.Element {
   const handleAddJob = (settings: OutputSettings) => {
     setShowDialog(false);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const ext = settings.format === 'png-sequence' || settings.format === 'jpg-sequence' ? 'zip' : settings.format === 'mp4' || settings.format === 'gif' ? 'webm' : settings.format;
+    const ext = outputExtFor(settings.format);
     
-    // Actually we are rendering mp4 on the backend, so the extension should be mp4
-    const finalExt = settings.format === 'mp4' ? 'mp4' : ext;
-
     addJob({
       compositionName: compName ?? 'Comp 1',
-      outputPath: `${compName ?? 'output'}_${ts}.${finalExt}`,
+      // Bind the job to the comp it was queued FROM (see RenderJob.compositionId).
+      compositionId: comp.id,
+      background: comp.background,
+      outputPath: `${compName ?? 'output'}_${ts}.${ext}`,
       format: settings.format,
       width: settings.width,
       height: settings.height,
@@ -126,7 +127,7 @@ export function RenderQueuePanel(): JSX.Element {
       <div className={styles.jobList}>
         {jobs.length === 0 && (
           <div className={styles.emptyState}>
-            <Icon name="layers" size={32} className={styles.emptyIcon} />
+            <Icon name="queue" size={32} className={styles.emptyIcon} />
             <span>No render jobs. Click "Add Comp" to queue a composition.</span>
           </div>
         )}
@@ -183,7 +184,7 @@ export function RenderQueuePanel(): JSX.Element {
 
       {/* ── Footer ───────────────────────────────────────────────── */}
       <div className={styles.footer}>
-        <Icon name="layers" size={11} />
+        <Icon name="queue" size={11} />
         {jobs.length} job{jobs.length !== 1 ? 's' : ''} · {queuedCount} queued · {doneCount} done
         {isRunning && <span style={{ color: 'var(--color-primary)' }}> · Rendering…</span>}
       </div>

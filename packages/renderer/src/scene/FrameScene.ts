@@ -37,8 +37,18 @@ export type RenderableEffect =
   | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number }
   | { type: 'gradient-ramp'; blend: number; colorA?: Color; colorB?: Color }
   | { type: 'fractal-noise'; scale: number }
-  | { type: 'displacement-map'; amount: number }
-  | { type: 'motion-tile'; scale: number };
+  | {
+      type: 'displacement-map';
+      amount: number;
+      /** Renderable id of the layer whose pixels drive the displacement.
+       *  Unset/unresolvable → the layer displaces by its own content. */
+      mapLayerId?: string;
+    }
+  | { type: 'motion-tile'; scale: number }
+  | { type: 'fill'; color: Color }
+  | { type: 'stroke'; widthPx: number; color: Color }
+  | { type: 'sharpen'; amount: number }
+  | { type: 'noise'; amount: number; evolution: number; monochrome: boolean };
 
 export interface Renderable {
   id: string;
@@ -49,6 +59,11 @@ export interface Renderable {
   bounds: Rect;
   opacity: number;
   blend: BlendMode;
+  /** Advanced blend mode id (1..15) when the layer uses a blend that fixed-
+   *  function GL can't do (overlay/hard-light/HSL/…). When set, `blend` stays
+   *  'normal' and CompositionPass routes the layer through the backdrop-sampling
+   *  BLEND_COMBINE shader instead. 0/undefined = simple blend via `blend`. */
+  advancedBlend?: number;
   /** Fill/tint color (rect, text). */
   color?: Color;
   /** SDF geometry for solid shapes (rounded-rect / ellipse). */
@@ -63,10 +78,35 @@ export interface Renderable {
   uvRect?: Rect;
   /** Clip children to this node's bounds. */
   clip?: boolean;
+  /**
+   * Motion-blur sub-frame samples: the layer accumulates ADDITIVELY into an
+   * offscreen at each sample's transform × 1/n weight, then composites once —
+   * the exact shutter-interval mean Canvas2D computes. Each entry carries the
+   * fully-composed model matrix for that sub-frame plus its sampled opacity.
+   */
+  motionSamples?: ReadonlyArray<{ modelMatrix: Mat3; opacity: number }>;
   /** Id of a renderable used as an alpha mask. */
   maskId?: string;
   /** Texture key for a pre-rasterized alpha mask. */
   maskTextureKey?: string;
+  /** Texture key for a 256×1 per-channel colour LUT (Levels/Curves/Posterize).
+   *  When set, the layer is remapped through it after the affine colour grade. */
+  lutTextureKey?: string;
+  /** Adjustment layer: instead of drawing content, re-composite EVERYTHING drawn
+   *  beneath this point through the given grade (an affine colour matrix and/or a
+   *  LUT). CompositionPass copies the accumulated colour target and redraws it
+   *  through the grade. Present => this renderable draws no content of its own. */
+  adjustment?: { colorMatrix?: RenderableColorMatrix; lutTextureKey?: string };
+  /** Track matte: this layer's alpha comes from the matte source `sourceId`
+   *  (alpha or luma, optionally inverted). CompositionPass renders both to
+   *  full-comp targets and combines them. */
+  matte?: { mode: 'alpha' | 'luma'; inverted: boolean; sourceId: string };
+  matteSource?: boolean;
+  /** Dynamic CPU-skinned mesh geometry for puppet deformation. */
+  deformedMesh?: {
+    vertices: Float32Array;
+    triangles: Uint16Array;
+  };
 }
 
 export interface CompositionInfo {

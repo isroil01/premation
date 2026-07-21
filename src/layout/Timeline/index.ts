@@ -7,5 +7,4 @@ export type {
   TimelineMarker,
   TimelineKeyframeRef,
   TimelinePropertyTrack,
-  TimelineCacheRange,
 } from './TimelineModel';

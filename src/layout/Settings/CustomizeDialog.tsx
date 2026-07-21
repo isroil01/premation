@@ -3,10 +3,13 @@
  *   • Shortcuts  — rebind / disable / reset command keys, with conflict warnings
  *   • Workspaces — apply a layout preset, save the current one, delete user ones
  *   • Appearance — accent colour + theme
+ *   • AI         — connect your own OpenAI / Claude / Gemini account
  *
  * Shortcut rebinds persist via shortcutOverrides and re-apply through the
  * ShortcutManager; layout presets drive the layout store; accent overrides the
- * primary CSS token. All persistence rides the existing SettingsManager.
+ * primary CSS token. Those all ride the existing SettingsManager — the AI tab
+ * is the exception: API keys go to the OS keychain instead, because
+ * SettingsManager is synchronous localStorage and secrets don't belong there.
  */
 
 import { useState } from 'react';
@@ -36,10 +39,12 @@ import {
 } from '@core/layout/workspaceLayouts';
 import { getThemeManager } from '@core/services/coreServices';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
-import { useRenderBackendStore } from '@stores/renderBackendStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import type { BackendChoice } from '@core/rendering/createRenderBackend';
 import type { KeyChord } from '@app-types/common';
+// NOTE: AI setup is deliberately NOT here. Connecting an account is a
+// once-per-machine errand that needs room to explain the options, so it lives
+// on the Settings page (Dashboard → Settings → Assistant), not in a dialog
+// you have to dismiss to get back to your work.
 import styles from './CustomizeDialog.module.css';
 
 type Tab = 'shortcuts' | 'tabs' | 'appearance';
@@ -199,11 +204,7 @@ function AppearanceTab(): JSX.Element {
   const confirmOnClose = usePreferenceStore((s) => s.confirmOnClose);
   const setPref = usePreferenceStore((s) => s.set);
 
-  const backend = useRenderBackendStore((s) => s.choice);
-  const setBackend = useRenderBackendStore((s) => s.setChoice);
 
-  // Check if WebGPU is supported in the current browser/environment
-  const webgpuSupported = typeof navigator !== 'undefined' && 'gpu' in navigator;
 
   const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition);
   const rightInspectorPos = useLayoutStore((s) => s.rightInspectorPosition);
@@ -228,23 +229,7 @@ function AppearanceTab(): JSX.Element {
           <Button variant="secondary" size="sm" onClick={() => getThemeManager().toggle()}>Switch light / dark</Button>
         </div>
       </div>
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Render Backend</span>
-        <div className={styles.rowRight}>
-          <select
-            className={styles.select}
-            value={backend}
-            onChange={(e) => setBackend(e.target.value as BackendChoice)}
-            aria-label="Render Backend"
-          >
-            <option value="canvas2d">Reference CPU (Canvas2D)</option>
-            <option value="webgl2">Experimental GPU (WebGL2)</option>
-            <option value="webgpu" disabled={!webgpuSupported}>
-              Experimental GPU (WebGPU){!webgpuSupported ? ' (Unsupported)' : ''}
-            </option>
-          </select>
-        </div>
-      </div>
+
 
       <div className={styles.row}>
         <span className={styles.rowLabel}>Left Sidebar Position</span>
@@ -384,7 +369,9 @@ function Customize(): JSX.Element {
           </button>
         ))}
       </div>
-      {tab === 'shortcuts' ? <ShortcutsTab /> : tab === 'tabs' ? <WorkspacesTab /> : <AppearanceTab />}
+      {tab === 'shortcuts' ? <ShortcutsTab />
+        : tab === 'tabs' ? <WorkspacesTab />
+        : <AppearanceTab />}
     </div>
   );
 }

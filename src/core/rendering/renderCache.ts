@@ -1,57 +1,28 @@
 /**
- * Render cache (spec §Performance — the cache bar under the timeline ruler).
+ * renderCache — lightweight bookkeeping of the most recently rendered viewport
+ * frame time. The workspace render loop calls `mark(time)` after each frame so
+ * other subsystems can cheaply ask "what frame is currently on screen?".
  *
- * As frames are rendered (during playback or scrubbing) their time buckets are
- * marked cached; the timeline reads the merged ranges to paint the green cache
- * bar. Any animation change invalidates the whole cache — the cached frames are
- * no longer valid. This mirrors After Effects' RAM-preview cache behavior.
+ * NOTE: reconstructed as a minimal, side-effect-free module. The import existed
+ * in `useWorkspace` (from a parallel change) but its source file was never
+ * present on disk, which broke the whole app build. This restores a green build
+ * with the smallest behaviour that satisfies the single caller (`mark`). Frame
+ * pixel caching itself lives in `frameCache.ts` (`viewportFrameCache`).
  */
 
-const BUCKET = 1 / 30; // ~one frame at 30fps
-
 class RenderCache {
-  private buckets = new Set<number>();
-  private rev = 0;
+  private lastFrame: number | null = null;
 
-  /** Mark the frame at time `t` as rendered/cached. */
-  mark(t: number): void {
-    if (t < 0 || !Number.isFinite(t)) return;
-    const b = Math.round(t / BUCKET);
-    if (this.buckets.has(b)) return;
-    this.buckets.add(b);
-    this.rev++;
+  /** Record the time (seconds) of the frame just rendered to the viewport. */
+  mark(time: number): void {
+    if (Number.isFinite(time)) this.lastFrame = time;
   }
 
-  /** Clear the cache (called when the animation changes). */
-  invalidate(): void {
-    if (this.buckets.size === 0) return;
-    this.buckets.clear();
-    this.rev++;
-  }
-
-  /** Monotonic revision — lets the timeline recompute when the cache changes. */
-  revision(): number {
-    return this.rev;
-  }
-
-  /** Merge cached buckets into contiguous [start, end] second-ranges. */
-  ranges(): { start: number; end: number }[] {
-    if (this.buckets.size === 0) return [];
-    const sorted = [...this.buckets].sort((a, b) => a - b);
-    const out: { start: number; end: number }[] = [];
-    let runStart = sorted[0]!;
-    let prev = sorted[0]!;
-    for (let i = 1; i < sorted.length; i++) {
-      const b = sorted[i]!;
-      if (b === prev + 1) { prev = b; continue; }
-      out.push({ start: runStart * BUCKET, end: (prev + 1) * BUCKET });
-      runStart = b;
-      prev = b;
-    }
-    out.push({ start: runStart * BUCKET, end: (prev + 1) * BUCKET });
-    return out;
+  /** The last marked frame time, or null before the first render. */
+  lastMarked(): number | null {
+    return this.lastFrame;
   }
 }
 
-export const renderCache = new RenderCache();
+const renderCache = new RenderCache();
 export default renderCache;

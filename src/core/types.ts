@@ -103,9 +103,20 @@ export interface Engine {
   update?: (ctx: EngineContext) => void;
 }
 
-// Persistence interface
-export interface ProjectFile {
+/**
+ * Anything the ProjectManager can save and load.
+ *
+ * The IO layer is deliberately blind to the document's shape: the scene engine
+ * once registered a scene-ONLY `ProjectFile`, which is why saving a `.motion`
+ * silently dropped every keyframe. The app now registers a full EditorDocument
+ * instead, and this is the only thing the persistence layer needs to know.
+ */
+export interface VersionedDocument {
   version: string;
+}
+
+// Persistence interface
+export interface ProjectFile extends VersionedDocument {
   nodes: SceneNode[];
   timeline?: TimelineModel;
   assets?: Asset[];

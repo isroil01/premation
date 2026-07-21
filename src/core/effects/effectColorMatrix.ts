@@ -9,6 +9,15 @@
  */
 
 import type { Effect, EffectType } from './effects';
+import { effectNumber, effectParam, primaryParamKey } from './effects';
+
+/** `#rrggbb` → [r,g,b] in 0..1 (unknown/invalid → black). */
+function hex01(v: unknown): [number, number, number] {
+  const m = typeof v === 'string' ? /^#?([0-9a-f]{6})$/i.exec(v.trim()) : null;
+  if (!m) return [0, 0, 0];
+  const n = parseInt(m[1]!, 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
 
 export interface ColorMatrix {
   /** Row-major 3×3 applied to linear-ish rgb. */
@@ -24,7 +33,8 @@ export const IDENTITY_COLOR_MATRIX: ColorMatrix = {
 
 /** Effect types that are expressible as an affine color transform. */
 const COLOR_EFFECTS: ReadonlySet<EffectType> = new Set<EffectType>([
-  'brightness', 'contrast', 'saturate', 'grayscale', 'sepia', 'hue-rotate', 'invert',
+  'brightness', 'contrast', 'saturate', 'grayscale', 'sepia', 'hue-rotate', 'invert', 'hue-saturation',
+  'tint', 'channel-mixer',
 ]);
 
 export function isColorEffect(type: EffectType): boolean {
@@ -86,30 +96,74 @@ function hueRotateMatrix(deg: number): M3 {
   ];
 }
 
-/** Build the {matrix, offset} for one color effect (amount in its own unit). */
-function effectToMatrix(type: EffectType, amount: number): ColorMatrix {
+/** Scalar multiply (brightness/lightness) as a matrix. */
+function scaleMatrix(b: number): M3 {
+  return [b, 0, 0, 0, b, 0, 0, 0, b];
+}
+
+/**
+ * Build the {matrix, offset} for one colour effect.
+ *
+ * Takes the whole effect (not a lone scalar) so multi-param colour effects —
+ * Hue/Saturation's hue + saturation + lightness — compose here on the GPU path
+ * the same way they do as a CSS filter string on Canvas2D.
+ */
+function effectToMatrix(effect: Effect): ColorMatrix {
+  const type = effect.type;
+  const amt = effectNumber(effect, primaryParamKey(type) ?? 'amount');
   switch (type) {
-    case 'brightness': {
-      const b = amount / 100;
-      return { m: [b, 0, 0, 0, b, 0, 0, 0, b], offset: [0, 0, 0] };
-    }
+    case 'brightness':
+      return { m: scaleMatrix(amt / 100), offset: [0, 0, 0] };
     case 'contrast': {
-      const c = amount / 100;
+      const c = amt / 100;
       const o = 0.5 * (1 - c);
       return { m: [c, 0, 0, 0, c, 0, 0, 0, c], offset: [o, o, o] };
     }
     case 'saturate':
-      return { m: saturateMatrix(amount / 100), offset: [0, 0, 0] };
+      return { m: saturateMatrix(amt / 100), offset: [0, 0, 0] };
     case 'grayscale':
-      return { m: saturateMatrix(1 - amount / 100), offset: [0, 0, 0] };
+      return { m: saturateMatrix(1 - amt / 100), offset: [0, 0, 0] };
     case 'sepia':
-      return { m: sepiaMatrix(amount / 100), offset: [0, 0, 0] };
+      return { m: sepiaMatrix(amt / 100), offset: [0, 0, 0] };
     case 'hue-rotate':
-      return { m: hueRotateMatrix(amount), offset: [0, 0, 0] };
+      return { m: hueRotateMatrix(amt), offset: [0, 0, 0] };
+    case 'hue-saturation': {
+      // Hue rotate, then saturation, then lightness — matching the CSS order.
+      const hue = hueRotateMatrix(effectNumber(effect, 'hue'));
+      const sat = saturateMatrix((100 + effectNumber(effect, 'saturation')) / 100);
+      const light = scaleMatrix((100 + effectNumber(effect, 'lightness')) / 100);
+      return { m: mul(light, mul(sat, hue)), offset: [0, 0, 0] };
+    }
     case 'invert': {
-      const i = amount / 100;
+      const i = amt / 100;
       const k = 1 - 2 * i;
       return { m: [k, 0, 0, 0, k, 0, 0, 0, k], offset: [i, i, i] };
+    }
+    case 'tint': {
+      // Map black→mapBlack and white→mapWhite along luminance, then blend by amount.
+      const b = hex01(effectParam(effect, 'mapBlack') ?? '#000000');
+      const w = hex01(effectParam(effect, 'mapWhite') ?? '#ffffff');
+      const a = amt / 100; // primaryParamKey('tint') === 'amount'
+      const row = (i: number): [number, number, number] => {
+        const d = w[i]! - b[i]!;
+        return [d * LR, d * LG, d * LB];
+      };
+      const tint: M3 = [...row(0), ...row(1), ...row(2)] as M3;
+      // final = (1−a)·I + a·tint ; offset = a·mapBlack
+      const m = I3.map((v, i) => v * (1 - a) + tint[i]! * a) as M3;
+      return { m, offset: [b[0] * a, b[1] * a, b[2] * a] };
+    }
+    case 'channel-mixer': {
+      // Per-output-channel weighted mix (percentages; 100 = full contribution).
+      const p = (k: string): number => effectNumber(effect, k) / 100;
+      const rr = p('redRed'), rg = p('redGreen'), rb = p('redBlue');
+      const gr = p('greenRed'), gg = p('greenGreen'), gb = p('greenBlue');
+      const br = p('blueRed'), bg = p('blueGreen'), bb = p('blueBlue');
+      const mono = effectParam(effect, 'monochrome') === true;
+      const m: M3 = mono
+        ? [rr, rg, rb, rr, rg, rb, rr, rg, rb]
+        : [rr, rg, rb, gr, gg, gb, br, bg, bb];
+      return { m, offset: [p('redConst'), p('greenConst'), p('blueConst')] };
     }
     default:
       return IDENTITY_COLOR_MATRIX;
@@ -126,7 +180,7 @@ export function effectColorMatrix(effects: ReadonlyArray<Effect>): ColorMatrix {
   let touched = false;
   for (const e of effects) {
     if (e.enabled === false || !COLOR_EFFECTS.has(e.type)) continue;
-    const { m: em, offset: eo } = effectToMatrix(e.type, e.amount);
+    const { m: em, offset: eo } = effectToMatrix(e);
     m = mul(em, m);
     offset = [
       em[0] * offset[0] + em[1] * offset[1] + em[2] * offset[2] + eo[0],
@@ -143,4 +197,24 @@ export function applyColorMatrix(cm: ColorMatrix, rgb: readonly [number, number,
   const [r, g, b] = apply3(cm.m, rgb);
   const clamp = (n: number): number => (n < 0 ? 0 : n > 1 ? 1 : n);
   return [clamp(r + cm.offset[0]), clamp(g + cm.offset[1]), clamp(b + cm.offset[2])];
+}
+
+/**
+ * Apply a color matrix in place to RGBA8 pixel data (straight, non-premultiplied
+ * — as `getImageData` returns). RGB is transformed; alpha is left untouched.
+ * This is the Canvas2D render path for matrix colour effects (Tint, Channel
+ * Mixer) that have no CSS-filter form.
+ */
+export function applyColorMatrixImage(data: Uint8ClampedArray, cm: ColorMatrix): void {
+  const { m, offset } = cm;
+  const [o0, o1, o2] = offset;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i]! / 255;
+    const g = data[i + 1]! / 255;
+    const b = data[i + 2]! / 255;
+    // data is Uint8ClampedArray, so assignment clamps to [0,255] for us.
+    data[i] = (m[0] * r + m[1] * g + m[2] * b + o0) * 255;
+    data[i + 1] = (m[3] * r + m[4] * g + m[5] * b + o1) * 255;
+    data[i + 2] = (m[6] * r + m[7] * g + m[8] * b + o2) * 255;
+  }
 }

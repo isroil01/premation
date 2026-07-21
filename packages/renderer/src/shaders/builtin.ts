@@ -248,6 +248,322 @@ void main() {
   },
 };
 
+// Textured quad with a per-channel colour LUT (Levels / Curves / Posterize).
+// After the affine grade, each channel is remapped through a 256×1 lookup
+// texture: texel i packs (r_lut[i], g_lut[i], b_lut[i]). Sampling at U = value
+// and taking the matching channel gives that channel's remapped output.
+const LUT_TEXTURED: ShaderSource = {
+  name: 'lut-textured',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var lutTex : texture_2d<f32>;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  var graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let lr = textureSample(lutTex, smp, vec2<f32>(graded.r, 0.5)).r;
+  let lg = textureSample(lutTex, smp, vec2<f32>(graded.g, 0.5)).g;
+  let lb = textureSample(lutTex, smp, vec2<f32>(graded.b, 0.5)).b;
+  graded = vec3<f32>(lr, lg, lb);
+  return vec4<f32>(graded * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+uniform sampler2D uTex;
+uniform sampler2D uLutTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  float lr = texture(uLutTex, vec2(graded.r, 0.5)).r;
+  float lg = texture(uLutTex, vec2(graded.g, 0.5)).g;
+  float lb = texture(uLutTex, vec2(graded.b, 0.5)).b;
+  graded = vec3(lr, lg, lb);
+  frag = vec4(graded * c.a, c.a);
+}
+`,
+  },
+};
+
+// Track matte combine: both the matted layer (uTex) and its matte source
+// (uMatteTex) are rendered to full-comp targets, sampled here at the same
+// screen uv. The matte value is the source's alpha (or luminance), optionally
+// inverted — packed into cr0.x (luma flag) and cr0.y (invert flag). Output is
+// premultiplied: the matted layer's premultiplied colour scaled by the matte.
+const MATTE_COMBINE: ShaderSource = {
+  name: 'matte-combine',
+  wgsl: /* wgsl */ `
+struct Object { mvp : mat3x3<f32>, uvRect : vec4<f32>, tint : vec4<f32>, cr0 : vec4<f32>, cr1 : vec4<f32>, cr2 : vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var matteTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let m = textureSample(tex, smp, uv);
+  let s = textureSample(matteTex, smp, uv);
+  let isLuma = obj.cr0.x > 0.5;
+  let isInverted = obj.cr0.y > 0.5;
+  var val : f32;
+  if (isLuma) {
+    let lumaVal = dot(s.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    if (isInverted) {
+      val = (1.0 - lumaVal) * s.a;
+    } else {
+      val = lumaVal * s.a;
+    }
+  } else {
+    if (isInverted) {
+      val = 1.0 - s.a;
+    } else {
+      val = s.a;
+    }
+  }
+  return vec4<f32>(m.rgb * val, m.a * val);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, 1.0); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+uniform sampler2D uTex;
+uniform sampler2D uMatteTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 m = texture(uTex, vUv);
+  vec4 s = texture(uMatteTex, vUv);
+  bool isLuma = cr0.x > 0.5;
+  bool isInverted = cr0.y > 0.5;
+  float val;
+  if (isLuma) {
+    float lumaVal = dot(s.rgb, vec3(0.2126, 0.7152, 0.0722));
+    if (isInverted) {
+      val = (1.0 - lumaVal) * s.a;
+    } else {
+      val = lumaVal * s.a;
+    }
+  } else {
+    if (isInverted) {
+      val = 1.0 - s.a;
+    } else {
+      val = s.a;
+    }
+  }
+  frag = vec4(m.rgb * val, m.a * val);
+}
+`,
+  },
+};
+
+// Advanced blend-mode combine. The layer (uTex, src) and the accumulated
+// backdrop (uMaskTex, dst) are rendered to full-comp targets and sampled here;
+// we compute the W3C blend B(cb,cs) in UNPREMULTIPLIED space then output the
+// premultiplied source-over-with-blend composite. Mode id rides cr0.x:
+// 1 multiply 2 screen 3 overlay 4 darken 5 lighten 6 color-dodge 7 color-burn
+// 8 hard-light 9 soft-light 10 difference 11 exclusion 12 hue 13 saturation
+// 14 color 15 luminosity.
+const BLEND_COMBINE_GLSL_HELPERS = /* glsl */ `
+float bChan(int mode, float cb, float cs) {
+  if (mode == 1) return cb * cs;
+  if (mode == 2) return cb + cs - cb * cs;
+  if (mode == 3) return cb <= 0.5 ? 2.0 * cb * cs : 1.0 - 2.0 * (1.0 - cb) * (1.0 - cs);
+  if (mode == 4) return min(cb, cs);
+  if (mode == 5) return max(cb, cs);
+  if (mode == 6) return cb <= 0.0 ? 0.0 : (cs >= 1.0 ? 1.0 : min(1.0, cb / (1.0 - cs)));
+  if (mode == 7) return cb >= 1.0 ? 1.0 : (cs <= 0.0 ? 0.0 : 1.0 - min(1.0, (1.0 - cb) / cs));
+  if (mode == 8) return cs <= 0.5 ? 2.0 * cb * cs : 1.0 - 2.0 * (1.0 - cb) * (1.0 - cs);
+  if (mode == 9) {
+    float d = cb <= 0.25 ? ((16.0 * cb - 12.0) * cb + 4.0) * cb : sqrt(cb);
+    return cs <= 0.5 ? cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb) : cb + (2.0 * cs - 1.0) * (d - cb);
+  }
+  if (mode == 10) return abs(cb - cs);
+  if (mode == 11) return cb + cs - 2.0 * cb * cs;
+  return cs;
+}
+vec3 bSep(int mode, vec3 cb, vec3 cs) {
+  return vec3(bChan(mode, cb.r, cs.r), bChan(mode, cb.g, cs.g), bChan(mode, cb.b, cs.b));
+}
+float bLum(vec3 c) { return dot(c, vec3(0.3, 0.59, 0.11)); }
+vec3 bClip(vec3 c) {
+  float l = bLum(c); float n = min(min(c.r, c.g), c.b); float x = max(max(c.r, c.g), c.b);
+  if (n < 0.0) c = l + (c - l) * l / (l - n + 1e-7);
+  if (x > 1.0) c = l + (c - l) * (1.0 - l) / (x - l + 1e-7);
+  return c;
+}
+vec3 bSetLum(vec3 c, float l) { return bClip(c + (l - bLum(c))); }
+float bSat(vec3 c) { return max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b); }
+vec3 bSetSat(vec3 c, float s) {
+  float mn = min(min(c.r, c.g), c.b); float mx = max(max(c.r, c.g), c.b);
+  return mx > mn ? (c - mn) / (mx - mn) * s : vec3(0.0);
+}
+vec3 bHSL(int mode, vec3 cb, vec3 cs) {
+  if (mode == 12) return bSetLum(bSetSat(cs, bSat(cb)), bLum(cb));
+  if (mode == 13) return bSetLum(bSetSat(cb, bSat(cs)), bLum(cb));
+  if (mode == 14) return bSetLum(cs, bLum(cb));
+  if (mode == 15) return bSetLum(cb, bLum(cs));
+  return cs;
+}
+`;
+const BLEND_COMBINE: ShaderSource = {
+  name: 'blend-combine',
+  wgsl: /* wgsl */ `
+struct Object { mvp : mat3x3<f32>, uvRect : vec4<f32>, tint : vec4<f32>, cr0 : vec4<f32>, cr1 : vec4<f32>, cr2 : vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var uMaskTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+fn bChan(mode : i32, cb : f32, cs : f32) -> f32 {
+  if (mode == 1) { return cb * cs; }
+  if (mode == 2) { return cb + cs - cb * cs; }
+  if (mode == 3) { if (cb <= 0.5) { return 2.0 * cb * cs; } return 1.0 - 2.0 * (1.0 - cb) * (1.0 - cs); }
+  if (mode == 4) { return min(cb, cs); }
+  if (mode == 5) { return max(cb, cs); }
+  if (mode == 6) { if (cb <= 0.0) { return 0.0; } if (cs >= 1.0) { return 1.0; } return min(1.0, cb / (1.0 - cs)); }
+  if (mode == 7) { if (cb >= 1.0) { return 1.0; } if (cs <= 0.0) { return 0.0; } return 1.0 - min(1.0, (1.0 - cb) / cs); }
+  if (mode == 8) { if (cs <= 0.5) { return 2.0 * cb * cs; } return 1.0 - 2.0 * (1.0 - cb) * (1.0 - cs); }
+  if (mode == 9) {
+    var d : f32 = sqrt(cb);
+    if (cb <= 0.25) { d = ((16.0 * cb - 12.0) * cb + 4.0) * cb; }
+    if (cs <= 0.5) { return cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb); }
+    return cb + (2.0 * cs - 1.0) * (d - cb);
+  }
+  if (mode == 10) { return abs(cb - cs); }
+  if (mode == 11) { return cb + cs - 2.0 * cb * cs; }
+  return cs;
+}
+fn bLum(c : vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.3, 0.59, 0.11)); }
+fn bClip(cin : vec3<f32>) -> vec3<f32> {
+  var c = cin; let l = bLum(c); let n = min(min(c.r, c.g), c.b); let x = max(max(c.r, c.g), c.b);
+  if (n < 0.0) { c = l + (c - l) * l / (l - n + 1e-7); }
+  if (x > 1.0) { c = l + (c - l) * (1.0 - l) / (x - l + 1e-7); }
+  return c;
+}
+fn bSetLum(c : vec3<f32>, l : f32) -> vec3<f32> { return bClip(c + (l - bLum(c))); }
+fn bSat(c : vec3<f32>) -> f32 { return max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b); }
+fn bSetSat(c : vec3<f32>, s : f32) -> vec3<f32> {
+  let mn = min(min(c.r, c.g), c.b); let mx = max(max(c.r, c.g), c.b);
+  if (mx > mn) { return (c - mn) / (mx - mn) * s; }
+  return vec3<f32>(0.0);
+}
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let s = textureSample(tex, smp, uv);
+  let d = textureSample(uMaskTex, smp, uv);
+  let as1 = s.a; let ad = d.a;
+  var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = s.rgb / as1; }
+  var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = d.rgb / ad; }
+  let mode = i32(obj.cr0.x + 0.5);
+  var B : vec3<f32>;
+  if (mode >= 12) {
+    if (mode == 12) { B = bSetLum(bSetSat(cs, bSat(cb)), bLum(cb)); }
+    else if (mode == 13) { B = bSetLum(bSetSat(cb, bSat(cs)), bLum(cb)); }
+    else if (mode == 14) { B = bSetLum(cs, bLum(cb)); }
+    else { B = bSetLum(cb, bLum(cs)); }
+  } else {
+    B = vec3<f32>(bChan(mode, cb.r, cs.r), bChan(mode, cb.g, cs.g), bChan(mode, cb.b, cs.b));
+  }
+  let co = as1 * (1.0 - ad) * cs + as1 * ad * B + (1.0 - as1) * ad * cb;
+  let ao = as1 + ad - as1 * ad;
+  return vec4<f32>(co, ao);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, 1.0); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+uniform sampler2D uTex;
+uniform sampler2D uMaskTex;
+in vec2 vUv;
+out vec4 frag;
+${BLEND_COMBINE_GLSL_HELPERS}
+void main() {
+  vec4 s = texture(uTex, vUv);
+  vec4 d = texture(uMaskTex, vUv);
+  float as1 = s.a, ad = d.a;
+  vec3 cs = as1 > 0.0 ? s.rgb / as1 : vec3(0.0);
+  vec3 cb = ad > 0.0 ? d.rgb / ad : vec3(0.0);
+  int mode = int(cr0.x + 0.5);
+  vec3 B = mode >= 12 ? bHSL(mode, cb, cs) : bSep(mode, cb, cs);
+  vec3 co = as1 * (1.0 - ad) * cs + as1 * ad * B + (1.0 - as1) * ad * cb;
+  float ao = as1 + ad - as1 * ad;
+  frag = vec4(co, ao);
+}
+`,
+  },
+};
+
 const BLUR: ShaderSource = {
   name: 'blur',
   wgsl: /* wgsl */ `
@@ -283,14 +599,19 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let dir = obj.blurParams.xy;
   var c = vec4<f32>(0.0);
   var total = 0.0;
-  
-  // Approximate Gaussian blur. For a large radius, a proper implementation would use
-  // two passes and potentially downsampling, but this is a 2D exact-radius pass.
-  let steps = min(i32(ceil(r)), 30);
+
+  // CSS blur() semantics: the radius IS the Gaussian sigma (what Canvas2D's
+  // filter uses, so both backends match). Taps span ±2.5σ; when that exceeds
+  // the loop cap, taps spread out and linear filtering fills the gaps. The
+  // old kernel used σ = r/2 truncated at ±r — visibly tighter than Canvas2D
+  // at every radius (profiled: tail died 2–3× sooner).
+  let sigma = r;
+  let steps = 30;
+  let spacing = max(1.0, (sigma * 2.5) / f32(steps));
   for(var i = -steps; i <= steps; i = i + 1) {
-    let fi = f32(i);
-    let w = exp(-0.5 * (fi * fi) / (r * r * 0.25));
-    c = c + textureSample(tex, smp, uv + dir * fi) * w;
+    let off = f32(i) * spacing;
+    let w = exp(-0.5 * (off * off) / (sigma * sigma));
+    c = c + textureSample(tex, smp, uv + dir * off) * w;
     total = total + w;
   }
   return c / total;
@@ -322,12 +643,16 @@ void main() {
   vec2 dir = blurParams.xy;
   vec4 c = vec4(0.0);
   float total = 0.0;
-  
-  int steps = min(int(ceil(r)), 30);
+
+  // CSS blur() semantics: radius IS sigma (matches Canvas2D). ±2.5σ extent,
+  // spaced taps under the loop cap — see the WGSL twin above.
+  float sigma = r;
+  const int steps = 30;
+  float spacing = max(1.0, (sigma * 2.5) / float(steps));
   for(int i = -steps; i <= steps; i++) {
-    float fi = float(i);
-    float w = exp(-0.5 * (fi * fi) / (r * r * 0.25));
-    c += texture(uTex, vUv + dir * fi) * w;
+    float off = float(i) * spacing;
+    float w = exp(-0.5 * (off * off) / (sigma * sigma));
+    c += texture(uTex, vUv + dir * off) * w;
     total += w;
   }
   frag = c / total;
@@ -565,4 +890,320 @@ void main() {
   }
 };
 
-export const BUILTIN_SHADERS: readonly ShaderSource[] = [SOLID, TEXTURED, MASKED_TEXTURED, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE];
+export const FILL: ShaderSource = {
+  name: 'fill',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, color: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv);
+  return vec4<f32>(obj.color.rgb * c.a * obj.color.a, c.a * obj.color.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 color; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 color; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 c = texture(uTex, vUv);
+  frag = vec4(color.rgb * c.a * color.a, c.a * color.a);
+}
+`
+  }
+};
+
+export const STROKE: ShaderSource = {
+  name: 'stroke',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, color: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv);
+  let width = obj.params.x;
+  let texelSize = obj.params.yz;
+  var maxAlpha = c.a;
+  let w = i32(clamp(width, 1.0, 16.0));
+  for (var dy = -w; dy <= w; dy = dy + 1) {
+    for (var dx = -w; dx <= w; dx = dx + 1) {
+      if (f32(dx*dx + dy*dy) <= width*width) {
+        let offsetUv = uv + vec2<f32>(f32(dx), f32(dy)) * texelSize;
+        maxAlpha = max(maxAlpha, textureSample(tex, smp, clamp(offsetUv, vec2<f32>(0.0), vec2<f32>(1.0))).a);
+      }
+    }
+  }
+  let edge = maxAlpha - c.a;
+  let strokeCol = vec4<f32>(obj.color.rgb * obj.color.a, obj.color.a);
+  return mix(c, strokeCol, edge * strokeCol.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 color; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 color; vec4 params; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 c = texture(uTex, vUv);
+  float width = params.x;
+  vec2 texelSize = params.yz;
+  float maxAlpha = c.a;
+  int w = int(clamp(width, 1.0, 16.0));
+  for (int dy = -w; dy <= w; dy++) {
+    for (int dx = -w; dx <= w; dx++) {
+      if (float(dx*dx + dy*dy) <= width*width) {
+        vec2 offsetUv = vUv + vec2(float(dx), float(dy)) * texelSize;
+        maxAlpha = max(maxAlpha, texture(uTex, clamp(offsetUv, vec2(0.0), vec2(1.0))).a);
+      }
+    }
+  }
+  float edge = maxAlpha - c.a;
+  vec4 strokeCol = vec4(color.rgb * color.a, color.a);
+  frag = mix(c, strokeCol, edge * strokeCol.a);
+}
+`
+  }
+};
+
+export const SHARPEN: ShaderSource = {
+  name: 'sharpen',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv);
+  let texelSize = obj.params.xy;
+  let amount = obj.params.z;
+  let neighborSum = 
+    textureSample(tex, smp, uv + vec2<f32>(0.0, -1.0) * texelSize) +
+    textureSample(tex, smp, uv + vec2<f32>(-1.0, 0.0) * texelSize) +
+    textureSample(tex, smp, uv + vec2<f32>(1.0, 0.0) * texelSize) +
+    textureSample(tex, smp, uv + vec2<f32>(0.0, 1.0) * texelSize);
+  let sharp = c * 5.0 - neighborSum;
+  return mix(c, vec4<f32>(sharp.rgb, c.a), amount);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 c = texture(uTex, vUv);
+  vec2 texelSize = params.xy;
+  float amount = params.z;
+  vec4 neighborSum = 
+    texture(uTex, vUv + vec2(0.0, -1.0) * texelSize) +
+    texture(uTex, vUv + vec2(-1.0, 0.0) * texelSize) +
+    texture(uTex, vUv + vec2(1.0, 0.0) * texelSize) +
+    texture(uTex, vUv + vec2(0.0, 1.0) * texelSize);
+  vec4 sharp = c * 5.0 - neighborSum;
+  frag = mix(c, vec4(sharp.rgb, c.a), amount);
+}
+`
+  }
+};
+
+export const NOISE: ShaderSource = {
+  name: 'noise',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn rand(co: vec2<f32>) -> f32 {
+  return fract(sin(dot(co, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv);
+  if (c.a == 0.0) { return c; }
+  let amount = obj.params.x;
+  let evolution = obj.params.y;
+  let monochrome = obj.params.z;
+  var rnd: vec3<f32>;
+  if (monochrome > 0.5) {
+    let r = rand(uv + evolution * 0.01) - 0.5;
+    rnd = vec3<f32>(r);
+  } else {
+    rnd = vec3<f32>(
+      rand(uv + evolution * 0.01) - 0.5,
+      rand(uv * 1.3 + evolution * 0.02) - 0.5,
+      rand(uv * 1.7 + evolution * 0.03) - 0.5
+    );
+  }
+  let rgb = clamp(c.rgb + rnd * amount, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(rgb, c.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+float rand(vec2 co) {
+  return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+void main() {
+  vec4 c = texture(uTex, vUv);
+  if (c.a == 0.0) {
+    frag = c;
+    return;
+  }
+  float amount = params.x;
+  float evolution = params.y;
+  float monochrome = params.z;
+  vec3 rnd;
+  if (monochrome > 0.5) {
+    float r = rand(vUv + evolution * 0.01) - 0.5;
+    rnd = vec3(r);
+  } else {
+    rnd = vec3(
+      rand(vUv + evolution * 0.01) - 0.5,
+      rand(vUv * 1.3 + evolution * 0.02) - 0.5,
+      rand(vUv * 1.7 + evolution * 0.03) - 0.5
+    );
+  }
+  vec3 rgb = clamp(c.rgb + rnd * amount, vec3(0.0), vec3(1.0));
+  frag = vec4(rgb, c.a);
+}
+`
+  }
+};
+
+const DEFORMED_MESH: ShaderSource = {
+  name: 'deformed-mesh',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>, @location(1) uv : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.uv = uv;
+  return o;
+}
+
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(graded * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(location = 1) in vec2 uv;
+layout(std140) uniform Object { mat3 mvp; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, 1.0);
+  vUv = uv;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  frag = vec4(graded * c.a, c.a);
+}
+`,
+  },
+};
+
+export const BUILTIN_SHADERS: readonly ShaderSource[] = [
+  SOLID, TEXTURED, MASKED_TEXTURED, LUT_TEXTURED, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
+  FILL, STROKE, SHARPEN, NOISE, DEFORMED_MESH
+];

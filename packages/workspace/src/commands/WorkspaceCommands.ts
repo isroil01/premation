@@ -14,9 +14,11 @@ export const WorkspaceCommandType = {
   MoveNodes: 'workspace.moveNodes',
   ResizeNode: 'workspace.resizeNode',
   RotateNode: 'workspace.rotateNode',
+  MoveAnchor: 'workspace.moveAnchor',
   CreateNode: 'workspace.createNode',
   DeleteNodes: 'workspace.deleteNodes',
   UpdateNodePath: 'workspace.updateNodePath',
+  UpdateMaskPath: 'workspace.updateMaskPath',
 } as const;
 
 export type WorkspaceCommandTypeName =
@@ -42,6 +44,12 @@ export interface RotateNodePayload {
   pivot: Vec2;
 }
 
+export interface MoveAnchorPayload {
+  id: NodeId;
+  /** New pivot in the node's LOCAL space (0,0 = centre). */
+  anchor: Vec2;
+}
+
 export interface CreateNodePayload {
   /** Node kind hint for the binding (e.g. "Rectangle", "Ellipse", "Text"). */
   kind: string;
@@ -62,6 +70,13 @@ export interface UpdateNodePathPayload {
   points: BezierPoint[];
 }
 
+/** Reshape one of a layer's masks. `id` is the layer; `maskId` the outline. */
+export interface UpdateMaskPathPayload {
+  id: NodeId;
+  maskId: string;
+  points: BezierPoint[];
+}
+
 export const commands = {
   moveNodes(ids: readonly NodeId[], delta: Vec2): WorkspaceCommand {
     return { type: WorkspaceCommandType.MoveNodes, payload: { ids, delta } satisfies MoveNodesPayload };
@@ -75,6 +90,10 @@ export const commands = {
       payload: { id, rotation, pivot } satisfies RotateNodePayload,
     };
   },
+  /** Pan-behind: re-pivot the node, compensating position so it stays put. */
+  moveAnchor(id: NodeId, anchor: Vec2): WorkspaceCommand {
+    return { type: WorkspaceCommandType.MoveAnchor, payload: { id, anchor } satisfies MoveAnchorPayload };
+  },
   createNode(kind: string, bounds: Rect, points?: BezierPoint[], maskTargetId?: NodeId): WorkspaceCommand {
     const payload: CreateNodePayload = points ? { kind, bounds, points, maskTargetId } : { kind, bounds, maskTargetId };
     return { type: WorkspaceCommandType.CreateNode, payload };
@@ -84,5 +103,11 @@ export const commands = {
   },
   updateNodePath(id: NodeId, points: BezierPoint[]): WorkspaceCommand {
     return { type: WorkspaceCommandType.UpdateNodePath, payload: { id, points } satisfies UpdateNodePathPayload };
+  },
+  updateMaskPath(id: NodeId, maskId: string, points: BezierPoint[]): WorkspaceCommand {
+    return {
+      type: WorkspaceCommandType.UpdateMaskPath,
+      payload: { id, maskId, points } satisfies UpdateMaskPathPayload,
+    };
   },
 };

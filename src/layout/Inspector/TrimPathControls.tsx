@@ -7,7 +7,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
-import { cn } from '@utils/cn';
+
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -23,6 +23,7 @@ import {
   type TrimParam,
 } from '@core/scene/trimPath';
 import styles from './TextAnimatorControls.module.css';
+import { Checkbox } from '@components/Checkbox';
 
 function ParamRow({
   nodeId,
@@ -55,15 +56,14 @@ function ParamRow({
 
   return (
     <div className={styles.paramRow}>
-      <button
-        type="button"
-        className={cn(styles.stopwatch, animated && styles.stopwatchOn)}
-        onClick={toggle}
-        aria-pressed={animated}
-        aria-label={animated ? `Remove ${label} animation` : `Animate ${label}`}
-      >
-        <Icon name="keyframe" size={11} />
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+          <Checkbox 
+            checked={animated} 
+            onChange={toggle} 
+            title="Toggle Animation"
+            style={{ width: 14, height: 14 }}
+          />
+        </div>
       <span className={styles.paramLabel}>{label}</span>
       <ValueField value={display} onChange={onChange} unit="%" min={-100} max={200} aria-label={label} />
     </div>

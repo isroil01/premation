@@ -17,6 +17,12 @@ import { getSettingsManager } from '@core/services/coreServices';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled, set3DEnabled, THREE_D_PROPS } from '@core/scene/threeD';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import {
+  applyTypewriter,
+  applyBounceInWords,
+  applySpinFadeCharacters,
+  applyTrackingReveal,
+} from './keyframeAssistants';
 
 export interface PresetTrack {
   prop: PropPath;
@@ -30,7 +36,10 @@ export interface PresetTrack {
 export interface AnimationPreset {
   name: string;
   builtin?: boolean;
+  category?: string;
   tracks: PresetTrack[];
+  /** Custom application function for complex rigs (e.g. text animators) */
+  applyFn?: (nodeId: string, atTime: number, engine?: any) => boolean;
 }
 
 // ── Pure time maths (the tested core) ────────────────────────────────
@@ -147,119 +156,342 @@ export function applyPresetTracks(
 
 const kf = (t: number, value: number, easing?: Keyframe['easing']): Keyframe => ({ t, value, easing });
 
+// Professional Easing Curves
+const SMOOTH_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1]; // Smooth AE Ease Ease
+const SNAPPY_EASE: [number, number, number, number] = [0.16, 1, 0.3, 1]; // Snappy Ease Out
+const OVERSHOOT_EASE: [number, number, number, number] = [0.34, 1.56, 0.64, 1]; // Pop In with settle
+const ANTICIPATE_EASE: [number, number, number, number] = [0.6, -0.28, 0.735, 0.045]; // Anticipation zoom/slide
+const BOUNCE_EASE: [number, number, number, number] = [0.175, 0.885, 0.32, 1.275]; // Elastic bounce
+
+// Bezier is optional: easing lives on the keyframe that STARTS a segment, so
+// a preset's final keyframe needs no handles.
+const kfb = (t: number, value: number, bezier?: [number, number, number, number]): Keyframe => ({
+  t,
+  value,
+  ...(bezier ? { easing: 'bezier' as const, bezier } : {}),
+});
+
 export const BUILTIN_PRESETS: ReadonlyArray<AnimationPreset> = [
+  // ── Entrances ───────────────────────────────────────────────────────
   {
     name: 'Fade In',
     builtin: true,
-    tracks: [{ prop: 'opacity', keyframes: [kf(0, 0, 'easeOut'), kf(0.5, 100)] }],
-  },
-  {
-    name: 'Fade Out',
-    builtin: true,
-    tracks: [{ prop: 'opacity', keyframes: [kf(0, 100, 'easeIn'), kf(0.5, 0)] }],
+    category: 'Entrances',
+    tracks: [{ prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.5, 100)] }],
   },
   {
     name: 'Pop In',
     builtin: true,
+    category: 'Entrances',
     tracks: [
-      { prop: 'scale', keyframes: [kf(0, 0, 'easeOut'), kf(0.35, 1.08), kf(0.5, 1)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.25, 100)] },
+      { prop: 'scale', keyframes: [kfb(0, 0, OVERSHOOT_EASE), kfb(0.5, 1)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.3, 100)] },
     ],
-  },
-  {
-    name: 'Spin',
-    builtin: true,
-    tracks: [{ prop: 'rotation', keyframes: [kf(0, 0, 'easeInOut'), kf(1, 360)] }],
-  },
-  {
-    name: 'Pulse',
-    builtin: true,
-    tracks: [{ prop: 'scale', keyframes: [kf(0, 1, 'easeInOut'), kf(0.4, 1.15), kf(0.8, 1)] }],
   },
   {
     name: 'Bounce In',
     builtin: true,
+    category: 'Entrances',
     tracks: [
-      { prop: 'scale', keyframes: [kf(0, 0, 'easeOut'), kf(0.3, 1.15), kf(0.45, 0.95), kf(0.6, 1.04), kf(0.75, 1)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.2, 100)] },
+      { prop: 'scale', keyframes: [kfb(0, 0, BOUNCE_EASE), kfb(0.6, 1)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.3, 100)] },
     ],
   },
   {
     name: 'Slide In Left',
     builtin: true,
+    category: 'Entrances',
     tracks: [
-      { prop: 'x', relative: true, keyframes: [kf(0, -400, 'easeOut'), kf(0.6, 0)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.35, 100)] },
+      { prop: 'x', relative: true, keyframes: [kfb(0, -400, SNAPPY_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.35, 100)] },
     ],
   },
   {
     name: 'Slide In Right',
     builtin: true,
+    category: 'Entrances',
     tracks: [
-      { prop: 'x', relative: true, keyframes: [kf(0, 400, 'easeOut'), kf(0.6, 0)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.35, 100)] },
+      { prop: 'x', relative: true, keyframes: [kfb(0, 400, SNAPPY_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.35, 100)] },
     ],
   },
   {
     name: 'Rise Up',
     builtin: true,
+    category: 'Entrances',
     tracks: [
-      { prop: 'y', relative: true, keyframes: [kf(0, 120, 'easeOut'), kf(0.6, 0)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.4, 100)] },
+      { prop: 'y', relative: true, keyframes: [kfb(0, 120, SNAPPY_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.4, 100)] },
     ],
   },
   {
     name: 'Drop In',
     builtin: true,
+    category: 'Entrances',
     tracks: [
-      { prop: 'y', relative: true, keyframes: [kf(0, -260, 'easeOut'), kf(0.45, 0), kf(0.6, -24, 'easeOut'), kf(0.75, 0)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.25, 100)] },
+      { prop: 'y', relative: true, keyframes: [kfb(0, -260, BOUNCE_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.25, 100)] },
     ],
+  },
+  {
+    name: 'Spiral Entrance',
+    builtin: true,
+    category: 'Entrances',
+    tracks: [
+      { prop: 'scale', keyframes: [kfb(0, 0, OVERSHOOT_EASE), kfb(0.6, 1)] },
+      { prop: 'rotation', keyframes: [kfb(0, -180, SNAPPY_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.4, 100)] },
+    ],
+  },
+  {
+    name: 'Skid Slide In',
+    builtin: true,
+    category: 'Entrances',
+    tracks: [
+      { prop: 'x', relative: true, keyframes: [kfb(0, -300, [0.34, 1.56, 0.64, 1]), kfb(0.7, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.3, 100)] },
+    ],
+  },
+
+  // ── Exits ──────────────────────────────────────────────────────────
+  {
+    name: 'Fade Out',
+    builtin: true,
+    category: 'Exits',
+    tracks: [{ prop: 'opacity', keyframes: [kfb(0, 100, SMOOTH_EASE), kfb(0.5, 0)] }],
+  },
+  {
+    name: 'Zoom Out Exit',
+    builtin: true,
+    category: 'Exits',
+    tracks: [
+      { prop: 'scale', keyframes: [kfb(0, 1, ANTICIPATE_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 100, SMOOTH_EASE), kfb(0.45, 0)] },
+    ],
+  },
+  {
+    name: 'Rotate Out Exit',
+    builtin: true,
+    category: 'Exits',
+    tracks: [
+      { prop: 'rotation', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.6, 360)] },
+      { prop: 'scale', keyframes: [kfb(0, 1, SMOOTH_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 100, SMOOTH_EASE), kfb(0.4, 0)] },
+    ],
+  },
+
+  // ── Emphases & Loops ────────────────────────────────────────────────
+  {
+    name: 'Spin',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [{ prop: 'rotation', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(1.0, 360)] }],
+  },
+  {
+    name: 'Pulse',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [{ prop: 'scale', keyframes: [kfb(0, 1, SMOOTH_EASE), kfb(0.4, 1.18, SMOOTH_EASE), kfb(0.8, 1)] }],
   },
   {
     name: 'Shake',
     builtin: true,
+    category: 'Emphases & Loops',
     tracks: [
-      { prop: 'rotation', relative: true, keyframes: [kf(0, 0), kf(0.08, 8), kf(0.16, -7), kf(0.24, 5), kf(0.32, -3), kf(0.4, 0)] },
+      { prop: 'rotation', relative: true, keyframes: [
+        kfb(0, 0, SMOOTH_EASE), 
+        kfb(0.08, 8, SMOOTH_EASE), 
+        kfb(0.16, -7, SMOOTH_EASE), 
+        kfb(0.24, 5, SMOOTH_EASE), 
+        kfb(0.32, -3, SMOOTH_EASE), 
+        kfb(0.4, 0)
+      ] },
     ],
   },
-  // ── 3D presets — applying one auto-enables the layer's 3D switch ──
+  {
+    name: 'Heartbeat',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [
+      { prop: 'scale', keyframes: [
+        kfb(0, 1, [0.25, 0.8, 0.25, 1]), 
+        kfb(0.14, 1.25, [0.25, 0.1, 0.25, 1]), 
+        kfb(0.28, 1.05, [0.25, 0.8, 0.25, 1]), 
+        kfb(0.42, 1.2, [0.25, 0.1, 0.25, 1]), 
+        kfb(0.6, 1)
+      ] },
+    ],
+  },
+  {
+    name: 'Elastic Float',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [
+      { prop: 'y', relative: true, keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.8, -20, SMOOTH_EASE), kfb(1.6, 0)] },
+    ],
+  },
+  {
+    name: 'Jelly Wobble',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [
+      { prop: 'scale', keyframes: [
+        kfb(0, 1, SMOOTH_EASE), 
+        kfb(0.2, 1.25, SMOOTH_EASE), 
+        kfb(0.4, 0.8, SMOOTH_EASE), 
+        kfb(0.6, 1.1, SMOOTH_EASE), 
+        kfb(0.8, 0.95, SMOOTH_EASE), 
+        kfb(1.0, 1)
+      ] },
+      { prop: 'rotation', relative: true, keyframes: [
+        kfb(0, 0, SMOOTH_EASE), 
+        kfb(0.2, 10, SMOOTH_EASE), 
+        kfb(0.4, -8, SMOOTH_EASE), 
+        kfb(0.6, 4, SMOOTH_EASE), 
+        kfb(0.8, -2, SMOOTH_EASE), 
+        kfb(1.0, 0)
+      ] },
+    ],
+  },
+  {
+    name: 'Glitch Jitter',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [
+      { prop: 'x', relative: true, keyframes: [kf(0, 0), kf(0.05, -6), kf(0.1, 8), kf(0.15, -4), kf(0.2, 5), kf(0.25, -2), kf(0.3, 0)] },
+      { prop: 'y', relative: true, keyframes: [kf(0, 0), kf(0.05, 4), kf(0.1, -6), kf(0.15, 5), kf(0.2, -3), kf(0.25, 4), kf(0.3, 0)] },
+      { prop: 'scale', keyframes: [kf(0, 1), kf(0.07, 0.95), kf(0.14, 1.08), kf(0.21, 0.97), kf(0.3, 1)] },
+    ],
+  },
+  {
+    name: 'Wiggle Drift',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [],
+    applyFn: (nodeId, _atTime, engine = defaultAnimation) => {
+      runAnimEdit('Apply wiggle expression', () => {
+        engine.setExpression(nodeId, 'x', 'wiggle(3, 40)');
+        engine.setExpression(nodeId, 'y', 'wiggle(3, 40)');
+      });
+      return true;
+    },
+  },
+  {
+    name: 'Wind Sway',
+    builtin: true,
+    category: 'Emphases & Loops',
+    tracks: [],
+    applyFn: (nodeId, _atTime, engine = defaultAnimation) => {
+      runAnimEdit('Apply continuous sway expression', () => {
+        engine.setExpression(nodeId, 'rotation', 'Math.sin(time * 3) * 6');
+      });
+      return true;
+    },
+  },
+
+  // ── 3D Motions ─────────────────────────────────────────────────────
   {
     name: 'Flip In 3D',
     builtin: true,
+    category: '3D Motions',
     tracks: [
-      { prop: 'rotationY', keyframes: [kf(0, -90, 'easeOut'), kf(0.6, 0)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.3, 100)] },
+      { prop: 'rotationY', keyframes: [kfb(0, -90, SNAPPY_EASE), kfb(0.6, 0, SMOOTH_EASE)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.3, 100)] },
     ],
   },
   {
     name: 'Card Flip 3D',
     builtin: true,
-    tracks: [{ prop: 'rotationY', keyframes: [kf(0, 0, 'easeInOut'), kf(0.9, 180)] }],
+    category: '3D Motions',
+    tracks: [{ prop: 'rotationY', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.9, 180)] }],
   },
   {
     name: 'Swing In 3D',
     builtin: true,
+    category: '3D Motions',
     tracks: [
-      { prop: 'rotationX', keyframes: [kf(0, -80, 'easeOut'), kf(0.5, 12, 'easeInOut'), kf(0.75, 0)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.25, 100)] },
+      { prop: 'rotationX', keyframes: [kfb(0, -80, BOUNCE_EASE), kfb(0.6, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.25, 100)] },
     ],
   },
   {
     name: 'Depth Push In',
     builtin: true,
+    category: '3D Motions',
     tracks: [
-      { prop: 'z', keyframes: [kf(0, 900, 'easeOut'), kf(0.8, 0)] },
-      { prop: 'opacity', keyframes: [kf(0, 0), kf(0.35, 100)] },
+      { prop: 'z', keyframes: [kfb(0, 800, SNAPPY_EASE), kfb(0.8, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.35, 100)] },
     ],
   },
   {
     name: 'Orbit Tilt 3D',
     builtin: true,
+    category: '3D Motions',
     tracks: [
-      { prop: 'rotationY', keyframes: [kf(0, 0, 'easeInOut'), kf(0.6, 28, 'easeInOut'), kf(1.2, 0)] },
-      { prop: 'rotationX', keyframes: [kf(0, 0, 'easeInOut'), kf(0.6, -14, 'easeInOut'), kf(1.2, 0)] },
+      { prop: 'rotationY', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.6, 28, SMOOTH_EASE), kfb(1.2, 0)] },
+      { prop: 'rotationX', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.6, -14, SMOOTH_EASE), kfb(1.2, 0)] },
     ],
+  },
+  {
+    name: '3D Twirl In',
+    builtin: true,
+    category: '3D Motions',
+    tracks: [
+      { prop: 'rotationX', keyframes: [kfb(0, -180, SNAPPY_EASE), kfb(0.7, 0)] },
+      { prop: 'rotationY', keyframes: [kfb(0, -180, SNAPPY_EASE), kfb(0.7, 0)] },
+      { prop: 'scale', keyframes: [kfb(0, 0, OVERSHOOT_EASE), kfb(0.7, 1)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.3, 100)] },
+    ],
+  },
+  {
+    name: '3D Cube Roll',
+    builtin: true,
+    category: '3D Motions',
+    tracks: [
+      { prop: 'rotationX', keyframes: [kfb(0, -90, SNAPPY_EASE), kfb(0.7, 0)] },
+      { prop: 'z', keyframes: [kfb(0, 400, SNAPPY_EASE), kfb(0.7, 0)] },
+      { prop: 'opacity', keyframes: [kfb(0, 0, SMOOTH_EASE), kfb(0.3, 100)] },
+    ],
+  },
+  {
+    name: 'Cinematic Pan 3D',
+    builtin: true,
+    category: '3D Motions',
+    tracks: [
+      { prop: 'rotationY', keyframes: [kfb(0, -15, SMOOTH_EASE), kfb(1.8, 15)] },
+      { prop: 'rotationX', keyframes: [kfb(0, 10, SMOOTH_EASE), kfb(1.8, -5)] },
+      { prop: 'z', keyframes: [kfb(0, 200, SMOOTH_EASE), kfb(1.8, -100)] },
+    ],
+  },
+
+  // ── Text Animators (AE-Style) ───────────────────────────────────────
+  {
+    name: 'Typewriter',
+    builtin: true,
+    category: 'Text Animators (AE-Style)',
+    tracks: [],
+    applyFn: (nodeId, atTime, engine) => applyTypewriter(nodeId, atTime, 1.5, engine),
+  },
+  {
+    name: 'Bounce In Words',
+    builtin: true,
+    category: 'Text Animators (AE-Style)',
+    tracks: [],
+    applyFn: (nodeId, atTime, engine) => applyBounceInWords(nodeId, atTime, 1.5, engine),
+  },
+  {
+    name: 'Spin & Fade Characters',
+    builtin: true,
+    category: 'Text Animators (AE-Style)',
+    tracks: [],
+    applyFn: (nodeId, atTime, engine) => applySpinFadeCharacters(nodeId, atTime, 1.5, engine),
+  },
+  {
+    name: 'Tracking Reveal',
+    builtin: true,
+    category: 'Text Animators (AE-Style)',
+    tracks: [],
+    applyFn: (nodeId, atTime, engine) => applyTrackingReveal(nodeId, atTime, 1.5, engine),
   },
 ];
 
@@ -301,6 +533,9 @@ export function saveCurrentAsPreset(nodeId: string, name: string): boolean {
 export function applyPresetByName(nodeId: string, name: string, atTime: number): boolean {
   const preset = listPresets().find((p) => p.name === name);
   if (!preset) return false;
+  if (preset.applyFn) {
+    return preset.applyFn(nodeId, atTime, defaultAnimation);
+  }
   applyPresetTracks(nodeId, preset.tracks, atTime);
   return true;
 }

@@ -6,10 +6,10 @@
 .item {
   display: flex;
   flex-direction: column;
-  margin-bottom: var(--space-3);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-1);
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: var(--color-surface-subtle, rgba(255, 255, 255, 0.025));
+  border: none;
   overflow: hidden;
 }
 
@@ -27,8 +27,8 @@
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  height: 30px;
-  padding: 0 var(--space-5);
+  height: 32px;
+  padding: 0 12px;
   background: transparent;
   border: none;
   color: var(--color-text-secondary);
@@ -43,7 +43,7 @@
 }
 
 .trigger:hover:not(:disabled) {
-  background: var(--color-hover);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--color-text-primary);
 }
 
@@ -83,11 +83,11 @@
 }
 
 .panel {
-  padding: var(--space-5) var(--space-7) var(--space-6) var(--space-7);
+  padding: 10px 12px 12px 12px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  background: var(--color-panel);
+  gap: 10px;
+  background: transparent;
 }
 
 .panel[hidden] {

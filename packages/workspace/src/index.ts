@@ -102,6 +102,8 @@ export {
   SelectTool,
   DirectSelectionTool,
   MoveTool,
+  RotateTool,
+  PanBehindTool,
   HandTool,
   ZoomTool,
   RectangleTool,
@@ -111,6 +113,8 @@ export {
   LineTool,
   PenTool,
   PencilTool,
+  BrushTool,
+  drawToolOptions,
   CurvatureTool,
   TextTool,
   CameraTool,
@@ -131,9 +135,11 @@ export {
   type MoveNodesPayload,
   type ResizeNodePayload,
   type RotateNodePayload,
+  type MoveAnchorPayload,
   type CreateNodePayload,
   type DeleteNodesPayload,
   type UpdateNodePathPayload,
+  type UpdateMaskPathPayload,
 } from './commands/WorkspaceCommands';
 
 // ── In-memory adapters (headless / tests) ─────────────────────────

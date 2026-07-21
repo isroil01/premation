@@ -53,7 +53,7 @@ export function PresetsBar(): JSX.Element {
       )}
       {userPresets.length > 0 ? (
         <Dropdown
-          placement="bottom-end"
+          placement="left-start"
           trigger={<button type="button" className={styles.manageBtn} title="Manage saved presets">⋯</button>}
           items={userPresets.map((p): DropdownItem => ({
             type: 'item', id: `del:${p.name}`, label: `Delete “${p.name}”`, danger: true,

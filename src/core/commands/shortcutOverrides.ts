@@ -15,16 +15,23 @@ import { getSettingsManager } from '@core/services/coreServices';
 /** commandId → chord (rebind) or null (disabled). Absent = use default. */
 export type ShortcutOverrides = Record<string, KeyChord | null>;
 
+/**
+ * The default preset mirrors After Effects' toolbar keymap, so a user arriving
+ * with AE muscle memory finds the tools where their hand expects them.
+ *
+ * `A` is deliberately left to the reveal-anchor-point shortcut (AE's meaning);
+ * Direct Selection moves to Shift+V rather than taking it.
+ *
+ * Only list genuine overrides. `rehydrateFromRegistry` walks the REGISTRY, so
+ * an entry naming a command that doesn't exist binds nothing — it just reads
+ * like a working shortcut to whoever opens this file next. ('timeline.revealAudio'
+ * and 'edit.deselectAll.f2' both sat here doing exactly that; L reveals audio
+ * via the reveal listener in App.tsx, not through a command.)
+ */
 export const AE_PRESET: ShortcutOverrides = {
-  'tool.rotate': { key: 'w' },
-  'tool.pan-behind': { key: 'y' }, // In AE, Pan Behind is Y. Wait, the prompt says "W rotation, A anchor, L audio, F2 deselect, Shift+F3 graph". So I'll map A to Pan Behind to match user explicit prompt.
-  'tool.direct-select': { key: 'v', shift: true }, // AE has A for direct select? If we remap A to anchor, maybe free up A
+  'tool.direct-select': { key: 'v', shift: true },
+  'view.graphEditor': { key: 'F3', shift: true },
 };
-// Overriding Pan Behind to A because prompt explicitly asked for "A anchor" in exact keymap.
-AE_PRESET['tool.pan-behind'] = { key: 'a' };
-AE_PRESET['timeline.revealAudio'] = { key: 'l' }; // (Even if revealAudio isn't currently implemented as a command, it can be defined here safely)
-AE_PRESET['edit.deselectAll.f2'] = { key: 'F2' };
-AE_PRESET['view.graphEditor'] = { key: 'F3', shift: true };
 
 export const DEFAULT_PRESET: ShortcutOverrides = AE_PRESET;
 

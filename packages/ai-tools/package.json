@@ -1,0 +1,14 @@
+{
+  "name": "@motion/ai-tools",
+  "version": "1.0.0",
+  "description": "The typed tool vocabulary an LLM uses to author motion graphics. Schemas only — hosts inject the handlers. Emits to OpenAI, Anthropic, Gemini and MCP from one definition.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest --config jest.config.cjs"
+  },
+  "license": "MIT"
+}

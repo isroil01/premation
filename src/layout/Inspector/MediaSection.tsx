@@ -3,9 +3,12 @@ import { ValueField } from '@components/ValueField';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
 import { useSceneRevision } from '@stores/sceneStore';
+import { useAssetStore } from '@stores/assetStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
+import { getNodeHasSequence, getNodeSequenceLoop, setSequenceLoop } from '@core/scene/imageSequence';
 import { TimeRemapRow } from './PrecompControl';
+import { customPrompt } from '@components/Modal';
 import styles from './TransformSection.module.css';
 
 export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -20,6 +23,11 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // Media Source and Fit Props on Transform component
   const [src, setSrc] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'src');
   const [fitMode, setFitMode] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fitMode');
+  // The renderer resolves assetId ahead of src (buildSnapshot), and the timeline
+  // bounds media clips by the asset's duration — so a replace has to re-point
+  // both or the layer keeps resolving the old asset.
+  const [, setAssetId] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'assetId');
+  const [, setAudioAssetId] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, '__assetId');
 
   // Crop offsets
   const [cropTop, setCropTop] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'cropTop');
@@ -35,22 +43,32 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
 
   if (!tComp) return null;
 
+  /** Point the layer at `path`, keeping its keyframes, effects and masks. */
+  const applyReplace = (path: string) => {
+    setSrc(path);
+    // Re-point to the matching library asset when the new source is one, and
+    // clear the id otherwise so src wins instead of the stale asset.
+    const match = useAssetStore.getState().assets.find((a) => a.src === path);
+    setAssetId(match?.id);
+    setAudioAssetId(match?.id);
+  };
+
   const handleReplace = async () => {
     // Check if Electron is available, else request standard import/replace or mock
     if (window.electronAPI?.project?.open) {
       try {
         const file = await window.electronAPI.project.open();
         if (file) {
-          setSrc(file.path);
+          applyReplace(file.path);
         }
       } catch (err) {
         console.error('Failed to open Electron file dialog:', err);
       }
     } else {
       // Browser fallback: trigger a prompt/alert
-      const path = prompt('Enter image/video URL or file path:', String(src ?? ''));
+      const path = await customPrompt('Replace Media Source', 'Enter image/video URL or file path:', String(src ?? ''));
       if (path !== null) {
-        setSrc(path);
+        applyReplace(path);
       }
     }
   };
@@ -85,6 +103,16 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
           <option value="none">None</option>
         </select>
       </InspectorRow>
+
+      {getNodeHasSequence(nodeId) && (
+        <InspectorRow label="Loop Sequence" align="center">
+          <Switch
+            checked={getNodeSequenceLoop(nodeId)}
+            onChange={(e) => setSequenceLoop(nodeId, e.currentTarget.checked)}
+            aria-label="Loop image sequence"
+          />
+        </InspectorRow>
+      )}
 
       <h4 className={styles.title} style={{ marginTop: 12 }}>Crop</h4>
       <InspectorRow label="Crop Top" align="center">

@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Antigravity Enterprise Architecture — AI Motion Editor Concept</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* Platform & Concept Zero-G Palette */
+      --obsidian-deep: #050505;
+      --void: #05060a;
+      --surface-0: #0b0d12;
+      --surface-1: #14171e;
+      --surface-2: #1e222c;
+      --surface-3: #292e3a;
+      
+      --carbon-15: rgba(20, 23, 30, 0.15);
+      --carbon-25: rgba(20, 23, 30, 0.25);
+      --carbon-65: rgba(20, 23, 30, 0.65);
+      --obsidian-80: rgba(5, 6, 10, 0.85);
+
+      --nebula-cyan: #22d3ee;
+      --signal-blue: #3170e6;
+      --signal-blue-hover: #4d88f5;
+      --ai-violet: #8b5cf6;
+      --temporal-ember: #ff6b45;
+      --moonlight-white: #ffffff;
+      
+      --ink: #f5f7fb;
+      --ink-secondary: #c6cdd9;
+      --ink-tertiary: #94a0b2;
+      --ink-muted: #707b8d;
+
+      --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'IBM Plex Mono', monospace;
+
+      --ease-inertial: cubic-bezier(0.16, 1, 0.3, 1);
+      --ease-drift: cubic-bezier(0.23, 1, 0.32, 1);
+      --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background-color: var(--obsidian-deep);
+      background-image: 
+        radial-gradient(circle at 15% 25%, rgba(34, 211, 238, 0.04) 0%, transparent 45%),
+        radial-gradient(circle at 85% 75%, rgba(139, 92, 246, 0.05) 0%, transparent 50%),
+        radial-gradient(circle at 50% 10%, rgba(49, 112, 230, 0.03) 0%, transparent 40%);
+      color: var(--ink);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Ambient Bioluminescent Edge Lighting */
+    .edge-glow-top {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--nebula-cyan), var(--ai-violet), var(--signal-blue), transparent);
+      opacity: 0.7;
+      z-index: 1000;
+      filter: drop-shadow(0 0 10px var(--nebula-cyan));
+    }
+
+    /* Top Switcher Bar (For Concept Exploration) */
+    .concept-switcher {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999;
+      background: var(--carbon-65);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 6px 8px;
+      border-radius: 9999px;
+      display: flex;
+      gap: 6px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.8), 0 0 20px rgba(34, 211, 238, 0.1);
+    }
+
+    .switch-btn {
+      background: transparent;
+      border: none;
+      color: var(--ink-secondary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      cursor: pointer;
+      transition: all 180ms var(--ease-drift);
+    }
+
+    .switch-btn:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .switch-btn.active {
+      background: var(--signal-blue);
+      color: var(--moonlight-white);
+      box-shadow: 0 0 16px rgba(49, 112, 230, 0.5);
+    }
+
+    /* Main Container Views */
+    .view-container {
+      flex: 1;
+      display: none;
+      padding: 90px 40px 40px;
+      min-height: 100vh;
+      opacity: 0;
+      transform: translateY(12px) scale(0.98);
+      transition: opacity 400ms var(--ease-inertial), transform 400ms var(--ease-inertial);
+    }
+
+    .view-container.active {
+      display: flex;
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    /* =========================================================
+       VIEW 1: DASHBOARD (MANAGEMENT LAYER)
+       ========================================================= */
+    .dashboard-view {
+      display: grid;
+      grid-template-columns: 76px 1fr 340px;
+      gap: 32px;
+      width: 100%;
+      max-width: 1720px;
+      margin: 0 auto;
+    }
+
+    /* Floating Pill Sidebar */
+    .floating-sidebar {
+      position: sticky;
+      top: 90px;
+      width: 56px;
+      height: calc(100vh - 130px);
+      background: var(--carbon-65);
+      backdrop-filter: blur(24px) saturate(180%);
+      border-radius: 9999px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 0;
+      gap: 20px;
+      box-shadow: 
+        0 24px 60px -12px rgba(5, 6, 10, 0.9),
+        0 0 25px -5px rgba(34, 211, 238, 0.08),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-pill-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink-secondary);
+      cursor: pointer;
+      transition: all 160ms var(--ease-drift);
+      position: relative;
+    }
+
+    .nav-pill-icon:hover, .nav-pill-icon.active {
+      color: var(--moonlight-white);
+      background: rgba(34, 211, 238, 0.12);
+      transform: scale(1.08);
+    }
+
+    .nav-pill-icon.active::after {
+      content: '';
+      position: absolute;
+      left: -6px;
+      width: 4px;
+      height: 20px;
+      background: var(--nebula-cyan);
+      border-radius: 4px;
+      box-shadow: 0 0 10px var(--nebula-cyan);
+    }
+
+    .nav-pill-icon svg {
+      width: 20px;
+      height: 20px;
+      stroke-width: 1.75px;
+    }
+
+    /* Main Workspace */
+    .workspace-main {
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .workspace-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .header-authority {
+      font-size: 32px;
+      font-weight: 300;
+      letter-spacing: -0.025em;
+      color: var(--ink);
+    }
+
+    .header-subtitle {
+      font-size: 13px;
+      color: var(--ink-tertiary);
+      margin-top: 4px;
+      font-weight: 400;
+    }
+
+    /* Holographic Data Display (Render Queue & Telemetry) */
+    .hologram-panel {
+      background: linear-gradient(180deg, var(--carbon-25) 0%, rgba(11, 13, 18, 0.4) 100%);
+      backdrop-filter: blur(20px);
+      border-radius: 16px;
+      padding: 24px;
+      position: relative;
+      box-shadow: 0 20px 50px -15px rgba(5, 6, 10, 0.9), 0 0 30px -5px rgba(34, 211, 238, 0.07);
+      border: 1px solid rgba(34, 211, 238, 0.15);
+    }
+
+    .hologram-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .hologram-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--nebula-cyan);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .hologram-title::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: var(--nebula-cyan);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--nebula-cyan);
+    }
+
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    .telemetry-stat {
+      background: rgba(5, 6, 10, 0.6);
+      padding: 16px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--ink-tertiary);
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-family: var(--font-mono);
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .stat-unit {
+      font-size: 12px;
+      color: var(--nebula-cyan);
+      font-weight: 400;
+    }
+
+    /* Holographic Render Graph Visualizer */
+    .graph-container {
+      height: 110px;
+      width: 100%;
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      padding: 10px 0;
+      border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+    }
+
+    .graph-bar {
+      flex: 1;
+      background: linear-gradient(180deg, var(--nebula-cyan) 0%, rgba(49, 112, 230, 0.2) 100%);
+      border-radius: 3px 3px 0 0;
+      transition: height 300ms var(--ease-inertial);
+      position: relative;
+    }
+
+    .graph-bar.ai-assisted {
+      background: linear-gradient(180deg, var(--ai-violet) 0%, rgba(139, 92, 246, 0.2) 100%);
+    }
+
+    .graph-bar:hover {
+      filter: brightness(1.3);
+      box-shadow: 0 0 15px var(--nebula-cyan);
+    }
+
+    /* Floating Project Islands Grid */
+    .islands-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    .islands-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .project-island {
+      position: relative;
+      background: var(--carbon-65);
+      backdrop-filter: blur(20px);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 24px 60px -15px rgba(5, 6, 10, 0.85);
+      cursor: pointer;
+      transition: transform 260ms var(--ease-inertial), box-shadow 260ms var(--ease-inertial);
+      overflow: hidden;
+    }
+
+    /* Razor-thin 1px inner stroke with glow gradient */
+    .project-island::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 14px;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.35) 0%, rgba(139, 92, 246, 0.1) 50%, rgba(49, 112, 230, 0.2) 100%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+      transition: opacity 220ms var(--ease-drift);
+      opacity: 0.6;
+    }
+
+    .project-island:hover {
+      transform: translateY(-8px) scale(1.015);
+      box-shadow: 
+        0 36px 80px -12px rgba(5, 6, 10, 0.95),
+        0 0 35px -5px rgba(34, 211, 238, 0.2),
+        0 0 50px -15px rgba(139, 92, 246, 0.15);
+    }
+
+    .project-island:hover::before {
+      opacity: 1;
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.8) 0%, rgba(139, 92, 246, 0.5) 50%, rgba(49, 112, 230, 0.6) 100%);
+    }
+
+    .island-preview {
+      height: 140px;
+      border-radius: 8px;
+      background: var(--surface-0);
+      margin-bottom: 16px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .island-preview::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, rgba(34, 211, 238, 0.15), transparent 70%);
+    }
+
+    .island-tag {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(5, 6, 10, 0.75);
+      backdrop-filter: blur(8px);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--nebula-cyan);
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      z-index: 2;
+    }
+
+    .island-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 6px;
+    }
+
+    .island-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      font-family: var(--font-mono);
+    }
+
+    /* Right Column: Persistent Recent Activity & AI Logs */
+    .activity-panel {
+      background: var(--carbon-65);
+      backdrop-filter: blur(24px);
+      border-radius: 16px;
+      padding: 24px;
+      height: calc(100vh - 130px);
+      position: sticky;
+      top: 90px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      box-shadow: var(--shadow-floating-island);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .activity-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding-bottom: 16px;
+    }
+
+    .activity-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .activity-item {
+      display: flex;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      transition: all 160ms var(--ease-drift);
+      border: 1px solid transparent;
+    }
+
+    .activity-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.08);
+      transform: translateX(4px);
+    }
+
+    .activity-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 6px;
+      flex-shrink: 0;
+    }
+
+    .dot-human {
+      background: var(--signal-blue);
+      box-shadow: 0 0 8px var(--signal-blue);
+    }
+
+    .dot-ai {
+      background: var(--ai-violet);
+      box-shadow: 0 0 8px var(--ai-violet);
+    }
+
+    .activity-content {
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .activity-user {
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .activity-user.ai {
+      color: #c4b5fd;
+    }
+
+    .activity-time {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--ink-muted);
+      margin-top: 4px;
+    }
+
+    /* =========================================================
+       VIEW 2: LOGIN / SIGNUP (ENTRY PORTAL APERTURE)
+       ========================================================= */
+    .portal-view {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: calc(100vh - 130px);
+    }
+
+    .aperture-portal {
+      width: 100%;
+      max-width: 480px;
+      background: var(--carbon-65);
+      backdrop-filter: blur(32px) saturate(200%);
+      border-radius: 24px;
+      padding: 48px 40px;
+      position: relative;
+      box-shadow: 
+        0 40px 100px -20px rgba(5, 6, 10, 0.95),
+        0 0 60px -10px rgba(34, 211, 238, 0.25),
+        0 0 80px -20px rgba(139, 92, 246, 0.2);
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      animation: apertureFloat 6s ease-in-out infinite alternate;
+    }
+
+    @keyframes apertureFloat {
+      0% { transform: translateY(0px); }
+      100% { transform: translateY(-8px); }
+    }
+
+    .aperture-portal::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: 25px;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.6) 0%, rgba(139, 92, 246, 0.3) 50%, rgba(49, 112, 230, 0.4) 100%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+
+    .portal-header {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .aperture-ring-logo {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--surface-0) 40%, transparent 41%),
+                  conic-gradient(from 0deg, var(--nebula-cyan), var(--ai-violet), var(--signal-blue), var(--nebula-cyan));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 30px rgba(34, 211, 238, 0.4);
+      position: relative;
+    }
+
+    .aperture-ring-logo::after {
+      content: '';
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--obsidian-deep);
+      border: 1px solid var(--nebula-cyan);
+    }
+
+    .portal-title {
+      font-size: 24px;
+      font-weight: 300;
+      letter-spacing: -0.025em;
+      color: var(--ink);
+    }
+
+    .portal-subtitle {
+      font-size: 13px;
+      color: var(--ink-tertiary);
+    }
+
+    .portal-form {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .portal-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-tertiary);
+    }
+
+    /* Borderless Fields Sunk in Dark Wells with Photon Bloom */
+    .portal-input-well {
+      background: var(--surface-0);
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      transition: all 260ms var(--ease-inertial);
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
+    }
+
+    .portal-input-well:focus-within {
+      background: rgba(11, 13, 18, 0.98);
+      border-color: rgba(34, 211, 238, 0.6);
+      box-shadow: 
+        0 0 32px -4px rgba(34, 211, 238, 0.45),
+        0 0 16px -2px rgba(139, 92, 246, 0.25),
+        inset 0 0 14px -2px rgba(34, 211, 238, 0.25);
+      transform: translateY(-2px);
+    }
+
+    .portal-input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--ink);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      width: 100%;
+    }
+
+    .portal-input::placeholder {
+      color: var(--ink-muted);
+    }
+
+    /* High-Contrast Pill CTA */
+    .portal-cta-btn {
+      margin-top: 10px;
+      width: 100%;
+      height: 48px;
+      border-radius: 9999px;
+      background: linear-gradient(135deg, var(--moonlight-white) 0%, #cbd5e1 100%);
+      color: var(--obsidian-deep);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      box-shadow: 0 10px 30px -5px rgba(34, 211, 238, 0.4), 0 0 20px -2px rgba(49, 112, 230, 0.3);
+      transition: transform 140ms var(--ease-drift), box-shadow 220ms var(--ease-drift);
+    }
+
+    .portal-cta-btn:hover {
+      transform: translateY(-2px) scale(1.02);
+      box-shadow: 0 16px 40px -4px rgba(34, 211, 238, 0.65), 0 0 30px -2px rgba(49, 112, 230, 0.5);
+    }
+
+    .portal-cta-btn:active {
+      transform: scale(0.97);
+      box-shadow: 0 4px 14px -4px rgba(34, 211, 238, 0.4);
+    }
+
+    /* Responsive Adjustments */
+    @media (max-width: 1200px) {
+      .dashboard-view {
+        grid-template-columns: 70px 1fr;
+      }
+      .activity-panel {
+        display: none;
+      }
+      .telemetry-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .islands-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="edge-glow-top"></div>
+
+  <!-- Concept Switcher Bar -->
+  <div class="concept-switcher">
+    <button class="switch-btn active" onclick="switchView('dashboard')">Management Dashboard</button>
+    <button class="switch-btn" onclick="switchView('portal')">Entry Portal (Login)</button>
+  </div>
+
+  <!-- VIEW 1: DASHBOARD (MANAGEMENT LAYER) -->
+  <div id="view-dashboard" class="view-container active dashboard-view">
+    <!-- Collapsed Floating Pill Navigation -->
+    <aside class="floating-sidebar">
+      <div class="nav-pill-icon active" title="Projects & Workspace">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg>
+      </div>
+      <div class="nav-pill-icon" title="Render Queue & Telemetry">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
+      </div>
+      <div class="nav-pill-icon" title="AI Neural Compositor">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" /></svg>
+      </div>
+      <div class="nav-pill-icon" title="Asset Repository">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" /></svg>
+      </div>
+    </aside>
+
+    <!-- Main Workspace Area -->
+    <main class="workspace-main">
+      <header class="workspace-header">
+        <div>
+          <h1 class="header-authority">Project Control Surface</h1>
+          <p class="header-subtitle">Antigravity Zero-G Cluster · Node AE-9 · 4 Active Operators</p>
+        </div>
+      </header>
+
+      <!-- Holographic Data Display (Suspended Above Grid) -->
+      <section class="hologram-panel">
+        <div class="hologram-header">
+          <span class="hologram-title">Holographic Render Telemetry & GPU Array</span>
+          <span class="stat-value" style="font-size: 13px; color: var(--ai-violet);">AI Neural Pass: ACTIVE</span>
+        </div>
+
+        <div class="telemetry-grid">
+          <div class="telemetry-stat">
+            <div class="stat-label">Frame Render Velocity</div>
+            <div class="stat-value">12.4 <span class="stat-unit">ms/f</span></div>
+          </div>
+          <div class="telemetry-stat">
+            <div class="stat-label">GPU Memory Allocation</div>
+            <div class="stat-value">18.6 <span class="stat-unit">/ 24 GB</span></div>
+          </div>
+          <div class="telemetry-stat">
+            <div class="stat-label">Active Scene Nodes</div>
+            <div class="stat-value">4,812 <span class="stat-unit">objs</span></div>
+          </div>
+          <div class="telemetry-stat">
+            <div class="stat-label">Queue Completion</div>
+            <div class="stat-value">84.2 <span class="stat-unit">%</span></div>
+          </div>
+        </div>
+
+        <div class="graph-container" id="renderGraph">
+          <!-- Dynamically generated bars via JS -->
+        </div>
+      </section>
+
+      <!-- Project Islands Grid -->
+      <section>
+        <div class="islands-header">
+          <h2 class="type-title">Suspended Project Islands</h2>
+          <span style="font-size: 12px; color: var(--ink-tertiary); font-family: var(--font-mono);">6 COMPOSITIONS ONLINE</span>
+        </div>
+        <div class="islands-grid" style="margin-top: 16px;">
+          <div class="project-island">
+            <div class="island-preview">
+              <span class="island-tag">4K · 60FPS</span>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--nebula-cyan)" stroke-width="1.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            </div>
+            <div class="island-title">Quantum Horizon Title Sequence</div>
+            <div class="island-meta">
+              <span>Modified 12m ago</span>
+              <span style="color: var(--ai-violet);">AI Optimized</span>
+            </div>
+          </div>
+
+          <div class="project-island">
+            <div class="island-preview">
+              <span class="island-tag">8K · EXR</span>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--ai-violet)" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><path d="M10 8l6 4-6 4V8z"></path></svg>
+            </div>
+            <div class="island-title">Cybernetic Neural Particles</div>
+            <div class="island-meta">
+              <span>Modified 1h ago</span>
+              <span>Layer Cluster #8</span>
+            </div>
+          </div>
+
+          <div class="project-island">
+            <div class="island-preview">
+              <span class="island-tag">1080p · COMP</span>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--signal-blue)" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
+            </div>
+            <div class="island-title">Obsidian Void Glassmorphism UI</div>
+            <div class="island-meta">
+              <span>Modified 4h ago</span>
+              <span style="color: var(--temporal-ember);">Rendering</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Right Column: Persistent Recent Activity & AI Logs -->
+    <aside class="activity-panel">
+      <div class="activity-header">
+        <span class="type-title" style="font-size: 15px;">Live Cluster Activity</span>
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981;"></span>
+      </div>
+
+      <div class="activity-list">
+        <div class="activity-item">
+          <div class="activity-dot dot-ai"></div>
+          <div class="activity-content">
+            <div><span class="activity-user ai">Antigravity AI</span> interpolated 1,240 motion keyframes with custom spring curves.</div>
+            <div class="activity-time">Just now</div>
+          </div>
+        </div>
+
+        <div class="activity-item">
+          <div class="activity-dot dot-human"></div>
+          <div class="activity-content">
+            <div><span class="activity-user">Elena R.</span> adjusted optical sizing & tracking on headline layers.</div>
+            <div class="activity-time">3m ago</div>
+          </div>
+        </div>
+
+        <div class="activity-item">
+          <div class="activity-dot dot-ai"></div>
+          <div class="activity-content">
+            <div><span class="activity-user ai">Antigravity AI</span> isolated 3D camera tracker path and stabilized jitter.</div>
+            <div class="activity-time">14m ago</div>
+          </div>
+        </div>
+
+        <div class="activity-item">
+          <div class="activity-dot dot-human"></div>
+          <div class="activity-content">
+            <div><span class="activity-user">Marcus K.</span> locked Temporal Ember playhead at timecode <span style="font-family: var(--font-mono);">01:24:12</span>.</div>
+            <div class="activity-time">28m ago</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- VIEW 2: LOGIN / SIGNUP (ENTRY PORTAL APERTURE) -->
+  <div id="view-portal" class="view-container portal-view">
+    <div class="aperture-portal">
+      <div class="portal-header">
+        <div class="aperture-ring-logo"></div>
+        <div>
+          <h2 class="portal-title">Antigravity Architecture</h2>
+          <p class="portal-subtitle">Quantum AI Motion Editor · Operator Entry Portal</p>
+        </div>
+      </div>
+
+      <form class="portal-form" onsubmit="event.preventDefault(); alert('Session initialized in Zero-Gravity mode.');">
+        <div class="form-group">
+          <label class="portal-label">Operator Identification / Email</label>
+          <div class="portal-input-well">
+            <input type="email" class="portal-input" placeholder="operator@antigravity.dev" value="isroil@antigravity.studio" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="portal-label">Zero-G Security Passkey</label>
+          <div class="portal-input-well">
+            <input type="password" class="portal-input" value="••••••••••••••••••••" required />
+          </div>
+        </div>
+
+        <button type="submit" class="portal-cta-btn">
+          <span>INITIALIZE MOTION SESSION</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // View Switcher Logic
+    function switchView(viewName) {
+      document.querySelectorAll('.view-container').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.switch-btn').forEach(el => el.classList.remove('active'));
+      
+      const targetView = document.getElementById(`view-${viewName}`);
+      if (targetView) targetView.classList.add('active');
+
+      const buttons = document.querySelectorAll('.switch-btn');
+      if (viewName === 'dashboard') buttons[0].classList.add('active');
+      else buttons[1].classList.add('active');
+    }
+
+    // Generate Holographic Render Graph Sparklines
+    const graphContainer = document.getElementById('renderGraph');
+    if (graphContainer) {
+      for (let i = 0; i < 48; i++) {
+        const bar = document.createElement('div');
+        bar.className = 'graph-bar' + (i % 5 === 0 || i % 7 === 0 ? ' ai-assisted' : '');
+        const height = Math.floor(Math.random() * 65) + 25;
+        bar.style.height = `${height}%`;
+        graphContainer.appendChild(bar);
+      }
+
+      // Simulate live telemetry pulses
+      setInterval(() => {
+        const bars = graphContainer.children;
+        const randomIndex = Math.floor(Math.random() * bars.length);
+        const newHeight = Math.floor(Math.random() * 75) + 20;
+        bars[randomIndex].style.height = `${newHeight}%`;
+      }, 800);
+    }
+  </script>
+</body>
+</html>

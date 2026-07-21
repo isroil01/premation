@@ -37,6 +37,10 @@ const bridge = {
     ipcRenderer.on('menu:command', listener);
     return () => ipcRenderer.removeListener('menu:command', listener);
   },
+
+  // NOTE: there is deliberately no `ai` surface here any more. AI runs through
+  // the backend gateway (POST /ai/stream) with keys stored server-side — the
+  // desktop shell holds no AI privileges at all.
 };
 
 contextBridge.exposeInMainWorld('motionEditor', bridge);

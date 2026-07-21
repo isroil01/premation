@@ -1,314 +1,150 @@
 /**
- * ViewportHeader — the AE-style composition panel header bar.
+ * ViewportHeader — the AE-style composition panel header bar, and the single
+ * owner of the viewport's controls.
  *
- * Sits directly above the canvas and surfaces the most-used controls:
- *   ← [Comp name] · [W×H] · [FPS] · [Duration] · [BG colour] · [Transparent] · [Zoom] · [Fit] · [Grid] · [Rulers] · [Safe] →
+ * Sits directly above the canvas:
+ *   ← [Comp name] · [Size] · [Free/Fixed] … [motion path] … [Zoom · Fit · View options] →
  *
- * Everything is live-editable inline. The colour swatch opens the system
- * colour picker; the zoom field scrubs on drag. All changes write through to
- * the canonical stores so the canvas repaints immediately.
+ * "Size" is the shared, grouped preset catalog (`presets.ts`) — not a local
+ * copy — and "View options" hosts grid / rulers / safe areas / channel /
+ * resolution. Zoom, fit and those options previously lived in the global
+ * TopNav, away from the canvas; they belong here. Composition Settings still
+ * owns exact px / fps / duration entry (reached via "Custom size…").
  */
 
-import { useRef, useState, useCallback, useEffect } from 'react';
-import { Icon } from '@components/Icon';
+import { useEffect, useReducer } from 'react';
 import { useCompositionStore } from '@stores/compositionStore';
-import { useGuidesStore } from '@stores/guidesStore';
-import { usePreferenceStore } from '@stores/preferenceStore';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { Icon } from '@components/Icon';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
-import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
-import { ColorPicker } from '@components/ColorPicker';
-import { useContainerSize } from '@hooks/useContainerSize';
+import { useFocusStore } from '@stores/focusStore';
+import { useGuidesStore } from '@stores/guidesStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
+import { getEventBus } from '@core/events/EventBus';
+import { hasPositionAnimation, smoothMotionPath, straightenMotionPath, hasPathTangents } from '@core/motion/motionPath';
+import { runAnimEdit } from '@core/animation/animationCommands';
+import { defaultAnimation } from '@motion/animation';
+import { ViewControls } from '@layout/TopNav/ViewControls';
+import { useRenderBackendStore } from '@stores/renderBackendStore';
 import styles from './ViewportHeader.module.css';
 
-/** Tiny inline number field that scrubs on drag. */
-function ScrubField({
-  value,
-  onChange,
-  unit = '',
-  min,
-  max,
-  step = 1,
-  digits = 0,
-  title,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  unit?: string;
-  min?: number;
-  max?: number;
-  step?: number;
-  digits?: number;
-  title?: string;
-}): JSX.Element {
-  const [editing, setEditing] = useState(false);
-  const [raw, setRaw] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const dragRef = useRef<{ startX: number; startV: number } | null>(null);
+export function ViewportHeader(): JSX.Element {
+  const name = useCompositionStore((s) => s.name);
+  const focusPath = useFocusStore((s) => s.path);
+  const jumpTo = useFocusStore((s) => s.jumpTo);
+  const motionPathVisible = useGuidesStore((s) => s.motionPathVisible);
+  const toggleMotionPath = useGuidesStore((s) => s.toggleMotionPath);
+  const workspaceMode = useWorkspaceViewStore((s) => s.mode);
+  const toggleWorkspaceMode = useWorkspaceViewStore((s) => s.toggleMode);
+  const isSoftware = useRenderBackendStore((s) => s.isSoftwareFallback);
 
-  const commit = (v: number) => {
-    let clamped = v;
-    if (min !== undefined) clamped = Math.max(min, clamped);
-    if (max !== undefined) clamped = Math.min(max, clamped);
-    if (!Number.isFinite(clamped)) return;
-    onChange(clamped);
-  };
-
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (editing) return;
-      e.preventDefault();
-      dragRef.current = { startX: e.clientX, startV: value };
-      const onMove = (me: MouseEvent) => {
-        if (!dragRef.current) return;
-        const dx = me.clientX - dragRef.current.startX;
-        commit(dragRef.current.startV + dx * step);
-      };
-      const onUp = () => {
-        dragRef.current = null;
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-      };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-    },
-    [editing, value, step, commit],
-  );
-
-  const onDoubleClick = () => {
-    setRaw(value.toFixed(digits));
-    setEditing(true);
-    requestAnimationFrame(() => inputRef.current?.select());
-  };
-
-  const onBlur = () => {
-    commit(parseFloat(raw));
-    setEditing(false);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') { commit(parseFloat(raw)); setEditing(false); }
-    if (e.key === 'Escape') setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        className={styles.scrubInput}
-        value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-        onBlur={onBlur}
-        onKeyDown={onKeyDown}
-        autoFocus
-      />
-    );
-  }
-
-  return (
-    <span
-      className={styles.scrubField}
-      title={title}
-      onMouseDown={onMouseDown}
-      onDoubleClick={onDoubleClick}
-    >
-      {value.toFixed(digits)}{unit}
-    </span>
-  );
-}
-
-/** Tiny colour swatch that opens native <input type=color>. */
-function ColourSwatch({ value, onChange, title }: { value: string; onChange: (v: string) => void; title?: string }): JSX.Element {
-  return <ColorPicker value={value} onChange={onChange} aria-label={title} />;
-}
-
-/** Live zoom % field — syncs with the workspace camera. */
-function ZoomField(): JSX.Element {
-  const [zoom, setZoom] = useState(() => getWorkspaceController().zoomPercent());
-
+  // Re-render when selection or animation changes so the contextual motion
+  // buttons appear/disappear correctly.
+  const selectedIds = useSelectionStore((s) => s.ids);
+  const [, bumpAnim] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    const ws = getWorkspaceController().ws;
-    const sync = () => setZoom(getWorkspaceController().zoomPercent());
-    const s1 = ws.events.on('ZoomChanged', sync);
-    const s2 = ws.events.on('ViewportChanged', sync);
-    return () => { s1.dispose(); s2.dispose(); };
+    const sub = getEventBus().on('AnimationChanged', () => bumpAnim());
+    return () => sub.dispose();
   }, []);
 
-  return (
-    <span className={styles.zoomGroup}>
-      <button className={styles.headerBtn} onClick={() => getWorkspaceController().zoomOut()} title="Zoom out (-)">
-        <Icon name="zoom-out" size={12} />
-      </button>
-      <ScrubField
-        value={zoom}
-        onChange={(v) => getWorkspaceController().setZoomPercent(v)}
-        unit="%"
-        min={5}
-        max={6400}
-        step={1}
-        digits={0}
-        title="Zoom · drag or double-click to type"
-      />
-      <button className={styles.headerBtn} onClick={() => getWorkspaceController().zoomIn()} title="Zoom in (+)">
-        <Icon name="zoom-in" size={12} />
-      </button>
-      <button className={styles.headerBtn} onClick={() => getWorkspaceController().fitComposition()} title="Fit comp in view">
-        <Icon name="fit" size={12} />
-      </button>
-    </span>
-  );
-}
-
-export function ViewportHeader(): JSX.Element {
-  const name     = useCompositionStore((s) => s.name);
-  const width    = useCompositionStore((s) => s.width);
-  const height   = useCompositionStore((s) => s.height);
-  const fps      = useCompositionStore((s) => s.fps);
-  const dur      = useCompositionStore((s) => s.durationSeconds);
-  const bg       = useCompositionStore((s) => s.background);
-  const transp   = useCompositionStore((s) => s.transparent);
-  const update   = useCompositionStore((s) => s.update);
-  const setBg    = useCompositionStore((s) => s.setBackground);
-  const setTrans = useCompositionStore((s) => s.setTransparent);
-
-  const grid      = useGuidesStore((s) => s.grid);
-  const rulers    = useGuidesStore((s) => s.rulers);
-  const safeArea  = useGuidesStore((s) => s.safeArea);
-  const camera3dMode = useGuidesStore((s) => s.camera3dMode);
-  const gridDivisions  = useGuidesStore((s) => s.gridDivisions);
-  const setGridDivisions = useGuidesStore((s) => s.setGridDivisions);
-  const toggleGrid     = useGuidesStore((s) => s.toggleGrid);
-  const toggleRulers   = useGuidesStore((s) => s.toggleRulers);
-  const toggleSafeArea = useGuidesStore((s) => s.toggleSafeArea);
-  const toggleCamera3dMode = useGuidesStore((s) => s.toggleCamera3dMode);
-
-  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
-  const setAutoKeyframe = (v: boolean) => usePreferenceStore.getState().set('timelineAutoKeyframe', v);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const { width: containerWidth } = useContainerSize(containerRef);
+  const singleId = selectedIds.length === 1 ? selectedIds[0] : null;
+  const hasPositionAnim = singleId ? hasPositionAnimation(singleId) : false;
+  const hasTangents = singleId ? hasPathTangents(singleId) : false;
+  const hasAnyAnim = singleId ? (defaultAnimation.animatedProps(singleId).length > 0) : false;
 
   return (
-    <div className={styles.root} ref={containerRef}>
-      {/* ── Left: comp name + settings cog ──────────────────── */}
+    <div className={styles.root}>
+      {/* ── Tabs ──────────────────── */}
       <div className={styles.group}>
+        {focusPath.length > 0 && (
+          <button
+            className={styles.headerBtn}
+            onClick={() => jumpTo(-1)}
+            title="Go Back"
+            style={{ marginRight: 4 }}
+          >
+            <Icon name="arrow-left" size={12} />
+          </button>
+        )}
         <button className={styles.compName} onClick={() => openCompositionSettings()} title="Composition Settings">
-          <Icon name="layers" size={11} className={styles.compIcon} />
+          <Icon name="layers" size={12} className={styles.compIcon} />
           <span className={styles.compLabel}>{name}</span>
         </button>
-        <span className={styles.sep} />
-        <button className={styles.headerBtn} onClick={() => openNewCompositionDialog()} title="New Composition">
-          <Icon name="plus" size={12} />
+        {/* Free (pan/zoom everywhere) vs Fixed (comp locked & centred) — icon only */}
+        <button
+          className={`${styles.headerBtn} ${workspaceMode === 'fixed' ? styles.headerBtnActive : ''}`}
+          onClick={toggleWorkspaceMode}
+          aria-pressed={workspaceMode === 'fixed'}
+          title={
+            workspaceMode === 'fixed'
+              ? 'Workspace: Fixed — composition is locked & centred. Click for a free, pannable canvas.'
+              : 'Workspace: Free — pan and zoom anywhere. Click to lock the composition in view.'
+          }
+        >
+          <Icon name={workspaceMode === 'fixed' ? 'lock' : 'hand'} size={12} />
         </button>
+
+        {isSoftware && (
+          <>
+            <span className={styles.sep} />
+            <span className={styles.softwareBadge} title="GPU context creation failed. Renders via rasterizer CPU fallback.">
+              <Icon name="warning" size={11} />
+              Software rendering
+            </span>
+          </>
+        )}
       </div>
 
-      {containerWidth >= 700 && (
-        <>
-          <span className={styles.divider} />
+      <div className={styles.spacer} />
 
-          {/* ── Resolution & FPS ─────────────────────────────────── */}
-          <div className={styles.group}>
-            <ScrubField value={width}  onChange={(v) => { update({ width: Math.round(v) }); requestAnimationFrame(() => getWorkspaceController().fitComposition()); }}  step={4}  min={1} max={16384} title="Width · drag or double-click" />
-            <span className={styles.x}>×</span>
-            <ScrubField value={height} onChange={(v) => { update({ height: Math.round(v) }); requestAnimationFrame(() => getWorkspaceController().fitComposition()); }} step={4}  min={1} max={16384} title="Height · drag or double-click" />
-            <span className={styles.sep} />
-            <ScrubField value={fps}    onChange={(v) => { const f = Math.round(v); update({ fps: f }); getTimelineController().setFrameRate(f); }}    step={1}  min={1} max={240}   unit=" fps" title="Frame rate · drag or double-click" />
-            <span className={styles.sep} />
-            <ScrubField value={dur}    onChange={(v) => { update({ durationSeconds: v }); getTimelineController().setDurationSeconds(v); }}    step={0.1} min={0.1} max={3600} digits={1} unit="s" title="Duration · drag or double-click" />
-          </div>
-        </>
-      )}
-
-      {containerWidth >= 500 && <span className={styles.divider} />}
-
-      {/* ── Background colour + transparency ─────────────────── */}
-      {containerWidth >= 500 && (
+      {/* ── Contextual motion path controls — icon-only with rich tooltips ── */}
+      {hasPositionAnim && (
         <div className={styles.group}>
-          {!transp && (
-            <ColourSwatch value={bg} onChange={setBg} title="Background colour" />
-          )}
+          <span className={styles.sep} />
           <button
-            className={transp ? styles.headerBtnActive : styles.headerBtn}
-            onClick={() => setTrans(!transp)}
-            title="Toggle transparent background (checkerboard)"
+            className={`${styles.headerBtn} ${motionPathVisible ? styles.headerBtnActive : ''}`}
+            onClick={toggleMotionPath}
+            aria-pressed={motionPathVisible}
+            title={motionPathVisible ? 'Hide Motion Path (Ctrl+Alt+M)' : 'Show Motion Path (Ctrl+Alt+M)'}
           >
-            <Icon name="image" size={12} />
-            <span className={styles.btnLabel}>α</span>
+            <Icon name="path" size={12} />
           </button>
+          <button
+            className={styles.headerBtn}
+            onClick={() => singleId && runAnimEdit('Smooth motion path', () => smoothMotionPath(singleId!))}
+            title="Auto-Bezier: smooth path through all keyframes (Ctrl+Alt+S)"
+          >
+            <Icon name="curvature" size={12} />
+          </button>
+          {hasTangents && (
+            <button
+              className={styles.headerBtn}
+              onClick={() => singleId && runAnimEdit('Straighten motion path', () => straightenMotionPath(singleId!))}
+              title="Straighten: remove spatial tangents"
+            >
+              <Icon name="line" size={12} />
+            </button>
+          )}
         </div>
       )}
 
-      <span className={styles.divider} />
+      {hasAnyAnim && !hasPositionAnim && (
+        <div className={styles.group}>
+          <span className={styles.sep} />
+          <span className={styles.animatedChip} title="This layer has keyframes (twirl it open in the timeline)">
+            <Icon name="stopwatch" size={11} />
+            Animated
+          </span>
+        </div>
+      )}
 
-      {/* ── View overlays ────────────────────────────────────── */}
+      {/* Zoom, fit and the view-options menu (grid/rulers/safe/channel/
+          resolution) — the viewport controls, in the viewport's own bar. They
+          used to sit up in the global TopNav, away from the canvas they act on. */}
       <div className={styles.group}>
-        <button
-          className={grid ? styles.headerBtnActive : styles.headerBtn}
-          onClick={toggleGrid}
-          title="Toggle grid (')"
-        >
-          <Icon name="grid" size={12} />
-        </button>
-        {grid ? (
-          <input
-            type="number"
-            min={2}
-            max={64}
-            value={gridDivisions}
-            onChange={(e) => setGridDivisions(Number(e.target.value))}
-            title="Grid divisions (cells per axis)"
-            aria-label="Grid divisions"
-            style={{
-              width: 40, height: 22,
-              background: 'var(--color-surface-0)',
-              color: 'var(--color-text-primary)',
-              border: '1px solid var(--color-border-strong)',
-              borderRadius: 3, fontSize: 11,
-              textAlign: 'center', marginRight: 2,
-            }}
-          />
-        ) : null}
-        <button
-          className={rulers ? styles.headerBtnActive : styles.headerBtn}
-          onClick={toggleRulers}
-          title="Toggle rulers"
-        >
-          <Icon name="ruler" size={12} />
-        </button>
-        <button
-          className={safeArea ? styles.headerBtnActive : styles.headerBtn}
-          onClick={toggleSafeArea}
-          title="Toggle safe areas"
-        >
-          <Icon name="crosshair" size={12} />
-        </button>
-        <button
-          className={camera3dMode === 'active' ? styles.headerBtnActive : styles.headerBtn}
-          onClick={toggleCamera3dMode}
-          title={camera3dMode === 'active' ? 'Active Camera View (3D)' : 'Front View (2D)'}
-        >
-          <Icon name="camera" size={12} />
-        </button>
+        <span className={styles.sep} />
+        <ViewControls />
       </div>
-      
-      <span className={styles.divider} />
-      
-      <div className={styles.group}>
-        <button
-          className={autoKeyframe ? styles.headerBtnActive : styles.headerBtn}
-          onClick={() => setAutoKeyframe(!autoKeyframe)}
-          title="Auto-Keyframe Mode: automatically record keyframes when moving layers or changing values"
-          style={{ color: autoKeyframe ? 'var(--color-primary)' : undefined }}
-        >
-          <Icon name="keyframe" size={12} />
-        </button>
-      </div>
-
-      <span className={styles.spacer} />
-
-      {/* ── Zoom controls ────────────────────────────────────── */}
-      <ZoomField />
     </div>
   );
 }

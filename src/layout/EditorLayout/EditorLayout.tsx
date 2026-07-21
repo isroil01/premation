@@ -61,10 +61,6 @@ export function EditorLayout({
   const setRightSize = useLayoutStore((s) => s.setRegionSize);
   const setBottomSize = useLayoutStore((s) => s.setRegionSize);
 
-  const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition ?? 'left');
-  const rightInspectorPos = useLayoutStore((s) => s.rightInspectorPosition ?? 'right');
-  const timelinePosition = useLayoutStore((s) => s.timelinePosition ?? 'bottom');
-
   const leftSidebarEl = (
     <LeftSidebar renderers={sidebarRenderers} className={left.collapsed ? 'sidebar-collapsed-view' : ''} />
   );
@@ -72,202 +68,68 @@ export function EditorLayout({
     <RightInspector renderers={inspectorRenderers} header={inspectorHeader} className={right.collapsed ? 'inspector-collapsed-view' : ''} />
   );
 
-  const centerContent = (
+  // Top Content: Viewport (left) and RightInspector (right)
+  const topContent = (
+    <SplitPane
+      className={styles.split}
+      direction="horizontal"
+      primary="last"
+      defaultSize={right.size}
+      minSize={right.collapsed ? 36 : right.minSize}
+      maxSize={Math.min(right.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : right.maxSize)}
+      size={right.collapsed ? 36 : right.size}
+      collapsed={right.collapsed}
+      storageKey="rightInspector"
+      onResizeEnd={(s) => setRightSize('rightInspector', s)}
+    >
+      <div className={styles.workspacePane}>
+        <WorkspaceViewport {...(workspaceExtras ?? {})} />
+      </div>
+      {rightInspectorEl}
+    </SplitPane>
+  );
+
+  // Main Right Pane: topContent (top) and Timeline (bottom)
+  const mainContent = (
     <SplitPane
       className={styles.split}
       direction="vertical"
-      primary={timelinePosition === 'bottom' ? 'last' : 'first'}
+      primary="last"
       defaultSize={bottom.size}
-      minSize={38}
+      minSize={44}
       maxSize={bottom.maxSize}
-      size={bottom.collapsed ? 38 : bottom.size}
+      size={bottom.collapsed ? 44 : bottom.size}
       collapsed={bottom.collapsed}
       storageKey="bottomTimeline"
       onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
     >
-      {timelinePosition === 'bottom' ? (
-        <div className={styles.workspacePane}>
-          <WorkspaceViewport {...(workspaceExtras ?? {})} />
-        </div>
-      ) : (
-        <div className={styles.timelinePane}>{timeline}</div>
-      )}
-      {timelinePosition === 'bottom' ? (
-        <div className={styles.timelinePane}>{timeline}</div>
-      ) : (
-        <div className={styles.workspacePane}>
-          <WorkspaceViewport {...(workspaceExtras ?? {})} />
-        </div>
-      )}
+      {topContent}
+      <div className={styles.timelinePane}>{timeline}</div>
     </SplitPane>
   );
-
-  // Define column definitions
-  const colL = {
-    id: 'leftSidebar' as const,
-    el: leftSidebarEl,
-    state: left,
-    setSize: setLeftSize,
-    collapsed: left.collapsed,
-    size: left.size,
-    maxSize: left.maxSize,
-    storageKey: 'leftSidebar',
-  };
-
-  const colR = {
-    id: 'rightInspector' as const,
-    el: rightInspectorEl,
-    state: right,
-    setSize: setRightSize,
-    collapsed: right.collapsed,
-    size: right.size,
-    maxSize: right.maxSize,
-    storageKey: 'rightInspector',
-  };
-
-  const colC = {
-    id: 'center' as const,
-    el: centerContent,
-  };
-
-  // Determine the column order [col1, col2, col3]
-  let colOrder: [
-    typeof colL | typeof colR | typeof colC,
-    typeof colL | typeof colR | typeof colC,
-    typeof colL | typeof colR | typeof colC
-  ];
-  if (leftSidebarPos === 'left' && rightInspectorPos === 'right') {
-    colOrder = [colL, colC, colR];
-  } else if (leftSidebarPos === 'right' && rightInspectorPos === 'right') {
-    colOrder = [colC, colL, colR];
-  } else if (leftSidebarPos === 'left' && rightInspectorPos === 'left') {
-    colOrder = [colL, colR, colC];
-  } else {
-    colOrder = [colR, colC, colL];
-  }
-
-  const [col1, col2, col3] = colOrder;
-
-  // Render the inner split (col1 vs col2)
-  const renderInnerSplit = () => {
-    const isCol1Center = col1.id === 'center';
-    const isCol2Center = col2.id === 'center';
-    
-    if (isCol1Center) {
-      const sidebar = col2 as typeof colL;
-      return (
-        <SplitPane
-          className={styles.split}
-          direction="horizontal"
-          primary="last"
-          defaultSize={sidebar.size}
-          minSize={36}
-          maxSize={Math.min(sidebar.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : sidebar.maxSize)}
-          size={sidebar.collapsed ? 36 : sidebar.size}
-          collapsed={sidebar.collapsed}
-          storageKey={sidebar.storageKey}
-          onResizeEnd={(s) => sidebar.setSize(sidebar.id, s)}
-        >
-          {col1.el}
-          {col2.el}
-        </SplitPane>
-      );
-    } else if (isCol2Center) {
-      const sidebar = col1 as typeof colL;
-      return (
-        <SplitPane
-          className={styles.split}
-          direction="horizontal"
-          primary="first"
-          defaultSize={sidebar.size}
-          minSize={36}
-          maxSize={Math.min(sidebar.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : sidebar.maxSize)}
-          size={sidebar.collapsed ? 36 : sidebar.size}
-          collapsed={sidebar.collapsed}
-          storageKey={sidebar.storageKey}
-          onResizeEnd={(s) => sidebar.setSize(sidebar.id, s)}
-        >
-          {col1.el}
-          {col2.el}
-        </SplitPane>
-      );
-    } else {
-      const sidebar = col1 as typeof colL;
-      return (
-        <SplitPane
-          className={styles.split}
-          direction="horizontal"
-          primary="first"
-          defaultSize={sidebar.size}
-          minSize={36}
-          maxSize={Math.min(sidebar.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : sidebar.maxSize)}
-          size={sidebar.collapsed ? 36 : sidebar.size}
-          collapsed={sidebar.collapsed}
-          storageKey={sidebar.storageKey}
-          onResizeEnd={(s) => sidebar.setSize(sidebar.id, s)}
-        >
-          {col1.el}
-          {col2.el}
-        </SplitPane>
-      );
-    }
-  };
-
-  const innerSplit = renderInnerSplit();
-
-  // Render the outer split (innerSplit vs col3)
-  const renderOuterSplit = () => {
-    const isCol3Center = col3.id === 'center';
-    
-    if (isCol3Center) {
-      const sidebar = colR; // rightInspector
-      return (
-        <SplitPane
-          className={styles.split}
-          direction="horizontal"
-          primary="first"
-          defaultSize={sidebar.size}
-          minSize={36}
-          maxSize={Math.min(sidebar.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : sidebar.maxSize)}
-          size={sidebar.collapsed ? 36 : sidebar.size}
-          collapsed={sidebar.collapsed}
-          storageKey={sidebar.storageKey}
-          onResizeEnd={(s) => sidebar.setSize(sidebar.id, s)}
-        >
-          {innerSplit}
-          {col3.el}
-        </SplitPane>
-      );
-    } else {
-      const sidebar = col3 as typeof colL;
-      return (
-        <SplitPane
-          className={styles.split}
-          direction="horizontal"
-          primary="last"
-          defaultSize={sidebar.size}
-          minSize={36}
-          maxSize={Math.min(sidebar.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : sidebar.maxSize)}
-          size={sidebar.collapsed ? 36 : sidebar.size}
-          collapsed={sidebar.collapsed}
-          storageKey={sidebar.storageKey}
-          onResizeEnd={(s) => sidebar.setSize(sidebar.id, s)}
-        >
-          {innerSplit}
-          {col3.el}
-        </SplitPane>
-      );
-    }
-  };
 
   return (
     <div className={styles.root}>
       {/* Full-width AE-style top chrome (menu bar + tool row). */}
       {topNav}
 
-      {/* Body row: dynamically ordered columns */}
+      {/* Body row: LeftSidebar (left) and mainContent (right) */}
       <div className={styles.body}>
-        {renderOuterSplit()}
+        <SplitPane
+          className={styles.split}
+          direction="horizontal"
+          primary="first"
+          defaultSize={left.size}
+          minSize={left.collapsed ? 36 : left.minSize}
+          maxSize={Math.min(left.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : left.maxSize)}
+          size={left.collapsed ? 36 : left.size}
+          collapsed={left.collapsed}
+          storageKey="leftSidebar"
+          onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
+        >
+          {leftSidebarEl}
+          {mainContent}
+        </SplitPane>
       </div>
 
       {statusBar}

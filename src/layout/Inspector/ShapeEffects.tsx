@@ -14,9 +14,11 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { readRepeaterConfig, setRepeater, defaultRepeater } from '@core/scene/repeater';
 import { readPathOpConfig, setPathOp, defaultPathOp } from '@core/scene/pathOps';
 import { readTrimConfig, setTrim, defaultTrim } from '@core/scene/trimPath';
+import { readNodeAudioWaveform, setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
 import { RepeaterControls } from './RepeaterControls';
 import { PathOpControls } from './PathOpControls';
 import { TrimPathControls } from './TrimPathControls';
+import { AudioWaveformSection } from './AudioWaveformSection';
 import styles from './TextAnimatorControls.module.css';
 
 export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -27,6 +29,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
   const hasRepeater = !!readRepeaterConfig(node);
   const hasPathOp = !!readPathOpConfig(node);
   const hasTrim = !!readTrimConfig(node);
+  const hasAudioWave = !!readNodeAudioWaveform(node);
 
   const items: DropdownItem[] = [
     {
@@ -53,6 +56,14 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
       disabled: hasRepeater,
       onSelect: () => setRepeater(nodeId, defaultRepeater()),
     },
+    {
+      type: 'item',
+      id: 'add-audiowave',
+      label: 'Audio Waveform',
+      icon: 'audio',
+      disabled: hasAudioWave,
+      onSelect: () => setAudioWaveform(nodeId, defaultAudioWaveform()),
+    },
   ];
 
   return (
@@ -60,7 +71,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
       <div className={styles.head}>
         <span className={styles.title}>Shape Effects</span>
         <Dropdown
-          placement="bottom-end"
+          placement="left-start"
           trigger={
             <button type="button" className={styles.add} aria-label="Add shape effect">
               <Icon name="plus" size={12} />
@@ -70,12 +81,13 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
           items={items}
         />
       </div>
-      {!hasRepeater && !hasPathOp && !hasTrim && (
-        <div className={styles.empty}>Fan into copies, deform, or trim the outline.</div>
+      {!hasRepeater && !hasPathOp && !hasTrim && !hasAudioWave && (
+        <div className={styles.empty}>Fan into copies, deform, trim the outline, or draw an audio waveform.</div>
       )}
       <PathOpControls nodeId={nodeId} />
       <TrimPathControls nodeId={nodeId} />
       <RepeaterControls nodeId={nodeId} />
+      <AudioWaveformSection nodeId={nodeId} />
     </div>
   );
 }

@@ -25,6 +25,7 @@ export default defineConfig({
       '@motion/timeline': path.resolve(__dirname, 'packages/timeline/src/index.ts'),
       '@motion/animation': path.resolve(__dirname, 'packages/animation/src/index.ts'),
       '@motion/renderer': path.resolve(__dirname, 'packages/renderer/src/index.ts'),
+      '@motion/ai-tools': path.resolve(__dirname, 'packages/ai-tools/src/index.ts'),
     },
   },
   build: {

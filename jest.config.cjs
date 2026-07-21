@@ -2,6 +2,10 @@ module.exports = {
   projects: ['<rootDir>', '<rootDir>/packages/*'],
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
+  testMatch: [
+    '**/__tests__/**/*.[jt]s?(x)',
+    '**/?(*.)+(test).[jt]s?(x)'
+  ],
   transform: {
     '^.+\\.tsx?$': 'ts-jest',
   },
@@ -14,6 +18,7 @@ module.exports = {
     '^@motion/renderer$': '<rootDir>/packages/renderer/src/index.ts',
     '^@motion/workspace$': '<rootDir>/packages/workspace/src/index.ts',
     '^@motion/timeline$': '<rootDir>/packages/timeline/src/index.ts',
+    '^@motion/ai-tools$': '<rootDir>/packages/ai-tools/src/index.ts',
     '^@core(.*)$': '<rootDir>/src/core$1',
     '^@components(.*)$': '<rootDir>/src/components$1',
     '^@layout(.*)$': '<rootDir>/src/layout$1',

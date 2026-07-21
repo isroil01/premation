@@ -16,7 +16,7 @@ import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
-import { cn } from '@utils/cn';
+
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -35,6 +35,7 @@ import {
   type TextAnimatorData,
 } from '@core/text/textAnimators';
 import styles from './TextAnimatorControls.module.css';
+import { Checkbox } from '@components/Checkbox';
 
 const BASED_ON: { id: RangeBasedOn; label: string }[] = [
   { id: 'characters', label: 'Characters' },
@@ -101,16 +102,14 @@ function ParamRow({
 
   return (
     <div className={styles.paramRow}>
-      <button
-        type="button"
-        className={cn(styles.stopwatch, animated && styles.stopwatchOn)}
-        onClick={toggle}
-        aria-pressed={animated}
-        aria-label={animated ? `Remove ${label} animation` : `Animate ${label}`}
-        title={animated ? 'Remove animation' : 'Animate (add keyframes)'}
-      >
-        <Icon name="keyframe" size={11} />
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+          <Checkbox 
+            checked={animated} 
+            onChange={toggle} 
+            title="Toggle Animation"
+            style={{ width: 14, height: 14 }}
+          />
+        </div>
       <span className={styles.paramLabel}>{label}</span>
       <ValueField
         value={display}
@@ -178,17 +177,31 @@ function AnimatorGroup({
 
       <div className={styles.selectorRow}>
         <span className={styles.paramLabel}>Based on</span>
-        <Dropdown placement="bottom-end" trigger={pickTrigger(basedLabel)} items={basedItems} />
+        <Dropdown placement="left-start" trigger={pickTrigger(basedLabel)} items={basedItems} />
       </div>
       <div className={styles.selectorRow}>
         <span className={styles.paramLabel}>Shape</span>
-        <Dropdown placement="bottom-end" trigger={pickTrigger(shapeLabel)} items={shapeItems} />
+        <Dropdown placement="left-start" trigger={pickTrigger(shapeLabel)} items={shapeItems} />
+      </div>
+      <div className={styles.selectorRow}>
+        <span className={styles.paramLabel}>Selector</span>
+        <Dropdown
+          placement="left-start"
+          trigger={pickTrigger(data.mode === 'wiggly' ? 'Wiggly' : 'Range')}
+          items={[
+            { type: 'item', id: 'range', label: 'Range', icon: data.mode !== 'wiggly' ? 'check' : undefined, onSelect: () => updateAnimator(nodeId, index, { mode: 'range' }) },
+            { type: 'item', id: 'wiggly', label: 'Wiggly (per-unit noise)', icon: data.mode === 'wiggly' ? 'check' : undefined, onSelect: () => updateAnimator(nodeId, index, { mode: 'wiggly' }) },
+          ]}
+        />
       </div>
 
       <div className={styles.subhead}>Range</div>
       <ParamRow nodeId={nodeId} index={index} param="start" label="Start" value={data.start} unit="%" min={0} max={100} />
       <ParamRow nodeId={nodeId} index={index} param="end" label="End" value={data.end} unit="%" min={0} max={100} />
       <ParamRow nodeId={nodeId} index={index} param="offset" label="Offset" value={data.offset} unit="%" min={-100} max={100} />
+      {data.mode === 'wiggly' && (
+        <ParamRow nodeId={nodeId} index={index} param="wiggleFreq" label="Wiggles/sec" value={data.wiggleFreq ?? 2} unit="Hz" min={0.1} />
+      )}
 
       <div className={styles.subhead}>Transform</div>
       <ParamRow nodeId={nodeId} index={index} param="x" label="Position X" value={data.x} unit="px" />
@@ -197,6 +210,7 @@ function AnimatorGroup({
       <ParamRow nodeId={nodeId} index={index} param="rotation" label="Rotation" value={data.rotation} unit="°" />
       <ParamRow nodeId={nodeId} index={index} param="opacity" label="Opacity" value={data.opacity} unit="%" min={0} max={100} />
       <ParamRow nodeId={nodeId} index={index} param="tracking" label="Tracking" value={data.tracking} unit="px" />
+      <ParamRow nodeId={nodeId} index={index} param="skew" label="Skew" value={data.skew ?? 0} unit="°" />
 
       <div className={styles.selectorRow}>
         <span className={styles.paramLabel}>Fill colour</span>

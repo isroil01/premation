@@ -43,8 +43,14 @@ export type {
 } from './expressions';
 
 // ── Keyframe ids (timeline ↔ engine reference encoding) ───────────
-export { makeKeyframeId, parseKeyframeId } from './keyframeId';
+export { makeKeyframeId, parseKeyframeId, expandKeyframeProp, POSITION_PSEUDO_PROP } from './keyframeId';
 export type { KeyframeRefParts } from './keyframeId';
+
+export { sampleDataTrack, upsertDataKeyframe, cloneDataValue, growOutline } from './dataTracks';
+export type { DataKind, DataTrack, DataValue, DataKeyframe, DataPoint, GradientStop } from './dataTracks';
+
+export { lottieBezierToPoints, pointsToLottieBezier, lottiePathKeyframes } from './lottiePath';
+export type { LottieBezier, LottieShapeProp } from './lottiePath';
 
 // ── Engine ────────────────────────────────────────────────────────
 export { AnimationEngine, defaultAnimation } from './AnimationEngine';

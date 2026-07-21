@@ -133,8 +133,24 @@ export class HistoryService {
 
   /** Temporary suppression — used by macro commands. */
   withSuppressed(fn: () => void): void {
+    this.suspend();
+    try { fn(); } finally { this.resume(); }
+  }
+
+  /**
+   * Suppress pushes until the matching `resume()`. Re-entrant (counted).
+   *
+   * The scoped `withSuppressed` can't cover an ASYNC macro — an AI run spans
+   * many awaits — so callers that span ticks pair these manually and must
+   * guarantee `resume()` (e.g. in a finally). Prefer `withSuppressed` whenever
+   * the work is synchronous.
+   */
+  suspend(): void {
     this.suspended++;
-    try { fn(); } finally { this.suspended--; }
+  }
+
+  resume(): void {
+    if (this.suspended > 0) this.suspended--;
   }
 
   private ctxFor(command: IUndoableCommand): CommandContext {

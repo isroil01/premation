@@ -195,7 +195,18 @@ describe('Workspace overlay', () => {
     selection.set(['a']);
     const overlay = ws.overlay();
     expect(overlay.selectionBounds).toEqual(R.fromPoints(toScreen(0, 0), toScreen(100, 100)));
-    expect(overlay.handles).toHaveLength(9);
+    // 8 resize + rotate + the always-visible anchor marker (AE shows the
+    // pivot on any selected layer, not only under the Pan-Behind tool).
+    expect(overlay.handles).toHaveLength(10);
+    expect(overlay.handles.some((h) => h.kind === 'anchor')).toBe(true);
+  });
+
+  it('multi-selection draws no transform handles (they would be dead grips)', () => {
+    const { ws, selection } = makeWorkspace();
+    selection.set(['a', 'b']);
+    const overlay = ws.overlay();
+    expect(overlay.selectionBounds).not.toBeNull();
+    expect(overlay.handles).toHaveLength(0);
   });
 
   it('emits HoverChanged as the pointer moves over a node', () => {

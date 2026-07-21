@@ -42,6 +42,9 @@ export const APP_EVENTS = [
   // Animation
   'AnimationChanged',
 
+  // Any authored state changed (drives autosave / dirty)
+  'DocumentChanged',
+
   // Timeline (future timeline engine integration)
   'TimelineFocused',
   'TimelineBlurred',
@@ -90,6 +93,14 @@ export interface AppEventPayloads {
   NodeUpdated: { nodeId: string; componentId: string; propName: string; value: unknown };
 
   AnimationChanged: { nodeId?: string };
+
+  /**
+   * Authored state that is NOT covered by SceneGraphChanged/AnimationChanged
+   * changed — comp settings, timeline clips/markers/work area, motion blur.
+   * Autosave listens to this; anything persisted in the project file that can
+   * change without touching the scene graph must emit it, or the edit is lost.
+   */
+  DocumentChanged: { source: 'composition' | 'timeline' | 'render' };
 
   TimelineFocused: undefined;
   TimelineBlurred: undefined;

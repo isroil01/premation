@@ -8,20 +8,23 @@
  * engine can replace it via the `transport` prop.
  */
 
-import { useMemo, useState, useEffect, type ReactNode } from 'react';
-import { Icon } from '@components/Icon';
+import { useRef, useMemo, useState, type ReactNode } from 'react';
+import { useContainerSize } from '@hooks/useContainerSize';
+import { Dropdown } from '@components/Dropdown';
+import { Icon, type IconName } from '@components/Icon';
 import { IconButton } from '@components/IconButton';
-import { ValueField } from '@components/ValueField';
 import { useCompositionStore } from '@stores/compositionStore';
+import { framesToTimecode } from '@core/time/timecode';
 import { Timeline, type TimelineProps } from '@layout/Timeline';
 import { GraphEditor } from '@layout/Timeline/GraphEditor';
 import { cn } from '@utils/cn';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useRenderQualityStore } from '@stores/renderQualityStore';
+import { useRenderQualityStore, RESOLUTION_LABELS, type PreviewResolution } from '@stores/renderQualityStore';
 import { useUIStore } from '@stores/uiStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
+
 import { getTimelineController } from '@core/timeline/TimelineController';
 import type { EasingPreset } from '@core/animation/keyframeAssistants';
 import { useFocusStore } from '@stores/focusStore';
@@ -44,17 +47,6 @@ export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
   onSetEasing?: (preset: EasingPreset) => void;
 }
 
-/** mm:ss:ff — the last field is FRAMES at the comp fps (AE timecode), not
- *  milliseconds. Frames pad to the fps digit width (3 digits above 99 fps). */
-function formatTime(sec: number, fps: number): string {
-  const totalFrames = Math.floor(sec * fps);
-  const m = Math.floor(totalFrames / (fps * 60));
-  const s = Math.floor((totalFrames / fps) % 60);
-  const f = totalFrames % fps;
-  const fw = Math.max(2, String(Math.max(1, Math.ceil(fps)) - 1).length);
-  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(fw, '0')}`;
-}
-
 const ZOOM_STEP = 1.4;
 const ZOOM_MIN = 4;
 const ZOOM_MAX = 800;
@@ -71,7 +63,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const setActiveTab = useWorkspaceStore((s) => s.actions.setActiveTab);
   const closeTab = useWorkspaceStore((s) => s.actions.closeTab);
   // Read collapse state directly from the store so the header always knows.
-  const isCollapsed = useLayoutStore((s) => s.regions.bottomTimeline.collapsed);
+  const region = useLayoutStore((s) => s.regions.bottomTimeline);
+  const isCollapsed = region.collapsed || region.size <= 60;
   const selectedIds = useSelectionStore((s) => s.ids);
   const focusPath = useFocusStore((s) => s.path);
   const jumpToFocus = useFocusStore((s) => s.jumpTo);
@@ -84,28 +77,25 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   
   const motionBlurEnabled = useMotionBlurStore((s) => s.enabled);
   const setMotionBlurEnabled = useMotionBlurStore((s) => s.setEnabled);
+  const onGpu = true;
 
-  const [looping, setLooping] = useState(false);
+  // The controller owns loop state. This was local `useState(false)`, which
+  // both lied (playback always looped) and destroyed the work area.
+  const [looping, setLoopingState] = useState(() => getTimelineController().isLooping());
+  const setLooping = (on: boolean): void => {
+    getTimelineController().setLooping(on);
+    setLoopingState(on);
+  };
   const draftQuality = useRenderQualityStore((s) => s.draft);
   const setDraftQuality = useRenderQualityStore((s) => s.setDraft);
-  // Comp duration — surfaced here so timeline length is editable in place.
-  const compDuration = useCompositionStore((s) => s.durationSeconds);
+  const previewResolution = useRenderQualityStore((s) => s.resolution);
+  const setResolution = useRenderQualityStore((s) => s.setResolution);
   const updateComp = useCompositionStore((s) => s.update);
   // Horizontal scroll mirror from Timeline → GraphEditor for pixel-alignment
   const [scrollLeft, setScrollLeft] = useState(0);
 
-  // Wire looping state → TimelineController work area
-  useEffect(() => {
-    const ctrl = getTimelineController();
-    if (looping) {
-      const dur = ctrl.durationSeconds;
-      ctrl.setWorkArea(0, dur);
-    } else {
-      ctrl.clearWorkArea();
-    }
-  }, [looping]);
-
   const fps = props.model.frameRate;
+  const startFrame = useCompositionStore((s) => s.startFrame);
   const pps = props.model.pixelsPerSecond;
   const onZoom = props.onZoom;
   const zoomPct = Math.round((pps / ZOOM_DEFAULT) * 100);
@@ -123,10 +113,34 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const timelineModelProps = { ...timelineProps, model };
 
   const [searchQuery, setSearchQuery] = useState('');
+  const headerRef = useRef<HTMLElement>(null);
+  const { width: headerWidth } = useContainerSize(headerRef);
+  const isNarrow = headerWidth > 0 && headerWidth < 1200;
+  const isCompact = headerWidth > 0 && headerWidth < 800;
+
+  const moreToolsMenu = [
+    { type: 'checkbox', id: 'loop', label: 'Loop playback', checked: looping, onChange: setLooping },
+    { type: 'checkbox', id: 'draft', label: 'Draft quality', checked: draftQuality, onChange: setDraftQuality },
+    {
+      type: 'item', id: 'res', label: `Resolution: ${RESOLUTION_LABELS[previewResolution]}`,
+      submenu: ([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
+        type: 'item' as const, id: `res-${r}`, label: RESOLUTION_LABELS[r],
+        icon: (r === previewResolution ? 'check' : undefined) as IconName | undefined, onSelect: () => setResolution(r),
+      })),
+    },
+    { type: 'checkbox', id: 'shy', label: 'Global Shy', checked: globalShy, onChange: setGlobalShy },
+    { type: 'checkbox', id: 'motionblur', label: 'Motion Blur', checked: motionBlurEnabled, onChange: setMotionBlurEnabled, disabled: !onGpu },
+    { type: 'separator' },
+    { type: 'item', id: 'split', label: 'Split at Playhead', icon: 'scissors', onSelect: () => { getTimelineController().splitSelectedAtPlayhead(selectedIds); bumpScene(); } },
+    { type: 'item', id: 'trimin', label: 'Trim In', icon: 'chevron-left', onSelect: () => { getTimelineController().trimSelectedStartToPlayhead(selectedIds); bumpScene(); } },
+    { type: 'item', id: 'trimout', label: 'Trim Out', icon: 'chevron-right', onSelect: () => { getTimelineController().trimSelectedEndToPlayhead(selectedIds); bumpScene(); } },
+    { type: 'separator' },
+    { type: 'checkbox', id: 'graph', label: 'Graph Editor', checked: graphEditorOpen, onChange: setGraphEditorOpen },
+  ] as const;
 
   return (
     <section className={cn(styles.root, className)}>
-      <header className={styles.header}>
+      <header className={styles.header} ref={headerRef}>
         {transport ?? (
           <>
             {/* AE-style: the timecode leads the timeline panel. */}
@@ -134,13 +148,15 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               className={styles.timecode}
               title={`Current time — minutes : seconds : frames @ ${fps} fps`}
             >
-              {formatTime(ws?.time ?? props.model.currentTime, fps)}
-              <span className={styles.timecodeTotal}>/ {formatTime(props.model.duration, fps)}</span>
+              {framesToTimecode(ws?.time ?? props.model.currentTime, fps, startFrame)}
+              {/* Total shows the END timecode (start + duration), so a comp that
+                  starts at 1:00:00:00 reads its real out-point, not a bare run. */}
+              <span className={styles.timecodeTotal}>/ {framesToTimecode(props.model.duration, fps, startFrame)}</span>
             </div>
 
             {/* Timeline Search/Filter Bar */}
             <div className={styles.searchContainer}>
-              <Icon name="search" size={11} className={styles.searchIcon} />
+              <Icon name="search" size={12} className={styles.searchIcon} />
               <input
                 type="text"
                 placeholder="Filter layers/properties..."
@@ -156,15 +172,17 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   onClick={() => setSearchQuery('')}
                   title="Clear search filter"
                 >
-                  <Icon name="close" size={10} />
+                  <Icon name="close" size={12} />
                 </button>
               )}
             </div>
 
             <div className={styles.transport}>
-              <IconButton aria-label="Skip to start" title="Go to start (Home)" size="sm" onClick={() => getTimelineController().goToStart()}>
-                <Icon name="skip-back" size={12} />
-              </IconButton>
+              {!isCompact && (
+                <IconButton aria-label="Skip to start" title="Go to start (Home)" size="sm" onClick={() => getTimelineController().goToStart()}>
+                  <Icon name="skip-back" size={12} />
+                </IconButton>
+              )}
               <IconButton aria-label="Previous frame" title="Previous frame (Page Up)" size="sm" onClick={() => getTimelineController().previousFrame()}>
                 <Icon name="chevron-left" size={13} />
               </IconButton>
@@ -181,123 +199,166 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               <IconButton aria-label="Next frame" title="Next frame (Page Down)" size="sm" onClick={() => getTimelineController().nextFrame()}>
                 <Icon name="chevron-right" size={13} />
               </IconButton>
-              <IconButton aria-label="Skip to end" title="Go to end (End)" size="sm" onClick={() => getTimelineController().goToEnd()}>
-                <Icon name="skip-forward" size={12} />
-              </IconButton>
-              <IconButton
-                aria-label="Add marker at playhead"
-                title="Add marker at playhead"
-                size="sm"
-                onClick={() => getTimelineController().addMarkerAtPlayhead()}
-              >
-                <Icon name="marker" size={12} />
-              </IconButton>
+              {!isCompact && (
+                <IconButton aria-label="Skip to end" title="Go to end (End)" size="sm" onClick={() => getTimelineController().goToEnd()}>
+                  <Icon name="skip-forward" size={12} />
+                </IconButton>
+              )}
+              {!isCompact && (
+                <IconButton
+                  aria-label="Add marker at playhead"
+                  title={
+                    selectedIds.length === 1
+                      ? 'Add layer marker to the selected layer (travels with it)'
+                      : 'Add composition marker at playhead'
+                  }
+                  size="sm"
+                  onClick={() => {
+                    // AE: a marker with one layer selected is a LAYER marker
+                    // (moves with the layer); otherwise a composition marker.
+                    const ctrl = getTimelineController();
+                    if (selectedIds.length === 1 && ctrl.addLayerMarkerAtPlayhead(selectedIds[0]!)) return;
+                    ctrl.addMarkerAtPlayhead();
+                  }}
+                >
+                  <Icon name="marker" size={12} />
+                </IconButton>
+              )}
             </div>
 
             {/* Loop + Draft Quality toggles — AE staple controls */}
-            <div className={styles.toggleGroup}>
-              <button
-                type="button"
-                className={looping ? styles.toggleBtnActive : styles.toggleBtn}
-                title="Loop playback"
-                onClick={() => setLooping((v) => !v)}
-              >
-                <Icon name="rotate-cw" size={11} />
-                Loop
-              </button>
-              <button
-                type="button"
-                className={draftQuality ? styles.toggleBtnActive : styles.toggleBtn}
-                title="Draft quality (faster preview)"
-                onClick={() => setDraftQuality(!draftQuality)}
-              >
-                Draft
-              </button>
-            </div>
+            {!isNarrow && (
+              <>
+                <div className={styles.toggleGroup}>
+                  <button
+                    type="button"
+                    className={looping ? styles.toggleIconActive : styles.toggleIcon}
+                    title="Loop playback"
+                    aria-label="Loop playback"
+                    aria-pressed={looping}
+                    onClick={() => setLooping(!looping)}
+                  >
+                    <Icon name="loop" size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className={draftQuality ? styles.toggleIconActive : styles.toggleIcon}
+                    title="Draft quality (faster preview)"
+                    aria-label="Draft quality"
+                    aria-pressed={draftQuality}
+                    onClick={() => setDraftQuality(!draftQuality)}
+                  >
+                    <Icon name="zap" size={12} />
+                  </button>
+                  {/* Preview resolution — renders fewer pixels for faster playback. */}
+                  <Dropdown
+                    placement="top-start"
+                    trigger={
+                      <button
+                        type="button"
+                        className={previewResolution !== 1 ? styles.toggleBtnActive : styles.toggleBtn}
+                        title="Preview resolution (fewer pixels = faster)"
+                      >
+                        {RESOLUTION_LABELS[previewResolution]}
+                        <Icon name="chevron-down" size={10} />
+                      </button>
+                    }
+                    items={([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
+                      type: 'item',
+                      id: `res-${r}`,
+                      label: RESOLUTION_LABELS[r],
+                      icon: r === previewResolution ? 'check' : undefined,
+                      onSelect: () => setResolution(r),
+                    }))}
+                  />
+                </div>
 
-            {/* Global switches for Shy and Motion Blur */}
-            <div className={styles.toggleGroup}>
-              <button
-                type="button"
-                className={globalShy ? styles.toggleBtnActive : styles.toggleBtn}
-                title={globalShy ? 'Global Shy: Active (Shy layers hidden)' : 'Global Shy: Inactive (All layers visible)'}
-                onClick={() => setGlobalShy(!globalShy)}
-              >
-                <Icon name="shy" size={11} />
-                Shy
-              </button>
-              <button
-                type="button"
-                className={motionBlurEnabled ? styles.toggleBtnActive : styles.toggleBtn}
-                title={motionBlurEnabled ? 'Global Motion Blur: Enabled' : 'Global Motion Blur: Disabled'}
-                onClick={() => setMotionBlurEnabled(!motionBlurEnabled)}
-              >
-                <Icon name="refresh" size={11} />
-                Motion Blur
-              </button>
-            </div>
+                {/* Global switches for Shy and Motion Blur */}
+                <div className={styles.toggleGroup}>
+                  <button
+                    type="button"
+                    className={globalShy ? styles.toggleIconActive : styles.toggleIcon}
+                    title={globalShy ? 'Global Shy: Active (Shy layers hidden)' : 'Global Shy: Inactive (All layers visible)'}
+                    aria-label="Global Shy"
+                    aria-pressed={globalShy}
+                    onClick={() => setGlobalShy(!globalShy)}
+                  >
+                    <Icon name="shy" size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className={motionBlurEnabled ? styles.toggleIconActive : styles.toggleIcon}
+                    title={motionBlurEnabled ? 'Global Motion Blur: Enabled' : 'Global Motion Blur: Disabled'}
+                    aria-label="Global Motion Blur"
+                    aria-pressed={motionBlurEnabled}
+                    onClick={() => setMotionBlurEnabled(!motionBlurEnabled)}
+                  >
+                    <Icon name="motion-blur" size={12} />
+                  </button>
+                </div>
 
-            {/* Layer split / trim controls */}
-            <div className={styles.toggleGroup}>
-              <button
-                type="button"
-                className={styles.toggleBtn}
-                title="Split selected layers at playhead (Ctrl+Shift+D)"
-                onClick={() => {
-                  getTimelineController().splitSelectedAtPlayhead(selectedIds);
-                  bumpScene();
-                }}
-              >
-                <Icon name="scissors" size={11} />
-                Split
-              </button>
-              <button
-                type="button"
-                className={styles.toggleBtn}
-                title="Trim Layer In point to playhead (Alt+[)"
-                onClick={() => {
-                  getTimelineController().trimSelectedStartToPlayhead(selectedIds);
-                  bumpScene();
-                }}
-              >
-                <Icon name="chevron-left" size={11} />
-                Trim In
-              </button>
-              <button
-                type="button"
-                className={styles.toggleBtn}
-                title="Trim Layer Out point to playhead (Alt+])"
-                onClick={() => {
-                  getTimelineController().trimSelectedEndToPlayhead(selectedIds);
-                  bumpScene();
-                }}
-              >
-                <Icon name="chevron-right" size={11} />
-                Trim Out
-              </button>
-            </div>
+                {/* Layer split / trim controls */}
+                <div className={styles.toggleGroup}>
+                  <button
+                    type="button"
+                    className={styles.toggleIcon}
+                    title="Split selected layers at playhead (Ctrl+Shift+D)"
+                    aria-label="Split at playhead"
+                    onClick={() => {
+                      getTimelineController().splitSelectedAtPlayhead(selectedIds);
+                      bumpScene();
+                    }}
+                  >
+                    <Icon name="scissors" size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.toggleIcon}
+                    title="Trim Layer In point to playhead (Alt+[)"
+                    aria-label="Trim In"
+                    onClick={() => {
+                      getTimelineController().trimSelectedStartToPlayhead(selectedIds);
+                      bumpScene();
+                    }}
+                  >
+                    <Icon name="trim-in" size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.toggleIcon}
+                    title="Trim Layer Out point to playhead (Alt+])"
+                    aria-label="Trim Out"
+                    onClick={() => {
+                      getTimelineController().trimSelectedEndToPlayhead(selectedIds);
+                      bumpScene();
+                    }}
+                  >
+                    <Icon name="trim-out" size={12} />
+                  </button>
+                </div>
+              </>
+            )}
 
-            {/* Composition duration — editable right where users look for it. */}
-            <div
-              className={styles.toggleGroup}
-              title="Composition duration (seconds) — also editable in Composition Settings"
-            >
-              <span style={{ fontSize: 10, opacity: 0.7 }}>Dur</span>
-              <ValueField
-                value={compDuration}
-                onChange={(v) => {
-                  updateComp({ durationSeconds: v });
-                  getTimelineController().setDurationSeconds(v);
-                }}
-                min={0.1}
-                max={3600}
-                step={0.5}
-                unit="s"
-                aria-label="Composition duration"
-              />
-            </div>
+            {isNarrow && (
+              <div className={styles.toggleGroup}>
+                <Dropdown
+                  placement={isCollapsed ? 'top-start' : 'bottom-start'}
+                  trigger={
+                    <IconButton
+                      aria-label="More timeline tools"
+                      title="More timeline tools"
+                      size="sm"
+                    >
+                      <Icon name="more-horizontal" size={14} />
+                    </IconButton>
+                  }
+                  items={moreToolsMenu}
+                />
+              </div>
+            )}
 
-            {/* Keyframe interpolation controls */}
+            {/* Keyframe interpolation controls — drawn curve icons (the old
+                text glyphs ◆⌒◆ rendered inconsistently across fonts). */}
             <div className={styles.interpGroup}>
               {(['Linear', 'Ease', 'EaseIn', 'EaseOut', 'Hold'] as const).map((ease) => (
                 <button
@@ -305,46 +366,59 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   type="button"
                   className={styles.interpBtn}
                   title={`Set keyframe interpolation: ${ease}`}
+                  aria-label={`Set keyframe interpolation: ${ease}`}
                   onClick={() => {
                     onSetEasing?.(ease);
                   }}
                 >
-                  {ease === 'Linear' ? '◆—◆' :
-                   ease === 'Ease'   ? '◆⌒◆' :
-                   ease === 'EaseIn' ? '◆⤴' :
-                   ease === 'EaseOut'? '⤵◆' :
-                                       '◆|◆'}
+                  <svg width="26" height="12" viewBox="0 0 26 12" fill="none" aria-hidden>
+                    {ease === 'Linear' && <path d="M3 10 L23 2" stroke="currentColor" strokeWidth="1.4" />}
+                    {ease === 'Ease' && <path d="M3 10 C 10 10, 16 2, 23 2" stroke="currentColor" strokeWidth="1.4" />}
+                    {ease === 'EaseIn' && <path d="M3 10 C 13 7, 19 2.5, 23 2" stroke="currentColor" strokeWidth="1.4" />}
+                    {ease === 'EaseOut' && <path d="M3 10 C 7 9.5, 13 5, 23 2" stroke="currentColor" strokeWidth="1.4" />}
+                    {ease === 'Hold' && <path d="M3 10 H 13 V 2 H 23" stroke="currentColor" strokeWidth="1.4" />}
+                    <rect x="1" y="8" width="4" height="4" transform="rotate(45 3 10)" fill="currentColor" />
+                    <rect x="21" y="0" width="4" height="4" transform="rotate(45 23 2)" fill="currentColor" />
+                  </svg>
                 </button>
               ))}
             </div>
 
             <div className={styles.zoom}>
               {/* Graph Editor toggle — the signature AE feature */}
-              <button
-                type="button"
-                className={graphEditorOpen ? styles.graphBtnActive : styles.graphBtn}
-                title="Toggle Graph Editor (Shift+G)"
-                aria-pressed={graphEditorOpen}
-                onClick={() => setGraphEditorOpen(!graphEditorOpen)}
-              >
-                <Icon name="track" size={13} />
-                Graph Editor
-              </button>
+              {!isNarrow && (
+                <>
+                  <button
+                    type="button"
+                    className={graphEditorOpen ? styles.toggleIconActive : styles.toggleIcon}
+                    // Shift+F3 is the EFFECTIVE binding: the AE preset remaps
+                    // view.graphEditor's base Shift+G chord (shortcutOverrides).
+                    title="Toggle Graph Editor (Shift+F3)"
+                    aria-label="Toggle Graph Editor"
+                    aria-pressed={graphEditorOpen}
+                    onClick={() => setGraphEditorOpen(!graphEditorOpen)}
+                  >
+                    <Icon name="track" size={13} />
+                  </button>
+                  <span className={styles.zoomDivider} aria-hidden />
+                </>
+              )}
 
-              <span className={styles.zoomDivider} aria-hidden />
-
-              <button
-                type="button"
-                className={styles.rowHeightBtn}
-                title={`Row height: ${row.label} — click to cycle`}
-                aria-label={`Row height ${row.label}`}
-                onClick={cycleRow}
-              >
-                <Icon name="grip-horizontal" size={13} />
-                <span className={styles.rowHeightKey}>{row.key}</span>
-              </button>
-
-              <span className={styles.zoomDivider} aria-hidden />
+              {!isCompact && (
+                <>
+                  <button
+                    type="button"
+                    className={styles.rowHeightBtn}
+                    title={`Row height: ${row.label} — click to cycle`}
+                    aria-label={`Row height ${row.label}`}
+                    onClick={cycleRow}
+                  >
+                    <Icon name="grip-horizontal" size={13} />
+                    <span className={styles.rowHeightKey}>{row.key}</span>
+                  </button>
+                  <span className={styles.zoomDivider} aria-hidden />
+                </>
+              )}
 
               <IconButton
                 aria-label="Zoom out"
@@ -354,15 +428,17 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               >
                 <Icon name="zoom-out" size={12} />
               </IconButton>
-              <button
-                type="button"
-                className={styles.zoomLabel}
-                title="Reset zoom to 100%"
-                disabled={!onZoom}
-                onClick={() => onZoom?.(ZOOM_DEFAULT)}
-              >
-                {zoomPct}%
-              </button>
+              {!isCompact && (
+                <button
+                  type="button"
+                  className={styles.zoomLabel}
+                  title="Reset zoom to 100%"
+                  disabled={!onZoom}
+                  onClick={() => onZoom?.(ZOOM_DEFAULT)}
+                >
+                  {zoomPct}%
+                </button>
+              )}
               <IconButton
                 aria-label="Zoom in"
                 size="sm"
@@ -450,6 +526,10 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
           {...timelineModelProps}
           searchQuery={searchQuery}
           globalShy={globalShy}
+          onDurationChange={(v) => {
+            updateComp({ durationSeconds: v });
+            getTimelineController().setDurationSeconds(v);
+          }}
           onScroll={(px) => {
             setScrollLeft(px);
             timelineProps.onScroll?.(px);

@@ -19,6 +19,9 @@
   --color-statusbar:         var(--color-slate-100);
   --color-titlebar:          var(--color-slate-0);
   --color-workspace:         var(--color-slate-200);
+  --color-pasteboard:        #202020; /* comp surround — one fixed NEUTRAL (zero blue
+                                          tint), shared across themes; not
+                                          user-customizable */
 
   /* ── Borders & dividers ────────────────────────────────────── */
   --color-border:            var(--color-black-a08);
@@ -50,6 +53,15 @@
   /* ── Selection (azure — never purple, never amber) ─────────── */
   --color-selection:         var(--color-azure-600);
   --color-selection-hover:   var(--color-azure-500);
+  /* Canvas motion-path trail (frame dots, keyframe vertices, tangents). */
+  --color-motion-path:       var(--color-azure-700);
+  /* Canvas overlay chrome (snap lines, camera/light guides, HUD pills). */
+  --color-snap-line:         #d81b7f;
+  --color-camera-guide:      #0284c7;
+  --color-light-guide:       #b45309;
+  --color-hud-bg:            rgba(255, 255, 255, 0.92);
+  --color-hud-border:        rgba(59, 118, 224, 0.45);
+  --color-hud-text:          rgba(30, 41, 59, 0.95);
 
   /* ── Brand / primary === selection ─────────────────────────── */
   --color-primary:           var(--color-azure-600);

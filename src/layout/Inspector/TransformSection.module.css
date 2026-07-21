@@ -184,3 +184,173 @@
   margin: 0;
   border: none;
 }
+
+/* ── Compact Popover Grid Layout ────────────────────────────────── */
+.compactGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Inline (always-visible) inspector rows — the flattened replacement for the
+   grid-cell → popover pattern. Controls live in the panel itself, AE-style. */
+.inlineRows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* Small group heading inside a section (Fill / Stroke / Corners …). */
+.subhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  margin-top: 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.subhead:first-child {
+  margin-top: 0;
+}
+
+.gridCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+  overflow: hidden;
+}
+
+.gridCell:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+
+.cellLabel {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  justify-content: space-between;
+}
+
+.cellValue {
+  font-size: 11px;
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.animatedDot {
+  width: 5px;
+  height: 5px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 4px var(--color-primary);
+}
+
+/* ── Popover Dropdown Styling ── */
+.popoverContent {
+  background: var(--color-surface-2, #1e2027);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 210px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popoverContent h5 {
+  margin: 0 0 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding-bottom: 4px;
+}
+
+.popoverRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 24px;
+}
+
+.popoverLabel {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.resetBtn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.1s ease;
+}
+
+.resetBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+}
+
+.lockBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  border-radius: 4px;
+  transition: all 150ms ease;
+}
+
+.lockBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover, rgba(255, 255, 255, 0.04));
+}
+
+.lockBtnActive {
+  color: var(--color-primary, #2988ff);
+}

@@ -8,6 +8,23 @@
 
 const SEP = '::';
 
+/**
+ * The pseudo-property the timeline shows when Separate Dimensions is OFF (the
+ * default): one "Position" row standing in for the x/y/z tracks.
+ *
+ * No track by this name exists in the engine, so anything acting on a keyframe
+ * id must expand it via `expandKeyframeProp` first. Not doing so is a silent
+ * no-op: `getTrackKeyframes(node, 'Position')` returns null, the loop hits
+ * `continue`, and the user sees nothing happen — which is exactly how F9 came
+ * to do nothing on the most-animated property in the app.
+ */
+export const POSITION_PSEUDO_PROP = 'Position';
+
+/** The real engine track(s) a (possibly pseudo) property name refers to. */
+export function expandKeyframeProp(prop: string): string[] {
+  return prop === POSITION_PSEUDO_PROP ? ['x', 'y', 'z'] : [prop];
+}
+
 export interface KeyframeRefParts {
   nodeId: string;
   prop: string;

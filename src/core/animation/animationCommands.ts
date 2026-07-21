@@ -28,7 +28,7 @@
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import { defaultAnimation, AnimationEngine, type AnimSnapshot, type Keyframe, type PropPath } from '@motion/animation';
+import { defaultAnimation, AnimationEngine, type AnimSnapshot, type Keyframe, type PropPath, type DataTrack } from '@motion/animation';
 
 /** One track's before/after keyframes (`null` = the track is absent). */
 export interface TrackChange {
@@ -38,6 +38,9 @@ export interface TrackChange {
   after: Keyframe[] | null;
   expressionBefore?: string | null;
   expressionAfter?: string | null;
+  /** Non-scalar (data) track states — text/points/gradient keyframes. */
+  dataBefore?: DataTrack | null;
+  dataAfter?: DataTrack | null;
 }
 
 /** Shared command id — instances are parametric, created per edit. */
@@ -76,6 +79,7 @@ export class AnimEditCommand implements Command {
         if (c.expressionAfter === null) this.engine.removeExpression(c.nodeId, c.prop);
         else this.engine.setExpression(c.nodeId, c.prop, c.expressionAfter);
       }
+      if (c.dataAfter !== undefined) this.engine.setDataTrack(c.nodeId, c.prop, c.dataAfter);
     }
   }
 
@@ -86,6 +90,7 @@ export class AnimEditCommand implements Command {
         if (c.expressionBefore === null) this.engine.removeExpression(c.nodeId, c.prop);
         else this.engine.setExpression(c.nodeId, c.prop, c.expressionBefore);
       }
+      if (c.dataBefore !== undefined) this.engine.setDataTrack(c.nodeId, c.prop, c.dataBefore);
     }
   }
 
@@ -116,13 +121,21 @@ export function diffTracks(before: AnimSnapshot, after: AnimSnapshot): TrackChan
     ...Object.keys(after.tracks),
     ...Object.keys(before.expressions || {}),
     ...Object.keys(after.expressions || {}),
+    ...Object.keys(before.data || {}),
+    ...Object.keys(after.data || {}),
   ]);
   for (const nodeId of nodeIds) {
     const bProps = before.tracks[nodeId] ?? {};
     const aProps = after.tracks[nodeId] ?? {};
     const bExprs = before.expressions?.[nodeId] ?? {};
     const aExprs = after.expressions?.[nodeId] ?? {};
-    for (const prop of new Set([...Object.keys(bProps), ...Object.keys(aProps), ...Object.keys(bExprs), ...Object.keys(aExprs)])) {
+    const bData = before.data?.[nodeId] ?? {};
+    const aData = after.data?.[nodeId] ?? {};
+    for (const prop of new Set([
+      ...Object.keys(bProps), ...Object.keys(aProps),
+      ...Object.keys(bExprs), ...Object.keys(aExprs),
+      ...Object.keys(bData), ...Object.keys(aData),
+    ])) {
       keys.add(`${nodeId} ${prop}`);
     }
   }
@@ -134,17 +147,31 @@ export function diffTracks(before: AnimSnapshot, after: AnimSnapshot): TrackChan
     const a = after.tracks[nodeId]?.[prop]?.keyframes ?? null;
     const eb = before.expressions?.[nodeId]?.[prop] ?? null;
     const ea = after.expressions?.[nodeId]?.[prop] ?? null;
-    if (kfEqual(b, a) && eb === ea) continue;
-    changes.push({
+    const db = before.data?.[nodeId]?.[prop] ?? null;
+    const da = after.data?.[nodeId]?.[prop] ?? null;
+    if (kfEqual(b, a) && eb === ea && dataEqual(db, da)) continue;
+    const change: TrackChange = {
       nodeId,
       prop,
       before: b ? b.map((k) => ({ ...k })) : null,
       after: a ? a.map((k) => ({ ...k })) : null,
       expressionBefore: eb,
       expressionAfter: ea,
-    });
+    };
+    if (!dataEqual(db, da)) {
+      change.dataBefore = db;
+      change.dataAfter = da;
+    }
+    changes.push(change);
   }
   return changes;
+}
+
+/** Structural equality for data tracks (values are JSON-safe by contract). */
+function dataEqual(a: DataTrack | null, b: DataTrack | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return JSON.stringify(a.keyframes) === JSON.stringify(b.keyframes) && a.kind === b.kind;
 }
 
 function kfEqual(a: Keyframe[] | null, b: Keyframe[] | null): boolean {

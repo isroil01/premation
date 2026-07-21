@@ -28,9 +28,24 @@ export interface Node3D {
   rotationX: number;
   /** Degrees — rotation about the vertical (y) axis. */
   rotationY: number;
+  /** AE Orientation: a resting 3D facing composed BEFORE the animatable
+   *  rotation, in degrees. Absent → 0 (no effect). */
+  orientationX: number;
+  orientationY: number;
+  orientationZ: number;
+  /** Anchor-point depth (px). matrix4 pivots rotation/scale around it; absent →
+   *  0 (the layer plane), which is why it was invisibly dropped before. */
+  anchorZ: number;
 }
 
-const ZERO_3D: Node3D = { z: 0, rotationX: 0, rotationY: 0 };
+const ZERO_3D: Node3D = {
+  z: 0, rotationX: 0, rotationY: 0,
+  orientationX: 0, orientationY: 0, orientationZ: 0, anchorZ: 0,
+};
+
+/** Extra 3D props beyond the depth markers — orientation + anchor Z. Seeded on
+ *  demand (they don't mark a layer 3D; z/rotationX/rotationY already do). */
+export const THREE_D_EXTRA_PROPS = ['orientationX', 'orientationY', 'orientationZ', 'anchorZ'] as const;
 
 function transformComponent(node: SceneNode): { id: string; props: Record<string, unknown> } | undefined {
   return node.components.find((c) => c.type === 'Transform') as
@@ -50,7 +65,15 @@ export function readNode3D(node: SceneNode): Node3D {
   const t = transformComponent(node);
   if (!t) return ZERO_3D;
   const n = (v: unknown): number => (typeof v === 'number' ? v : 0);
-  return { z: n(t.props.z), rotationX: n(t.props.rotationX), rotationY: n(t.props.rotationY) };
+  return {
+    z: n(t.props.z),
+    rotationX: n(t.props.rotationX),
+    rotationY: n(t.props.rotationY),
+    orientationX: n(t.props.orientationX),
+    orientationY: n(t.props.orientationY),
+    orientationZ: n(t.props.orientationZ),
+    anchorZ: n(t.props.anchorZ),
+  };
 }
 
 /**

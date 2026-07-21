@@ -72,6 +72,14 @@ class Pool<H extends ResourceHandle<string>> {
     return this.map.size;
   }
 
+  free(key: string): void {
+    const entry = this.map.get(key);
+    if (entry) {
+      this.destroy(entry.handle);
+      this.map.delete(key);
+    }
+  }
+
   disposeAll(): void {
     for (const e of this.map.values()) this.destroy(e.handle);
     this.map.clear();
@@ -150,6 +158,10 @@ export class ResourceManager {
   }
   renderTarget(key: string, desc: RenderTargetDescriptor, pinned = false): RenderTargetHandle {
     return this.renderTargets.acquire(key, this.frame, () => this.backend.createRenderTarget(desc), pinned);
+  }
+
+  freeTexture(key: string): void {
+    this.textures.free(key);
   }
 
   has(kind: keyof ResourceManagerStats, key: string): boolean {

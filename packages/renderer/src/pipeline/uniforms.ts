@@ -113,6 +113,26 @@ export function packTextured(
   return out;
 }
 
+/**
+ * Deformed-mesh material uniform: mat3 mvp + vec4 tint + 3 colour rows.
+ * NOTE: This is intentionally DIFFERENT from packTextured — the DEFORMED_MESH
+ * shader does not have a uvRect field because UVs come per-vertex from the
+ * mesh buffer, not from a uniform quad rect. Using packTextured here would
+ * shift tint into the wrong slot (reading uvRect as tint instead).
+ */
+export function packDeformedMesh(
+  mvp: Mat3,
+  tint: Color,
+  opacity: number,
+  color: ColorTransform = IDENTITY_COLOR_TRANSFORM,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 12);
+  let o = packMat3(mvp, out, 0);
+  o = packColor(tint, out, o, opacity);
+  packColorRows(color, out, o);
+  return out;
+}
+
 /** Blur material uniform: mat3 mvp + vec4 uvRect + vec4 blurParams (dirX, dirY, radiusPx, 0). */
 export function packBlur(
   mvp: Mat3,
@@ -167,5 +187,38 @@ export function packMotionTile(mvp: Mat3, uvRect: Rect, scaleX: number, scaleY: 
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
   out[o + 0] = scaleX; out[o + 1] = scaleY; out[o + 2] = offsetX; out[o + 3] = offsetY;
+  return out;
+}
+
+export function packFill(mvp: Mat3, uvRect: Rect, color: Color): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
+export function packStroke(mvp: Mat3, uvRect: Rect, color: Color, width: number, texelWidth: number, texelHeight: number): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a; o += 4;
+  out[o + 0] = width; out[o + 1] = texelWidth; out[o + 2] = texelHeight; out[o + 3] = 0;
+  return out;
+}
+
+export function packSharpen(mvp: Mat3, uvRect: Rect, texelWidth: number, texelHeight: number, amount: number): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = texelWidth; out[o + 1] = texelHeight; out[o + 2] = amount; out[o + 3] = 0;
+  return out;
+}
+
+export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: number, monochrome: boolean): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = amount; out[o + 1] = evolution; out[o + 2] = monochrome ? 1 : 0; out[o + 3] = 0;
   return out;
 }

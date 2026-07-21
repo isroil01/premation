@@ -91,6 +91,9 @@ const ADDRESS = { clamp: 'clamp-to-edge', repeat: 'repeat', mirror: 'mirror-repe
 
 export class WebGPUBackend implements RenderBackend {
   readonly kind = 'webgpu' as const;
+  /** WebGPU render targets are written top-down (clip +Y → row 0 → V=0), so
+   *  full-screen samples of a target must NOT flip V. */
+  readonly renderTargetFlipV = false;
   capabilities: BackendCapabilities = {
     kind: 'webgpu',
     maxTextureSize: 8192,
@@ -263,13 +266,24 @@ export class WebGPUBackend implements RenderBackend {
   beginFrame(): void {
     this.encoder = this.device.createCommandEncoder();
   }
+  /** Surface clip rect (surface px, top-left origin), or null. */
+  private frameClip: { x: number; y: number; width: number; height: number } | null = null;
+  /** Surface size, tracked at resize (GPUTexture doesn't expose dimensions in
+   *  this project's WebGPU type set). */
+  private surfaceW = 0;
+  private surfaceH = 0;
+
+  setFrameClip(rect: { x: number; y: number; width: number; height: number } | null): void {
+    this.frameClip = rect;
+  }
+
   beginRenderPass(desc: RenderPassDescriptor): RenderPassEncoder {
     if (!this.encoder) throw new Error('beginRenderPass outside a frame');
     const attach = desc.color;
-    const view =
-      attach.target === 'surface'
-        ? this.context.getCurrentTexture().createView()
-        : (attach.target.native as { view: GPUTextureView }).view;
+    const toSurface = attach.target === 'surface';
+    const view = toSurface
+      ? this.context.getCurrentTexture().createView()
+      : (attach.target.native as { view: GPUTextureView }).view;
     const clear = attach.clear;
     const pass = this.encoder.beginRenderPass({
       label: desc.label,
@@ -282,6 +296,18 @@ export class WebGPUBackend implements RenderBackend {
         },
       ],
     });
+    // The clear above is full-canvas (loadOp runs before the scissor applies);
+    // draws after this are clipped to the comp rect. Surface only —
+    // intermediate targets legitimately hold full content.
+    const clip = toSurface && this.surfaceW > 0 && this.surfaceH > 0 ? this.frameClip : null;
+    if (clip) {
+      // setScissorRect throws on out-of-bounds rects — clamp to the surface.
+      const x = Math.max(0, Math.min(this.surfaceW, Math.round(clip.x)));
+      const y = Math.max(0, Math.min(this.surfaceH, Math.round(clip.y)));
+      const w = Math.max(0, Math.min(this.surfaceW - x, Math.round(clip.width)));
+      const h = Math.max(0, Math.min(this.surfaceH - y, Math.round(clip.height)));
+      pass.setScissorRect(x, y, w, h);
+    }
     return new WebGPUPassEncoder(pass);
   }
   endFrame(): void {
@@ -292,8 +318,13 @@ export class WebGPUBackend implements RenderBackend {
   present(): void {
     // WebGPU presents implicitly on submit.
   }
-  resize(width: number, height: number): void {
-    if (this.context) this.context.configure({ device: this.device, format: this.surfaceFormat, alphaMode: 'premultiplied', size: { width, height } });
+  resize(width: number, height: number, devicePixelRatio = 1): void {
+    // Physical pixels: the canvas backing store is CSS×dpr, and the frame clip
+    // (setFrameClip) arrives in device px — surfaceW/H clamp against it, so
+    // they must be in the same space.
+    this.surfaceW = Math.max(1, Math.round(width * devicePixelRatio));
+    this.surfaceH = Math.max(1, Math.round(height * devicePixelRatio));
+    if (this.context) this.context.configure({ device: this.device, format: this.surfaceFormat, alphaMode: 'premultiplied', size: { width: this.surfaceW, height: this.surfaceH } });
   }
   dispose(): void {
     this.device?.destroy();

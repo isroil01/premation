@@ -5,23 +5,20 @@
  * History / autosave / export.
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { cn } from '@utils/cn';
 import { Icon } from '@components/Icon';
 import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
-import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { Switch } from '@components/Switch';
+import { Dropdown } from '@components/Dropdown';
+import { Accordion, type AccordionItem } from '@components/Accordion';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
+import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { EFFECT_DEFS, addEffect } from '@core/effects/effects';
 import { EffectStack } from './EffectStack';
-import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
-import { MATTE_OPTIONS, getNodeMatte, setNodeMatte } from '@core/effects/matte';
-import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
-import { getNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
 import {
   getNodeMask,
   addMaskPath,
@@ -34,11 +31,9 @@ import {
   hasMaskAnim,
   type MaskMode,
 } from '@core/effects/mask';
-import { useActiveWorkspace } from '@stores/projectStore';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { TimeControls } from './TimeControls';
-import { LayerStylesControls } from './LayerStylesControls';
+import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import styles from './EffectsPanel.module.css';
 
 const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
@@ -51,126 +46,103 @@ export function EffectsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   useSceneRevision((s) => s.rev);
   const maskTime = useActiveWorkspace()?.time ?? 0;
-  const mb = useMotionBlurStore();
   const [effectQuery, setEffectQuery] = useState('');
 
-  if (!primary || !defaultSceneGraph.getNode(primary)) {
-    return <EmptyState icon="settings" message="Select a layer to add visual effects." />;
-  }
+
+  // NOTE: the empty-state early return must come AFTER every hook — the
+  // browser-accordion useMemos below run on every render, and returning before
+  // them changed the hook count the moment a layer was selected, which is a
+  // Rules-of-Hooks crash that took the whole editor down with it.
+  const hasSelection = !!(primary && defaultSceneGraph.getNode(primary));
 
   const q = effectQuery.trim().toLowerCase();
   const browserDefs = q ? EFFECT_DEFS.filter((d) => d.label.toLowerCase().includes(q)) : EFFECT_DEFS;
-
-  const blend = getNodeBlend(primary);
-  const blendLabel = BLEND_MODES.find((b) => b.mode === blend)?.label ?? 'Normal';
-  const blendItems: DropdownItem[] = BLEND_MODES.map((b) => ({
-    type: 'item',
-    id: b.mode,
-    label: b.label,
-    icon: b.mode === blend ? 'check' : undefined,
-    onSelect: () => setNodeBlend(primary, b.mode),
-  }));
-
-  const matte = getNodeMatte(primary);
-  const matteLabel = MATTE_OPTIONS.find((m) => m.value === matte)?.label ?? 'No matte';
-  const matteItems: DropdownItem[] = MATTE_OPTIONS.map((m) => ({
-    type: 'item',
-    id: m.value,
-    label: m.label,
-    icon: m.value === matte ? 'check' : undefined,
-    onSelect: () => setNodeMatte(primary, m.value),
-  }));
-
-  // Mask presets are built at the layer's rendered size (matches buildSnapshot).
-  const node = defaultSceneGraph.getNode(primary);
+  // Unified GPU engine renders every effect — no locks needed.
+  const effectAvailability = (_d: (typeof EFFECT_DEFS)[number]): { ok: true } | { ok: false; reason: string } => {
+    return { ok: true };
+  };
+  const node = hasSelection ? defaultSceneGraph.getNode(primary!) : undefined;
   const kind = node ? readNodeKind(node) : 'shape';
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
   const { w: maskW, h: maskH } = SIZE[layerKind];
-  const masks = getNodeMask(primary).paths;
-  const isAdjustment = getNodeAdjustment(primary);
-  const motionBlur = getNodeMotionBlur(primary);
+  const masks = hasSelection ? getNodeMask(primary!).paths : [];
+
+  const getCategoryForEffect = (type: string): string => {
+    if (type === 'blur' || type === 'sharpen') return 'Blur & Sharpen';
+    if ([
+      'brightness', 'contrast', 'saturate', 'grayscale', 'sepia', 
+      'hue-rotate', 'hue-saturation', 'invert', 'levels', 'curves', 
+      'posterize', 'tint', 'channel-mixer', 'fill', 'four-color-gradient'
+    ].includes(type)) {
+      return 'Color Correction';
+    }
+    return 'Stylize, Keying & Utility';
+  };
+
+  const effectGroups = useMemo(() => {
+    const groups: Record<string, typeof browserDefs> = {
+      'Blur & Sharpen': [],
+      'Color Correction': [],
+      'Stylize, Keying & Utility': [],
+    };
+    browserDefs.forEach((d) => {
+      const cat = getCategoryForEffect(d.type);
+      if (groups[cat]) {
+        groups[cat].push(d);
+      } else {
+        groups[cat] = [d];
+      }
+    });
+    return groups;
+  }, [browserDefs]);
+
+  const browserAccordionItems = useMemo((): AccordionItem[] => {
+    return Object.entries(effectGroups)
+      .filter(([_, items]) => items.length > 0)
+      .map(([cat, items]) => ({
+        id: cat,
+        title: cat,
+        badge: <span className={styles.catBadge}>{items.length}</span>,
+        defaultOpen: true,
+        content: (
+          <div className={styles.effectRowsList}>
+            {items.map((d) => {
+              const avail = effectAvailability(d);
+              const unavailable = !avail.ok;
+              return (
+                <button
+                  key={d.type}
+                  type="button"
+                  className={cn(styles.effectRowCard, unavailable && styles.effectRowCardUnavailable)}
+                  disabled={unavailable}
+                  draggable={!unavailable}
+                  onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
+                  title={avail.ok ? `Add ${d.label} — or drag onto a layer` : avail.reason}
+                  onClick={() => { if (primary) addEffect(primary, d.type); }}
+                >
+                  <div className={styles.effectIconWrapper}>
+                    <Icon name={unavailable ? 'lock' : 'sparkles'} size={12} />
+                  </div>
+                  <div className={styles.effectInfo}>
+                    <span className={styles.effectLabelText}>{d.label}</span>
+                    {d.gpuOnly && <span className={styles.gpuBadge}>GPU</span>}
+                  </div>
+                  <Icon name="plus" size={12} className={styles.effectAddIcon} />
+                </button>
+              );
+            })}
+          </div>
+        )
+      }));
+  }, [effectGroups, primary]);
+
+  // Every hook above has run — returning here is now hook-count-stable.
+  if (!hasSelection || !primary) {
+    return <EmptyState icon="settings" message="Select a layer to add visual effects." />;
+  }
 
   return (
     <div className={styles.root}>
-      <TimeControls nodeId={primary} />
-
-      <LayerStylesControls nodeId={primary} />
-
-      <div className={styles.blendRow}>
-        <span className={styles.blendLabel}>Blend</span>
-        <Dropdown
-          placement="bottom-end"
-          trigger={
-            <button type="button" className={styles.blendTrigger}>
-              {blendLabel}
-              <Icon name="chevron-down" size={12} />
-            </button>
-          }
-          items={blendItems}
-        />
-      </div>
-
-      <div className={styles.blendRow}>
-        <span className={styles.blendLabel}>Track matte</span>
-        <Dropdown
-          placement="bottom-end"
-          trigger={
-            <button type="button" className={styles.blendTrigger}>
-              {matteLabel}
-              <Icon name="chevron-down" size={12} />
-            </button>
-          }
-          items={matteItems}
-        />
-      </div>
-
-      <div className={styles.blendRow}>
-        <span className={styles.blendLabel}>Adjustment layer</span>
-        <Switch
-          checked={isAdjustment}
-          onChange={(e) => setNodeAdjustment(primary, e.currentTarget.checked)}
-          aria-label="Adjustment layer"
-        />
-      </div>
-
-      <div className={styles.blendRow}>
-        <span className={styles.blendLabel}>Motion blur</span>
-        <Switch
-          checked={motionBlur}
-          onChange={(e) => setNodeMotionBlur(primary, e.currentTarget.checked)}
-          aria-label="Motion blur"
-        />
-      </div>
-
-      {motionBlur && (
-        <div className={styles.maskControls}>
-          <label className={styles.blendLabel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={mb.enabled} onChange={(e) => mb.setEnabled(e.currentTarget.checked)} />
-            Comp enabled
-          </label>
-          <label className={styles.maskField}>
-            <span>Shutter°</span>
-            <ValueField value={mb.shutterAngle} min={0} max={360} precision={0} unit="°"
-              onChange={mb.setShutterAngle} aria-label="Shutter angle" />
-          </label>
-          <label className={styles.maskField}>
-            <span>Phase°</span>
-            <ValueField value={mb.shutterPhase ?? -90} min={-360} max={360} precision={0} unit="°"
-              onChange={mb.setShutterPhase} aria-label="Shutter phase" />
-          </label>
-          <label className={styles.maskField}>
-            <span>Samples</span>
-            <ValueField value={mb.samples} min={2} max={32} precision={0}
-              onChange={mb.setSamples} aria-label="Motion blur samples" />
-          </label>
-          <label className={styles.maskField}>
-            <span>Limit</span>
-            <ValueField value={mb.adaptiveSampleLimit ?? 128} min={2} max={128} precision={0}
-              onChange={mb.setAdaptiveSampleLimit} aria-label="Adaptive sample limit" />
-          </label>
-        </div>
-      )}
-
       {/* Effects browser — searchable list of effect types to add. */}
       <div className={styles.sectionTitle}>Effects &amp; presets</div>
       <div className={styles.browser}>
@@ -182,14 +154,12 @@ export function EffectsPanel(): JSX.Element {
           leftIcon="search"
           onChange={(e) => setEffectQuery(e.currentTarget.value)}
         />
-        <div className={styles.addRow}>
-          {browserDefs.map((d) => (
-            <button key={d.type} type="button" className={styles.addChip} onClick={() => addEffect(primary, d.type)}>
-              <Icon name="plus" size={11} /> {d.label}
-            </button>
-          ))}
-          {browserDefs.length === 0 ? <span className={styles.hint}>No effects match “{effectQuery}”.</span> : null}
-        </div>
+        {browserAccordionItems.length > 0 ? (
+          <Accordion items={browserAccordionItems} />
+        ) : (
+          <div className={styles.hint}>No effects match “{effectQuery}”.</div>
+        )}
+
       </div>
 
       <EffectStack nodeId={primary} />
@@ -221,7 +191,7 @@ export function EffectsPanel(): JSX.Element {
               <div className={styles.itemHead}>
                 <span className={styles.itemLabel}>Mask {i + 1}</span>
                 <Dropdown
-                  placement="bottom-end"
+                  placement="left-start"
                   trigger={
                     <button type="button" className={styles.blendTrigger}>
                       {MASK_MODES.find((x) => x.mode === m.mode)?.label ?? 'Add'}
@@ -233,7 +203,7 @@ export function EffectsPanel(): JSX.Element {
                     id: x.mode,
                     label: x.label,
                     icon: x.mode === m.mode ? 'check' : undefined,
-                    onSelect: () => updateMaskPath(primary, m.id, { mode: x.mode }),
+                    onSelect: () => updateMaskPath(primary, m.id, { mode: x.mode }, maskTime),
                   }))}
                 />
                 <button
@@ -249,22 +219,22 @@ export function EffectsPanel(): JSX.Element {
                 <label className={styles.maskField}>
                   <span>Feather</span>
                   <ValueField value={m.feather} min={0} max={200} precision={0} unit="px"
-                    onChange={(v) => updateMaskPath(primary, m.id, { feather: v })} aria-label="Mask feather" />
+                    onChange={(v) => updateMaskPath(primary, m.id, { feather: v }, maskTime)} aria-label="Mask feather" />
                 </label>
                 <label className={styles.maskField}>
                   <span>Opacity</span>
                   <ValueField value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
-                    onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 })} aria-label="Mask opacity" />
+                    onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 }, maskTime)} aria-label="Mask opacity" />
                 </label>
                 <label className={styles.maskField}>
                   <span>Expansion</span>
                   <ValueField value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
-                    onChange={(v) => updateMaskPath(primary, m.id, { expansion: v })} aria-label="Mask expansion" />
+                    onChange={(v) => updateMaskPath(primary, m.id, { expansion: v }, maskTime)} aria-label="Mask expansion" />
                 </label>
                 <button
                   type="button"
                   className={m.inverted ? styles.invertOn : styles.addChip}
-                  onClick={() => updateMaskPath(primary, m.id, { inverted: !m.inverted })}
+                  onClick={() => updateMaskPath(primary, m.id, { inverted: !m.inverted }, maskTime)}
                 >
                   Invert
                 </button>

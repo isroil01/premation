@@ -1,6 +1,6 @@
 import { Color } from '../../core/math/Color';
 import { RenderPass, SURFACE, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, emitTextured, modelFromRect, mvpFor, writeAttachment } from './passUtils';
+import { beginViewportPass, emitTextured, writeAttachment, screenMvp, targetSampleUv } from './passUtils';
 
 export const SCENE_COLOR_TARGET = 'scene-color';
 
@@ -25,13 +25,12 @@ export class EffectPass extends RenderPass {
     const tex = ctx.services.backend.renderTargetTexture(source);
     if (!tex) return;
 
-    const { scene, viewport, services } = ctx;
-    const rect = { x: 0, y: 0, width: scene.composition.size.width, height: scene.composition.size.height };
+    const { services } = ctx;
 
     services.commands.clear();
     emitTextured(
       services.commands,
-      mvpFor(viewport, modelFromRect(rect)),
+      screenMvp(),
       Color.white(),
       1,
       'normal',
@@ -42,7 +41,7 @@ export class EffectPass extends RenderPass {
         addressU: 'clamp',
         addressV: 'clamp',
       }),
-      { x: 0, y: 0, width: 1, height: 1 }
+      targetSampleUv(ctx)
     );
 
     const enc = beginViewportPass(ctx, this.name, writeAttachment(ctx, SURFACE));

@@ -3,14 +3,20 @@
  *
  * An expression is a small JavaScript formula attached to a numeric property
  * that computes its value each frame from `time`, the property's own `value`,
- * and a curated motion API (wiggle, clamp, linear, random, Math). It compiles
- * once via `new Function` — safe here because it is the user's own formula on
- * their own machine (this mirrors After Effects' expression model).
+ * and a curated motion API (wiggle, clamp, linear, random, Math).
+ *
+ * It is PARSED AND INTERPRETED, not eval'd — see `exprLang.ts` for why. The
+ * short version: `new Function` is refused by the app's CSP, so expressions
+ * were silently dead in the real renderer; and relaxing the CSP would let any
+ * shared project run arbitrary code in a renderer holding the user's auth
+ * token. The interpreter can only reach the names bound in `run` below.
  *
  * Compile errors and runtime errors are surfaced as plain-language messages
  * so the editor can highlight them inline. Everything stays editable — an
  * expression is text the user owns, never a locked result.
  */
+
+import { parseExpression, evaluateExpression, type ExprNode } from './exprLang';
 
 /** Loop mode for `loopOut`/`loopIn` (AE semantics). Unknown modes fall back
  *  to `'cycle'` so a typo degrades gracefully instead of erroring. */
@@ -52,10 +58,16 @@ export interface ExprContext {
     width: number;
     height: number;
   };
+  /** Deterministic per-(node, prop) seed mixed into `wiggle`'s noise phase so
+   *  x and y wiggle INDEPENDENTLY (AE behaviour) instead of diagonally in
+   *  lock-step. Still reproducible: same node+prop ⇒ same motion every run. */
+  propSeed?: number;
 }
 
 export interface ExprResult {
-  value: number | null;
+  /** A finite number, or a small vector (AE-style `[x, y]` returns — the
+   *  engine picks the component matching the track: x→0, y→1, z→2). */
+  value: number | number[] | null;
   error: string | null;
 }
 
@@ -92,7 +104,12 @@ function humanize(e: unknown): string {
   return msg;
 }
 
-const API_PARAMS = [
+/**
+ * The complete set of names an expression can see. Was the parameter list for
+ * `new Function`; now the contract for the scope built in `run` (and the source
+ * of truth for the "Unknown name" hint below and API_NAMES highlighting).
+ */
+export const API_PARAMS = [
   'time', 'value', 'audio', 'ctrl', 'wiggle', 'clamp', 'linear', 'ease', 'easeIn', 'easeOut',
   'timeToFrames', 'framesToTime', 'random', 'Math', 'valueAtTime', 'velocity', 'speed',
   'velocityAtTime', 'layer', 'layerAt', 'loopOut', 'loopIn', 'thisComp', 'thisLayer', 'thisProperty',
@@ -116,13 +133,13 @@ export function compileExpression(src: string): CompiledExpression {
     return { src, compileError: null, run: () => ({ value: null, error: null }) };
   }
 
-  let fn: ((...args: unknown[]) => unknown) | null = null;
+  // Parsed, not eval'd. `new Function` is refused by the app's CSP
+  // (script-src 'self'), which made every expression silently evaluate to null
+  // in the real renderer while jsdom-based tests passed. See exprLang.ts.
+  let ast: ExprNode | null = null;
   let compileError: string | null = null;
   try {
-    // eslint-disable-next-line no-new-func
-    fn = new Function(...API_PARAMS, `"use strict"; return (${trimmed});`) as (
-      ...args: unknown[]
-    ) => unknown;
+    ast = parseExpression(trimmed);
   } catch (e) {
     compileError = humanize(e);
   }
@@ -131,10 +148,11 @@ export function compileExpression(src: string): CompiledExpression {
     src,
     compileError,
     run: (ctx) => {
-      if (compileError || !fn) return { value: null, error: compileError };
+      if (compileError || !ast) return { value: null, error: compileError };
       const { time, value } = ctx;
       const audio = ctx.audio ?? 0;
       const ctrl = ctx.ctrl ?? ((): number => 0);
+      const wiggleSeed = ctx.propSeed ?? 0;
       const wiggle = (freq = 2, amp = 30, octaves = 1, ampMult = 0.5, tt = time): number => {
         let total = 0;
         let f = freq;
@@ -142,7 +160,7 @@ export function compileExpression(src: string): CompiledExpression {
         let maxA = 0;
         const n = Math.max(1, Math.floor(octaves));
         for (let i = 0; i < n; i++) {
-          total += (smoothNoise(tt * f) * 2 - 1) * a;
+          total += (smoothNoise(tt * f + wiggleSeed) * 2 - 1) * a;
           maxA += a;
           f *= 2;
           a *= ampMult;
@@ -256,14 +274,35 @@ export function compileExpression(src: string): CompiledExpression {
         loopIn,
       };
 
+      // The evaluator can only see these names — there is no `window`, no
+      // `fetch`, no prototype chain to climb. Keep in sync with API_PARAMS
+      // (the tokenizer's API_NAMES drives editor highlighting off the same set).
+      const scope = new Map<string, unknown>([
+        ['time', time], ['value', value], ['audio', audio], ['ctrl', ctrl],
+        ['wiggle', wiggle], ['clamp', clamp], ['linear', linear],
+        ['ease', ease], ['easeIn', easeIn], ['easeOut', easeOut],
+        ['timeToFrames', timeToFrames], ['framesToTime', framesToTime],
+        ['random', random], ['Math', Math],
+        ['valueAtTime', valueAtTime], ['velocity', velocity], ['speed', speed],
+        ['velocityAtTime', velocityAtTime],
+        ['layer', layer], ['layerAt', layerAt],
+        ['loopOut', loopOut], ['loopIn', loopIn],
+        ['thisComp', thisComp], ['thisLayer', thisLayer], ['thisProperty', thisProperty],
+      ]);
+
       try {
-        const out = fn(
-          time, value, audio, ctrl, wiggle, clamp, linear, ease, easeIn, easeOut,
-          timeToFrames, framesToTime, random, Math, valueAtTime, velocity, speed,
-          velocityAtTime, layer, layerAt, loopOut, loopIn, thisComp, thisLayer, thisProperty,
-        );
+        const out = evaluateExpression(ast, scope);
         if (typeof out === 'number' && Number.isFinite(out)) return { value: out, error: null };
-        return { value: null, error: 'Expression must return a number.' };
+        // AE-style vector returns: `[x, y]` (or [x,y,z]/[x,y,z,w]). The engine
+        // selects the component matching the decomposed track (x→0, y→1, z→2),
+        // so one expression drives Position instead of erroring out.
+        if (
+          Array.isArray(out) && out.length >= 1 && out.length <= 4 &&
+          out.every((v) => typeof v === 'number' && Number.isFinite(v))
+        ) {
+          return { value: out as number[], error: null };
+        }
+        return { value: null, error: 'Expression must return a number (or a [x, y] array).' };
       } catch (e) {
         return { value: null, error: humanize(e) };
       }

@@ -13,6 +13,7 @@ export const ProjectCommands = {
   Open: 'project.open',
   Save: 'project.save',
   SaveAs: 'project.saveAs',
+  IncrementAndSave: 'project.incrementAndSave',
   Close: 'project.close',
   About: 'help.about',
 } as const;
@@ -40,6 +41,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: ProjectCommands.Save, label: 'Save' },
       { commandId: ProjectCommands.SaveAs, label: 'Save As…' },
+      { commandId: ProjectCommands.IncrementAndSave, label: 'Increment and Save' },
       { separator: true },
       { commandId: 'file.export', label: 'Export…' },
       { separator: true },
@@ -70,8 +72,11 @@ export const APP_MENU: MenuGroupModel[] = [
     id: 'composition',
     label: 'Composition',
     items: [
-      { commandId: 'comp.new', label: 'New Composition…' },
+      // "New Composition…" removed — compositions (and their size) are created
+      // only from the dashboard, one project per composition.
       { commandId: 'comp.settings', label: 'Composition Settings…' },
+      { separator: true },
+      { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
     ],
   },
   {
@@ -84,6 +89,11 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'layer.newLight', label: 'New -> Light' },
       { commandId: 'layer.newNull', label: 'New -> Null Object' },
       { commandId: 'layer.newAdjustment', label: 'New -> Adjustment Layer' },
+      { separator: true },
+      { commandId: 'layer.bringToFront', label: 'Bring to Front' },
+      { commandId: 'layer.bringForward', label: 'Bring Forward' },
+      { commandId: 'layer.sendBackward', label: 'Send Backward' },
+      { commandId: 'layer.sendToBack', label: 'Send to Back' },
       { separator: true },
       { commandId: 'layer.precompose', label: 'Pre-compose…' },
     ],
@@ -100,6 +110,19 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'effect.grayscale', label: 'Grayscale' },
       { commandId: 'effect.sepia', label: 'Sepia' },
       { commandId: 'effect.hue', label: 'Hue Rotate' },
+    ],
+  },
+  {
+    // AE's Animation menu — keyframe assistants that were shortcut-only.
+    id: 'animation',
+    label: 'Animation',
+    items: [
+      { commandId: 'anim.easyEase', label: 'Keyframe Assistant: Easy Ease' },
+      { commandId: 'anim.easyEaseIn', label: 'Easy Ease In' },
+      { commandId: 'anim.easyEaseOut', label: 'Easy Ease Out' },
+      { separator: true },
+      { commandId: 'anim.interpLinear', label: 'Keyframe Interpolation: Linear' },
+      { commandId: 'anim.interpHold', label: 'Keyframe Interpolation: Hold' },
     ],
   },
   {
@@ -133,6 +156,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.commandPalette', label: 'Command Palette' },
       { commandId: 'view.presentation', label: 'Present (Preview)' },
       { separator: true },
+      { commandId: 'view.project', label: 'Project' },
       { commandId: 'view.effectControls', label: 'Effects' },
       { commandId: 'view.renderQueue', label: 'Render Queue' },
       { commandId: 'view.graphEditor', label: 'Graph Editor' },

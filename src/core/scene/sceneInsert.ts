@@ -17,8 +17,15 @@ import { useUIStore } from '@stores/uiStore';
 import { Project3D } from '@motion/scene';
 import { is3DEnabled } from './threeD';
 import { flattenScene, readNodeKind } from './sceneDerive';
+import { getTimelineController } from '@core/timeline/TimelineController';
+import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
+import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
+import { detectImageSequence } from '@core/scene/imageSequence';
 
 let seq = 0;
+
+export { activeCompRootId } from './activeComp';
+import { activeCompRootId } from './activeComp';
 
 /** Build a fresh scene node of `kind` with sensible default components. */
 function makeNode(kind: SceneKind, name: string): SceneNode {
@@ -67,17 +74,109 @@ function makeNode(kind: SceneKind, name: string): SceneNode {
   return { id, name, parent: null, children: [], transform, visible: true, locked: false, components };
 }
 
+import { useProjectStore } from '@stores/projectStore';
+import { worldMatrixOf } from './worldTransform';
+import { Matrix } from '@motion/scene';
+
+function getLocalTransformForInsert(id: string) {
+  const node = defaultSceneGraph.getNode(id);
+  if (!node) return null;
+  const t = node.components.find((c) => c.type === 'Transform');
+  return {
+    x: (t?.props.x as number) ?? node.transform.position.x ?? 0,
+    y: (t?.props.y as number) ?? node.transform.position.y ?? 0,
+    rotation: (t?.props.rotation as number) ?? node.transform.rotation ?? 0,
+    scaleX: (t?.props.scaleX as number) ?? (t?.props.scale as number) ?? node.transform.scale.x ?? 1,
+    scaleY: (t?.props.scaleY as number) ?? (t?.props.scale as number) ?? node.transform.scale.y ?? 1,
+  };
+}
+
+function getParentIdForInsert(id: string) {
+  const node = defaultSceneGraph.getNode(id);
+  return node?.parent ?? null;
+}
+
+/** Drop a freshly-made node at the centre of the REAL composition — makeNode's
+ *  (160,120) default put every inserted layer in the top-left corner of a
+ *  1920×1080 comp, which read as "shapes come in broken". */
+function centerInComp(node: SceneNode): void {
+  const activeTabId = useProjectStore.getState().activeTabId;
+  const activeTab = useProjectStore.getState().tabs[activeTabId ?? ''];
+  const compId = activeTab?.compositionId ?? 'comp_root';
+  const comp = useProjectStore.getState().comps[compId] ?? useCompositionStore.getState();
+  const cx = comp.width / 2;
+  const cy = comp.height / 2;
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (t) {
+    t.props.x = cx;
+    t.props.y = cy;
+  }
+  node.transform.position.x = cx;
+  node.transform.position.y = cy;
+}
+
+/**
+ * Move a node's base Transform to a world point. Used by canvas drop-to-insert:
+ * the insert helpers below all center in the comp and select the new node, so
+ * the drop handler inserts then calls this on the fresh selection to land it
+ * under the cursor instead. Bumps the scene.
+ */
+export function setNodeWorldPosition(nodeId: string, x: number, y: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  let localX = x;
+  let localY = y;
+  if (node.parent) {
+    const pw = worldMatrixOf(node.parent, getLocalTransformForInsert, getParentIdForInsert);
+    const inv = Matrix.invert(pw);
+    const pt = Matrix.transformPoint(inv, { x, y });
+    localX = pt.x;
+    localY = pt.y;
+  }
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (t) {
+    t.props.x = localX;
+    t.props.y = localY;
+  }
+  node.transform.position.x = localX;
+  node.transform.position.y = localY;
+  bumpScene();
+}
+
 /** Insert a primitive at the composition root, select it, and refresh the UI. */
 export function insertPrimitive(kind: SceneKind, name: string): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const node = makeNode(kind, name);
+  centerInComp(node);
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
 }
 
 /** The distinct shapes the shape library can insert. */
-export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'star' | 'polygon';
+export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'star' | 'polygon' | 'triangle' | 'arrow' | 'heart' | 'cross' | 'diamond' | 'crescent';
+
+type Pt = { x: number; y: number };
+type BPoint = ReturnType<typeof corner>;
+
+/**
+ * Give a closed outline Catmull-Rom bezier tangents at the indices `smoothAt`
+ * marks (corners elsewhere). Curved shapes (heart, crescent) were committed as
+ * straight-segment polygons — visibly faceted; the renderer draws real cubic
+ * beziers, so handing it tangents is all "smooth clean shapes" needs.
+ */
+function withTangents(pts: readonly Pt[], smoothAt: (i: number) => boolean): BPoint[] {
+  const n = pts.length;
+  const k = 1 / 6;
+  return pts.map((p, i) => {
+    if (!smoothAt(i)) return corner(p.x, p.y);
+    const prev = pts[(i - 1 + n) % n]!;
+    const next = pts[(i + 1) % n]!;
+    const tx = (next.x - prev.x) * k;
+    const ty = (next.y - prev.y) * k;
+    return { x: p.x, y: p.y, inX: p.x - tx, inY: p.y - ty, outX: p.x + tx, outY: p.y + ty };
+  });
+}
 
 /** Outline points (local space, centred at 0,0, spanning ±w/2 · ±h/2) for the
  *  path-based shapes. `rect`/`ellipse` return null — they render as native SDF
@@ -93,6 +192,85 @@ function shapeOutlinePoints(shape: ShapeKind, w: number, h: number): Array<{ x: 
       for (let i = 0; i < 6; i++) {
         const a = TOP + (i / 6) * Math.PI * 2;
         pts.push({ x: Math.cos(a) * rx, y: Math.sin(a) * ry });
+      }
+      return pts;
+    }
+    case 'triangle': {
+      // Regular triangle pointing up.
+      const pts: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i < 3; i++) {
+        const a = TOP + (i / 3) * Math.PI * 2;
+        pts.push({ x: Math.cos(a) * rx, y: Math.sin(a) * ry });
+      }
+      return pts;
+    }
+    case 'arrow': {
+      // Clean arrow pointing up.
+      return [
+        { x: 0, y: -ry },
+        { x: rx, y: -ry + ry * 0.9 },
+        { x: rx * 0.4, y: -ry + ry * 0.9 },
+        { x: rx * 0.4, y: ry },
+        { x: -rx * 0.4, y: ry },
+        { x: -rx * 0.4, y: -ry + ry * 0.9 },
+        { x: -rx, y: -ry + ry * 0.9 },
+      ];
+    }
+    case 'heart': {
+      // Symmetric heart outline
+      return [
+        { x: 0, y: -ry * 0.35 },
+        { x: rx * 0.35, y: -ry },
+        { x: rx * 0.85, y: -ry },
+        { x: rx, y: -ry * 0.45 },
+        { x: rx, y: ry * 0.1 },
+        { x: 0, y: ry },
+        { x: -rx, y: ry * 0.1 },
+        { x: -rx, y: -ry * 0.45 },
+        { x: -rx * 0.85, y: -ry },
+        { x: -rx * 0.35, y: -ry },
+      ];
+    }
+    case 'cross': {
+      // Clean plus / cross shape
+      const cx = rx * 0.35;
+      const cy = ry * 0.35;
+      return [
+        { x: -cx, y: -ry },
+        { x: cx, y: -ry },
+        { x: cx, y: -cy },
+        { x: rx, y: -cy },
+        { x: rx, y: cy },
+        { x: cx, y: cy },
+        { x: cx, y: ry },
+        { x: -cx, y: ry },
+        { x: -cx, y: cy },
+        { x: -rx, y: cy },
+        { x: -rx, y: -cy },
+        { x: -cx, y: -cy },
+      ];
+    }
+    case 'diamond': {
+      // Diamond shape
+      return [
+        { x: 0, y: -ry },
+        { x: rx, y: 0 },
+        { x: 0, y: ry },
+        { x: -rx, y: 0 },
+      ];
+    }
+    case 'crescent': {
+      // Crescent moon shape
+      const pts: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i <= 10; i++) {
+        const pct = i / 10;
+        const a = -Math.PI/2 + pct * Math.PI;
+        pts.push({ x: Math.cos(a) * rx, y: Math.sin(a) * ry });
+      }
+      for (let i = 10; i >= 0; i--) {
+        const pct = i / 10;
+        const a = -Math.PI/2 + pct * Math.PI;
+        pts.push({ x: Math.cos(a) * rx * 0.52 + rx * 0.32, y: Math.sin(a) * ry });
       }
       return pts;
     }
@@ -122,8 +300,9 @@ function shapeOutlinePoints(shape: ShapeKind, w: number, h: number): Array<{ x: 
  * `Geometry` component so the renderer draws their real outline as a path.
  */
 export function insertShape(shape: ShapeKind, name: string): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const node = makeNode('shape', name);
+  centerInComp(node);
   const W = 220;
   const H = 220;
 
@@ -138,12 +317,22 @@ export function insertShape(shape: ShapeKind, name: string): void {
 
   const pts = shapeOutlinePoints(shape, W, H);
   if (pts) {
+    // Curved shapes get real bezier tangents; angular shapes stay corners.
+    // Heart: everything curves except the top notch (0) and bottom tip (5).
+    // Crescent: two arcs — smooth their bellies, keep the joining tips sharp
+    // (outer arc spans 0..10, inner 11..21).
+    const points: BPoint[] =
+      shape === 'heart'
+        ? withTangents(pts, (i) => i !== 0 && i !== 5)
+        : shape === 'crescent'
+          ? withTangents(pts, (i) => i !== 0 && i !== 10 && i !== 11 && i !== 21)
+          : pts.map((p) => corner(p.x, p.y));
     node.components.push({
       id: `${node.id}_g`,
       type: 'Geometry',
       // A line is an open stroke — flag it so the renderer doesn't close the
       // 2-point path into a degenerate loop.
-      props: { points: pts.map((p) => corner(p.x, p.y)), ...(shape === 'line' ? { open: true } : {}) },
+      props: { points, ...(shape === 'line' ? { open: true } : {}) },
     });
   }
 
@@ -167,15 +356,68 @@ export function insertShape(shape: ShapeKind, name: string): void {
   bumpScene();
 }
 
-/** Insert a text layer seeded with a preset's font size / weight and label. */
-export function insertText(name: string, fontSize = 32, fontWeight = 400): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+/**
+ * Insert a custom-outline path layer carrying a `Geometry` points component —
+ * the vector primitive the generic `create('shape', …)` action can't build
+ * (it only makes rects/ellipses). Used by the Lottie importer to land `ty:'sh'`
+ * layers; pair with an animated `path.points` data track for a moving outline.
+ * Returns the new node id. Does NOT select or centre — the importer positions
+ * layers explicitly.
+ */
+export function insertPathNode(
+  name: string,
+  points: BPoint[],
+  opts: { closed?: boolean; x?: number; y?: number; width?: number; height?: number } = {},
+): string {
+  const rootId = activeCompRootId();
+  const node = makeNode('shape', name);
+  const transform = node.components.find((c) => c.type === 'Transform');
+  if (transform) {
+    transform.props.width = opts.width ?? 0;
+    transform.props.height = opts.height ?? 0;
+    transform.props.shapeType = 'path';
+    if (opts.x !== undefined) transform.props.x = opts.x;
+    if (opts.y !== undefined) transform.props.y = opts.y;
+  }
+  node.components.push({
+    id: `${node.id}_g`,
+    type: 'Geometry',
+    // `open: true` stops the renderer closing an open outline into a loop.
+    props: { points, ...(opts.closed === false ? { open: true } : {}) },
+  });
+  defaultSceneGraph.addChild(rootId, node);
+  bumpScene();
+  return node.id;
+}
+
+/** Insert a text layer seeded with a preset's font size / weight, label, and style overrides. */
+export function insertText(name: string, fontSize = 32, fontWeight = 400, extraProps: Record<string, any> = {}): void {
+  const rootId = activeCompRootId();
   const node = makeNode('text', name);
+  centerInComp(node);
   const text = node.components.find((c) => c.type === 'Text');
   if (text) {
     text.props.content = name;
     text.props.fontSize = fontSize;
     text.props.fontWeight = fontWeight;
+    // Map extraProps onto Text component props
+    for (const [key, value] of Object.entries(extraProps)) {
+      if (key !== 'fill') {
+        text.props[key] = value;
+      }
+    }
+  }
+  // Map fill color onto the Style component when present — but text nodes are
+  // built with only [Transform, Text], so colored presets (Neon, Tag, Quote…)
+  // silently lost their color. The renderer reads `fill` off ANY component,
+  // and the inspector writes to Style ?? Text, so Text is the right fallback.
+  if (extraProps.fill) {
+    const target =
+      node.components.find((c) => c.type === 'Style') ??
+      node.components.find((c) => c.type === 'Text');
+    if (target) {
+      target.props.fill = extraProps.fill;
+    }
   }
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
@@ -185,7 +427,7 @@ export function insertText(name: string, fontSize = 32, fontWeight = 400): void 
 /** Insert a full-frame solid colour layer (background / matte / adjustment base).
  *  It is a shape flagged `solid`, so buildSnapshot sizes it to the composition. */
 export function insertSolid(color = '#2b7eff'): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const node = makeNode('shape', 'Solid');
   defaultSceneGraph.addChild(rootId, node);
   defaultSceneGraph.setSolid(node.id, true);
@@ -198,7 +440,7 @@ export function insertSolid(color = '#2b7eff'): void {
  *  length so the comp plane renders 1:1. Position / z / focalLength are plain
  *  editable + keyframeable props (the inspector shows them automatically). */
 export function insertCamera(): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const node = makeNode('camera', 'Camera 1');
   const compSize = useCompositionStore.getState();
   const cam = Project3D.defaultCamera(compSize.width, compSize.height);
@@ -232,7 +474,7 @@ export function insertCamera(): void {
 
 /** Insert a Light layer */
 export function insertLight(): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const node = makeNode('light', 'Light 1');
   const compSize = useCompositionStore.getState();
   // Seed position + keyframeable intensity/radius; warm colour via Style.fill.
@@ -252,9 +494,26 @@ export function insertLight(): void {
   bumpScene();
 }
 
+/** Insert a Particle emitter layer, positioned at the comp centre with a
+ *  ready-to-play default fountain. The emitter follows the layer's transform. */
+export function insertParticle(): void {
+  const rootId = activeCompRootId();
+  const node = makeNode('particle', 'Particles 1');
+  const compSize = useCompositionStore.getState();
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (t) {
+    t.props.x = compSize.width / 2;
+    t.props.y = compSize.height / 2;
+  }
+  defaultSceneGraph.addChild(rootId, node);
+  defaultSceneGraph.setParticle(node.id, DEFAULT_PARTICLE_CONFIG);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+}
+
 /** Insert an Adjustment Layer */
 export function insertAdjustmentLayer(): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const node = makeNode('adjustment', 'Adjustment Layer 1');
   defaultSceneGraph.addChild(rootId, node);
   defaultSceneGraph.setSolid(node.id, true);
@@ -264,15 +523,55 @@ export function insertAdjustmentLayer(): void {
   bumpScene();
 }
 
+/**
+ * Insert a COMPOSITION as a layer (AE's core organizing model): a node that
+ * references another comp's root and renders its content through the precomp
+ * texture path. The same comp can be placed any number of times; edits to the
+ * source comp show up in every instance. Refuses reference cycles.
+ * Returns the new node id, or null when refused.
+ */
+export function insertCompInstance(refCompId: string): string | null {
+  const hostRootId = activeCompRootId();
+  if (!defaultSceneGraph.getNode(refCompId)) return null;
+  if (wouldCreateCompCycle(defaultSceneGraph, hostRootId, refCompId)) {
+    useUIStore.getState().notify({
+      level: 'warning',
+      message: 'That would create a composition loop — this comp is already used inside the one you are inserting.',
+      durationMs: 6000,
+    });
+    return null;
+  }
+  const refName = defaultSceneGraph.getNode(refCompId)?.name ?? 'Composition';
+  const node = makeNode('comp', refName);
+  centerInComp(node);
+  // The instance composites its expanded content as one unit (precomp path)
+  // and carries the reference the renderer expands.
+  node.components.push({
+    id: `${node.id}_fx`,
+    type: 'fx',
+    props: { precomp: true, [COMP_REF_PROP]: refCompId },
+  });
+  defaultSceneGraph.addChild(hostRootId, node);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+  return node.id;
+}
+
 /** Group selected layers into a new Pre-composition folder */
 export function precomposeSelected(): void {
   const selectionStore = useSelectionStore.getState();
   const selectedIds = selectionStore.ids;
   if (selectedIds.length === 0) return;
 
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  // Put the precomp where the layers already are — AE replaces them in place.
+  // This used to hardcode `getRoots()[0]`, which yanked nested layers up to the
+  // root, and now that comps are separate roots would also drop them into
+  // whichever composition happens to be first rather than the active one.
+  const first = defaultSceneGraph.getNode(selectedIds[0]!);
+  const parentId = first?.parent ?? activeCompRootId();
+
   const preCompNode = makeNode('group', 'Pre-comp 1');
-  defaultSceneGraph.addChild(rootId, preCompNode);
+  defaultSceneGraph.addChild(parentId, preCompNode);
 
   for (const childId of selectedIds) {
     defaultSceneGraph.setParent(childId, preCompNode.id);
@@ -281,6 +580,11 @@ export function precomposeSelected(): void {
   // Flag it a real precomp: its subtree now composites as one unit (group
   // opacity / blend / effects apply to the nested result).
   defaultSceneGraph.setPrecomp(preCompNode.id, true);
+
+  // The moved nodes' clips (trims / splits / positions / markers) follow them
+  // into the precomp's own timeline. Without this, the next syncFromScene saw
+  // them as orphans of the parent comp and silently deleted every time edit.
+  getTimelineController().transferNodeClips(selectedIds, parentId, preCompNode.id);
 
   selectionStore.set([preCompNode.id]);
   bumpScene();
@@ -292,7 +596,7 @@ export function precomposeSelected(): void {
  * inspector, and plays in sync with the transport via the AudioEngine.
  */
 export function insertAudio(asset: ImportedAsset): void {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const duration = asset.metadata?.duration ?? 0;
   const node = makeNode('audio', asset.name);
   const transform = node.components.find((c) => c.type === 'Transform');
@@ -322,7 +626,7 @@ export function insertAudio(asset: ImportedAsset): void {
 
 /** Insert an imported media asset (image or video) at native size */
 export async function insertMedia(asset: ImportedAsset): Promise<void> {
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   if (asset.type === 'audio') {
     insertAudio(asset);
     return;
@@ -369,7 +673,9 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
             {
               id: `${pathId}_g`,
               type: 'Geometry',
-              props: { points: s.points },
+              // Open outlines (polyline / line / un-closed paths) must not wrap
+              // the last point back to the first at render time.
+              props: { points: s.points, ...(s.closed ? {} : { open: true }) },
             },
           ];
 
@@ -411,6 +717,50 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
+}
+
+/**
+ * Insert an image SEQUENCE (numbered stills) as one footage layer. Detects play
+ * order from the filenames, creates a blob URL per frame, and stores the ordered
+ * frame list on the layer's `fx` so buildSnapshot swaps `src` to the frame for
+ * the current source time. Returns false if fewer than two numbered files.
+ */
+export async function insertImageSequence(files: File[], fps = 30): Promise<boolean> {
+  if (files.length < 2) return false;
+  const detected = detectImageSequence(files.map((f) => f.name));
+  if (!detected) return false;
+  const byName = new Map(files.map((f) => [f.name, f]));
+  const frames: string[] = [];
+  for (const n of detected.frames) {
+    const f = byName.get(n);
+    if (f) frames.push(URL.createObjectURL(f));
+  }
+  if (frames.length < 2) return false;
+  // First frame's native size.
+  const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.width, h: img.height });
+    img.onerror = () => resolve({ w: 400, h: 400 });
+    img.src = frames[0]!;
+  });
+  const rootId = activeCompRootId();
+  const node = makeNode('image', detected.base);
+  const comp = useCompositionStore.getState();
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (t) {
+    t.props.width = dims.w;
+    t.props.height = dims.h;
+    t.props.src = frames[0];
+    t.props.x = comp.width / 2;
+    t.props.y = comp.height / 2;
+    node.transform.position.x = comp.width / 2;
+    node.transform.position.y = comp.height / 2;
+  }
+  defaultSceneGraph.addChild(rootId, node);
+  defaultSceneGraph.setImageSequence(node.id, { frames, fps });
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+  return true;
 }
 
 /**
@@ -503,7 +853,10 @@ export function groupSelectedLayers(): void {
   const sel = useSelectionStore.getState();
   const ids = sel.ids;
   if (ids.length === 0) return;
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  // Group in place, like precompose — a selection inside a precomp should not
+  // be yanked up to the comp root.
+  const first = defaultSceneGraph.getNode(ids[0]!);
+  const rootId = first?.parent ?? activeCompRootId();
   const group = makeNode('group', 'Group');
   defaultSceneGraph.addChild(rootId, group);
   for (const id of ids) {
@@ -519,7 +872,7 @@ export function ungroupSelected(): void {
   const sel = useSelectionStore.getState();
   const ids = sel.ids;
   if (ids.length === 0) return;
-  const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+  const rootId = activeCompRootId();
   const freed: string[] = [];
   let changed = false;
   for (const id of ids) {

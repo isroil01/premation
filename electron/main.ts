@@ -176,6 +176,9 @@ app.whenReady().then(() => {
   });
 
   registerFileIpc();
+  // NOTE: no AI IPC any more. AI runs through the backend gateway
+  // (POST /ai/stream) with the user's keys stored server-side — this process
+  // holds no AI privileges at all.
 
   // The app connects to the backend at localhost:4000 (the renderer's default
   // API origin — see src/core/api/env.ts). You run motion-back yourself,

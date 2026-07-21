@@ -83,7 +83,7 @@ export function TimeControls({ nodeId }: { nodeId: string }): JSX.Element {
       <div className={styles.blendRow}>
         <span className={styles.blendLabel}>Frame blend</span>
         <Dropdown
-          placement="bottom-end"
+          placement="left-start"
           trigger={
             <button type="button" className={styles.blendTrigger}>
               {FRAME_BLENDS.find((b) => b.value === time.frameBlend)?.label ?? 'Off'}

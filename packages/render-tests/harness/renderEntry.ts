@@ -142,6 +142,16 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
         be.renderFrame(snap);
       }
       const rgba = readCanvasRGBA(canvas, be.kind);
+      // Determinism gate (real GPU, not Null): re-render the scene's FIRST
+      // frame from the same snapshot and require byte-identical output —
+      // "same machine + same driver ⇒ same bytes" (the AE-level promise).
+      if (i === scene.frames[0]) {
+        be.renderFrame(snap);
+        const again = readCanvasRGBA(canvas, be.kind);
+        if (again.data.length !== rgba.data.length || !again.data.every((v, k) => v === rgba.data[k])) {
+          throw new Error(`${scene.id}#${i} [${backend}] double-render bytes differ — non-deterministic output`);
+        }
+      }
       await window.harnessBridge.frame({
         sceneId: scene.id,
         backend,

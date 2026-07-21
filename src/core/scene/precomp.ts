@@ -49,3 +49,27 @@ export function nearestPrecompRoot(
   }
   return null;
 }
+
+/**
+ * The full chain of precomp-group ancestors of `node`, OUTERMOST first and
+ * EXCLUDING `node` itself. For nested precomps A ▸ B ▸ C (A outermost) a leaf
+ * inside C yields [A, B, C]; the group node C itself yields [A, B] (its own
+ * remap is applied via its `sourceTime`, so it must not appear in its own
+ * children's inheritance twice). Used to fold every ancestor's time-remap in
+ * order so inner content composes ALL outer remaps, not just the nearest one.
+ */
+export function precompAncestorChain(
+  node: SceneNode,
+  nodeById: ReadonlyMap<string, SceneNode>,
+): SceneNode[] {
+  const chain: SceneNode[] = [];
+  let parentId = node.parent;
+  while (parentId) {
+    const parent = nodeById.get(parentId);
+    if (!parent) break;
+    if (isPrecomp(parent)) chain.push(parent);
+    parentId = parent.parent;
+  }
+  chain.reverse(); // outermost first
+  return chain;
+}

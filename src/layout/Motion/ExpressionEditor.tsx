@@ -147,7 +147,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
         {preview.error ? (
           <span className={styles.error}><Icon name="warning" size={11} /> {preview.error}</span>
         ) : draft.trim() ? (
-          <span className={styles.value}>= {preview.value?.toFixed(2) ?? '—'} <span className={styles.at}>@ {time.toFixed(2)}s</span></span>
+          <span className={styles.value}>= {preview.value === null ? '—' : Array.isArray(preview.value) ? `[${preview.value.map((v) => v.toFixed(2)).join(', ')}]` : preview.value.toFixed(2)} <span className={styles.at}>@ {time.toFixed(2)}s</span></span>
         ) : (
           <span className={styles.muted}>No expression — the property uses its keyframes.</span>
         )}

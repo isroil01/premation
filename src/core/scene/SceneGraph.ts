@@ -38,6 +38,7 @@ const KIND_TO_ENGINE_TYPE: Record<string, string> = {
   camera: 'group',
   light: 'group',
   adjustment: 'rectangle',
+  particle: 'rectangle',
 };
 
 function kindOfPlain(node: SceneNode): string {
@@ -381,6 +382,16 @@ export class SceneGraph {
     this.setFx(nodeId, 'mask', mask);
   }
 
+  /** Store the layer's puppet rig on its `fx` component (undefined clears it). */
+  setPuppet(nodeId: ID, puppet: unknown): void {
+    this.setFx(nodeId, 'puppet', puppet);
+  }
+
+  /** Store the layer's skeleton rig on its `fx` component (undefined clears it). */
+  setSkeleton(nodeId: ID, skeleton: unknown): void {
+    this.setFx(nodeId, 'skeleton', skeleton);
+  }
+
   /** Store animated mask keyframes on its `fx` (undefined clears them). */
   setMaskAnim(nodeId: ID, keyframes: unknown): void {
     this.setFx(nodeId, 'maskAnim', keyframes);
@@ -391,6 +402,11 @@ export class SceneGraph {
     this.setFx(nodeId, 'matte', matte);
   }
 
+  /** Store the text layer's path options on its `fx` component (undefined clears). */
+  setTextPath(nodeId: ID, cfg: unknown): void {
+    this.setFx(nodeId, 'textPath', cfg);
+  }
+
   /** Mark the layer as an adjustment layer on its `fx` component. */
   setAdjustment(nodeId: ID, on: unknown): void {
     this.setFx(nodeId, 'isAdjustment', on);
@@ -399,6 +415,11 @@ export class SceneGraph {
   /** Toggle per-layer motion blur on its `fx` component. */
   setMotionBlur(nodeId: ID, on: unknown): void {
     this.setFx(nodeId, 'motionBlur', on);
+  }
+
+  /** Toggle the layer's effect stack (After Effects' `fx` switch). */
+  setFxEnabled(nodeId: ID, enabled: unknown): void {
+    this.setFx(nodeId, 'fxEnabled', enabled);
   }
 
   /** Toggle auto-orient (rotate along the motion path) on its `fx` component. */
@@ -431,9 +452,19 @@ export class SceneGraph {
     this.setFx(nodeId, 'fill', fill);
   }
 
+  /** Store the layer's FILL STACK (multi-fill) on its `fx` (undefined clears it). */
+  setFills(nodeId: ID, fills: unknown): void {
+    this.setFx(nodeId, 'fills', fills);
+  }
+
   /** Store the layer's stroke on its `fx` component (undefined clears it). */
   setStroke(nodeId: ID, stroke: unknown): void {
     this.setFx(nodeId, 'stroke', stroke);
+  }
+
+  /** Store the layer's STROKE STACK (multi-stroke) on its `fx` (undefined clears it). */
+  setStrokes(nodeId: ID, strokes: unknown): void {
+    this.setFx(nodeId, 'strokes', strokes);
   }
 
   /** Flag the layer as a full-frame solid on its `fx` component. */
@@ -449,6 +480,31 @@ export class SceneGraph {
   /** Store the layer's Photoshop-style layer styles (shadow/glow) on its `fx`. */
   setLayerStyles(nodeId: ID, styles: unknown): void {
     this.setFx(nodeId, 'layerStyles', styles);
+  }
+
+  /** Store the layer's particle-emitter config on its `fx` component. */
+  setParticle(nodeId: ID, config: unknown): void {
+    this.setFx(nodeId, 'particle', config);
+  }
+
+  /** Store the layer's render quality ('draft' | undefined=best) on its `fx`. */
+  setLayerQuality(nodeId: ID, quality: unknown): void {
+    this.setFx(nodeId, 'quality', quality);
+  }
+
+  /** Store an image-sequence config ({frames,fps}) on the layer's `fx`. */
+  setImageSequence(nodeId: ID, sequence: unknown): void {
+    this.setFx(nodeId, 'sequence', sequence);
+  }
+
+  /** Store the layer's paint-stroke config ({strokes}) on its `fx` component. */
+  setPaint(nodeId: ID, paint: unknown): void {
+    this.setFx(nodeId, 'paint', paint);
+  }
+
+  /** Store the layer's audio-waveform generator config on its `fx` (undefined clears it). */
+  setAudioWaveform(nodeId: ID, config: unknown): void {
+    this.setFx(nodeId, 'audioWaveform', config);
   }
 
   /** Write a single key onto the node's `fx` component (created on demand). */

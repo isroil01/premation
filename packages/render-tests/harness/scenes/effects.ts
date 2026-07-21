@@ -94,4 +94,59 @@ function effectScene(spec: EffectSpec): Scene {
   });
 }
 
-export const effectScenes: Scene[] = EFFECTS.map(effectScene);
+/**
+ * Displace driven by ANOTHER layer (mapLayerId): a full-comp linear-gradient
+ * rect is the map — its red/green ramp displaces the subject ellipse
+ * progressively across the frame (self-displacement would warp symmetrically
+ * about the subject's own silhouette instead). gpuOnly → GPU is the oracle;
+ * the Canvas2D render is a documented no-op. Note the map layer must be
+ * VISIBLE — invisible layers never reach the renderable list, and the effect
+ * then falls back to self-displacement.
+ */
+const displacementMapLayerScene: Scene = defineScene({
+  id: 'effect-displacement-map-layer',
+  description: 'Displace with a real map layer (mapLayerId → gradient rect) warping the subject ellipse. gpuOnly — Canvas2D no-op.',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'known-divergent',
+  oracle: 'gpu',
+  build(graph) {
+    // The map: a full-comp horizontal gradient (dark → bright), drawn behind.
+    graph.addNode(node('map', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 320, height: 220 },
+      style: { fill: '#000' },
+    }));
+    graph.setFill('map', {
+      type: 'linear',
+      angle: 0,
+      stops: [
+        { id: 'a', offset: 0, color: '#101010' },
+        { id: 'b', offset: 1, color: '#f0f0f0' },
+      ],
+    } as never);
+    // The subject: the family's standard gradient ellipse, displaced by the map.
+    graph.addNode(node('subj', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 220, height: 170, shapeType: 'ellipse' },
+      style: { fill: '#000' },
+    }));
+    graph.setFill('subj', {
+      type: 'linear',
+      angle: 30,
+      stops: [
+        { id: 'a', offset: 0, color: '#2b3cff' },
+        { id: 'b', offset: 1, color: '#ff7a1a' },
+      ],
+    } as never);
+    graph.setEffects('subj', [
+      { id: 'fx', type: 'displacement-map', params: { amount: 40, mapLayerId: 'map' } },
+    ]);
+  },
+});
+
+export const effectScenes: Scene[] = [...EFFECTS.map(effectScene), displacementMapLayerScene];

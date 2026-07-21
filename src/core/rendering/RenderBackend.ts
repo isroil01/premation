@@ -26,6 +26,12 @@ export interface MotionSample {
   scaleX: number;
   scaleY: number;
   opacity: number;
+  /**
+   * 3D only: the projected affine at this sub-frame time. `drawComposited`
+   * prefers a layer's `matrix` over its decomposed x/y/rotation/scale, so a 3D
+   * sample without its own matrix renders identically to every other sample.
+   */
+  matrix?: readonly [number, number, number, number, number, number];
 }
 
 export interface RenderLayer {
@@ -37,20 +43,48 @@ export interface RenderLayer {
   mask?: LayerMask;
   /** Track matte: the layer above (or explicit sourceId) defines this layer's alpha. */
   matte?: MatteProp;
+  /** Resolved matte source layer id (explicit sourceId, else the layer above) —
+   *  set by resolveMatteSources so the GPU path can pair by lookup. */
+  matteSourceId?: string;
   /** True when the layer above consumes this layer as its matte source. */
   isMatteSource?: boolean;
   /** Adjustment layer: its `filter` applies to everything beneath, and it draws
    *  no content of its own. */
   isAdjustment?: boolean;
+  /** Per-layer render quality (AE's Quality switch). 'draft' disables image
+   *  smoothing for this layer (nearest-neighbour). Absent = 'best'. */
+  quality?: 'best' | 'draft';
   /** Precomp (nested composition): these inner layers are rendered to an
    *  offscreen texture, then this layer composites that texture as one unit
    *  (its opacity / blend / filter / mask apply to the whole nested result). */
   precompLayers?: ReadonlyArray<RenderLayer>;
   /** Point light: a radial glow (colour, intensity 0..100, radius px) drawn at
    *  x,y with a screen blend to brighten the layers beneath. */
-  light?: { color: string; intensity: number; radius: number };
+  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number };
+  /** Particle emitter config. When present, the layer draws a particle system
+   *  (simulated deterministically at the current time) instead of its content. */
+  particles?: import('@core/particles/particleSim').ParticleConfig;
+  /** Paint strokes (AE Paint effect) drawn over the layer content in local
+   *  space — paint composites colour, erase cuts holes. */
+  paint?: import('@core/paint/paintStrokes').PaintConfig;
   /** Source playhead time in seconds (for video/audio/precomps with timeRemap or stretch). Defaults to current composition time if undefined. */
   sourceTime?: number;
+  /** Frame blending (AE's Frame Mix) for retimed footage: cross-dissolve the
+   *  two source frames bracketing `sourceTime` rather than showing the nearest
+   *  one, which is what removes the judder from slowed footage.
+   *
+   *  Resolved to times here rather than passing a flag + fps, because
+   *  buildSnapshot knows the composition frame rate and a backend does not.
+   *  Emitted only when the layer asks for it — see `capabilities.frameBlending`
+   *  for which backends honour it. */
+  frameBlend?: {
+    /** Source time of the earlier frame. */
+    a: number;
+    /** Source time of the later frame. */
+    b: number;
+    /** How far between them, 0..1 — the later frame's alpha. */
+    weight: number;
+  };
   /** Sub-frame transform samples for motion blur (accumulated by the backend).
    *  Present only when motion blur is on and the layer actually moves. */
   motionSamples?: ReadonlyArray<MotionSample>;
@@ -77,11 +111,17 @@ export interface RenderLayer {
   height: number;
   /** Solid fallback colour (legacy). `fillPaint` supersedes it when present. */
   fill: string;
-  /** Rich fill: solid / linear / radial gradient. Canvas2D renders all; the GPU
-   *  path uses the first stop for gradients (documented gap). */
+  /** Rich fill: solid / linear / radial gradient. The GPU rasterizer renders
+   *  all gradient types and stop counts via the Canvas2DVectorRasterizer. */
   fillPaint?: FillPaint;
-  /** Outline stroke over the layer's primitive (Canvas2D only for now). */
+  /** Multi-fill stack (bottom→top). When present it supersedes `fillPaint`;
+   *  entry 0 is kept equal to `fillPaint` for single-fill readers. */
+  fillPaints?: FillPaint[];
+  /** Outline stroke over the layer's primitive (rasterized by Canvas2DVectorRasterizer). */
   stroke?: Stroke;
+  /** Multi-stroke stack (bottom→top). Supersedes `stroke` when present;
+   *  entry 0 mirrors `stroke`. */
+  strokes?: Stroke[];
   /** Layer color (e.g. for label tagging in the UI). */
   color?: string;
   visible: boolean;
@@ -115,22 +155,56 @@ export interface RenderLayer {
    *  present the backend lays the string out glyph-by-glyph; when absent it
    *  draws the whole string as one run (no animators → unchanged). */
   glyphs?: ReadonlyArray<import('@core/text/textAnimators').GlyphTransform>;
-  /** CSS filter string from the layer's effect stack (blur/glow/color…). Used by
-   *  the Canvas2D backend. */
+  /** Per-character static styling. Each run overrides the layer's font fields
+   *  for a `[start, end)` span of `[...text]`. Like `glyphs`, presence forces
+   *  the glyph-by-glyph path — a layer with one style still takes the cheap
+   *  whole-string draw. */
+  runs?: ReadonlyArray<import('@core/text/textLayout').RichRun>;
+  /** Extra px between paragraphs (every newline starts one). */
+  paragraphSpacing?: number;
+  /** Text on a path: the layer's chosen mask, already flattened to a polyline
+   *  in layer-local space, plus how to ride it. Resolved in buildSnapshot so a
+   *  backend never has to reach back into the scene graph for geometry. */
+  textPath?: {
+    points: ReadonlyArray<{ x: number; y: number }>;
+    closed: boolean;
+    firstMargin: number;
+    reversed: boolean;
+    perpendicular: boolean;
+  };
+  /** CSS filter string from the layer's effect stack + DOF blur + cast shadow.
+   *  Legacy: only the (deleted) Canvas2D backend read it; kept because tests
+   *  assert against it and it documents the frame in one greppable string. The
+   *  renderer consumes `effects` instead. */
   filter?: string;
-  /** The resolved effect stack (amounts sampled at the current time). Canvas2D
-   *  uses `filter`; the GPU path reads this to build a colour matrix, etc. */
+  /** The resolved effect stack (amounts sampled at the current time), including
+   *  synthetic entries buildSnapshot appends for 3D depth-of-field blur and
+   *  2.5D light-cast shadows. The GPU path renders from THIS (colour matrix +
+   *  spatial effect passes), never from `filter`. */
   effects?: ReadonlyArray<Effect>;
   /** Imported source URL (blob: or web URL) for image/video/audio layers. */
   src?: string;
   /** Referenced project asset ID. */
   assetId?: string;
+  /** Digest of the fields that determine this layer's OWN rasterized pixels
+   *  (geometry + fills/strokes/text/masks + pre-DOF effects + width/height),
+   *  excluding transform + compositing. Computed once in buildSnapshot (see
+   *  contentHash.ts); the VectorRasterizer keys its texture cache on it, so a
+   *  transform-only animation reuses one texture. */
+  contentHash?: string;
+  /** Dynamic CPU-skinned mesh geometry for puppet deformation. */
+  deformedMesh?: {
+    vertices: Float32Array;
+    triangles: Uint16Array;
+  };
 }
 
 export interface RenderOverlays {
   grid?: boolean;
   /** Number of grid cells per axis (default 3 = rule-of-thirds). */
   gridDivisions?: number;
+  /** Grid line colour (#rrggbbaa). Default: faint white. */
+  gridColor?: string;
   safeArea?: boolean;
   rulers?: boolean;
 }
@@ -152,14 +226,30 @@ export interface RenderSnapshot {
   width: number;
   height: number;
   background: string;
+  /** Rich background paint (linear/radial gradient). When present the Canvas2D
+   *  backend paints this over the flat `background`; `background` remains the
+   *  solid fallback for the GPU backend and exports. */
+  backgroundPaint?: FillPaint;
   /** When true the comp has no background fill (transparent — checkerboard in
    *  preview, alpha:0 in export). `background` is then ignored for compositing. */
   transparent?: boolean;
+  /**
+   * Which channel to display. 'alpha' paints the comp's own alpha as opaque
+   * greyscale — the standard way to inspect a matte. Preview-only; export
+   * always writes real colour.
+   */
+  channel?: 'rgb' | 'alpha' | 'red' | 'green' | 'blue';
   /** Current playhead time in seconds. */
   time?: number;
   layers: ReadonlyArray<RenderLayer>;
   /** Guide overlays drawn over the composition. */
   overlays?: RenderOverlays;
+  /**
+   * Region of Interest, in comp px. Preview-only: content is clipped to it (so
+   * the expensive draws outside cost nothing) and the surround is dimmed.
+   * Export ignores this — a render always covers the whole comp.
+   */
+  roi?: { x: number; y: number; width: number; height: number };
   /** Camera-driven comp→canvas transform (falls back to fit when omitted). */
   view?: RenderView;
 }
@@ -176,4 +266,16 @@ export interface RenderBackend {
   dispose(): void;
   /** Promise that resolves when the backend is fully initialized (e.g. GPU compilation). */
   readyPromise?: Promise<void>;
+  /**
+   * Exact media timing for offline export. On, video layers seek with a
+   * sub-millisecond deadband (the live path tolerates 0.05s ≈ ±1.5 frames to
+   * avoid seek storms during playback) and every async media wait started by a
+   * render (video seeks, first-decode readiness, blend-cache fills) is
+   * COLLECTED so the export loop can await them and re-render — otherwise a
+   * captured frame shows whatever stale frame the element still held.
+   */
+  setExactMediaTiming?(on: boolean): void;
+  /** Drain the media waits started by renders since the last call. Empty when
+   *  every media layer drew its exact frame — the settle signal. */
+  takeMediaWaits?(): Promise<void>[];
 }

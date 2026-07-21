@@ -96,6 +96,56 @@ describe('buildSnapshot — precomp', () => {
     expect(innerX(1)).toBeCloseTo(0);
   });
 
+  it('composes ALL ancestor precomp remaps for a 3-level nesting (A ▸ B ▸ C)', () => {
+    // A (outermost) ▸ B ▸ C (innermost) ▸ leaf. Each precomp has an identical
+    // linear timeRemap value = 0.5 * time (keyframes (0,0)→(1,0.5)).
+    const g = new SceneGraph();
+    g.addNode(group('A'));
+    g.addChild('A', group('B'));
+    g.addChild('B', group('C'));
+    g.addChild('C', shape('leaf'));
+    g.setPrecomp('A', true);
+    g.setPrecomp('B', true);
+    g.setPrecomp('C', true);
+
+    const engine = new AnimationEngine();
+    // leaf.x maps its (composed) source time to a position: x = 100 * time.
+    engine.setKeyframe('leaf', 'x', 0, 0);
+    engine.setKeyframe('leaf', 'x', 1, 100);
+    // Each precomp halves the incoming time.
+    for (const id of ['A', 'B', 'C']) {
+      engine.setKeyframe(id, 'timeRemap', 0, 0);
+      engine.setKeyframe(id, 'timeRemap', 1, 0.5);
+    }
+
+    // At comp t = 1: A(1)=0.5, B(0.5)=0.25, C(0.25)=0.125 → leaf.x = 12.5.
+    // The (buggy) nearest-only path would apply only C(1)=0.5 → leaf.x = 50.
+    const snap = buildSnapshot(g, engine, 1, undefined, undefined, undefined, undefined, COMP);
+    const leaf = snap.layers[0]!.precompLayers![0]!.precompLayers![0]!.precompLayers![0]!;
+    expect(leaf.id).toBe('leaf');
+    expect(leaf.x).toBeCloseTo(12.5);
+    expect(leaf.x).not.toBeCloseTo(50); // guard against the nearest-only regression
+  });
+
+  it('1-level nesting is identical whether or not it is the only precomp (regression)', () => {
+    // Same setup as the single-level timeRemap test above: one precomp, reversed
+    // inner time. Composing a chain of length 1 must reproduce the old output.
+    const g = new SceneGraph();
+    g.addNode(group('G'));
+    g.addChild('G', shape('C1'));
+    g.setPrecomp('G', true);
+    const engine = new AnimationEngine();
+    engine.setKeyframe('C1', 'x', 0, 0);
+    engine.setKeyframe('C1', 'x', 1, 100);
+    engine.setKeyframe('G', 'timeRemap', 0, 1);
+    engine.setKeyframe('G', 'timeRemap', 1, 0);
+    const innerX = (t: number): number =>
+      buildSnapshot(g, engine, t, undefined, undefined, undefined, undefined, COMP).layers[0]!.precompLayers![0]!.x;
+    expect(innerX(0)).toBeCloseTo(100);
+    expect(innerX(0.5)).toBeCloseTo(50);
+    expect(innerX(1)).toBeCloseTo(0);
+  });
+
   it('populates sourceTime on media layers (video) when timeRemap is keyframed', () => {
     const g = new SceneGraph();
     const vidNode = {

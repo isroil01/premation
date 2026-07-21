@@ -10,6 +10,15 @@
 import type { PropPath, PropertyTrack, SceneValueSnapshot, EasingKind, BezierHandles, Keyframe } from './types';
 import { sampleTrack, upsertKeyframe, applyRoving, smoothTrackTangents, clearTrackTangents } from './interpolate';
 import { compileExpression, type CompiledExpression, type ExprContext, type ExprResult } from './expressions';
+import {
+  sampleDataTrack,
+  upsertDataKeyframe,
+  cloneDataValue,
+  type DataKind,
+  type DataTrack,
+  type DataValue,
+  type DataKeyframe,
+} from './dataTracks';
 
 /**
  * Notified whenever a node's animation changes. `'*'` means "all nodes"
@@ -45,6 +54,21 @@ export type LayerInfoProvider = (nodeId: string) => {
   width: number;
   height: number;
 };
+
+/** Which vector component a decomposed track reads from an `[x, y, z]`
+ *  expression return. Unknown props read component 0. */
+function componentIndexOf(prop: PropPath): number {
+  if (prop === 'y' || prop === 'scaleY' || prop === 'anchorY') return 1;
+  if (prop === 'z' || prop === 'rotationZ') return 2;
+  return 0;
+}
+
+/** Small deterministic string hash → a noise-phase seed (NOT crypto). */
+function stringSeed(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return (h >>> 0) % 10007;
+}
 
 export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
@@ -171,17 +195,25 @@ export class AnimationEngine {
     if (!kf) return;
     kf.easing = easing;
     // Seed default handles when switching to a custom bezier curve.
-    if (easing === 'bezier' && !kf.bezier) kf.bezier = [0.25, 0.1, 0.25, 1];
+    if (easing === 'bezier') {
+      if (!kf.bezier) kf.bezier = [0.25, 0.1, 0.25, 1];
+      if (kf.continuous === undefined) kf.continuous = true;
+    }
     if ((easing === 'autoBezier' || easing === 'continuousBezier') && !kf.bezier) kf.bezier = [0.333, 0, 0.667, 1];
     this.notifyChange(nodeId);
   }
 
   /** Apply an Easy-Ease-style bezier to the segment starting at `t`. */
-  setBezier(nodeId: string, prop: PropPath, t: number, bezier: BezierHandles): void {
+  setBezier(nodeId: string, prop: PropPath, t: number, bezier: BezierHandles, continuous?: boolean): void {
     const kf = this.tracks.get(nodeId)?.get(prop)?.keyframes.find((k) => k.t === t);
     if (!kf) return;
     kf.easing = 'bezier';
     kf.bezier = [...bezier] as BezierHandles;
+    if (continuous !== undefined) {
+      kf.continuous = continuous;
+    } else if (kf.continuous === undefined) {
+      kf.continuous = true;
+    }
     this.notifyChange(nodeId);
   }
 
@@ -239,7 +271,7 @@ export class AnimationEngine {
     nodeId: string,
     prop: PropPath,
     oldT: number,
-    patch: { t?: number; value?: number; easing?: EasingKind; bezier?: BezierHandles; roving?: boolean },
+    patch: { t?: number; value?: number; easing?: EasingKind; bezier?: BezierHandles; roving?: boolean; continuous?: boolean },
   ): void {
     const track = this.tracks.get(nodeId)?.get(prop);
     const kf = track?.keyframes.find((k) => k.t === oldT);
@@ -249,6 +281,7 @@ export class AnimationEngine {
       value: patch.value ?? kf.value,
       easing: patch.easing ?? kf.easing,
       bezier: patch.bezier ?? kf.bezier,
+      continuous: patch.continuous ?? kf.continuous,
       roving: patch.roving ?? kf.roving,
       si: kf.si,
       so: kf.so,
@@ -362,7 +395,14 @@ export class AnimationEngine {
             throw new Error(r.error);
           }
         }
-        if (r.value !== null) return r.value;
+        if (r.value !== null) {
+          // Vector return (`[x, y]`): pick the component matching THIS track.
+          if (Array.isArray(r.value)) {
+            const idx = componentIndexOf(prop);
+            return r.value[Math.min(idx, r.value.length - 1)];
+          }
+          return r.value;
+        }
       }
       return base ?? this.baseValueProvider(nodeId, prop);
     } finally {
@@ -395,6 +435,9 @@ export class AnimationEngine {
       layerAt: (name, p, tt) => this.crossLayerValue(name, p, tt, visited, depth),
       comp: this.compInfoProvider(),
       layerInfo: this.layerInfoProvider(nodeId),
+      // Per-(node, prop) noise phase so `wiggle()` on x and y move
+      // independently (AE) — still deterministic run to run.
+      propSeed: stringSeed(`${nodeId}:${prop}`),
     };
   }
 
@@ -477,6 +520,109 @@ export class AnimationEngine {
     return out;
   }
 
+  // ── Data tracks (non-scalar keyframes) ──────────────────────────
+  // Typed values beside the number tracks: Source Text (hold), path points
+  // and gradient stops (pairwise lerp). Same change-notification contract as
+  // the scalar mutators, so autosave, the render cache and the timeline react
+  // identically. See dataTracks.ts for the interpolation rules.
+
+  private dataTracksMap = new Map<string, Map<PropPath, DataTrack>>();
+
+  /** Add/replace a data keyframe at `t` (deep-copies the value in). */
+  setDataKeyframe(nodeId: string, prop: PropPath, kind: DataKind, t: number, value: DataValue): void {
+    let byProp = this.dataTracksMap.get(nodeId);
+    if (!byProp) {
+      byProp = new Map();
+      this.dataTracksMap.set(nodeId, byProp);
+    }
+    const track = byProp.get(prop) ?? { nodeId, prop, kind, keyframes: [] as DataKeyframe[] };
+    track.keyframes = upsertDataKeyframe(track.keyframes, { t, value: cloneDataValue(value) });
+    byProp.set(prop, track);
+    this.notifyChange(nodeId);
+  }
+
+  removeDataKeyframe(nodeId: string, prop: PropPath, t: number): void {
+    const byProp = this.dataTracksMap.get(nodeId);
+    const track = byProp?.get(prop);
+    if (!byProp || !track) return;
+    track.keyframes = track.keyframes.filter((k) => k.t !== t);
+    if (track.keyframes.length === 0) {
+      byProp.delete(prop);
+      if (byProp.size === 0) this.dataTracksMap.delete(nodeId);
+    }
+    this.notifyChange(nodeId);
+  }
+
+  /** Move a data keyframe in time, keeping its value. */
+  moveDataKeyframe(nodeId: string, prop: PropPath, fromT: number, toT: number): void {
+    if (fromT === toT) return;
+    const track = this.dataTracksMap.get(nodeId)?.get(prop);
+    const kf = track?.keyframes.find((k) => k.t === fromT);
+    if (!track || !kf) return;
+    track.keyframes = upsertDataKeyframe(
+      track.keyframes.filter((k) => k.t !== fromT),
+      { ...kf, t: toT },
+    );
+    this.notifyChange(nodeId);
+  }
+
+  /** Sample a data track at `t` (undefined when the track is absent/empty). */
+  sampleData(nodeId: string, prop: PropPath, t: number): DataValue | undefined {
+    const track = this.dataTracksMap.get(nodeId)?.get(prop);
+    return track ? sampleDataTrack(track, t) : undefined;
+  }
+
+  isDataAnimated(nodeId: string, prop: PropPath): boolean {
+    return (this.dataTracksMap.get(nodeId)?.get(prop)?.keyframes.length ?? 0) > 0;
+  }
+
+  /** All data tracks for a node (deep values shared — treat as read-only). */
+  dataTracksFor(nodeId: string): DataTrack[] {
+    const byProp = this.dataTracksMap.get(nodeId);
+    return byProp ? Array.from(byProp.values()) : [];
+  }
+
+  /** Deep copy of a data track, or null — the undo seam (mirrors getTrackKeyframes). */
+  getDataTrack(nodeId: string, prop: PropPath): DataTrack | null {
+    const track = this.dataTracksMap.get(nodeId)?.get(prop);
+    if (!track) return null;
+    return {
+      ...track,
+      keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+    };
+  }
+
+  /** Replace a data track wholesale (null/empty removes). Mirrors setTrackKeyframes. */
+  setDataTrack(nodeId: string, prop: PropPath, track: DataTrack | null): void {
+    if (!track || track.keyframes.length === 0) {
+      const byProp = this.dataTracksMap.get(nodeId);
+      if (byProp?.delete(prop) && byProp.size === 0) this.dataTracksMap.delete(nodeId);
+      this.notifyChange(nodeId);
+      return;
+    }
+    let byProp = this.dataTracksMap.get(nodeId);
+    if (!byProp) {
+      byProp = new Map();
+      this.dataTracksMap.set(nodeId, byProp);
+    }
+    byProp.set(prop, {
+      nodeId,
+      prop,
+      kind: track.kind,
+      keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+    });
+    this.notifyChange(nodeId);
+  }
+
+  /** All data-animated prop paths for a node. */
+  getDataAnimatedPropPaths(nodeId: string): PropPath[] {
+    const byProp = this.dataTracksMap.get(nodeId);
+    if (!byProp) return [];
+    return [...byProp.entries()]
+      .filter(([, track]) => track.keyframes.length > 0)
+      .map(([prop]) => prop);
+  }
+
   // ── Expressions ─────────────────────────────────────────────────
   /** Attach/replace an expression on a property (compiles immediately). */
   setExpression(nodeId: string, prop: PropPath, src: string): void {
@@ -521,11 +667,13 @@ export class AnimationEngine {
   clearNode(nodeId: string): void {
     this.tracks.delete(nodeId);
     this.expressions.delete(nodeId);
+    this.dataTracksMap.delete(nodeId);
   }
 
   clear(): void {
     this.tracks.clear();
     this.expressions.clear();
+    this.dataTracksMap.clear();
   }
 
   /** Deep-clone tracks + expressions into a serializable snapshot (History). */
@@ -544,13 +692,49 @@ export class AnimationEngine {
       for (const [prop, expr] of byProp) props[prop] = expr.src;
       expressions[nodeId] = props;
     }
-    return { tracks, expressions };
+    const data: NonNullable<AnimSnapshot['data']> = {};
+    let hasData = false;
+    for (const [nodeId, byProp] of this.dataTracksMap) {
+      const props: Record<string, DataTrack> = {};
+      for (const [prop, track] of byProp) {
+        props[prop] = {
+          nodeId,
+          prop,
+          kind: track.kind,
+          keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+        };
+        hasData = true;
+      }
+      data[nodeId] = props;
+    }
+    // Optional field: pre-data snapshots restore unchanged.
+    return hasData ? { tracks, expressions, data } : { tracks, expressions };
   }
 
   /** Replace all tracks + expressions from a snapshot (History jump). */
   restore(data: AnimSnapshot): void {
     this.tracks.clear();
     this.expressions.clear();
+    this.dataTracksMap.clear();
+    if (data.data) {
+      for (const nodeId of Object.keys(data.data)) {
+        const props = data.data[nodeId];
+        if (!props) continue;
+        const byProp = new Map<PropPath, DataTrack>();
+        for (const prop of Object.keys(props)) {
+          const track = props[prop];
+          if (track && track.keyframes.length > 0) {
+            byProp.set(prop, {
+              nodeId,
+              prop,
+              kind: track.kind,
+              keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+            });
+          }
+        }
+        if (byProp.size) this.dataTracksMap.set(nodeId, byProp);
+      }
+    }
     for (const nodeId of Object.keys(data.tracks)) {
       const byProp = new Map<PropPath, PropertyTrack>();
       const props = data.tracks[nodeId];
@@ -575,10 +759,12 @@ export class AnimationEngine {
   }
 }
 
-/** Serializable animation state: keyframe tracks + expression sources. */
+/** Serializable animation state: keyframe tracks + expression sources +
+ *  (optionally) non-scalar data tracks. `data` is absent on old documents. */
 export interface AnimSnapshot {
   tracks: Record<string, Record<string, PropertyTrack>>;
   expressions: Record<string, Record<string, string>>;
+  data?: Record<string, Record<string, DataTrack>>;
 }
 
 /** Process-wide default instance (mirrors defaultSceneGraph). */

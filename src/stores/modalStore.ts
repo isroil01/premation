@@ -17,6 +17,8 @@ export interface ModalRequest {
   description?: ReactNode;
   size?: ModalSize;
   persistent?: boolean;
+  hideCloseButton?: boolean;
+  onClose?: () => void;
   render: (close: () => void) => ReactNode;
   footer?: (close: () => void) => ReactNode;
 }

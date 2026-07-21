@@ -12,6 +12,7 @@ function anim(patch: Partial<ResolvedAnimator>): ResolvedAnimator {
   return {
     basedOn: 'characters',
     shape: 'square',
+    mode: 'range',
     start: 0,
     end: 100,
     offset: 0,
@@ -21,6 +22,8 @@ function anim(patch: Partial<ResolvedAnimator>): ResolvedAnimator {
     rotation: 0,
     opacity: 100,
     tracking: 0,
+    skew: 0,
+    wiggleFreq: 2,
     ...patch,
   };
 }
@@ -155,5 +158,41 @@ describe('mixHex', () => {
 
   it('falls back to the target when a colour is unparseable', () => {
     expect(mixHex(undefined, '#123456', 0.5)).toBe('#123456');
+  });
+});
+
+describe('wiggly selector + skew', () => {
+  const { wigglyWeight } = require('./textAnimators');
+
+  it('wigglyWeight is deterministic and in [0,1]', () => {
+    for (let u = 0; u < 5; u++) {
+      for (const t of [0, 0.33, 1.5, 7.2]) {
+        const a = wigglyWeight(u, t, 2);
+        expect(a).toBe(wigglyWeight(u, t, 2));
+        expect(a).toBeGreaterThanOrEqual(0);
+        expect(a).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('different units wiggle differently at the same time', () => {
+    const vals = [0, 1, 2, 3, 4].map((u) => wigglyWeight(u, 0.4, 2));
+    expect(new Set(vals.map((v: number) => v.toFixed(6))).size).toBeGreaterThan(2);
+  });
+
+  it('wiggly mode varies glyph weights over time; range mode does not', () => {
+    const wiggly = anim({ mode: 'wiggly', x: 100, wiggleFreq: 3 });
+    const a = evaluateTextAnimators('abcdef', [wiggly], 0.1);
+    const b = evaluateTextAnimators('abcdef', [wiggly], 0.4);
+    expect(a.map((g) => g.dx)).not.toEqual(b.map((g) => g.dx));
+    const ranged = anim({ x: 100 });
+    expect(evaluateTextAnimators('abcdef', [ranged], 0.1).map((g) => g.dx))
+      .toEqual(evaluateTextAnimators('abcdef', [ranged], 0.4).map((g) => g.dx));
+  });
+
+  it('skew accumulates weighted like rotation', () => {
+    const g = evaluateTextAnimators('ab', [anim({ skew: 30 })], 0);
+    expect(g[0]!.skew).toBeCloseTo(30);
+    expect(g[1]!.skew).toBeCloseTo(30);
   });
 });

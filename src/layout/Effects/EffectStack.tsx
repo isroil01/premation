@@ -1,8 +1,13 @@
 import { getTimelineController } from '@core/timeline/TimelineController';
 /**
  * EffectStack — the applied-effects list for a layer (AE Effect Controls): each
- * effect has an enable toggle, reorder, remove, and a **keyframeable** amount
- * (stopwatch → keyframes under `effect.<id>`, sampled per frame by buildSnapshot).
+ * effect has an enable toggle, reorder, remove, and one row per PARAMETER.
+ * Numeric params are keyframeable (stopwatch → keyframes under
+ * `effect.<id>.<param>`, sampled per frame by buildSnapshot).
+ *
+ * The panel used to render exactly one field per effect, because an effect
+ * carried exactly one scalar — which is why Glow's colour and Drop Shadow's
+ * angle didn't exist.
  *
  * Shared by the kitchen-sink Effects panel and the dedicated Effect Controls
  * panel so the stack lives in exactly one component (no duplicated logic).
@@ -10,75 +15,217 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
+import { Checkbox } from '@components/Checkbox';
+import { ColorPicker } from '@components/ColorPicker';
+import { CurveEditor } from './CurveEditor';
 import { EmptyState } from '@components/EmptyState';
-import { cn } from '@utils/cn';
+
 import { useSceneRevision } from '@stores/sceneStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { defaultAnimation } from '@motion/animation';
+import { Color } from '@motion/renderer';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import {
   EFFECT_DEFS,
   getNodeEffects,
-  updateEffect,
+  updateEffectParam,
   removeEffect,
   toggleEffect,
   moveEffect,
   effectPropPath,
+  effectParam,
+  type Effect,
   type EffectDef,
+  type EffectParamDef,
+  type CurvePoints,
 } from '@core/effects/effects';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
-function EffectAmount({
+/** One parameter of one effect: a stopwatch (numbers only) plus its control. */
+function EffectParamRow({
   nodeId,
-  effectId,
-  amount,
+  effect,
   def,
+  param,
 }: {
   nodeId: string;
-  effectId: string;
-  amount: number;
+  effect: Effect;
   def: EffectDef;
-  disabled?: boolean;
+  param: EffectParamDef;
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
-  const path = effectPropPath(effectId);
+
+  const value = effectParam(effect, param.key);
+  const label = `${def.label} ${param.label}`;
+
+  if (param.type === 'color') {
+    // Keyframeable through decomposed channel tracks (`effect.<id>.<key>_r`
+    // …), exactly the fill/stroke pattern — resolveEffectParams recomposes
+    // them per frame. Before this, color params were the one param type the
+    // stopwatch couldn't touch: no animated glow color, no shadow color ramp.
+    const chPrefix = effectPropPath(effect.id, param.key);
+    const animated = defaultAnimation.isAnimated(nodeId, `${chPrefix}_r`);
+    const layerT = getTimelineController().toLayerTime(nodeId, time);
+    const displayed = (() => {
+      if (!animated) return String(value);
+      const r = defaultAnimation.sample(nodeId, `${chPrefix}_r`, layerT) ?? 255;
+      const g = defaultAnimation.sample(nodeId, `${chPrefix}_g`, layerT) ?? 255;
+      const b = defaultAnimation.sample(nodeId, `${chPrefix}_b`, layerT) ?? 255;
+      const alpha = defaultAnimation.sample(nodeId, `${chPrefix}_a`, layerT) ?? 1;
+      return Color.toHex({ r, g, b, a: alpha });
+    })();
+    const writeChannels = (hex: string, editLabel: string): void => {
+      const c = Color.fromHex(hex);
+      runAnimEdit(editLabel, () => {
+        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_r`, layerT, c.r);
+        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_g`, layerT, c.g);
+        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_b`, layerT, c.b);
+        defaultAnimation.setKeyframe(nodeId, `${chPrefix}_a`, layerT, c.a ?? 1);
+      }, `fxcolor:${nodeId}:${chPrefix}`);
+    };
+    const toggleColorAnim = (): void => {
+      if (animated) {
+        runAnimEdit(`Remove ${label} animation`, () => {
+          for (const ch of ['_r', '_g', '_b', '_a']) {
+            defaultAnimation.removeTrack(nodeId, `${chPrefix}${ch}`);
+          }
+        });
+      } else {
+        writeChannels(String(value), `Animate ${label}`);
+      }
+    };
+    return (
+      <div className={row.paramRow}>
+        <Checkbox
+          checked={animated}
+          onChange={toggleColorAnim}
+          title="Toggle Keyframes"
+          style={{ width: 13, height: 13 }}
+        />
+        <span className={row.paramLabel}>{param.label}</span>
+        <ColorPicker
+          value={displayed}
+          onChange={(hex) => {
+            if (animated) writeChannels(hex, `Set ${label}`);
+            else updateEffectParam(nodeId, effect.id, param.key, hex);
+          }}
+          aria-label={label}
+          compact
+        />
+      </div>
+    );
+  }
+
+  if (param.type === 'checkbox') {
+    return (
+      <div className={row.paramRow}>
+        <div style={{ width: 14 }} />
+        <span className={row.paramLabel}>{param.label}</span>
+        <Checkbox
+          checked={value === true}
+          onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.checked)}
+          aria-label={label}
+          style={{ width: 14, height: 14 }}
+        />
+      </div>
+    );
+  }
+
+  if (param.type === 'layer') {
+    // Layer reference (e.g. Displace's Map Layer): a dropdown of the comp's
+    // OTHER layers — same sibling scope as the track-matte source picker.
+    // '' = None → the effect falls back to its self-referential behavior.
+    const self = defaultSceneGraph.getNode(nodeId);
+    const siblings = self && self.parent
+      ? defaultSceneGraph.getChildren(self.parent).filter((n) => n.id !== nodeId)
+      : [];
+    const current = typeof value === 'string' ? value : '';
+    const stale = current !== '' && !siblings.some((s) => s.id === current);
+    return (
+      <div className={row.paramRow}>
+        <div style={{ width: 14 }} />
+        <span className={row.paramLabel}>{param.label}</span>
+        <select
+          value={current}
+          onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.value)}
+          aria-label={label}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            height: 20,
+            fontSize: 11,
+            background: 'var(--color-surface-0)',
+            color: 'var(--color-text-primary)',
+            border: '1px solid var(--color-border-subtle)',
+            borderRadius: 3,
+          }}
+        >
+          <option value="">None (self)</option>
+          {stale && <option value={current}>Missing layer ({current})</option>}
+          {siblings.map((s) => (
+            <option key={s.id} value={s.id}>{s.name || s.id}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  if (param.type === 'curve') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
+        <span className={row.paramLabel}>{param.label}</span>
+        <CurveEditor
+          value={Array.isArray(value) ? (value as CurvePoints) : [[0, 0], [255, 255]]}
+          onChange={(points) => updateEffectParam(nodeId, effect.id, param.key, points)}
+        />
+      </div>
+    );
+  }
+
+  // Numeric: keyframeable under `effect.<id>.<param>`.
+  const stored = typeof value === 'number' ? value : 0;
+  const path = effectPropPath(effect.id, param.key);
   const animated = defaultAnimation.isAnimated(nodeId, path);
-  const display = animated ? defaultAnimation.sample(nodeId, path, time) ?? amount : amount;
+  const display = animated ? defaultAnimation.sample(nodeId, path, time) ?? stored : stored;
 
   const onChange = (v: number): void => {
     if (animated) {
-      runAnimEdit(`Set ${def.label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v), `fx:${nodeId}:${path}:${time}`);
+      runAnimEdit(
+        `Set ${label}`,
+        () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v),
+        `fx:${nodeId}:${path}:${time}`,
+      );
     } else {
-      updateEffect(nodeId, effectId, v);
+      updateEffectParam(nodeId, effect.id, param.key, v);
     }
   };
   const toggle = (): void => {
-    if (animated) runAnimEdit(`Remove ${def.label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${def.label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), amount));
+    if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
+    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), stored));
   };
 
   return (
     <div className={row.paramRow}>
-      <button
-        type="button"
-        className={cn(row.stopwatch, animated && row.stopwatchOn)}
-        onClick={toggle}
-        aria-pressed={animated}
-        aria-label={animated ? `Remove ${def.label} animation` : `Animate ${def.label}`}
-        title={animated ? 'Remove animation' : 'Animate (add keyframes)'}
-      >
-        <Icon name="keyframe" size={11} />
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+        <Checkbox
+          checked={animated}
+          onChange={toggle}
+          title="Toggle Animation"
+          style={{ width: 14, height: 14 }}
+        />
+      </div>
+      <span className={row.paramLabel}>{param.label}</span>
       <ValueField
         value={display}
-        min={def.min}
-        max={def.max}
-        unit={def.unit}
-        precision={0}
+        min={param.min}
+        max={param.max}
+        unit={param.unit}
+        precision={param.precision ?? 0}
         onChange={onChange}
-        aria-label={`${def.label} amount`}
+        aria-label={label}
       />
     </div>
   );
@@ -102,16 +249,13 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
         return (
           <div key={e.id} className={panel.item}>
             <div className={panel.itemHead}>
-              <button
-                type="button"
-                className={panel.eyeBtn}
-                aria-label={off ? `Enable ${def.label}` : `Disable ${def.label}`}
-                aria-pressed={!off}
-                onClick={() => toggleEffect(nodeId, e.id)}
-              >
-                <Icon name={off ? 'eye-off' : 'eye'} size={12} />
-              </button>
-              <span className={off ? panel.itemLabelOff : panel.itemLabel}>{def.label}</span>
+              <Checkbox
+                checked={!off}
+                onChange={() => toggleEffect(nodeId, e.id)}
+                title={off ? 'Enable effect' : 'Disable effect'}
+                style={{ width: 14, height: 14, marginRight: 8 }}
+              />
+              <span className={off ? panel.itemLabelOff : panel.itemLabel} style={{ flex: 1 }}>{def.label}</span>
               <div className={panel.itemActions}>
                 <button type="button" className={panel.remove} aria-label={`Move ${def.label} up`}
                   disabled={i === 0} onClick={() => moveEffect(nodeId, e.id, -1)}>
@@ -127,7 +271,10 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 </button>
               </div>
             </div>
-            {!off && <EffectAmount nodeId={nodeId} effectId={e.id} amount={e.amount} def={def} />}
+            {!off &&
+              def.params.map((p) => (
+                <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
+              ))}
           </div>
         );
       })}

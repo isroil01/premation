@@ -32,6 +32,7 @@ import type {
   TextureHandle,
   TextureSource,
   VertexBufferLayout,
+  IndexFormat,
 } from '../types';
 import { nextId } from '../../utils/ids';
 
@@ -50,6 +51,10 @@ interface NativePipeline {
   topology: PrimitiveTopology;
   layout: VertexBufferLayout[];
   texUniform: WebGLUniformLocation | null;
+  /** Secondary sampler (uMaskTex / uMapTex / uLutTex) for two-texture shaders —
+   *  masks, displacement map, colour LUT. Previously never resolved or set, so
+   *  every second sampler silently read texture unit 0. */
+  tex1Uniform: WebGLUniformLocation | null;
 }
 interface NativeRenderTarget {
   fbo: WebGLFramebuffer;
@@ -75,6 +80,8 @@ function topo(gl: GL, t: PrimitiveTopology): number {
 
 export class WebGL2Backend implements RenderBackend {
   readonly kind = 'webgl2' as const;
+  /** GL FBOs are written bottom-up: full-screen samples of a target flip V. */
+  readonly renderTargetFlipV = true;
   capabilities: BackendCapabilities = {
     kind: 'webgl2',
     maxTextureSize: 4096,
@@ -173,12 +180,20 @@ export class WebGL2Backend implements RenderBackend {
     const gl = this.gl;
     const program = (desc.shader.native as NativeProgram).program;
     const texUniform = gl.getUniformLocation(program, 'uTex');
+    // The secondary sampler, whatever a two-texture shader calls it. A shader
+    // declares at most one, so first match wins.
+    const tex1Uniform =
+      gl.getUniformLocation(program, 'uMaskTex') ??
+      gl.getUniformLocation(program, 'uMapTex') ??
+      gl.getUniformLocation(program, 'uLutTex') ??
+      gl.getUniformLocation(program, 'uMatteTex');
     return h('pipeline', {
       program,
       blend: desc.blend,
       topology: desc.topology,
       layout: desc.buffers,
       texUniform,
+      tex1Uniform,
     } satisfies NativePipeline);
   }
   destroyPipeline(_pipeline: PipelineHandle): void {}
@@ -209,16 +224,45 @@ export class WebGL2Backend implements RenderBackend {
     this.gl.deleteTexture(rt.texture);
   }
 
+  /** Surface clip rect (surface px, top-left origin), or null. */
+  private frameClip: { x: number; y: number; width: number; height: number } | null = null;
+
+  setFrameClip(rect: { x: number; y: number; width: number; height: number } | null): void {
+    this.frameClip = rect;
+  }
+
   beginFrame(): void {}
   beginRenderPass(desc: RenderPassDescriptor): RenderPassEncoder {
     const gl = this.gl;
     const attach = desc.color;
-    if (attach.target === 'surface') gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    else gl.bindFramebuffer(gl.FRAMEBUFFER, (attach.target.native as NativeRenderTarget).fbo);
+    // Surface-ness is decided by the ACTUAL framebuffer bound, not just the
+    // 'surface' string sentinel: a target handle whose native fbo is missing
+    // binds the DEFAULT framebuffer (GL coerces null/undefined), so its draws
+    // land on the canvas and must be frame-clipped like any surface pass.
+    const fbo = attach.target === 'surface'
+      ? null
+      : ((attach.target.native as NativeRenderTarget | undefined)?.fbo ?? null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    const toSurface = fbo === null;
     gl.bindVertexArray(this.vao);
+    // Clears are always full-canvas (the pasteboard outside the comp keeps the
+    // clear colour); only DRAWS are scissored, and only on the surface.
+    gl.disable(gl.SCISSOR_TEST);
     if (attach.clear) {
       gl.clearColor(attach.clear.r, attach.clear.g, attach.clear.b, attach.clear.a);
       gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    const clip = toSurface ? this.frameClip : null;
+    if (clip) {
+      // gl.scissor is bottom-left origin; the contract is top-left.
+      const h = gl.drawingBufferHeight;
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(
+        Math.max(0, Math.round(clip.x)),
+        Math.max(0, Math.round(h - clip.y - clip.height)),
+        Math.max(0, Math.round(clip.width)),
+        Math.max(0, Math.round(clip.height)),
+      );
     }
     return new WebGL2PassEncoder(gl);
   }
@@ -226,8 +270,17 @@ export class WebGL2Backend implements RenderBackend {
     this.gl.bindVertexArray(null);
   }
   present(): void {}
-  resize(width: number, height: number): void {
-    this.gl.viewport(0, 0, width, height);
+  resize(width: number, height: number, devicePixelRatio = 1): void {
+    // width/height arrive in CSS px (Renderer.resize contract); the canvas
+    // backing store is CSS×dpr. The GL viewport is in PHYSICAL pixels — using
+    // CSS px here drew everything at 1/dpr scale in a corner of the surface on
+    // scaled displays (Windows 125%/150%), which Canvas2D never did.
+    this.gl.viewport(
+      0,
+      0,
+      Math.max(1, Math.round(width * devicePixelRatio)),
+      Math.max(1, Math.round(height * devicePixelRatio)),
+    );
   }
   dispose(): void {
     if (this.vao) this.gl.deleteVertexArray(this.vao);
@@ -237,6 +290,7 @@ export class WebGL2Backend implements RenderBackend {
 class WebGL2PassEncoder implements RenderPassEncoder {
   private pipeline: NativePipeline | null = null;
   private vertexBuffer: NativeBuffer | null = null;
+  private indexFormat: IndexFormat = 'uint32';
 
   constructor(private readonly gl: GL) {}
 
@@ -247,20 +301,38 @@ class WebGL2PassEncoder implements RenderPassEncoder {
   }
   setBindGroup(_index: number, group: BindGroupHandle): void {
     const gl = this.gl;
-    let unit = 0;
+    // Each texture entry gets its OWN unit and its OWN sampler uniform, in the
+    // order the entries appear (primary = uTex@0, secondary = uMaskTex/uMapTex/
+    // uLutTex@1). The old code set the single `uTex` uniform for every texture,
+    // so a second texture bound to unit 1 while `uTex` pointed at unit 1 too —
+    // the primary silently read the secondary, and the secondary uniform was
+    // never assigned. That is why masks / displacement never sampled right.
+    let texIndex = 0;
+    let sampler: WebGLSampler | null = null;
     for (const e of (group.native as { entries: BindGroupResource[] }).entries) {
       if ('buffer' in e) {
         const nb = e.buffer.native as NativeBuffer;
         if (e.offsetBytes || e.sizeBytes) gl.bindBufferRange(gl.UNIFORM_BUFFER, e.binding === 0 ? 0 : e.binding, nb.buffer, e.offsetBytes ?? 0, e.sizeBytes ?? 0);
         else gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, nb.buffer);
       } else if ('texture' in e) {
-        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.activeTexture(gl.TEXTURE0 + texIndex);
         gl.bindTexture(gl.TEXTURE_2D, e.texture.native as WebGLTexture);
-        if (this.pipeline?.texUniform) gl.uniform1i(this.pipeline.texUniform, unit);
-        unit += 1;
+        const uni = texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform;
+        if (uni) gl.uniform1i(uni, texIndex);
+        texIndex += 1;
       } else {
-        gl.bindSampler(Math.max(0, unit - 1), e.sampler.native as WebGLSampler);
+        sampler = e.sampler.native as WebGLSampler;
       }
+    }
+    // Bind the sampler to EVERY texture unit used. Our textures are uploaded
+    // without mipmaps and never get texParameteri, so their default
+    // NEAREST_MIPMAP_LINEAR min filter makes them INCOMPLETE — a unit without
+    // a sampler object samples (0,0,0,1). The old code bound the sampler only
+    // to the unit before it in entry order (unit 0), which left every
+    // SECONDARY texture (mask/matte/LUT/displacement map) incomplete: alpha
+    // read as 1, so masks silently did nothing on the GL backend.
+    if (sampler) {
+      for (let u = 0; u < Math.max(1, texIndex); u++) gl.bindSampler(u, sampler);
     }
   }
   setVertexBuffer(_slot: number, buffer: BufferHandle): void {
@@ -269,9 +341,10 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer.buffer);
     if (this.pipeline) configureAttribs(gl, this.pipeline.layout);
   }
-  setIndexBuffer(buffer: BufferHandle): void {
+  setIndexBuffer(buffer: BufferHandle, format: IndexFormat): void {
     const nb = buffer.native as NativeBuffer;
     this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, nb.buffer);
+    this.indexFormat = format;
   }
   setViewport(x: number, y: number, width: number, height: number): void {
     this.gl.viewport(x, y, width, height);
@@ -287,8 +360,9 @@ class WebGL2PassEncoder implements RenderPassEncoder {
   drawIndexed(indexCount: number, instanceCount = 1): void {
     const gl = this.gl;
     const mode = this.pipeline ? topo(gl, this.pipeline.topology) : gl.TRIANGLES;
-    if (instanceCount > 1) gl.drawElementsInstanced(mode, indexCount, gl.UNSIGNED_INT, 0, instanceCount);
-    else gl.drawElements(mode, indexCount, gl.UNSIGNED_INT, 0);
+    const type = this.indexFormat === 'uint16' ? gl.UNSIGNED_SHORT : gl.UNSIGNED_INT;
+    if (instanceCount > 1) gl.drawElementsInstanced(mode, indexCount, type, 0, instanceCount);
+    else gl.drawElements(mode, indexCount, type, 0);
   }
   end(): void {}
 }

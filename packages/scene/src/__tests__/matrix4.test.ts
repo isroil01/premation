@@ -7,6 +7,33 @@ describe('Matrix4 math', () => {
     expect(p).toEqual({ x: 3, y: 5, z: 7 });
   });
 
+  it('anchor Z pivots rotation (not a no-op) — AE anchor-point depth', () => {
+    // A 90° rotation about X, with the anchor pushed +100 in Z. The layer's
+    // local origin sits at (0,0,-100) relative to the anchor, so after the X
+    // rotation it swings out of the Z plane — proving anchorZ is consumed.
+    const withZ = Matrix4Math.transformPoint(
+      Matrix4Math.compose({
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: Math.PI / 2, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+        anchor: { x: 0, y: 0, z: 100 },
+      }),
+      { x: 0, y: 0, z: 0 },
+    );
+    const withoutZ = Matrix4Math.transformPoint(
+      Matrix4Math.compose({
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: Math.PI / 2, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+        anchor: { x: 0, y: 0, z: 0 },
+      }),
+      { x: 0, y: 0, z: 0 },
+    );
+    // anchorZ=0 keeps the origin at world origin; anchorZ=100 swings it away.
+    expect(withoutZ).toEqual({ x: 0, y: 0, z: 0 });
+    expect(Math.abs(withZ.y) + Math.abs(withZ.z)).toBeGreaterThan(50);
+  });
+
   it('multiply by identity is a no-op', () => {
     const m = Matrix4Math.compose({
       position: { x: 1, y: 2, z: 3 },

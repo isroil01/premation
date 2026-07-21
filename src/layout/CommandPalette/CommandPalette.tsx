@@ -1,7 +1,8 @@
 /**
  * CommandPalette — the universal, mode-aware launcher (spec §Command Palette).
  *
- * Cmd/Ctrl+K opens it from anywhere (including while a field is focused). One
+ * Cmd/Ctrl+Shift+P opens it from anywhere (including while a field is focused).
+ * Cmd/Ctrl+K belongs to Composition Settings, per AE. One
  * search box finds everything and switches mode by the first character:
  *   plain text → search all   ·   `>` commands   ·   `@` layers
  *   `#` compositions          ·   `:` timecode
@@ -24,6 +25,8 @@ import { cn } from '@utils/cn';
 import { useCommandPaletteStore } from '@stores/commandPaletteStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { framesToTimecode, displayFramesToDomainSeconds } from '@core/time/timecode';
 import { useSceneRevision } from '@stores/sceneStore';
 import { getCommandRegistry } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
@@ -33,7 +36,7 @@ import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { asCommandId } from '@app-types/common';
 import { formatChord } from '@layout/Menu/formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
-import { parseQuery, fuzzyScore, parseTimecode, formatSeconds } from './paletteSearch';
+import { parseQuery, fuzzyScore, parseTimecode } from './paletteSearch';
 import styles from './CommandPalette.module.css';
 
 /** Frames-per-second used to derive a frame number for timecode jumps. */
@@ -64,6 +67,8 @@ const KIND_ICON: Record<SceneKind, IconName> = {
   camera: 'camera',
   light: 'light',
   adjustment: 'adjustment',
+  particle: 'sparkles',
+  comp: 'component',
 };
 
 function buildItems(query: string, closePalette: () => void): Item[] {
@@ -156,17 +161,23 @@ function buildItems(query: string, closePalette: () => void): Item[] {
 
   // ── Timecode ──────────────────────────────────────────────────────
   if (wantTime) {
-    const sec = parseTimecode(term);
-    if (sec !== null) {
+    const displaySec = parseTimecode(term);
+    if (displaySec !== null) {
+      const comp = useCompositionStore.getState();
+      const fps = comp.fps || FPS;
+      // The user types the DISPLAYED timecode, which includes the comp's start
+      // offset — subtract it to land on the real playhead time. (Keyframes and
+      // playback are 0-based; only the label is shifted.)
+      const sec = displayFramesToDomainSeconds(displaySec, fps, comp.startFrame ?? 0);
       items.push({
         key: 'time',
         section: 'Go to time',
-        label: `Go to ${formatSeconds(sec)}`,
-        hint: `${sec}s`,
+        label: `Go to ${framesToTimecode(sec, fps, comp.startFrame ?? 0)}`,
+        hint: `${sec.toFixed(3)}s`,
         icon: 'skip-forward',
         run: () => {
           closePalette();
-          useWorkspaceStore.getState().actions.setTime(sec, Math.round(sec * FPS));
+          useWorkspaceStore.getState().actions.setTime(sec, Math.round(sec * fps));
         },
       });
     }
@@ -189,10 +200,14 @@ export function CommandPalette(): JSX.Element | null {
   // Subscribe to scene changes so the layer/comp lists stay fresh.
   useSceneRevision((s) => s.rev);
 
-  // Global Cmd/Ctrl+K — works even when a form field is focused.
+  // Global Cmd/Ctrl+Shift+P — works even when a form field is focused, which is
+  // why this is a listener rather than a registry command (ShortcutManager
+  // ignores keys typed into inputs). Keep this chord out of the command
+  // registry: a registry binding would fire alongside this listener and the two
+  // toggles would cancel out.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
         e.preventDefault();
         e.stopPropagation();
         toggle();

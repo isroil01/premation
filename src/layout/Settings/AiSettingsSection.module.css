@@ -1,0 +1,227 @@
+/* AI setup — lives in the Settings page (not a dialog), so it has room to
+   explain the two ways to power the assistant. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.intro {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #a6a6a6);
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* The choice: platform AI vs your own key. */
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.choice {
+  position: relative;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border-strong, #333);
+  background: var(--color-surface-2, #1c1c1c);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.choice:hover:not(:disabled) {
+  border-color: var(--color-accent, #3b82f6);
+  transform: translateY(-1px);
+}
+
+.choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.choiceOn {
+  border-color: var(--color-accent, #3b82f6);
+  background: color-mix(in srgb, var(--color-accent, #3b82f6) 10%, transparent);
+}
+
+.choiceTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #fff;
+}
+
+.choiceDesc {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary, #a6a6a6);
+  line-height: 1.4;
+}
+
+.badge {
+  margin-left: auto;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-strong, #333);
+  color: var(--color-text-secondary, #a6a6a6);
+  white-space: nowrap;
+}
+
+.badgeOn {
+  border-color: var(--color-accent, #3b82f6);
+  color: var(--color-accent, #3b82f6);
+}
+
+/* Provider key rows. */
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border-strong, #333);
+  background: var(--color-surface-2, #1c1c1c);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.rowConnected {
+  background: var(--color-surface-1, #141414);
+  border-color: var(--color-border, #222);
+}
+
+.rowOn {
+  border-color: var(--color-accent, #3b82f6);
+  background: color-mix(in srgb, var(--color-accent, #3b82f6) 6%, var(--color-surface-1, #141414));
+}
+
+.rowInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.lockIconSecure {
+  color: #10b981; /* Green secure lock */
+}
+
+.lockIconInactive {
+  color: var(--color-text-tertiary, #666);
+}
+
+.hint {
+  font-size: 0.68rem;
+  font-weight: 400;
+  color: var(--color-text-secondary, #a6a6a6);
+  font-variant-numeric: tabular-nums;
+}
+
+.notConnectedHint {
+  font-size: 0.68rem;
+  font-weight: 400;
+  color: var(--color-text-tertiary, #666);
+}
+
+.rowRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.input,
+.select {
+  background: var(--color-surface-3, #0f0f0f);
+  border: 1px solid var(--color-border-strong, #333);
+  border-radius: var(--radius-sm, 4px);
+  color: #fff;
+  font-size: 0.76rem;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 140ms ease;
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--color-accent, #3b82f6);
+}
+
+.input {
+  min-width: 200px;
+}
+
+.activeMark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--color-accent, #3b82f6);
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 2px 6px;
+  background: color-mix(in srgb, var(--color-accent, #3b82f6) 10%, transparent);
+  border-radius: 4px;
+}
+
+.greenDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  display: inline-block;
+  animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+.error {
+  font-size: 0.74rem;
+  color: var(--color-danger, #f87171);
+  margin: 0;
+}
+
+.links {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary, #a6a6a6);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.links a {
+  color: var(--color-accent, #3b82f6);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}

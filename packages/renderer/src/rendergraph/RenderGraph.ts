@@ -141,12 +141,14 @@ export class RenderGraph {
     backend: RenderBackend,
     resources: ResourceManager,
     viewport: Viewport,
+    colorFormat: import('../gpu/types').TextureFormat,
   ): Map<string, RenderTargetHandle> {
     void backend;
     const map = new Map<string, RenderTargetHandle>();
     const { width, height } = viewport.pixelSize;
     for (const decl of this.targets.values()) {
       const desc = decl.descriptor(viewport);
+      desc.format = colorFormat;
       const handle = resources.renderTarget(`graph-target:${decl.name}:${width}x${height}`, desc);
       map.set(decl.name, handle);
     }
@@ -155,7 +157,12 @@ export class RenderGraph {
 
   execute(args: RenderGraphExecuteArgs): void {
     const order = this.compile();
-    const targetMap = this.resolveTargets(args.services.backend, args.services.resources, args.viewport);
+    const targetMap = this.resolveTargets(
+      args.services.backend,
+      args.services.resources,
+      args.viewport,
+      args.services.colorFormat,
+    );
 
     const ctx: RenderPassContext = {
       services: args.services,

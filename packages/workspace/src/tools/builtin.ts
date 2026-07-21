@@ -5,6 +5,8 @@
  *
  *   SelectTool     — click-select, shift-toggle, marquee, drag-to-move (+snap)
  *   MoveTool       — drag the current selection (no marquee)
+ *   RotateTool     — drag to spin the selection about its anchor
+ *   PanBehindTool  — drag to place the anchor without moving the layer
  *   HandTool       — pan the camera
  *   ZoomTool       — click to zoom (alt = out), drag a region to frame it
  *   RectangleTool  — drag to create a rectangle
@@ -16,7 +18,7 @@
 
 import type { Rect } from '../math/Rect';
 import * as R from '../math/Rect';
-import type { NodeId, OverlayHandle } from '../ports';
+import type { NodeId, OverlayHandle, WorkspaceNode } from '../ports';
 import type { Vec2 } from '../math/Vec2';
 import type { BezierPoint } from '../math/BezierPoint';
 import { corner as bezierCorner } from '../math/BezierPoint';
@@ -53,6 +55,24 @@ export class SelectTool implements Tool {
   private transformStartRotation = 0;
   private transformPivot: Vec2 = { x: 0, y: 0 };
   private cursorPop: (() => void) | null = null;
+
+  getHandles(ctx: ToolContext): readonly OverlayHandle[] {
+    const sel = ctx.selectionIds();
+    if (sel.length !== 1) {
+      // Multi-select: the bounding box still draws (buildOverlay), but the
+      // transform handles are single-node only — painting them would offer
+      // grips that can't be grabbed, so draw none.
+      return [];
+    }
+    const out: OverlayHandle[] = ctx.selection
+      .handles(ctx.camera.screenDistanceToWorld(24))
+      .map((h) => ({ id: h.id, position: h.position, kind: h.kind }));
+    // AE always shows the layer's pivot on selection — not only under the
+    // Pan-Behind tool. Visual-only here; dragging it still needs Y.
+    const node = ctx.scene.getNode(sel[0]!);
+    if (node) out.push({ id: `anchor_${sel[0]!}`, position: anchorWorld(node), kind: 'anchor' });
+    return out;
+  }
 
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext): void {
     // A handle grab (single selection) takes priority over hit-testing nodes.
@@ -113,7 +133,8 @@ export class SelectTool implements Tool {
       return;
     }
     if (this.mode === 'resize' && this.transformId && this.startBounds && this.downHandle) {
-      const bounds = resizeBounds(this.startBounds, this.downHandle, e.currentWorld, e.modifiers.alt);
+      // Alt = scale from center, Shift = constrain aspect ratio (AE/Figma).
+      const bounds = resizeBounds(this.startBounds, this.downHandle, e.currentWorld, e.modifiers.alt, undefined, e.modifiers.shift);
       ctx.execute(commands.resizeNode(this.transformId, bounds));
       ctx.requestRender();
       return;
@@ -444,6 +465,11 @@ export class PenTool implements Tool {
     this.mouse = e.world;
   }
 
+  onPointerLeave(_e: ToolPointerEvent, ctx: ToolContext): void {
+    this.mouse = null;
+    ctx.requestRender();
+  }
+
   onPointerDown(e: ToolPointerEvent, _ctx: ToolContext): void {
     // We commit the new point on pointer-down, and set draggingHandle=true
     // so that onDrag can stretch the out-handle.
@@ -522,9 +548,10 @@ export class PencilTool implements Tool {
   private pts: Vec2[] = [];
   private drawing = false;
 
-  /** Live preview via the shared overlay (drawn as connected segments). */
+  /** Live preview via the shared overlay — smoothed like the final stroke,
+   *  so what you see while dragging is what commits. */
   get pendingPoints(): readonly BezierPoint[] {
-    return this.pts.map((p) => bezierCorner(p.x, p.y));
+    return smoothBezier(this.pts, false);
   }
 
   onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
@@ -557,8 +584,163 @@ export class PencilTool implements Tool {
       const bounds = R.bounds(simplified.map((p) => R.rect(p.x, p.y, 0, 0))) ?? R.rect();
       const cx = bounds.x + bounds.width / 2;
       const cy = bounds.y + bounds.height / 2;
-      const local = simplified.map((p) => bezierCorner(p.x - cx, p.y - cy));
+      // Catmull-Rom tangents: freehand ink commits as a smooth curve, not the
+      // jagged polyline the raw corner points produced.
+      const local = smoothBezier(
+        simplified.map((p) => ({ x: p.x - cx, y: p.y - cy })),
+        false,
+      );
       ctx.execute(commands.createNode('Pencil', bounds, local));
+    }
+    this.pts = [];
+    this.drawing = false;
+    ctx.requestRender();
+  }
+}
+
+// ── Brush (pressure-sensitive variable-width ink) ────────────────────
+
+/**
+ * Live-tunable options for the drawing tools. A plain mutable singleton so the
+ * host app's tool-options bar can drive the framework-free engine without a
+ * store dependency; tools read it at draw/commit time.
+ */
+export const drawToolOptions = {
+  /** Brush: stroke width at full pressure (world px). */
+  brushSize: 14,
+  /** Brush: 0–100, how much of each stroke end tapers to a point. */
+  brushTaper: 35,
+  /** Brush: scale width by stylus pressure (mouse input reports ~0.5 flat). */
+  brushPressure: true,
+  /** Brush: ink colour (the committed ribbon's fill). */
+  brushColor: '#2b7eff',
+  /** Pencil / Line: stroke width (world px). */
+  pencilWidth: 4,
+  /** Pencil / Line: stroke colour. */
+  pencilColor: '#2b7eff',
+  /** Polygon tool: number of sides (3–12). */
+  polygonSides: 6,
+  /** Star tool: number of points (3–12). */
+  starPoints: 5,
+  /** Star tool: inner/outer radius ratio (0.1–0.9). */
+  starInnerRatio: 0.42,
+};
+
+interface BrushSample extends Vec2 {
+  pressure: number;
+}
+
+/**
+ * Build the closed outline of a variable-width stroke: offset each centreline
+ * point along its normal by half the local width (pressure × taper), walk the
+ * left side forward and the right side back. Returned smoothed, so the ink
+ * commits as flowing curves.
+ */
+export function ribbonOutline(samples: readonly BrushSample[], size: number, taperPct: number, usePressure: boolean): BezierPoint[] {
+  const n = samples.length;
+  if (n < 2) return [];
+
+  // Cumulative arc length for the taper profile.
+  const arc: number[] = [0];
+  for (let i = 1; i < n; i++) {
+    const a = samples[i - 1]!;
+    const b = samples[i]!;
+    arc.push(arc[i - 1]! + Math.hypot(b.x - a.x, b.y - a.y));
+  }
+  const total = arc[n - 1]! || 1;
+  const taperLen = (Math.max(0, Math.min(100, taperPct)) / 100) * total * 0.5;
+
+  const widthAt = (i: number): number => {
+    // Neighbour-averaged pressure — raw stylus pressure is jittery.
+    const p0 = samples[Math.max(0, i - 1)]!.pressure;
+    const p1 = samples[i]!.pressure;
+    const p2 = samples[Math.min(n - 1, i + 1)]!.pressure;
+    const p = usePressure ? Math.max(0.15, Math.min(1, (p0 + p1 + p2) / 3 || 0.5)) : 1;
+    let taper = 1;
+    if (taperLen > 0) {
+      taper = Math.min(1, arc[i]! / taperLen, (total - arc[i]!) / taperLen);
+      taper = Math.max(0.05, taper);
+    }
+    return Math.max(0.5, size * p * taper);
+  };
+
+  const left: Vec2[] = [];
+  const right: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = samples[Math.max(0, i - 1)]!;
+    const next = samples[Math.min(n - 1, i + 1)]!;
+    const tx = next.x - prev.x;
+    const ty = next.y - prev.y;
+    const len = Math.hypot(tx, ty) || 1;
+    const nx = -ty / len;
+    const ny = tx / len;
+    const w = widthAt(i) / 2;
+    left.push({ x: samples[i]!.x + nx * w, y: samples[i]!.y + ny * w });
+    right.push({ x: samples[i]!.x - nx * w, y: samples[i]!.y - ny * w });
+  }
+  return smoothBezier([...left, ...right.reverse()], true);
+}
+
+/**
+ * Freehand ink with pressure-driven width and end tapers — commits as a FILLED
+ * closed ribbon (the Pencil stays the uniform-width stroked line).
+ */
+export class BrushTool implements Tool {
+  readonly id = 'brush';
+  readonly label = 'Brush';
+  readonly shortcut = '';
+  readonly cursor = 'pen' as const;
+
+  private pts: BrushSample[] = [];
+  private drawing = false;
+
+  /** Live preview: the actual ribbon outline (painted filled by the host). */
+  get pendingPoints(): readonly BezierPoint[] {
+    const o = drawToolOptions;
+    return ribbonOutline(this.pts, o.brushSize, o.brushTaper, o.brushPressure);
+  }
+
+  onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
+    this.drawing = true;
+    this.pts = [{ x: e.startWorld.x, y: e.startWorld.y, pressure: e.pointer.pressure }];
+    ctx.requestRender();
+  }
+
+  onDrag(e: ToolDragEvent, ctx: ToolContext): void {
+    if (!this.drawing) return;
+    const last = this.pts[this.pts.length - 1]!;
+    if (Math.hypot(e.currentWorld.x - last.x, e.currentWorld.y - last.y) >= 2) {
+      this.pts.push({ x: e.currentWorld.x, y: e.currentWorld.y, pressure: e.pointer.pressure });
+      ctx.requestRender();
+    }
+  }
+
+  onDragEnd(_e: ToolDragEvent, ctx: ToolContext): void {
+    this.commit(ctx);
+  }
+
+  deactivate(ctx: ToolContext): void {
+    this.commit(ctx);
+  }
+
+  private commit(ctx: ToolContext): void {
+    if (this.pts.length >= 2) {
+      // Simplify the CENTERLINE (keeping pressure by index) then outline it.
+      const keepIdx = simplifyPathIndices(this.pts, 1.25);
+      const centre = keepIdx.map((i) => this.pts[i]!);
+      const o = drawToolOptions;
+      const outline = ribbonOutline(centre, o.brushSize, o.brushTaper, o.brushPressure);
+      if (outline.length >= 3) {
+        const bounds = R.bounds(outline.map((p) => R.rect(p.x, p.y, 0, 0))) ?? R.rect();
+        const cx = bounds.x + bounds.width / 2;
+        const cy = bounds.y + bounds.height / 2;
+        const local = outline.map((p) => ({
+          x: p.x - cx, y: p.y - cy,
+          inX: p.inX - cx, inY: p.inY - cy,
+          outX: p.outX - cx, outY: p.outY - cy,
+        }));
+        ctx.execute(commands.createNode('Brush', bounds, local));
+      }
     }
     this.pts = [];
     this.drawing = false;
@@ -673,9 +855,10 @@ export class PolygonTool extends CreatePolyTool {
   readonly kind = 'Polygon';
   readonly shortcut = '';
   protected makePoints(cx: number, cy: number, rx: number, ry: number): BezierPoint[] {
+    const sides = Math.max(3, Math.min(12, Math.round(drawToolOptions.polygonSides)));
     const pts: BezierPoint[] = [];
-    for (let i = 0; i < 6; i++) {
-      const a = -Math.PI / 2 + (i / 6) * Math.PI * 2;
+    for (let i = 0; i < sides; i++) {
+      const a = -Math.PI / 2 + (i / sides) * Math.PI * 2;
       pts.push(bezierCorner(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry));
     }
     return pts;
@@ -688,10 +871,13 @@ export class StarTool extends CreatePolyTool {
   readonly kind = 'Star';
   readonly shortcut = '';
   protected makePoints(cx: number, cy: number, rx: number, ry: number): BezierPoint[] {
+    const points = Math.max(3, Math.min(12, Math.round(drawToolOptions.starPoints)));
+    const inner = Math.max(0.1, Math.min(0.9, drawToolOptions.starInnerRatio));
+    const total = points * 2;
     const pts: BezierPoint[] = [];
-    for (let i = 0; i < 10; i++) {
-      const a = -Math.PI / 2 + (i / 10) * Math.PI * 2;
-      const r = i % 2 === 0 ? 1 : 0.42;
+    for (let i = 0; i < total; i++) {
+      const a = -Math.PI / 2 + (i / total) * Math.PI * 2;
+      const r = i % 2 === 0 ? 1 : inner;
       pts.push(bezierCorner(cx + Math.cos(a) * rx * r, cy + Math.sin(a) * ry * r));
     }
     return pts;
@@ -775,6 +961,133 @@ export class TextTool implements Tool {
   }
 }
 
+// ── Rotate (AE: W) ─────────────────────────────────────────────────
+/**
+ * Drag anywhere to spin the selected layer about its anchor point. AE keeps
+ * rotation on its own tool so that dragging near a corner scales rather than
+ * rotates; the Select tool's corner rotate-handle stays available too.
+ */
+export class RotateTool implements Tool {
+  readonly id = 'rotate';
+  readonly label = 'Rotation';
+  readonly shortcut = 'w';
+  readonly cursor = 'rotate' as const;
+
+  private rotateId: NodeId | null = null;
+  private startRotation = 0;
+  private pivot: Vec2 = { x: 0, y: 0 };
+
+  onClick(e: ToolPointerEvent, ctx: ToolContext): void {
+    ctx.selection.clickAt(e.world, e.modifiers);
+    ctx.requestRender();
+  }
+
+  onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
+    if (currentSelection(ctx).length === 0) {
+      const hit = ctx.hitTester.hitTest(e.startWorld);
+      if (hit) ctx.selection.select(hit.id);
+    }
+    const sel = currentSelection(ctx);
+    // Rotation is a single-node edit, matching the Select tool's rotate handle.
+    if (sel.length !== 1) return;
+    this.rotateId = sel[0]!;
+    const node = ctx.scene.getNode(this.rotateId);
+    if (!node) {
+      this.rotateId = null;
+      return;
+    }
+    this.pivot = anchorWorld(node);
+    this.startRotation = Math.atan2(node.worldMatrix.b, node.worldMatrix.a);
+  }
+
+  onDrag(e: ToolDragEvent, ctx: ToolContext): void {
+    if (!this.rotateId) return;
+    const delta = rotationDelta(this.pivot, e.startWorld, e.currentWorld);
+    ctx.execute(commands.rotateNode(this.rotateId, this.startRotation + delta, this.pivot));
+    ctx.requestRender();
+  }
+
+  onDragEnd(_e: ToolDragEvent, ctx: ToolContext): void {
+    this.rotateId = null;
+    ctx.requestRender();
+  }
+}
+
+// ── Pan Behind / Anchor Point (AE: Y) ──────────────────────────────
+/**
+ * Place a layer's pivot visually, relative to its artwork, instead of typing
+ * anchor X/Y. The host compensates position so the layer doesn't jump, which
+ * leaves `worldMatrix` invariant — so dragging against the live matrix is
+ * stable frame to frame.
+ */
+export class PanBehindTool implements Tool {
+  readonly id = 'pan-behind';
+  readonly label = 'Pan Behind (Anchor Point)';
+  readonly shortcut = 'y';
+  readonly cursor = 'move' as const;
+
+  private dragId: NodeId | null = null;
+
+  getHandles(ctx: ToolContext): readonly OverlayHandle[] {
+    const out: OverlayHandle[] = [];
+    for (const id of ctx.selectionIds()) {
+      const node = ctx.scene.getNode(id);
+      if (!node) continue;
+      out.push({ id: `anchor_${id}`, position: anchorWorld(node), kind: 'anchor' });
+    }
+    return out;
+  }
+
+  onPointerDown(e: ToolPointerEvent, ctx: ToolContext): void {
+    // Grabbing the marker itself takes priority over hit-testing the artwork.
+    const radius = ctx.camera.screenDistanceToWorld(HANDLE_PICK_RADIUS);
+    for (const id of currentSelection(ctx)) {
+      const node = ctx.scene.getNode(id);
+      if (!node) continue;
+      const p = anchorWorld(node);
+      if (Math.hypot(p.x - e.world.x, p.y - e.world.y) <= radius) {
+        this.dragId = id;
+        return;
+      }
+    }
+    this.dragId = null;
+  }
+
+  onClick(e: ToolPointerEvent, ctx: ToolContext): void {
+    if (this.dragId) return;
+    ctx.selection.clickAt(e.world, e.modifiers);
+    ctx.requestRender();
+  }
+
+  onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
+    if (this.dragId) return;
+    // Dragging the layer body moves its anchor too — AE's behaviour.
+    const hit = ctx.hitTester.hitTest(e.startWorld);
+    if (!hit) return;
+    if (!isSelected(ctx, hit.id)) ctx.selection.select(hit.id);
+    this.dragId = hit.id;
+  }
+
+  onDrag(e: ToolDragEvent, ctx: ToolContext): void {
+    if (!this.dragId) return;
+    const node = ctx.scene.getNode(this.dragId);
+    if (!node) return;
+    const local = Mat.apply(Mat.invert(node.worldMatrix), e.currentWorld);
+    ctx.execute(commands.moveAnchor(this.dragId, local));
+    ctx.requestRender();
+  }
+
+  onDragEnd(_e: ToolDragEvent, ctx: ToolContext): void {
+    this.dragId = null;
+    ctx.requestRender();
+  }
+}
+
+/** World position of a node's pivot. worldMatrix already folds the anchor in. */
+function anchorWorld(node: { worldMatrix: Mat.Mat2D; anchor?: Vec2 }): Vec2 {
+  return Mat.apply(node.worldMatrix, node.anchor ?? { x: 0, y: 0 });
+}
+
 // ── Camera (viewport navigation) ───────────────────────────────────
 export class CameraTool implements Tool {
   readonly id = 'camera';
@@ -800,37 +1113,80 @@ export class CameraTool implements Tool {
   }
 }
 
+/** Which outline a handle belongs to: the layer's geometry, or one of its masks. */
+interface OutlineRef {
+  nodeId: NodeId;
+  /** null = the node's own `pathPoints`; otherwise a mask id. */
+  maskId: string | null;
+  index: number;
+  kind: 'point' | 'tangent-in' | 'tangent-out';
+}
+
 export class DirectSelectionTool implements Tool {
   readonly id = 'direct-select';
   readonly label = 'Direct Selection';
   readonly shortcut = 'a';
   readonly cursor = 'default' as const;
 
-  // Drag state
-  private dragNodeId: NodeId | null = null;
-  private dragKind: 'point' | 'tangent-in' | 'tangent-out' | null = null;
-  private dragIndex: number | null = null;
-  /** Which vertex is expanded to show tangents */
-  private activeVertex: number | null = null;
+  /**
+   * handle id → what it edits.
+   *
+   * Handle ids used to encode this and be parsed back with `split('_')`, which
+   * silently picked the wrong node for any id containing an underscore (every
+   * `comp_root`, every `tab_x`). A map has no such ambiguity — and it carries
+   * the mask id, which a positional string couldn't.
+   */
+  private refs = new Map<string, OutlineRef>();
+  private drag: OutlineRef | null = null;
+  /** Which vertex is expanded to show tangents, and on which outline. */
+  private active: { maskId: string | null; index: number } | null = null;
+
+  /** Every editable outline on a node: its geometry, then each of its masks. */
+  private outlinesOf(node: WorkspaceNode): Array<{ maskId: string | null; points: readonly BezierPoint[] }> {
+    const out: Array<{ maskId: string | null; points: readonly BezierPoint[] }> = [];
+    if (node.pathPoints) out.push({ maskId: null, points: node.pathPoints });
+    for (const m of node.maskPaths ?? []) out.push({ maskId: m.id, points: m.points });
+    return out;
+  }
+
+  private pointsFor(node: WorkspaceNode, maskId: string | null): readonly BezierPoint[] | undefined {
+    return maskId === null
+      ? node.pathPoints
+      : node.maskPaths?.find((m) => m.id === maskId)?.points;
+  }
+
+  private commit(ctx: ToolContext, ref: OutlineRef, points: BezierPoint[]): void {
+    ctx.execute(
+      ref.maskId === null
+        ? commands.updateNodePath(ref.nodeId, points)
+        : commands.updateMaskPath(ref.nodeId, ref.maskId, points),
+    );
+  }
 
   getHandles(ctx: ToolContext): readonly OverlayHandle[] {
+    this.refs.clear();
     const handles: OverlayHandle[] = [];
+    const add = (id: string, position: Vec2, kind: OverlayHandle['kind'], ref: OutlineRef): void => {
+      handles.push({ id, position, kind });
+      this.refs.set(id, ref);
+    };
+
     for (const id of ctx.selectionIds()) {
       const node = ctx.scene.getNode(id);
-      if (!node?.pathPoints) continue;
-      node.pathPoints.forEach((pt, i) => {
-        // Convert local to world
-        const wp = Mat.apply(node.worldMatrix, { x: pt.x, y: pt.y });
-        handles.push({ id: `vert_${id}_${i}`, position: wp, kind: 'point' });
+      if (!node) continue;
+      for (const outline of this.outlinesOf(node)) {
+        const scope = outline.maskId ?? 'geom';
+        outline.points.forEach((pt, i) => {
+          const base = { nodeId: id, maskId: outline.maskId, index: i } as const;
+          add(`vert:${id}:${scope}:${i}`, Mat.apply(node.worldMatrix, { x: pt.x, y: pt.y }), 'point', { ...base, kind: 'point' });
 
-        // Show tangent handles for the active vertex
-        if (this.activeVertex === i) {
-          const wIn  = Mat.apply(node.worldMatrix, { x: pt.inX,  y: pt.inY  });
-          const wOut = Mat.apply(node.worldMatrix, { x: pt.outX, y: pt.outY });
-          handles.push({ id: `tin_${id}_${i}`,  position: wIn,  kind: 'tangent-in'  });
-          handles.push({ id: `tout_${id}_${i}`, position: wOut, kind: 'tangent-out' });
-        }
-      });
+          // Tangents only for the active vertex of the active outline.
+          if (this.active?.index === i && this.active.maskId === outline.maskId) {
+            add(`tin:${id}:${scope}:${i}`, Mat.apply(node.worldMatrix, { x: pt.inX, y: pt.inY }), 'tangent-in', { ...base, kind: 'tangent-in' });
+            add(`tout:${id}:${scope}:${i}`, Mat.apply(node.worldMatrix, { x: pt.outX, y: pt.outY }), 'tangent-out', { ...base, kind: 'tangent-out' });
+          }
+        });
+      }
     }
     return handles;
   }
@@ -840,74 +1196,72 @@ export class DirectSelectionTool implements Tool {
     const handles = this.getHandles(ctx);
     for (const h of handles) {
       if (Math.hypot(h.position.x - e.world.x, h.position.y - e.world.y) < pickRadius) {
-        const parts = h.id.split('_');
-        this.dragNodeId = parts[1] as NodeId;
-        this.dragIndex  = parseInt(parts[2]!, 10);
-        if (h.kind === 'point') {
+        const ref = this.refs.get(h.id);
+        if (!ref) continue;
+        if (ref.kind === 'point') {
           if (e.modifiers.alt) {
-            // Delete the point
-            const node = ctx.scene.getNode(this.dragNodeId);
-            if (node?.pathPoints && node.pathPoints.length > 2) {
-              const pts = [...node.pathPoints];
-              pts.splice(this.dragIndex, 1);
-              ctx.execute(commands.updateNodePath(this.dragNodeId, pts));
+            // Delete the point.
+            const node = ctx.scene.getNode(ref.nodeId);
+            const pts = node ? this.pointsFor(node, ref.maskId) : undefined;
+            if (pts && pts.length > 2) {
+              const next = pts.map((p) => ({ ...p }));
+              next.splice(ref.index, 1);
+              this.commit(ctx, ref, next);
             }
-            this.dragNodeId = null;
-            this.activeVertex = null;
+            this.drag = null;
+            this.active = null;
             ctx.requestRender();
             return;
           }
-          this.dragKind = 'point';
-          this.activeVertex = this.dragIndex;
-        } else if (h.kind === 'tangent-in')  {
-          this.dragKind = 'tangent-in';
-        } else {
-          this.dragKind = 'tangent-out';
+          this.active = { maskId: ref.maskId, index: ref.index };
         }
+        this.drag = ref;
         ctx.requestRender();
         return;
       }
     }
-    // No handle hit — check for Shift+Click to append a point
+    // No handle hit — Shift+Click appends a point to the active outline.
     if (e.modifiers.shift && ctx.selectionIds().length === 1) {
       const selectedId = ctx.selectionIds()[0]!;
       const node = ctx.scene.getNode(selectedId);
-      if (node?.pathPoints) {
+      const maskId = this.active?.maskId ?? null;
+      const pts = node ? this.pointsFor(node, maskId) : undefined;
+      if (node && pts) {
         const inv = Mat.invert(node.worldMatrix);
         const localPt = Mat.apply(inv, e.world);
-        const pts = [...node.pathPoints];
-        pts.push(bezierCorner(localPt.x, localPt.y));
-        ctx.execute(commands.updateNodePath(selectedId, pts));
+        const next = [...pts.map((p) => ({ ...p })), bezierCorner(localPt.x, localPt.y)];
+        this.commit(ctx, { nodeId: selectedId, maskId, index: next.length - 1, kind: 'point' }, next);
         ctx.requestRender();
         return;
       }
     }
     // Otherwise, click selects node, clears active vertex
-    this.dragNodeId = null;
-    this.dragIndex  = null;
-    this.dragKind   = null;
-    this.activeVertex = null;
+    this.drag = null;
+    this.active = null;
     ctx.selection.clickAt(e.world, e.modifiers);
     ctx.requestRender();
   }
 
   onDrag(e: ToolDragEvent, ctx: ToolContext): void {
-    if (!this.dragNodeId || this.dragIndex === null || !this.dragKind) return;
-    const node = ctx.scene.getNode(this.dragNodeId);
-    if (!node?.pathPoints) return;
+    const ref = this.drag;
+    if (!ref) return;
+    const node = ctx.scene.getNode(ref.nodeId);
+    if (!node) return;
+    const source = this.pointsFor(node, ref.maskId);
+    if (!source) return;
 
     const inv = Mat.invert(node.worldMatrix);
     const localPt = Mat.apply(inv, e.currentWorld);
-    const pts = node.pathPoints.map((p) => ({ ...p }));
-    const pt = pts[this.dragIndex]!;
-
-    if (this.dragKind === 'point') {
+    const pts = source.map((p) => ({ ...p }));
+    const pt = pts[ref.index];
+    if (!pt) return;
+    if (ref.kind === 'point') {
       const dx = localPt.x - pt.x;
       const dy = localPt.y - pt.y;
       pt.x += dx;    pt.y += dy;
       pt.inX += dx;  pt.inY += dy;
       pt.outX += dx; pt.outY += dy;
-    } else if (this.dragKind === 'tangent-out') {
+    } else if (ref.kind === 'tangent-out') {
       pt.outX = localPt.x;
       pt.outY = localPt.y;
       // Mirror in-handle for smooth symmetric bezier (hold Alt to break)
@@ -928,7 +1282,7 @@ export class DirectSelectionTool implements Tool {
       }
     }
 
-    ctx.execute(commands.updateNodePath(this.dragNodeId, pts as BezierPoint[]));
+    this.commit(ctx, ref, pts as BezierPoint[]);
     ctx.requestRender();
   }
 }
@@ -939,6 +1293,8 @@ export function createBuiltinTools(): Tool[] {
     new SelectTool(),
     new DirectSelectionTool(),
     new MoveTool(),
+    new RotateTool(),
+    new PanBehindTool(),
     new HandTool(),
     new ZoomTool(),
     new RectangleTool(),
@@ -950,6 +1306,7 @@ export function createBuiltinTools(): Tool[] {
     new LineTool(),
     new PenTool(),
     new PencilTool(),
+    new BrushTool(),
     new CurvatureTool(),
     new TextTool(),
     new CameraTool(),
@@ -989,6 +1346,34 @@ function simplifyPath(points: readonly Vec2[], tolerance: number): Vec2[] {
     }
   }
   return points.filter((_, i) => keep[i]);
+}
+
+/** RDP simplify returning the KEPT INDICES — for strokes whose points carry
+ *  extra per-sample data (brush pressure) that must survive the thinning. */
+function simplifyPathIndices(points: readonly Vec2[], tolerance: number): number[] {
+  if (points.length <= 2) return points.map((_, i) => i);
+  const keep = new Array(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+  const stack: Array<[number, number]> = [[0, points.length - 1]];
+  while (stack.length) {
+    const [s, e] = stack.pop()!;
+    let maxD = 0;
+    let idx = -1;
+    const a = points[s]!;
+    const b = points[e]!;
+    for (let i = s + 1; i < e; i++) {
+      const d = perpDist(points[i]!, a, b);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > tolerance && idx !== -1) {
+      keep[idx] = true;
+      stack.push([s, idx], [idx, e]);
+    }
+  }
+  const out: number[] = [];
+  for (let i = 0; i < points.length; i++) if (keep[i]) out.push(i);
+  return out;
 }
 
 /**

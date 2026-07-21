@@ -1,0 +1,43 @@
+.root {
+  margin-top: 16px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
+}
+
+.header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-dimmed);
+  margin-bottom: 8px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.button {
+  background: var(--color-surface-hover);
+  border: 1px solid transparent;
+  color: var(--color-text);
+  border-radius: 4px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--color-surface-active);
+  color: var(--color-text-bright);
+}
+
+.button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}

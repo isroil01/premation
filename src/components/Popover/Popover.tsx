@@ -104,6 +104,9 @@ export function Popover({
       const t = e.target as Node;
       if (popRef.current?.contains(t)) return;
       if (triggerRef.current?.contains(t)) return;
+      // Submenus portal to document.body outside popRef; without this a click on
+      // a submenu item closes the popover before the item's click can fire.
+      if ((t as Element).closest?.('[data-menu-portal]')) return;
       setOpen(false);
     };
     const id = window.setTimeout(() => window.addEventListener('pointerdown', onDown), 0);

@@ -13,7 +13,7 @@
  * canvas so it runs in the browser / render worker, not under jsdom.
  */
 
-import { createRenderBackend, type BackendChoice } from '@core/rendering/createRenderBackend';
+import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, type SnapshotComp } from '@core/rendering/buildSnapshot';
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
 import type { RenderView } from '@core/rendering/RenderBackend';
@@ -30,8 +30,6 @@ export interface OfflineRenderParams {
   /** Optional inclusive frame range (defaults to the whole duration). */
   startFrame?: number;
   endFrame?: number;
-  /** Preferred rendering backend choice (defaults to resolveBackendChoice()). */
-  backendChoice?: BackendChoice;
   /** Motion blur (threaded from the viewport settings so export matches). */
   motionBlur?: MotionBlurConfig;
 }
@@ -99,9 +97,14 @@ export async function renderOffline(
   signal?: AbortSignal,
 ): Promise<number> {
   const canvas = document.createElement('canvas');
-  const backend = createRenderBackend(params.backendChoice);
+  const backend = createRenderBackend();
   backend.attach(canvas);
   backend.resize(params.width, params.height, 1);
+  // Frame-accurate media: sub-millisecond video seeks + collected waits, so a
+  // captured frame can never show the PREVIOUS frame's footage. Without this,
+  // seeks were async fire-and-forget with a ±0.05s deadband — every exported
+  // video layer lagged a frame and stuttered at ~half rate.
+  backend.setExactMediaTiming?.(true);
 
   if (backend.readyPromise) {
     await backend.readyPromise;
@@ -113,18 +116,27 @@ export async function renderOffline(
     for (let i = start; i <= end; i++) {
       if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
       const t = frameTimeAt(i, params.fps);
-      backend.renderFrame(
-        buildSnapshot(
-          defaultSceneGraph,
-          defaultAnimation,
-          t,
-          undefined,
-          undefined,
-          exportView(params.width, params.height, params.comp), // 1:1 comp→frame (no preview inset)
-          params.motionBlur,
-          params.comp,
-        ),
+      const snap = buildSnapshot(
+        defaultSceneGraph,
+        defaultAnimation,
+        t,
+        undefined,
+        undefined,
+        exportView(params.width, params.height, params.comp), // 1:1 comp→frame (no preview inset)
+        params.motionBlur,
+        params.comp,
       );
+      backend.renderFrame(snap);
+      // Converge media: while a render started async media work (video seeks,
+      // first decode, blend-cache fills), await it and re-render. Every wait is
+      // internally time-capped, and the pass cap bounds a pathological source.
+      for (let pass = 0; pass < 4; pass++) {
+        const waits = backend.takeMediaWaits?.();
+        if (!waits || waits.length === 0) break;
+        await Promise.all(waits);
+        if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
+        backend.renderFrame(snap);
+      }
       await onFrame(canvas, i - start, total);
       // Yield so progress paints and cancellation can interrupt.
       await new Promise<void>((r) => setTimeout(r, 0));
@@ -133,4 +145,29 @@ export async function renderOffline(
     backend.dispose();
   }
   return total;
+}
+
+/**
+ * Render a SINGLE frame to a PNG blob (AE's "Save Frame As"). Reuses the exact
+ * deterministic offline path — same backend, same 1:1 comp→frame view — so a
+ * saved still matches a video export frame-for-frame. Returns null if the
+ * canvas can't encode. `mime` may be 'image/png' (lossless, default) or
+ * 'image/jpeg'.
+ */
+export async function renderStillFrame(
+  params: OfflineRenderParams,
+  frameIndex: number,
+  mime: 'image/png' | 'image/jpeg' = 'image/png',
+  quality = 0.92,
+): Promise<Blob | null> {
+  let blob: Blob | null = null;
+  await renderOffline(
+    { ...params, startFrame: frameIndex, endFrame: frameIndex },
+    async (canvas) => {
+      blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob((b) => resolve(b), mime, quality),
+      );
+    },
+  );
+  return blob;
 }

@@ -35,10 +35,10 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background-color: var(--color-workspace);
-  background-image:
-    radial-gradient(circle, var(--color-border-strong) 1px, transparent 1px);
-  background-size: 20px 20px;
+  /* Flat pasteboard — a lighter neutral surround so the composition (the video
+     screen) reads as distinct from the wrapper body (AE-style). The dot-grid
+     void was removed. Falls back to the workspace void if the token is unset. */
+  background-color: var(--color-pasteboard, var(--color-workspace));
 }
 
 /* Transparent-mode: show checkerboard beneath the comp.

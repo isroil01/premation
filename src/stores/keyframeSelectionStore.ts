@@ -1,6 +1,7 @@
 /**
  * Keyframe selection — the set of currently-selected keyframe ids
- * (`nodeId::prop@time`, from `makeKeyframeId`). Lifted out of Timeline's local
+ * (`nodeId::prop::t`, from `makeKeyframeId`; decode with `parseKeyframeId`
+ * rather than splitting by hand). Lifted out of Timeline's local
  * state so other surfaces (the timeline's easing pills, the graph editor) can
  * act on the same selection.
  */

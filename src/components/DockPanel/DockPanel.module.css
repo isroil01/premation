@@ -51,7 +51,8 @@
 .tabsScroll {
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-width: none;
 }
 
@@ -89,8 +90,25 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  /* Scroll vertically when a tab's content is taller than the panel (the
+     inspector accordion — Transform/anchor + Align + Effects, etc. — easily
+     overflows). Was `overflow: hidden`, which clipped the extra rows with no
+     way to reach them. */
+  overflow-y: auto;
+  overflow-x: hidden;
   position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+.content::-webkit-scrollbar {
+  width: 4px;
+}
+.content::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 2px;
+}
+.content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Drag-to-reorder wrapper for each vertical tab icon. */

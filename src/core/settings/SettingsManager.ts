@@ -53,6 +53,14 @@ export class SettingsManager {
 
   constructor(private readonly backend: SettingsBackend = createLocalStorageBackend()) {
     this.cache = backend.read() ?? {};
+    if ('rendering.backend' in this.cache) {
+      delete this.cache['rendering.backend'];
+      try {
+        this.backend.write(this.cache);
+      } catch {
+        /* ignore write failures during boot */
+      }
+    }
   }
 
   get<T>(key: string, fallback: T): T {

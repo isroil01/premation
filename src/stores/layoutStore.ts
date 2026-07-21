@@ -148,8 +148,8 @@ export interface LayoutStore {
 }
 
 const DEFAULT_REGIONS: LayoutMap = {
-  leftSidebar:     { collapsed: false, size: 280, minSize: 200, maxSize: 480 },
-  rightInspector:  { collapsed: false, size: 320, minSize: 240, maxSize: 520 },
+  leftSidebar:     { collapsed: false, size: 340, minSize: 300, maxSize: 640 },
+  rightInspector:  { collapsed: false, size: 340, minSize: 300, maxSize: 640 },
   centerWorkspace: { collapsed: false, size: 0,   minSize: 0,   maxSize: 0   },
   bottomTimeline:  { collapsed: false, size: 260, minSize: 120, maxSize: 600 },
 };

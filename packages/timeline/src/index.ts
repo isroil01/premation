@@ -55,6 +55,7 @@ export {
   type Migration,
   serializeTimeline,
   deserializeTimeline,
+  applySerializedTimeline,
   registerMigration,
   migrate,
 } from './serialization/Serializer';

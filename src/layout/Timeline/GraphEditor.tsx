@@ -3,20 +3,25 @@
  *
  * Features:
  *  - Value mode: shows animated property curves as SVG Bézier paths.
- *  - Speed mode: shows the derivative (rate-of-change) of the curve.
- *  - Interactive keyframe diamonds: drag horizontally to retime, vertically to change value.
+ *  - Speed mode: shows the derivative (rate-of-change) of the curve — read-only
+ *    on the vertical axis, since a y position there is a speed, not a value.
+ *  - Interactive keyframe diamonds: drag horizontally to retime; vertically to
+ *    change value (value mode only).
  *  - Bézier handle tangents: when a keyframe is selected, two circular handles appear;
  *    dragging them updates the easing via `defaultAnimation.setBezier()`.
  *  - Playhead scrubbing by clicking the graph background.
  *  - Property legend with color dots.
  *
- * Lives below the timeline; shares the same horizontal time axis (pps / scrollLeft).
+ * Lives below the timeline; shares the same horizontal time axis (pps /
+ * scrollLeft). That axis is COMP time, while the animation engine stores
+ * keyframes in LAYER time — every conversion happens in `sampledPaths`.
  */
 
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { defaultAnimation } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -36,7 +41,26 @@ interface KfPoint {
   nodeId: string;
   prop: string;
   t: number;
+  /**
+   * The keyframe's REAL value — what gets written back.
+   *
+   * Distinct from `plotted` on purpose. These used to be the same field, set to
+   * whatever the active graph displayed; in speed mode that is the DERIVATIVE,
+   * so dragging a keyframe wrote its speed into its value. A position key at
+   * x=100 travelling 250px/s silently became x=250, and because it looked like
+   * an ordinary edit, undo was the only way back.
+   */
   value: number;
+  /** The value this graph plots: the value itself, or the speed in speed mode. */
+  plotted: number;
+  /**
+   * `t` in COMP time — what the x axis and the playhead are measured in.
+   *
+   * `t` itself is LAYER time (the engine's base). They differ by the layer's
+   * clip start, so plotting `t` directly drew every trimmed layer's curve
+   * shifted away from its own keyframes by exactly that offset.
+   */
+  tAbs: number;
   y: number;
   /** Normalised min/max for this track — needed for drag math. */
   minV: number;
@@ -45,6 +69,7 @@ interface KfPoint {
   easing?: string;
   /** Bezier handles [x1,y1,x2,y2] in [0,1] space. */
   bezier?: [number, number, number, number];
+  continuous?: boolean;
 }
 
 interface SelectedKf {
@@ -58,6 +83,33 @@ const COLORS = ['#2988ff', '#ff6b6b', '#4cdf8e', '#ffd770', '#bf8cff', '#ff8cde'
 const GRAPH_HEIGHT_DEFAULT = 200;
 const HANDLE_RADIUS = 4.5;
 const KF_SIZE = 8;
+/** cubic-bezier equivalent of linear — handles at ⅓ along the segment. */
+const LINEAR_BEZIER: [number, number, number, number] = [1 / 3, 1 / 3, 2 / 3, 2 / 3];
+
+function alignKeyframeTangents(nodeId: string, prop: string, t: number): void {
+  const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
+  if (!kfs) return;
+  const idx = kfs.findIndex((k) => Math.abs(k.t - t) < 0.001);
+  if (idx <= 0 || idx >= kfs.length - 1) return;
+  const prevKf = kfs[idx - 1]!;
+  const kf = kfs[idx]!;
+  const nextKf = kfs[idx + 1]!;
+  
+  const bz_A = [...(prevKf.bezier ?? LINEAR_BEZIER)] as [number, number, number, number];
+  const bz_B = [...(kf.bezier ?? LINEAR_BEZIER)] as [number, number, number, number];
+  
+  const dt_A = kf.t - prevKf.t;
+  const dv_A = kf.value - prevKf.value;
+  const dt_B = nextKf.t - kf.t;
+  const dv_B = nextKf.value - kf.value;
+  
+  if (bz_B[0] > 0 && dv_A !== 0) {
+    const S = (bz_B[1] * dv_B) / (bz_B[0] * dt_B);
+    const new_y2 = 1 - (S * (1 - bz_A[2]) * dt_A) / dv_A;
+    bz_A[3] = Math.max(-1, Math.min(2, new_y2));
+    defaultAnimation.setBezier(nodeId, prop, prevKf.t, bz_A, true);
+  }
+}
 
 function valueToY(val: number, min: number, max: number, h: number): number {
   if (max === min) return h / 2;
@@ -113,9 +165,17 @@ export function GraphEditor({
       maxV: number;
     }[] = [];
 
+    const ctrl = getTimelineController();
+
     for (const { nodeId, prop, color } of allTracks) {
       const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
       if (!kfs || kfs.length === 0) continue;
+
+      // The engine stores keyframes in LAYER time; this axis (and the playhead)
+      // are COMP time. Convert at the boundary, per track — each layer has its
+      // own clip start.
+      const toAbs = (layerT: number): number => ctrl.toAbsoluteTime(nodeId, layerT);
+      const toLayer = (absT: number): number => ctrl.toLayerTime(nodeId, absT);
 
       let minV = Infinity, maxV = -Infinity;
       const getVal = (t: number) => {
@@ -132,8 +192,9 @@ export function GraphEditor({
         for (const kf of kfs) { minV = Math.min(minV, kf.value); maxV = Math.max(maxV, kf.value); }
       }
       
+      // Sweep the axis in comp time, sample the engine in layer time.
       for (let i = 0; i <= SAMPLES; i++) {
-        const v = getVal((i / SAMPLES) * duration);
+        const v = getVal(toLayer((i / SAMPLES) * duration));
         if (v !== undefined) { minV = Math.min(minV, v); maxV = Math.max(maxV, v); }
       }
       if (maxV === minV) { minV -= 1; maxV += 1; }
@@ -142,20 +203,26 @@ export function GraphEditor({
 
       const pts: string[] = [];
       for (let i = 0; i <= SAMPLES; i++) {
-        const tSec = (i / SAMPLES) * duration;
-        const v = getVal(tSec) ?? minV;
-        pts.push(`${tSec * pps},${valueToY(v, minV, maxV, INNER_H)}`);
+        const tAbs = (i / SAMPLES) * duration;
+        const v = getVal(toLayer(tAbs)) ?? minV;
+        pts.push(`${tAbs * pps},${valueToY(v, minV, maxV, INNER_H)}`);
       }
 
       const keyframes: KfPoint[] = kfs.map((kf) => {
-        const val = getVal(kf.t) ?? kf.value;
+        // `plotted` is what this graph draws (speed in speed mode); `value` is
+        // always the keyframe's own value, so writes can never confuse the two.
+        const plotted = getVal(kf.t) ?? kf.value;
         return {
           nodeId, prop,
-          t: kf.t, value: val,
-          y: valueToY(val, minV, maxV, INNER_H),
+          t: kf.t,
+          tAbs: toAbs(kf.t),
+          value: kf.value,
+          plotted,
+          y: valueToY(plotted, minV, maxV, INNER_H),
           minV, maxV,
           easing: kf.easing,
           bezier: kf.bezier,
+          continuous: kf.continuous,
         };
       });
 
@@ -177,6 +244,11 @@ export function GraphEditor({
     startY: number;
     minV: number;
     maxV: number;
+    /** Graph mode FROZEN at drag-start. The move handler reads this, not the
+     *  live `mode` state, so a mode switch mid-drag (only reachable via
+     *  multi-touch, since pointer capture blocks a mouse) can never pair
+     *  value-mode math with the speed-mode bounds captured here. */
+    mode: 'value' | 'speed';
     tx?: ReturnType<typeof beginAnimEdit>;
   } | null>(null);
 
@@ -210,33 +282,43 @@ export function GraphEditor({
         startY: y,
         minV: kf.minV,
         maxV: kf.maxV,
+        mode,
         tx: beginAnimEdit(),
       };
     },
-    [svgCoords],
+    [svgCoords, mode],
   );
 
-  // Start dragging a Bézier handle.
+  // Start dragging a Bézier handle. Works on LINEAR keyframes too: grabbing a
+  // handle converts the segment to bezier seeded with the linear-equivalent
+  // curve, so the graph doesn't jump — only your drag bends it. (Previously
+  // handles existed only after F9/Ease, a hidden extra step.)
   const onHandlePointerDown = useCallback(
     (e: React.PointerEvent<SVGElement>, kf: KfPoint, which: 'handle-in' | 'handle-out') => {
       e.stopPropagation();
       e.currentTarget.setPointerCapture(e.pointerId);
       const { x, y } = svgCoords(e);
+      const tx = beginAnimEdit();
+      if (kf.easing !== 'bezier' || !kf.bezier) {
+        defaultAnimation.setEasing(kf.nodeId, kf.prop, kf.t, 'bezier');
+        defaultAnimation.setBezier(kf.nodeId, kf.prop, kf.t, LINEAR_BEZIER);
+      }
       dragRef.current = {
         kind: which,
         nodeId: kf.nodeId,
         prop: kf.prop,
         origT: kf.t,
         origValue: kf.value,
-        origBezier: kf.bezier ?? [0.25, 0.1, 0.25, 1],
+        origBezier: kf.bezier ?? LINEAR_BEZIER,
         startX: x,
         startY: y,
         minV: kf.minV,
         maxV: kf.maxV,
-        tx: beginAnimEdit(),
+        mode,
+        tx,
       };
     },
-    [svgCoords],
+    [svgCoords, mode],
   );
 
   const onSvgPointerMove = useCallback(
@@ -248,12 +330,22 @@ export function GraphEditor({
       const dy = y - d.startY;
 
       if (d.kind === 'kf') {
-        const newT = clamp(d.origT + dx / pps, 0, duration);
-        const newV = mode === 'value' ? clamp(
-          yToValue(d.startY + dy, d.minV, d.maxV, INNER_H),
-          d.minV,
-          d.maxV,
-        ) : d.origValue;
+        const ctrl = getTimelineController();
+        const newT = clamp(
+          d.origT + dx / pps,
+          ctrl.toLayerTime(d.nodeId, 0),
+          ctrl.toLayerTime(d.nodeId, duration),
+        );
+        // In speed mode the vertical axis is the derivative, not the value —
+        // there is no meaningful value to read off a y position, so the drag
+        // retimes only and the value is carried through untouched. (AE maps
+        // vertical drag here to influence; until that's implemented, moving the
+        // key in time is the honest subset.)
+        const newV = d.mode === 'value'
+          ? clamp(yToValue(d.startY + dy, d.minV, d.maxV, INNER_H), d.minV, d.maxV)
+          : d.origValue;
+        // `newT` is layer time. A time DELTA is identical in both bases, so the
+        // dx math needs no conversion — only the clamp bounds do.
         defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.origT, { t: newT, value: newV });
         dragRef.current!.origT = newT;
         dragRef.current!.startX = x;
@@ -269,18 +361,68 @@ export function GraphEditor({
         const dv = nextKf.value - d.origValue;
         
         const tHover = clamp(x / pps, d.origT, nextKf.t);
-        const vHover = mode === 'value' ? clamp(yToValue(y, d.minV, d.maxV, INNER_H), d.minV, d.maxV) : d.origValue;
+        const vHover = d.mode === 'value' ? clamp(yToValue(y, d.minV, d.maxV, INNER_H), d.minV, d.maxV) : d.origValue;
         
         const nx = dt === 0 ? 0 : Math.max(0, Math.min(1, (tHover - d.origT) / dt));
         const ny = dv === 0 ? 0 : Math.max(-1, Math.min(2, (vHover - d.origValue) / dv));
         
+        const trackKfs = sampledPaths.find(p => p.nodeId === d.nodeId && p.prop === d.prop)?.keyframes;
+        const anchorT = d.kind === 'handle-in' ? d.origT : nextKf.t;
+        const anchorKf = trackKfs?.find(k => Math.abs(k.t - anchorT) < 0.001);
+        
+        const isContinuous = anchorKf && anchorKf.continuous !== false && !e.altKey;
+        
+        if (anchorKf && e.altKey && anchorKf.continuous !== false) {
+          defaultAnimation.updateKeyframe(d.nodeId, d.prop, anchorKf.t, { continuous: false });
+        }
+
         if (d.kind === 'handle-in') {
           bz[0] = nx;
           bz[1] = ny;
+          
+          if (isContinuous) {
+            const idx = trackKfs ? trackKfs.findIndex(k => Math.abs(k.t - anchorT) < 0.001) : -1;
+            if (idx > 0) {
+              const prevKf = trackKfs![idx - 1]!;
+              const prevBz = [...(prevKf.bezier ?? LINEAR_BEZIER)] as [number, number, number, number];
+              const dt_A = anchorT - prevKf.t;
+              const dv_A = anchorKf.value - prevKf.value;
+              const dt_B = nextKf.t - anchorT;
+              const dv_B = nextKf.value - anchorKf.value;
+              
+              if (nx > 0 && dv_A !== 0) {
+                const S = (ny * dv_B) / (nx * dt_B);
+                const new_y2 = 1 - (S * (1 - prevBz[2]) * dt_A) / dv_A;
+                prevBz[3] = Math.max(-1, Math.min(2, new_y2));
+                defaultAnimation.setBezier(d.nodeId, d.prop, prevKf.t, prevBz, true);
+              }
+            }
+          }
         } else {
           bz[2] = nx;
           bz[3] = ny;
+          
+          if (isContinuous) {
+            const idx = trackKfs ? trackKfs.findIndex(k => Math.abs(k.t - anchorT) < 0.001) : -1;
+            if (idx >= 0 && idx < trackKfs!.length - 1) {
+              const nextOfAnchor = trackKfs![idx + 1]!;
+              const bz_B = [...(anchorKf.bezier ?? LINEAR_BEZIER)] as [number, number, number, number];
+              const dt_A = anchorT - d.origT;
+              const dv_A = anchorKf.value - d.origValue;
+              const dt_B = nextOfAnchor.t - anchorT;
+              const dv_B = nextOfAnchor.value - anchorKf.value;
+              
+              const denom = (1 - nx) * dt_A;
+              if (denom !== 0 && dv_B !== 0) {
+                const S = ((1 - ny) * dv_A) / denom;
+                const new_y1 = (S * bz_B[0] * dt_B) / dv_B;
+                bz_B[1] = Math.max(-1, Math.min(2, new_y1));
+                defaultAnimation.setBezier(d.nodeId, d.prop, anchorKf.t, bz_B, true);
+              }
+            }
+          }
         }
+        
         defaultAnimation.setBezier(d.nodeId, d.prop, d.origT, bz);
         dragRef.current!.origBezier = bz;
       }
@@ -323,10 +465,10 @@ export function GraphEditor({
       {/* ── Toolbar ────────────────────────────────────────────── */}
       <div className={styles.toolbar}>
         <button type="button" className={mode === 'value' ? styles.tabActive : styles.tab} onClick={() => setMode('value')} title="Value graph">
-          <Icon name="track" size={13} /> Value
+          <Icon name="graph-value" size={13} /> Value
         </button>
         <button type="button" className={mode === 'speed' ? styles.tabActive : styles.tab} onClick={() => setMode('speed')} title="Speed graph">
-          <Icon name="move" size={13} /> Speed
+          <Icon name="graph-speed" size={13} /> Speed
         </button>
         <span className={styles.spacer} />
         {selectedKfData && (
@@ -347,6 +489,8 @@ export function GraphEditor({
           </div>
           <div style={{ width: 60 }}>
             <span>v=</span>
+            {/* Always the keyframe's own value, in both modes — this field
+                used to display (and write back) the speed in speed mode. */}
             <ValueField
               value={selectedKfData.value}
               precision={2}
@@ -354,6 +498,30 @@ export function GraphEditor({
                 defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, { value: newV });
               }}
             />
+          </div>
+          {selectedKfData.easing === 'bezier' && (
+            <button
+              type="button"
+              className={selectedKfData.continuous !== false ? styles.tabActive : styles.tab}
+              style={{ padding: '2px 6px', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+              title={selectedKfData.continuous !== false ? "Click to break tangent handles" : "Click to link tangent handles"}
+              onClick={() => {
+                const nextContinuous = selectedKfData.continuous === false;
+                defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, {
+                  continuous: nextContinuous
+                });
+                if (nextContinuous) {
+                  alignKeyframeTangents(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t);
+                }
+              }}
+            >
+              {selectedKfData.continuous !== false ? "🔗 Linked" : "🔓 Broken"}
+            </button>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {mode === 'speed' ? (
+              <span className={styles.easingLabel}>{selectedKfData.plotted.toFixed(1)}/s</span>
+            ) : null}
             {selectedKfData.easing ? <span className={styles.easingLabel}>· {selectedKfData.easing}</span> : null}
           </div>
           </div>
@@ -402,38 +570,66 @@ export function GraphEditor({
               {/* Curve */}
               <path d={d} stroke={color} strokeWidth={1.5} fill="none" opacity={0.9} />
 
-              {/* Bézier handles for selected keyframe */}
+              {/* Bézier handles for the selected keyframe. Linear keyframes
+                  show handles at the linear-equivalent positions — grabbing
+                  one converts the segment to bezier (see onHandlePointerDown),
+                  so easing never requires a separate F9 step first. */}
+              {/* Bézier handles centered around the selected keyframe (AE-style). */}
               {keyframes.map((kf, i) => {
                 const isSelected = selectedKf?.nodeId === kf.nodeId && selectedKf.prop === kf.prop && Math.abs(kf.t - selectedKf.t) < 0.001;
-                if (!isSelected || kf.easing !== 'bezier' || !kf.bezier) return null;
-                const nextKf = keyframes[i + 1];
-                if (!nextKf) return null;
+                if (!isSelected) return null;
 
-                const kx = kf.t * pps;
+                const kx = kf.tAbs * pps;
                 const ky = kf.y;
-                const dt = nextKf.t - kf.t;
-                const dv = nextKf.value - kf.value;
-                
-                const inX = kx + dt * pps * kf.bezier[0];
-                const inY = mode === 'value' ? valueToY(kf.value + dv * kf.bezier[1], kf.minV, kf.maxV, INNER_H) : ky;
-                const outX = kx + dt * pps * kf.bezier[2];
-                const outY = mode === 'value' ? valueToY(kf.value + dv * kf.bezier[3], kf.minV, kf.maxV, INNER_H) : ky;
-                
+
+                const prevKf = i > 0 ? keyframes[i - 1] : null;
+                const nextKf = i < keyframes.length - 1 ? keyframes[i + 1] : null;
+
+                const showIn = prevKf && kf.easing !== 'hold' && prevKf.easing !== 'hold';
+                const showOut = nextKf && kf.easing !== 'hold';
+
+                let inX = 0, inY = 0;
+                let outX = 0, outY = 0;
+
+                if (showIn && prevKf) {
+                  const prevBz = prevKf.easing === 'bezier' && prevKf.bezier ? prevKf.bezier : LINEAR_BEZIER;
+                  const dtPrev = kf.t - prevKf.t;
+                  const dvPrev = kf.value - prevKf.value;
+                  inX = kx - dtPrev * pps * (1 - prevBz[2]);
+                  inY = mode === 'value' ? valueToY(kf.value - dvPrev * (1 - prevBz[3]), kf.minV, kf.maxV, INNER_H) : ky;
+                }
+
+                if (showOut && nextKf) {
+                  const bz = kf.easing === 'bezier' && kf.bezier ? kf.bezier : LINEAR_BEZIER;
+                  const dt = nextKf.t - kf.t;
+                  const dv = nextKf.value - kf.value;
+                  outX = kx + dt * pps * bz[0];
+                  outY = mode === 'value' ? valueToY(kf.value + dv * bz[1], kf.minV, kf.maxV, INNER_H) : ky;
+                }
+
                 return (
                   <g key={`handle-${kf.t}`}>
-                    <line className={styles.handleLine} x1={kx} y1={ky} x2={inX} y2={inY} strokeWidth={1} strokeDasharray="2 2" />
-                    <line className={styles.handleLine} x1={nextKf.t * pps} y1={nextKf.y} x2={outX} y2={outY} strokeWidth={1} strokeDasharray="2 2" />
-                    <circle className={styles.handleDot} cx={inX} cy={inY} r={HANDLE_RADIUS} strokeWidth={1.5}
-                      onPointerDown={(e) => onHandlePointerDown(e, kf, 'handle-in')} />
-                    <circle className={styles.handleDot} cx={outX} cy={outY} r={HANDLE_RADIUS} strokeWidth={1.5}
-                      onPointerDown={(e) => onHandlePointerDown(e, kf, 'handle-out')} />
+                    {showIn && prevKf && (
+                      <>
+                        <line className={styles.handleLine} x1={kx} y1={ky} x2={inX} y2={inY} strokeWidth={1} strokeDasharray="2 2" />
+                        <circle className={styles.handleDot} cx={inX} cy={inY} r={HANDLE_RADIUS} strokeWidth={1.5}
+                          onPointerDown={(e) => onHandlePointerDown(e, prevKf, 'handle-out')} />
+                      </>
+                    )}
+                    {showOut && nextKf && (
+                      <>
+                        <line className={styles.handleLine} x1={kx} y1={ky} x2={outX} y2={outY} strokeWidth={1} strokeDasharray="2 2" />
+                        <circle className={styles.handleDot} cx={outX} cy={outY} r={HANDLE_RADIUS} strokeWidth={1.5}
+                          onPointerDown={(e) => onHandlePointerDown(e, kf, 'handle-in')} />
+                      </>
+                    )}
                   </g>
                 );
               })}
 
               {/* Keyframe diamonds */}
               {keyframes.map((kf) => {
-                const kx = kf.t * pps;
+                const kx = kf.tAbs * pps;
                 const ky = kf.y;
                 const isSelected = selectedKf?.nodeId === kf.nodeId && selectedKf.prop === kf.prop && Math.abs(kf.t - selectedKf.t) < 0.001;
                 return (
