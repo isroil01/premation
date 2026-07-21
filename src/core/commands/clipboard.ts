@@ -18,7 +18,7 @@ import {
 } from '@motion/animation';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
@@ -158,11 +158,14 @@ export function pasteSelection(): void {
 
     runAnimEdit('Paste keyframes', () => {
       for (const layerId of selectedLayerIds) {
+        // The playhead converts to the TARGET's canonical keyframe time once;
+        // `relativeTime` is already keyframe-axis spacing, so it adds directly.
+        const base = compToKeyframeTime(layerId, curTime);
         for (const kf of keyframes) {
           // ONE time base for all three calls. setBezier/setSpatialTangent used
           // to be handed comp time while setKeyframe got layer time, so their
           // lookups missed and pasted keyframes silently came back linear.
-          const layerT = controller.toLayerTime(layerId, curTime + kf.relativeTime);
+          const layerT = base + kf.relativeTime;
           defaultAnimation.setKeyframe(layerId, kf.prop, layerT, kf.value, kf.easing);
           if (kf.bezier) {
             defaultAnimation.setBezier(layerId, kf.prop, layerT, kf.bezier);

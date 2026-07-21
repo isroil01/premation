@@ -21,7 +21,13 @@ export type CanvasDragPayload =
   | { kind: 'component'; componentId: string }
   | { kind: 'effect'; effectType: EffectType }
   | { kind: 'motionPreset'; name: string }
-  | { kind: 'animPreset'; presetId: string };
+  | { kind: 'animPreset'; presetId: string }
+  | { kind: 'cursor'; cursorId: string; name: string }
+  | { kind: 'mograph'; mographId: string; name: string }
+  | { kind: 'transition'; transId: string; name: string }
+  | { kind: 'sfx'; sfxId: string; name: string }
+  | { kind: 'lottie'; lottieId: string; name: string };
+
 
 /** Attach a typed payload to a drag event (call from a panel item's onDragStart). */
 export function setCanvasDrag(e: { dataTransfer: DataTransfer | null }, payload: CanvasDragPayload): void {

@@ -16,7 +16,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import styles from './TransformSection.module.css';
 
 function KfRow({
@@ -39,7 +39,8 @@ function KfRow({
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const animated = defaultAnimation.isAnimated(nodeId, prop);
-  const layerT = getTimelineController().toLayerTime(nodeId, time);
+  // The canonical keyframe axis — what the renderer samples for this node.
+  const layerT = compToKeyframeTime(nodeId, time);
   const display = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
 
   const handleChange = (v: number) => {
@@ -47,7 +48,7 @@ function KfRow({
       runAnimEdit(
         `Set ${prop}`,
         () => defaultAnimation.setKeyframe(nodeId, prop, layerT, v),
-        `set:${nodeId}:${prop}:${time}`,
+        `set:${nodeId}:${prop}:${layerT}`,
       );
     } else {
       onStatic(v);

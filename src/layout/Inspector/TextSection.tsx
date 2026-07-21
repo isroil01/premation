@@ -213,7 +213,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
         runAnimEdit(
           `Set ${propName}`,
           () => defaultAnimation.setKeyframe(nodeId, propName, layerT, v),
-          `text:${nodeId}:${propName}:${time}`
+          `text:${nodeId}:${propName}:${layerT}`
         );
       } else {
         setVal(v);

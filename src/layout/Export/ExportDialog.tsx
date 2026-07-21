@@ -3,7 +3,7 @@
  * and shows progress; never blocks the editor.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { cn } from '@utils/cn';
@@ -13,7 +13,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useRenderQueueStore, outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
-import { runExport, EXPORT_PRESETS, type ExportFormat } from '@core/export/exportManager';
+import { runExport, isAbortError, EXPORT_PRESETS, type ExportFormat } from '@core/export/exportManager';
 import styles from './ExportDialog.module.css';
 
 const RES = [
@@ -36,8 +36,14 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   const height = Math.round(comp.height * scale);
   const busy = progress !== null;
 
+  // The in-flight export's abort controller — Cancel fires it, and closing the
+  // dialog mid-export aborts too so a render never keeps burning invisibly.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const doExport = async (): Promise<void> => {
+    const controller = new AbortController();
+    abortRef.current = controller;
     setProgress(0);
     try {
       await runExport({
@@ -46,13 +52,23 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         // in the project renders into the same frame.
         comp: { ...comp, rootId: comp.id },
         onProgress: (f) => setProgress(f),
+        signal: controller.signal,
       });
       notify({ level: 'success', message: 'Export complete — downloading', durationMs: 2600 });
-    } catch {
-      notify({ level: 'error', message: 'Export failed', durationMs: 3000 });
+    } catch (err) {
+      if (isAbortError(err)) {
+        notify({ level: 'info', message: 'Export cancelled', durationMs: 2600 });
+      } else {
+        notify({ level: 'error', message: 'Export failed', durationMs: 3000 });
+      }
     } finally {
+      abortRef.current = null;
       setProgress(null);
     }
+  };
+
+  const cancelExport = (): void => {
+    abortRef.current?.abort();
   };
 
   const queueJob = (): void => {
@@ -117,9 +133,19 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
       ) : null}
 
       {busy ? (
-        <div className={styles.progressWrap}>
-          <div className={styles.progressBar} style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} />
-          <span className={styles.progressText}>Rendering… {Math.round((progress ?? 0) * 100)}%</span>
+        <div className={styles.progressRow}>
+          <div className={styles.progressWrap}>
+            <div className={styles.progressBar} style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} />
+            <span className={styles.progressText}>Rendering… {Math.round((progress ?? 0) * 100)}%</span>
+          </div>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={cancelExport}
+            title="Stop the export — nothing is downloaded"
+          >
+            Cancel
+          </Button>
         </div>
       ) : null}
 

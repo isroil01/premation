@@ -188,6 +188,7 @@ export interface PlanItem {
 
 /** Ordered pipeline stage labels — must match PipelineOrchestrator onActivity calls. */
 export const PIPELINE_STAGE_LABELS = [
+  'Optimizing prompt',
   'Analyzing intent',
   'Directing creative visual',
   'Generating motion spec',
@@ -203,18 +204,20 @@ export const PIPELINE_STAGE_LABELS = [
 /** Map an onActivity label to its canonical stage index (-1 if not a pipeline stage). */
 function matchStageIndex(label: string): number {
   const l = label.toLowerCase();
-  if (l.includes('analyzing intent')) return 0;
-  if (l.includes('directing creative')) return 1;
-  if (l.includes('generating motion')) return 2;
-  if (l.includes('storyboard')) return 3;
-  if (l.includes('planning') && l.includes('scene')) return 4;
-  if (l.includes('cameras') || l.includes('animations')) return 5;
-  if (l.includes('timeline')) return 6;
-  if (l.includes('tool plan') || l.includes('authoring')) return 7;
-  if (l.includes('reviewing') || l.includes('critique')) return 8;
-  if (l.includes('executing')) return 9;
+  if (l.includes('optimizing prompt')) return 0;
+  if (l.includes('analyzing intent')) return 1;
+  if (l.includes('directing creative')) return 2;
+  if (l.includes('generating motion')) return 3;
+  if (l.includes('storyboard')) return 4;
+  if (l.includes('planning') && l.includes('scene')) return 5;
+  if (l.includes('cameras') || l.includes('animations')) return 6;
+  if (l.includes('timeline')) return 7;
+  if (l.includes('tool plan') || l.includes('authoring')) return 8;
+  if (l.includes('reviewing') || l.includes('critique')) return 9;
+  if (l.includes('executing')) return 10;
   return -1;
 }
+
 
 export interface UseAiChat {
   messages: ChatMessage[];

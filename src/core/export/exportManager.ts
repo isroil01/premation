@@ -41,6 +41,14 @@ export interface ExportOptions {
    *  `transparent` yields real alpha in the exported PNG/WebM. */
   comp?: SnapshotComp;
   onProgress?: (fraction: number) => void;
+  /** Cooperative cancellation for the whole export (frame loop, encoders, the
+   *  backend MP4 job). Aborting rejects with a DOMException 'AbortError'. */
+  signal?: AbortSignal;
+}
+
+/** True when an error is the cooperative-cancel rejection. */
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError';
 }
 
 /** Viewport motion-blur settings, threaded into export so it matches preview. */
@@ -202,12 +210,22 @@ export async function renderSequenceZip(
 
 async function exportPNG(opts: ExportOptions): Promise<void> {
   const { canvas, backend } = makeCanvas(opts.width, opts.height);
-  if (backend.readyPromise) await backend.readyPromise;
-  backend.renderFrame(exportSnapshot(opts, opts.time));
-  opts.onProgress?.(1);
-  const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
-  backend.dispose();
-  if (blob) download(blob, `motion-frame-${opts.time.toFixed(2)}s.png`);
+  try {
+    if (backend.readyPromise) await backend.readyPromise;
+    throwIfAborted(opts.signal);
+    backend.renderFrame(exportSnapshot(opts, opts.time));
+    opts.onProgress?.(1);
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
+    throwIfAborted(opts.signal);
+    if (blob) download(blob, `motion-frame-${opts.time.toFixed(2)}s.png`);
+  } finally {
+    backend.dispose();
+  }
+}
+
+/** Throw the standard cancellation rejection when the signal has fired. */
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
 }
 
 /**
@@ -276,27 +294,31 @@ export async function renderWebMBlob(
   // Start audio in lock-step with the recorder so track 0 of both aligns.
   rec.audio?.source.start();
 
-  await renderOffline(
-    offlineParams(opts),
-    async (frameCanvas, frame, count) => {
-      ctx.clearRect(0, 0, opts.width, opts.height);
-      ctx.drawImage(frameCanvas, 0, 0);
-      rec.track.requestFrame();
-      onProgress?.((frame + 1) / count);
-      await sleep(Math.max(16, 1000 / opts.fps));
-    },
-    signal,
-  );
-
-  rec.recorder.stop();
-  await stopped;
-  rec.audio?.source.stop();
-  void rec.audio?.ctx.close();
+  try {
+    await renderOffline(
+      offlineParams(opts),
+      async (frameCanvas, frame, count) => {
+        ctx.clearRect(0, 0, opts.width, opts.height);
+        ctx.drawImage(frameCanvas, 0, 0);
+        rec.track.requestFrame();
+        onProgress?.((frame + 1) / count);
+        await sleep(Math.max(16, 1000 / opts.fps));
+      },
+      signal,
+    );
+  } finally {
+    // Runs on abort too — a cancelled export must not leave the recorder,
+    // audio graph or capture stream running (partial-state cleanup).
+    rec.recorder.stop();
+    await stopped;
+    try { rec.audio?.source.stop(); } catch { /* never started / already stopped */ }
+    void rec.audio?.ctx.close();
+  }
   return new Blob(rec.chunks, { type: 'video/webm' });
 }
 
 async function exportWebM(opts: ExportOptions): Promise<void> {
-  const blob = await renderWebMBlob(opts, opts.onProgress, undefined);
+  const blob = await renderWebMBlob(opts, opts.onProgress, opts.signal);
   opts.onProgress?.(1);
   download(blob, 'motion-export.webm');
 }
@@ -337,13 +359,13 @@ export async function renderGIFBlob(
 }
 
 async function exportGIF(opts: ExportOptions): Promise<void> {
-  const blob = await renderGIFBlob(opts, opts.onProgress, undefined);
+  const blob = await renderGIFBlob(opts, opts.onProgress, opts.signal);
   opts.onProgress?.(1);
   download(blob, 'motion-export.gif');
 }
 
 async function exportSequence(opts: ExportOptions, ext: 'png' | 'jpg'): Promise<void> {
-  const blob = await renderSequenceZip(opts, ext, opts.onProgress, undefined);
+  const blob = await renderSequenceZip(opts, ext, opts.onProgress, opts.signal);
   opts.onProgress?.(1);
   download(blob, `motion-${ext}-sequence.zip`);
 }
@@ -639,27 +661,50 @@ export async function renderMP4Blob(
   rec.recorder.start();
   rec.audio?.source.start();
 
-  await renderOffline(
-    offlineParams(opts),
-    async (frameCanvas, frame, count) => {
-      ctx.clearRect(0, 0, opts.width, opts.height);
-      ctx.drawImage(frameCanvas, 0, 0);
-      rec.track.requestFrame();
-      onProgress?.(frame / count);
-      await sleep(Math.max(16, 1000 / opts.fps));
-    },
-    signal,
-  );
-
-  rec.recorder.stop();
-  await stopped;
-  rec.audio?.source.stop();
-  void rec.audio?.ctx.close();
+  try {
+    await renderOffline(
+      offlineParams(opts),
+      async (frameCanvas, frame, count) => {
+        ctx.clearRect(0, 0, opts.width, opts.height);
+        ctx.drawImage(frameCanvas, 0, 0);
+        rec.track.requestFrame();
+        onProgress?.(frame / count);
+        await sleep(Math.max(16, 1000 / opts.fps));
+      },
+      signal,
+    );
+  } finally {
+    // Runs on abort too — never leave the recorder / audio graph running.
+    rec.recorder.stop();
+    await stopped;
+    try { rec.audio?.source.stop(); } catch { /* never started / already stopped */ }
+    void rec.audio?.ctx.close();
+  }
+  // The blob's type is whatever the recorder ACTUALLY produced — the caller
+  // must read it to name the file honestly (mp4 vs the webm fallback).
   return new Blob(rec.chunks, { type: rec.recorder.mimeType });
 }
 
+/** Download a locally-recorded video blob under its HONEST extension: the
+ *  MediaRecorder falls back to WebM where MP4 recording isn't supported, and
+ *  shipping that file as `.mp4` produced a video many players refuse to open. */
+function downloadRecordedVideo(blob: Blob): void {
+  const isMp4 = /mp4/i.test(blob.type);
+  if (!isMp4) {
+    useUIStore.getState().notify({
+      level: 'warning',
+      message: 'This browser cannot record MP4 locally — exported as WebM instead (motion-export.webm).',
+      durationMs: 6000,
+    });
+  }
+  download(blob, `motion-export-${Date.now()}.${isMp4 ? 'mp4' : 'webm'}`);
+}
+
 async function exportMP4(opts: ExportOptions): Promise<void> {
-  const signal = new AbortController().signal;
+  const signal = opts.signal;
+  // The backend job id, once created — an abort mid-flight also cancels the
+  // server-side render instead of leaving it burning in the queue.
+  let jobId: string | null = null;
   try {
     const renderJob = await api.createRender({
       format: 'mp4',
@@ -669,30 +714,39 @@ async function exportMP4(opts: ExportOptions): Promise<void> {
       duration: opts.duration,
       transparent: false,
     });
+    jobId = renderJob.id;
     opts.onProgress?.(0.1);
     // Mix the comp's audio over the export range; bundled into the frames zip
     // as audio.wav for the backend to mux. Empty when the comp has no audio.
     const audioEntries = await exportAudioEntries(opts);
     const zipBlob = await renderSequenceZip(opts, 'jpg', (f) => opts.onProgress?.(0.1 + f * 0.4), signal, audioEntries);
     opts.onProgress?.(0.5);
+    throwIfAborted(signal);
     await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
-    
+
     while (true) {
+      throwIfAborted(signal);
       const status = await api.getRender(renderJob.id);
       if (status.status === 'completed' && status.resultUrl) {
         opts.onProgress?.(1.0);
-        const res = await fetch(status.resultUrl);
+        const res = await fetch(status.resultUrl, signal ? { signal } : undefined);
         const blob = await res.blob();
         download(blob, `motion-export-${Date.now()}.mp4`);
         return;
       }
-      if (status.status === 'failed') {
-        throw new Error(status.error || 'Backend render failed');
+      if (status.status === 'failed' || status.status === 'canceled') {
+        throw new Error(status.error || `Backend render ${status.status}`);
       }
       opts.onProgress?.(0.5 + status.progress * 0.45);
       await new Promise((r) => setTimeout(r, 1000));
     }
   } catch (err) {
+    // User cancellation: also cancel the server-side job, then propagate —
+    // never treated as "backend offline" or reported as a failure.
+    if (isAbortError(err)) {
+      if (jobId) void api.cancelRender(jobId).catch(() => undefined);
+      throw err;
+    }
     // Report what actually failed. This used to blame the network for every
     // error, which masked a frame-naming bug that broke most MP4 exports.
     const reason = (err as Error)?.message ?? String(err);
@@ -706,9 +760,10 @@ async function exportMP4(opts: ExportOptions): Promise<void> {
       try {
         const blob = await renderMP4Blob(opts, opts.onProgress, signal);
         opts.onProgress?.(1.0);
-        download(blob, `motion-export-${Date.now()}.mp4`);
+        downloadRecordedVideo(blob);
         return;
       } catch (localErr) {
+        if (isAbortError(localErr)) throw localErr;
         useUIStore.getState().notify({
           level: 'error',
           message: `Local MP4 export failed: ${(localErr as Error)?.message || localErr}`,

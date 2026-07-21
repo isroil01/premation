@@ -72,6 +72,27 @@ function query(params: Record<string, string | number | undefined>): string {
 }
 
 /**
+ * Freshly signed `/files/...` URLs from this session's API responses, keyed by
+ * their bare path (no query).
+ *
+ * Locally stored backend files are served behind expiring HMAC signatures
+ * (`?exp=…&sig=…`). Project documents persist asset `src` strings, so a
+ * reloaded document holds yesterday's signature — dead on arrival. Every asset
+ * list/upload response registers its fresh URL here, and `assetUrl()` swaps a
+ * stale persisted URL for the fresh one by path. The library is loaded at
+ * sign-in (assetStore.loadFromCloud), so the map is warm before any document
+ * renders.
+ */
+const freshFileUrls = new Map<string, string>();
+
+/** Remember the freshly signed form of a served `/files` URL. */
+export function registerFileUrl(src: string | null | undefined): void {
+  if (!src) return;
+  const m = src.match(/^(?:https?:\/\/[^/]+)?(\/files\/[^?]+)(\?.*)?$/);
+  if (m) freshFileUrls.set(m[1]!, m[1]! + (m[2] ?? ''));
+}
+
+/**
  * Rewrite a backend-served asset URL to a same-origin relative path.
  *
  * The backend hands back absolute URLs like `http://localhost:4000/files/<key>`.
@@ -79,7 +100,8 @@ function query(params: Record<string, string | number | undefined>): string {
  * (`default-src 'self'`), so images/video/audio never load. Collapsing them to
  * `/files/<key>` routes the request through the same-origin dev proxy (see
  * vite.config.ts) so it satisfies `'self'`. Blob/data URLs pass through
- * untouched.
+ * untouched. `/files` URLs also trade any stale persisted signature for the
+ * freshest one this session has seen (see `registerFileUrl`).
  */
 export function assetUrl(src: string | null | undefined): string {
   if (!src) return src ?? '';
@@ -88,9 +110,13 @@ export function assetUrl(src: string | null | undefined): string {
   const m = src.match(/^https?:\/\/[^/]+(\/files\/.*)$/);
   const path = m ? m[1]! : src;
   if (path.startsWith('/files')) {
+    // A persisted URL carries the signature it was saved with; prefer the
+    // fresh one from this session's asset list.
+    const bare = path.split('?')[0]!;
+    const resolved = freshFileUrls.get(bare) ?? path;
     // Electron has no dev proxy → the asset must be an absolute backend URL.
     // The browser uses the same-origin proxied path (satisfies CSP 'self').
-    return IS_ELECTRON ? `${BACKEND_ORIGIN}${path}` : path;
+    return IS_ELECTRON ? `${BACKEND_ORIGIN}${resolved}` : resolved;
   }
   return path;
 }
@@ -396,16 +422,19 @@ export const api = {
   listAssets: (projectId?: string, params: PageQuery = {}) =>
     request<Paginated<ImportedAssetDto>>(`/assets${query({ projectId, ...params })}`).then((page) => ({
       ...page,
-      items: page.items.map((a) => ({ ...a, src: assetUrl(a.src) })),
+      items: page.items.map((a) => {
+        registerFileUrl(a.src);
+        return { ...a, src: assetUrl(a.src) };
+      }),
     })),
   uploadAsset: (file: File, projectId?: string) => {
     const form = new FormData();
     form.append('file', file);
     if (projectId) form.append('projectId', projectId);
-    return request<ImportedAssetDto>('/assets', { method: 'POST', body: form }).then((a) => ({
-      ...a,
-      src: assetUrl(a.src),
-    }));
+    return request<ImportedAssetDto>('/assets', { method: 'POST', body: form }).then((a) => {
+      registerFileUrl(a.src);
+      return { ...a, src: assetUrl(a.src) };
+    });
   },
   deleteAsset: (id: string) => request<{ deleted: boolean }>(`/assets/${id}`, { method: 'DELETE' }),
 

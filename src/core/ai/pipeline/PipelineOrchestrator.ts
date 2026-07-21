@@ -3,7 +3,9 @@ import { validate } from '@motion/ai-tools';
 import type { GatewayProviderId } from '@core/api/client';
 import type { PipelineContext } from './PipelineContext';
 import { streamTurn } from '../AgentLoop';
+import { runPromptOptimizerStage } from './stages/promptOptimizer';
 import { runIntentStage } from './stages/intent';
+
 import { intentSchema } from './schemas/intent';
 import { runCreativeStage } from './stages/creative';
 import { creativeSchema } from './schemas/creative';
@@ -209,9 +211,16 @@ export class PipelineOrchestrator {
 
     if (signal.aborted) throw new Error('Cancelled');
 
+    // 1.5. Stage 0: Prompt Optimizer
+    events?.onActivity?.('Optimizing prompt…');
+    context.optimizedPrompt = await runPromptOptimizerStage(context, (opts) => this.callModel(opts));
+    // Override originalPrompt internally so subsequent stages run on the optimized brief
+    context.originalPrompt = context.optimizedPrompt;
+
     // 2. Stage 1: Intent Analyzer
     events?.onActivity?.('Analyzing intent…');
     context.intent = await this.runIntentStage(context);
+
 
     // 3. Stage 2: Creative Director
     events?.onActivity?.('Directing creative visual…');

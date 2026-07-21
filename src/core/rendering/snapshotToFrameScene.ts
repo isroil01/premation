@@ -372,6 +372,91 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   };
 }
 
+/**
+ * True when a precomp container must render through an offscreen texture and
+ * composite as ONE unit (RenderBackend.precompLayers contract), rather than
+ * being collapsed inline:
+ *   • group opacity < 1 over MULTIPLE children — per-child multiplication
+ *     double-darkens every overlap, isolation fades the group as a whole;
+ *   • a mask, track matte (either side), non-normal blend, or effects on the
+ *     container — inline collapse silently dropped all of these.
+ * Everything else (plain transform, full opacity, single child) keeps the fast
+ * inline-collapse path. Exported for unit tests.
+ */
+export function precompNeedsIsolation(layer: RenderLayer): boolean {
+  if (!layer.precompLayers || layer.precompLayers.length === 0) return false;
+  if (layer.blend && layer.blend !== 'normal') return true;
+  if (layer.mask && layer.mask.paths.length > 0) return true;
+  if (getMatteMode(layer.matte) && layer.matteSourceId) return true;
+  if (layer.isMatteSource) return true;
+  if (layer.effects && layer.effects.length > 0) return true;
+  if (layer.opacity < 1 && layer.precompLayers.filter((l) => l.visible).length > 1) return true;
+  return false;
+}
+
+/** An isolated precomp container → a textured renderable carrying its flattened
+ *  subtree. CompositionPass renders the subtree offscreen, registers the target
+ *  texture under `precomp:<id>`, and then composites this renderable through
+ *  the ordinary per-layer machinery (blend / advanced blend / effects / matte),
+ *  so the whole group behaves exactly like a single layer. */
+function precompToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpacity: number): Renderable {
+  // Children flatten with IDENTITY parent — they are already in the container's
+  // comp space (buildSnapshot emits them with full world transforms) and the
+  // offscreen texture is composited in that same space.
+  const inner = flattenLayers(layer.precompLayers!, Mat3.identity(), 1);
+  const local = centerModel(layer);
+  const model = Mat3.multiply(parentMatrix, local);
+  const advBlend = advancedBlendId(layer.blend);
+  return {
+    id: layer.id,
+    kind: 'image',
+    modelMatrix: model,
+    bounds: boundsOf(model),
+    opacity: parentOpacity * layer.opacity,
+    blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
+    ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    color: Color.white(),
+    textureKey: `precomp:${layer.id}`,
+    ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
+    ...(matteOf(layer) ? { matte: matteOf(layer)! } : {}),
+    ...(layer.isMatteSource ? { matteSource: true } : {}),
+    colorMatrix: texturedColorMatrix(layer),
+    effects: extractSpatialEffects(layer),
+    precomp: { renderables: inner },
+  };
+}
+
+/** A particle emitter layer → a textured renderable sampling its rasterized
+ *  field (`particles:<id>`, fed by AppTextureProvider from the deterministic
+ *  simulation). The field is layer-box sized with the emitter at its centre, so
+ *  the layer transform flies/rotates/scales the whole system; being an ordinary
+ *  textured renderable, blend modes, masks, mattes and spatial effects all
+ *  compose over it with no special cases. */
+function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpacity: number): Renderable {
+  const local = centerModel(layer);
+  const model = Mat3.multiply(parentMatrix, local);
+  const advBlend = advancedBlendId(layer.blend);
+  // The config's 'add' transfer composites the field additively over the
+  // backdrop (the classic glow look) unless the layer sets its own blend mode.
+  const fieldAdd = layer.particles!.blend === 'add' && (!layer.blend || layer.blend === 'normal');
+  return {
+    id: layer.id,
+    kind: 'image',
+    modelMatrix: model,
+    bounds: boundsOf(model),
+    opacity: parentOpacity * layer.opacity,
+    blend: advBlend > 0 ? 'normal' : fieldAdd ? 'add' : layerBlendToGpu(layer.blend),
+    ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    color: Color.white(),
+    textureKey: `particles:${layer.id}`,
+    ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
+    ...(matteOf(layer) ? { matte: matteOf(layer)! } : {}),
+    ...(layer.isMatteSource ? { matteSource: true } : {}),
+    colorMatrix: texturedColorMatrix(layer),
+    effects: extractSpatialEffects(layer),
+  };
+}
+
 /** Parse a layer's track matte into the renderable's matte descriptor, or null
  *  when it has no matte (or its source wasn't resolved). */
 function matteOf(layer: RenderLayer): { mode: 'alpha' | 'luma'; inverted: boolean; sourceId: string } | null {
@@ -449,12 +534,23 @@ function flattenLayers(
   parentOpacity: number,
   result: Renderable[] = []
 ): Renderable[] {
+  // A layer's leaf renderable, honouring the special content sources (particle
+  // fields, isolated precomps) so matte sources and plain draws share one path.
+  const toRenderable = (layer: RenderLayer): Renderable =>
+    layer.particles
+      ? particlesToRenderable(layer, parentMatrix, parentOpacity)
+      : layer.precompLayers && layer.precompLayers.length > 0 && precompNeedsIsolation(layer)
+        ? precompToRenderable(layer, parentMatrix, parentOpacity)
+        : layerToRenderable(layer, parentMatrix, parentOpacity);
+
   for (const layer of layers) {
     if (!layer.visible) continue;
     if (layer.isMatteSource) {
       // Emit the source flagged — CompositionPass renders it into MATTE_TARGET on
-      // demand for its matted layer, and skips drawing it to the scene.
-      const src = layerToRenderable(layer, parentMatrix, parentOpacity);
+      // demand for its matted layer, and skips drawing it to the scene. Particle
+      // and precomp sources route through their texture-backed renderables (a
+      // precomp source used to matte with its comp-sized black carrier rect).
+      const src = toRenderable(layer);
       src.matteSource = true;
       result.push(src);
       continue;
@@ -475,12 +571,27 @@ function flattenLayers(
       continue;
     }
 
+    // Particle emitter: a textured renderable sampling its rasterized field —
+    // never the comp-sized solid its carrier layer describes (which painted the
+    // whole comp opaque black before particles had a render path).
+    if (layer.particles) {
+      result.push(particlesToRenderable(layer, parentMatrix, parentOpacity));
+      continue;
+    }
+
     if (layer.precompLayers && layer.precompLayers.length > 0) {
-      // Precomp container: accumulate transformation matrix and opacity for child layers
+      if (precompNeedsIsolation(layer)) {
+        // True isolation: render offscreen, composite as one unit with the
+        // container's opacity / blend / mask / matte / effects.
+        result.push(precompToRenderable(layer, parentMatrix, parentOpacity));
+        continue;
+      }
+      // Fast path (plain transform + full/single-child opacity, no compositing
+      // features): collapse inline — transform folds, opacity multiplies.
       const rad = (layer.rotation * Math.PI) / 180;
       const tOrigin = Mat3.translation(-layer.width / 2, -layer.height / 2);
       const mPrecomp = Mat3.compose(layer.x, layer.y, rad, layer.scaleX || 1, layer.scaleY || 1);
-      
+
       const localParent = Mat3.multiply(mPrecomp, tOrigin);
       const nextParent = Mat3.multiply(parentMatrix, localParent);
       const nextOpacity = parentOpacity * layer.opacity;

@@ -30,28 +30,51 @@ function toBezierPoints(pts: DataPoint[]): Array<{ x: number; y: number; inX: nu
   }));
 }
 
-function createLayer(L: PlannedLayer, ctx: ToolContext): string {
+function createLayer(L: PlannedLayer, ctx: ToolContext, ox: number, oy: number): string {
   if (L.pointsTrack) {
     const first = (L.pointsTrack.keyframes[0]?.value as DataPoint[] | undefined) ?? [];
-    return insertPathNode(L.name, toBezierPoints(first), { closed: L.pointsTrack.closed, x: L.x, y: L.y });
+    return insertPathNode(L.name, toBezierPoints(first), { closed: L.pointsTrack.closed, x: L.x + ox, y: L.y + oy });
   }
-  return ctx.scene.create(facadeKind(L.kind), L.name, { x: L.x, y: L.y });
+  return ctx.scene.create(facadeKind(L.kind), L.name, { x: L.x + ox, y: L.y + oy });
 }
 
-export function applyImportPlan(plan: ImportPlan, ctx: ToolContext): { nodeIds: string[]; warnings: string[] } {
-  ctx.comp.update({
-    width: plan.comp.width,
-    height: plan.comp.height,
-    fps: plan.comp.fps,
-    durationSeconds: plan.comp.durationSeconds,
-  });
+export interface ApplyImportOptions {
+  /** Resize the active comp to the Lottie's size/fps/duration (default true —
+   *  a full-file import IS the comp). Library drop-ins pass false to leave the
+   *  user's comp untouched. */
+  updateComp?: boolean;
+  /** Translate every imported layer (root layers + their x/y tracks) — lets a
+   *  small bundled animation land centred in a larger comp. */
+  offset?: { x: number; y: number };
+}
+
+export function applyImportPlan(
+  plan: ImportPlan,
+  ctx: ToolContext,
+  opts: ApplyImportOptions = {},
+): { nodeIds: string[]; warnings: string[] } {
+  if (opts.updateComp !== false) {
+    ctx.comp.update({
+      width: plan.comp.width,
+      height: plan.comp.height,
+      fps: plan.comp.fps,
+      durationSeconds: plan.comp.durationSeconds,
+    });
+  }
+  const ox = opts.offset?.x ?? 0;
+  const oy = opts.offset?.y ?? 0;
 
   const idByInd = new Map<number, string>();
   const nodeIds: string[] = [];
 
   // Pass 1 — create nodes, write props + tracks.
   for (const L of plan.layers) {
-    const nodeId = createLayer(L, ctx);
+    // Offsets shift ROOT layers only — parented layers are parent-relative
+    // (their world position moves with the offset parent).
+    const isRoot = L.parentInd === undefined;
+    const lox = isRoot ? ox : 0;
+    const loy = isRoot ? oy : 0;
+    const nodeId = createLayer(L, ctx, lox, loy);
     if (!nodeId) continue; // facade could not create this kind — skip, keep going
     idByInd.set(L.ind, nodeId);
     nodeIds.push(nodeId);
@@ -59,9 +82,10 @@ export function applyImportPlan(plan: ImportPlan, ctx: ToolContext): { nodeIds: 
     for (const [prop, value] of Object.entries(L.staticProps)) ctx.scene.setProp(nodeId, prop, value);
 
     for (const tr of L.scalarTracks) {
+      const shift = tr.prop === 'x' ? lox : tr.prop === 'y' ? loy : 0;
       for (const kf of tr.keyframes) {
         const lt = ctx.time.toLayerTime(nodeId, kf.t);
-        ctx.anim.setKeyframe(nodeId, tr.prop, lt, kf.value, kf.easing);
+        ctx.anim.setKeyframe(nodeId, tr.prop, lt, kf.value + shift, kf.easing);
         if (kf.easing === 'bezier' && kf.bezier) ctx.anim.setBezier(nodeId, tr.prop, lt, kf.bezier);
       }
     }

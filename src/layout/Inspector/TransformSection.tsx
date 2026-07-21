@@ -103,7 +103,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
               defaultAnimation.setKeyframe(nodeId, otherProp, layerT, valNum);
             }
           },
-          `set:${nodeId}:${propName}:${time}`
+          `set:${nodeId}:${propName}:${layerT}`
         );
       } else {
         setVal(valNum);

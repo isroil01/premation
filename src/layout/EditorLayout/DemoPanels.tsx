@@ -64,6 +64,11 @@ import {
   deleteSelectedLayers,
   insertShape,
   insertText,
+  insertCursorLibraryItem,
+  insertMotionGraphicLibraryItem,
+  insertTransitionLibraryItem,
+  insertSoundFxLibraryItem,
+  insertLottieLibraryItem,
 } from '@core/scene/sceneInsert';
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
@@ -1454,9 +1459,17 @@ export function CursorLibraryPanel(): JSX.Element {
       <div className={styles.libBody}>
         <div className={styles.libGrid}>
           {items.map((item) => (
-            <button key={item.id} type="button" className={styles.libChip}
-              title={`${item.name} — ${item.tag}`}
-              onClick={() => notify({ level: 'info', message: `"${item.name}" added to timeline`, durationMs: 1800 })}>
+            <button
+              key={item.id}
+              type="button"
+              className={styles.libChip}
+              title={`${item.name} — ${item.tag} (Drag onto canvas or click to insert)`}
+              draggable
+              onDragStart={(e) => setCanvasDrag(e, { kind: 'cursor', cursorId: item.id, name: item.name })}
+              onClick={() => {
+                insertCursorLibraryItem(item.id, item.name);
+                notify({ level: 'success', message: `Inserted cursor: ${item.name}`, durationMs: 1500 });
+              }}>
               <span className={styles.libChipThumb}
                 style={{ background: `radial-gradient(circle at 40% 40%, ${item.color}44 0%, transparent 70%), #1a1a2e` }}>
                 <span style={{ display:'block', width:8, height:8, borderRadius:'50%',
@@ -1509,8 +1522,17 @@ export function MotionGFXPanel(): JSX.Element {
       <div className={styles.libBody}>
         <div className={styles.libList}>
           {items.map((item) => (
-            <button key={item.id} type="button" className={styles.libMotionItem}
-              onClick={() => notify({ level: 'info', message: `"${item.name}" added to timeline`, durationMs: 1800 })}>
+            <button
+              key={item.id}
+              type="button"
+              className={styles.libMotionItem}
+              title={`${item.name} — Drag onto canvas or click to insert`}
+              draggable
+              onDragStart={(e) => setCanvasDrag(e, { kind: 'mograph', mographId: item.id, name: item.name })}
+              onClick={() => {
+                insertMotionGraphicLibraryItem(item.id, item.name);
+                notify({ level: 'success', message: `Inserted motion graphic: ${item.name}`, durationMs: 1500 });
+              }}>
               <span style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
                 <span style={{ width:3, height:28, borderRadius:2, background:item.color, flexShrink:0 }} />
                 <span style={{ display:'flex', flexDirection:'column', gap:2 }}>
@@ -1566,9 +1588,17 @@ export function TransitionsPanel(): JSX.Element {
       <div className={styles.libBody}>
         <div className={styles.libList}>
           {items.map((item) => (
-            <button key={item.id} type="button" className={styles.libMotionItem}
-              title="Drop between two clips on the timeline"
-              onClick={() => notify({ level: 'info', message: `"${item.name}" transition added`, durationMs: 1800 })}>
+            <button
+              key={item.id}
+              type="button"
+              className={styles.libMotionItem}
+              title={`${item.name} — Drag onto canvas/timeline or click to insert`}
+              draggable
+              onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
+              onClick={() => {
+                insertTransitionLibraryItem(item.id, item.name);
+                notify({ level: 'success', message: `Added transition: ${item.name}`, durationMs: 1500 });
+              }}>
               <span style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
                 <span style={{ display:'flex', width:28, height:20, borderRadius:3, overflow:'hidden', flexShrink:0 }}>
                   <span style={{ flex:1, background: item.a, opacity:0.8 }} />
@@ -1627,11 +1657,18 @@ export function SoundFXPanel(): JSX.Element {
       <div className={styles.libBody}>
         <div className={styles.libList}>
           {items.map((item) => (
-            <button key={item.id} type="button" className={styles.libMotionItem}
-              title="Sync to keyframe or drop on audio track"
-              onClick={() => notify({ level: 'info', message: `"${item.name}" added to audio track`, durationMs: 1800 })}>
+            <button
+              key={item.id}
+              type="button"
+              className={styles.libMotionItem}
+              title={`${item.name} — Drag onto audio track or click to insert`}
+              draggable
+              onDragStart={(e) => setCanvasDrag(e, { kind: 'sfx', sfxId: item.id, name: item.name })}
+              onClick={() => {
+                insertSoundFxLibraryItem(item.id, item.name);
+                notify({ level: 'success', message: `Added Sound FX: ${item.name}`, durationMs: 1500 });
+              }}>
               <span style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
-                {/* Mini waveform bars */}
                 <span style={{ display:'flex', alignItems:'center', gap:1.5, width:24, height:20, flexShrink:0 }}>
                   {[4,7,5,9,6,8,5].map((h,i) => (
                     <span key={i} style={{ width:2, height:`${h*2}px`, borderRadius:1,
@@ -1691,9 +1728,17 @@ export function LottiePanel(): JSX.Element {
       <div className={styles.libBody}>
         <div className={styles.libGrid}>
           {items.map((item) => (
-            <button key={item.id} type="button" className={styles.libChip}
-              title={`${item.name} · ${item.frames}f · ${item.size}`}
-              onClick={() => notify({ level: 'info', message: `"${item.name}" Lottie imported`, durationMs: 1800 })}>
+            <button
+              key={item.id}
+              type="button"
+              className={styles.libChip}
+              title={`${item.name} — Drag onto canvas or click to insert`}
+              draggable
+              onDragStart={(e) => setCanvasDrag(e, { kind: 'lottie', lottieId: item.id, name: item.name })}
+              onClick={() => {
+                insertLottieLibraryItem(item.id, item.name);
+                notify({ level: 'success', message: `Imported Lottie: ${item.name}`, durationMs: 1500 });
+              }}>
               <span className={styles.libChipThumb}
                 style={{ background: `radial-gradient(circle at 50% 45%, ${item.color}33 0%, transparent 70%), #0f0f1a`, position:'relative' }}>
                 <span style={{ display:'block', width:16, height:16, borderRadius:'50%', margin:'auto', marginTop:6,
@@ -1713,6 +1758,7 @@ export function LottiePanel(): JSX.Element {
     </Panel>
   );
 }
+
 
 
 

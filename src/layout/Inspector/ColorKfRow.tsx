@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useMemo } from 'react';
 import { Color } from '@motion/renderer';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -36,15 +36,18 @@ export function ColorKfRow({
   const aProp = `${propPrefix}_a`;
 
   const animated = defaultAnimation.isAnimated(nodeId, rProp);
+  // ONE axis for reads and writes: the canonical keyframe time — sampling or
+  // writing at the raw comp time collapses keyframes on any moved/trimmed clip.
+  const layerT = compToKeyframeTime(nodeId, time);
 
   const displayColor = useMemo(() => {
     if (!animated) return value;
-    const r = defaultAnimation.sample(nodeId, rProp, time) ?? 255;
-    const g = defaultAnimation.sample(nodeId, gProp, time) ?? 255;
-    const b = defaultAnimation.sample(nodeId, bProp, time) ?? 255;
-    const aVal = defaultAnimation.sample(nodeId, aProp, time) ?? 1;
+    const r = defaultAnimation.sample(nodeId, rProp, layerT) ?? 255;
+    const g = defaultAnimation.sample(nodeId, gProp, layerT) ?? 255;
+    const b = defaultAnimation.sample(nodeId, bProp, layerT) ?? 255;
+    const aVal = defaultAnimation.sample(nodeId, aProp, layerT) ?? 1;
     return Color.toHex({ r, g, b, a: aVal });
-  }, [animated, nodeId, rProp, gProp, bProp, aProp, time, value]);
+  }, [animated, nodeId, rProp, gProp, bProp, aProp, layerT, value]);
 
   const onChange = (hex: string): void => {
     if (animated) {
@@ -52,12 +55,12 @@ export function ColorKfRow({
       runAnimEdit(
         `Set ${label}`,
         () => {
-          defaultAnimation.setKeyframe(nodeId, rProp, getTimelineController().toLayerTime(nodeId, time), c.r);
-          defaultAnimation.setKeyframe(nodeId, gProp, getTimelineController().toLayerTime(nodeId, time), c.g);
-          defaultAnimation.setKeyframe(nodeId, bProp, getTimelineController().toLayerTime(nodeId, time), c.b);
-          defaultAnimation.setKeyframe(nodeId, aProp, getTimelineController().toLayerTime(nodeId, time), c.a ?? 1);
+          defaultAnimation.setKeyframe(nodeId, rProp, layerT, c.r);
+          defaultAnimation.setKeyframe(nodeId, gProp, layerT, c.g);
+          defaultAnimation.setKeyframe(nodeId, bProp, layerT, c.b);
+          defaultAnimation.setKeyframe(nodeId, aProp, layerT, c.a ?? 1);
         },
-        `color:${nodeId}:${propPrefix}:${time}`
+        `color:${nodeId}:${propPrefix}:${layerT}`
       );
     } else {
       setValue(hex);
@@ -75,10 +78,10 @@ export function ColorKfRow({
     } else {
       const c = Color.fromHex(value);
       runAnimEdit(`Animate ${label}`, () => {
-        defaultAnimation.setKeyframe(nodeId, rProp, getTimelineController().toLayerTime(nodeId, time), c.r);
-        defaultAnimation.setKeyframe(nodeId, gProp, getTimelineController().toLayerTime(nodeId, time), c.g);
-        defaultAnimation.setKeyframe(nodeId, bProp, getTimelineController().toLayerTime(nodeId, time), c.b);
-        defaultAnimation.setKeyframe(nodeId, aProp, getTimelineController().toLayerTime(nodeId, time), c.a ?? 1);
+        defaultAnimation.setKeyframe(nodeId, rProp, layerT, c.r);
+        defaultAnimation.setKeyframe(nodeId, gProp, layerT, c.g);
+        defaultAnimation.setKeyframe(nodeId, bProp, layerT, c.b);
+        defaultAnimation.setKeyframe(nodeId, aProp, layerT, c.a ?? 1);
       });
     }
   };

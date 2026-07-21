@@ -21,7 +21,7 @@ import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { defaultAnimation } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -165,17 +165,16 @@ export function GraphEditor({
       maxV: number;
     }[] = [];
 
-    const ctrl = getTimelineController();
-
     for (const { nodeId, prop, color } of allTracks) {
       const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
       if (!kfs || kfs.length === 0) continue;
 
-      // The engine stores keyframes in LAYER time; this axis (and the playhead)
-      // are COMP time. Convert at the boundary, per track — each layer has its
-      // own clip start.
-      const toAbs = (layerT: number): number => ctrl.toAbsoluteTime(nodeId, layerT);
-      const toLayer = (absT: number): number => ctrl.toLayerTime(nodeId, absT);
+      // The engine stores keyframes on the canonical keyframe axis; this axis
+      // (and the playhead) are COMP time. Convert at the boundary, per track —
+      // the canonical pair honors trim/sourceIn, the active clip, stretch and
+      // precomp remaps, so curves plot where the renderer applies them.
+      const toAbs = (layerT: number): number => keyframeToCompTime(nodeId, layerT, prop);
+      const toLayer = (absT: number): number => compToKeyframeTime(nodeId, absT, prop);
 
       let minV = Infinity, maxV = -Infinity;
       const getVal = (t: number) => {
@@ -330,11 +329,14 @@ export function GraphEditor({
       const dy = y - d.startY;
 
       if (d.kind === 'kf') {
-        const ctrl = getTimelineController();
-        const newT = clamp(
-          d.origT + dx / pps,
-          ctrl.toLayerTime(d.nodeId, 0),
-          ctrl.toLayerTime(d.nodeId, duration),
+        // Drag in COMP time (what the x axis measures), clamp to the comp, and
+        // convert back through the canonical pair. A time delta is NOT the same
+        // in both bases once a layer is stretched or remapped, so the naive
+        // `origT + dx/pps` shortcut only held for plain clips.
+        const newT = compToKeyframeTime(
+          d.nodeId,
+          clamp(keyframeToCompTime(d.nodeId, d.origT, d.prop) + dx / pps, 0, duration),
+          d.prop,
         );
         // In speed mode the vertical axis is the derivative, not the value —
         // there is no meaningful value to read off a y position, so the drag
@@ -344,8 +346,7 @@ export function GraphEditor({
         const newV = d.mode === 'value'
           ? clamp(yToValue(d.startY + dy, d.minV, d.maxV, INNER_H), d.minV, d.maxV)
           : d.origValue;
-        // `newT` is layer time. A time DELTA is identical in both bases, so the
-        // dx math needs no conversion — only the clamp bounds do.
+        // `newT` is canonical keyframe time — same axis `d.origT` is stored on.
         defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.origT, { t: newT, value: newV });
         dragRef.current!.origT = newT;
         dragRef.current!.startX = x;

@@ -178,7 +178,21 @@ export class MotionRendererBackend implements RenderBackend {
           // must not abort texture feeding for the rest of the frame.
           try {
             // 1. Base layer rasterization
-            if (layer.kind === 'image' && layer.src) {
+            if (layer.particles) {
+              // Particle emitter: rasterize the deterministic field for this
+              // frame (sourceTime-aware, so time-remapped/stretched layers sim
+              // the right instant). snapshotToFrameScene routes the layer to a
+              // textured renderable under the same `particles:` key.
+              const key = `particles:${layer.id}`;
+              activeKeys.add(key);
+              this.textures!.setParticles(
+                key,
+                layer.particles,
+                layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0),
+                layer.width,
+                layer.height,
+              );
+            } else if (layer.kind === 'image' && layer.src) {
               const key = `asset:${layer.id}`;
               activeKeys.add(key);
               this.textures!.setImage(key, layer.src);
@@ -230,7 +244,10 @@ export class MotionRendererBackend implements RenderBackend {
                 effects: layer.effects,
                 mask: layer.mask,
               });
-            } else if (needsShapeRaster(layer)) {
+            } else if (!(layer.precompLayers && layer.precompLayers.length > 0) && needsShapeRaster(layer)) {
+              // (Precomp containers draw their offscreen subtree texture, never
+              // their own shape — skipping the raster avoids uploading a
+              // comp-sized black texture per container.)
               // Custom paths, gradient-filled and masked shapes — the SAME
               // predicate layerToRenderable routes by, so the `path:` texture
               // this uploads is exactly the one the renderable references.

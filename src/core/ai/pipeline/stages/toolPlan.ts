@@ -143,12 +143,29 @@ Animate a puppet pin's POSITION over time (the primary way to make a rig move â€
 Args: { layerId, pinId, keyframes: [{ timeSec, x, y }] }  (x,y in the same layer-local space as create_puppet_rig; linear tween.)
 Call create_puppet_rig first; use the returned pin ids.
 
+### create_skeleton_rig
+Rig a character or multi-part vector layer with a skeletal hierarchy of bones (After Effects / Spine style).
+Args: { layerId, bones: [{ id, parentId?, length, x?, y?, rotation? }] }
+
+### pose_skeleton
+Pose and animate character bones over time for kicks, walks, arm swings, and body rotations.
+Args: { layerId, bonePoses: [{ boneId, timeSec, rotation, x?, y? }] }
+
+### apply_layer_style
+Apply outer glow or drop shadow styling to a layer to create depth, glow, or 3D elevation.
+Args: { nodeId, styleType: "drop_shadow"|"outer_glow", color, opacity?, size?, distance?, angle? }
+
+### recolor_lottie_vector
+Recursively recolor all vector shape fills inside an imported Lottie or grouped graphic hierarchy.
+Args: { nodeId, color }
+
 ### create_media
 Place an imported asset on the canvas. Args: { assetId, name, x?, y? }
 
 ### delete_layer
 Delete layers. Args: { nodeIds: string[] }
 `;
+
 
 const EXECUTION_GRAMMAR = `
 ## STRUCTURE: BUILD THE VIDEO SCENE-BY-SCENE (most important rule)

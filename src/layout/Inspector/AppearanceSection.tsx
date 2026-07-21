@@ -14,7 +14,7 @@ import styles from './TransformSection.module.css';
 import effStyles from '../Effects/EffectsPanel.module.css';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
@@ -51,7 +51,8 @@ function GradientGeomRow({
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const animated = defaultAnimation.isAnimated(nodeId, prop);
-  const layerT = getTimelineController().toLayerTime(nodeId, time);
+  // The canonical keyframe axis — what the renderer samples for this node.
+  const layerT = compToKeyframeTime(nodeId, time);
   const engineVal = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
 
   const handleChange = (display: number) => {
@@ -60,7 +61,7 @@ function GradientGeomRow({
       runAnimEdit(
         `Set ${prop}`,
         () => defaultAnimation.setKeyframe(nodeId, prop, layerT, engine),
-        `set:${nodeId}:${prop}:${time}`,
+        `set:${nodeId}:${prop}:${layerT}`,
       );
     } else {
       onStatic(engine);
@@ -101,7 +102,7 @@ function GradientGeomRow({
 function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   if (paint.type === 'solid') return null;
-  const layerT = getRemappedTime(nodeId, time);
+  const layerT = compToKeyframeTime(nodeId, time);
 
   // Gradient-stop keyframes (data track): when live, the rows show the
   // SAMPLED stop list at the playhead and every edit writes a keyframe there —

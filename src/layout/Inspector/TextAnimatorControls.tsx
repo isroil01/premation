@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * TextAnimatorControls (MG Phase D) — the "Text Animators" section of the
  * inspector, shown only for text layers.
@@ -78,14 +78,16 @@ function ParamRow({
   useSceneRevision((s) => s.rev);
   const path = animatorPropPath(index, param);
   const animated = defaultAnimation.isAnimated(nodeId, path);
-  const display = animated ? defaultAnimation.sample(nodeId, path, time) ?? value : value;
+  // ONE axis for reads and writes: the canonical keyframe time.
+  const layerT = compToKeyframeTime(nodeId, time);
+  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? value : value;
 
   const onChange = (v: number): void => {
     if (animated) {
       runAnimEdit(
         `Set ${label}`,
-        () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v),
-        `ta:${nodeId}:${path}:${time}`,
+        () => defaultAnimation.setKeyframe(nodeId, path, layerT, v),
+        `ta:${nodeId}:${path}:${layerT}`,
       );
     } else {
       updateAnimator(nodeId, index, { [param]: v } as Partial<TextAnimatorData>);
@@ -96,7 +98,7 @@ function ParamRow({
     if (animated) {
       runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
     } else {
-      runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), value));
+      runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, value));
     }
   };
 

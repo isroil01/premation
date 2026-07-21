@@ -23,6 +23,8 @@ import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/te
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { isRiggableKind } from '@core/scene/rigLogo';
+import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
+
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
 import { rectangleMask, ellipseMask, addMaskPath, type MaskMode } from '@core/effects/mask';
 import { bumpScene } from '@stores/sceneStore';
@@ -1024,10 +1026,64 @@ const poseSkeletonHandler: AiTool['handler'] = (input, ctx) => {
   return ok(`Set ${i.bonePoses.length} bone pose keyframes on layer '${i.layerId}'.`, { layerId: i.layerId, poseCount: i.bonePoses.length });
 };
 
+const applyLayerStyleHandler: AiTool['handler'] = (input, ctx) => {
+  const i = input as { nodeId: string; styleType: 'drop_shadow' | 'outer_glow'; color: string; opacity?: number; size?: number; distance?: number; angle?: number };
+  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
+
+  if (i.styleType === 'drop_shadow') {
+    updateDropShadow(i.nodeId, {
+      enabled: true,
+      color: i.color,
+      opacity: i.opacity ?? 0.5,
+      blur: i.size ?? 8,
+      distance: i.distance ?? 8,
+      angle: i.angle ?? 90,
+    });
+  } else {
+    updateOuterGlow(i.nodeId, {
+      enabled: true,
+      color: i.color,
+      opacity: i.opacity ?? 0.9,
+      size: i.size ?? 16,
+    });
+  }
+  bumpScene();
+  return ok(`Applied ${i.styleType} layer style on '${i.nodeId}'.`);
+};
+
+const recolorLottieVectorHandler: AiTool['handler'] = (input, ctx) => {
+  const { nodeId, color } = input as { nodeId: string; color: string };
+  if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
+
+  let count = 0;
+  const traverseAndRecolor = (id: string) => {
+    const node = defaultSceneGraph.getNode(id);
+    if (!node) return;
+    const kind = readNodeKind(node);
+    if (kind === 'shape') {
+      const style = node.components.find((c) => c.type === 'Style');
+      if (style) {
+        style.props.fill = color;
+        count++;
+      }
+    }
+    for (const childId of node.children) {
+      traverseAndRecolor(childId);
+    }
+  };
+
+  traverseAndRecolor(nodeId);
+  bumpScene();
+  return ok(`Recolored ${count} vector shapes inside Lottie/group '${nodeId}' to ${color}.`);
+};
+
 // ── Registry wiring ───────────────────────────────────────────────
 
 const HANDLERS: Record<string, AiTool['handler']> = {
+  apply_layer_style: applyLayerStyleHandler,
+  recolor_lottie_vector: recolorLottieVectorHandler,
   describe_scene: describeScene,
+
   read_tracks: readTracks,
   evaluate_at: evaluateAt,
   get_selection: getSelection,
@@ -1075,10 +1131,48 @@ const HANDLERS: Record<string, AiTool['handler']> = {
 
 /** Every tool definition bound to its handler. */
 export function buildAiTools(): AiTool[] {
-  return ALL_TOOL_DEFS.map((d) => {
+  const tools = ALL_TOOL_DEFS.map((d) => {
     const handler = HANDLERS[d.name];
     if (!handler) throw new Error(`Tool '${d.name}' is declared but has no handler`);
     return { ...def(d.name), handler };
   });
+
+  const applyLayerStyleTool: AiTool = {
+    name: 'apply_layer_style',
+    description: 'Apply outer glow or drop shadow layer styling to add visual depth.',
+    kind: 'write',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string', description: 'The layer to style.' },
+        styleType: { type: 'string', enum: ['drop_shadow', 'outer_glow'], description: 'Style type to apply.' },
+        color: { type: 'string', description: 'Color hex code.' },
+        opacity: { type: 'number', description: 'Opacity from 0.0 to 1.0.' },
+        size: { type: 'number', description: 'Blur radius or glow size in pixels.' },
+        distance: { type: 'number', description: 'Shadow offset distance in pixels (shadow only).' },
+        angle: { type: 'number', description: 'Shadow offset angle in degrees (shadow only).' },
+      },
+      required: ['nodeId', 'styleType', 'color'],
+    },
+    handler: applyLayerStyleHandler,
+  };
+
+  const recolorLottieVectorTool: AiTool = {
+    name: 'recolor_lottie_vector',
+    description: 'Recursively recolors all shape outline vector layers inside a Lottie/group hierarchy to match brand colors.',
+    kind: 'write',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: { type: 'string', description: 'The root Lottie or group layer ID.' },
+        color: { type: 'string', description: 'The color hex code to apply (e.g. #ff00ff).' },
+      },
+      required: ['nodeId', 'color'],
+    },
+    handler: recolorLottieVectorHandler,
+  };
+
+  tools.push(applyLayerStyleTool, recolorLottieVectorTool);
+  return tools;
 }
 

@@ -33,6 +33,8 @@ import { resolutionTier, paddingClass } from '@motion/renderer';
 import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake } from '@core/effects/effectBake';
+import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
+import type { ParticleConfig } from '@core/particles/particleSim';
 
 interface PathEntry {
   kind: 'path';
@@ -164,6 +166,20 @@ interface VideoEntry {
   h: number;
 }
 
+interface ParticleEntry {
+  kind: 'particles';
+  signature: string;
+  canvas: HTMLCanvasElement;
+  texture: TextureHandle | null;
+  w: number;
+  h: number;
+}
+
+/** Longest edge of a rasterized particle field (device px). Fields are soft
+ *  (round sprites, additive glow), so capping the raster keeps per-frame
+ *  uploads bounded while staying visually lossless at export sizes. */
+const PARTICLE_TEX_MAX = 4096;
+
 
 
 /** HTMLMediaElement.HAVE_CURRENT_DATA — enough decoded to sample a frame. */
@@ -211,6 +227,7 @@ export class AppTextureProvider implements TextureProvider {
   private readonly lutEntries = new Map<string, LutEntry>();
   /** Externally-rasterized frames (decoded video frames for Frame Mix). */
   private readonly frameEntries = new Map<string, { signature: string; texture: TextureHandle }>();
+  private readonly particleEntries = new Map<string, ParticleEntry>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
   private hasInitWhite = false;
@@ -477,6 +494,51 @@ export class AppTextureProvider implements TextureProvider {
     this.frameEntries.set(key, { signature, texture: tex });
   }
 
+  /**
+   * Register/refresh a particle emitter's rasterized field for this frame.
+   * The simulation is a pure function of (config, time) — see particleSim —
+   * so the field is deterministic at any scrub time; the content signature
+   * (config + time + box + raster scale) skips the redraw/re-upload whenever
+   * the frame genuinely repeats (paused playhead, media-settle re-renders).
+   * One persistent texture per key is rewritten in place (the setVideo
+   * pattern), so playback doesn't churn GPU allocations.
+   */
+  setParticles(key: string, cfg: ParticleConfig, timeSec: number, fieldW: number, fieldH: number): void {
+    const w = Math.max(1, Math.round(fieldW));
+    const h = Math.max(1, Math.round(fieldH));
+    const scale = Math.max(0.1, Math.min(this.rasterScale, PARTICLE_TEX_MAX / Math.max(w, h)));
+    const time = Math.max(0, timeSec);
+    const signature = particleFieldSignature(cfg, time, w, h, scale);
+    let entry = this.particleEntries.get(key);
+    if (!entry) {
+      entry = { kind: 'particles', signature: '', canvas: document.createElement('canvas'), texture: null, w: 0, h: 0 };
+      this.particleEntries.set(key, entry);
+    }
+    if (entry.texture && entry.signature === signature) return;
+
+    const pxW = Math.max(1, Math.round(w * scale));
+    const pxH = Math.max(1, Math.round(h * scale));
+    if (entry.canvas.width !== pxW || entry.canvas.height !== pxH) {
+      entry.canvas.width = pxW;
+      entry.canvas.height = pxH;
+    }
+    const ctx = entry.canvas.getContext('2d');
+    if (!ctx) return;
+    drawParticleField(ctx, cfg, time, w, h, scale);
+
+    if (entry.texture === null || entry.w !== pxW || entry.h !== pxH) {
+      entry.texture = this.resources.texture(
+        `particles:${key}:${pxW}x${pxH}`,
+        { label: `particles:${key}`, width: pxW, height: pxH, format: 'rgba8unorm', externalCopy: true },
+        /* pinned */ true,
+      );
+      entry.w = pxW;
+      entry.h = pxH;
+    }
+    this.resources.writeTexture(entry.texture, { type: 'canvas', canvas: entry.canvas });
+    entry.signature = signature;
+  }
+
   /** Forget keys no longer present in the scene (frees the GPU textures via GC). */
   retain(activeKeys: ReadonlySet<string>): void {
     for (const key of this.entries.keys()) {
@@ -502,6 +564,9 @@ export class AppTextureProvider implements TextureProvider {
     }
     for (const key of this.frameEntries.keys()) {
       if (!activeKeys.has(key)) this.frameEntries.delete(key);
+    }
+    for (const key of this.particleEntries.keys()) {
+      if (!activeKeys.has(key)) this.particleEntries.delete(key);
     }
   }
 
@@ -578,6 +643,10 @@ export class AppTextureProvider implements TextureProvider {
     const frame = this.frameEntries.get(key);
     if (frame) {
       return { texture: frame.texture, sampler: this.sampler(), ready: true };
+    }
+    const particles = this.particleEntries.get(key);
+    if (particles && particles.texture) {
+      return { texture: particles.texture, sampler: this.sampler(), ready: true };
     }
     const video = this.videoEntries.get(key);
     if (video && video.texture) {

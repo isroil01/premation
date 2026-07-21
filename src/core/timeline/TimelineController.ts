@@ -32,6 +32,9 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useAssetStore } from '@stores/assetStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
+import { isPrecomp } from '@core/scene/precomp';
+import { instanceSourceOf } from '@core/scene/compInstance';
 import type { SceneNode } from '@core/types';
 import { defaultAnimation } from '@motion/animation';
 
@@ -297,6 +300,11 @@ export class TimelineController {
     return this.registryForNode(nodeId)?.timeline.getFrameRate().fps ?? this.fps;
   }
 
+  /** Duration (frames) of the timeline that owns a node's clips. */
+  durationFramesForNode(nodeId: string): number {
+    return this.registryForNode(nodeId)?.timeline.duration ?? this.timeline.duration;
+  }
+
   /**
    * Memoized per-track sourceId → layers indexes. `getLayersForNode` is called
    * PER NODE by the renderer (remapOf), the workspace ports and the timeline
@@ -442,18 +450,20 @@ export class TimelineController {
     this.timeline.trimLayer(layerId, edge, Math.round(secondsToFrames(seconds, this.timeline.getFrameRate())));
   }
 
-  // ── Time Mapping (Absolute ↔ Layer-Relative) ────────────────────
+  // ── Time Mapping (Absolute ↔ Layer-BAR-Relative) ────────────────
 
   /**
-   * Convert an absolute timeline time (seconds) to layer-relative time.
+   * Convert an absolute timeline time (seconds) to layer-BAR-relative time
+   * (0 = the first clip bar's in-point).
    *
-   * **Do not use this to read or write keyframes** — use {@link getRemappedTime}.
-   * This is a naive "subtract the first clip's start": it ignores `sourceIn`,
-   * ignores which clip is actually under the playhead, and answers for a time
-   * the layer may not even occupy. `getRemappedTime` is what the RENDERER uses
-   * (via `buildSnapshot`'s `remapOf`), so it is the only conversion that makes
-   * the inspector agree with the pixels. Mixing the two is what made a value
-   * typed at 5s change the keyframe the user set at 1s.
+   * **NEVER use this for keyframes** — reading, writing, moving or displaying
+   * them. Keyframes live on the axis the renderer samples, which this is not:
+   * it is a naive "subtract the first clip's start" that ignores `sourceIn`,
+   * the active clip, stretch/reverse/freeze and precomp time remaps. The
+   * canonical keyframe conversions are {@link compToKeyframeTime} /
+   * {@link keyframeToCompTime}. This helper exists ONLY for bar-anchored
+   * geometry such as layer markers ({@link addLayerMarkerAtPlayhead}), which
+   * travel with the clip bar by definition.
    */
   toLayerTime(nodeId: string, absoluteSeconds: number): number {
     const clips = this.getLayersForNode(nodeId);
@@ -463,7 +473,11 @@ export class TimelineController {
     return absoluteSeconds - (firstClip.start / this.timeline.getFrameRate().fps);
   }
 
-  /** Convert a layer-relative time (seconds) to absolute timeline time. */
+  /**
+   * Convert a layer-BAR-relative time (seconds) to absolute timeline time.
+   * Same contract as {@link toLayerTime}: bar geometry only, never keyframes —
+   * use {@link keyframeToCompTime} for those.
+   */
   toAbsoluteTime(nodeId: string, layerSeconds: number): number {
     const clips = this.getLayersForNode(nodeId);
     const firstClip = clips[0];
@@ -877,18 +891,173 @@ export function getTimelineController(): TimelineController {
   return singleton;
 }
 
-export function getRemappedTime(nodeId: string, time: number): number {
-  const controller = getTimelineController();
-  // The OWNING comp's fps — a node nested in a precomp keeps its clips in the
-  // precomp's timeline, which may run at a different rate than the active tab.
-  const fps = controller.fpsForNode(nodeId);
-  const currentFrame = Math.round(time * fps);
-  const clips = controller.getLayersForNode(nodeId);
-  if (clips.length > 0) {
-    const active = clips.find((l) => l.isActiveAt(currentFrame));
-    if (active) {
-      return active.clip.sourceFrameAt(currentFrame) / fps;
+// ── Canonical keyframe time axis ──────────────────────────────────
+//
+// Keyframes are stored on ONE axis: the time `buildSnapshot` hands the
+// animation engine for the node (its `remapOf`). Every surface that reads,
+// writes, moves or draws a keyframe must convert through this pair —
+// `compToKeyframeTime` on the way in, `keyframeToCompTime` on the way out.
+// Anything else re-creates the "typed a value at 5s, it overwrote my 1s
+// keyframe" family of bugs the moment a clip is trimmed, slid, split,
+// stretched or nested in a remapped precomp.
+
+/** Props the renderer samples on the PRECOMP-CHAIN axis (a group's own remap
+ *  track is read at chain time — buildSnapshot's `sourceTime` / ancestor fold —
+ *  never through the group's own clip/stretch mapping). */
+const REMAP_PROPS: ReadonlySet<string> = new Set(['timeRemap', 'precompTime']);
+
+/** Comp-instance indirection: clones sample the ORIGINAL node's tracks and
+ *  clips (buildSnapshot's `srcId`); real nodes map to themselves. */
+function srcIdOf(nodeId: string): string {
+  return instanceSourceOf(defaultSceneGraph.getNode(nodeId)) ?? nodeId;
+}
+
+/** The node's precomp-group ancestors, OUTERMOST first, excluding itself
+ *  (mirrors `precompAncestorChain`, reading straight off the scene graph). */
+function precompChainOf(nodeId: string): SceneNode[] {
+  const chain: SceneNode[] = [];
+  let parentId = defaultSceneGraph.getNode(nodeId)?.parent ?? null;
+  while (parentId) {
+    const parent = defaultSceneGraph.getNode(parentId);
+    if (!parent) break;
+    if (isPrecomp(parent)) chain.push(parent);
+    parentId = parent.parent ?? null;
+  }
+  chain.reverse(); // outermost first — outer remaps feed inner ones
+  return chain;
+}
+
+function isChainRemapAnimated(pc: SceneNode): boolean {
+  const src = srcIdOf(pc.id);
+  return defaultAnimation.isAnimated(src, 'timeRemap') || defaultAnimation.isAnimated(src, 'precompTime');
+}
+
+/** Fold every ancestor precomp's animated time remap over `compTime`,
+ *  outermost → innermost — buildSnapshot's ancestor-chain composition. */
+function foldPrecompChain(nodeId: string, compTime: number): number {
+  let time = compTime;
+  for (const pc of precompChainOf(nodeId)) {
+    if (isChainRemapAnimated(pc)) {
+      const src = srcIdOf(pc.id);
+      time = defaultAnimation.sample(src, 'timeRemap', time)
+        ?? defaultAnimation.sample(src, 'precompTime', time)
+        ?? time;
     }
   }
   return time;
+}
+
+/**
+ * Composition time → the axis `nodeId`'s keyframes are stored on. This is,
+ * step for step, what `buildSnapshot`'s `remapOf` hands the animation engine:
+ *
+ *   1. fold the precomp ANCESTOR chain's animated time remaps (outermost →
+ *      innermost) over comp time;
+ *   2. clip retime — the clip ACTIVE at that frame maps it to its source frame
+ *      (`sourceIn + (frame − start)`), frame-rounded exactly like the
+ *      renderer; outside every clip the renderer falls through to the raw
+ *      time, and so does this (a keyframe written there is self-consistent:
+ *      the renderer samples the same raw time);
+ *   3. the node's own stretch / reverse / freeze (`layerTime.remapTime`) on
+ *      top. NOTE the span anchor is the node's keyframe span, which moves as
+ *      keyframes are added — that is the renderer's own behavior, matched
+ *      here rather than "fixed" one-sidedly.
+ *
+ * `prop` matters for the remap track itself: a group's `timeRemap` /
+ * `precompTime` keyframes are sampled by the renderer at CHAIN time (step 1
+ * only), so pass the prop being edited whenever it might be a remap track.
+ */
+export function compToKeyframeTime(nodeId: string, compTime: number, prop?: string): number {
+  const controller = getTimelineController();
+  const src = srcIdOf(nodeId);
+  // The OWNING comp's fps — a node nested in a precomp keeps its clips in the
+  // precomp's timeline, which may run at a different rate than the active tab.
+  const fps = controller.fpsForNode(src);
+  let time = foldPrecompChain(nodeId, compTime);
+  if (prop !== undefined && REMAP_PROPS.has(prop)) return time;
+  const frame = Math.round(time * fps);
+  const active = controller.getLayersForNode(src).find((l) => l.isActiveAt(frame));
+  if (active) time = active.clip.sourceFrameAt(frame) / fps;
+  const node = defaultSceneGraph.getNode(nodeId);
+  const cfg = node ? readNodeLayerTime(node) : undefined;
+  if (cfg) time = remapTime(time, cfg, defaultAnimation.timeSpan(src) ?? { start: 0, end: 1 });
+  return time;
+}
+
+/**
+ * Stored keyframe time → the composition time where the renderer applies it —
+ * the TRUE inverse of {@link compToKeyframeTime}, for display: timeline
+ * diamonds, the graph editor, seeking to a keyframe.
+ *
+ * Deliberate choices where the forward map is not invertible:
+ *   - Non-monotonic / hold ancestor remaps: scan the owning comp's frames and
+ *     return the EARLIEST comp time whose forward map lands on the keyframe
+ *     (nearest frame when nothing lands exactly — e.g. a hold jumped over it).
+ *   - Freeze frame: every comp time samples `freezeTime`, so the map collapses
+ *     to a point. Inverting as if unfrozen keeps the diamonds laid out (and
+ *     round-tripping) instead of stacking them all on one instant.
+ *   - A keyframe no clip reaches (trimmed-off head/tail): clamp to the nearest
+ *     clip edge — the comp time where its clamped value actually takes effect.
+ *   - Outside every clip with no clips at all: identity, matching the forward
+ *     fall-through.
+ */
+export function keyframeToCompTime(nodeId: string, keyframeTime: number, prop?: string): number {
+  const controller = getTimelineController();
+  const src = srcIdOf(nodeId);
+  const fps = controller.fpsForNode(src);
+  // Animated ancestor remaps have no closed form (arbitrary keyframed curves,
+  // holds, reversals) — invert by scanning the owning comp's frames against
+  // the full forward map. Only entered when a chain remap is live.
+  if (precompChainOf(nodeId).some(isChainRemapAnimated)) {
+    const frames = controller.durationFramesForNode(src);
+    let best = 0;
+    let bestErr = Infinity;
+    for (let f = 0; f <= frames; f++) {
+      const err = Math.abs(compToKeyframeTime(nodeId, f / fps, prop) - keyframeTime);
+      if (err === 0) return f / fps; // first (earliest) exact landing wins
+      // Strict `<` keeps the EARLIEST of equally-near frames (hold plateaus).
+      if (err < bestErr) { bestErr = err; best = f; }
+    }
+    return best / fps;
+  }
+  // The remap track itself lives on the chain axis; with no animated chain the
+  // fold is the identity.
+  if (prop !== undefined && REMAP_PROPS.has(prop)) return keyframeTime;
+  let t = keyframeTime;
+  // 3⁻¹ — stretch / reverse (freeze: see doc above).
+  const node = defaultSceneGraph.getNode(nodeId);
+  const cfg = node ? readNodeLayerTime(node) : undefined;
+  if (cfg && !cfg.freeze) {
+    const span = defaultAnimation.timeSpan(src) ?? { start: 0, end: 1 };
+    const stretch = cfg.stretch > 0 ? cfg.stretch : 100;
+    let s = t;
+    if (cfg.reverse) s = span.start + span.end - s;
+    t = span.start + (s - span.start) * (stretch / 100);
+  }
+  // 2⁻¹ — clip retime: earliest clip that shows this source frame, else the
+  // nearest clip edge.
+  const clips = controller.getLayersForNode(src);
+  if (clips.length > 0) {
+    const sourceFrame = Math.round(t * fps);
+    let best: number | null = null;
+    let bestDist = Infinity;
+    for (const l of clips) { // getLayersForNode sorts by start → earliest wins
+      const compFrame = l.start + (sourceFrame - l.clip.sourceIn);
+      if (l.isActiveAt(compFrame)) { best = compFrame; break; }
+      const clamped = Math.max(l.start, Math.min(l.end - 1, compFrame));
+      const dist = Math.abs(compFrame - clamped);
+      if (dist < bestDist) { bestDist = dist; best = clamped; }
+    }
+    if (best !== null) t = best / fps;
+  }
+  return t;
+}
+
+/**
+ * @deprecated Old name for the canonical comp→keyframe axis, kept so existing
+ * read surfaces stay on it. New code should call {@link compToKeyframeTime}
+ * (and {@link keyframeToCompTime} for the display direction).
+ */
+export function getRemappedTime(nodeId: string, time: number): number {
+  return compToKeyframeTime(nodeId, time);
 }

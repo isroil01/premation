@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * RepeaterControls (MG Phase C) — the "Repeater" inspector section for shape
  * layers. Add a repeater to fan a shape into N copies; every parameter is
@@ -49,18 +49,20 @@ function ParamRow({
   useSceneRevision((s) => s.rev);
   const path = repeaterPropPath(param);
   const animated = defaultAnimation.isAnimated(nodeId, path);
-  const display = animated ? defaultAnimation.sample(nodeId, path, time) ?? value : value;
+  // ONE axis for reads and writes: the canonical keyframe time.
+  const layerT = compToKeyframeTime(nodeId, time);
+  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? value : value;
 
   const onChange = (v: number): void => {
     if (animated) {
-      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v), `rep:${nodeId}:${path}:${time}`);
+      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, v), `rep:${nodeId}:${path}:${layerT}`);
     } else {
       updateRepeater(nodeId, { [param]: v } as Partial<Repeater>);
     }
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), value));
+    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, value));
   };
 
   return (

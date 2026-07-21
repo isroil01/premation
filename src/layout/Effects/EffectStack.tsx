@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * EffectStack — the applied-effects list for a layer (AE Effect Controls): each
  * effect has an enable toggle, reorder, remove, and one row per PARAMETER.
@@ -68,7 +68,8 @@ function EffectParamRow({
     // stopwatch couldn't touch: no animated glow color, no shadow color ramp.
     const chPrefix = effectPropPath(effect.id, param.key);
     const animated = defaultAnimation.isAnimated(nodeId, `${chPrefix}_r`);
-    const layerT = getTimelineController().toLayerTime(nodeId, time);
+    // The canonical keyframe axis — what buildSnapshot samples for this node.
+    const layerT = compToKeyframeTime(nodeId, time);
     const displayed = (() => {
       if (!animated) return String(value);
       const r = defaultAnimation.sample(nodeId, `${chPrefix}_r`, layerT) ?? 255;
@@ -189,14 +190,16 @@ function EffectParamRow({
   const stored = typeof value === 'number' ? value : 0;
   const path = effectPropPath(effect.id, param.key);
   const animated = defaultAnimation.isAnimated(nodeId, path);
-  const display = animated ? defaultAnimation.sample(nodeId, path, time) ?? stored : stored;
+  // ONE axis for reads and writes: the canonical keyframe time.
+  const layerT = compToKeyframeTime(nodeId, time);
+  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? stored : stored;
 
   const onChange = (v: number): void => {
     if (animated) {
       runAnimEdit(
         `Set ${label}`,
-        () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v),
-        `fx:${nodeId}:${path}:${time}`,
+        () => defaultAnimation.setKeyframe(nodeId, path, layerT, v),
+        `fx:${nodeId}:${path}:${layerT}`,
       );
     } else {
       updateEffectParam(nodeId, effect.id, param.key, v);
@@ -204,7 +207,7 @@ function EffectParamRow({
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), stored));
+    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, stored));
   };
 
   return (

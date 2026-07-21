@@ -30,7 +30,7 @@ import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
-import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
+import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { Icon } from '@components/Icon';
 import { EditorLayout } from '@layout/EditorLayout';
 
@@ -182,6 +182,26 @@ function EditorShellInner(): JSX.Element {
     registerPanel({ id: 'motion',      title: 'Easing',       icon: 'keyframe',      region: 'rightInspector', weight: 2, closable: false });
     registerPanel({ id: 'presets',     title: 'Presets',      icon: 'zap',           region: 'rightInspector', weight: 1, closable: false });
     registerPanel({ id: 'misc',        title: 'Settings',     icon: 'sliders-h',     region: 'rightInspector', weight: 0, closable: false });
+    // ── On-demand panels (Window menu / F6 / ExportDialog) ───────────────────
+    // These renderers exist in getAllPanelRenderers() but were never registered,
+    // and layoutStore's openPanel/togglePanel bail on unknown ids — so F6,
+    // Window ▸ Project and ExportDialog's "Added to Render Queue (F6)" toast
+    // all silently did nothing. Register them closable, then close any a
+    // persisted layout didn't already keep open (registerPanel appends to the
+    // tab strip): fresh sessions get them on demand, not by default. Regions
+    // match workspaceLayouts' DEFAULT_PANEL_ORDER (rightInspector) — except
+    // Project, an AE-style bin that belongs with the left-sidebar lists.
+    const openBefore = new Set(Object.values(useLayoutStore.getState().panelOrder).flat());
+    const onDemand = [
+      { id: 'project',     title: 'Project',      icon: 'folder',  region: 'leftSidebar' as const,    weight: 3,   closable: true },
+      { id: 'comments',    title: 'Comments',     icon: 'user',    region: 'rightInspector' as const, weight: 0.9, closable: true },
+      { id: 'history',     title: 'History',      icon: 'history', region: 'rightInspector' as const, weight: 0.8, closable: true },
+      { id: 'renderQueue', title: 'Render Queue', icon: 'queue',   region: 'rightInspector' as const, weight: 0.7, closable: true },
+    ];
+    for (const p of onDemand) {
+      registerPanel(p);
+      if (!openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
+    }
   }, [registerPanel]);
 
 
@@ -233,7 +253,10 @@ function EditorShellInner(): JSX.Element {
           keyframes: track.keyframes.map((kf) => ({
             id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
-            time: controller.toAbsoluteTime(node.id, kf.t),
+            // Diamonds draw at the comp time where the renderer actually
+            // applies the keyframe — the canonical inverse, which honors
+            // trim/sourceIn, the active clip, stretch and precomp remaps.
+            time: keyframeToCompTime(node.id, kf.t, track.prop),
             roving: kf.roving,
             isHold: kf.easing === 'hold',
           })),
@@ -261,7 +284,7 @@ function EditorShellInner(): JSX.Element {
           keyframes: dt.keyframes.map((kf) => ({
             id: makeKeyframeId(node.id, dt.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
-            time: controller.toAbsoluteTime(node.id, kf.t),
+            time: keyframeToCompTime(node.id, kf.t, dt.prop),
             isHold: dt.kind === 'text' || undefined,
           })),
           stopwatchProps: [dt.prop],
@@ -277,10 +300,12 @@ function EditorShellInner(): JSX.Element {
           for (const pt of posProps) {
             for (const kf of pt.keyframes) {
               if (!mergedKfs.has(kf.time)) {
-                // The id must carry LAYER time, like every per-property row —
-                // `kf.time` is absolute, so encoding it here made every handler
-                // look up the wrong instant on any layer that doesn't start at 0.
-                const layerT = controller.toLayerTime(node.id, kf.time);
+                // The id must carry the STORED keyframe time, like every
+                // per-property row — `kf.time` is absolute. The source row's id
+                // already encodes the exact stored time, so lift it from there
+                // rather than round-tripping through the (frame-quantizing)
+                // inverse conversion.
+                const layerT = parseKeyframeId(kf.id)?.t ?? compToKeyframeTime(node.id, kf.time);
                 mergedKfs.set(kf.time, {
                   ...kf,
                   id: makeKeyframeId(node.id, POSITION_PSEUDO_PROP, layerT) as KeyId,
@@ -739,7 +764,9 @@ function EditorShellInner(): JSX.Element {
   const handleKeyframeSeek = (kfId: string): void => {
     const ref = parseKeyframeId(kfId);
     if (!ref) return;
-    handleScrub(ref.t);
+    // `ref.t` is the STORED keyframe time — seek to the comp time where the
+    // renderer applies it (identical only for an untrimmed clip at 0).
+    handleScrub(keyframeToCompTime(ref.nodeId, ref.t, ref.prop));
     setSelected([ref.nodeId]);
   };
   const handleKeyframeMove = (kfId: string, time: number): void => {
@@ -752,8 +779,7 @@ function EditorShellInner(): JSX.Element {
         if (time < 0) {
           runAnimEdit('Delete keyframe', () => defaultAnimation.removeDataKeyframe(ref.nodeId, ref.prop, ref.t));
         } else {
-          const c = getTimelineController();
-          runAnimEdit('Move keyframe', () => defaultAnimation.moveDataKeyframe(ref.nodeId, ref.prop, ref.t, c.toLayerTime(ref.nodeId, time)));
+          runAnimEdit('Move keyframe', () => defaultAnimation.moveDataKeyframe(ref.nodeId, ref.prop, ref.t, compToKeyframeTime(ref.nodeId, time, ref.prop)));
         }
         return;
       }
@@ -763,9 +789,11 @@ function EditorShellInner(): JSX.Element {
           for (const p of props) defaultAnimation.removeKeyframe(ref.nodeId, p, ref.t);
         });
       } else {
-        const c = getTimelineController();
+        // `time` is the drop's comp time — store the keyframe on the canonical
+        // axis so the diamond re-draws exactly where it was dropped.
         runAnimEdit('Move keyframe', () => {
-          for (const p of props) defaultAnimation.moveKeyframe(ref.nodeId, p, ref.t, c.toLayerTime(ref.nodeId, time));
+          const layerT = compToKeyframeTime(ref.nodeId, time, ref.prop);
+          for (const p of props) defaultAnimation.moveKeyframe(ref.nodeId, p, ref.t, layerT);
         });
       }
     }
@@ -855,7 +883,9 @@ function EditorShellInner(): JSX.Element {
       runAnimEdit(
         `Set ${prop}`,
         () => defaultAnimation.setKeyframe(trackId, prop, layerT, value),
-        `set:${trackId}:${prop}:${rawTime}`,
+        // Merge key carries the CANONICAL written time, so scrubs at one comp
+        // time coalesce iff they land on the same keyframe.
+        `set:${trackId}:${prop}:${layerT}`,
       );
       return;
     }

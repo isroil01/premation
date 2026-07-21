@@ -17,6 +17,8 @@ export interface PipelineContext {
   compPreamble: string;
   history: readonly AiMessage[];
   images?: readonly AiImage[];
+  optimizedPrompt?: string;
+
 
   // Accumulated stage outputs
   intent?: IntentOutput;

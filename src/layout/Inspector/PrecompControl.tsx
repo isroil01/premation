@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * PrecompControl (Prompt 10) — the "Precompose" switch + Time Remap, shown for
  * group layers. Precompose: the group's subtree renders to a texture and
@@ -29,12 +29,16 @@ export function TimeRemapRow({ nodeId }: { nodeId: string }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
   const animated = defaultAnimation.isAnimated(nodeId, REMAP) || defaultAnimation.isAnimated(nodeId, LEGACY_REMAP);
+  // The remap track's own axis: the renderer samples `timeRemap` at the
+  // precomp-CHAIN time (never through this group's clip/stretch), so pass the
+  // prop to land reads and writes exactly where buildSnapshot looks.
+  const remapT = compToKeyframeTime(nodeId, time, REMAP);
   const display = animated
-    ? (defaultAnimation.sample(nodeId, REMAP, time) ?? defaultAnimation.sample(nodeId, LEGACY_REMAP, time) ?? time)
+    ? (defaultAnimation.sample(nodeId, REMAP, remapT) ?? defaultAnimation.sample(nodeId, LEGACY_REMAP, remapT) ?? time)
     : time;
 
   const onChange = (v: number): void => {
-    runAnimEdit('Set time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, getTimelineController().toLayerTime(nodeId, time), v), `timeRemap:${nodeId}:${time}`);
+    runAnimEdit('Set time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, remapT, v), `timeRemap:${nodeId}:${remapT}`);
   };
   const toggle = (): void => {
     if (animated) {
@@ -43,7 +47,7 @@ export function TimeRemapRow({ nodeId }: { nodeId: string }): JSX.Element {
         defaultAnimation.removeTrack(nodeId, LEGACY_REMAP);
       });
     } else {
-      runAnimEdit('Enable time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, getTimelineController().toLayerTime(nodeId, time), time));
+      runAnimEdit('Enable time remap', () => defaultAnimation.setKeyframe(nodeId, REMAP, remapT, time));
     }
   };
 

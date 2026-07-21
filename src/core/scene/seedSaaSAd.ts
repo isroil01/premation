@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * seedSaaSAd — a ~24s premium SaaS product ad authored entirely through the
  * engine's public APIs, as a capability benchmark. It is a *generative* build
@@ -102,7 +102,7 @@ function geomPath(parent: string, id: string, pts: Pt[], stroke: string, width: 
   return id;
 }
 
-const kf = (id: string, prop: string, frames: Frame[]) => { for (const [t, v, e] of frames) defaultAnimation.setKeyframe(id, prop, getTimelineController().toLayerTime(id, t), v, e ?? 'easeInOut'); };
+const kf = (id: string, prop: string, frames: Frame[]) => { for (const [t, v, e] of frames) defaultAnimation.setKeyframe(id, prop, compToKeyframeTime(id, t), v, e ?? 'easeInOut'); };
 function animLastFx(id: string, frames: Frame[]) { const fx = getNodeEffects(id).at(-1); if (!fx) return; kf(id, effectPropPath(fx.id), frames); }
 const fx = (id: string, type: EffectType) => addEffect(id, type);
 

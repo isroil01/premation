@@ -29,7 +29,17 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
-import { insertShape, insertText, insertMedia, setNodeWorldPosition } from '@core/scene/sceneInsert';
+import {
+  insertShape,
+  insertText,
+  insertMedia,
+  setNodeWorldPosition,
+  insertCursorLibraryItem,
+  insertMotionGraphicLibraryItem,
+  insertTransitionLibraryItem,
+  insertSoundFxLibraryItem,
+  insertLottieLibraryItem
+} from '@core/scene/sceneInsert';
 import { useAssetStore } from '@stores/assetStore';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -37,6 +47,7 @@ import { useUIStore } from '@stores/uiStore';
 import { addEffect } from '@core/effects/effects';
 import { applyPresetByName } from '@core/animation/animationPresets';
 import { insertAnimPreset } from '@core/template/animPresets';
+
 import { ViewportHeader } from './ViewportHeader';
 import { FocusBreadcrumb } from '@layout/focus/FocusBreadcrumb';
 import { TextEditOverlay } from './TextEditOverlay';
@@ -215,8 +226,24 @@ export function WorkspaceViewport({
         // A self-contained animated element — insert at the drop point.
         insertAnimPreset(payload.presetId, world.x, world.y);
         break;
+      case 'cursor':
+        insertCursorLibraryItem(payload.cursorId, payload.name, world.x, world.y);
+        break;
+      case 'mograph':
+        insertMotionGraphicLibraryItem(payload.mographId, payload.name, world.x, world.y);
+        break;
+      case 'transition':
+        insertTransitionLibraryItem(payload.transId, payload.name);
+        break;
+      case 'sfx':
+        insertSoundFxLibraryItem(payload.sfxId, payload.name);
+        break;
+      case 'lottie':
+        insertLottieLibraryItem(payload.lottieId, payload.name, world.x, world.y);
+        break;
     }
   }, []);
+
 
   return (
     <div className={cn(styles.wrapper, className)}>

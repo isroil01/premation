@@ -17,10 +17,13 @@ import { useUIStore } from '@stores/uiStore';
 import { Project3D } from '@motion/scene';
 import { is3DEnabled } from './threeD';
 import { flattenScene, readNodeKind } from './sceneDerive';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { detectImageSequence } from '@core/scene/imageSequence';
+import { useWorkspaceStore } from '@stores/projectStore';
+import { defaultAnimation } from '@motion/animation';
+
 
 let seq = 0;
 
@@ -921,4 +924,326 @@ function toggleSelectionFlag(flag: 'locked' | 'solo' | 'visible'): void {
 export const toggleSelectedLocked = (): void => toggleSelectionFlag('locked');
 export const toggleSelectedSolo = (): void => toggleSelectionFlag('solo');
 export const toggleSelectedVisible = (): void => toggleSelectionFlag('visible');
+
+// ── Asset Libraries Core Insertion Helpers ─────────────────────────────
+
+export function insertCursorLibraryItem(cursorId: string, name: string, x?: number, y?: number): string {
+  const rootId = activeCompRootId();
+  const px = x ?? useCompositionStore.getState().width / 2;
+  const py = y ?? useCompositionStore.getState().height / 2;
+
+  if (cursorId === 'c2' || cursorId === 'c3') {
+    // Click Ripple or Double Burst group
+    const group = makeNode('group', name);
+    group.transform.position = { x: px, y: py };
+    defaultSceneGraph.addChild(rootId, group);
+
+    const arrow = makeNode('shape', 'Pointer');
+    arrow.transform.position = { x: 0, y: 0 };
+    const tArrow = arrow.components.find((c) => c.type === 'Transform');
+    if (tArrow) {
+      tArrow.props.width = 40;
+      tArrow.props.height = 40;
+      tArrow.props.shapeType = 'arrow';
+    }
+    const styleArrow = arrow.components.find((c) => c.type === 'Style');
+    if (styleArrow) styleArrow.props.fill = '#8b5cf6';
+    defaultSceneGraph.addChild(group.id, arrow);
+
+    const ripple = makeNode('shape', 'Ripple');
+    ripple.transform.position = { x: 0, y: 0 };
+    const tRipple = ripple.components.find((c) => c.type === 'Transform');
+    if (tRipple) {
+      tRipple.props.width = 80;
+      tRipple.props.height = 80;
+      tRipple.props.shapeType = 'ellipse';
+    }
+    const styleRipple = ripple.components.find((c) => c.type === 'Style');
+    if (styleRipple) styleRipple.props.fill = 'rgba(0,0,0,0)';
+    ripple.components.push({
+      id: `${ripple.id}_fx`,
+      type: 'fx',
+      props: {
+        stroke: { enabled: true, color: '#8b5cf6', width: 4, opacity: 1, cap: 'round', join: 'miter', align: 'center', dash: [] },
+      },
+    });
+    defaultSceneGraph.addChild(group.id, ripple);
+    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
+    const lt = compToKeyframeTime(ripple.id, t0);
+    defaultAnimation.setKeyframe(ripple.id, 'scaleX', lt, 0, 'easeOut');
+    defaultAnimation.setKeyframe(ripple.id, 'scaleY', lt, 0, 'easeOut');
+    defaultAnimation.setKeyframe(ripple.id, 'opacity', lt, 100, 'easeOut');
+
+    defaultAnimation.setKeyframe(ripple.id, 'scaleX', lt + 0.5, 1.5, 'easeOut');
+    defaultAnimation.setKeyframe(ripple.id, 'scaleY', lt + 0.5, 1.5, 'easeOut');
+    defaultAnimation.setKeyframe(ripple.id, 'opacity', lt + 0.5, 0, 'easeOut');
+
+    useSelectionStore.getState().set([group.id]);
+    bumpScene();
+    return group.id;
+  } else {
+    const node = makeNode('shape', name);
+    node.transform.position = { x: px, y: py };
+    const t = node.components.find((c) => c.type === 'Transform');
+    let fill = '#2988ff';
+    let shape: ShapeKind = 'arrow';
+    let size = 50;
+
+    if (cursorId === 'c4' || cursorId === 'c5' || cursorId === 'c6') {
+      shape = 'ellipse';
+      fill = cursorId === 'c4' ? '#10b981' : cursorId === 'c5' ? '#ec4899' : '#6366f1';
+      size = 30;
+    } else if (cursorId === 'c7' || cursorId === 'c8') {
+      shape = 'ellipse';
+      fill = cursorId === 'c7' ? 'rgba(249, 115, 22, 0.35)' : 'rgba(132, 204, 22, 0.3)';
+      size = 180;
+    } else if (cursorId === 'c9' || cursorId === 'c10') {
+      shape = 'triangle';
+      fill = '#14b8a6';
+      size = 45;
+    } else if (cursorId === 'c11') {
+      shape = 'cross';
+      fill = '#fb7185';
+      size = 40;
+    }
+
+    if (t) {
+      t.props.width = size;
+      t.props.height = size;
+      t.props.shapeType = shape;
+    }
+    const style = node.components.find((c) => c.type === 'Style');
+    if (style) style.props.fill = fill;
+
+    defaultSceneGraph.addChild(rootId, node);
+    useSelectionStore.getState().set([node.id]);
+    bumpScene();
+    return node.id;
+  }
+}
+
+export function insertMotionGraphicLibraryItem(mgId: string, name: string, x?: number, y?: number): string {
+  const rootId = activeCompRootId();
+  const px = x ?? useCompositionStore.getState().width / 2;
+  const py = y ?? useCompositionStore.getState().height / 2;
+
+  const group = makeNode('group', name);
+  group.transform.position = { x: px, y: py };
+  defaultSceneGraph.addChild(rootId, group);
+
+  const bg = makeNode('shape', 'Background Matte');
+  bg.transform.position = { x: 0, y: 0 };
+  const tBg = bg.components.find((c) => c.type === 'Transform');
+  if (tBg) {
+    tBg.props.width = 360;
+    tBg.props.height = 80;
+    tBg.props.shapeType = 'rect';
+    tBg.props.cornerRadius = 8;
+  }
+  const styleBg = bg.components.find((c) => c.type === 'Style');
+  if (styleBg) {
+    styleBg.props.fill = mgId === 'mg1' ? 'rgba(41, 136, 255, 0.95)' : 'rgba(139, 92, 246, 0.95)';
+  }
+  defaultSceneGraph.addChild(group.id, bg);
+
+  const txt = makeNode('text', name);
+  txt.transform.position = { x: -140, y: -10 };
+  const tText = txt.components.find((c) => c.type === 'Text');
+  if (tText) {
+    tText.props.fontSize = 24;
+    tText.props.fill = '#ffffff';
+    tText.props.content = name;
+  }
+  defaultSceneGraph.addChild(group.id, txt);
+  const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
+  const ltBg = compToKeyframeTime(bg.id, t0);
+  const ltTxt = compToKeyframeTime(txt.id, t0);
+
+  defaultAnimation.setKeyframe(bg.id, 'scaleX', ltBg, 0, 'easeOut');
+  defaultAnimation.setKeyframe(bg.id, 'scaleX', ltBg + 0.4, 1, 'easeOut');
+
+  defaultAnimation.setKeyframe(txt.id, 'opacity', ltTxt, 0, 'easeInOut');
+  defaultAnimation.setKeyframe(txt.id, 'opacity', ltTxt + 0.2, 0, 'easeInOut');
+  defaultAnimation.setKeyframe(txt.id, 'opacity', ltTxt + 0.6, 100, 'easeInOut');
+
+  useSelectionStore.getState().set([group.id]);
+  bumpScene();
+  return group.id;
+}
+
+export function insertTransitionLibraryItem(transId: string, name: string): string {
+  const rootId = activeCompRootId();
+  const comp = useCompositionStore.getState();
+  const W = comp.width || 1920;
+
+  const node = makeNode('shape', name);
+  defaultSceneGraph.addChild(rootId, node);
+  defaultSceneGraph.setSolid(node.id, true);
+
+  const color = transId === 't2' ? '#2988ff' : transId === 't3' ? '#10b981' : '#8b5cf6';
+  defaultSceneGraph.setFill(node.id, { type: 'solid', color });
+
+  centerInComp(node);
+  const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
+  const lt = compToKeyframeTime(node.id, t0);
+
+  if (transId === 't2' || transId === 't3') {
+    defaultAnimation.setKeyframe(node.id, 'x', lt, -W, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'x', lt + 0.4, 0, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'x', lt + 0.8, W, 'easeInOut');
+  } else if (transId === 't4' || transId === 't5') {
+    defaultAnimation.setKeyframe(node.id, 'scaleX', lt, 0, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleY', lt, 0, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.4, 1.5, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.4, 1.5, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.8, 0, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.8, 0, 'easeInOut');
+  } else {
+    defaultAnimation.setKeyframe(node.id, 'opacity', lt, 0, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'opacity', lt + 0.3, 100, 'easeInOut');
+    defaultAnimation.setKeyframe(node.id, 'opacity', lt + 0.6, 0, 'easeInOut');
+  }
+
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+  return node.id;
+}
+
+export function insertSoundFxLibraryItem(sfxId: string, name: string): string {
+  const asset: ImportedAsset = {
+    id: `sfx_asset_${sfxId}_${Math.random().toString(36).slice(2, 6)}`,
+    name: name,
+    type: 'audio' as const,
+    src: 'sfx-dummy-silent.mp3',
+    size: 2048,
+    metadata: {
+      duration: sfxId.startsWith('s1') ? 0.2 : sfxId.startsWith('s4') ? 0.6 : 1.5,
+    },
+  };
+
+  insertAudio(asset);
+  const ids = useSelectionStore.getState().ids;
+  return ids[0] || '';
+}
+
+export function insertLottieLibraryItem(lottieId: string, name: string, x?: number, y?: number): string {
+  const rootId = activeCompRootId();
+  const px = x ?? useCompositionStore.getState().width / 2;
+  const py = y ?? useCompositionStore.getState().height / 2;
+
+  const color = lottieId === 'l1' ? '#10b981' : lottieId === 'l4' ? '#ec4899' : '#2988ff';
+
+  if (lottieId === 'l1') {
+    const group = makeNode('group', name);
+    group.transform.position = { x: px, y: py };
+    defaultSceneGraph.addChild(rootId, group);
+
+    const circle = makeNode('shape', 'Ring');
+    circle.transform.position = { x: 0, y: 0 };
+    const tCircle = circle.components.find((c) => c.type === 'Transform');
+    if (tCircle) {
+      tCircle.props.width = 100;
+      tCircle.props.height = 100;
+      tCircle.props.shapeType = 'ellipse';
+    }
+    const styleCircle = circle.components.find((c) => c.type === 'Style');
+    if (styleCircle) styleCircle.props.fill = 'rgba(0,0,0,0)';
+    circle.components.push({
+      id: `${circle.id}_fx`,
+      type: 'fx',
+      props: {
+        stroke: { enabled: true, color: color, width: 6, opacity: 1, cap: 'round', join: 'miter', align: 'center', dash: [] },
+      },
+    });
+    defaultSceneGraph.addChild(group.id, circle);
+
+    const check = makeNode('shape', 'Check');
+    check.transform.position = { x: 0, y: 0 };
+    const tCheck = check.components.find((c) => c.type === 'Transform');
+    if (tCheck) {
+      tCheck.props.width = 60;
+      tCheck.props.height = 60;
+      tCheck.props.shapeType = 'star';
+    }
+    const styleCheck = check.components.find((c) => c.type === 'Style');
+    if (styleCheck) styleCheck.props.fill = color;
+    defaultSceneGraph.addChild(group.id, check);
+    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
+    const ltC = compToKeyframeTime(circle.id, t0);
+    const ltH = compToKeyframeTime(check.id, t0);
+
+    defaultAnimation.setKeyframe(circle.id, 'scaleX', ltC, 0, 'easeOut');
+    defaultAnimation.setKeyframe(circle.id, 'scaleY', ltC, 0, 'easeOut');
+    defaultAnimation.setKeyframe(circle.id, 'scaleX', ltC + 0.4, 1, 'easeOut');
+    defaultAnimation.setKeyframe(circle.id, 'scaleY', ltC + 0.4, 1, 'easeOut');
+
+    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH, 0, 'easeOut');
+    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH, 0, 'easeOut');
+    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH + 0.3, 0, 'easeOut');
+    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH + 0.3, 0, 'easeOut');
+    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH + 0.6, 1.2, 'easeOut');
+    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH + 0.6, 1.2, 'easeOut');
+    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH + 0.8, 1, 'easeOut');
+    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH + 0.8, 1, 'easeOut');
+
+    useSelectionStore.getState().set([group.id]);
+    bumpScene();
+    return group.id;
+  } else if (lottieId === 'l2') {
+    const node = makeNode('shape', name);
+    node.transform.position = { x: px, y: py };
+    const t = node.components.find((c) => c.type === 'Transform');
+    if (t) {
+      t.props.width = 80;
+      t.props.height = 80;
+      t.props.shapeType = 'ellipse';
+    }
+    const style = node.components.find((c) => c.type === 'Style');
+    if (style) style.props.fill = 'rgba(0,0,0,0)';
+    node.components.push({
+      id: `${node.id}_fx`,
+      type: 'fx',
+      props: {
+        stroke: { enabled: true, color: color, width: 8, opacity: 1, cap: 'round', join: 'miter', align: 'center', dash: [30, 20] },
+      },
+    });
+    defaultSceneGraph.addChild(rootId, node);
+    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
+    const lt = compToKeyframeTime(node.id, t0);
+
+    defaultAnimation.setKeyframe(node.id, 'rotation', lt, 0, 'linear');
+    defaultAnimation.setKeyframe(node.id, 'rotation', lt + 2.0, 360, 'linear');
+
+    useSelectionStore.getState().set([node.id]);
+    bumpScene();
+    return node.id;
+  } else {
+    const node = makeNode('shape', name);
+    node.transform.position = { x: px, y: py };
+    const t = node.components.find((c) => c.type === 'Transform');
+    const shape = lottieId === 'l4' ? 'heart' : 'star';
+    if (t) {
+      t.props.width = 90;
+      t.props.height = 90;
+      t.props.shapeType = shape;
+    }
+    const style = node.components.find((c) => c.type === 'Style');
+    if (style) style.props.fill = color;
+    defaultSceneGraph.addChild(rootId, node);
+    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
+    const lt = compToKeyframeTime(node.id, t0);
+
+    defaultAnimation.setKeyframe(node.id, 'scaleX', lt, 0, 'easeOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleY', lt, 0, 'easeOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.3, 1.3, 'easeOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.3, 1.3, 'easeOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.5, 1.0, 'easeOut');
+    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.5, 1.0, 'easeOut');
+
+    useSelectionStore.getState().set([node.id]);
+    bumpScene();
+    return node.id;
+  }
+}
+
 

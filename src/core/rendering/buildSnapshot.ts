@@ -57,9 +57,8 @@ import { rasterPadding } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints } from '../rig/puppet';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
-import { computeWorldTransforms, computeBindInverses, type Bone } from '../rig/skeleton';
-import { skinMesh, type SkinVertex } from '../rig/skinning';
-import { boneSegments, autoWeightVertex } from '../rig/autoWeight';
+import { computeWorldTransforms, type Bone } from '../rig/skeleton';
+import { applyIk, getSkeletonBinding, skinRigVertices, type IkTargetResolved } from '../rig/rigDeform';
 import { getImageCoverageMask } from './imageAlphaCoverage';
 
 const COMP_WIDTH = 1920;
@@ -330,11 +329,15 @@ export function buildSnapshot(
     const gv = valuesOf(groupNode.id);
     const gBase = readBase(groupNode);
     const inner = precompInner.get(groupNode.id) ?? [];
+    // Resolve the container's effect stack once — the CSS string stays for
+    // tests/legacy readers, the structured list is what the GPU path renders
+    // (without it a precomp's effects were silently dropped on composite).
+    const gFx = resolveEffectParams(readNodeRenderEffects(groupNode), (path) => {
+      const v = gv?.get(path);
+      return typeof v === 'number' ? v : undefined;
+    });
     const filter = [
-      effectsToFilter(resolveEffectParams(readNodeRenderEffects(groupNode), (path) => {
-        const v = gv?.get(path);
-        return typeof v === 'number' ? v : undefined;
-      })),
+      effectsToFilter(gFx),
       layerStylesToFilter(readNodeLayerStyles(groupNode)),
     ].filter(Boolean).join(' ') || undefined;
     return {
@@ -355,6 +358,7 @@ export function buildSnapshot(
       fill: '#000',
       visible: groupNode.visible !== false,
       filter,
+      effects: gFx.length ? gFx : undefined,
       precompLayers: inner,
       sourceTime: (() => {
         const remapped = anim.sample(groupNode.id, 'timeRemap', t) ?? anim.sample(groupNode.id, 'precompTime', t);
@@ -875,9 +879,17 @@ export function buildSnapshot(
     const ay = a?.get('anchorY') ?? anchor.y;
     if (ax !== 0 || ay !== 0) { layer.anchorX = ax; layer.anchorY = ay; }
 
-    // Puppet mesh rigging & deformation (Phase 6):
+    // Mesh rigging & deformation: puppet pins (Phase 6) and/or skeleton bones.
+    // When BOTH rigs live on one layer they COMPOSE instead of the skeleton
+    // silently no-oping: the puppet solve runs first in REST space (keeping the
+    // ARAP rest configuration — and its cached Cholesky factorisation — frame-
+    // invariant), then the skeleton skinning maps the puppet-refined vertices
+    // into posed space. Order rationale + determinism notes live in rigDeform.ts.
     const puppetRig = readNodePuppet(node);
-    if (puppetRig && puppetRig.pins && puppetRig.pins.length > 0) {
+    const skelRig = readNodeSkeleton(node);
+    const hasPuppet = !!(puppetRig && puppetRig.pins && puppetRig.pins.length > 0);
+    const hasSkel = !!(skelRig && skelRig.bones && skelRig.bones.length > 0);
+    if (hasPuppet || hasSkel) {
       const pad = rasterPadding(layer);
       // Silhouette-conforming mesh: cull grid cells fully outside the layer's
       // path outline when path geometry exists (closed shapes). Image layers get
@@ -887,96 +899,86 @@ export function buildSnapshot(
       const coverage = (!silhouette && layerKind === 'image' && layer.src)
         ? getImageCoverageMask(base.assetId ?? layer.src, layer.src)
         : undefined;
+      // ONE shared rest mesh. Puppet mesh settings win when a puppet rig exists
+      // (its pin weights are baked into the mesh); a skeleton-only layer reads
+      // density/expansion off its own config.
+      const meshRig = hasPuppet
+        ? puppetRig!
+        : { pins: [], meshDensity: skelRig!.meshDensity, meshExpansion: skelRig!.meshExpansion };
       const restMesh = getCachedRestMesh(
         node.id,
         layer.width ?? 100,
         layer.height ?? 100,
         pad,
-        puppetRig,
+        meshRig,
         silhouette,
         coverage
       );
-      const puppetT = layer.sourceTime ?? t;
-      const animatedPins = puppetRig.pins.map((pin) => {
-        // Sample dynamic position from data track, falling back to static pin position
-        const livePos = anim.sampleData(node.id, `puppet.${pin.id}.position`, puppetT);
-        let px = pin.x;
-        let py = pin.y;
-        if (Array.isArray(livePos) && livePos.length > 0 && livePos[0] && typeof livePos[0] === 'object' && 'x' in livePos[0]) {
-          const pt = livePos[0] as { x: number; y: number };
-          px = pt.x;
-          py = pt.y;
-        }
-        // Rotation / stiffness: scalar keyframe tracks (puppet.<pinId>.rotation
-        // and .stiffness), falling back to the pin's static values.
-        const liveRot = anim.sample(node.id, `puppet.${pin.id}.rotation`, puppetT);
-        const liveStiff = anim.sample(node.id, `puppet.${pin.id}.stiffness`, puppetT);
-        return {
-          id: pin.id,
-          x: px,
-          y: py,
-          rotation: typeof liveRot === 'number' ? liveRot : pin.rotation,
-          stiffness: typeof liveStiff === 'number' ? liveStiff : pin.stiffness,
-        };
-      });
-      const deformedVertices = deform(animatedPins, restMesh, puppetRig.solver ?? 'arap');
-      layer.deformedMesh = {
-        vertices: deformedVertices,
-        triangles: restMesh.triangles,
-      };
-    }
+      const rigT = layer.sourceTime ?? t;
 
-    // Skeleton bone rigging & linear blend skinning deformation:
-    const skelRig = readNodeSkeleton(node);
-    if (skelRig && skelRig.bones && skelRig.bones.length > 0 && !layer.deformedMesh) {
-      const pad = rasterPadding(layer);
-      const silhouette = silhouetteFromPathPoints(pathPoints, pathOpen);
-      const coverage = (!silhouette && layerKind === 'image' && layer.src)
-        ? getImageCoverageMask(base.assetId ?? layer.src, layer.src)
-        : undefined;
-      const restMesh = getCachedRestMesh(
-        node.id,
-        layer.width ?? 100,
-        layer.height ?? 100,
-        pad,
-        { pins: [] },
-        silhouette,
-        coverage
-      );
-      const skelT = layer.sourceTime ?? t;
-      const animatedBones: Bone[] = skelRig.bones.map((b) => {
-        const liveRot = anim.sample(node.id, `bone.${b.id}.rotation`, skelT);
-        const liveX = anim.sample(node.id, `bone.${b.id}.x`, skelT);
-        const liveY = anim.sample(node.id, `bone.${b.id}.y`, skelT);
-        return {
-          ...b,
-          rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
-          x: typeof liveX === 'number' ? liveX : b.x,
-          y: typeof liveY === 'number' ? liveY : b.y,
-        };
-      });
+      let deformedVertices = restMesh.vertices;
 
-      const poseWorld = computeWorldTransforms({ bones: animatedBones });
-      const bindWorld = computeWorldTransforms({ bones: skelRig.bones });
-      const bindInverse = computeBindInverses(bindWorld);
-      const segments = boneSegments(skelRig.bones, bindWorld);
-
-      const numVerts = restMesh.vertices.length / 4;
-      const skinVerts: SkinVertex[] = [];
-      for (let i = 0; i < numVerts; i++) {
-        const vx = restMesh.vertices[i * 4 + 0]!;
-        const vy = restMesh.vertices[i * 4 + 1]!;
-        const weights = autoWeightVertex({ x: vx, y: vy }, segments);
-        skinVerts.push({ x: vx, y: vy, weights });
+      if (hasPuppet) {
+        const animatedPins = puppetRig!.pins.map((pin) => {
+          // Sample dynamic position from data track, falling back to static pin position
+          const livePos = anim.sampleData(node.id, `puppet.${pin.id}.position`, rigT);
+          let px = pin.x;
+          let py = pin.y;
+          if (Array.isArray(livePos) && livePos.length > 0 && livePos[0] && typeof livePos[0] === 'object' && 'x' in livePos[0]) {
+            const pt = livePos[0] as { x: number; y: number };
+            px = pt.x;
+            py = pt.y;
+          }
+          // Rotation / stiffness: scalar keyframe tracks (puppet.<pinId>.rotation
+          // and .stiffness), falling back to the pin's static values.
+          const liveRot = anim.sample(node.id, `puppet.${pin.id}.rotation`, rigT);
+          const liveStiff = anim.sample(node.id, `puppet.${pin.id}.stiffness`, rigT);
+          return {
+            id: pin.id,
+            x: px,
+            y: py,
+            rotation: typeof liveRot === 'number' ? liveRot : pin.rotation,
+            stiffness: typeof liveStiff === 'number' ? liveStiff : pin.stiffness,
+          };
+        });
+        deformedVertices = deform(animatedPins, restMesh, puppetRig!.solver ?? 'arap');
       }
 
-      const skinned = skinMesh(skinVerts, poseWorld, bindInverse);
-      const deformedVertices = new Float32Array(restMesh.vertices.length);
-      for (let i = 0; i < numVerts; i++) {
-        deformedVertices[i * 4 + 0] = skinned[i]!.x;
-        deformedVertices[i * 4 + 1] = skinned[i]!.y;
-        deformedVertices[i * 4 + 2] = restMesh.vertices[i * 4 + 2]!;
-        deformedVertices[i * 4 + 3] = restMesh.vertices[i * 4 + 3]!;
+      if (hasSkel) {
+        // FK: sample the bone tracks (rotation stored in radians — the unit
+        // fromTRS consumes; the UI converts at the display boundary).
+        const animatedBones: Bone[] = skelRig!.bones.map((b) => {
+          const liveRot = anim.sample(node.id, `bone.${b.id}.rotation`, rigT);
+          const liveX = anim.sample(node.id, `bone.${b.id}.x`, rigT);
+          const liveY = anim.sample(node.id, `bone.${b.id}.y`, rigT);
+          return {
+            ...b,
+            rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
+            x: typeof liveX === 'number' ? liveX : b.x,
+            y: typeof liveY === 'number' ? liveY : b.y,
+          };
+        });
+        // IK: each enabled target overrides its chain's rotations so the end
+        // bone's tip reaches the (keyframeable) target position.
+        const ikTargets: IkTargetResolved[] = (skelRig!.ikTargets ?? [])
+          .filter((tg) => tg.enabled !== false)
+          .map((tg) => {
+            const liveX = anim.sample(node.id, `ikTarget.${tg.boneId}.x`, rigT);
+            const liveY = anim.sample(node.id, `ikTarget.${tg.boneId}.y`, rigT);
+            return {
+              boneId: tg.boneId,
+              x: typeof liveX === 'number' ? liveX : tg.x,
+              y: typeof liveY === 'number' ? liveY : tg.y,
+              chainLength: tg.chainLength,
+            };
+          });
+        const posedBones = applyIk(animatedBones, ikTargets);
+        const poseWorld = computeWorldTransforms({ bones: posedBones });
+        // Weights bound once per (mesh × rest skeleton) and cached — not
+        // recomputed per frame. Skinning positions come from the (possibly
+        // puppet-deformed) vertex buffer; weights always from rest positions.
+        const binding = getSkeletonBinding(restMesh, skelRig!.bones);
+        deformedVertices = skinRigVertices(binding, poseWorld, deformedVertices);
       }
 
       layer.deformedMesh = {

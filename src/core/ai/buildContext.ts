@@ -12,6 +12,8 @@
  */
 
 import type { ToolContext } from '@motion/ai-tools';
+import { getAssetsVisualContext } from './assetVisualAnalyzer';
+
 
 export const SYSTEM_PROMPT = `You are a motion graphics director working inside a professional animation editor, alongside the user. You author motion by calling tools; you never write code or describe what you would do instead of doing it. Your job is not to satisfy the prompt literally — it is to make the result *look good on screen*, the way a senior motion designer would.
 
@@ -108,7 +110,9 @@ export function buildContextPreamble(ctx: ToolContext): string {
     `DESIGN FOR THIS EXACTLY: the user chose ${comp.durationSeconds}s — structure the motion across the FULL duration (entrances early, development in the middle, a resolve near ${comp.durationSeconds}s; no dead air at the end). Lay out for ${comp.width}x${comp.height} ${aspectLabel} framing — never assume 1920x1080.`,
     `Playhead: ${ctx.comp.playhead().toFixed(2)}s.`,
     `Layers: ${all.length} total (${topLevel.length} top-level, ${animatedCount} already animated).`,
+    getAssetsVisualContext(),
   ];
+
 
   if (selection.length) {
     const named = selection

@@ -1,5 +1,5 @@
 import { mergeSelectedPaths } from '@core/scene/mergePaths';
-import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
+import { getRemappedTime } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
  *
@@ -43,7 +43,7 @@ import {
   positionSamplerFor,
 } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
+import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { bumpScene } from '@stores/sceneStore';
 import { readNodeKind, flattenScene } from '@core/scene/sceneDerive';
@@ -533,11 +533,15 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
         if (part === 'point') {
           // Move the point in 2D (both axis tracks get a key at this time;
           // spatial tangents are relative offsets, so they travel with it).
+          // `drag.t` is ALREADY the stored keyframe time — converting it again
+          // (the old toLayerTime call) shifted the write off the keyframe being
+          // dragged on any clip that doesn't start at 0. The tangent branch
+          // below always passed it raw; now both do.
           runAnimEdit(
             'Move keyframe',
             () => {
-              defaultAnimation.setKeyframe(drag.nodeId, 'x', getTimelineController().toLayerTime(drag.nodeId, drag.t), w.x);
-              defaultAnimation.setKeyframe(drag.nodeId, 'y', getTimelineController().toLayerTime(drag.nodeId, drag.t), w.y);
+              defaultAnimation.setKeyframe(drag.nodeId, 'x', drag.t, w.x);
+              defaultAnimation.setKeyframe(drag.nodeId, 'y', drag.t, w.y);
             },
             `mpdrag:${drag.nodeId}:${drag.t}`,
           );
@@ -623,11 +627,10 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
           if (textComp) {
             e.preventDefault();
             e.stopPropagation();
-            const currentVal = (textComp.props.content as string) ?? '';
-            const newVal = window.prompt('Edit text:', currentVal);
-            if (newVal !== null) {
-              updateNodeComponentProp(defaultSceneGraph, node.id, textComp.id, 'content', newVal);
-            }
+            // On-canvas editor (TextEditOverlay, mounted by Workspace) — NOT
+            // window.prompt, which Electron's Chromium refuses to show, so the
+            // desktop app's double-click did nothing at all.
+            useTextEditStore.getState().begin(node.id);
             return;
           }
         }

@@ -9,7 +9,18 @@ import { readGeometry, worldMatrix } from '@core/workspace/geometry';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, PuppetPin } from '@core/rig/puppet';
 import { addPuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
-import { getRemappedTime } from '@core/timeline/TimelineController';
+import { readNodeSkeleton } from '@core/rig/skeletonCommands';
+import { computeWorldTransforms, type Bone } from '@core/rig/skeleton';
+import {
+  applyIk,
+  getSkeletonBinding,
+  skinRigVertices,
+  unskinPoint,
+  type IkTargetResolved,
+  type SkeletonBinding,
+} from '@core/rig/rigDeform';
+import type { Mat2D } from '@core/rig/mat2d';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
 import { upsertDataKeyframe } from '@motion/animation';
 import { bumpScene } from '@stores/sceneStore';
@@ -56,6 +67,13 @@ export function PuppetOverlay(): JSX.Element | null {
     startRotationDeg: number;
   } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // Drag/element-origin guard: pointerup synthesizes a click even after a drag
+  // (stopPropagation on pointerdown does NOT stop it), so every pin drag-release
+  // used to also spawn a stray pin. Any pointerdown on an existing pin, any
+  // completed drag, or travel past the slop suppresses the click-add.
+  const suppressClickAddRef = useRef(false);
+
 
   // Force re-render on render ticks / camera movements
   const [, setTick] = useState(0);
@@ -130,7 +148,8 @@ export function PuppetOverlay(): JSX.Element | null {
     silhouette
   );
 
-  const layerT = getRemappedTime(node.id, time);
+  // Canonical keyframe axis — the same forward map buildSnapshot samples.
+  const layerT = compToKeyframeTime(node.id, time);
 
   const animatedPins = pins.map((pin) => {
     const livePos = defaultAnimation.sampleData(node.id, `puppet.${pin.id}.position`, layerT);
@@ -152,7 +171,50 @@ export function PuppetOverlay(): JSX.Element | null {
     };
   });
 
-  const deformedVertices = deform(animatedPins, restMesh, puppetRig?.solver ?? 'arap');
+  let deformedVertices = deform(animatedPins, restMesh, puppetRig?.solver ?? 'arap');
+
+  // Skeleton composition preview — mirror buildSnapshot exactly: when the layer
+  // also carries a skeleton, the puppet solve stays in REST space and the
+  // skeleton skinning (FK + IK) poses the puppet-refined mesh on top. Pins are
+  // authored/stored in rest space; pointer input is mapped back via unskinPoint.
+  const skel = readNodeSkeleton(node);
+  let skelBinding: SkeletonBinding | null = null;
+  let skelPoseWorld: Map<string, Mat2D> | null = null;
+  if (skel && skel.bones.length > 0) {
+    const animatedBones: Bone[] = skel.bones.map((b) => {
+      const liveRot = defaultAnimation.sample(node.id, `bone.${b.id}.rotation`, layerT);
+      const liveX = defaultAnimation.sample(node.id, `bone.${b.id}.x`, layerT);
+      const liveY = defaultAnimation.sample(node.id, `bone.${b.id}.y`, layerT);
+      return {
+        ...b,
+        rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
+        x: typeof liveX === 'number' ? liveX : b.x,
+        y: typeof liveY === 'number' ? liveY : b.y,
+      };
+    });
+    const activeIk: IkTargetResolved[] = (skel.ikTargets ?? [])
+      .filter((tg) => tg.enabled !== false)
+      .map((tg) => {
+        const liveX = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.x`, layerT);
+        const liveY = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.y`, layerT);
+        return {
+          boneId: tg.boneId,
+          x: typeof liveX === 'number' ? liveX : tg.x,
+          y: typeof liveY === 'number' ? liveY : tg.y,
+          chainLength: tg.chainLength,
+        };
+      });
+    const posedBones = applyIk(animatedBones, activeIk);
+    skelPoseWorld = computeWorldTransforms({ bones: posedBones });
+    skelBinding = getSkeletonBinding(restMesh, skel.bones);
+    deformedVertices = skinRigVertices(skelBinding, skelPoseWorld, deformedVertices);
+  }
+
+  /** Posed-space pointer position → rest space (identity without a skeleton). */
+  const toRestSpace = (p: { x: number; y: number }): { x: number; y: number } =>
+    skelBinding && skelPoseWorld ? unskinPoint(p, skelBinding, skelPoseWorld) : p;
+
+
 
   // Render triangulation polygons
   const polygons: JSX.Element[] = [];
@@ -191,6 +253,7 @@ export function PuppetOverlay(): JSX.Element | null {
   // Pointer drag operations
   const onPointerDownPin = (e: React.PointerEvent, pinId: string) => {
     e.stopPropagation();
+    suppressClickAddRef.current = true;
     setSelectedPinId(pinId);
     const svg = svgRef.current;
     if (!svg) return;
@@ -204,7 +267,7 @@ export function PuppetOverlay(): JSX.Element | null {
     let startRotationDeg = 0;
     if (mode === 'rotate') {
       const animPin = animatedPins.find((p) => p.id === pinId);
-      const local = screenToLocal(startScreen.x, startScreen.y);
+      const local = toRestSpace(screenToLocal(startScreen.x, startScreen.y));
       const cx = animPin?.x ?? 0;
       const cy = animPin?.y ?? 0;
       startAngleDeg = (Math.atan2(local.y - cy, local.x - cx) * 180) / Math.PI;

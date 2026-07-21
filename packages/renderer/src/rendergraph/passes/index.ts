@@ -3,7 +3,7 @@
 import { RenderGraph } from '../RenderGraph';
 import { ClearPass } from './ClearPass';
 import { BackgroundPass } from './BackgroundPass';
-import { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET } from './CompositionPass';
+import { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET, PRECOMP_TARGETS } from './CompositionPass';
 import { SelectionPass } from './SelectionPass';
 import { OverlayPass } from './OverlayPass';
 import { MaskPass, MASK_TARGET } from './MaskPass';
@@ -11,7 +11,7 @@ import { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
 
 export { ClearPass } from './ClearPass';
 export { BackgroundPass } from './BackgroundPass';
-export { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET } from './CompositionPass';
+export { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
 export { SelectionPass } from './SelectionPass';
 export { OverlayPass } from './OverlayPass';
 export { MaskPass, MASK_TARGET } from './MaskPass';
@@ -71,6 +71,15 @@ export function buildDefaultGraph(): RenderGraph {
     height: vp.pixelSize.height,
     format: 'rgba8unorm',
   }));
+  // One isolated-precomp target per nesting depth (see CompositionPass).
+  for (const name of PRECOMP_TARGETS) {
+    graph.declareTarget(name, (vp) => ({
+      label: name,
+      width: vp.pixelSize.width,
+      height: vp.pixelSize.height,
+      format: 'rgba8unorm',
+    }));
+  }
 
   return graph;
 }

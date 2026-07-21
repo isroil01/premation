@@ -13,7 +13,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeParticle, DEFAULT_PARTICLE_CONFIG, particlePropPath, type ParticleConfig, type ParticleNumericKey } from '@core/particles/particleSim';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { getTimelineController, getRemappedTime } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { ColorKfRow } from './ColorKfRow';
@@ -26,7 +26,10 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const cfg = readNodeParticle(node) ?? DEFAULT_PARTICLE_CONFIG;
-  const layerT = getRemappedTime(nodeId, time);
+  // ONE axis for reads and writes: the canonical keyframe time (reads used to
+  // be on the renderer axis while writes subtracted the first clip's start —
+  // a moved/trimmed clip made every edit land beside the keyframe it showed).
+  const layerT = compToKeyframeTime(nodeId, time);
 
   const set = <K extends keyof ParticleConfig>(key: K, value: ParticleConfig[K]): void => {
     defaultSceneGraph.setParticle(nodeId, { ...cfg, [key]: value });
@@ -44,7 +47,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
         runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
       } else {
         runAnimEdit(`Animate ${label}`, () =>
-          defaultAnimation.setKeyframe(nodeId, prop, getTimelineController().toLayerTime(nodeId, time), cfg[key] as number));
+          defaultAnimation.setKeyframe(nodeId, prop, layerT, cfg[key] as number));
       }
     };
     return (
@@ -61,7 +64,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
               // Editing an animated param writes a keyframe at the playhead —
               // writing the static config would change nothing on screen.
               runAnimEdit(`Set ${label}`, () =>
-                defaultAnimation.setKeyframe(nodeId, prop, getTimelineController().toLayerTime(nodeId, time), Number(v)),
+                defaultAnimation.setKeyframe(nodeId, prop, layerT, Number(v)),
                 `particle:${nodeId}:${prop}`);
             } else {
               set(key, Number(v) as ParticleConfig[typeof key]);

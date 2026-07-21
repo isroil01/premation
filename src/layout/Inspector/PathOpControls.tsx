@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * PathOpControls (MG Phase C) — "Path Operator" inspector section for shape
  * layers. Deform the outline with Zig-Zag, Round Corners, Pucker & Bloat or
@@ -86,18 +86,20 @@ function ParamRow({
   useSceneRevision((s) => s.rev);
   const path = pathOpPropPath(param);
   const animated = defaultAnimation.isAnimated(nodeId, path);
-  const display = animated ? defaultAnimation.sample(nodeId, path, time) ?? value : value;
+  // ONE axis for reads and writes: the canonical keyframe time.
+  const layerT = compToKeyframeTime(nodeId, time);
+  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? value : value;
 
   const onChange = (v: number): void => {
     if (animated) {
-      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), v), `pathop:${nodeId}:${path}:${time}`);
+      runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, v), `pathop:${nodeId}:${path}:${layerT}`);
     } else {
       updatePathOp(nodeId, { [param]: v } as Partial<PathOp>);
     }
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
-    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, getTimelineController().toLayerTime(nodeId, time), value));
+    else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, value));
   };
 
   return (

@@ -1,4 +1,4 @@
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * Complex showcase — a deliberately over-the-top motion-graphics build that
  * exercises most of the engine at once: keyframed transforms with easing,
@@ -96,7 +96,7 @@ function starPts(points: number, rOuter: number, rInner: number): Pt[] {
 // ── keyframe helpers ──────────────────────────────────────────────────
 
 function kf(id: string, prop: string, frames: Array<[number, number, Ease?]>): void {
-  for (const [t, v, e] of frames) defaultAnimation.setKeyframe(id, prop, getTimelineController().toLayerTime(id, t), v, e ?? 'easeInOut');
+  for (const [t, v, e] of frames) defaultAnimation.setKeyframe(id, prop, compToKeyframeTime(id, t), v, e ?? 'easeInOut');
 }
 
 /** Animate the amount of the most-recently-added effect on a layer. */
@@ -104,7 +104,7 @@ function animLastEffect(id: string, frames: Array<[number, number, Ease?]>): voi
   const fx = getNodeEffects(id).at(-1);
   if (!fx) return;
   const path = effectPropPath(fx.id);
-  for (const [t, v, e] of frames) defaultAnimation.setKeyframe(id, path, getTimelineController().toLayerTime(id, t), v, e ?? 'easeInOut');
+  for (const [t, v, e] of frames) defaultAnimation.setKeyframe(id, path, compToKeyframeTime(id, t), v, e ?? 'easeInOut');
 }
 
 // ── the build ─────────────────────────────────────────────────────────

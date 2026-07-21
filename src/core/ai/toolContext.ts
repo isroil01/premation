@@ -30,7 +30,7 @@ import { readNodePuppet } from '@core/rig/puppet';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { resetSceneWindow } from './sceneWindow';
 import { defaultAnimation, upsertDataKeyframe, type EasingKind } from '@motion/animation';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { reparentNode } from '@core/scene/parenting';
@@ -83,6 +83,18 @@ const isPrefixed = (prop: string): boolean =>
 const isPuppetScalar = (prop: string): boolean =>
   prop.startsWith('puppet.') && (prop.endsWith('.rotation') || prop.endsWith('.stiffness'));
 
+/**
+ * Skeleton scalar tracks the renderer samples (buildSnapshot rig section):
+ * `bone.<boneId>.rotation|x|y` (FK pose; rotation stored in RADIANS — the
+ * pose_skeleton tool converts from its degree-based schema) and
+ * `ikTarget.<boneId>.x|y` (layer-local IK goal position, px — the chain solves
+ * toward the animated target every frame).
+ */
+const isSkeletonScalar = (prop: string): boolean =>
+  (prop.startsWith('bone.') &&
+    (prop.endsWith('.rotation') || prop.endsWith('.x') || prop.endsWith('.y'))) ||
+  (prop.startsWith('ikTarget.') && (prop.endsWith('.x') || prop.endsWith('.y')));
+
 export function isAnimatableProp(prop: string): boolean {
   return (
     (TRANSFORM_PROPS as readonly string[]).includes(prop) ||
@@ -90,7 +102,8 @@ export function isAnimatableProp(prop: string): boolean {
     (SPECIAL_PROPS as readonly string[]).includes(prop) ||
     (CAMERA_PROPS as readonly string[]).includes(prop) ||
     isPrefixed(prop) ||
-    isPuppetScalar(prop)
+    isPuppetScalar(prop) ||
+    isSkeletonScalar(prop)
   );
 }
 
@@ -362,9 +375,13 @@ export function createCompFacade(): CompFacade {
 }
 
 export function createTimeFacade(): TimeFacade {
+  // The facade keeps its historical names, but both directions ride the
+  // CANONICAL keyframe axis (what buildSnapshot samples) — every AI tool that
+  // authors keyframes through ctx.time inherits trim/split/stretch/precomp
+  // correctness from here.
   return {
-    toLayerTime: (nodeId, compSeconds) => getTimelineController().toLayerTime(nodeId, compSeconds),
-    toCompTime: (nodeId, layerSeconds) => getTimelineController().toAbsoluteTime(nodeId, layerSeconds),
+    toLayerTime: (nodeId, compSeconds) => compToKeyframeTime(nodeId, compSeconds),
+    toCompTime: (nodeId, layerSeconds) => keyframeToCompTime(nodeId, layerSeconds),
   };
 }
 

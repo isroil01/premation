@@ -58,7 +58,10 @@ function addNode(x: number): void {
  */
 function addClip(startFrames: number): void {
   const c = getTimelineController();
-  const trackId = (c as unknown as { compositionTrackId: string }).compositionTrackId;
+  // The controller's composition track is its timeline's only track (created
+  // by initTimeline) — the old private `compositionTrackId` cast went stale
+  // when the controller grew a per-comp map and silently returned undefined.
+  const trackId = c.timeline.getTracks()[0]!.id;
   c.timeline.addLayer(String(trackId), {
     name: NODE, sourceId: NODE, clip: { start: startFrames, duration: 300 },
   });
@@ -98,8 +101,7 @@ describe('keyframing position from the inspector', () => {
     defaultAnimation.removeTrack(NODE, 'x');
     try { defaultSceneGraph.removeNode(NODE); } catch { /* first run */ }
     const c = getTimelineController();
-    const tid = (c as unknown as { compositionTrackId: string }).compositionTrackId;
-    const track = c.timeline.getTrack(String(tid));
+    const track = c.timeline.getTracks()[0];
     for (const l of [...(track?.layers ?? [])]) c.timeline.removeLayer(String(l.id));
     c.invalidateLayerIndex();
     addNode(-400);

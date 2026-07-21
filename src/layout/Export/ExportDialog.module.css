@@ -101,8 +101,15 @@
   color: var(--color-text-muted);
 }
 
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .progressWrap {
   position: relative;
+  flex: 1;
   height: 24px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-1);

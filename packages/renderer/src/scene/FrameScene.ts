@@ -102,6 +102,16 @@ export interface Renderable {
    *  full-comp targets and combines them. */
   matte?: { mode: 'alpha' | 'luma'; inverted: boolean; sourceId: string };
   matteSource?: boolean;
+  /**
+   * Isolated precomp (nested composition): CompositionPass renders these child
+   * renderables into an offscreen target, then composites that texture as ONE
+   * unit with this renderable's opacity / blend / effects / mask / matte —
+   * exactly like a single layer. Used when the container carries group opacity
+   * over multiple children, a mask/matte, a non-normal blend, or effects; the
+   * adapter keeps the cheap inline-collapse path otherwise. Children are in
+   * the container's local (comp) space with identity parent transform.
+   */
+  precomp?: { renderables: Renderable[] };
   /** Dynamic CPU-skinned mesh geometry for puppet deformation. */
   deformedMesh?: {
     vertices: Float32Array;

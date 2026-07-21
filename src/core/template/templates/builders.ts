@@ -14,7 +14,7 @@ import type { SceneNode, Transform } from '@core/types';
 import type { FillPaint } from '@core/paint/fill';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { defaultAnimation } from '@motion/animation';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 
 export type Ease = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';
 export type Frame = [number, number, Ease?];
@@ -25,9 +25,9 @@ export type Frame = [number, number, Ease?];
  *  and the isolated gallery-card animation. Mirrors animPresets' SetKf. */
 export type SetKf = (id: string, prop: string, timeSec: number, value: number, ease?: Ease) => void;
 
-/** Writes into the LIVE scene's animation engine (seconds → layer time). */
+/** Writes into the LIVE scene's animation engine (seconds → canonical keyframe time). */
 export const liveKf: SetKf = (id, prop, timeSec, value, ease) => {
-  defaultAnimation.setKeyframe(id, prop, getTimelineController().toLayerTime(id, timeSec), value, ease ?? 'easeInOut');
+  defaultAnimation.setKeyframe(id, prop, compToKeyframeTime(id, timeSec), value, ease ?? 'easeInOut');
 };
 
 /** The largest keyframe time (seconds) a choreography sets — its loop length. */

@@ -19,13 +19,23 @@ export const SKELETON_EDIT_COMMAND = asCommandId('skeleton.edit');
 
 export interface IKTarget {
   boneId: string;
+  /** Target position in LAYER-LOCAL space (the mesh/bone coordinate space).
+   *  Keyframeable via the ikTarget.<boneId>.x / .y scalar tracks; these static
+   *  values are the fallback when no track exists. */
   x: number;
   y: number;
   enabled?: boolean;
+  /** Bones in the solved chain (target bone + ancestors). Default 2, max 8. */
+  chainLength?: number;
 }
 
 export interface SkeletonRig extends Skeleton {
   ikTargets?: IKTarget[];
+  /** Skinning mesh controls (skeleton-only layers) — same semantics as the
+   *  puppet rig's meshDensity/meshExpansion. When a puppet rig coexists on the
+   *  layer, the shared mesh comes from the puppet settings instead. */
+  meshDensity?: number;
+  meshExpansion?: number;
 }
 
 /** Read a node's skeleton rig from its fx component. */
@@ -97,6 +107,7 @@ function applyAndRecord(
 export function addBone(nodeId: ID, bone: Bone): void {
   const skel = currentSkeleton(nodeId);
   const after: SkeletonRig = {
+    ...skel,
     bones: [...(skel?.bones ?? []), bone],
     ikTargets: skel?.ikTargets ?? [],
   };
@@ -108,6 +119,7 @@ export function deleteBone(nodeId: ID, boneId: string): void {
   const skel = currentSkeleton(nodeId);
   if (!skel) return;
   const after: SkeletonRig = {
+    ...skel,
     bones: (skel.bones ?? []).filter((b) => b.id !== boneId && b.parentId !== boneId),
     ikTargets: (skel.ikTargets ?? []).filter((t) => t.boneId !== boneId),
   };
@@ -115,6 +127,8 @@ export function deleteBone(nodeId: ID, boneId: string): void {
     defaultAnimation.removeTrack(nodeId, `bone.${boneId}.rotation`);
     defaultAnimation.removeTrack(nodeId, `bone.${boneId}.x`);
     defaultAnimation.removeTrack(nodeId, `bone.${boneId}.y`);
+    defaultAnimation.removeTrack(nodeId, `ikTarget.${boneId}.x`);
+    defaultAnimation.removeTrack(nodeId, `ikTarget.${boneId}.y`);
   });
   applyAndRecord(nodeId, after, `Delete Bone ${boneId}`, trackEdit);
 }
@@ -136,8 +150,19 @@ export function setIKTarget(nodeId: ID, target: IKTarget): void {
   const targets = (skel?.ikTargets ?? []).filter((t) => t.boneId !== target.boneId);
   if (target.enabled !== false) targets.push(target);
   const after: SkeletonRig = {
+    ...skel,
     bones: skel?.bones ?? [],
     ikTargets: targets,
   };
   applyAndRecord(nodeId, after, `Set IK Target for ${target.boneId}`);
+}
+
+/** Update rig-level skinning mesh settings (density / expansion). One undo step. */
+export function updateSkeletonSettings(
+  nodeId: ID,
+  patch: Partial<Pick<SkeletonRig, 'meshDensity' | 'meshExpansion'>>,
+): void {
+  const skel = currentSkeleton(nodeId);
+  const after: SkeletonRig = { bones: [], ikTargets: [], ...skel, ...patch };
+  applyAndRecord(nodeId, after, 'Edit Skeleton Mesh');
 }

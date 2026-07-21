@@ -13,7 +13,7 @@
 import type { EasingKind, BezierHandles } from '@motion/animation';
 import { defaultAnimation, parseKeyframeId, expandKeyframeProp } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { getTimelineController } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 
 export interface ClipboardEntry {
   nodeId: string;
@@ -70,13 +70,16 @@ export function copyKeyframes(ids: ReadonlySet<string>): void {
 export function pasteKeyframes(targetNodeIds: readonly string[], atCompTime: number): void {
   if (_clipboard.length === 0 || targetNodeIds.length === 0) return;
   const minT = Math.min(..._clipboard.map((e) => e.t));
-  const offset = atCompTime - minT;
-  const c = getTimelineController();
 
   runAnimEdit('Paste keyframes', () => {
     for (const nodeId of targetNodeIds) {
+      // The earliest clipboard keyframe lands at the TARGET's canonical time
+      // for the playhead; the rest keep their stored spacing. The old code
+      // added a comp-time offset to stored keyframe times — two different
+      // axes, which scattered pastes on any moved/trimmed clip.
+      const base = compToKeyframeTime(nodeId, atCompTime);
       for (const entry of _clipboard) {
-        const layerT = c.toLayerTime(nodeId, entry.t + offset);
+        const layerT = base + (entry.t - minT);
         defaultAnimation.setKeyframe(nodeId, entry.prop, layerT, entry.value, entry.easing);
         if (entry.bezier) defaultAnimation.setBezier(nodeId, entry.prop, layerT, entry.bezier);
       }
