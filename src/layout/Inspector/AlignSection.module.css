@@ -41,3 +41,53 @@
   opacity: 0.3;
   cursor: not-allowed;
 }
+
+.targetRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.targetLabel {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary);
+}
+
+.targetToggles {
+  display: flex;
+  background: var(--color-surface-3, rgba(255, 255, 255, 0.03));
+  border-radius: 4px;
+  padding: 2px;
+  gap: 1px;
+}
+
+.targetBtn {
+  background: transparent;
+  border: none;
+  outline: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--color-text-dimmed);
+  font-size: 10px;
+  font-weight: 500;
+  transition: all 0.1s;
+}
+
+.targetBtn:hover {
+  color: var(--color-text);
+}
+
+.targetBtnActive {
+  composes: targetBtn;
+  background: var(--color-surface-active, rgba(255, 255, 255, 0.1));
+  color: var(--color-text-bright);
+}
+

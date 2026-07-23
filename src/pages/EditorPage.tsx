@@ -11,13 +11,9 @@
 import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Providers } from '@providers/Providers';
-import { EditorShell } from '../App';
+import { CloudThumbnailWorker } from '../components/CloudThumbnailWorker';
 import { getProjectManager, getFileManager } from '@core/services/coreServices';
-import { getEventBus } from '@core/events/EventBus';
-import { api } from '@core/api/client';
-import { captureDocument } from '@core/api/cloudDocument';
-import { renderThumbnailBlob } from '@core/export/exportManager';
-import { useCompositionStore } from '@stores/compositionStore';
+import { CloudAutosave } from '../components/CloudAutosave';
 import { ApiFileAdapter } from '@core/files/ApiFileAdapter';
 import { useUIStore } from '@stores/uiStore';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
@@ -84,51 +80,7 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
  * revision and keeps a rolling snapshot). Armed after a short settle so the
  * project's own load doesn't immediately re-save it.
  */
-function CloudAutosave({ projectId }: { projectId: string }): null {
-  useEffect(() => {
-    let armed = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let inFlight = false;
-    const armTimer = setTimeout(() => { armed = true; }, 2000);
-
-    const flush = async (): Promise<void> => {
-      if (inFlight) { schedule(); return; } // coalesce while a save is running
-      inFlight = true;
-      try {
-        await api.autosave(projectId, captureDocument());
-        const ws = useWorkspaceStore.getState();
-        if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
-        clearRecovery();
-      } catch {
-        /* offline / transient — the next edit will retry */
-      } finally {
-        inFlight = false;
-      }
-    };
-    const schedule = (): void => {
-      if (!armed) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { void flush(); }, 1200);
-    };
-
-    const bus = getEventBus();
-    const subs = [
-      bus.on('AnimationChanged', schedule),
-      bus.on('NodeUpdated', schedule),
-      bus.on('SceneGraphChanged', schedule),
-      // Comp settings, timeline clips/markers/work area and motion blur don't
-      // touch the scene graph, so without this they never reach the server.
-      bus.on('DocumentChanged', schedule),
-    ];
-    return () => {
-      clearTimeout(armTimer);
-      if (timer) clearTimeout(timer);
-      subs.forEach((s) => s.dispose());
-    };
-  }, [projectId]);
-
-  return null;
-}
+// Imported CloudAutosave component replaces the inline implementation
 
 /**
  * Keeps the project's poster frame current.
@@ -142,72 +94,22 @@ function CloudAutosave({ projectId }: { projectId: string }): null {
  * Failure is silent by design. A missing preview costs the user a nice
  * thumbnail; an error toast about one costs them their attention.
  */
-const THUMBNAIL_MIN_INTERVAL_MS = 120_000;
+// CloudThumbnail removed; using worker component instead
 
-function CloudThumbnail({ projectId }: { projectId: string }): null {
-  useEffect(() => {
-    let dirty = false;
-    let capturing = false;
-    let lastCapture = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+import { Suspense, lazy } from 'react';
 
-    const capture = async (): Promise<void> => {
-      if (!dirty || capturing) return;
-      capturing = true;
-      dirty = false;
-      lastCapture = Date.now();
-      try {
-        const c = useCompositionStore.getState();
-        const blob = await renderThumbnailBlob({
-          width: c.width,
-          height: c.height,
-          background: c.background,
-          transparent: c.transparent,
-        });
-        if (blob) await api.setProjectThumbnail(projectId, blob);
-      } catch {
-        /* a preview is a nicety — never surface this */
-      } finally {
-        capturing = false;
-      }
-    };
-
-    const onChange = (): void => {
-      dirty = true;
-      if (timer) return;
-      const wait = Math.max(0, THUMBNAIL_MIN_INTERVAL_MS - (Date.now() - lastCapture));
-      timer = setTimeout(() => {
-        timer = undefined;
-        void capture();
-      }, wait);
-    };
-
-    const bus = getEventBus();
-    const subs = [
-      bus.on('AnimationChanged', onChange),
-      bus.on('SceneGraphChanged', onChange),
-    ];
-
-    return () => {
-      if (timer) clearTimeout(timer);
-      subs.forEach((s) => s.dispose());
-      // One last frame on the way out. This is a normal SPA unmount, so the
-      // upload still completes; on a hard tab close it won't, and that's fine.
-      void capture();
-    };
-  }, [projectId]);
-
-  return null;
-}
+const LazyEditorShell = lazy(() => import('../App').then(m => ({ default: m.EditorShell })));
 
 export function EditorPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
   return (
     <Providers>
-      {projectId ? <ProjectLoader projectId={projectId} /> : null}
-      {projectId ? <CloudAutosave projectId={projectId} /> : null}
-      {projectId ? <CloudThumbnail projectId={projectId} /> : null}
-      <EditorShell />
+      <Suspense fallback={<div>Loading editor…</div>}>
+        {projectId ? <ProjectLoader projectId={projectId} /> : null}
+        {projectId ? <CloudAutosave projectId={projectId} /> : null}
+        {projectId ? <CloudThumbnailWorker projectId={projectId} /> : null}
+        <LazyEditorShell />
+      </Suspense>
     </Providers>
   );
 }

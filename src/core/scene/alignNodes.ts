@@ -77,17 +77,23 @@ function setPos(nodeId: string, x: number, y: number): void {
   defaultSceneGraph.writeProp(node.id, c.id, 'y', y);
 }
 
-export function alignNodes(ids: string[], mode: AlignMode): void {
+export function alignNodes(
+  ids: string[],
+  mode: AlignMode,
+  alignTo: 'selection' | 'composition' = 'selection',
+  compWidth: number = 1920,
+  compHeight: number = 1080
+): void {
   if (ids.length < 1) return;
   const boxes = ids
     .map((id) => ({ id, b: getBounds(id) }))
     .filter((v): v is { id: string; b: Bounds } => v.b !== null);
   if (boxes.length === 0) return;
 
-  const left   = Math.min(...boxes.map((v) => v.b.x));
-  const top    = Math.min(...boxes.map((v) => v.b.y));
-  const right  = Math.max(...boxes.map((v) => v.b.x + v.b.w));
-  const bottom = Math.max(...boxes.map((v) => v.b.y + v.b.h));
+  const left   = alignTo === 'composition' ? 0 : Math.min(...boxes.map((v) => v.b.x));
+  const top    = alignTo === 'composition' ? 0 : Math.min(...boxes.map((v) => v.b.y));
+  const right  = alignTo === 'composition' ? compWidth : Math.max(...boxes.map((v) => v.b.x + v.b.w));
+  const bottom = alignTo === 'composition' ? compHeight : Math.max(...boxes.map((v) => v.b.y + v.b.h));
   const cx = (left + right) / 2;
   const cy = (top + bottom) / 2;
 
@@ -103,22 +109,28 @@ export function alignNodes(ids: string[], mode: AlignMode): void {
     }
   }
 
-  if (mode === 'distribute-h' && boxes.length > 2) {
+  if (mode === 'distribute-h' && boxes.length > (alignTo === 'composition' ? 1 : 2)) {
     const sorted = [...boxes].sort((a, b) => a.b.x - b.b.x);
     const totalW = sorted.reduce((s, v) => s + v.b.w, 0);
-    const gap = (right - left - totalW) / (sorted.length - 1);
+    const gap = (right - left - totalW) / (sorted.length - (alignTo === 'composition' ? 0 : 1));
     let cursor = left;
+    if (alignTo === 'composition') {
+      cursor += gap / 2;
+    }
     for (const { id, b } of sorted) {
       setPos(id, cursor + b.w / 2, b.cy);
       cursor += b.w + gap;
     }
   }
 
-  if (mode === 'distribute-v' && boxes.length > 2) {
+  if (mode === 'distribute-v' && boxes.length > (alignTo === 'composition' ? 1 : 2)) {
     const sorted = [...boxes].sort((a, b) => a.b.y - b.b.y);
     const totalH = sorted.reduce((s, v) => s + v.b.h, 0);
-    const gap = (bottom - top - totalH) / (sorted.length - 1);
+    const gap = (bottom - top - totalH) / (sorted.length - (alignTo === 'composition' ? 0 : 1));
     let cursor = top;
+    if (alignTo === 'composition') {
+      cursor += gap / 2;
+    }
     for (const { id, b } of sorted) {
       setPos(id, b.cx, cursor + b.h / 2);
       cursor += b.h + gap;

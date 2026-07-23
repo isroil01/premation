@@ -78,6 +78,8 @@ import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 import { useComponentStore } from '@stores/componentStore';
 import { MotionPresetsPanel } from '@layout/Motion/MotionPresetsPanel';
+import { FlowPanel } from '@layout/Flow/FlowPanel';
+import { MotionToolsPanel } from '@layout/MotionTools/MotionToolsPanel';
 import { useUIStore } from '@stores/uiStore';
 import type { SceneNode } from '@core/types';
 import styles from './DemoPanels.module.css';
@@ -1947,6 +1949,8 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     style: () => <StylePanel />,
     rig: () => <RigPanel />,
     motion: () => <MotionEditorPanel />,
+    flow: () => <FlowPanel />,
+    motiontools: () => <MotionToolsPanel />,
     effects: () => <EffectsPanel />,
     misc: () => <MiscPanel />,
     history: () => <HistoryPanel />,

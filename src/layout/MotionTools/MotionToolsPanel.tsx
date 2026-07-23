@@ -9,28 +9,55 @@ import {
   sequenceLayers,
   timeReverseKeyframes,
 } from '@core/animation/keyframeAssistants';
+import { insertNull } from '@core/scene/parenting';
+import { insertPrimitive, insertCamera, precomposeSelected } from '@core/scene/sceneInsert';
+import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
+import { defaultAnimation } from '@motion/animation';
+import { hasTrim, setTrim, defaultTrim } from '@core/scene/trimPath';
+import { getTimelineController } from '@core/timeline/TimelineController';
+import { useActiveWorkspace } from '@stores/projectStore';
+import { bumpScene } from '@stores/sceneStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { runAnimEdit } from '@core/animation/animationCommands';
 import styles from './MotionToolsPanel.module.css';
+
+// Predefined After Effects label colors
+const SWATCH_COLORS = [
+  { name: 'Red', hex: '#f04f43' },
+  { name: 'Yellow', hex: '#f1ca3a' },
+  { name: 'Green', hex: '#5cb85c' },
+  { name: 'Blue', hex: '#4a90e2' },
+  { name: 'Pink', hex: '#e4839c' },
+  { name: 'Orange', hex: '#f39c12' },
+  { name: 'Purple', hex: '#9b59b6' },
+  { name: 'Cyan', hex: '#48c9b0' },
+  { name: 'Grey', hex: '#95a5a6' },
+  { name: 'Charcoal', hex: '#555555' },
+];
 
 export function MotionToolsPanel(): JSX.Element {
   const selectedNodeIds = useSelectionStore((s) => s.ids);
   const selectedKeyframeIds = useKeyframeSelectionStore((s) => s.ids);
-  // Stagger interval (seconds) for Sequence Layers — configurable, no longer 0.3 fixed.
-  const [stagger, setStagger] = useState(0.3);
   
-  // Custom velocity influence percentage (0% to 100%)
+  // Workspace playhead
+  const playhead = useActiveWorkspace()?.time ?? 0;
+
+  // Stagger & Velocity values
+  const [stagger, setStagger] = useState(0.3);
   const [velIn, setVelIn] = useState(33);
   const [velOut, setVelOut] = useState(33);
 
   const handleAnchorClick = useCallback((xPercent: number, yPercent: number) => {
     if (selectedNodeIds.length === 0) return;
-    
-    for (const nodeId of selectedNodeIds) {
-      const bounds = estimateNodeBounds(nodeId);
-      // ax and ay are offsets from the center (0,0)
-      const ax = bounds.width * xPercent;
-      const ay = bounds.height * yPercent;
-      moveAnchorCompensated(nodeId, ax, ay);
-    }
+    runAnimEdit('Align Anchor Point', () => {
+      for (const nodeId of selectedNodeIds) {
+        const bounds = estimateNodeBounds(nodeId);
+        const ax = bounds.width * xPercent;
+        const ay = bounds.height * yPercent;
+        moveAnchorCompensated(nodeId, ax, ay);
+      }
+    });
+    bumpScene();
   }, [selectedNodeIds]);
 
   const handleEasing = useCallback((type: 'Ease' | 'Linear' | 'EaseIn' | 'EaseOut' | 'Hold') => {
@@ -55,53 +82,159 @@ export function MotionToolsPanel(): JSX.Element {
     }
   }, [selectedNodeIds]);
 
+  // Color Swatch Selection
+  const handleColorSelect = useCallback((colorHex: string) => {
+    if (selectedNodeIds.length === 0) return;
+    runAnimEdit('Set Label Color', () => {
+      for (const nodeId of selectedNodeIds) {
+        const node = defaultSceneGraph.getNode(nodeId);
+        if (node) {
+          (node as any).color = colorHex;
+        }
+      }
+    });
+    bumpScene();
+  }, [selectedNodeIds]);
+
+  // Motion Tweaks Actions
+  const handleToggle3D = useCallback(() => {
+    if (selectedNodeIds.length === 0) return;
+    runAnimEdit('Toggle 3D Layer', () => {
+      for (const nodeId of selectedNodeIds) {
+        const node = defaultSceneGraph.getNode(nodeId);
+        if (node) {
+          set3DEnabled(nodeId, !is3DEnabled(node));
+        }
+      }
+    });
+    bumpScene();
+  }, [selectedNodeIds]);
+
+  const handleToggleTimeRemap = useCallback(() => {
+    if (selectedNodeIds.length === 0) return;
+    const nodeId = selectedNodeIds[0]!;
+    const isAnimated = defaultAnimation.isAnimated(nodeId, 'timeRemap') || defaultAnimation.isAnimated(nodeId, 'precompTime');
+    runAnimEdit(isAnimated ? 'Disable time remap' : 'Enable time remap', () => {
+      if (isAnimated) {
+        defaultAnimation.removeTrack(nodeId, 'timeRemap');
+        defaultAnimation.removeTrack(nodeId, 'precompTime');
+      } else {
+        defaultAnimation.setKeyframe(nodeId, 'timeRemap', playhead, playhead);
+      }
+    });
+    bumpScene();
+  }, [selectedNodeIds, playhead]);
+
+  const handleToggleTrimPaths = useCallback(() => {
+    if (selectedNodeIds.length === 0) return;
+    runAnimEdit('Toggle Trim Paths', () => {
+      for (const nodeId of selectedNodeIds) {
+        const node = defaultSceneGraph.getNode(nodeId);
+        if (!node) continue;
+        if (hasTrim(node)) {
+          setTrim(nodeId, null);
+        } else {
+          setTrim(nodeId, defaultTrim());
+        }
+      }
+    });
+    bumpScene();
+  }, [selectedNodeIds]);
+
+  // Trim Pack Actions
+  const handleTrimIn = useCallback(() => {
+    if (selectedNodeIds.length === 0) return;
+    getTimelineController().trimSelectedStartToPlayhead(selectedNodeIds);
+    bumpScene();
+  }, [selectedNodeIds]);
+
+  const handleTrimOut = useCallback(() => {
+    if (selectedNodeIds.length === 0) return;
+    getTimelineController().trimSelectedEndToPlayhead(selectedNodeIds);
+    bumpScene();
+  }, [selectedNodeIds]);
+
+  const handleAddKeyframe = useCallback(() => {
+    if (selectedNodeIds.length === 0) return;
+    runAnimEdit('Add Keyframes', () => {
+      for (const nodeId of selectedNodeIds) {
+        const props = defaultAnimation.tracksFor(nodeId).map((t) => t.prop);
+        if (props.length > 0) {
+          for (const prop of props) {
+            const val = defaultAnimation.sample(nodeId, prop, playhead) ?? 0;
+            defaultAnimation.setKeyframe(nodeId, prop, playhead, val);
+          }
+        } else {
+          // add default position keyframes
+          const xVal = defaultAnimation.sample(nodeId, 'x', playhead) ?? 0;
+          const yVal = defaultAnimation.sample(nodeId, 'y', playhead) ?? 0;
+          defaultAnimation.setKeyframe(nodeId, 'x', playhead, xVal);
+          defaultAnimation.setKeyframe(nodeId, 'y', playhead, yVal);
+        }
+      }
+    });
+    bumpScene();
+  }, [selectedNodeIds, playhead]);
+
   return (
     <div className={styles.root}>
-      {/* Anchor Point Grid */}
+      {/* SECTION 1: Anchor point grid and color swatches */}
       <div className={styles.section}>
-        <div className={styles.sectionTitle}>Anchor Alignment</div>
-        <div className={styles.anchorGrid}>
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(-0.5, -0.5)} aria-label="Top Left">↖</button>
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(0, -0.5)} aria-label="Top Center">↑</button>
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(0.5, -0.5)} aria-label="Top Right">↗</button>
-          
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(-0.5, 0)} aria-label="Center Left">←</button>
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(0, 0)} aria-label="Center">•</button>
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(0.5, 0)} aria-label="Center Right">→</button>
-          
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(-0.5, 0.5)} aria-label="Bottom Left">↙</button>
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(0, 0.5)} aria-label="Bottom Center">↓</button>
-          <button type="button" className={styles.gridBtn} onClick={() => handleAnchorClick(0.5, 0.5)} aria-label="Bottom Right">↘</button>
+        <div className={styles.sectionTitle}>Motion Layout</div>
+        
+        <div className={styles.layoutFlexRow}>
+          {/* Circular 9-dot grid for Anchor point alignment */}
+          <div className={styles.anchorGrid}>
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(-0.5, -0.5)} title="Top Left" />
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(0, -0.5)} title="Top Center" />
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(0.5, -0.5)} title="Top Right" />
+            
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(-0.5, 0)} title="Center Left" />
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(0, 0)} title="Center" />
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(0.5, 0)} title="Center Right" />
+            
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(-0.5, 0.5)} title="Bottom Left" />
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(0, 0.5)} title="Bottom Center" />
+            <button type="button" className={styles.gridDot} onClick={() => handleAnchorClick(0.5, 0.5)} title="Bottom Right" />
+          </div>
+
+          {/* Preset Color Swatches */}
+          <div className={styles.colorPalette}>
+            {SWATCH_COLORS.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                className={styles.colorSwatch}
+                style={{ backgroundColor: c.hex }}
+                onClick={() => handleColorSelect(c.hex)}
+                title={`Set label color to ${c.name}`}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Easing Shortcuts */}
-      <div className={styles.section}>
-        <div className={styles.sectionTitle}>Keyframe Easing</div>
-        <div className={styles.actionRow}>
-          <button type="button" className={styles.actionBtn} onClick={() => handleEasing('Ease')} disabled={selectedKeyframeIds.size === 0} title="Easy Ease">
-            <Icon name="ease" size={14} /> Ease
-          </button>
-          <button type="button" className={styles.actionBtn} onClick={() => handleEasing('Linear')} disabled={selectedKeyframeIds.size === 0} title="Linear">
-            <Icon name="line" size={14} /> Linear
-          </button>
-        </div>
-        <div className={styles.actionRow}>
-          <button type="button" className={styles.actionBtn} onClick={() => handleEasing('EaseIn')} disabled={selectedKeyframeIds.size === 0} title="Ease In">
-            <Icon name="chevron-down" size={14} /> In
-          </button>
-          <button type="button" className={styles.actionBtn} onClick={() => handleEasing('EaseOut')} disabled={selectedKeyframeIds.size === 0} title="Ease Out">
-            <Icon name="chevron-up" size={14} /> Out
-          </button>
-        </div>
+      {/* SECTION 2: Keyframe Velocity & Easing Sliders */}
+      <div className={styles.section} style={{ borderTop: '1px solid var(--color-border)', paddingTop: 14 }}>
+        <div className={styles.sectionTitle}>Easing & Velocity</div>
         
+        {/* Quick presets row */}
+        <div className={styles.presetsRow}>
+          <button type="button" className={styles.presetBtn} onClick={() => handleEasing('Ease')} disabled={selectedKeyframeIds.size === 0}>
+            <Icon name="ease" size={12} /> Ease
+          </button>
+          <button type="button" className={styles.presetBtn} onClick={() => handleEasing('Linear')} disabled={selectedKeyframeIds.size === 0}>
+            <Icon name="line" size={12} /> Linear
+          </button>
+          <button type="button" className={styles.presetBtn} onClick={() => handleEasing('Hold')} disabled={selectedKeyframeIds.size === 0}>
+            <Icon name="stop" size={12} /> Hold
+          </button>
+        </div>
+
         {/* Velocity Sliders */}
         <div className={styles.sliderContainer}>
-          <div className={styles.sliderHeader}>
-            <span className={styles.sliderLabel}>Keyframe Velocity</span>
-          </div>
-          <div className={styles.sliderRow} style={{ marginTop: 4 }}>
-            <span style={{ fontSize: 11, width: 28, color: 'var(--color-text-tertiary)' }}>Out</span>
+          <div className={styles.sliderRow}>
+            <span className={styles.sliderLabel}>Out Speed</span>
             <input
               type="range"
               min="0"
@@ -109,13 +242,13 @@ export function MotionToolsPanel(): JSX.Element {
               value={velOut}
               onChange={(e) => setVelOut(Number(e.target.value))}
               disabled={selectedKeyframeIds.size === 0}
-              className={styles.sliderInput}
-              aria-label="Outgoing velocity percentage"
+              className={styles.rangeInput}
             />
-            <span className={styles.sliderValue} style={{ width: 32, textAlign: 'right' }}>{velOut}%</span>
+            <span className={styles.sliderVal}>{velOut}%</span>
           </div>
-          <div className={styles.sliderRow} style={{ marginTop: 4 }}>
-            <span style={{ fontSize: 11, width: 28, color: 'var(--color-text-tertiary)' }}>In</span>
+
+          <div className={styles.sliderRow}>
+            <span className={styles.sliderLabel}>In Speed</span>
             <input
               type="range"
               min="0"
@@ -123,48 +256,105 @@ export function MotionToolsPanel(): JSX.Element {
               value={velIn}
               onChange={(e) => setVelIn(Number(e.target.value))}
               disabled={selectedKeyframeIds.size === 0}
-              className={styles.sliderInput}
-              aria-label="Incoming velocity percentage"
+              className={styles.rangeInput}
             />
-            <span className={styles.sliderValue} style={{ width: 32, textAlign: 'right' }}>{velIn}%</span>
+            <span className={styles.sliderVal}>{velIn}%</span>
           </div>
-          <div className={styles.sliderRow} style={{ marginTop: 8, justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              className={styles.applyBtn}
-              onClick={applyVelocity}
-              disabled={selectedKeyframeIds.size === 0}
-              title="Apply velocity to selected keyframes"
-            >
-              Apply
-            </button>
-          </div>
+
+          <button
+            type="button"
+            className={styles.applyBtn}
+            onClick={applyVelocity}
+            disabled={selectedKeyframeIds.size === 0}
+          >
+            Apply Velocity
+          </button>
         </div>
       </div>
 
-      {/* Workflow Utilities */}
-      <div className={styles.section}>
-        <div className={styles.sectionTitle}>Workflow</div>
-        <div className={styles.actionRow}>
-          <button type="button" className={styles.actionBtn} onClick={handleSequence} disabled={selectedNodeIds.length < 2} title={`Sequence selected layers, staggered by ${stagger}s`}>
-            <Icon name="layers" size={14} /> Sequence
+      {/* SECTION 3: Motion Tweaks Panel (AE shortcuts) */}
+      <div className={styles.section} style={{ borderTop: '1px solid var(--color-border)', paddingTop: 14 }}>
+        <div className={styles.sectionTitle}>Motion Tweaks</div>
+        <div className={styles.tweaksGrid}>
+          <button type="button" className={styles.tweakBtn} onClick={handleToggle3D} disabled={selectedNodeIds.length === 0} title="Toggle 3D Layer mode">
+            <Icon name="3d" size={12} />
+            <span>3D Toggle</span>
           </button>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-tertiary)' }} title="Stagger interval between layers (seconds)">
+          <button type="button" className={styles.tweakBtn} onClick={() => insertNull()} title="Insert Null Object Layer">
+            <Icon name="crosshair" size={12} />
+            <span>Create Null</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={() => insertPrimitive('shape', 'Shape')} title="Create new Shape Layer">
+            <Icon name="shape" size={12} />
+            <span>Create Shape</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={() => insertCamera()} title="Insert active workspace Camera">
+            <Icon name="camera" size={12} />
+            <span>Create Cam</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={() => insertPrimitive('text', 'Text')} title="Insert new Text Layer">
+            <Icon name="type" size={12} />
+            <span>Create Text</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={() => precomposeSelected()} disabled={selectedNodeIds.length === 0} title="Precompose selected layers">
+            <Icon name="component" size={12} />
+            <span>Precompose</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={handleToggleTimeRemap} disabled={selectedNodeIds.length === 0} title="Toggle time-remapping keys">
+            <Icon name="stopwatch" size={12} />
+            <span>Time Remap</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={handleToggleTrimPaths} disabled={selectedNodeIds.length === 0} title="Toggle shape Trim-Paths modifier">
+            <Icon name="scissors" size={12} />
+            <span>Trim Paths</span>
+          </button>
+        </div>
+      </div>
+
+      {/* SECTION 4: Trim Pack & Workflow Utilities */}
+      <div className={styles.section} style={{ borderTop: '1px solid var(--color-border)', paddingTop: 14 }}>
+        <div className={styles.sectionTitle}>Trim Pack & Workflow</div>
+        <div className={styles.tweaksGrid}>
+          <button type="button" className={styles.tweakBtn} onClick={handleTrimIn} disabled={selectedNodeIds.length === 0} title="Trim selected start boundaries to playhead">
+            <Icon name="chevron-left" size={12} />
+            <span>Trim In</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={handleTrimOut} disabled={selectedNodeIds.length === 0} title="Trim selected end boundaries to playhead">
+            <Icon name="chevron-right" size={12} />
+            <span>Trim Out</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={handleAddKeyframe} disabled={selectedNodeIds.length === 0} title="Insert keyframe for active properties at playhead">
+            <Icon name="keyframe" size={12} />
+            <span>Add Key</span>
+          </button>
+          <button type="button" className={styles.tweakBtn} onClick={handleReverse} disabled={selectedNodeIds.length === 0} title="Reverse keyframe order sequence">
+            <Icon name="refresh" size={12} />
+            <span>Reverse</span>
+          </button>
+        </div>
+
+        {/* Stagger Sequence Utility */}
+        <div className={styles.staggerRow}>
+          <button
+            type="button"
+            className={styles.staggerBtn}
+            onClick={handleSequence}
+            disabled={selectedNodeIds.length < 2}
+            title="Stagger layer start times end-to-end"
+          >
+            <Icon name="layers" size={12} /> Stagger Layers
+          </button>
+          <div className={styles.staggerInputWrapper}>
             <input
               type="number"
+              step="0.05"
+              min="0"
               value={stagger}
-              min={0}
-              max={5}
-              step={0.05}
               onChange={(e) => setStagger(Number(e.target.value))}
-              aria-label="Stagger interval (seconds)"
-              style={{ width: 52, background: 'var(--color-surface-1)', border: '1px solid var(--color-border)', color: 'var(--color-text-primary)', borderRadius: 4, padding: '4px 6px', fontSize: 12 }}
+              className={styles.staggerInput}
             />
-            s
-          </label>
-          <button type="button" className={styles.actionBtn} onClick={handleReverse} disabled={selectedNodeIds.length === 0} title="Reverse Keyframes">
-            <Icon name="refresh" size={14} /> Reverse
-          </button>
+            <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>s</span>
+          </div>
         </div>
       </div>
     </div>

@@ -12,10 +12,10 @@ import { getEventBus } from '@core/events/EventBus';
 import { IconButton } from '@components/IconButton';
 import { Icon, type IconName } from '@components/Icon';
 import { ToolOptionsBar } from './ToolOptionsBar';
-import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
-import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance } from '@core/scene/sceneInsert';
+import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
+import { useGuidesStore } from '@stores/guidesStore';
+import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { importLottieFile } from '@core/library/lottieLibrary';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
@@ -28,6 +28,7 @@ import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { AppMenuButton } from '@layout/Menu';
+import { SceneControls } from '@layout/SceneControls/SceneControls';
 
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -52,8 +53,6 @@ const POINTER_TOOLS: ToolDef[] = [
   { id: 'zoom',          icon: 'zoom-in',       label: 'Zoom Tool', shortcut: 'Z' },
 ];
 
-// Only advertise a shortcut a tool actually has (see buildToolCommands):
-// pencil/curvature/polygon/star/line have no binding, so they show none.
 const PEN_TOOLS: ToolDef[] = [
   { id: 'pen',      icon: 'pen',        label: 'Pen Tool', shortcut: 'G' },
   { id: 'pencil',   icon: 'pencil',     label: 'Pencil Tool' },
@@ -128,8 +127,7 @@ export function TopNav(): JSX.Element {
   useSceneRevision((s) => s.rev);
   const selectedIds = useSelectionStore((s) => s.ids);
   const selectedId = selectedIds[0];
-  // Other compositions insertable as layers (comp instances). Excludes the
-  // active comp itself; the insert helper refuses deeper reference cycles.
+
   const projComps = useProjectStore((s) => s.comps);
   const activeCompId = useProjectStore((s) => s.tabs[s.activeTabId ?? '']?.compositionId);
   const insertableComps = Object.values(projComps).filter(
@@ -137,18 +135,8 @@ export function TopNav(): JSX.Element {
   );
   const selectedNode = selectedId ? defaultSceneGraph.getNode(selectedId) : undefined;
   const isTextLayer = !!selectedNode && hasTextComponent(selectedNode);
-  // Rig tools need ONE riggable leaf (shape/image/text). No selection, a
-  // multi-selection, or a group/precomp can't be rigged directly — the user
-  // should run "Rig Logo for Animation" (rasterize) instead.
   const canRig = selectedIds.length === 1 && isRiggableLeafNode(selectedNode);
   const rigHint = canRig ? '' : ' — select a shape or image layer (use Rig Logo for a group)';
-  
-  const compName = useCompositionStore((s) => s.name);
-  const compWidth = useCompositionStore((s) => s.width);
-  const compHeight = useCompositionStore((s) => s.height);
-  const compFps = useCompositionStore((s) => s.fps);
-  const wsTitle = useActiveWorkspace()?.title;
-  const title = wsTitle ?? compName ?? 'Untitled';
   
   const playhead = useActiveWorkspace()?.time ?? 0;
   const snap = useUIStore((s) => s.snap);
@@ -192,7 +180,6 @@ export function TopNav(): JSX.Element {
       useUIStore.getState().notify({ level, message, durationMs: 3200 });
     };
     try {
-      // Shared import path — same code the Lottie library panel uses.
       const { nodeIds, warnings } = await importLottieFile(file);
       if (nodeIds.length === 0) {
         toast('Lottie import: no layers could be created', 'warning');
@@ -227,6 +214,173 @@ export function TopNav(): JSX.Element {
     if (isShapeActive) setLastShapeTool(activeTool);
   }, [activeTool, isPointerActive, isPenActive, isShapeActive]);
 
+  // Screen width monitoring hook for responsive collapse
+  const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1000);
+  useEffect(() => {
+    const handleResize = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const hidePuppet = width < 1200;
+  const hideMask = width < 1050;
+  const hideSnap = width < 950;
+  const hideCustomize = width < 950;
+  const hideAnimate = width < 850;
+  const hideUndoRedo = width < 850;
+  const hideSceneControls = width < 750;
+
+  const overflowItems: DropdownItem[] = [];
+
+  const pushSeparator = () => {
+    const lastItem = overflowItems[overflowItems.length - 1];
+    if (lastItem && lastItem.type !== 'separator') {
+      overflowItems.push({ type: 'separator' });
+    }
+  };
+
+  if (hideSceneControls) {
+    overflowItems.push({
+      type: 'item',
+      id: 'camera-tools',
+      label: 'Camera Navigation',
+      icon: 'camera',
+      submenu: [
+        { type: 'item', id: 'cam-orbit', label: 'Orbit Camera', icon: 'refresh', onSelect: () => useGuidesStore.getState().setCameraTool('orbit') },
+        { type: 'item', id: 'cam-pan', label: 'Pan Camera', icon: 'hand', onSelect: () => useGuidesStore.getState().setCameraTool('pan') },
+        { type: 'item', id: 'cam-dolly', label: 'Dolly Camera', icon: 'zoom-in', onSelect: () => useGuidesStore.getState().setCameraTool('dolly') },
+      ]
+    });
+    overflowItems.push({
+      type: 'item',
+      id: '3d-gizmos',
+      label: '3D Gizmo Modes',
+      icon: 'cube',
+      submenu: [
+        { type: 'item', id: 'gizmo-universal', label: 'Universal Gizmo', icon: 'cube', onSelect: () => useGuidesStore.getState().setGizmo3dState('universal') },
+        { type: 'item', id: 'gizmo-position', label: 'Position Gizmo', icon: 'move', onSelect: () => useGuidesStore.getState().setGizmo3dState('position') },
+        { type: 'item', id: 'gizmo-scale', label: 'Scale Gizmo', icon: 'scale', onSelect: () => useGuidesStore.getState().setGizmo3dState('scale') },
+        { type: 'item', id: 'gizmo-rotation', label: 'Rotation Gizmo', icon: 'rotate-cw', onSelect: () => useGuidesStore.getState().setGizmo3dState('rotation') },
+      ]
+    });
+    overflowItems.push({
+      type: 'item',
+      id: '3d-toggles',
+      label: '3D Options',
+      icon: 'zap',
+      submenu: [
+        { type: 'item', id: 'draft-3d', label: 'Draft 3D', icon: 'zap', onSelect: () => useGuidesStore.getState().toggleDraft3d() },
+        { type: 'item', id: 'ground-grid', label: 'Ground Grid', icon: 'grid', onSelect: () => useGuidesStore.getState().toggleGroundGridVisible() },
+        { type: 'item', id: 'workspace-mode', label: 'Workspace Mode', icon: 'hand', onSelect: () => useWorkspaceViewStore.getState().toggleMode() },
+      ]
+    });
+    overflowItems.push({
+      type: 'item',
+      id: 'insert-3d',
+      label: 'Insert 3D Object',
+      icon: 'plus',
+      submenu: [
+        { type: 'item', id: 'ins-text', label: '3D Text', icon: 'type', onSelect: () => insert3DText('3D TEXT') },
+        { type: 'item', id: 'ins-cube', label: 'Cube', icon: 'cube', onSelect: () => insert3DPrimitive('cube') },
+        { type: 'item', id: 'ins-sphere', label: 'Sphere', icon: 'circle', onSelect: () => insert3DPrimitive('sphere') },
+        { type: 'item', id: 'ins-cylinder', label: 'Cylinder', icon: 'shape', onSelect: () => insert3DPrimitive('cylinder') },
+        { type: 'item', id: 'ins-light', label: 'Light', icon: 'light', onSelect: () => insertLight() },
+        { type: 'item', id: 'ins-camera', label: 'Camera', icon: 'camera', onSelect: () => insertCamera() },
+      ]
+    });
+  }
+
+  if (hideAnimate && selectedId) {
+    pushSeparator();
+    overflowItems.push({
+      type: 'item',
+      id: 'animate-layer',
+      label: 'Animate Layer',
+      icon: 'keyframe',
+      submenu: buildAnimateItems(selectedIds, isTextLayer, playhead)
+    });
+  }
+
+  if (hideMask) {
+    pushSeparator();
+    overflowItems.push({
+      type: 'item',
+      id: 'mask-rect-item',
+      label: 'Rectangle Mask Tool',
+      icon: 'mask-square',
+      onSelect: () => setTool('mask-rect')
+    });
+    overflowItems.push({
+      type: 'item',
+      id: 'mask-ellipse-item',
+      label: 'Ellipse Mask Tool',
+      icon: 'mask-circle',
+      onSelect: () => setTool('mask-ellipse')
+    });
+  }
+
+  if (hidePuppet) {
+    pushSeparator();
+    overflowItems.push({
+      type: 'item',
+      id: 'puppet-pin-item',
+      label: 'Puppet Position Pin Tool',
+      icon: 'puppet-pin',
+      disabled: !canRig,
+      onSelect: () => setTool('puppet-pin')
+    });
+    overflowItems.push({
+      type: 'item',
+      id: 'bone-item',
+      label: 'Bone Tool',
+      icon: 'bone',
+      disabled: !canRig,
+      onSelect: () => setTool('bone')
+    });
+  }
+
+  if (hideSnap) {
+    pushSeparator();
+    overflowItems.push({
+      type: 'checkbox',
+      id: 'snap-item',
+      label: 'Toggle Snapping',
+      checked: snap,
+      onChange: toggleSnap
+    });
+  }
+
+  if (hideUndoRedo) {
+    pushSeparator();
+    overflowItems.push({
+      type: 'item',
+      id: 'undo-item',
+      label: 'Undo',
+      icon: 'undo',
+      disabled: !canUndo,
+      onSelect: () => performUndo()
+    });
+    overflowItems.push({
+      type: 'item',
+      id: 'redo-item',
+      label: 'Redo',
+      icon: 'redo',
+      disabled: !canRedo,
+      onSelect: () => performRedo()
+    });
+  }
+
+  if (hideCustomize) {
+    pushSeparator();
+    overflowItems.push({
+      type: 'item',
+      id: 'customize-item',
+      label: 'Customize settings',
+      icon: 'settings',
+      onSelect: () => openCustomizeDialog()
+    });
+  }
+
   return (
     <div className={styles.root} ref={containerRef}>
       <div className={styles.toolRow} role="toolbar" aria-label="Tools">
@@ -241,17 +395,12 @@ export function TopNav(): JSX.Element {
             <Icon name="arrow-left" size={15} />
           </IconButton>
 
-          {!isElectron && (
-            <>
-              <AppMenuButton />
-              <span className={styles.toolDivider} aria-hidden />
-            </>
-          )}
-
+          {!isElectron && <AppMenuButton />}
           <span className={styles.toolDivider} aria-hidden />
 
-          {/* Pointer Tools Dropdown */}
+          {/* Cluster 1: Edit & Drawing Tools */}
           <div className={styles.toolGroup}>
+            {/* Pointer Tools Dropdown */}
             <Dropdown
               placement="bottom-start"
               trigger={
@@ -272,12 +421,8 @@ export function TopNav(): JSX.Element {
                 onSelect: () => setTool(t.id),
               }))}
             />
-          </div>
 
-          <span className={styles.toolDivider} aria-hidden />
-
-          {/* Pen Tools Dropdown */}
-          <div className={styles.toolGroup}>
+            {/* Pen Tools Dropdown */}
             <Dropdown
               placement="bottom-start"
               trigger={
@@ -298,10 +443,8 @@ export function TopNav(): JSX.Element {
                 onSelect: () => setTool(t.id),
               }))}
             />
-          </div>
 
-          {/* Text Tool */}
-          <div className={styles.toolGroup}>
+            {/* Text Tool */}
             <button
               type="button"
               className={activeTool === TEXT_TOOL.id ? styles.toolActive : styles.tool}
@@ -310,10 +453,8 @@ export function TopNav(): JSX.Element {
             >
               <Icon name={TEXT_TOOL.icon} size={16} />
             </button>
-          </div>
 
-          {/* Shape Tools Dropdown */}
-          <div className={styles.toolGroup}>
+            {/* Shape Tools Dropdown */}
             <Dropdown
               placement="bottom-start"
               trigger={
@@ -336,51 +477,56 @@ export function TopNav(): JSX.Element {
             />
           </div>
 
+          {/* Cluster 2: Mask & Puppet Tools (conditionally rendered) */}
+          {(!hideMask || !hidePuppet) && (
+            <>
+              <span className={styles.toolDivider} aria-hidden />
+              <div className={styles.toolGroup}>
+                {!hideMask && MASK_TOOLS.map((tool) => {
+                  const active = activeTool === tool.id;
+                  return (
+                    <button
+                      key={tool.id}
+                      type="button"
+                      className={active ? styles.toolActive : styles.tool}
+                      title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
+                      onClick={() => setTool(tool.id)}
+                    >
+                      <Icon name={tool.icon} size={16} />
+                    </button>
+                  );
+                })}
+
+                {!hidePuppet && (
+                  <>
+                    <button
+                      type="button"
+                      className={activeTool === PUPPET_TOOL.id ? styles.toolActive : styles.tool}
+                      title={`${PUPPET_TOOL.label} (${PUPPET_TOOL.shortcut})${rigHint}`}
+                      disabled={!canRig}
+                      onClick={() => setTool(PUPPET_TOOL.id)}
+                    >
+                      <Icon name={PUPPET_TOOL.icon} size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className={activeTool === BONE_TOOL.id ? styles.toolActive : styles.tool}
+                      title={`${BONE_TOOL.label} (${BONE_TOOL.shortcut})${rigHint}`}
+                      disabled={!canRig}
+                      onClick={() => setTool(BONE_TOOL.id)}
+                    >
+                      <Icon name={BONE_TOOL.icon} size={16} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Cluster 3: Layer Creation & Animation Tools */}
           <span className={styles.toolDivider} aria-hidden />
-
-          {/* Mask Tools */}
           <div className={styles.toolGroup}>
-            {MASK_TOOLS.map((tool) => {
-              const active = activeTool === tool.id;
-              return (
-                <button
-                  key={tool.id}
-                  type="button"
-                  className={active ? styles.toolActive : styles.tool}
-                  title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
-                  onClick={() => setTool(tool.id)}
-                >
-                  <Icon name={tool.icon} size={16} />
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Puppet Pin & Bone Tools */}
-          <div className={styles.toolGroup}>
-            <button
-              type="button"
-              className={activeTool === PUPPET_TOOL.id ? styles.toolActive : styles.tool}
-              title={`${PUPPET_TOOL.label} (${PUPPET_TOOL.shortcut})${rigHint}`}
-              disabled={!canRig}
-              onClick={() => setTool(PUPPET_TOOL.id)}
-            >
-              <Icon name={PUPPET_TOOL.icon} size={16} />
-            </button>
-            <button
-              type="button"
-              className={activeTool === BONE_TOOL.id ? styles.toolActive : styles.tool}
-              title={`${BONE_TOOL.label} (${BONE_TOOL.shortcut})${rigHint}`}
-              disabled={!canRig}
-              onClick={() => setTool(BONE_TOOL.id)}
-            >
-              <Icon name={BONE_TOOL.icon} size={16} />
-            </button>
-          </div>
-
-          {/* New layer */}
-          <div className={styles.toolGroup}>
-            <span className={styles.toolDivider} aria-hidden />
+            {/* New layer dropdown */}
             <Dropdown
               placement="bottom-start"
               trigger={
@@ -425,6 +571,8 @@ export function TopNav(): JSX.Element {
             <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={onPickAudio} />
             <input ref={seqInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onPickSequence} />
             <input ref={lottieInputRef} type="file" accept=".json,.lottie,application/json,application/x-lottie" style={{ display: 'none' }} onChange={onPickLottie} />
+
+            {/* 3D toggle */}
             <button
               type="button"
               className={styles.tool}
@@ -437,100 +585,123 @@ export function TopNav(): JSX.Element {
             >
               <Icon name="3d" size={16} />
             </button>
+
+            {/* Animate dropdown */}
+            {!hideAnimate && (
+              <Dropdown
+                placement="bottom-start"
+                trigger={
+                  <button
+                    type="button"
+                    className={styles.toolDropdownTrigger}
+                    aria-label="Animate"
+                    title={selectedId ? 'Animate the selected layer…' : 'Select a layer to animate'}
+                    disabled={!selectedId}
+                  >
+                    <Icon name="keyframe" size={16} />
+                    <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                  </button>
+                }
+                items={buildAnimateItems(selectedIds, isTextLayer, playhead)}
+              />
+            )}
           </div>
 
-          {/* Animate */}
-          <div className={styles.toolGroup}>
-            <span className={styles.toolDivider} aria-hidden />
-            <Dropdown
-              placement="bottom-start"
-              trigger={
+          {/* Cluster 4: Snapping */}
+          {!hideSnap && (
+            <>
+              <span className={styles.toolDivider} aria-hidden />
+              <div className={styles.toolGroup}>
                 <button
                   type="button"
-                  className={styles.toolDropdownTrigger}
-                  aria-label="Animate"
-                  title={selectedId ? 'Animate the selected layer…' : 'Select a layer to animate'}
-                  disabled={!selectedId}
+                  className={snap ? styles.toolActive : styles.tool}
+                  aria-label="Toggle snapping"
+                  aria-pressed={snap}
+                  title={snap ? 'Snapping ON — click to disable' : 'Snapping OFF — click to enable'}
+                  onClick={toggleSnap}
                 >
-                  <Icon name="keyframe" size={16} />
-                  <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                  <Icon name="magnet" size={16} />
                 </button>
-              }
-              items={buildAnimateItems(selectedIds, isTextLayer, playhead)}
-            />
-          </div>
+              </div>
+            </>
+          )}
 
-          {/* Snap */}
-          <div className={styles.toolGroup}>
-            <span className={styles.toolDivider} aria-hidden />
-            <button
-              type="button"
-              className={snap ? styles.toolActive : styles.tool}
-              aria-label="Toggle snapping"
-              aria-pressed={snap}
-              title={snap ? 'Snapping ON — click to disable' : 'Snapping OFF — click to enable'}
-              onClick={toggleSnap}
-            >
-              <Icon name="magnet" size={16} />
-            </button>
-          </div>
+          {!hideSceneControls && (
+            <>
+              <div className={styles.spacer} aria-hidden />
+              <div className={styles.toolGroup}>
+                <SceneControls />
+              </div>
+              <div className={styles.spacer} aria-hidden />
+            </>
+          )}
 
-          <div className={styles.spacer} aria-hidden />
+          {hideSceneControls && <div className={styles.spacer} aria-hidden />}
 
-          {/* Composition context */}
-          <button
-            type="button"
-            className={styles.comp}
-            title="Composition settings"
-            onClick={() => openCompositionSettings()}
-          >
-            <Icon name="layers" size={12} className={styles.compIcon} />
-            <span className={styles.compName}>{title}</span>
-            <span className={styles.compMeta}>{compWidth}×{compHeight} · {compFps}fps</span>
-          </button>
-
-          <div className={styles.spacer} aria-hidden />
-
-          {/* Zoom + view options moved to the composition's own header bar
-              (ViewportHeader), which sits directly above the canvas they act
-              on — the viewport controls now have a single home. */}
+          {/* Overflow dropdown for smaller screens */}
+          {overflowItems.length > 0 && (
+            <>
+              <span className={styles.toolDivider} aria-hidden />
+              <div className={styles.toolGroup}>
+                <Dropdown
+                  placement="bottom-end"
+                  trigger={
+                    <button type="button" className={styles.tool} aria-label="More tools" title="More tools">
+                      <Icon name="more-horizontal" size={16} />
+                    </button>
+                  }
+                  items={overflowItems}
+                />
+              </div>
+            </>
+          )}
 
           {/* Undo / Redo */}
-          <div className={styles.toolGroup}>
-            <button
-              type="button"
-              className={styles.tool}
-              aria-label="Undo"
-              title="Undo  (Ctrl+Z)"
-              disabled={!canUndo}
-              onClick={() => performUndo()}
-            >
-              <Icon name="undo" size={16} />
-            </button>
-            <button
-              type="button"
-              className={styles.tool}
-              aria-label="Redo"
-              title="Redo  (Ctrl+Shift+Z)"
-              disabled={!canRedo}
-              onClick={() => performRedo()}
-            >
-              <Icon name="redo" size={16} />
-            </button>
-          </div>
+          {!hideUndoRedo && (
+            <>
+              <span className={styles.toolDivider} aria-hidden />
+              <div className={styles.toolGroup}>
+                <button
+                  type="button"
+                  className={styles.tool}
+                  aria-label="Undo"
+                  title="Undo  (Ctrl+Z)"
+                  disabled={!canUndo}
+                  onClick={() => performUndo()}
+                >
+                  <Icon name="undo" size={16} />
+                </button>
+                <button
+                  type="button"
+                  className={styles.tool}
+                  aria-label="Redo"
+                  title="Redo  (Ctrl+Shift+Z)"
+                  disabled={!canRedo}
+                  onClick={() => performRedo()}
+                >
+                  <Icon name="redo" size={16} />
+                </button>
+              </div>
+            </>
+          )}
 
           {/* Customize / Settings */}
-          <div className={styles.toolGroup}>
-            <button
-              type="button"
-              className={styles.tool}
-              aria-label="Customize"
-              title="Customize (Shortcuts, Workspaces, Appearance)"
-              onClick={() => openCustomizeDialog()}
-            >
-              <Icon name="settings" size={16} />
-            </button>
-          </div>
+          {!hideCustomize && (
+            <>
+              <span className={styles.toolDivider} aria-hidden />
+              <div className={styles.toolGroup}>
+                <button
+                  type="button"
+                  className={styles.tool}
+                  aria-label="Customize"
+                  title="Customize (Shortcuts, Workspaces, Appearance)"
+                  onClick={() => openCustomizeDialog()}
+                >
+                  <Icon name="settings" size={16} />
+                </button>
+              </div>
+            </>
+          )}
 
           <span className={styles.toolHint}>{activeTool}</span>
         </div>

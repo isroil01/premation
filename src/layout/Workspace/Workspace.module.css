@@ -90,10 +90,8 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  /* Flat pasteboard — a lighter neutral surround so the composition (the video
-     screen) reads as distinct from the wrapper body (AE-style). The dot-grid
-     void was removed. Falls back to the workspace void if the token is unset. */
-  background-color: var(--color-pasteboard, var(--color-workspace));
+  /* Premium radial gradient void centered on the composition, fading to true slate-950 */
+  background: radial-gradient(circle at center, #242426 0%, var(--color-slate-950, #0b0b0c) 100%);
 }
 
 /* Transparent-mode: show checkerboard beneath the comp.

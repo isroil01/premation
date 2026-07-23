@@ -2,9 +2,13 @@
   display: flex;
   flex-direction: column;
   flex: none;
-  background: var(--color-toolbar);
-  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-toolbar) 85%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--color-border-strong);
   user-select: none;
+  position: relative;
+  z-index: 100;
 }
 
 /* ── Row 1 — menu bar ─────────────────────────────────────────── */
@@ -45,7 +49,7 @@
   align-items: baseline;
   gap: var(--space-2);
   padding: 3px var(--space-3);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: var(--color-surface-0);
   border: 1px solid var(--color-border);
   max-width: 320px;
@@ -102,7 +106,8 @@
   min-height: 36px;
   height: auto;
   padding: 4px var(--space-3);
-  background: var(--color-surface-1);
+  background: transparent;
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .inner {
@@ -110,7 +115,7 @@
   align-items: center;
   flex-wrap: nowrap;
   width: 100%;
-  gap: var(--space-1);
+  gap: 6px;
 }
 
 .zoomGroup {
@@ -124,8 +129,8 @@
   align-items: center;
   gap: 4px;
   height: 28px;
-  padding: 0 6px;
-  border-radius: 0;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
   color: var(--color-text-secondary);
   border: 1px solid transparent;
   cursor: pointer;
@@ -142,11 +147,11 @@
   align-items: center;
   gap: 4px;
   height: 28px;
-  padding: 0 6px;
-  border-radius: 0;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: var(--motion-hover-transition);
-  background: transparent;
+  background: var(--color-primary-subtle);
   color: var(--color-primary);
   border: 1px solid transparent;
   position: relative;
@@ -155,23 +160,24 @@
 .toolDropdownTriggerActive::after {
   content: "";
   position: absolute;
-  left: 3px;
-  right: 3px;
+  left: 6px;
+  right: 6px;
   bottom: 0;
   height: 2px;
   background: var(--color-primary);
+  border-radius: var(--radius-full);
 }
 
 .toolGroup {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 6px;
 }
 
 .toolDivider {
   width: 1px;
   height: 18px;
-  margin: 0 var(--space-2);
+  margin: 0;
   background: var(--color-border-subtle);
 }
 
@@ -180,11 +186,11 @@
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 0;
+  border-radius: var(--radius-md);
   color: var(--color-text-secondary);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: var(--motion-hover-transition);
+  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
   position: relative;
 }
 
@@ -194,16 +200,20 @@
   border-color: transparent;
 }
 
+.tool:active {
+  transform: scale(0.92);
+}
+
 /* Active tool — blue bottom-edge line, white icon */
 .toolActive {
   width: 28px;
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 0;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: var(--motion-hover-transition);
-  background: transparent;
+  background: var(--color-primary-subtle);
   color: var(--color-primary);
   border: 1px solid transparent;
   position: relative;
@@ -212,12 +222,12 @@
 .toolActive::after {
   content: "";
   position: absolute;
-  left: 3px;
-  right: 3px;
+  left: 6px;
+  right: 6px;
   bottom: 0;
   height: 2px;
   background: var(--color-primary);
-  border-radius: 0;
+  border-radius: var(--radius-full);
 }
 
 .layoutToggle {

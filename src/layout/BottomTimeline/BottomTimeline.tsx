@@ -112,6 +112,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   );
   const timelineModelProps = { ...timelineProps, model };
 
+
+
   const [searchQuery, setSearchQuery] = useState('');
   const headerRef = useRef<HTMLElement>(null);
   const { width: headerWidth } = useContainerSize(headerRef);
@@ -176,6 +178,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 </button>
               )}
             </div>
+
+
 
             <div className={styles.transport}>
               {!isCompact && (

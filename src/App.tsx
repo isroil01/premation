@@ -64,6 +64,7 @@ import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { openPalette } from '@stores/commandPaletteStore';
 import { AccountButton } from '@layout/Auth/AccountButton';
+import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { FpsMeter } from '@layout/StatusBar/FpsMeter';
 import { InfoReadout } from '@layout/StatusBar/InfoReadout';
 import { VUMeter } from '@layout/StatusBar/VUMeter';
@@ -148,6 +149,8 @@ function EditorShellInner(): JSX.Element {
   const active = useActiveWorkspace();
   
   const compFps = useCompositionStore((s) => s.fps);
+  const compWidth = useCompositionStore((s) => s.width);
+  const compHeight = useCompositionStore((s) => s.height);
   const compStartFrame = useCompositionStore((s) => s.startFrame);
   const compDuration = useCompositionStore((s) => s.durationSeconds);
 
@@ -186,6 +189,7 @@ function EditorShellInner(): JSX.Element {
     // ── Left Sidebar (4 Core Workstation Categories) ──────────────────────────
     registerPanel({ id: 'scene',       title: 'Scene & Layers', icon: 'layout',        region: 'leftSidebar',   weight: 10, closable: false });
     registerPanel({ id: 'assets',      title: 'Assets & Media', icon: 'image',         region: 'leftSidebar',   weight: 8, closable: false });
+    registerPanel({ id: 'flow',        title: 'Flow & EaseCopy', icon: 'ease',         region: 'leftSidebar',   weight: 7, closable: false });
     registerPanel({ id: 'library',     title: 'Elements & Library', icon: 'sparkles',  region: 'leftSidebar',   weight: 6, closable: false });
     registerPanel({ id: 'ai',          title: 'AI Assistant',   icon: 'ai',            region: 'leftSidebar',   weight: 4, closable: false });
     // ── Right Inspector ───────────────────────────────────────────────────────
@@ -194,6 +198,7 @@ function EditorShellInner(): JSX.Element {
     registerPanel({ id: 'rig',         title: 'Rigging',      icon: 'bone',          region: 'rightInspector', weight: 3.5, closable: false });
     registerPanel({ id: 'effects',     title: 'Effects',      icon: 'zap',           region: 'rightInspector', weight: 3, closable: false });
     registerPanel({ id: 'motion',      title: 'Easing',       icon: 'ease',          region: 'rightInspector', weight: 2, closable: false });
+    registerPanel({ id: 'motiontools',  title: 'Motion Tools', icon: 'sliders-h',     region: 'rightInspector', weight: 1.5, closable: false });
     registerPanel({ id: 'presets',     title: 'Presets',      icon: 'star',          region: 'rightInspector', weight: 1, closable: false });
     registerPanel({ id: 'misc',        title: 'Settings',     icon: 'settings',      region: 'rightInspector', weight: 0, closable: false });
     // ── On-demand panels (Window menu / F6 / ExportDialog) ───────────────────
@@ -1049,17 +1054,46 @@ function EditorShellInner(): JSX.Element {
                 </>
               }
               center={
-                <span style={{ fontFamily: 'var(--font-family-mono)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                  {active?.title ?? 'Untitled'}
+                <button
+                  type="button"
+                  title="Composition settings"
+                  onClick={() => openCompositionSettings()}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: 'var(--color-surface-hover, rgba(255, 255, 255, 0.05))',
+                    border: '1px solid var(--color-border)',
+                    cursor: 'pointer',
+                    font: 'inherit',
+                    fontSize: '11px',
+                    color: 'var(--color-text-primary)',
+                    transition: 'border-color 0.1s, background-color 0.1s',
+                  }}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-border-strong)';
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-border)';
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface-hover, rgba(255, 255, 255, 0.05))';
+                  }}
+                >
+                  <Icon name="layers" size={11} style={{ color: 'var(--color-text-tertiary)' }} />
+                  <span style={{ fontWeight: 500 }}>{active?.title ?? 'Untitled'}</span>
+                  <span style={{ fontFamily: 'var(--font-family-mono)', fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
+                    {compWidth}×{compHeight} · {compFps}fps
+                  </span>
                   {active?.dirty ? (
-                    // Unsaved changes — small amber dot (VS Code convention).
                     <span
                       aria-label="Unsaved changes"
                       title="Unsaved changes"
-                      style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-modified)' }}
+                      style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-modified)' }}
                     />
                   ) : null}
-                </span>
+                </button>
               }
               right={
                 <>

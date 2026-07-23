@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Icon } from '@components/Icon';
-import { onCoreServicesReady } from '@core/services/coreServices';
-import { useProjectStore } from '@stores/projectStore';
 import { AppMenuBar } from '@layout/Menu';
 import { IconButton } from '@components/IconButton';
 import { useLayoutStore } from '@stores/layoutStore';
@@ -24,29 +22,9 @@ export function TitleBar(): JSX.Element | null {
   const compFps = useCompositionStore((s) => s.fps);
   const compDuration = useCompositionStore((s) => s.durationSeconds);
 
-  // Live project ref + dirty flag — the title bar must reflect the real
-  // document, not a hardcoded placeholder.
-  const [project, setProject] = useState<any>(null);
-  useEffect(() => {
-    if (!isElectron) return undefined;
-    let unsubProject: (() => void) | undefined;
-    const unsubReady = onCoreServicesReady((core) => {
-      setProject(core.project.getState());
-      unsubProject = core.project.subscribe(setProject);
-    });
-    return () => {
-      unsubReady();
-      unsubProject?.();
-    };
-  }, [isElectron]);
-
-  const tabDirty = useProjectStore((s) =>
-    s.activeTabId ? s.tabs?.[s.activeTabId]?.dirty === true : false,
-  );
 
 
   if (!isElectron) return null;
-  const dirty = (project?.dirty ?? false) || tabDirty;
 
   const handleMinimize = () => {
     window.electronAPI?.window?.minimize?.();
@@ -77,12 +55,7 @@ export function TitleBar(): JSX.Element | null {
           </>
         )}
       </div>
-      <div className={styles.center}>
-        <span className={styles.appName}>
-          {project?.name ? `${project.name} — Motion Editor` : 'Motion Editor'}
-        </span>
-        {dirty && <span className={styles.dirtyDot} title="Unsaved changes" />}
-      </div>
+      <div className={styles.center} />
       <div className={styles.right}>
         {isEditor && (
           <div className={styles.editorControls}>

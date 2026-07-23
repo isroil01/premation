@@ -6,20 +6,20 @@
   /* Spec elevation — very subtle, never exaggerated:
      Small 0 2px 8px .20 · Medium 0 8px 24px .28 · Large 0 16px 48px .40 */
   --shadow-none: none;
-  --shadow-xs: none;
-  --shadow-sm: none;   /* Small */
-  --shadow-md: none;  /* Medium */
-  --shadow-lg: none; /* Large */
-  --shadow-xl: none;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.15);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);   /* Small */
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.3);  /* Medium */
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.45); /* Large */
+  --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.55);
   
-  /* Panels are flat and separated by borders, not elevation (AE-style). */
-  --shadow-panel:       none;
-  --shadow-popover:     none;
-  --shadow-modal:       none;
-  --shadow-floating:    none;
+  /* Panels and popovers get actual depth and separation */
+  --shadow-panel:       0 2px 10px rgba(0, 0, 0, 0.18);
+  --shadow-popover:     0 8px 28px rgba(0, 0, 0, 0.4);
+  --shadow-modal:       0 20px 50px rgba(0, 0, 0, 0.55);
+  --shadow-floating:    0 10px 32px rgba(0, 0, 0, 0.35);
 
   /* The focus ring is an accessibility affordance, not decorative elevation,
      so it is the one "shadow" that is NOT none. Theme-aware via --color-focus-ring. */
   --shadow-focus-ring:  0 0 0 2px var(--color-focus-ring);
-  --shadow-inset-border: none;
+  --shadow-inset-border: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }

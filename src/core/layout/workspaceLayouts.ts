@@ -64,8 +64,8 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
 ];
 
 const DEFAULT_PANEL_ORDER: Record<RegionId, ReadonlyArray<string>> = {
-  leftSidebar: ['scene', 'assets', 'components', 'shapes', 'text'],
-  rightInspector: ['properties', 'style', 'rig', 'effects', 'motion', 'presets', 'misc', 'comments', 'history', 'renderQueue'],
+  leftSidebar: ['scene', 'assets', 'flow', 'components', 'shapes', 'text'],
+  rightInspector: ['properties', 'style', 'rig', 'effects', 'motion', 'motiontools', 'presets', 'misc', 'comments', 'history', 'renderQueue'],
   centerWorkspace: [],
   bottomTimeline: [],
 };

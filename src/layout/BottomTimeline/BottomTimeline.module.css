@@ -17,7 +17,9 @@
   gap: 6px;
   height: 38px;
   padding: 0 8px;
-  background: var(--color-surface-2);
+  background: color-mix(in srgb, var(--color-surface-2) 85%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--color-border);
   flex: none;
   user-select: none;
@@ -516,4 +518,54 @@ button.play:hover {
 .tlMoveMenuItem:hover {
   background: var(--color-hover);
   color: var(--color-text-primary);
+}
+
+/* Composition context chip in the timeline header */
+.compCenter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0 8px;
+}
+
+.compBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  max-width: 320px;
+  min-width: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  color: var(--color-text-primary);
+  transition: border-color 0.1s, background-color 0.1s;
+}
+
+.compBtn:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-0);
+}
+
+.compIcon {
+  color: var(--color-text-tertiary);
+}
+
+.compName {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compMeta {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
 }

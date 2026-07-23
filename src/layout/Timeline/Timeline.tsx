@@ -40,8 +40,9 @@ import type {
   TimelineClip,
 } from './TimelineModel';
 import { Dropdown } from '@components/Dropdown';
-import { ColorPicker } from '@components/ColorPicker';
 import { BLEND_MODES, type LayerBlendMode } from '@core/effects/blendMode';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { useSelectionStore } from '@stores/selectionStore';
 import { eligibleParents, parentOfNode } from '@core/scene/parenting';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import {
@@ -1314,6 +1315,21 @@ function Ruler({
   );
 }
 
+const AE_LABEL_COLORS = [
+  { name: 'Red', hex: '#f15b5b' },
+  { name: 'Yellow', hex: '#f4cc44' },
+  { name: 'Green', hex: '#5cb85c' },
+  { name: 'Blue', hex: '#428bca' },
+  { name: 'Pink', hex: '#e05d9f' },
+  { name: 'Orange', hex: '#f0ad4e' },
+  { name: 'Purple', hex: '#9b59b6' },
+  { name: 'Cyan', hex: '#5bc0de' },
+  { name: 'Grey', hex: '#95a5a6' },
+  { name: 'Peach', hex: '#ffbe76' },
+  { name: 'Seafoam', hex: '#2bcbba' },
+  { name: 'Lavender', hex: '#a55eea' },
+];
+
 function TrackHeader({
   track,
   index,
@@ -1466,12 +1482,65 @@ function TrackHeader({
           <Icon name={(track.icon as IconName) ?? 'layers'} size={14} />
         </span>
         {typeof track.nodeColor === 'string' && (
-          <div onClick={(e) => e.stopPropagation()} style={{ marginRight: 'var(--space-2)', display: 'inline-flex' }}>
-            <ColorPicker
-              value={track.nodeColor}
-              onChange={(color) => onTrackColorChange?.(track.id, color)}
-              compact
-              aria-label="Change layer color"
+          <div onClick={(e) => e.stopPropagation()} style={{ marginRight: 'var(--space-2)', display: 'inline-flex', alignItems: 'center' }}>
+            <Dropdown
+              placement="bottom-start"
+              trigger={
+                <button
+                  type="button"
+                  style={{
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '2px',
+                    backgroundColor: track.nodeColor,
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                  aria-label="Layer label color"
+                  title="Change layer color / Select label group"
+                />
+              }
+              items={[
+                ...AE_LABEL_COLORS.map((color) => ({
+                  type: 'item' as const,
+                  id: `color-${color.name}`,
+                  label: (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '2px', backgroundColor: color.hex }} />
+                      <span>{color.name}</span>
+                    </div>
+                  ),
+                  onSelect: () => onTrackColorChange?.(track.id, color.hex),
+                })),
+                { type: 'separator' as const },
+                {
+                  type: 'item' as const,
+                  id: 'select-label-group',
+                  label: 'Select Label Group',
+                  onSelect: () => {
+                    const findSameColorNodes = (): string[] => {
+                      const result: string[] = [];
+                      const traverse = (nodeId: string) => {
+                        const node = defaultSceneGraph.getNode(nodeId);
+                        if (!node) return;
+                        if ((node as any).color === track.nodeColor) {
+                          result.push(node.id);
+                        }
+                        const kids = defaultSceneGraph.getChildren(nodeId);
+                        for (const k of kids) traverse(k.id);
+                      };
+                      const roots = defaultSceneGraph.getRoots();
+                      for (const r of roots) traverse(r.id);
+                      return result;
+                    };
+                    const sameColorNodeIds = findSameColorNodes();
+                    if (sameColorNodeIds.length > 0) {
+                      useSelectionStore.getState().set(sameColorNodeIds);
+                    }
+                  },
+                },
+              ]}
             />
           </div>
         )}
