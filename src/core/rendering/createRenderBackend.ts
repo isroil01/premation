@@ -10,9 +10,12 @@
  * Selection order within the GPU engine:
  *   WebGPU (when available) → WebGL2 → Null (headless / test)
  *
- * If GPU context creation fails, the engine emits an 'EngineError' event
- * which renderBackendStore.ts catches and steps down gracefully (WebGPU → WebGL2
- * → software badge).  That is error handling, not a second engine.
+ * If GPU context creation fails, MotionRendererBackend itself steps down:
+ * it disposes the failed backend and re-initializes on the next tier
+ * (WebGPU → WebGL2 → delayed WebGL2 retry), emitting 'EngineError' /
+ * 'EngineReady' events that renderBackendStore.ts mirrors into the tier badge.
+ * If every tier fails, the backend resolves readyPromise with initFailed set
+ * and the workspace shows a visible error instead of a blank stage.
  */
 
 import type { RenderBackend } from './RenderBackend';

@@ -16,6 +16,9 @@ export interface Preferences {
   theme: ThemeId;
   /** Whole-UI zoom, 0.75 .. 1.5 (applied as document zoom). */
   uiScale: number;
+  buttonSize: 'sm' | 'md' | 'lg';
+  iconSize: 'sm' | 'md' | 'lg';
+  sidebarDensity: 'compact' | 'default' | 'comfortable';
   timelineAutoKeyframe: boolean;
   /** Disables UI transitions/animations (accessibility / low-power). */
   editorReduceMotion: boolean;
@@ -42,6 +45,9 @@ export type PreferenceStore = Preferences & PreferenceActions;
 export const DEFAULT_PREFERENCES: Preferences = {
   theme: asThemeId('dark'),
   uiScale: 1,
+  buttonSize: 'md',
+  iconSize: 'md',
+  sidebarDensity: 'default',
   timelineAutoKeyframe: false,
   editorReduceMotion: false,
   confirmOnClose: true,
@@ -102,7 +108,7 @@ export const usePreferenceStore = create<PreferenceStore>()(
         });
       }
       // Document-level prefs take effect immediately.
-      if (key === 'uiScale' || key === 'editorReduceMotion') applyUiPreferences();
+      if (key === 'uiScale' || key === 'buttonSize' || key === 'iconSize' || key === 'sidebarDensity' || key === 'editorReduceMotion') applyUiPreferences();
     },
 
     setMany: (values) => {
@@ -123,12 +129,26 @@ export const usePreferenceStore = create<PreferenceStore>()(
   })),
 );
 
-/** Push the document-level preferences (zoom + reduced motion) onto the DOM. */
+/** Push the document-level preferences (zoom + reduced motion + element sizes) onto the DOM. */
 export function applyUiPreferences(): void {
-  const { uiScale, editorReduceMotion } = usePreferenceStore.getState();
+  const { uiScale, buttonSize, iconSize, sidebarDensity, editorReduceMotion } = usePreferenceStore.getState();
   const root = document.documentElement as HTMLElement & { style: CSSStyleDeclaration & { zoom?: string } };
+
   root.style.zoom = uiScale === 1 ? '' : String(uiScale);
   root.classList.toggle('reduce-motion', editorReduceMotion);
+
+  // Element scaling maps
+  const buttonScaleMap = { sm: '0.88', md: '1.0', lg: '1.15' };
+  const iconScaleMap = { sm: '0.88', md: '1.0', lg: '1.18' };
+  const sidebarPadMap = { compact: '4px 8px', default: '8px 12px', comfortable: '12px 16px' };
+  const sidebarFontMap = { compact: '11px', default: '12px', comfortable: '13px' };
+
+  root.style.setProperty('--app-button-scale', buttonScaleMap[buttonSize || 'md']);
+  root.style.setProperty('--app-icon-scale', iconScaleMap[iconSize || 'md']);
+  root.style.setProperty('--sidebar-item-padding', sidebarPadMap[sidebarDensity || 'default']);
+  root.style.setProperty('--sidebar-item-font-size', sidebarFontMap[sidebarDensity || 'default']);
+
+  window.dispatchEvent(new Event('resize'));
 }
 
 /** Apply persisted preferences to the document (theme attribute, zoom, etc.). */

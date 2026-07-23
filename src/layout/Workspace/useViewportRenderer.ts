@@ -17,7 +17,8 @@ import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
-import { useGuidesStore } from '@stores/guidesStore';
+import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
+import { resolveViewCameraInput } from '@core/workspace/cameraNav';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
@@ -33,6 +34,12 @@ export function useViewportRenderer(
   focus?: SnapshotFocus,
   /** Signal that changes whenever `focus` changes, to force a re-render. */
   focusKey?: string,
+  /**
+   * Render through THIS view instead of the store's camera3dMode — the 2-up
+   * secondary pane shows a different view of the same scene. Undefined =
+   * follow the store (Presentation Mode, unchanged behavior).
+   */
+  viewOverride?: Camera3dMode,
 ): void {
   const backendRef = useRef<RenderBackend | null>(null);
   const timeRef = useRef(time);
@@ -45,7 +52,9 @@ export function useViewportRenderer(
   const gridDivisions = useGuidesStore((s) => s.gridDivisions);
   const gridColor = useGuidesStore((s) => s.gridColor);
   const safeArea = useGuidesStore((s) => s.safeArea);
-  const camera3dMode = useGuidesStore((s) => s.camera3dMode);
+  const camera3dMode = useGuidesStore((s) => viewOverride ?? s.camera3dMode);
+  // Custom-view params re-render this surface while a custom view is orbited.
+  const customViews = useGuidesStore((s) => s.customViews);
   const overlaysRef = useRef({ rulers, grid, gridDivisions, gridColor, safeArea });
   overlaysRef.current = { rulers, grid, gridDivisions, gridColor, safeArea };
   // Threaded via ref (like the overlays) so the stable render callback always
@@ -86,8 +95,13 @@ export function useViewportRenderer(
       ...buildSnapshot(
         defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
         overlaysRef.current, undefined, motionBlurRef.current,
-        // rootId scopes the render to THIS composition's subtree.
-        { ...compRef.current, rootId: compRef.current.id, camera3dMode: camera3dModeRef.current },
+        // rootId scopes the render to THIS composition's subtree. Custom views
+        // resolve to a pre-built override camera (scene camera ignored).
+        {
+          ...compRef.current,
+          rootId: compRef.current.id,
+          ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
+        },
       ),
       // View-only: the channel never reaches export, which always writes colour.
       channel: channelRef.current,
@@ -166,7 +180,7 @@ export function useViewportRenderer(
   // toggle never repainted this surface).
   useEffect(() => {
     render();
-  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, gridColor, safeArea, camera3dMode, mbEnabled, mbShutter, mbSamples, compKey, render]);
+  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, gridColor, safeArea, camera3dMode, customViews, mbEnabled, mbShutter, mbSamples, compKey, render]);
 
   // Preview-quality change: re-size the content buffer (dpr/N) and repaint.
   useEffect(() => {

@@ -16,9 +16,7 @@ import { openCompositionSettings } from '@layout/Composition/CompositionSettings
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance } from '@core/scene/sceneInsert';
-import { planLottieImport, type LottieJson } from '@core/lottie/lottieImport';
-import { applyImportPlan } from '@core/lottie/lottieImportApply';
-import { createToolContext } from '@core/ai/toolContext';
+import { importLottieFile } from '@core/library/lottieLibrary';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
@@ -194,9 +192,8 @@ export function TopNav(): JSX.Element {
       useUIStore.getState().notify({ level, message, durationMs: 3200 });
     };
     try {
-      const json = JSON.parse(await file.text()) as LottieJson;
-      const plan = planLottieImport(json);
-      const { nodeIds, warnings } = applyImportPlan(plan, createToolContext(new AbortController().signal));
+      // Shared import path — same code the Lottie library panel uses.
+      const { nodeIds, warnings } = await importLottieFile(file);
       if (nodeIds.length === 0) {
         toast('Lottie import: no layers could be created', 'warning');
       } else {
@@ -205,7 +202,7 @@ export function TopNav(): JSX.Element {
         toast(`Imported ${n} layer${n > 1 ? 's' : ''}${suffix}`, warnings.length ? 'warning' : 'success');
       }
     } catch {
-      toast('Lottie import failed: not valid JSON', 'warning');
+      toast('Lottie import failed: file could not be parsed', 'warning');
     }
   };
   
@@ -422,12 +419,12 @@ export function TopNav(): JSX.Element {
                 { type: 'separator' },
                 { type: 'item', id: 'new-audio', label: 'Audio…', icon: 'audio', onSelect: () => audioInputRef.current?.click() },
                 { type: 'item', id: 'new-image-sequence', label: 'Image Sequence…', icon: 'image', onSelect: () => seqInputRef.current?.click() },
-                { type: 'item', id: 'import-lottie', label: 'Lottie / Bodymovin JSON…', icon: 'image', onSelect: () => lottieInputRef.current?.click() },
+                { type: 'item', id: 'import-lottie', label: 'Import .lottie / .json Animation…', icon: 'image', onSelect: () => lottieInputRef.current?.click() },
               ]}
             />
             <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={onPickAudio} />
             <input ref={seqInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onPickSequence} />
-            <input ref={lottieInputRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={onPickLottie} />
+            <input ref={lottieInputRef} type="file" accept=".json,.lottie,application/json,application/x-lottie" style={{ display: 'none' }} onChange={onPickLottie} />
             <button
               type="button"
               className={styles.tool}

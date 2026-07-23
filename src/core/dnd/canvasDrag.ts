@@ -19,10 +19,12 @@ export type CanvasDragPayload =
   | { kind: 'text'; label: string; fontSize: number; weight: number; extra?: Record<string, unknown> }
   | { kind: 'asset'; assetId: string }
   | { kind: 'component'; componentId: string }
+  | { kind: 'component-preset'; presetId: string; label: string }
   | { kind: 'effect'; effectType: EffectType }
   | { kind: 'motionPreset'; name: string }
   | { kind: 'animPreset'; presetId: string }
   | { kind: 'cursor'; cursorId: string; name: string }
+  | { kind: 'uikit'; componentId: string; name: string }
   | { kind: 'mograph'; mographId: string; name: string }
   | { kind: 'transition'; transId: string; name: string }
   | { kind: 'sfx'; sfxId: string; name: string }

@@ -68,7 +68,11 @@ export interface SceneFacade {
   nearest(nodeId: string, limit?: number): string[];
   create(kind: string, name: string, at?: { x: number; y: number }): string;
   remove(nodeId: string): void;
-  reparent(nodeId: string, parentId: string | null): void;
+  /** Re-parent a node. By default the node keeps its WORLD pose (local transform
+   *  is recompensated). Pass `{ preserveWorld: false }` to keep the LOCAL
+   *  transform instead — used by importers whose locals are already
+   *  parent-relative (e.g. Lottie). */
+  reparent(nodeId: string, parentId: string | null, options?: { preserveWorld?: boolean }): void;
   setProp(nodeId: string, prop: string, value: unknown): boolean;
   addEffect(nodeId: string, type: string): string;
   updateEffect(nodeId: string, effectId: string, amount: number): void;

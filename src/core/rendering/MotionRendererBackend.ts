@@ -38,6 +38,16 @@ const VOID: Color = { r: 0, g: 0, b: 0, a: 0 };
 export class MotionRendererBackend implements RenderBackend {
   readonly kind: string;
   readonly readyPromise: Promise<void>;
+  /**
+   * True when EVERY init attempt (preferred tier + fallbacks + retry) failed.
+   * readyPromise still resolves — so awaiting callers never hang — but the
+   * surface cannot paint; the UI must check this flag instead of treating a
+   * resolved readyPromise as success (the old behavior dismissed the loading
+   * spinner into a silent blank canvas).
+   */
+  initFailed = false;
+  /** Human-readable reason for the failure when initFailed is true. */
+  initErrorMessage: string | null = null;
   private resolveReady!: () => void;
   private readonly preferred: RendererBackendKind;
 
@@ -70,64 +80,107 @@ export class MotionRendererBackend implements RenderBackend {
     void this.init(canvas);
   }
 
-  private createGpuBackend(): GpuBackend {
-    if (this.preferred === 'null') return new NullBackend();
-    if (
-      this.preferred === 'webgpu' &&
-      typeof navigator !== 'undefined' &&
-      'gpu' in navigator
-    ) {
-      return new WebGPUBackend();
-    }
+  private createGpuBackendFor(kind: RendererBackendKind): GpuBackend {
+    if (kind === 'null') return new NullBackend();
+    if (kind === 'webgpu') return new WebGPUBackend();
     return new WebGL2Backend();
   }
 
-  private async init(canvas: HTMLCanvasElement): Promise<void> {
-    // The app-side texture provider decodes image assets to real GPU textures.
-    // A finished decode fires onChange → we re-render so the pixels appear. The
-    // `textures` factory runs synchronously inside the Renderer constructor.
-    const renderer = new Renderer({
-      backend: this.createGpuBackend(),
-      textures: (resources) => (this.textures = new AppTextureProvider(resources)),
-    });
-    if (this.textures) {
-      this.textures.setExactMediaTiming?.(this.exactMediaTiming);
-      (this.textures as AppTextureProvider).onChange = () =>
-        getEventBus().emit('AnimationChanged', { nodeId: '__texture__' });
+  /**
+   * The ladder of init attempts, in order. Real recovery, not just a badge:
+   *   webgpu (when preferred + available) → webgl2 → webgl2 retry (delayed).
+   * The delayed WebGL2 retry exists because a failed getContext usually means
+   * the page hit the browser's live-context cap; backend.dispose() now
+   * explicitly loses its context, so a slot frees up almost immediately and a
+   * short-delay retry succeeds where the first attempt raced the release.
+   * (NullBackend is NOT a fallback tier here — it produces no pixels, which is
+   * indistinguishable from the blank-canvas bug this fixes. Total failure is
+   * surfaced via initFailed instead.)
+   */
+  private initAttempts(): Array<{ kind: RendererBackendKind; delayMs?: number }> {
+    if (this.preferred === 'null') return [{ kind: 'null' }];
+    const attempts: Array<{ kind: RendererBackendKind; delayMs?: number }> = [];
+    if (this.preferred === 'webgpu' && typeof navigator !== 'undefined' && 'gpu' in navigator) {
+      attempts.push({ kind: 'webgpu' });
     }
-    try {
-      await renderer.initialize({ canvas });
-    } catch (err) {
-      // No WebGL2/WebGPU (or context lost). Stay not-ready; the surface simply
-      // shows nothing rather than throwing into React's render loop.
-      // eslint-disable-next-line no-console
-      console.warn(`[MotionRendererBackend] init failed for ${this.preferred}:`, err);
-      renderer.dispose();
-      getEventBus().emit('EngineError', { engine: `motion-${this.preferred}`, error: err as Error });
-      this.resolveReady();
-      return;
-    }
-    if (this.disposed) {
-      renderer.dispose();
-      this.resolveReady();
-      return;
-    }
-    this.renderer = renderer;
-    this.viewport = renderer.createViewport({
-      width: this.cssW,
-      height: this.cssH,
-      devicePixelRatio: this.dpr,
-    });
-    this.sizeCanvas();
-    renderer.resize(this.cssW, this.cssH, this.dpr);
-    this.ready = true;
-    this.resolveReady();
+    attempts.push({ kind: 'webgl2' });
+    attempts.push({ kind: 'webgl2', delayMs: 250 });
+    return attempts;
+  }
 
-    if (this.pending) {
-      const snapshot = this.pending;
-      this.pending = null;
-      this.renderFrame(snapshot);
+  private async init(canvas: HTMLCanvasElement): Promise<void> {
+    let lastError: unknown = null;
+    for (const attempt of this.initAttempts()) {
+      if (this.disposed) break;
+      if (attempt.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, attempt.delayMs));
+        if (this.disposed) break;
+      }
+      // The app-side texture provider decodes image assets to real GPU textures.
+      // A finished decode fires onChange → we re-render so the pixels appear. The
+      // `textures` factory runs synchronously inside the Renderer constructor.
+      const renderer = new Renderer({
+        backend: this.createGpuBackendFor(attempt.kind),
+        textures: (resources) => (this.textures = new AppTextureProvider(resources)),
+      });
+      if (this.textures) {
+        this.textures.setExactMediaTiming?.(this.exactMediaTiming);
+        (this.textures as AppTextureProvider).onChange = () =>
+          getEventBus().emit('AnimationChanged', { nodeId: '__texture__' });
+      }
+      try {
+        await renderer.initialize({ canvas });
+      } catch (err) {
+        // No context for this tier (or context lost mid-init). Dispose the
+        // failed renderer+backend and step down to the next attempt.
+        lastError = err;
+        // eslint-disable-next-line no-console
+        console.warn(`[MotionRendererBackend] init failed for ${attempt.kind}:`, err);
+        try {
+          renderer.dispose();
+        } catch {
+          /* teardown of a half-initialized renderer is best-effort */
+        }
+        this.textures = null;
+        getEventBus().emit('EngineError', { engine: `motion-${attempt.kind}`, error: err as Error });
+        continue;
+      }
+      if (this.disposed) {
+        renderer.dispose();
+        break;
+      }
+      this.renderer = renderer;
+      this.viewport = renderer.createViewport({
+        width: this.cssW,
+        height: this.cssH,
+        devicePixelRatio: this.dpr,
+      });
+      this.sizeCanvas();
+      renderer.resize(this.cssW, this.cssH, this.dpr);
+      this.ready = true;
+      // Corrects the tier badge after a successful fallback/retry (an earlier
+      // EngineError may have flipped it to 'software' prematurely).
+      getEventBus().emit('EngineReady', { engine: `motion-${attempt.kind}` });
+      this.resolveReady();
+
+      if (this.pending) {
+        const snapshot = this.pending;
+        this.pending = null;
+        this.renderFrame(snapshot);
+      }
+      return;
     }
+    // Disposed mid-init, or every attempt failed. Resolve readyPromise either
+    // way (awaiters must not hang), but record failure so the UI shows an
+    // error state instead of dismissing the spinner into a blank canvas.
+    if (!this.disposed) {
+      this.initFailed = true;
+      this.initErrorMessage =
+        lastError instanceof Error
+          ? lastError.message
+          : 'GPU rendering could not be initialized (WebGL2/WebGPU unavailable).';
+    }
+    this.resolveReady();
   }
 
   /** The renderer's backend only sets the GL viewport; the canvas backing store
@@ -185,17 +238,21 @@ export class MotionRendererBackend implements RenderBackend {
               // textured renderable under the same `particles:` key.
               const key = `particles:${layer.id}`;
               activeKeys.add(key);
+              const layerScaleX = Math.abs(layer.scaleX ?? 1);
+              const layerScaleY = Math.abs(layer.scaleY ?? 1);
+              const maxLayerScale = Math.max(layerScaleX, layerScaleY);
               this.textures!.setParticles(
                 key,
                 layer.particles,
                 layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0),
                 layer.width,
                 layer.height,
+                maxLayerScale,
               );
             } else if (layer.kind === 'image' && layer.src) {
               const key = `asset:${layer.id}`;
               activeKeys.add(key);
-              this.textures!.setImage(key, layer.src);
+              this.textures!.setImage(key, layer.src, layer.fill);
             } else if (layer.kind === 'video' && layer.src) {
               if (layer.frameBlend) {
                 // Frame Mix: feed both bracket frames. Cache hits upload the
@@ -224,7 +281,7 @@ export class MotionRendererBackend implements RenderBackend {
               this.textures!.setText(key, {
                 text: layer.text ?? 'Text',
                 fontSize: layer.fontSize ?? 48,
-                color: layer.fill,
+                color: layer.fill ?? '#ffffff',
                 width: layer.width,
                 height: layer.height,
                 scaleX: layer.scaleX,

@@ -5,10 +5,11 @@
  * Palette right away.
  */
 
-import { useSyncExternalStore } from 'react';
+import { useSyncExternalStore, type ChangeEvent } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { openModal } from '@stores/modalStore';
+import { useUIStore } from '@stores/uiStore';
 import pluginHost from '@core/plugins/PluginHost';
 import { SAMPLE_PLUGINS } from '../../plugins/samplePlugins';
 import styles from './PluginsModal.module.css';
@@ -17,12 +18,51 @@ function PluginsList(): JSX.Element {
   // Re-render whenever install state changes.
   useSyncExternalStore(
     (cb) => pluginHost.subscribe(cb),
-    () => SAMPLE_PLUGINS.filter((p) => pluginHost.isInstalled(p.id)).length,
+    () => SAMPLE_PLUGINS.filter((p) => pluginHost.isInstalled(p.id)).length + pluginHost.getUserPlugins().length,
   );
+
+  const allPlugins = [...SAMPLE_PLUGINS, ...pluginHost.getUserPlugins()];
+
+  const handleLoadScript = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const code = evt.target?.result as string;
+      if (!code) return;
+      try {
+        const loaded = pluginHost.installFromSource(code);
+        useUIStore.getState().notify({
+          level: 'success',
+          message: `Installed plugin: “${loaded.name}”`,
+          durationMs: 3000,
+        });
+      } catch (err) {
+        useUIStore.getState().notify({
+          level: 'error',
+          message: `Plugin load failed: ${(err as Error).message}`,
+          durationMs: 5000,
+        });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   return (
     <div className={styles.list}>
-      {SAMPLE_PLUGINS.map((p) => {
+      <label className={styles.loadBtn}>
+        <Icon name="upload" size={14} />
+        <span>Load External Plugin Script (.js)</span>
+        <input
+          type="file"
+          accept=".js,.ts"
+          style={{ display: 'none' }}
+          onChange={handleLoadScript}
+        />
+      </label>
+
+      {allPlugins.map((p) => {
         const installed = pluginHost.isInstalled(p.id);
         return (
           <div key={p.id} className={styles.row}>
@@ -42,7 +82,7 @@ function PluginsList(): JSX.Element {
         );
       })}
       <p className={styles.note}>
-        Installed plugins add commands you can run from the Command Palette (⌘⇧P).
+        Installed plugins add searchable commands to the Command Palette (⌘⇧P).
       </p>
     </div>
   );

@@ -1,10 +1,9 @@
 /**
- * Icon system — backed by Phosphor Icons.
+ * Icon system — backed entirely by the Phosphor Icon library.
  *
  * The app-wide API is unchanged (`<Icon name="play" size={16} />`) and the
- * `IconName` union is stable, so every call site keeps working. Internally each
- * name maps to a crisp Phosphor glyph, giving us a consistent, professional
- * icon set.
+ * `IconName` union is stable, so every call site keeps working. Each name maps
+ * to a single Phosphor glyph in `PHOSPHOR_MAP`; glyphs inherit `currentColor`.
  */
 
 import { memo, type CSSProperties } from 'react';
@@ -31,8 +30,8 @@ import {
   Timer, ArrowUUpLeft, ArrowUUpRight, Queue, PuzzlePiece, Path, WaveSine,
   FrameCorners, NavigationArrow, SlidersHorizontal, PaintBrush,
   Lightning, Images, CubeFocus, Package, FolderPlus, FolderOpen, UploadSimple,
-  Repeat, Wind, ArrowLineLeft, ArrowLineRight, Rectangle, ChartLine, Gauge,
-  Export, ClockCounterClockwise, ShareNetwork, Link, PushPin, Bone,
+  Repeat, Wind, ArrowLineLeft, ArrowLineRight, Rectangle, ChartLine, Gauge, Resize,
+  Export, ClockCounterClockwise, ShareNetwork, Link, PushPin, Bone, House,
   type Icon as PhosphorIcon, type IconWeight
 } from '@phosphor-icons/react';
 
@@ -66,7 +65,7 @@ export const ICON_NAMES = [
   'collapse', 'expand',
   'keyframe', 'track', 'marker', 'stopwatch',
   'sparkles',
-  '3d', 'box', 'heart', 'cross', 'crescent', 'diamond', 'adjustment', 'shy',
+  '3d', 'box', 'cube', 'scale', 'heart', 'cross', 'crescent', 'diamond', 'adjustment', 'shy',
   'camera', 'light',
   'user',
   'align-left', 'align-center', 'align-right',
@@ -78,12 +77,12 @@ export const ICON_NAMES = [
   'brush', '3d-focus',
   'loop', 'motion-blur', 'trim-in', 'trim-out', 'solid',
   'graph-value', 'graph-speed', 'export', 'history', 'share', 'link', 'puppet-pin', 'push-pin', 'bone',
+  'home', 'app', 'voice', 'sound', 'mic', 'ai', 'brain', 'tv', 'tour', 'text-left', 'text-center', 'text-right',
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
 
-/** name → Phosphor component. */
-const MAP: Record<IconName, PhosphorIcon> = {
+const PHOSPHOR_MAP: Record<IconName, PhosphorIcon> = {
   'arrow-down': ArrowDown,
   'arrow-left': ArrowLeft,
   'arrow-right': ArrowRight,
@@ -116,16 +115,12 @@ const MAP: Record<IconName, PhosphorIcon> = {
   rotate: ArrowCounterClockwise,
   anchor: Anchor,
   move: ArrowsOutCardinal,
-  // Matched, orientation-correct panel-toggle family (right = mirrored,
-  // bottom = rotated — see TRANSFORMS above).
   'panel-left': SidebarSimple,
   'panel-right': SidebarSimple,
   'panel-bottom': SidebarSimple,
   layout: Layout,
   crosshair: Crosshair,
   theme: SunDim,
-  // Undo/redo get their own arrows — they previously aliased the same glyphs
-  // as rotate/rotate-cw, so four different actions shared two icons.
   undo: ArrowUUpLeft,
   redo: ArrowUUpRight,
   'select-all': SelectionAll,
@@ -157,10 +152,7 @@ const MAP: Record<IconName, PhosphorIcon> = {
   media: Images,
   shape: Shapes,
   layers: Stack,
-  // Reusable components get their own package glyph, distinct from the 3D cube.
   component: Package,
-  // Motion presets. Previously registered as 'zap' with no mapping, so every
-  // Motion tab silently fell back to the plain square glyph.
   zap: Lightning,
   'zoom-in': MagnifyingGlassPlus,
   'zoom-out': MagnifyingGlassMinus,
@@ -178,14 +170,14 @@ const MAP: Record<IconName, PhosphorIcon> = {
   collapse: CaretDoubleUp,
   expand: CaretDoubleDown,
   keyframe: DiamondsFour,
-  stopwatch: Timer,
   track: ListBullets,
   marker: Flag,
+  stopwatch: Timer,
   sparkles: Sparkle,
-  // '3d' (the layer 3D toggle) and 'box' used to share the same Cube glyph.
-  // Give the toggle a focused-cube so it reads as an on/off spatial control.
   '3d': CubeFocus,
   box: Cube,
+  cube: Cube,
+  scale: Resize,
   heart: Heart,
   cross: Plus,
   crescent: Moon,
@@ -216,22 +208,13 @@ const MAP: Record<IconName, PhosphorIcon> = {
   'sliders-h': SlidersHorizontal,
   brush: PaintBrush,
   '3d-focus': CubeFocus,
-  // Playback loop — a repeat cycle, distinct from the single-arrow rotate/redo
-  // glyph the toggle used to borrow.
   loop: Repeat,
-  // Motion blur — a wind/streak glyph, not the circular "refresh/reload" arrows.
   'motion-blur': Wind,
-  // Timeline trim-to-playhead — line-anchored arrows that read as "clamp the
-  // in/out edge", replacing the misused sidebar-panel glyphs.
   'trim-in': ArrowLineLeft,
   'trim-out': ArrowLineRight,
-  // Solid/fill layer — a filled rectangle, not the bottom-panel toggle glyph.
   solid: Rectangle,
-  // Graph editor tabs: value curve vs speed gauge.
   'graph-value': ChartLine,
   'graph-speed': Gauge,
-  // Export (render out) — distinct from `download` (save a file) and `upload`
-  // (import media).
   export: Export,
   history: ClockCounterClockwise,
   share: ShareNetwork,
@@ -239,20 +222,23 @@ const MAP: Record<IconName, PhosphorIcon> = {
   'puppet-pin': PushPin,
   'push-pin': PushPin,
   bone: Bone,
+  home: House,
+  app: Package,
+  voice: SpeakerHigh,
+  sound: SpeakerHigh,
+  mic: SpeakerHigh,
+  ai: Sparkle,
+  brain: Sparkle,
+  tv: Layout,
+  tour: Flag,
+  'text-left': AlignLeft,
+  'text-center': AlignCenterHorizontal,
+  'text-right': AlignRight,
 };
 
-/**
- * Unified default weight. Keeping every icon on one Phosphor weight is what
- * makes the set read as a single, clean family rather than a mix of stroke
- * thicknesses. Override per-call only when an icon needs emphasis (e.g. a
- * filled state for an active toggle).
- */
-const DEFAULT_WEIGHT: IconWeight = 'regular';
-
-interface IconProps {
+export interface IconProps {
   name: IconName;
   size?: number;
-  /** Phosphor stroke weight. Defaults to the app-wide `DEFAULT_WEIGHT`. */
   weight?: IconWeight;
   className?: string;
   style?: CSSProperties;
@@ -261,22 +247,53 @@ interface IconProps {
   'aria-label'?: string;
 }
 
-function IconInner({ name, size = 16, weight = DEFAULT_WEIGHT, className, style, title, onClick, 'aria-label': ariaLabel }: IconProps): JSX.Element {
-  const Glyph = MAP[name] ?? Square;
+import { usePreferenceStore } from '@stores/preferenceStore';
+
+function IconInner({
+  name,
+  size = 16,
+  weight = 'regular',
+  className,
+  style,
+  title,
+  onClick,
+  'aria-label': ariaLabel,
+}: IconProps): JSX.Element {
+  const iconScale = usePreferenceStore((s) => s.iconSize);
+  const scaleMult = iconScale === 'sm' ? 0.82 : iconScale === 'lg' ? 1.25 : 1.0;
+  const computedSize = Math.max(10, Math.round(size * scaleMult));
+
   const transform = TRANSFORMS[name];
-  const mergedStyle = transform ? { ...style, transform: [transform, style?.transform].filter(Boolean).join(' ') } : style;
+  const mergedStyle: CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: computedSize,
+    height: computedSize,
+    minWidth: computedSize,
+    minHeight: computedSize,
+    maxWidth: computedSize,
+    maxHeight: computedSize,
+    flexShrink: 0,
+    color: 'currentColor',
+    lineHeight: 1,
+    verticalAlign: 'middle',
+    overflow: 'hidden',
+    ...style,
+    ...(transform ? { transform: [transform, style?.transform].filter(Boolean).join(' ') } : {}),
+  };
+
+  const Glyph = PHOSPHOR_MAP[name] ?? Square;
   return (
-    <Glyph
-      size={size}
-      weight={weight}
+    <span
       className={className}
       style={mergedStyle}
       onClick={onClick}
       aria-label={ariaLabel ?? title}
       aria-hidden={(ariaLabel ?? title) ? undefined : true}
     >
-      {title ? <title>{title}</title> : null}
-    </Glyph>
+      <Glyph size={computedSize} weight={weight} />
+    </span>
   );
 }
 

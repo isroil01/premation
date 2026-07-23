@@ -7,6 +7,19 @@ describe('Matrix4 math', () => {
     expect(p).toEqual({ x: 3, y: 5, z: 7 });
   });
 
+  it('transformVector transforms direction vectors ignoring matrix translation', () => {
+    const m = Matrix4Math.compose({
+      position: { x: 500, y: 300, z: -100 },
+      rotation: { x: 0, y: 0, z: Math.PI / 2 },
+      scale: { x: 1, y: 1, z: 1 },
+      anchor: { x: 0, y: 0, z: 0 },
+    });
+    const vec = Matrix4Math.transformVector(m, { x: 1, y: 0, z: 0 });
+    expect(vec.x).toBeCloseTo(0);
+    expect(vec.y).toBeCloseTo(1);
+    expect(vec.z).toBeCloseTo(0);
+  });
+
   it('anchor Z pivots rotation (not a no-op) — AE anchor-point depth', () => {
     // A 90° rotation about X, with the anchor pushed +100 in Z. The layer's
     // local origin sits at (0,0,-100) relative to the anchor, so after the X

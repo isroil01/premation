@@ -120,6 +120,12 @@ export interface PipelineDescriptor {
   colorFormat: TextureFormat;
   /** Optional depth attachment format for this pipeline. */
   depthFormat?: TextureFormat;
+  /** Depth-tested pipeline (3D layer path). When set the pipeline is only
+   *  valid inside a render pass that carries a depth attachment (WebGPU bakes
+   *  the depth state into the pipeline; WebGL2 applies it at bind time). */
+  depthTest?: boolean;
+  /** Write depth as well as test it (defaults to `depthTest`). */
+  depthWrite?: boolean;
 }
 
 export type BindGroupResource =
@@ -149,6 +155,12 @@ export type ColorAttachment =
 export interface RenderPassDescriptor {
   label?: string;
   color: ColorAttachment;
+  /** Use the target's depth attachment for this pass (3D group rendering).
+   *  Only valid when the color target was created with `depth: true`; every
+   *  pipeline used inside such a pass must set `depthTest` (WebGPU requires
+   *  pass/pipeline depth state to agree). `clearDepth` clears to the given
+   *  value (1 = far) at pass start. */
+  depth?: { clearDepth?: number };
 }
 
 export interface BackendCapabilities {

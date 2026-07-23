@@ -11,10 +11,9 @@ import { ReviewBar } from './ReviewBar';
 import { useCommentsStore } from '@stores/commentsStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import styles from './CommentsPanel.module.css';
-
-const FPS = 30;
 
 export function CommentsPanel(): JSX.Element {
   const comments = useCommentsStore((s) => s.comments);
@@ -24,6 +23,7 @@ export function CommentsPanel(): JSX.Element {
   const setSelected = useSelectionStore((s) => s.set);
   const time = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0)) ?? 0;
   const setTime = useWorkspaceStore((s) => s.actions.setTime);
+  const fps = useCompositionStore((s) => s.fps);
 
   const [draft, setDraft] = useState('');
   const node = primary ? defaultSceneGraph.getNode(primary) : null;
@@ -37,7 +37,7 @@ export function CommentsPanel(): JSX.Element {
 
   const jumpTo = (c: { nodeId: string; time: number }): void => {
     setSelected([c.nodeId]);
-    setTime(c.time, Math.round(c.time * FPS));
+    setTime(c.time, Math.round(c.time * fps));
   };
 
   return (

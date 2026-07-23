@@ -307,24 +307,16 @@ export function MotionPresetsPanel(): JSX.Element {
     >
       <div className={styles.panelHeader}>
         <div className={styles.searchRow}>
-          <div className={styles.searchInputWrapper}>
-            <Icon name="search" size={12} className={styles.searchIcon} />
-            <Input
-              value={search}
-              placeholder="Search presets..."
-              className={styles.searchInput}
-              onChange={(e) => setSearch(e.currentTarget.value)}
-            />
-            {search ? (
-              <button
-                type="button"
-                className={styles.clearSearchBtn}
-                onClick={() => setSearch('')}
-              >
-                <Icon name="close" size={11} />
-              </button>
-            ) : null}
-          </div>
+          <Input
+            value={search}
+            placeholder="Search presets…"
+            size="sm"
+            fullWidth
+            leftIcon="search"
+            clearable
+            onClear={() => setSearch('')}
+            onChange={(e) => setSearch(e.currentTarget.value)}
+          />
           <Dropdown
             placement="bottom-end"
             trigger={

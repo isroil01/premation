@@ -156,10 +156,10 @@ describe('emitters', () => {
 
 describe('the tool surface itself', () => {
   // Models degrade past ~30 tools, so this count is a budget, not trivia.
-  it('exposes 44 tools: 7 read, 37 write', () => {
-    expect(ALL_TOOL_DEFS).toHaveLength(44);
+  it('exposes 45 tools: 7 read, 38 write', () => {
+    expect(ALL_TOOL_DEFS).toHaveLength(45);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(7);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(37);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(38);
   });
 
   it('has unique names', () => {

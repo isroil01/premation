@@ -1139,6 +1139,506 @@ void main() {
   }
 };
 
+// ── mat4 (true 3D) shader variants ──────────────────────────────────────────
+// The depth-tested 3D layer path. Same fragment logic as the 2D twins, but the
+// vertex stage takes a full mat4 MVP and emits real clip-space (z and w), so
+// the hardware does the perspective divide, perspective-correct interpolation,
+// and depth testing. The mat3 shaders above are UNTOUCHED — 2D output stays
+// bit-identical.
+//
+// Every 3d Object block ends with the SHADE TAIL (must match packShade3D in
+// pipeline/uniforms.ts exactly): model (mat4, unit quad → 3D comp space),
+// eyeLit (xyz camera eye, w = lit flag), shadeParams (light count, specular
+// 0..1, shininess, 0) and lights (MAX_LIGHTS3D × 3 vec4s: pos+type,
+// color+gain, radius/halfCone/aimX/aimY). When the lit flag is 0 the tail is
+// all zeros and shading is a byte-exact identity — unlit layers render exactly
+// as before. When lit, the fragment stage runs the SAME light model as
+// lightShading.ts (two-sided Lambert, linear radius falloff, feathered 2D spot
+// cone, gain clamped to 4) but PER-FRAGMENT — a near light shows a real
+// hotspot across a plane — plus Blinn-Phong specular (specular 0 → Lambert
+// only, matching the CPU per-quad fallback).
+const SOLID3D: ShaderSource = {
+  name: 'solid3d',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat4x4<f32>,
+  color : vec4<f32>,
+  shape : vec4<f32>,
+  model : mat4x4<f32>,
+  eyeLit : vec4<f32>,
+  shadeParams : vec4<f32>,
+  lights : array<vec4<f32>, 24>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) local : vec2<f32>,
+  @location(1) world : vec3<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  o.pos = obj.mvp * vec4<f32>(pos, 0.0, 1.0);
+  o.local = pos;
+  o.world = (obj.model * vec4<f32>(pos, 0.0, 1.0)).xyz;
+  return o;
+}
+
+fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
+  if (obj.eyeLit.w < 0.5) { return baseRgb; }
+  let N = normalize(obj.model[2].xyz);
+  let count = i32(obj.shadeParams.x + 0.5);
+  let specI = obj.shadeParams.y;
+  let shin = max(obj.shadeParams.z, 1.0);
+  var diff = vec3<f32>(0.0);
+  var spec = vec3<f32>(0.0);
+  for (var i = 0; i < 8; i = i + 1) {
+    if (i >= count) { break; }
+    let posType = obj.lights[i * 3];
+    let colGain = obj.lights[i * 3 + 1];
+    let misc = obj.lights[i * 3 + 2];
+    let lType = i32(posType.w + 0.5);
+    let gain = colGain.w;
+    if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
+    var toLight = vec3<f32>(0.0, 0.0, -1.0);
+    var atten = 1.0;
+    var lambert = 1.0;
+    var skip = false;
+    if (lType == 3) {
+      let L = vec3<f32>(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
+      lambert = abs(dot(N, L));
+      toLight = -L;
+    } else {
+      let Lvec = posType.xyz - world;
+      let d = length(Lvec);
+      let radius = misc.x;
+      if (radius > 0.0 && d >= radius) { skip = true; }
+      if (!skip) {
+        atten = select(1.0, 1.0 - d / radius, radius > 0.0);
+        if (d > 1e-6) {
+          toLight = Lvec / d;
+          lambert = abs(dot(N, toLight));
+          if (lType == 2) {
+            let cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+            let halfCone = max(misc.y, 1e-3);
+            let ang = acos(clamp(cosA, -1.0, 1.0));
+            if (ang > halfCone) { skip = true; }
+            let feather = halfCone * 0.2;
+            if (!skip && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
+          }
+        }
+      }
+    }
+    if (skip) { continue; }
+    let k = gain * lambert * atten;
+    diff = diff + colGain.rgb * k;
+    if (specI > 0.0) {
+      let V = normalize(obj.eyeLit.xyz - world);
+      let H = normalize(toLight + V);
+      spec = spec + colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+    }
+  }
+  diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
+  return baseRgb * diff + spec * specI;
+}
+
+fn shapeAlpha(local : vec2<f32>) -> f32 {
+  let kind = i32(obj.shape.x + 0.5);
+  if (kind == 2) {
+    let p = (local - vec2<f32>(0.5)) * 2.0;
+    let d = length(p) - 1.0;
+    let aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  if (kind == 1) {
+    let r = obj.shape.y;
+    let sz = obj.shape.zw;
+    let p = (local - vec2<f32>(0.5)) * sz;
+    let b = sz * 0.5 - r;
+    let q = abs(p) - b;
+    let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    let aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  return 1.0;
+}
+
+@fragment
+fn fs(@location(0) local : vec2<f32>, @location(1) world : vec3<f32>) -> @location(0) vec4<f32> {
+  let a = obj.color.a * shapeAlpha(local);
+  let rgb = shade3d(world, obj.color.rgb);
+  return vec4<f32>(rgb * a, a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };
+out vec2 vLocal;
+out vec3 vWorld;
+void main() {
+  gl_Position = mvp * vec4(pos, 0.0, 1.0);
+  vLocal = pos;
+  vWorld = (model * vec4(pos, 0.0, 1.0)).xyz;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };
+in vec2 vLocal;
+in vec3 vWorld;
+out vec4 frag;
+vec3 shade3d(vec3 world, vec3 baseRgb) {
+  if (eyeLit.w < 0.5) return baseRgb;
+  vec3 N = normalize(model[2].xyz);
+  int count = int(shadeParams.x + 0.5);
+  float specI = shadeParams.y;
+  float shin = max(shadeParams.z, 1.0);
+  vec3 diff = vec3(0.0);
+  vec3 spec = vec3(0.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= count) break;
+    vec4 posType = lights[i * 3];
+    vec4 colGain = lights[i * 3 + 1];
+    vec4 misc = lights[i * 3 + 2];
+    int lType = int(posType.w + 0.5);
+    float gain = colGain.w;
+    if (lType == 0) { diff += colGain.rgb * gain; continue; }
+    vec3 toLight = vec3(0.0, 0.0, -1.0);
+    float atten = 1.0;
+    float lambert = 1.0;
+    if (lType == 3) {
+      vec3 L = vec3(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
+      lambert = abs(dot(N, L));
+      toLight = -L;
+    } else {
+      vec3 Lvec = posType.xyz - world;
+      float d = length(Lvec);
+      float radius = misc.x;
+      if (radius > 0.0 && d >= radius) continue;
+      atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      if (d > 1e-6) {
+        toLight = Lvec / d;
+        lambert = abs(dot(N, toLight));
+        if (lType == 2) {
+          float cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+          float halfCone = max(misc.y, 1e-3);
+          float ang = acos(clamp(cosA, -1.0, 1.0));
+          if (ang > halfCone) continue;
+          float feather = halfCone * 0.2;
+          if (ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+        }
+      }
+    }
+    float k = gain * lambert * atten;
+    diff += colGain.rgb * k;
+    if (specI > 0.0) {
+      vec3 V = normalize(eyeLit.xyz - world);
+      vec3 H = normalize(toLight + V);
+      spec += colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+    }
+  }
+  diff = clamp(diff, vec3(0.0), vec3(4.0));
+  return baseRgb * diff + spec * specI;
+}
+float shapeAlpha(vec2 local) {
+  int kind = int(shape.x + 0.5);
+  if (kind == 2) {
+    vec2 p = (local - 0.5) * 2.0;
+    float d = length(p) - 1.0;
+    float aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  if (kind == 1) {
+    float r = shape.y;
+    vec2 sz = shape.zw;
+    vec2 p = (local - 0.5) * sz;
+    vec2 b = sz * 0.5 - r;
+    vec2 q = abs(p) - b;
+    float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    float aa = fwidth(d) + 1e-6;
+    return 1.0 - smoothstep(-aa, aa, d);
+  }
+  return 1.0;
+}
+void main() {
+  float a = color.a * shapeAlpha(vLocal);
+  vec3 rgb = shade3d(vWorld, color.rgb);
+  frag = vec4(rgb * a, a);
+}
+`,
+  },
+};
+
+// WGSL shade tail + per-fragment light model, shared verbatim by the textured
+// 3d shaders (the Object block layout after the 2D-twin fields is identical).
+const WGSL_TEX3D_OBJECT = /* wgsl */ `
+struct Object {
+  mvp : mat4x4<f32>,
+  uvRect : vec4<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+  model : mat4x4<f32>,
+  eyeLit : vec4<f32>,
+  shadeParams : vec4<f32>,
+  lights : array<vec4<f32>, 24>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+`;
+
+const WGSL_SHADE3D_FN = /* wgsl */ `
+fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
+  if (obj.eyeLit.w < 0.5) { return baseRgb; }
+  let N = normalize(obj.model[2].xyz);
+  let count = i32(obj.shadeParams.x + 0.5);
+  let specI = obj.shadeParams.y;
+  let shin = max(obj.shadeParams.z, 1.0);
+  var diff = vec3<f32>(0.0);
+  var spec = vec3<f32>(0.0);
+  for (var i = 0; i < 8; i = i + 1) {
+    if (i >= count) { break; }
+    let posType = obj.lights[i * 3];
+    let colGain = obj.lights[i * 3 + 1];
+    let misc = obj.lights[i * 3 + 2];
+    let lType = i32(posType.w + 0.5);
+    let gain = colGain.w;
+    if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
+    var toLight = vec3<f32>(0.0, 0.0, -1.0);
+    var atten = 1.0;
+    var lambert = 1.0;
+    var skip = false;
+    if (lType == 3) {
+      let L = vec3<f32>(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
+      lambert = abs(dot(N, L));
+      toLight = -L;
+    } else {
+      let Lvec = posType.xyz - world;
+      let d = length(Lvec);
+      let radius = misc.x;
+      if (radius > 0.0 && d >= radius) { skip = true; }
+      if (!skip) {
+        atten = select(1.0, 1.0 - d / radius, radius > 0.0);
+        if (d > 1e-6) {
+          toLight = Lvec / d;
+          lambert = abs(dot(N, toLight));
+          if (lType == 2) {
+            let cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+            let halfCone = max(misc.y, 1e-3);
+            let ang = acos(clamp(cosA, -1.0, 1.0));
+            if (ang > halfCone) { skip = true; }
+            let feather = halfCone * 0.2;
+            if (!skip && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
+          }
+        }
+      }
+    }
+    if (skip) { continue; }
+    let k = gain * lambert * atten;
+    diff = diff + colGain.rgb * k;
+    if (specI > 0.0) {
+      let V = normalize(obj.eyeLit.xyz - world);
+      let H = normalize(toLight + V);
+      spec = spec + colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+    }
+  }
+  diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
+  return baseRgb * diff + spec * specI;
+}
+`;
+
+// GLSL twins of the above (UBO tail + light model), same layout contract.
+const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };`;
+
+const GLSL_SHADE3D_FN = /* glsl */ `
+vec3 shade3d(vec3 world, vec3 baseRgb) {
+  if (eyeLit.w < 0.5) return baseRgb;
+  vec3 N = normalize(model[2].xyz);
+  int count = int(shadeParams.x + 0.5);
+  float specI = shadeParams.y;
+  float shin = max(shadeParams.z, 1.0);
+  vec3 diff = vec3(0.0);
+  vec3 spec = vec3(0.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= count) break;
+    vec4 posType = lights[i * 3];
+    vec4 colGain = lights[i * 3 + 1];
+    vec4 misc = lights[i * 3 + 2];
+    int lType = int(posType.w + 0.5);
+    float gain = colGain.w;
+    if (lType == 0) { diff += colGain.rgb * gain; continue; }
+    vec3 toLight = vec3(0.0, 0.0, -1.0);
+    float atten = 1.0;
+    float lambert = 1.0;
+    if (lType == 3) {
+      vec3 L = vec3(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
+      lambert = abs(dot(N, L));
+      toLight = -L;
+    } else {
+      vec3 Lvec = posType.xyz - world;
+      float d = length(Lvec);
+      float radius = misc.x;
+      if (radius > 0.0 && d >= radius) continue;
+      atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      if (d > 1e-6) {
+        toLight = Lvec / d;
+        lambert = abs(dot(N, toLight));
+        if (lType == 2) {
+          float cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+          float halfCone = max(misc.y, 1e-3);
+          float ang = acos(clamp(cosA, -1.0, 1.0));
+          if (ang > halfCone) continue;
+          float feather = halfCone * 0.2;
+          if (ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+        }
+      }
+    }
+    float k = gain * lambert * atten;
+    diff += colGain.rgb * k;
+    if (specI > 0.0) {
+      vec3 V = normalize(eyeLit.xyz - world);
+      vec3 H = normalize(toLight + V);
+      spec += colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+    }
+  }
+  diff = clamp(diff, vec3(0.0), vec3(4.0));
+  return baseRgb * diff + spec * specI;
+}
+`;
+
+const TEXTURED3D: ShaderSource = {
+  name: 'textured3d',
+  wgsl: /* wgsl */ `
+${WGSL_TEX3D_OBJECT}
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+  @location(1) world : vec3<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  o.pos = obj.mvp * vec4<f32>(pos, 0.0, 1.0);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  o.world = (obj.model * vec4<f32>(pos, 0.0, 1.0)).xyz;
+  return o;
+}
+${WGSL_SHADE3D_FN}
+@fragment
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let lit = shade3d(world, graded);
+  return vec4<f32>(lit * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+${GLSL_TEX3D_UBO}
+out vec2 vUv;
+out vec3 vWorld;
+void main() {
+  gl_Position = mvp * vec4(pos, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+  vWorld = (model * vec4(pos, 0.0, 1.0)).xyz;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${GLSL_TEX3D_UBO}
+uniform sampler2D uTex;
+in vec2 vUv;
+in vec3 vWorld;
+out vec4 frag;
+${GLSL_SHADE3D_FN}
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 lit = shade3d(vWorld, graded);
+  frag = vec4(lit * c.a, c.a);
+}
+`,
+  },
+};
+
+const MASKED_TEXTURED3D: ShaderSource = {
+  name: 'masked-textured3d',
+  wgsl: /* wgsl */ `
+${WGSL_TEX3D_OBJECT}
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var maskTex : texture_2d<f32>;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+  @location(1) world : vec3<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  o.pos = obj.mvp * vec4<f32>(pos, 0.0, 1.0);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  o.world = (obj.model * vec4<f32>(pos, 0.0, 1.0)).xyz;
+  return o;
+}
+${WGSL_SHADE3D_FN}
+@fragment
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let maskAlpha = textureSample(maskTex, smp, uv).a;
+  let a = c.a * maskAlpha;
+  let lit = shade3d(world, graded);
+  return vec4<f32>(lit * a, a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+${GLSL_TEX3D_UBO}
+out vec2 vUv;
+out vec3 vWorld;
+void main() {
+  gl_Position = mvp * vec4(pos, 0.0, 1.0);
+  vUv = uvRect.xy + pos * uvRect.zw;
+  vWorld = (model * vec4(pos, 0.0, 1.0)).xyz;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${GLSL_TEX3D_UBO}
+uniform sampler2D uTex;
+uniform sampler2D uMaskTex;
+in vec2 vUv;
+in vec3 vWorld;
+out vec4 frag;
+${GLSL_SHADE3D_FN}
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  float maskAlpha = texture(uMaskTex, vUv).a;
+  float a = c.a * maskAlpha;
+  vec3 lit = shade3d(vWorld, graded);
+  frag = vec4(lit * a, a);
+}
+`,
+  },
+};
+
 const DEFORMED_MESH: ShaderSource = {
   name: 'deformed-mesh',
   wgsl: /* wgsl */ `
@@ -1205,5 +1705,6 @@ void main() {
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, TEXTURED, MASKED_TEXTURED, LUT_TEXTURED, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
-  FILL, STROKE, SHARPEN, NOISE, DEFORMED_MESH
+  FILL, STROKE, SHARPEN, NOISE, DEFORMED_MESH,
+  SOLID3D, TEXTURED3D, MASKED_TEXTURED3D,
 ];

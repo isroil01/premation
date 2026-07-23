@@ -19,9 +19,11 @@ import { ColorPicker } from '@components/ColorPicker';
 
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { applyTypewriter } from '@core/animation/keyframeAssistants';
 import {
   hasTextComponent,
   readAnimatorData,
@@ -251,10 +253,17 @@ function AnimatorGroup({
 
 export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
+  const time = useActiveWorkspace()?.time ?? 0;
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasTextComponent(node)) return null;
 
   const animators = readAnimatorData(node);
+
+  const handleAutoTypewriter = (): void => {
+    if (applyTypewriter(nodeId, time)) {
+      useUIStore.getState().notify({ level: 'success', message: 'Created typewriter typing motion!', durationMs: 1800 });
+    }
+  };
 
   return (
     <div className={styles.root}>
@@ -271,6 +280,34 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
           <span>Add</span>
         </button>
       </div>
+
+      <div style={{ display: 'flex', gap: 6, padding: '4px 12px 10px 12px' }}>
+        <button
+          type="button"
+          onClick={handleAutoTypewriter}
+          style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            padding: '6px 12px',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            borderRadius: '4px',
+            border: '1px dashed var(--color-accent, #635bff)',
+            background: 'rgba(99,91,255,0.06)',
+            color: 'var(--color-accent, #635bff)',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+          }}
+          title="Auto-creates typewriter rig keyframed over 1.5s"
+        >
+          <Icon name="type" size={13} />
+          <span>Auto-Animate Typing</span>
+        </button>
+      </div>
+
       {animators.length === 0 ? (
         <div className={styles.empty}>No animators. Add one to animate characters, words, or lines.</div>
       ) : (

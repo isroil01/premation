@@ -91,6 +91,8 @@ export class NullBackend implements RenderBackend {
 
   readonly draws: RecordedDraw[] = [];
   readonly passLog: string[] = [];
+  /** Labels of passes begun with a depth attachment (3D group passes). */
+  readonly depthPassLog: string[] = [];
   private frameCount = 0;
   private passCount = 0;
   private bufferBytes = 0;
@@ -194,6 +196,7 @@ export class NullBackend implements RenderBackend {
     this.passCount += 1;
     const label = desc.label ?? 'pass';
     this.passLog.push(label);
+    if (desc.depth) this.depthPassLog.push(label);
     return new NullPassEncoder(label, (d) => this.draws.push(d));
   }
   endFrame(): void {}
@@ -222,5 +225,6 @@ export class NullBackend implements RenderBackend {
   resetLog(): void {
     this.draws.length = 0;
     this.passLog.length = 0;
+    this.depthPassLog.length = 0;
   }
 }

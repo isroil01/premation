@@ -14,13 +14,13 @@ import { HistoryPanel } from '@layout/History/HistoryPanel';
 import { ProjectPanel } from '@layout/Project/ProjectPanel';
 import { TemplateFieldsPanel } from '@layout/Templates/TemplateFieldsPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
-import { CommentsPanel } from '@layout/Comments/CommentsPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
+import { customConfirm } from '@components/Modal';
 import { useAssetStore, type AssetFolder } from '@stores/assetStore';
 import { ParentControl } from '@layout/Inspector/ParentControl';
 import { PrecompControl } from '@layout/Inspector/PrecompControl';
@@ -37,6 +37,7 @@ import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
 import { CameraSection } from '@layout/Inspector/CameraSection';
 import { LightSection } from '@layout/Inspector/LightSection';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
+import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
 import { CompositingControls } from '@layout/Inspector/CompositingControls';
 import { PuppetControls } from '@layout/Inspector/PuppetControls';
 import { BoneControls } from '@layout/Inspector/BoneControls';
@@ -64,12 +65,13 @@ import {
   deleteSelectedLayers,
   insertShape,
   insertText,
-  insertCursorLibraryItem,
-  insertMotionGraphicLibraryItem,
-  insertTransitionLibraryItem,
-  insertSoundFxLibraryItem,
-  insertLottieLibraryItem,
 } from '@core/scene/sceneInsert';
+import { mergeSelectedPaths } from '@core/scene/mergePaths';
+import { rigLogoForAnimation } from '@core/scene/rigLogo';
+import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
+import { TRANSITION_ITEMS, applyTransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
+import { SFX_ITEMS, insertSfxItem, type SfxCategory } from '@core/library/sfxLibrary';
+import { LOTTIE_ITEMS, insertLottieItem, importLottieFile, type LottieCategory } from '@core/library/lottieLibrary';
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
@@ -280,6 +282,22 @@ export function ScenePanel(): JSX.Element {
       { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
       ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
       { id: 'precompose', label: 'Pre-compose…', onSelect: () => precomposeSelected() },
+      { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
+      ...(useSelectionStore.getState().ids.length >= 2
+        ? [
+            { id: 'sep_merge', separator: true },
+            {
+              id: 'merge-paths',
+              label: 'Merge Paths',
+              children: [
+                { id: 'merge-union', label: 'Union (Add)', onSelect: () => mergeSelectedPaths('union') },
+                { id: 'merge-subtract', label: 'Subtract', onSelect: () => mergeSelectedPaths('subtract') },
+                { id: 'merge-intersect', label: 'Intersect', onSelect: () => mergeSelectedPaths('intersect') },
+                { id: 'merge-exclude', label: 'Exclude (XOR)', onSelect: () => mergeSelectedPaths('exclude') },
+              ],
+            },
+          ]
+        : []),
       { id: 'sep3', separator: true },
       { id: 'delete', label: 'Delete', danger: true, onSelect: () => deleteSelectedLayers() },
     ]);
@@ -366,7 +384,7 @@ function formatBytes(bytes: number): string {
 export function AssetsPanel(): JSX.Element {
   const assets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
-  const addAsset = useAssetStore((s) => s.addAsset);
+  const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
   const removeAsset = useAssetStore((s) => s.removeAsset);
   const createFolder = useAssetStore((s) => s.createFolder);
   const renameFolder = useAssetStore((s) => s.renameFolder);
@@ -379,18 +397,37 @@ export function AssetsPanel(): JSX.Element {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  // Multi-select: clicking asset rows toggles them into this set; the bulk bar
+  // then adds/deletes them together.
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
+
+  // Selection is folder/search-scoped — reset it whenever the view changes so a
+  // hidden asset can't be silently deleted by a bulk action.
+  const goToFolder = (id: string | null): void => {
+    setCurrentFolderId(id);
+    setSelectedAssetIds(new Set());
+  };
+  const toggleAssetSelected = (id: string, e: React.MouseEvent): void => {
+    e.stopPropagation();
+    setSelectedAssetIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   // Import loose files into the current folder and drop them on the canvas.
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
+    const items: Array<{ file: File; folderId: string | null }> = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (file) {
-        const asset = await addAsset(file, currentFolderId);
-        insertMedia(asset);
-      }
+      if (file) items.push({ file, folderId: currentFolderId });
     }
+    const created = await addAssetsBatch(items);
+    for (const a of created) insertMedia(a);
     e.target.value = '';
   };
 
@@ -398,7 +435,7 @@ export function AssetsPanel(): JSX.Element {
   // folder (via webkitRelativePath) and file each asset into the matching leaf.
   const handleFolderChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
     // Cache of "relative path → folderId" so shared parents are created once.
     const pathToId = new Map<string, string | null>();
     pathToId.set('', currentFolderId);
@@ -415,6 +452,7 @@ export function AssetsPanel(): JSX.Element {
       }
       return parentId;
     };
+    const items: Array<{ file: File; folderId: string | null }> = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (!file) continue;
@@ -424,7 +462,10 @@ export function AssetsPanel(): JSX.Element {
       // "MyPack" then "MyPack/logos", with a.png filed in the leaf.
       const folderSegments = parts.slice(0, -1);
       const targetFolder = ensureFolder(folderSegments);
-      await addAsset(file, targetFolder);
+      items.push({ file, folderId: targetFolder });
+    }
+    if (items.length > 0) {
+      await addAssetsBatch(items);
     }
     e.target.value = '';
   };
@@ -465,6 +506,41 @@ export function AssetsPanel(): JSX.Element {
   });
 
   const isEmpty = subfolders.length === 0 && visibleAssets.length === 0;
+
+  // Bulk actions operate only on selected assets that are actually visible.
+  const selectedInView = visibleAssets.filter((a) => selectedAssetIds.has(a.id));
+  const allVisibleSelected = visibleAssets.length > 0 && selectedInView.length === visibleAssets.length;
+  const toggleSelectAll = (): void => {
+    setSelectedAssetIds(allVisibleSelected ? new Set() : new Set(visibleAssets.map((a) => a.id)));
+  };
+  const bulkAdd = (): void => {
+    for (const a of selectedInView) insertMedia(a);
+    setSelectedAssetIds(new Set());
+  };
+  const bulkDelete = async (): Promise<void> => {
+    const n = selectedInView.length;
+    if (n === 0) return;
+    const ok = await customConfirm(
+      'Delete assets',
+      `Delete ${n} selected asset${n === 1 ? '' : 's'}? This can’t be undone.`,
+      { confirmLabel: 'Delete', isDanger: true },
+    );
+    if (!ok) return;
+    for (const a of selectedInView) removeAsset(a.id);
+    setSelectedAssetIds(new Set());
+  };
+  const deleteFolder = async (folder: AssetFolder): Promise<void> => {
+    const assetCount = assets.filter((a) => a.folderId === folder.id).length;
+    const subCount = folders.filter((f) => f.parentId === folder.id).length;
+    const ok = await customConfirm(
+      `Delete “${folder.name}”`,
+      assetCount || subCount
+        ? `This deletes the folder and everything inside it (${assetCount} asset${assetCount === 1 ? '' : 's'}${subCount ? `, ${subCount} subfolder${subCount === 1 ? '' : 's'}` : ''}). This can’t be undone.`
+        : 'Delete this empty folder?',
+      { confirmLabel: 'Delete', isDanger: true },
+    );
+    if (ok) removeFolder(folder.id);
+  };
 
   return (
     <Panel
@@ -520,7 +596,7 @@ export function AssetsPanel(): JSX.Element {
           <button
             type="button"
             className={currentFolderId === null ? styles.crumbCurrent : styles.crumb}
-            onClick={() => setCurrentFolderId(null)}
+            onClick={() => goToFolder(null)}
           >
             Assets
           </button>
@@ -530,12 +606,29 @@ export function AssetsPanel(): JSX.Element {
               <button
                 type="button"
                 className={i === breadcrumb.length - 1 ? styles.crumbCurrent : styles.crumb}
-                onClick={() => setCurrentFolderId(f.id)}
+                onClick={() => goToFolder(f.id)}
               >
                 {f.name}
               </button>
             </span>
           ))}
+        </div>
+      )}
+
+      {selectedInView.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface-1)' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', flex: 1 }}>
+            {selectedInView.length} selected
+          </span>
+          <button type="button" className={styles.toolBtn} title={allVisibleSelected ? 'Deselect all' : 'Select all'} onClick={toggleSelectAll}>
+            <Icon name={allVisibleSelected ? 'deselect' : 'select-all'} size={12} /> {allVisibleSelected ? 'None' : 'All'}
+          </button>
+          <button type="button" className={styles.toolBtn} title="Add selected to composition" onClick={bulkAdd}>
+            <Icon name="plus" size={12} /> Add
+          </button>
+          <button type="button" className={styles.toolBtnPrimary} title="Delete selected assets" style={{ background: 'var(--color-danger)' }} onClick={() => void bulkDelete()}>
+            <Icon name="trash" size={12} /> Delete
+          </button>
         </div>
       )}
 
@@ -561,7 +654,7 @@ export function AssetsPanel(): JSX.Element {
                   key={folder.id}
                   className={`${styles.folderItem}${dropFolderId === folder.id ? ` ${styles.dropActive}` : ''}`}
                   title={folder.name}
-                  onClick={() => { if (renamingId !== folder.id) setCurrentFolderId(folder.id); }}
+                  onClick={() => { if (renamingId !== folder.id) goToFolder(folder.id); }}
                   onDragOver={(e) => { e.preventDefault(); setDropFolderId(folder.id); }}
                   onDragLeave={() => setDropFolderId((cur) => (cur === folder.id ? null : cur))}
                   onDrop={(e) => {
@@ -602,8 +695,8 @@ export function AssetsPanel(): JSX.Element {
                     <button
                       type="button"
                       className={styles.actionButtonRemove}
-                      title="Delete folder (keeps its assets)"
-                      onClick={(e) => { e.stopPropagation(); removeFolder(folder.id); }}
+                      title="Delete folder and all its contents"
+                      onClick={(e) => { e.stopPropagation(); void deleteFolder(folder); }}
                     >
                       <Icon name="trash" size={13} />
                     </button>
@@ -613,12 +706,16 @@ export function AssetsPanel(): JSX.Element {
             })}
 
             {/* Then assets (unified — images, video, audio together) */}
-            {visibleAssets.map((asset) => (
+            {visibleAssets.map((asset) => {
+              const selected = selectedAssetIds.has(asset.id);
+              return (
               <div
                 key={asset.id}
                 className={styles.assetItem}
                 title={asset.name}
                 draggable
+                onClick={(e) => toggleAssetSelected(asset.id, e)}
+                style={selected ? { outline: '2px solid var(--color-primary)', outlineOffset: -2, background: 'var(--color-primary-soft, rgba(99,102,241,0.12))' } : undefined}
                 onDragStart={(e) => {
                   // Folder-move (Assets panel) reads text/asset-id; canvas drop reads the typed payload.
                   e.dataTransfer.setData('text/asset-id', asset.id);
@@ -627,9 +724,9 @@ export function AssetsPanel(): JSX.Element {
               >
                 <div className={styles.assetIcon}>
                   {asset.type === 'image' ? (
-                    <img src={asset.src} alt="" className={styles.assetThumbImg} />
+                    <img src={asset.thumbSrc ?? asset.src} alt="" className={styles.assetThumbImg} loading="lazy" decoding="async" />
                   ) : asset.type === 'video' ? (
-                    <video src={asset.src} className={styles.assetThumbVideo} muted playsInline />
+                    <video src={asset.src} className={styles.assetThumbVideo} preload="metadata" muted playsInline />
                   ) : (
                     <Icon name="audio" size={14} />
                   )}
@@ -648,7 +745,7 @@ export function AssetsPanel(): JSX.Element {
                     type="button"
                     className={styles.actionButtonAdd}
                     title="Add to composition"
-                    onClick={() => insertMedia(asset)}
+                    onClick={(e) => { e.stopPropagation(); insertMedia(asset); }}
                   >
                     <Icon name="plus" size={13} />
                   </button>
@@ -656,13 +753,14 @@ export function AssetsPanel(): JSX.Element {
                     type="button"
                     className={styles.actionButtonRemove}
                     title="Delete asset"
-                    onClick={() => removeAsset(asset.id)}
+                    onClick={(e) => { e.stopPropagation(); removeAsset(asset.id); }}
                   >
                     <Icon name="trash" size={13} />
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1048,6 +1146,10 @@ export function MiscPanel(): JSX.Element {
         </div>
       )}
       <MiscPanelContent nodeId={primary} query={query} />
+      {/* Project-level, selection-independent — renders only under LOCAL_FIRST. */}
+      <div style={{ padding: '0 14px' }}>
+        <VersionHistorySection />
+      </div>
     </Panel>
   );
 }
@@ -1423,165 +1525,109 @@ export function TextPanel(): JSX.Element {
 }
 
 
-// ── Cursor Library Panel ──────────────────────────────────────────
+// ── Motion Graphics Panel ─────────────────────────────────────────
+// Real programmatic mograph elements — the card previews PLAY the same
+// build + choreography the insert writes (shared gallery ticker).
 
-const CURSOR_LIB = [
-  { id: 'c1', name: 'Default Arrow',     cat: 'click',     tag: 'FREE', color: '#2988ff', animated: false },
-  { id: 'c2', name: 'Click Ripple',      cat: 'click',     tag: 'FREE', color: '#8b5cf6', animated: true  },
-  { id: 'c3', name: 'Double Burst',      cat: 'click',     tag: 'FREE', color: '#f59e0b', animated: true  },
-  { id: 'c4', name: 'Glow Trail',        cat: 'trail',     tag: 'PRO',  color: '#10b981', animated: true  },
-  { id: 'c5', name: 'Neon Trail',        cat: 'trail',     tag: 'PRO',  color: '#ec4899', animated: true  },
-  { id: 'c6', name: 'Particle Trail',    cat: 'trail',     tag: 'PRO',  color: '#6366f1', animated: true  },
-  { id: 'c7', name: 'Spotlight Circle',  cat: 'spotlight', tag: 'FREE', color: '#f97316', animated: false },
-  { id: 'c8', name: 'Soft Spotlight',    cat: 'spotlight', tag: 'FREE', color: '#84cc16', animated: false },
-  { id: 'c9', name: 'Hand Pointer',      cat: 'hand',      tag: 'FREE', color: '#14b8a6', animated: false },
-  { id: 'c10', name: 'Hand Click',       cat: 'hand',      tag: 'FREE', color: '#a78bfa', animated: true  },
-  { id: 'c11', name: 'Crosshair',        cat: 'click',     tag: 'PRO',  color: '#fb7185', animated: false },
-  { id: 'c12', name: 'Magnetic Pull',    cat: 'trail',     tag: 'PRO',  color: '#38bdf8', animated: true  },
-] as const;
-
-export function CursorLibraryPanel(): JSX.Element {
-  const [filter, setFilter] = useState<'all'|'click'|'trail'|'spotlight'|'hand'>('all');
+function MographCard({ item }: { item: MographItem }): JSX.Element {
   const notify = useUIStore((s) => s.notify);
-  const items = CURSOR_LIB.filter((c) => filter === 'all' || c.cat === filter);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const player = createMographPlayer(canvas, item);
+    return () => player.stop();
+  }, [item]);
   return (
-    <Panel id="lib-cursors" title="Cursors" icon="mouse-pointer" hideHeader
-      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'lib-cursors' })}>
-      <div className={styles.libTabs}>
-        {(['all','click','trail','spotlight','hand'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
-        <div className={styles.libGrid}>
-          {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={styles.libChip}
-              title={`${item.name} — ${item.tag} (Drag onto canvas or click to insert)`}
-              draggable
-              onDragStart={(e) => setCanvasDrag(e, { kind: 'cursor', cursorId: item.id, name: item.name })}
-              onClick={() => {
-                insertCursorLibraryItem(item.id, item.name);
-                notify({ level: 'success', message: `Inserted cursor: ${item.name}`, durationMs: 1500 });
-              }}>
-              <span className={styles.libChipThumb}
-                style={{ background: `radial-gradient(circle at 40% 40%, ${item.color}44 0%, transparent 70%), #1a1a2e` }}>
-                <span style={{ display:'block', width:8, height:8, borderRadius:'50%',
-                  background: item.color, boxShadow: `0 0 8px ${item.color}`, margin:'auto', marginTop:10 }} />
-              </span>
-              <span className={styles.libChipLabel}>{item.name}</span>
-              {item.tag === 'PRO' && <span className={styles.libChipPro}>PRO</span>}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className={styles.footer}>{items.length} cursor{items.length !== 1 ? 's' : ''}</div>
-    </Panel>
+    <button
+      type="button"
+      className={styles.libMotionItem}
+      title={`${item.name} — Drag onto canvas or click to insert`}
+      draggable
+      onDragStart={(e) => setCanvasDrag(e, { kind: 'mograph', mographId: item.id, name: item.name })}
+      onClick={() => {
+        const id = insertMographItem(item.id);
+        if (id) notify({ level: 'success', message: `Inserted motion graphic: ${item.name}`, durationMs: 1500 });
+        else notify({ level: 'warning', message: `Could not insert ${item.name}`, durationMs: 2000 });
+      }}>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+        <canvas
+          ref={canvasRef}
+          width={224}
+          height={126}
+          style={{ width: '100%', aspectRatio: '16 / 9', borderRadius: 6, background: '#101016', display: 'block' }}
+        />
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 3, height: 22, borderRadius: 2, background: item.color, flexShrink: 0 }} />
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</span>
+            <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
+              {item.cat} · {item.loop ? '∞ loop' : `${mographDuration(item).toFixed(1)}s`}
+            </span>
+          </span>
+        </span>
+      </span>
+    </button>
   );
 }
 
-// ── Motion Graphics Panel ─────────────────────────────────────────
-
-const MG_LIB = [
-  { id: 'mg1',  name: 'Clean Lower Third',   cat: 'lower-thirds', tag: 'FREE', color: '#2988ff', dur: '3s' },
-  { id: 'mg2',  name: 'Bold Name Plate',      cat: 'lower-thirds', tag: 'FREE', color: '#8b5cf6', dur: '4s' },
-  { id: 'mg3',  name: 'News Ticker',          cat: 'lower-thirds', tag: 'PRO',  color: '#f59e0b', dur: 'Loop' },
-  { id: 'mg4',  name: 'Speech Bubble',        cat: 'callouts',     tag: 'FREE', color: '#10b981', dur: '2s' },
-  { id: 'mg5',  name: 'Arrow Callout',        cat: 'callouts',     tag: 'FREE', color: '#ec4899', dur: '1.5s' },
-  { id: 'mg6',  name: 'Highlight Box',        cat: 'callouts',     tag: 'FREE', color: '#6366f1', dur: '2s' },
-  { id: 'mg7',  name: 'Geometric Circle',     cat: 'shapes',       tag: 'FREE', color: '#f97316', dur: 'Loop' },
-  { id: 'mg8',  name: 'Particle Burst',       cat: 'shapes',       tag: 'PRO',  color: '#84cc16', dur: '2s' },
-  { id: 'mg9',  name: 'Grid Reveal',          cat: 'shapes',       tag: 'PRO',  color: '#14b8a6', dur: '1.5s' },
-  { id: 'mg10', name: 'Kinetic Title',        cat: 'titles',       tag: 'FREE', color: '#a78bfa', dur: '3s' },
-  { id: 'mg11', name: 'Glitch Title',         cat: 'titles',       tag: 'PRO',  color: '#fb7185', dur: '2s' },
-  { id: 'mg12', name: 'Neon Glow Title',      cat: 'titles',       tag: 'PRO',  color: '#38bdf8', dur: '4s' },
-] as const;
-
-export function MotionGFXPanel(): JSX.Element {
-  const [filter, setFilter] = useState<'all'|'lower-thirds'|'callouts'|'shapes'|'titles'>('all');
-  const notify = useUIStore((s) => s.notify);
-  const items = MG_LIB.filter((m) => filter === 'all' || m.cat === filter);
+function MotionGFXContent(): JSX.Element {
+  const [filter, setFilter] = useState<'all' | MographCategory>('all');
+  const items = MOGRAPH_ITEMS.filter((m) => filter === 'all' || m.cat === filter);
   return (
-    <Panel id="lib-mograph" title="Motion GFX" icon="component" hideHeader
-      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'lib-mograph' })}>
+    <>
       <div className={styles.libTabs}>
-        {(['all','lower-thirds','callouts','shapes','titles'] as const).map((f) => (
+        {(['all', 'lower-thirds', 'callouts', 'titles', 'data', 'shapes', 'loops'] as const).map((f) => (
           <button key={f} type="button"
             className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
             onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f === 'lower-thirds' ? 'Lower 3rds' : f.charAt(0).toUpperCase()+f.slice(1)}
+            {f === 'all' ? 'All' : f === 'lower-thirds' ? 'Lower 3rds' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
       </div>
       <div className={styles.libBody}>
         <div className={styles.libList}>
           {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={styles.libMotionItem}
-              title={`${item.name} — Drag onto canvas or click to insert`}
-              draggable
-              onDragStart={(e) => setCanvasDrag(e, { kind: 'mograph', mographId: item.id, name: item.name })}
-              onClick={() => {
-                insertMotionGraphicLibraryItem(item.id, item.name);
-                notify({ level: 'success', message: `Inserted motion graphic: ${item.name}`, durationMs: 1500 });
-              }}>
-              <span style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
-                <span style={{ width:3, height:28, borderRadius:2, background:item.color, flexShrink:0 }} />
-                <span style={{ display:'flex', flexDirection:'column', gap:2 }}>
-                  <span style={{ fontSize:'0.78rem', fontWeight:600 }}>{item.name}</span>
-                  <span style={{ fontSize:'0.68rem', color:'var(--color-text-muted)', fontFamily:'var(--font-family-mono)' }}>
-                    {item.cat} · {item.dur}
-                  </span>
-                </span>
-              </span>
-              {item.tag === 'PRO' && <span className={styles.libChipPro}>PRO</span>}
-            </button>
+            <MographCard key={item.id} item={item} />
           ))}
         </div>
       </div>
       <div className={styles.footer}>{items.length} preset{items.length !== 1 ? 's' : ''}</div>
-    </Panel>
+    </>
   );
 }
 
 // ── Transitions Panel ─────────────────────────────────────────────
+// Real keyframe recipes: with a selection the recipe is keyframed onto the
+// selected layers at the playhead; otherwise a choreographed solid covers
+// the cut. Every write goes through the normal animation engine (undoable).
 
-const TRANS_LIB = [
-  { id: 't1',  name: 'Clean Cut',       cat: 'wipe',   tag: 'FREE', a: '#2988ff', b: '#8b5cf6' },
-  { id: 't2',  name: 'Horizontal Wipe', cat: 'wipe',   tag: 'FREE', a: '#1a1a2e', b: '#2988ff' },
-  { id: 't3',  name: 'Diagonal Wipe',   cat: 'wipe',   tag: 'FREE', a: '#10b981', b: '#1a1a2e' },
-  { id: 't4',  name: 'Zoom In',         cat: 'zoom',   tag: 'FREE', a: '#f59e0b', b: '#1a1a2e' },
-  { id: 't5',  name: 'Zoom Out',        cat: 'zoom',   tag: 'FREE', a: '#ec4899', b: '#1a1a2e' },
-  { id: 't6',  name: 'Whip Pan Zoom',   cat: 'zoom',   tag: 'PRO',  a: '#6366f1', b: '#f97316' },
-  { id: 't7',  name: 'Push Left',       cat: 'push',   tag: 'FREE', a: '#84cc16', b: '#1a1a2e' },
-  { id: 't8',  name: 'Push Right',      cat: 'push',   tag: 'FREE', a: '#14b8a6', b: '#1a1a2e' },
-  { id: 't9',  name: 'Push Down',       cat: 'push',   tag: 'PRO',  a: '#a78bfa', b: '#1a1a2e' },
-  { id: 't10', name: 'Glitch Slice',    cat: 'glitch', tag: 'PRO',  a: '#fb7185', b: '#38bdf8' },
-  { id: 't11', name: 'RGB Split',       cat: 'glitch', tag: 'PRO',  a: '#f43f5e', b: '#06b6d4' },
-  { id: 't12', name: 'VHS Glitch',      cat: 'glitch', tag: 'PRO',  a: '#ef4444', b: '#22c55e' },
-] as const;
-
-export function TransitionsPanel(): JSX.Element {
-  const [filter, setFilter] = useState<'all'|'wipe'|'zoom'|'push'|'glitch'>('all');
+function TransitionsContent(): JSX.Element {
+  const [filter, setFilter] = useState<'all' | TransitionCategory>('all');
   const notify = useUIStore((s) => s.notify);
-  const items = TRANS_LIB.filter((t) => filter === 'all' || t.cat === filter);
+  const items = TRANSITION_ITEMS.filter((t) => filter === 'all' || t.cat === filter);
+  const apply = (id: string, name: string): void => {
+    const result = applyTransitionItem(id);
+    if (!result) {
+      notify({ level: 'warning', message: `Could not apply ${name}`, durationMs: 2000 });
+    } else if (result.mode === 'layer') {
+      const n = result.nodeIds.length;
+      const kinds = new Set(result.phases ?? []);
+      const variant = kinds.size === 1 ? ` (${kinds.has('exit') ? 'exit' : 'entrance'})` : kinds.size > 1 ? ' (entrance + exit)' : '';
+      notify({ level: 'success', message: `Keyframed ${name}${variant} onto ${n} layer${n > 1 ? 's' : ''}`, durationMs: 1800 });
+    } else {
+      const n = result.nodeIds.length;
+      notify({ level: 'success', message: n > 1 ? `Inserted ${n} ${name} solids at the playhead` : `Inserted ${name} solid at the playhead`, durationMs: 1800 });
+    }
+  };
   return (
-    <Panel id="lib-trans" title="Transitions" icon="scissors" hideHeader
-      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'lib-trans' })}>
+    <>
       <div className={styles.libTabs}>
-        {(['all','wipe','zoom','push','glitch'] as const).map((f) => (
+        {(['all', 'fade', 'slide', 'zoom', 'whip', 'glitch', 'wipe'] as const).map((f) => (
           <button key={f} type="button"
             className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
             onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
+            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
       </div>
@@ -1592,65 +1638,61 @@ export function TransitionsPanel(): JSX.Element {
               key={item.id}
               type="button"
               className={styles.libMotionItem}
-              title={`${item.name} — Drag onto canvas/timeline or click to insert`}
+              title={item.solidOnly
+                ? `${item.name} — inserts a choreographed solid at the playhead`
+                : `${item.name} — applies to the selected layers (or inserts a solid)`}
               draggable
               onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
-              onClick={() => {
-                insertTransitionLibraryItem(item.id, item.name);
-                notify({ level: 'success', message: `Added transition: ${item.name}`, durationMs: 1500 });
-              }}>
-              <span style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
-                <span style={{ display:'flex', width:28, height:20, borderRadius:3, overflow:'hidden', flexShrink:0 }}>
-                  <span style={{ flex:1, background: item.a, opacity:0.8 }} />
-                  <span style={{ flex:1, background: item.b, opacity:0.8 }} />
+              onClick={() => apply(item.id, item.name)}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                <span style={{ display: 'flex', width: 28, height: 20, borderRadius: 3, overflow: 'hidden', flexShrink: 0 }}>
+                  <span style={{ flex: 1, background: item.a, opacity: 0.85 }} />
+                  <span style={{ flex: 1, background: item.b, opacity: 0.85 }} />
                 </span>
-                <span style={{ display:'flex', flexDirection:'column', gap:2 }}>
-                  <span style={{ fontSize:'0.78rem', fontWeight:600 }}>{item.name}</span>
-                  <span style={{ fontSize:'0.68rem', color:'var(--color-text-muted)', textTransform:'uppercase', fontFamily:'var(--font-family-mono)' }}>
-                    {item.cat}
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{item.name}</span>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontFamily: 'var(--font-family-mono)' }}>
+                    {item.cat} · {item.duration.toFixed(1)}s{item.solidOnly ? ' · solid' : ''}
                   </span>
                 </span>
               </span>
-              {item.tag === 'PRO' && <span className={styles.libChipPro}>PRO</span>}
             </button>
           ))}
         </div>
       </div>
       <div className={styles.footer}>{items.length} transition{items.length !== 1 ? 's' : ''}</div>
-    </Panel>
+    </>
   );
 }
 
 // ── Sound FX Panel ────────────────────────────────────────────────
+// Deterministic synthesized SFX — every item renders a real WAV through the
+// normal asset pipeline and lands as a real audio layer at the playhead.
 
-const SFX_LIB = [
-  { id: 's1',  name: 'UI Click',        cat: 'click',   tag: 'FREE', dur: '0.1s', color: '#2988ff' },
-  { id: 's2',  name: 'Button Pop',      cat: 'click',   tag: 'FREE', dur: '0.2s', color: '#8b5cf6' },
-  { id: 's3',  name: 'Toggle Switch',   cat: 'click',   tag: 'FREE', dur: '0.15s', color: '#10b981' },
-  { id: 's4',  name: 'Fast Whoosh',     cat: 'whoosh',  tag: 'FREE', dur: '0.4s', color: '#f59e0b' },
-  { id: 's5',  name: 'Heavy Whoosh',    cat: 'whoosh',  tag: 'FREE', dur: '0.6s', color: '#ec4899' },
-  { id: 's6',  name: 'Wind Sweep',      cat: 'whoosh',  tag: 'PRO',  dur: '0.8s', color: '#6366f1' },
-  { id: 's7',  name: 'Hit Impact',      cat: 'impact',  tag: 'FREE', dur: '0.3s', color: '#f97316' },
-  { id: 's8',  name: 'Thud',            cat: 'impact',  tag: 'FREE', dur: '0.5s', color: '#ef4444' },
-  { id: 's9',  name: 'Cinematic Boom',  cat: 'impact',  tag: 'PRO',  dur: '1.2s', color: '#7c3aed' },
-  { id: 's10', name: 'Room Tone',       cat: 'ambient', tag: 'FREE', dur: 'Loop', color: '#14b8a6' },
-  { id: 's11', name: 'City Noise',      cat: 'ambient', tag: 'FREE', dur: 'Loop', color: '#84cc16' },
-  { id: 's12', name: 'Studio Hum',      cat: 'ambient', tag: 'PRO',  dur: 'Loop', color: '#38bdf8' },
-] as const;
-
-export function SoundFXPanel(): JSX.Element {
-  const [filter, setFilter] = useState<'all'|'click'|'whoosh'|'impact'|'ambient'>('all');
+function SoundFXContent(): JSX.Element {
+  const [filter, setFilter] = useState<'all' | SfxCategory>('all');
+  const [busy, setBusy] = useState<string | null>(null);
   const notify = useUIStore((s) => s.notify);
-  const items = SFX_LIB.filter((s) => filter === 'all' || s.cat === filter);
+  const items = SFX_ITEMS.filter((s) => filter === 'all' || s.cat === filter);
+  const insert = async (id: string, name: string): Promise<void> => {
+    if (busy) return;
+    setBusy(id);
+    try {
+      const nodeId = await insertSfxItem(id);
+      if (nodeId) notify({ level: 'success', message: `Added Sound FX: ${name}`, durationMs: 1500 });
+      else notify({ level: 'warning', message: `Could not add ${name}`, durationMs: 2000 });
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
-    <Panel id="lib-sfx" title="Sound FX" icon="zap" hideHeader
-      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'lib-sfx' })}>
+    <>
       <div className={styles.libTabs}>
-        {(['all','click','whoosh','impact','ambient'] as const).map((f) => (
+        {(['all', 'click', 'whoosh', 'impact', 'ambient'] as const).map((f) => (
           <button key={f} type="button"
             className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
             onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
+            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
       </div>
@@ -1661,100 +1703,226 @@ export function SoundFXPanel(): JSX.Element {
               key={item.id}
               type="button"
               className={styles.libMotionItem}
-              title={`${item.name} — Drag onto audio track or click to insert`}
+              disabled={busy !== null}
+              style={busy === item.id ? { opacity: 0.6 } : undefined}
+              title={`${item.name} — synthesized ${item.duration.toFixed(2)}s WAV, added as an audio layer`}
               draggable
               onDragStart={(e) => setCanvasDrag(e, { kind: 'sfx', sfxId: item.id, name: item.name })}
-              onClick={() => {
-                insertSoundFxLibraryItem(item.id, item.name);
-                notify({ level: 'success', message: `Added Sound FX: ${item.name}`, durationMs: 1500 });
-              }}>
-              <span style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
-                <span style={{ display:'flex', alignItems:'center', gap:1.5, width:24, height:20, flexShrink:0 }}>
-                  {[4,7,5,9,6,8,5].map((h,i) => (
-                    <span key={i} style={{ width:2, height:`${h*2}px`, borderRadius:1,
-                      background: item.color, opacity:0.7+i*0.04, display:'block' }} />
+              onClick={() => { void insert(item.id, item.name); }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 1.5, width: 24, height: 20, flexShrink: 0 }}>
+                  {[4, 7, 5, 9, 6, 8, 5].map((h, i) => (
+                    <span key={i} style={{ width: 2, height: `${h * 2}px`, borderRadius: 1,
+                      background: item.color, opacity: 0.7 + i * 0.04, display: 'block' }} />
                   ))}
                 </span>
-                <span style={{ display:'flex', flexDirection:'column', gap:2 }}>
-                  <span style={{ fontSize:'0.78rem', fontWeight:600 }}>{item.name}</span>
-                  <span style={{ fontSize:'0.68rem', color:'var(--color-text-muted)', fontFamily:'var(--font-family-mono)' }}>
-                    {item.cat} · {item.dur}
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{busy === item.id ? 'Rendering…' : item.name}</span>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
+                    {item.cat} · {item.duration.toFixed(2)}s
                   </span>
                 </span>
               </span>
-              {item.tag === 'PRO' && <span className={styles.libChipPro}>PRO</span>}
             </button>
           ))}
         </div>
       </div>
-      <div className={styles.footer}>{items.length} sound{items.length !== 1 ? 's' : ''}</div>
-    </Panel>
+      <div className={styles.footer}>{items.length} sound{items.length !== 1 ? 's' : ''} · synthesized offline</div>
+    </>
   );
 }
 
-// ── Lottie & JSON Panel ───────────────────────────────────────────
+// ── Lottie Micro UI Panel ─────────────────────────────────────────
+// Advanced Apple-style UI micro-interactions (Pill Stepper, Dynamic Island, Fluid Switch, Face ID, etc.)
 
-const LOTTIE_LIB = [
-  { id: 'l1',  name: 'Success Check',   cat: 'icons',          tag: 'FREE', color: '#10b981', frames: 60,  size: '4.2 KB' },
-  { id: 'l2',  name: 'Loading Spinner', cat: 'loaders',        tag: 'FREE', color: '#2988ff', frames: 120, size: '2.8 KB' },
-  { id: 'l3',  name: 'Warning Alert',   cat: 'icons',          tag: 'FREE', color: '#f59e0b', frames: 90,  size: '3.5 KB' },
-  { id: 'l4',  name: 'Heart Like',      cat: 'icons',          tag: 'FREE', color: '#ec4899', frames: 45,  size: '5.1 KB' },
-  { id: 'l5',  name: 'Dots Loader',     cat: 'loaders',        tag: 'FREE', color: '#8b5cf6', frames: 60,  size: '1.9 KB' },
-  { id: 'l6',  name: 'Progress Ring',   cat: 'loaders',        tag: 'PRO',  color: '#6366f1', frames: 90,  size: '3.2 KB' },
-  { id: 'l7',  name: 'Globe Spin',      cat: 'illustrations',  tag: 'PRO',  color: '#14b8a6', frames: 180, size: '22 KB' },
-  { id: 'l8',  name: 'Rocket Launch',   cat: 'illustrations',  tag: 'PRO',  color: '#f97316', frames: 120, size: '18 KB' },
-  { id: 'l9',  name: 'Thumbs Up',       cat: 'stickers',       tag: 'FREE', color: '#84cc16', frames: 60,  size: '8.4 KB' },
-  { id: 'l10', name: 'Fire Flame',      cat: 'stickers',       tag: 'FREE', color: '#ef4444', frames: 120, size: '6.7 KB' },
-  { id: 'l11', name: 'Star Burst',      cat: 'stickers',       tag: 'PRO',  color: '#fbbf24', frames: 45,  size: '5.2 KB' },
-  { id: 'l12', name: 'Confetti Pop',    cat: 'illustrations',  tag: 'PRO',  color: '#a78bfa', frames: 150, size: '14 KB' },
-] as const;
+function renderLottiePreviewSvg(id: string, color: string): JSX.Element {
+  switch (id) {
+    case 'lot-pill-stepper':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <text x="2" y="15" fill="#ffffff" fontSize="9" fontWeight="800" fontFamily="sans-serif">3</text>
+          <rect x="10" y="4" width="26" height="16" rx="8" fill="#000000" stroke="#ffffff" strokeWidth="0.8" />
+          <path d="M 10 12 A 8 8 0 0 1 18 4 L 23 4 L 23 20 L 18 20 A 8 8 0 0 1 10 12 Z" fill="#ffffff" />
+          <line x1="13" y1="12" x2="19" y2="12" stroke="#000000" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="26" y1="12" x2="32" y2="12" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="29" y1="9" x2="29" y2="15" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      );
+    case 'lot-dynamic-island':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <rect x="2" y="5" width="36" height="14" rx="7" fill="#09090b" stroke="#27272a" strokeWidth="0.8" />
+          <line x1="10" y1="9" x2="10" y2="15" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="14" y1="7" x2="14" y2="17" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="18" y1="10" x2="18" y2="14" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="30" cy="12" r="2.5" fill="#22c55e" />
+        </svg>
+      );
+    case 'lot-fluid-switch':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <rect x="2" y="4" width="36" height="16" rx="8" fill="#18181b" stroke="#27272a" strokeWidth="0.8" />
+          <rect x="20" y="6" width="16" height="12" rx="6" fill="#ffffff" />
+          <circle cx="10" cy="12" r="2" fill="#71717a" />
+          <circle cx="28" cy="12" r="2" fill="#000000" />
+        </svg>
+      );
+    case 'lot-glass-action':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <circle cx="20" cy="12" r="10" fill="none" stroke="#6366f1" strokeWidth="1" strokeDasharray="3 2" opacity="0.6" />
+          <rect x="6" y="5" width="28" height="14" rx="7" fill="#0f172a" stroke="#6366f1" strokeWidth="0.8" />
+          <circle cx="20" cy="12" r="3.5" fill="#10b981" />
+          <path d="M 18.5 12 L 19.5 13 L 21.5 11" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" fill="none" />
+        </svg>
+      );
+    case 'lot-face-id':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <circle cx="20" cy="12" r="9" fill="none" stroke="#38bdf8" strokeWidth="1.2" strokeDasharray="4 2" />
+          <rect x="15" y="7" width="10" height="10" rx="2.5" fill="#09090b" stroke="#22c55e" strokeWidth="1" />
+          <circle cx="20" cy="12" r="1.8" fill="#22c55e" />
+        </svg>
+      );
+    case 'lot-volume-pill':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <rect x="14" y="2" width="12" height="20" rx="6" fill="#18181b" stroke="#27272a" strokeWidth="0.8" />
+          <rect x="15" y="10" width="10" height="11" rx="5" fill="#f43f5e" />
+          <circle cx="20" cy="6" r="1.5" fill="#ffffff" />
+        </svg>
+      );
+    case 'lot-toast-banner':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <rect x="4" y="5" width="32" height="14" rx="7" fill="#09090b" stroke="#a855f7" strokeWidth="0.8" />
+          <circle cx="11" cy="12" r="3" fill="#a855f7" />
+          <line x1="17" y1="12" x2="30" y2="12" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" opacity="0.7" />
+        </svg>
+      );
+    case 'lot-liquid-toggle':
+      return (
+        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
+          <rect x="4" y="4" width="32" height="16" rx="8" fill="#10b981" />
+          <circle cx="28" cy="12" r="6" fill="#ffffff" />
+        </svg>
+      );
+    default:
+      return (
+        <circle cx="20" cy="12" r="6" fill={color} />
+      );
+  }
+}
 
-export function LottiePanel(): JSX.Element {
-  const [filter, setFilter] = useState<'all'|'icons'|'loaders'|'illustrations'|'stickers'>('all');
+function LottieContent(): JSX.Element {
+  const [filter, setFilter] = useState<'all' | LottieCategory>('all');
   const notify = useUIStore((s) => s.notify);
-  const items = LOTTIE_LIB.filter((l) => filter === 'all' || l.cat === filter);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const items = LOTTIE_ITEMS.filter((l) => filter === 'all' || l.cat === filter);
+
+  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { nodeIds, warnings } = await importLottieFile(file);
+      if (nodeIds.length === 0) {
+        notify({ level: 'warning', message: 'Lottie import: no layers could be created', durationMs: 3200 });
+      } else {
+        const suffix = warnings.length ? ` (${warnings.length} warning${warnings.length > 1 ? 's' : ''})` : '';
+        notify({
+          level: warnings.length ? 'warning' : 'success',
+          message: `Imported ${nodeIds.length} layer${nodeIds.length > 1 ? 's' : ''}${suffix}`,
+          durationMs: 3200,
+        });
+      }
+    } catch {
+      notify({ level: 'warning', message: 'Lottie import failed: file could not be parsed', durationMs: 3200 });
+    }
+  };
+
   return (
-    <Panel id="lib-lottie" title="Lottie" icon="ease" hideHeader
-      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'lib-lottie' })}>
+    <>
       <div className={styles.libTabs}>
-        {(['all','icons','loaders','illustrations','stickers'] as const).map((f) => (
+        {(['all', 'micro-ui', 'widgets', 'controls'] as const).map((f) => (
           <button key={f} type="button"
             className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
             onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase()+f.slice(1)}
+            {f === 'all' ? 'All' : f === 'micro-ui' ? 'Micro UI' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
       </div>
       <div className={styles.libBody}>
+        <div style={{ padding: '6px 8px 2px' }}>
+          <Button size="sm" variant="secondary" style={{ width: '100%', fontWeight: 600 }}
+            onClick={() => fileRef.current?.click()}>
+            📥 Import .json / .lottie File…
+          </Button>
+          <input ref={fileRef} type="file" accept=".json,.lottie,application/json,application/x-lottie" style={{ display: 'none' }}
+            onChange={(e) => { void onPickFile(e); }} />
+        </div>
         <div className={styles.libGrid}>
           {items.map((item) => (
             <button
               key={item.id}
               type="button"
               className={styles.libChip}
-              title={`${item.name} — Drag onto canvas or click to insert`}
+              title={`${item.name} — ${item.frames}f @ 30fps. Drag onto canvas or click to insert`}
               draggable
               onDragStart={(e) => setCanvasDrag(e, { kind: 'lottie', lottieId: item.id, name: item.name })}
               onClick={() => {
-                insertLottieLibraryItem(item.id, item.name);
-                notify({ level: 'success', message: `Imported Lottie: ${item.name}`, durationMs: 1500 });
+                const ids = insertLottieItem(item.id);
+                if (ids.length > 0) notify({ level: 'success', message: `Inserted ${item.name} (${ids.length} layer${ids.length > 1 ? 's' : ''})`, durationMs: 1800 });
+                else notify({ level: 'warning', message: `Could not insert ${item.name}`, durationMs: 2000 });
               }}>
               <span className={styles.libChipThumb}
-                style={{ background: `radial-gradient(circle at 50% 45%, ${item.color}33 0%, transparent 70%), #0f0f1a`, position:'relative' }}>
-                <span style={{ display:'block', width:16, height:16, borderRadius:'50%', margin:'auto', marginTop:6,
-                  background: `conic-gradient(from 0deg, ${item.color}, ${item.color}44, ${item.color})`,
-                  boxShadow: `0 0 10px ${item.color}55`,
-                  animation: 'spin 3s linear infinite' }} />
-                <span style={{ position:'absolute', bottom:2, right:3, fontSize:'0.55rem', fontWeight:800,
-                  color: 'rgba(255,255,255,0.4)', letterSpacing:'0.04em' }}>JSON</span>
+                style={{ background: `radial-gradient(circle at 50% 45%, ${item.color}22 0%, transparent 70%), #09090b`, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {renderLottiePreviewSvg(item.id, item.color)}
+                <span style={{ position: 'absolute', bottom: 2, right: 3, fontSize: '0.52rem', fontWeight: 800,
+                  color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em' }}>LOTTIE</span>
               </span>
               <span className={styles.libChipLabel}>{item.name}</span>
-              {item.tag === 'PRO' && <span className={styles.libChipPro}>PRO</span>}
             </button>
           ))}
         </div>
       </div>
-      <div className={styles.footer}>{items.length} animation{items.length !== 1 ? 's' : ''}</div>
+      <div className={styles.footer}>{items.length} high-level UI animation{items.length !== 1 ? 's' : ''}</div>
+    </>
+  );
+}
+
+// ── Library Panel — ONE home for asset libraries ──────────────────
+// Motion GFX / Transitions / Sound FX / Lottie live as sections inside a single sidebar tab.
+
+type LibrarySection = 'mograph' | 'transitions' | 'sfx' | 'lottie';
+
+const LIBRARY_SECTIONS: ReadonlyArray<{ id: LibrarySection; label: string; icon: IconName }> = [
+  { id: 'mograph',     label: 'Motion GFX',  icon: 'sparkles' },
+  { id: 'transitions', label: 'Transitions', icon: 'scissors' },
+  { id: 'sfx',         label: 'Sound FX',    icon: 'voice' },
+  { id: 'lottie',      label: 'Lottie UI',   icon: 'video' },
+];
+
+export function LibraryPanel(): JSX.Element {
+  const [section, setSection] = useState<LibrarySection>('mograph');
+  return (
+    <Panel id="library" title="Library" icon="sparkles" hideHeader
+      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'library' })}>
+      <div className={styles.libTabs} style={{ borderBottom: '1px solid var(--color-border, rgba(255,255,255,0.08))' }}>
+        {LIBRARY_SECTIONS.map((s) => (
+          <button key={s.id} type="button"
+            className={`${styles.libTab} ${section === s.id ? styles.libTabActive : ''}`}
+            title={s.label}
+            onClick={() => setSection(s.id)}>
+            <Icon name={s.icon} size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {section === 'mograph' && <MotionGFXContent />}
+      {section === 'transitions' && <TransitionsContent />}
+      {section === 'sfx' && <SoundFXContent />}
+      {section === 'lottie' && <LottieContent />}
     </Panel>
   );
 }
@@ -1781,14 +1949,9 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     motion: () => <MotionEditorPanel />,
     effects: () => <EffectsPanel />,
     misc: () => <MiscPanel />,
-    comments: () => <CommentsPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
-    // ── Asset Libraries ──────────────────────────────────────────────────
-    'lib-cursors': () => <CursorLibraryPanel />,
-    'lib-mograph': () => <MotionGFXPanel />,
-    'lib-trans':   () => <TransitionsPanel />,
-    'lib-sfx':     () => <SoundFXPanel />,
-    'lib-lottie':  () => <LottiePanel />,
+    // ── Asset Library (one tab, sections inside) ─────────────────────────
+    library: () => <LibraryPanel />,
   };
 }

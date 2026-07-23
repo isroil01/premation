@@ -12,6 +12,7 @@
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
+import { bumpScene } from '@stores/sceneStore';
 
 export type PaintMode = 'paint' | 'erase';
 
@@ -95,6 +96,7 @@ export function addPaintStroke(
   const strokes = [...existing, normalizeStroke(stroke, `pstroke_${(strokeSeq += 1)}`)];
   defaultSceneGraph.setPaint(nodeId, { strokes });
   getEventBus().emit('AnimationChanged', { nodeId });
+  bumpScene();
 }
 
 /** Remove the most recent stroke (undo the last brush pass). */
@@ -103,10 +105,12 @@ export function removeLastStroke(nodeId: string): void {
   if (!strokes || strokes.length === 0) return;
   defaultSceneGraph.setPaint(nodeId, { strokes: strokes.slice(0, -1) });
   getEventBus().emit('AnimationChanged', { nodeId });
+  bumpScene();
 }
 
 /** Clear all paint on a layer. */
 export function clearPaint(nodeId: string): void {
   defaultSceneGraph.setPaint(nodeId, undefined);
   getEventBus().emit('AnimationChanged', { nodeId });
+  bumpScene();
 }

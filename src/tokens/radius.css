@@ -3,21 +3,20 @@
  */
 
 :root {
-  /* Spec radii: Small 8 (controls) · Medium 12 (panels/cards) ·
-     Large 16 (large surfaces) · Dialogs 20 */
+  /* Spec radii: Precision controls (4px) · Cards/Surfaces (8px) · Dialogs (12px) */
   --radius-none: 0;
   --radius-xs:   1px;
-  --radius-sm:   1px;   /* Precise controls (inputs/icons) */
-  --radius-md:   2px;   /* Buttons and standard fields */
-  --radius-lg:   2px;   /* Panel headers/small lists */
-  --radius-xl:   2px;   /* Panels / dropdown lists */
-  --radius-2xl:  2px;   /* Cards / small modals */
-  --radius-3xl:  4px;   /* Main dialogs */
+  --radius-sm:   2px;   /* Precise inputs / tags */
+  --radius-md:   4px;   /* Buttons, control fields */
+  --radius-lg:   6px;   /* Dropdown menus, tooltips */
+  --radius-xl:   8px;   /* Cards / floating panels */
+  --radius-2xl:  12px;  /* Modals and dialogs */
+  --radius-3xl:  16px;
   --radius-full: 9999px;
 
-  /* Semantic aliases (spec role names) */
-  --radius-control: 2px;
+  /* Semantic aliases */
+  --radius-control: 4px;
   --radius-panel:   0px;
-  --radius-surface: 0px;
-  --radius-dialog:  4px;
+  --radius-surface: 8px;
+  --radius-dialog:  12px;
 }

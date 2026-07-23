@@ -13,6 +13,8 @@ export interface ParsedShape {
   height: number;
   centerX: number;
   centerY: number;
+  textContent?: string;
+  fontSize?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -551,10 +553,12 @@ interface RawShape {
   points: BezierPoint[];
   closed: boolean;
   style: StyleCtx;
+  textContent?: string;
+  fontSize?: number;
 }
 
 /** Extract user-space geometry for a single shape element (null if none). */
-function elementGeometry(el: Element): { points: BezierPoint[]; closed: boolean } | null {
+function elementGeometry(el: Element): { points: BezierPoint[]; closed: boolean; textContent?: string; fontSize?: number } | null {
   const tag = el.tagName.toLowerCase().replace(/^svg:/, '');
   switch (tag) {
     case 'path': {
@@ -609,6 +613,20 @@ function elementGeometry(el: Element): { points: BezierPoint[]; closed: boolean 
         closed: false,
       };
     }
+    case 'text':
+    case 'tspan': {
+      const txt = (el.textContent || '').trim();
+      if (!txt) return null;
+      const x = num(el, 'x');
+      const y = num(el, 'y');
+      const fs = num(el, 'font-size', 14);
+      return {
+        points: [{ x, y, inX: x, inY: y, outX: x, outY: y }],
+        closed: false,
+        textContent: txt,
+        fontSize: fs,
+      };
+    }
     default:
       return null;
   }
@@ -624,7 +642,7 @@ function transformPoints(points: BezierPoint[], m: Mat): BezierPoint[] {
   });
 }
 
-const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line']);
+const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'tspan']);
 const SKIP_TAGS = new Set(['defs', 'clippath', 'mask', 'symbol', 'lineargradient', 'radialgradient', 'filter', 'metadata', 'title', 'desc', 'style', 'marker', 'pattern']);
 
 /** Recursively collect shapes with accumulated transform + inherited style. */
@@ -639,10 +657,12 @@ function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[]): v
     const geom = elementGeometry(el);
     if (geom) {
       out.push({
-        name: el.getAttribute('id') || `SVG ${tag} ${out.length + 1}`,
+        name: el.getAttribute('id') || (geom.textContent ? `Text: ${geom.textContent.slice(0, 15)}` : `SVG ${tag} ${out.length + 1}`),
         points: transformPoints(geom.points, localMatrix),
         closed: geom.closed,
         style: localStyle,
+        textContent: geom.textContent,
+        fontSize: geom.fontSize,
       });
     }
     return;
@@ -699,6 +719,24 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
   const rootMatrix = rootMatrixFromSvg(svg);
   const rootStyle: StyleCtx = { fill: '#000000' };
 
+  // Gradients/patterns can't be reproduced as vector fills — approximate each
+  // `url(#id)` paint with the referenced gradient's FIRST stop colour so a
+  // vectorized shape gets a sensible solid fill instead of a broken/black one.
+  const gradMap = new Map<string, string>();
+  for (const g of Array.from(doc.querySelectorAll('linearGradient,radialGradient'))) {
+    const id = g.getAttribute('id');
+    if (!id) continue;
+    const stop = g.querySelector('stop');
+    const styleColor = /stop-color:\s*([^;]+)/i.exec(stop?.getAttribute('style') ?? '')?.[1]?.trim();
+    const color = stop?.getAttribute('stop-color') || styleColor || '#cccccc';
+    gradMap.set(id, color);
+  }
+  const resolvePaint = (v: string | undefined): string | undefined => {
+    if (!v) return v;
+    const m = /^url\(\s*#([^)\s]+)\s*\)/i.exec(v.trim());
+    return m ? (gradMap.get(m[1]!) ?? '#cccccc') : v;
+  };
+
   const raw: RawShape[] = [];
   // The <svg> element itself may carry a transform; start traversal from it.
   traverse(svg, rootMatrix, rootStyle, raw);
@@ -730,9 +768,10 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
       outY: p.outY - centerY,
     }));
 
-    const fillRaw = r.style.fill;
+    const fillRaw = resolvePaint(r.style.fill);
     const fill = fillRaw && fillRaw !== 'none' ? fillRaw : fillRaw === 'none' ? 'none' : '#000000';
-    const strokeColor = r.style.stroke && r.style.stroke !== 'none' ? r.style.stroke : undefined;
+    const strokeRaw = resolvePaint(r.style.stroke);
+    const strokeColor = strokeRaw && strokeRaw !== 'none' ? strokeRaw : undefined;
     const strokeWidth = r.style.strokeWidth != null && Number.isFinite(r.style.strokeWidth) ? r.style.strokeWidth : undefined;
 
     shapes.push({
@@ -746,8 +785,21 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
       height,
       centerX,
       centerY,
+      textContent: r.textContent,
+      fontSize: r.fontSize,
     });
   }
 
   return shapes;
+}
+
+/**
+ * True when an SVG can be parsed into vector shapes & text elements.
+ */
+export function isSimpleSvg(svgContent: string): boolean {
+  const s = svgContent.toLowerCase();
+  if (/<(image|use|foreignobject)[\s>]/.test(s)) {
+    return false;
+  }
+  return true;
 }

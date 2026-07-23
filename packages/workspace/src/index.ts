@@ -70,6 +70,10 @@ export { SelectionController } from './selection/SelectionController';
 export { Marquee, type MarqueeMode } from './selection/Marquee';
 export { computeHandles, pickHandle, handleCursor, type Handle, type HandleId } from './selection/handles';
 export { resizeBounds, rotationDelta, isResizeHandle } from './selection/transform';
+export * as Gizmo3D from './selection/gizmo3d';
+export type { GizmoHandleType, RenderedGizmo3D, RenderedGizmoAxis, RenderedGizmoArc, RenderedGizmoPlane } from './selection/gizmo3d';
+export * as DimensionalGuides from './selection/dimensionalGuides';
+export type { DimensionalGuideState, DimensionalGuideRenderData } from './selection/dimensionalGuides';
 
 // ── Cursor ────────────────────────────────────────────────────────
 export { CursorManager, CURSOR_CSS, type CursorType } from './cursor/CursorManager';

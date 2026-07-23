@@ -47,14 +47,21 @@ function statusLabel(s: RenderJob['status']): string {
 }
 
 export function RenderQueuePanel(): JSX.Element {
-  const comp = useCompositionStore((s) => s.comp());
   const compName = useCompositionStore((s) => s.name);
   const compW = useCompositionStore((s) => s.width);
   const compH = useCompositionStore((s) => s.height);
   const compFps = useCompositionStore((s) => s.fps);
   const compDur = useCompositionStore((s) => s.durationSeconds);
-  const { jobs, isRunning, addJob, removeJob, startAll, pauseAll, clearFinished } =
-    useRenderQueueStore();
+  // Scoped selectors: subscribing to the WHOLE store (no selector) re-rendered
+  // the entire panel on every per-frame progress tick. Actions are stable refs,
+  // so selecting them never triggers a render; only `jobs`/`isRunning` do.
+  const jobs = useRenderQueueStore((s) => s.jobs);
+  const isRunning = useRenderQueueStore((s) => s.isRunning);
+  const addJob = useRenderQueueStore((s) => s.addJob);
+  const removeJob = useRenderQueueStore((s) => s.removeJob);
+  const startAll = useRenderQueueStore((s) => s.startAll);
+  const pauseAll = useRenderQueueStore((s) => s.pauseAll);
+  const clearFinished = useRenderQueueStore((s) => s.clearFinished);
 
   const [showDialog, setShowDialog] = useState(false);
 
@@ -62,7 +69,10 @@ export function RenderQueuePanel(): JSX.Element {
     setShowDialog(false);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const ext = outputExtFor(settings.format);
-    
+    // Read the active comp lazily (avoids subscribing the panel to a fresh
+    // object every store tick).
+    const comp = useCompositionStore.getState().comp();
+
     addJob({
       compositionName: compName ?? 'Comp 1',
       // Bind the job to the comp it was queued FROM (see RenderJob.compositionId).

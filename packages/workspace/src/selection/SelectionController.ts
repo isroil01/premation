@@ -27,6 +27,16 @@ export class SelectionController {
     private readonly hit: HitTester,
   ) {}
 
+  /**
+   * Expand a node to the group of ids that must select/move as one body (an
+   * imported SVG icon's leaf parts, a user group). Falls back to `[id]` when the
+   * binding has no grouping or the node stands alone.
+   */
+  private expand(id: NodeId): NodeId[] {
+    const group = this.scene.selectionGroup?.(id);
+    return group && group.length > 0 ? [...group] : [id];
+  }
+
   /** Handle a click at a world point with modifiers. Returns the hit node id. */
   clickAt(worldPoint: Vec2, mods: Modifiers): NodeId | null {
     const node = this.hit.hitTest(worldPoint);
@@ -35,16 +45,32 @@ export class SelectionController {
       if (!additive) this.selection.clear();
       return null;
     }
+    const group = this.expand(node.id);
     if (additive) {
-      this.selection.toggle(node.id);
+      // Toggle the whole group as a unit — clicking any part of an already
+      // selected icon deselects the entire icon.
+      const allSelected = group.every((g) => this.selection.has(g));
+      for (const g of group) {
+        if (allSelected) this.selection.remove(g);
+        else this.selection.add(g);
+      }
     } else if (!this.selection.has(node.id)) {
-      this.selection.set([node.id]);
+      this.selection.set(group);
     }
     return node.id;
   }
 
-  /** Select a single node explicitly. */
+  /** Select a single node explicitly (expanded to its group when it has one). */
   select(id: NodeId): void {
+    this.selection.set(this.expand(id));
+  }
+
+  /**
+   * Select exactly this node, WITHOUT expanding to its group. This is how the
+   * user drills into a group (double-click) to edit one part — e.g. recolour a
+   * single shape of an imported SVG icon or a UI-kit component.
+   */
+  selectExact(id: NodeId): void {
     this.selection.set([id]);
   }
 

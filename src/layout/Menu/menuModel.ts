@@ -126,14 +126,6 @@ export const APP_MENU: MenuGroupModel[] = [
     ],
   },
   {
-    id: 'examples',
-    label: 'Examples',
-    items: [
-      { commandId: 'scene.loadSaaSAd', label: 'Load: Nova AI — SaaS Ad (24s)' },
-      { commandId: 'scene.loadShowcase', label: 'Load: Complex Showcase' },
-    ],
-  },
-  {
     id: 'view',
     label: 'View',
     items: [

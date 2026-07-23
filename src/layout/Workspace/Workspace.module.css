@@ -26,6 +26,61 @@
   outline-offset: -1px;
 }
 
+/* ── Scene loading overlay ──────────────────────────────────────────
+ * Shown over the stage until the GPU backend has come up and painted the
+ * first frame, so (re-)entering a project shows a spinner rather than a blank
+ * canvas. Fades itself out; pointer-events off so it never blocks input. */
+.loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: var(--color-pasteboard, var(--color-workspace, #1e1e1e));
+}
+
+.loadingSpinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border, rgba(255, 255, 255, 0.18));
+  border-top-color: var(--color-primary, #2988ff);
+  animation: workspaceSpin 0.7s linear infinite;
+}
+
+@keyframes workspaceSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* GPU init failed on every tier — visible error card instead of a silent
+ * blank stage (shares the .loading overlay container). */
+.renderError {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 360px;
+  padding: 16px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.18));
+  background: var(--color-surface, rgba(30, 30, 30, 0.92));
+  color: var(--color-text, #e8e8ea);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.renderError strong {
+  font-size: 13px;
+}
+
+.renderError span {
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.6));
+}
+
 /*
  * Composition stage — the infinite-canvas viewport.
  * Uses a refined dot-grid on the dark void; the canvas engine paints the

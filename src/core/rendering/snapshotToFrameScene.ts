@@ -18,7 +18,8 @@
  *     extractSpatialEffects routes through the GPU effect passes.
  */
 
-import { Mat3, Color, type BlendMode, type FrameScene, type Renderable, type RenderableKind, type RenderableSdf } from '@motion/renderer';
+import { Mat3, Color, depthEligible3D, type BlendMode, type FrameScene, type Renderable, type RenderableKind, type RenderableSdf } from '@motion/renderer';
+import { Matrix4Math } from '@motion/scene';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
 import { isLutEffect } from '@core/effects/colorLut';
@@ -106,6 +107,35 @@ function centerModel(layer: RenderLayer): Mat3 {
   return Mat3.multiply(Mat3.compose(layer.x, layer.y, rad, w, h), Mat3.translation(-0.5, -0.5));
 }
 
+/**
+ * mat4 model for the GPU depth-tested 3D path: the layer's 4×4 world matrix
+ * (local CENTERED pixels → 3D comp space) composed with the same w×h unit-quad
+ * bridge the mat3 path uses — scale(W, H, 1) · translate(−0.5, −0.5, 0) — so
+ * the unit quad's centre lands on the layer's anchor exactly like the affine
+ * path. Do NOT drop the bridge: without it every 3D layer collapses to ~1px.
+ */
+function model3dFor(world3d: readonly number[], layer: RenderLayer): readonly number[] {
+  const pad = rasterPadding(layer);
+  const W = layer.width + 2 * pad;
+  const H = layer.height + 2 * pad;
+  const bridge: import('@motion/scene').Matrix4 = [
+    W, 0, 0, 0,
+    0, H, 0, 0,
+    0, 0, 1, 0,
+    -0.5 * W, -0.5 * H, 0, 1,
+  ];
+  return Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, bridge);
+}
+
+/** True when a Mat3 is (exactly) the identity — the top-level flatten parent. */
+function isIdentityMat3(m: Mat3): boolean {
+  return (
+    m[0] === 1 && m[1] === 0 && m[2] === 0 &&
+    m[3] === 0 && m[4] === 1 && m[5] === 0 &&
+    m[6] === 0 && m[7] === 0 && m[8] === 1
+  );
+}
+
 /** World-space AABB of the transformed unit quad, for the renderer's culling. */
 function boundsOf(m: Mat3): { x: number; y: number; width: number; height: number } {
   const pts = [
@@ -129,7 +159,7 @@ function boundsOf(m: Mat3): { x: number; y: number; width: number; height: numbe
  *  gradients are now fully rasterized, never flattened to one stop). */
 function representativeColor(layer: RenderLayer): string {
   const p = layer.fillPaint;
-  return !p || p.type !== 'solid' ? layer.fill : p.color;
+  return !p || p.type !== 'solid' ? (layer.fill ?? '#000000') : p.color;
 }
 
 /** The layer's solid fill graded by its colour effects (brightness/contrast/…),
@@ -347,7 +377,13 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // relationship, not baked, so it survives. (Image/video are not baked:
   // dynamic/large content; those still route to Canvas2D.)
   const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text') && effectsNeedCpuBake(layer.effects);
-  return {
+  // Per-quad Lambert gain (Accepts Lights): folded into the draw tint on the
+  // affine fallback. Renderables that take the depth-tested group path get the
+  // gain UNfolded and carry per-fragment shade data instead (decided after
+  // construction below, with the SAME predicate CompositionPass partitions by).
+  const applyLighting = (c: Color): Color =>
+    layer.lighting ? { r: c.r * layer.lighting[0], g: c.g * layer.lighting[1], b: c.b * layer.lighting[2], a: c.a } : c;
+  const out: Renderable = {
     id: layer.id,
     kind,
     modelMatrix: model,
@@ -369,7 +405,31 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(motionSamples ? { motionSamples } : {}),
     effects: cpuBaked ? undefined : extractSpatialEffects(layer),
     ...(layer.deformedMesh ? { deformedMesh: normalizeDeformedMesh(layer.deformedMesh, layer.width, layer.height, pad) } : {}),
+    // True-3D placement for the depth-tested GPU path. Only meaningful for a
+    // layer whose 2D model came from the projected affine (`layer.matrix`) —
+    // an inline-collapsed precomp child folds an extra parent transform into
+    // the mat3 that the mat4 world doesn't know about, so it must keep the
+    // affine path (the top-level flatten passes an identity parent).
+    ...(layer.world3d && layer.matrix && (!parentMatrix || isIdentityMat3(parentMatrix))
+      ? { threeD: { model: model3dFor(layer.world3d, layer) } }
+      : {}),
   };
+  // Accepts-Lights routing: a renderable that will take the depth-tested group
+  // path carries per-fragment shade data (the shader lights it for real, with
+  // the per-quad gain as its own fallback); anything on the affine painter path
+  // gets the per-quad gain folded into its tint exactly as before.
+  if (layer.lighting) {
+    if (layer.shade3d && out.threeD && depthEligible3D(out)) {
+      out.threeD.shade = {
+        specular: layer.shade3d.specular,
+        shininess: layer.shade3d.shininess,
+        quadGain: layer.lighting,
+      };
+    } else if (out.color) {
+      out.color = applyLighting(out.color);
+    }
+  }
+  return out;
 }
 
 /**
@@ -658,7 +718,13 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   // Advanced blend layers need the samplable SCENE_COLOR_TARGET (they sample the
   // backdrop), same precondition as effects — force it on when any are present.
   const hasAdvancedBlend = renderables.some((r) => (r.advancedBlend ?? 0) > 0);
-  const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend;
+  // 3D depth groups need a depth-capable colour target; the surface has no
+  // guaranteed depth attachment, so any 3D frame routes through the scene
+  // colour target too (it is declared with depth: true).
+  const checkThreeD = (rs: ReadonlyArray<Renderable>): boolean =>
+    rs.some((r) => !!r.threeD || (r.precomp ? checkThreeD(r.precomp.renderables) : false));
+  const has3d = !!snapshot.camera3d && checkThreeD(renderables);
+  const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend || has3d;
   return {
     composition: {
       id: 'composition',
@@ -668,6 +734,8 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
     renderables,
     selection: [],
     hasEffects,
+    ...(has3d ? { camera3d: snapshot.camera3d } : {}),
+    ...(has3d && snapshot.lights3d && snapshot.lights3d.length > 0 ? { lights3d: snapshot.lights3d } : {}),
   };
 }
 

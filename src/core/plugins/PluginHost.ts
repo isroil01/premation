@@ -1,13 +1,7 @@
-/**
- * Plugin host (spec §Extensibility). A documented, native extension point:
- * plugins register commands (which become searchable in Universal Search),
- * effects, and get scripting access to the object model. Plugins install and
- * uninstall at runtime — no restart — and cleanly unregister what they added.
- */
-
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, type AnimationEngine } from '@motion/animation';
+import { useCompositionStore, type CompositionSettings } from '@stores/compositionStore';
 import type SceneGraph from '@core/scene/SceneGraph';
 import type { CommandId } from '@app-types/common';
 
@@ -28,6 +22,8 @@ export interface PluginContext {
   /** Current selection ids (wired from the app at boot). */
   getSelection: () => ReadonlyArray<string>;
   notify: (message: string) => void;
+  /** Access active composition settings (FPS, width, height, duration). */
+  getComposition: () => CompositionSettings;
 }
 
 export interface MotionPlugin {
@@ -48,9 +44,14 @@ interface Installed {
 class PluginHost {
   private readonly installed = new Map<string, Installed>();
   private readonly effects = new Map<string, PluginEffect>();
+  private readonly userPlugins: MotionPlugin[] = [];
   private selectionProvider: () => ReadonlyArray<string> = () => [];
   private notifier: (msg: string) => void = () => {};
   private onChange: (() => void)[] = [];
+
+  constructor() {
+    this.setupPostMessageBridge();
+  }
 
   /** Wire app services the plugin context needs (called once at boot). */
   configure(opts: { getSelection: () => ReadonlyArray<string>; notify: (msg: string) => void }): void {
@@ -69,10 +70,37 @@ class PluginHost {
       animation: defaultAnimation,
       getSelection: () => this.selectionProvider(),
       notify: (m) => this.notifier(m),
+      getComposition: () => useCompositionStore.getState(),
     };
     const dispose = plugin.activate(ctx) ?? undefined;
     this.installed.set(plugin.id, { plugin, commandIds, effectIds, dispose });
     this.emit();
+  }
+
+  /**
+   * Evaluates JS source code defining a MotionPlugin object.
+   * Allows authors to load external .js script files at runtime without compiling.
+   */
+  installFromSource(jsCode: string): MotionPlugin {
+    const fn = new Function(
+      'pluginHost',
+      'defaultSceneGraph',
+      'defaultAnimation',
+      `${jsCode}; return typeof plugin !== "undefined" ? plugin : (typeof exports !== "undefined" ? exports.default || exports : null);`
+    );
+    const loaded = fn(this, defaultSceneGraph, defaultAnimation) as MotionPlugin;
+    if (!loaded || !loaded.id || !loaded.name || typeof loaded.activate !== 'function') {
+      throw new Error('Plugin script must define a "plugin" object with id, name, and activate(ctx) function.');
+    }
+    if (!this.userPlugins.some((p) => p.id === loaded.id)) {
+      this.userPlugins.push(loaded);
+    }
+    this.install(loaded);
+    return loaded;
+  }
+
+  getUserPlugins(): MotionPlugin[] {
+    return this.userPlugins;
   }
 
   uninstall(id: string): void {
@@ -96,6 +124,30 @@ class PluginHost {
   subscribe(fn: () => void): () => void {
     this.onChange.push(fn);
     return () => { this.onChange = this.onChange.filter((f) => f !== fn); };
+  }
+
+  /**
+   * Sets up iframe / webview postMessage listener so web extensions can send keyframe commands.
+   */
+  private setupPostMessageBridge(): () => void {
+    if (typeof window === 'undefined') return () => {};
+    const listener = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'SET_KEYFRAME' && data.nodeId && data.property) {
+        defaultAnimation.setKeyframe(
+          data.nodeId,
+          data.property,
+          Number(data.time) || 0,
+          Number(data.value) || 0
+        );
+        this.notifier(`Extension updated keyframe: ${data.property}`);
+      } else if (data.type === 'NOTIFY' && data.message) {
+        this.notifier(String(data.message));
+      }
+    };
+    window.addEventListener('message', listener);
+    return () => window.removeEventListener('message', listener);
   }
 
   private emit(): void {

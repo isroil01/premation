@@ -1,6 +1,7 @@
 /** Shared helpers for passes: MVP assembly, quad models, surface attachments. */
 
 import { Mat3 } from '../../core/math/Mat3';
+import { Mat4 } from '../../core/math/Mat4';
 import { Color } from '../../core/math/Color';
 import type { Rect } from '../../core/math/geometry';
 import type { RenderPassEncoder } from '../../gpu/RenderBackend';
@@ -8,8 +9,8 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL } from '../../shaders/Material';
-import { packSolid, packTextured, packDeformedMesh, type SolidShape, type ColorTransform } from '../../pipeline/uniforms';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
+import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
 
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
 
@@ -38,6 +39,90 @@ export function mvpFor(viewport: Viewport, model: Mat3): Mat3 {
   return Mat3.multiply(viewport.camera.viewProjectionMatrix(), model);
 }
 
+/**
+ * Full mat4 MVP for a 3D renderable:
+ *   clip = lift(camera2D VP) · projection3d · view3d · model
+ * The 3D projection outputs homogeneous COMP-space coordinates (divide by w =
+ * camera-space z happens in hardware); the 2D pan/zoom camera is an affine map
+ * of comp space, so its lifted mat4 composes on top without disturbing w or z.
+ */
+export function mvp3dFor(
+  viewport: Viewport,
+  camera3d: { view: readonly number[]; projection: readonly number[] },
+  model: readonly number[],
+): Mat4 {
+  const cam2d = Mat4.fromMat3(viewport.camera.viewProjectionMatrix());
+  const pv = Mat4.multiply(Mat4.fromArray(camera3d.projection), Mat4.fromArray(camera3d.view));
+  return Mat4.multiply(cam2d, Mat4.multiply(pv, Mat4.fromArray(model)));
+}
+
+/** Queue a depth-tested 3D solid quad (no cross-item batching by design —
+ *  paint order within a 3D group is the back-to-front transparency order). */
+export function emitSolid3D(
+  cmds: CommandBuffer,
+  mvp: Mat4,
+  color: Color,
+  opacity: number,
+  blend: BlendMode,
+  shape?: SolidShape,
+  shade?: Shade3D,
+): void {
+  cmds.add({
+    batchKey: `solid3d|${blend}`,
+    material: SOLID3D_MATERIAL,
+    blend,
+    uniforms: packSolid3D(mvp, color, opacity, shape, shade),
+  });
+}
+
+/** Queue a depth-tested 3D textured quad. */
+export function emitTextured3D(
+  cmds: CommandBuffer,
+  mvp: Mat4,
+  tint: Color,
+  opacity: number,
+  blend: BlendMode,
+  texture: TextureHandle,
+  sampler: SamplerHandle,
+  uvRect: Rect = FULL_UV,
+  color?: ColorTransform,
+  shade?: Shade3D,
+): void {
+  cmds.add({
+    batchKey: `tex3d|${texture.id}|${blend}`,
+    material: TEXTURED3D_MATERIAL,
+    blend,
+    uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade),
+    texture,
+    sampler,
+  });
+}
+
+/** Queue a depth-tested 3D masked textured quad. */
+export function emitMaskedTextured3D(
+  cmds: CommandBuffer,
+  mvp: Mat4,
+  tint: Color,
+  opacity: number,
+  blend: BlendMode,
+  texture: TextureHandle,
+  sampler: SamplerHandle,
+  maskTexture: TextureHandle,
+  uvRect: Rect = FULL_UV,
+  color?: ColorTransform,
+  shade?: Shade3D,
+): void {
+  cmds.add({
+    batchKey: `tex3d_mask|${texture.id}|${maskTexture.id}|${blend}`,
+    material: MASKED_TEXTURED3D_MATERIAL,
+    blend,
+    uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade),
+    texture,
+    sampler,
+    maskTexture,
+  });
+}
+
 /** Model matrix mapping the unit quad [0,1]² onto a world-space rect. */
 export function modelFromRect(rect: Rect): Mat3 {
   const m = Mat3.scaling(rect.width, rect.height);
@@ -51,9 +136,16 @@ export function writeAttachment(ctx: RenderPassContext, name: string, clear?: Co
   return target ? { target, clear } : { target: 'surface', clear };
 }
 
-/** Begin a render pass on the given attachment and set the full viewport. */
-export function beginViewportPass(ctx: RenderPassContext, label: string, attachment: ColorAttachment): RenderPassEncoder {
-  const enc = ctx.services.backend.beginRenderPass({ label, color: attachment });
+/** Begin a render pass on the given attachment and set the full viewport.
+ *  `depth` opts the pass into the target's depth attachment (3D groups); the
+ *  target must have been created with `depth: true`. */
+export function beginViewportPass(
+  ctx: RenderPassContext,
+  label: string,
+  attachment: ColorAttachment,
+  depth?: { clearDepth?: number },
+): RenderPassEncoder {
+  const enc = ctx.services.backend.beginRenderPass({ label, color: attachment, ...(depth ? { depth } : {}) });
   const { width, height } = ctx.viewport.pixelSize;
   enc.setViewport(0, 0, width, height);
   return enc;

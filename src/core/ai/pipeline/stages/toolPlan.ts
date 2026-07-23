@@ -2,6 +2,7 @@ import type { PipelineContext } from '../PipelineContext';
 import type { ToolPlanOutput } from '../types';
 import { toolPlanSchema } from '../schemas/toolPlan';
 import type { CallModelFn } from './intent';
+import { buildExemplarBlock } from '../../exemplars';
 
 /**
  * Full tool catalogue injected into the Tool Planner prompt so the model
@@ -30,6 +31,22 @@ Args: { atSec, kind?: "fade_black"|"flash", durationSec? }
 ## HIGH-LEVEL COMPOSE TOOLS — USE THESE FOR CONTENT
 These build a WHOLE correctly-designed element in ONE call. Always prefer these.
 
+### define_style  (emit FIRST when the brief has brand colours / a distinct mood)
+Defines this run's custom motion style — palette, type scale, easing personality — derived from the
+brief instead of snapping to a preset. Later compose steps that omit style use it.
+Args: { name?, brief?, basedOn? ("premium"|"minimal"|"bold"|"playful"|"cyberpunk"|"saas"),
+        palette?: { bg?, bgAccent?, card?, fg?, accent?, muted? } (accent alone is enough — the rest derive),
+        titlePx?, subtitlePx?, taglinePx?, weightTitle?, weightBody?,
+        easing?: "soft"|"overshoot"|"snappy"|"smooth"|"elastic"|"anticipate",
+        entranceDur?, staggerSec?, travelPx?, glow? }
+
+### ENTRANCE ARCHETYPES (param on add_title / add_cards / add_emblem / stagger_in)
+entrance: "rise" | "scale_pop" | "blur_resolve" | "slide_settle" | "mask_wipe" | "char_cascade"
+Omit for a varied auto-pick (each run differs). Set it when a beat calls for a feel:
+char_cascade = per-character type-on (text only), blur_resolve = cinematic resolve,
+scale_pop = punchy overshoot, slide_settle = directional slide, mask_wipe = clip reveal.
+VARY archetypes across the video and let ONE accent element break the pattern deliberately.
+
 ### add_background
 A single full-composition background (use add_scene instead when building multiple scenes).
 Args: { style?, color? }
@@ -37,23 +54,24 @@ Styles: premium (Apple-dark), minimal (clean white), bold (saturated), playful (
 Also accepts: "apple", "luxury", "corporate", "startup".
 
 ### add_title
-Add a headline, subtitle, or tagline — positioned, animated with staggered fade-and-rise, glow on titles.
+Add a headline, subtitle, or tagline — positioned, animated with a staggered entrance, glow on titles.
 Successive calls auto-stagger so nothing appears at once.
-Args: { text, level?: "title"|"subtitle"|"tagline", style?, y? }
+Args: { text, level?: "title"|"subtitle"|"tagline", style?, entrance?, y? }
 Use this instead of create_layer + set_keyframes for ANY text element.
 
 ### add_emblem
 Add a glowing circular emblem/badge that scales up with overshoot and pulses — for logos/focal accents.
-Args: { style?, y?, size? }
+Args: { style?, entrance?, y?, size? }
 
 ### add_cards
-Add a centred row of evenly-spaced cards that stagger in — for feature grids, pricing, step sequences.
-Args: { count?: 1-8, style?, y? }
+Add a centred row of evenly-spaced cards that stagger in (non-uniform rhythm, centre card leads) —
+for feature grids, pricing, step sequences.
+Args: { count?: 1-8, style?, entrance?, y? }
 Returns card ids so you can call add_title to place text on each.
 
 ### stagger_in
-Give existing layers a staggered fade-and-rise entrance with rhythm instead of all appearing at once.
-Args: { nodeIds: string[], style? }
+Give existing layers a staggered entrance with rhythm instead of all appearing at once.
+Args: { nodeIds: string[], style?, entrance? }
 
 ### add_camera_move
 Add a slow cinematic push-in/pull-out across the scene — makes hero shots feel alive and 3D.
@@ -261,6 +279,7 @@ ${JSON.stringify(ctx.timeline, null, 2)}
 
 ## Composition Context
 ${ctx.compPreamble}
+${buildExemplarBlock(ctx.originalPrompt)}
 
 Now produce the complete execution plan. Structure it SCENE-BY-SCENE with add_scene per Timeline window (different background each), content after each. Prefer compose tools. Follow the execution grammar.`;
 

@@ -9,6 +9,7 @@
 import { create } from 'zustand';
 import { api, getToken, setToken } from '@core/api/client';
 import { useAssetStore } from './assetStore';
+import { useAiProviderStore } from './aiProviderStore';
 
 export interface AuthUser {
   id: string;
@@ -34,6 +35,8 @@ interface AuthActions {
 async function afterAuth(): Promise<void> {
   // Bring the user's cloud assets into the panel; ignore failures (offline).
   await useAssetStore.getState().loadFromCloud().catch(() => undefined);
+  // Sync AI Keys status & decrypt them into localStorage
+  await useAiProviderStore.getState().refreshStatus().catch(() => undefined);
 }
 
 export const useAuthStore = create<AuthState & AuthActions>((set) => ({

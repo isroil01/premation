@@ -298,6 +298,7 @@ export interface AiKeyStatus {
   present: boolean;
   /** Masked tail for display, e.g. "sk-…4f2a". Never the full key. */
   hint: string;
+  key?: string | null;
 }
 
 /**

@@ -1,0 +1,66 @@
+/* AngleDial — compact circular rotation control (AE's dial), token-styled to
+   sit inline with ValueField in 24px inspector rows. */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.dial {
+  display: block;
+  cursor: grab;
+  border-radius: 50%;
+  outline: none;
+  transition: var(--motion-hover-transition);
+}
+
+.dial:hover .ring {
+  stroke: var(--color-border-strong);
+}
+
+.dial:focus-visible {
+  box-shadow: var(--shadow-focus-ring, 0 0 0 2px var(--color-primary));
+}
+
+.dragging {
+  cursor: grabbing;
+}
+
+.dragging .needle,
+.dial:hover .needle {
+  stroke: var(--color-primary-hover, var(--color-primary));
+}
+
+.ring {
+  fill: var(--color-surface-1);
+  stroke: var(--color-field-border, var(--color-border));
+  stroke-width: 1;
+}
+
+.tick {
+  stroke: var(--color-text-tertiary);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.needle {
+  stroke: var(--color-primary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.hub {
+  fill: var(--color-text-tertiary);
+}
+
+/* Revolutions badge ("1x") — only rendered past the first full turn. */
+.turns {
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+  user-select: none;
+  white-space: nowrap;
+}

@@ -104,6 +104,15 @@ function activityFor(toolName: string): string {
       return 'Adding a light sweep';
     case 'add_camera_move':
       return 'Adding a camera move';
+    case 'add_logo_reveal':
+    case 'set_trim_path':
+      return 'Revealing trim-path outlines';
+    case 'add_radial_burst':
+    case 'add_repeater':
+      return 'Adding shape repeater burst';
+    case 'add_path_morph':
+    case 'add_path_operator':
+      return 'Morphing vector path distortion';
     case 'stagger_in':
       return 'Staggering entrances';
     case 'create_media':
@@ -152,9 +161,9 @@ function describeError(err: unknown): string {
       case 'auth':
         return 'Sign in and check your API key in Customize → AI.';
       case 'coming_soon':
-        return 'Motion AI is still in development — connect your own provider key for now.';
+        return 'Connect your own API key in Settings → AI to use the assistant.';
       case 'upgrade_required':
-        return 'Motion AI is a Pro feature. Upgrade your plan, or connect your own API key in Settings.';
+        return 'Connect your own API key in Settings → AI to use the assistant.';
       case 'no_credits':
         return err.message; // the server explains the credit balance
       case 'rate_limit':

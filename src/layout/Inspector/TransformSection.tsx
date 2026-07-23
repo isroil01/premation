@@ -14,8 +14,21 @@ import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { Checkbox } from '@components/Checkbox';
+import { AngleDial } from '@components/AngleDial';
 
 import styles from './TransformSection.module.css';
+
+/** Rotation-flavored props get a purpose-built dial next to their number —
+ *  the dial writes through the SAME handleChange as the ValueField, so
+ *  keyframing/auto-key behaviour is identical. */
+const ROTATION_PROPS = new Set([
+  'rotation',
+  'rotationX',
+  'rotationY',
+  'orientationX',
+  'orientationY',
+  'orientationZ',
+]);
 
 export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
@@ -146,6 +159,15 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
           </span>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {/* Rotation rows: AE-style dial (drag = rotate, Shift snaps 15°,
+              winds through revolutions) sharing the row's write path. */}
+          {ROTATION_PROPS.has(propName) && (
+            <AngleDial
+              value={Number(displayVal ?? 0)}
+              onChange={handleChange}
+              aria-label={`${label} dial`}
+            />
+          )}
           {/* The visible label is stripped to "X"/"Y" under a group header, so
               several rows read identically; the field carries the full name for
               screen readers (and anything else addressing it by name). */}

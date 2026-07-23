@@ -82,7 +82,9 @@ export {
   type RenderableColorMatrix,
   type RenderableEffect,
   type CompositionInfo,
+  type SceneLight3D,
   emptyScene,
+  depthEligible3D,
 } from './scene/FrameScene';
 export { buildFrameScene, toRenderable, type SceneItemInput } from './integration/buildFrameScene';
 

@@ -392,3 +392,56 @@ describe('motion-blur samples on the GPU path', () => {
     expect(scene.renderables.find((x) => x.id === 's')!.motionSamples).toBeUndefined();
   });
 });
+
+describe('Accepts-Lights routing (per-fragment vs per-quad fold)', () => {
+  // A lit 3D layer as buildSnapshot emits it: world matrix + projected affine +
+  // per-quad gain + per-fragment shade params.
+  const IDENTITY_W3D = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as const;
+  const lit3d = (over: Partial<RenderLayer> = {}): RenderLayer =>
+    layer({
+      matrix: [1, 0, 0, 1, 100, 200],
+      world3d: IDENTITY_W3D,
+      lighting: [0.5, 0.5, 0.5],
+      shade3d: { specular: 0.25, shininess: 32 },
+      ...over,
+    });
+
+  test('depth-eligible lit layer: tint stays UNfolded, shade rides threeD (with quadGain fallback)', () => {
+    const r = layerToRenderable(lit3d());
+    expect(r.threeD).toBeDefined();
+    expect(r.threeD!.shade).toEqual({ specular: 0.25, shininess: 32, quadGain: [0.5, 0.5, 0.5] });
+    // fill #ff0000 → red channel 1, NOT pre-multiplied by the 0.5 gain
+    expect(r.color!.r).toBeCloseTo(1, 5);
+  });
+
+  test('lit layer WITH effects is now depth-eligible: shade rides threeD, tint stays UNfolded', () => {
+    // A 3D layer carrying a spatial effect is depth-eligible again — CompositionPass
+    // pre-resolves the effect chain to a texture and draws it as a textured3d quad
+    // inside the depth pass, so the effect result is lit per-fragment. The adapter
+    // therefore attaches shade (with the per-quad gain as fallback) and does NOT
+    // pre-fold the gain into the tint.
+    const r = layerToRenderable(lit3d({ effects: [{ id: 'b', type: 'blur', params: { amount: 5 } }] }));
+    expect(r.threeD!.shade).toEqual({ specular: 0.25, shininess: 32, quadGain: [0.5, 0.5, 0.5] });
+    expect(r.color!.r).toBeCloseTo(1, 5);
+  });
+
+  test('per-quad-only layer (no shade3d — e.g. old snapshots): folds exactly as before', () => {
+    const r = layerToRenderable(lit3d({ shade3d: undefined }));
+    expect(r.threeD?.shade).toBeUndefined();
+    expect(r.color!.r).toBeCloseTo(0.5, 5);
+  });
+
+  test('scene passthrough: lights3d + camera eye reach the FrameScene', () => {
+    const cam = {
+      view: IDENTITY_W3D, projection: IDENTITY_W3D,
+      eye: [960, 540, -1500] as const,
+    };
+    const lights3d = [{
+      type: 'point' as const, color: { r: 1, g: 1, b: 1 }, gain: 0.8,
+      x: 0, y: 0, z: -100, radius: 900, aimX: 1, aimY: 0, halfConeRad: 0.5,
+    }];
+    const scene = snapshotToFrameScene(snapshot([lit3d()], { camera3d: cam, lights3d }));
+    expect(scene.camera3d?.eye).toEqual([960, 540, -1500]);
+    expect(scene.lights3d).toHaveLength(1);
+  });
+});

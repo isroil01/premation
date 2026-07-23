@@ -5,7 +5,7 @@
   overflow: hidden;
   background: var(--color-background, #161616);
   color: var(--color-text-primary, #e1e1e1);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+  font-family: var(--font-family-sans);
 }
 
 /* ── 1. Left Sidebar ─────────────────────────────────────────────────────── */
@@ -1590,3 +1590,310 @@
   color: rgba(255, 255, 255, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
+
+/* ── 11. Continue Editing Hero Banner & Quick Launchpad ──────────────────── */
+.heroBanner {
+  background: linear-gradient(135deg, rgba(49, 112, 230, 0.14) 0%, rgba(139, 92, 246, 0.10) 50%, rgba(20, 23, 30, 0.9) 100%);
+  border: 1px solid rgba(49, 112, 230, 0.25);
+  border-radius: var(--radius-surface, 12px);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.heroBanner::after {
+  content: '';
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  width: 140px;
+  height: 140px;
+  background: radial-gradient(circle, rgba(49, 112, 230, 0.25) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.heroBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  background: rgba(49, 112, 230, 0.18);
+  border: 1px solid rgba(49, 112, 230, 0.35);
+  color: var(--color-primary, #3170e6);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 10px;
+}
+
+.heroTitle {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--color-ink, #f5f7fb);
+  margin: 0 0 6px 0;
+  letter-spacing: -0.015em;
+}
+
+.heroSubtitle {
+  font-size: 0.84rem;
+  color: var(--color-ink-secondary, #c6cdd9);
+  margin: 0 0 16px 0;
+  line-height: 1.4;
+}
+
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.heroBtnPrimary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: var(--radius-control, 5px);
+  background: linear-gradient(135deg, var(--color-primary, #3170e6) 0%, #4d88f5 100%);
+  color: #ffffff;
+  border: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background 200ms ease;
+  box-shadow: 0 2px 12px rgba(49, 112, 230, 0.35);
+}
+
+.heroBtnPrimary:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, #4d88f5 0%, #6ba1ff 100%);
+}
+
+.heroBtnPrimary:active {
+  transform: scale(0.97);
+}
+
+.kbdHint {
+  font-family: var(--font-family-mono, monospace);
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(255, 255, 255, 0.75);
+  margin-left: 4px;
+}
+
+.launchpadSection {
+  margin-bottom: 24px;
+}
+
+.sectionHint {
+  font-size: 0.78rem;
+  color: var(--color-ink-tertiary, #94a0b2);
+  margin-left: 10px;
+  font-weight: 400;
+}
+
+.launchpadGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.launchpadCard {
+  background: var(--color-surface-1, #14171e);
+  border: 1px solid var(--color-border-strong, #292e3a);
+  border-radius: var(--radius-surface, 8px);
+  padding: 14px;
+  cursor: pointer;
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), border-color 140ms ease, background 140ms ease;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.launchpadCard:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-primary, #3170e6);
+  background: var(--color-surface-2, #1e222c);
+}
+
+.launchpadCard:active {
+  transform: scale(0.97);
+}
+
+.launchpadHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.launchpadIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.launchpadBadge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--color-surface-3, #292e3a);
+  color: var(--color-ink-secondary, #c6cdd9);
+}
+
+.launchpadTitle {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-ink, #f5f7fb);
+}
+
+.launchpadDesc {
+  font-size: 0.75rem;
+  color: var(--color-ink-tertiary, #94a0b2);
+  font-family: var(--font-family-mono, monospace);
+}
+
+/* Interactive Project Card Hover Scrubbing */
+.projectThumb {
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.projectThumb:hover {
+  transform: scale(1.04);
+  border-color: var(--color-primary, #3170e6) !important;
+}
+
+.projectThumbScrubBar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: var(--color-primary, #3170e6);
+  transition: width 80ms ease;
+}
+
+/* ── 3. Comprehensive Responsive Layout Breakpoints ─────────────────────── */
+@media (max-width: 1024px) {
+  .mainContent {
+    padding: 20px 16px;
+  }
+  .heroBanner {
+    padding: 20px;
+  }
+  .heroTitle {
+    font-size: 1.2rem;
+  }
+  .launchpadGrid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 840px) {
+  .root {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border-strong, #333333);
+    padding: 10px 16px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sidebar::-webkit-scrollbar {
+    display: none;
+  }
+  .sidebarNav {
+    flex-direction: row;
+    gap: 6px;
+    flex: initial;
+  }
+  .sidebarFooter {
+    border-top: none;
+    padding-top: 0;
+    flex-direction: row;
+  }
+  .upgradeCardBox {
+    display: none;
+  }
+  .logoutSidebarBtn {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+  }
+  .container {
+    height: calc(100% - 54px);
+  }
+  .actionBar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .filterGroup {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .searchWrapper {
+    flex: 1;
+    min-width: 140px;
+  }
+  .projectSearchInput {
+    width: 100%;
+  }
+  .actionButtons {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .tableCard {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (max-width: 540px) {
+  .mainContent {
+    padding: 14px 12px;
+  }
+  .pageTitle {
+    font-size: 1.2rem;
+  }
+  .navLink span {
+    display: none;
+  }
+  .navLink {
+    padding: 8px;
+  }
+  .actionButtons {
+    flex-wrap: wrap;
+  }
+  .btnPrimary, .btnSecondary, .btnDanger {
+    flex: 1;
+    justify-content: center;
+    padding: 8px 10px;
+  }
+  .launchpadGrid {
+    grid-template-columns: 1fr;
+  }
+  .heroActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .heroBtnPrimary {
+    justify-content: center;
+  }
+}
+
+

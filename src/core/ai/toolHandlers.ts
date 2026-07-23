@@ -33,7 +33,8 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { insertMedia } from '@core/scene/sceneInsert';
-import { resolveStyle } from './design';
+import { resolveStyle, buildCustomStyle, setRuntimeStyle, type CustomStyleInput } from './design';
+import type { EntranceArchetype } from './archetypes';
 import {
   recipeBackground,
   recipeText,
@@ -47,6 +48,9 @@ import {
   recipeLowerThird,
   recipeScene,
   recipeTransition,
+  recipeLogoReveal,
+  recipeRadialBurst,
+  recipePathMorph,
 } from './recipes';
 import { selectScene } from './sceneWindow';
 import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, isAnimatableProp } from './toolContext';
@@ -724,36 +728,48 @@ const addBackground: AiTool['handler'] = (input, ctx) => {
 };
 
 const addTitle: AiTool['handler'] = (input, ctx) => {
-  const i = input as { text: string; level?: 'title' | 'subtitle' | 'tagline'; style?: string; y?: number; scene?: number };
+  const i = input as { text: string; level?: 'title' | 'subtitle' | 'tagline'; style?: string; y?: number; scene?: number; entrance?: EntranceArchetype };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const id = recipeText(ctx, resolveStyle(i.style), { text: i.text, level: i.level ?? 'title', y: i.y });
+  const id = recipeText(ctx, resolveStyle(i.style), { text: i.text, level: i.level ?? 'title', y: i.y, entrance: i.entrance });
   bumpScene();
   return ok(`Added ${i.level ?? 'title'} "${i.text}" (id ${id}), positioned and animated in.`, { id });
 };
 
 const addEmblem: AiTool['handler'] = (input, ctx) => {
-  const i = input as { style?: string; y?: number; size?: number; scene?: number };
+  const i = input as { style?: string; y?: number; size?: number; scene?: number; entrance?: EntranceArchetype };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const id = recipeEmblem(ctx, resolveStyle(i.style), { y: i.y, size: i.size });
+  const id = recipeEmblem(ctx, resolveStyle(i.style), { y: i.y, size: i.size, entrance: i.entrance });
   bumpScene();
-  return ok(`Added a glowing emblem (id ${id}) with an overshoot entrance and pulse.`, { id });
+  return ok(`Added a glowing emblem (id ${id}) with an animated entrance and pulse.`, { id });
 };
 
 const addCards: AiTool['handler'] = (input, ctx) => {
-  const i = input as { count?: number; style?: string; y?: number; scene?: number };
+  const i = input as { count?: number; style?: string; y?: number; scene?: number; entrance?: EntranceArchetype };
   if (typeof i.scene === 'number') selectScene(i.scene);
-  const ids = recipeCards(ctx, resolveStyle(i.style), { count: i.count, y: i.y });
+  const ids = recipeCards(ctx, resolveStyle(i.style), { count: i.count, y: i.y, entrance: i.entrance });
   bumpScene();
   return ok(`Added a row of ${ids.length} card(s), staggered in. Ids: ${ids.join(', ')}.`, { ids });
 };
 
 const staggerIn: AiTool['handler'] = (input, ctx) => {
-  const i = input as { nodeIds: string[]; style?: string };
+  const i = input as { nodeIds: string[]; style?: string; entrance?: EntranceArchetype };
   const bad = i.nodeIds.filter((n) => !ctx.scene.has(n));
-  const applied = recipeStaggerIn(ctx, resolveStyle(i.style), i.nodeIds);
+  const applied = recipeStaggerIn(ctx, resolveStyle(i.style), i.nodeIds, i.entrance);
   bumpScene();
   if (bad.length) return { ok: applied > 0, content: `Staggered ${applied} layer(s). Unknown ids: ${bad.join(', ')}.` };
   return ok(`Gave ${applied} layer(s) a staggered entrance.`);
+};
+
+const defineStyle: AiTool['handler'] = (input) => {
+  const i = input as CustomStyleInput;
+  const style = buildCustomStyle(i);
+  setRuntimeStyle(style);
+  return ok(
+    `Defined custom style "${style.name}": accent ${style.palette.accent} on ${style.palette.bg}, ` +
+      `title ${style.type.titlePx}px/${style.type.weightTitle}, entrance ${style.entranceDur}s, stagger ${style.staggerSec}s, ` +
+      `glow ${style.glow ? 'on' : 'off'}. Compose tools that omit style (or pass "custom") now use it.`,
+    { style },
+  );
 };
 
 const addCameraMove: AiTool['handler'] = (input, ctx) => {
@@ -1115,6 +1131,7 @@ const HANDLERS: Record<string, AiTool['handler']> = {
   create_mask: createMask,
   update_composition: updateComposition,
   apply_preset: applyPreset,
+  define_style: defineStyle,
   add_background: addBackground,
   add_title: addTitle,
   add_emblem: addEmblem,
@@ -1172,7 +1189,78 @@ export function buildAiTools(): AiTool[] {
     handler: recolorLottieVectorHandler,
   };
 
-  tools.push(applyLayerStyleTool, recolorLottieVectorTool);
+const addLogoReveal: AiTool['handler'] = (input, ctx) => {
+  const i = input as { text: string; shape?: 'ellipse' | 'star' | 'rect'; style?: string };
+  const s = resolveStyle(i.style);
+  const ids = recipeLogoReveal(ctx, s, { text: i.text, shape: i.shape });
+  bumpScene();
+  return ok(`Built trim-path logo reveal sequence for "${i.text}".`, { ids });
+};
+
+const addRadialBurst: AiTool['handler'] = (input, ctx) => {
+  const i = input as { count?: number; x?: number; y?: number; style?: string };
+  const s = resolveStyle(i.style);
+  const id = recipeRadialBurst(ctx, s, { count: i.count, x: i.x, y: i.y });
+  bumpScene();
+  return ok(`Added radial repeater burst accent '${id}'.`, { id });
+};
+
+const addPathMorph: AiTool['handler'] = (input, ctx) => {
+  const i = input as { op?: 'puckerBloat' | 'zigzag'; amount?: number; style?: string };
+  const s = resolveStyle(i.style);
+  const id = recipePathMorph(ctx, s, { op: i.op, amount: i.amount });
+  bumpScene();
+  return ok(`Added organic shape path morph '${id}'.`, { id });
+};
+
+  tools.push(
+    applyLayerStyleTool,
+    recolorLottieVectorTool,
+    {
+      name: 'add_logo_reveal',
+      description: 'Builds an After Effects-style trim-path stroke outline logo reveal sequence with glowing emblem pop and title entrance.',
+      kind: 'write',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'Brand or product title text.' },
+          shape: { type: 'string', enum: ['ellipse', 'star', 'rect'], description: 'Outline shape style.' },
+          style: { type: 'string', description: 'Motion style name (e.g. premium, cyberpunk, saas, apple).' },
+        },
+        required: ['text'],
+      },
+      handler: addLogoReveal,
+    },
+    {
+      name: 'add_radial_burst',
+      description: 'Adds a radial shape repeater burst accent (HUD / particle ring) for high-impact motion graphics.',
+      kind: 'write',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          count: { type: 'number', description: 'Number of repeater copies (4 to 16).' },
+          x: { type: 'number', description: 'Center X coordinate.' },
+          y: { type: 'number', description: 'Center Y coordinate.' },
+          style: { type: 'string', description: 'Motion style name.' },
+        },
+      },
+      handler: addRadialBurst,
+    },
+    {
+      name: 'add_path_morph',
+      description: 'Creates a fluid organic morphing shape (pucker/bloat or zigzag distortion).',
+      kind: 'write',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          op: { type: 'string', enum: ['puckerBloat', 'zigzag'], description: 'Path distortion operator.' },
+          amount: { type: 'number', description: 'Distortion intensity.' },
+          style: { type: 'string', description: 'Motion style name.' },
+        },
+      },
+      handler: addPathMorph,
+    },
+  );
   return tools;
 }
 

@@ -16,7 +16,19 @@ import type { AiToolDef } from '../types';
 
 const STYLE_PROP = {
   type: 'string',
-  description: 'Aesthetic: premium (Apple-like), minimal, bold, or playful. Also accepts apple/luxury/corporate/startup/fun. Default premium.',
+  description:
+    'Aesthetic: premium (Apple-like), minimal, bold, playful, cyberpunk, or saas. Also accepts apple/luxury/corporate/startup/fun. ' +
+    'Pass "custom" (or omit) to use the style defined by define_style when one exists. Default premium.',
+} as const;
+
+/** How the element enters. Omitting it is NOT always-rise — the recipe varies the pick per run. */
+const ENTRANCE_PROP = {
+  type: 'string',
+  enum: ['rise', 'scale_pop', 'blur_resolve', 'slide_settle', 'mask_wipe', 'char_cascade'],
+  description:
+    'Entrance archetype: rise (fade up from below), scale_pop (0.85→overshoot→1), blur_resolve (blur 12→0 + fade), ' +
+    'slide_settle (directional slide with settle), mask_wipe (clip-style reveal), char_cascade (per-character type-on, text only). ' +
+    'Omit for a varied auto-pick keyed to role + style + this run. Set it when the brief calls for a specific feel.',
 } as const;
 
 /** Binds a content element to a scene opened by add_scene, so it enters at that
@@ -60,6 +72,7 @@ export const addTitleDef: AiToolDef = {
       level: { type: 'string', enum: ['title', 'subtitle', 'tagline'], default: 'title' },
       scene: SCENE_PROP,
       style: STYLE_PROP,
+      entrance: ENTRANCE_PROP,
       y: { type: 'number', description: 'Optional centre Y in comp px. Omit to auto-place by level.' },
     },
   },
@@ -77,6 +90,7 @@ export const addEmblemDef: AiToolDef = {
     properties: {
       scene: SCENE_PROP,
       style: STYLE_PROP,
+      entrance: ENTRANCE_PROP,
       y: { type: 'number', description: 'Centre Y in comp px. Omit to auto-place in the upper third.' },
       size: { type: 'number', description: 'Diameter in px. Omit for a comp-relative default.' },
     },
@@ -97,6 +111,7 @@ export const addCardsDef: AiToolDef = {
       count: { type: 'integer', minimum: 1, maximum: 8, default: 3 },
       scene: SCENE_PROP,
       style: STYLE_PROP,
+      entrance: ENTRANCE_PROP,
       y: { type: 'number', description: 'Row centre Y in comp px. Omit to centre vertically.' },
     },
   },
@@ -115,6 +130,53 @@ export const staggerInDef: AiToolDef = {
     properties: {
       nodeIds: { type: 'array', minItems: 1, maxItems: 60, items: { type: 'string' } },
       style: STYLE_PROP,
+      entrance: ENTRANCE_PROP,
+    },
+  },
+};
+
+export const defineStyleDef: AiToolDef = {
+  name: 'define_style',
+  kind: 'write',
+  description:
+    'Define THIS run\'s custom motion style — palette, type scale, easing personality, pacing — derived from the ' +
+    'brief instead of a preset. Call it FIRST, before compose tools, whenever the brief names brand colours, a mood, ' +
+    'or an industry that the presets do not match. Subsequent compose calls that omit style (or pass "custom") use it. ' +
+    'Any field you omit is filled from the closest preset anchor (basedOn), so a single accent colour is enough.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      name: { type: 'string', description: 'A short name for the style (default "custom").' },
+      brief: { type: 'string', description: 'Free-text brief (brand colours, mood words) to derive unspecified fields from.' },
+      basedOn: { type: 'string', description: 'Preset anchor supplying defaults: premium/minimal/bold/playful/cyberpunk/saas.' },
+      palette: {
+        type: 'object',
+        additionalProperties: false,
+        description: 'Hex colours. Give at least accent; the rest can be derived from it.',
+        properties: {
+          bg: { type: 'string' },
+          bgAccent: { type: 'string' },
+          card: { type: 'string' },
+          fg: { type: 'string' },
+          accent: { type: 'string' },
+          muted: { type: 'string' },
+        },
+      },
+      titlePx: { type: 'number' },
+      subtitlePx: { type: 'number' },
+      taglinePx: { type: 'number' },
+      weightTitle: { type: 'number' },
+      weightBody: { type: 'number' },
+      easing: {
+        type: 'string',
+        enum: ['soft', 'overshoot', 'snappy', 'smooth', 'elastic', 'anticipate'],
+        description: 'Easing personality for entrances.',
+      },
+      entranceDur: { type: 'number', minimum: 0.2, maximum: 2, description: 'Entrance duration, seconds.' },
+      staggerSec: { type: 'number', minimum: 0.03, maximum: 0.5, description: 'Stagger between elements, seconds.' },
+      travelPx: { type: 'number', minimum: 5, maximum: 200, description: 'Entrance travel distance, px.' },
+      glow: { type: 'boolean', description: 'Whether hero elements get a glow.' },
     },
   },
 };
@@ -255,6 +317,7 @@ export const addTransitionDef: AiToolDef = {
 };
 
 export const COMPOSE_TOOL_DEFS: readonly AiToolDef[] = [
+  defineStyleDef,
   addSceneDef,
   addTransitionDef,
   addBackgroundDef,

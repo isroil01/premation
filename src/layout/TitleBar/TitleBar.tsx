@@ -65,8 +65,8 @@ export function TitleBar(): JSX.Element | null {
     <div className={styles.titleBar}>
       <div className={styles.dragRegion} />
       <div className={styles.left}>
-        <span className={styles.appIcon}>
-          <Icon name="shape" size={14} style={{ color: '#38bdf8' }} />
+        <span className={styles.appIconBadge} title="Motion Editor">
+          <Icon name="shape" size={13} />
         </span>
         {isEditor && (
           <>
@@ -78,7 +78,9 @@ export function TitleBar(): JSX.Element | null {
         )}
       </div>
       <div className={styles.center}>
-        <span className={styles.appName}>Motion Editor</span>
+        <span className={styles.appName}>
+          {project?.name ? `${project.name} — Motion Editor` : 'Motion Editor'}
+        </span>
         {dirty && <span className={styles.dirtyDot} title="Unsaved changes" />}
       </div>
       <div className={styles.right}>
@@ -135,22 +137,30 @@ export function TitleBar(): JSX.Element | null {
             </IconButton>
           </div>
         )}
-        <button type="button" onClick={handleMinimize} className={styles.btn} title="Minimize">
-          <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor" /></svg>
-        </button>
-        <button type="button" onClick={handleMaximize} className={styles.btn} title={isMaximized ? 'Restore' : 'Maximize'}>
-          {isMaximized ? (
-            <svg width="10" height="10" viewBox="0 0 10 10">
-              <path d="M2,1 L8,1 A1,1 0 0,1 9,2 L9,8 A1,1 0 0,1 8,9 L2,9 A1,1 0 0,1 1,8 L1,2 A1,1 0 0,1 2,1 z" fill="none" stroke="currentColor" strokeWidth="1" />
-              <path d="M3,3 L7,3 L7,7 L3,7 z" fill="none" stroke="currentColor" strokeWidth="1" />
+        <div className={styles.windowActions}>
+          <button type="button" onClick={handleMinimize} className={styles.btn} title="Minimize">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
             </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10"><rect width="8" height="8" x="1" y="1" fill="none" stroke="currentColor" strokeWidth="1" /></svg>
-          )}
-        </button>
-        <button type="button" onClick={handleClose} className={`${styles.btn} ${styles.btnClose}`} title="Close">
-          <Icon name="close" size={10} />
-        </button>
+          </button>
+          <button type="button" onClick={handleMaximize} className={styles.btn} title={isMaximized ? 'Restore' : 'Maximize'}>
+            {isMaximized ? (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <rect x="3.5" y="1.5" width="5" height="5" rx="0.8" stroke="currentColor" strokeWidth="1" />
+                <rect x="1.5" y="3.5" width="5" height="5" rx="0.8" fill="var(--color-titlebar, #141416)" stroke="currentColor" strokeWidth="1" />
+              </svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <rect x="1.5" y="1.5" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            )}
+          </button>
+          <button type="button" onClick={handleClose} className={`${styles.btn} ${styles.btnClose}`} title="Close">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );

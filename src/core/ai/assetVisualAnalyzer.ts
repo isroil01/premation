@@ -1,54 +1,36 @@
 import { useAssetStore } from '@stores/assetStore';
 
-export interface AssetVisualMetadata {
-  id: string;
-  name: string;
-  type: 'image' | 'video' | 'audio';
-  dominantColors: string[];
-  description: string;
-  aspectRatio: string;
-}
-
-/** Analyze assets and return descriptive metadata for the AI prompt context. */
+/**
+ * A neutral, factual listing of the media the user has imported — nothing more.
+ *
+ * This block used to fabricate a "Visual Content" description and a "Key Palette"
+ * for every asset by guessing from the filename (logo→blue, product→pink, …).
+ * That was a lie the model could not tell from truth: it read as real visual
+ * analysis, made every asset look like the obvious centrepiece of the scene, and
+ * pushed the model to drop the user's files into videos that never asked for
+ * them. We do not analyse pixels here, so we no longer pretend to.
+ *
+ * Assets are OPT-IN. When the user's prompt says nothing about their media, the
+ * best result is almost always a scene composed from shapes and text — not a
+ * random photo pasted onto the canvas. The guard line below states that plainly,
+ * and when nothing is imported we emit nothing at all (no wasted tokens, no
+ * standing invitation to go looking for files).
+ */
 export function getAssetsVisualContext(): string {
   const assets = useAssetStore.getState().assets;
-  if (!assets.length) return 'Available Assets in editor: None imported yet (User has not uploaded assets).';
+  if (!assets.length) return '';
 
   const lines = assets.map((a) => {
-    // Generate semantic descriptions based on asset names/properties to simulate visual analysis
-    let desc = 'Universal media asset';
-    let colors = ['#ffffff', '#000000'];
-    const nameLower = a.name.toLowerCase();
-
-    if (a.type === 'image') {
-      if (nameLower.includes('logo')) {
-        desc = 'Brand logo with transparent background';
-        colors = ['#2988ff', '#1a1a2e'];
-      } else if (nameLower.includes('avatar') || nameLower.includes('profile') || nameLower.includes('user')) {
-        desc = 'User profile avatar photo';
-        colors = ['#f59e0b', '#e2e8f0'];
-      } else if (nameLower.includes('bg') || nameLower.includes('background') || nameLower.includes('hero')) {
-        desc = 'High-resolution hero background image';
-        colors = ['#0f172a', '#1e293b'];
-      } else if (nameLower.includes('product') || nameLower.includes('item') || nameLower.includes('shoe')) {
-        desc = 'Product showcase image, centered subject';
-        colors = ['#ec4899', '#f8fafc'];
-      } else {
-        desc = 'Imported photographic or vector image';
-      }
-    } else if (a.type === 'video') {
-      desc = 'B-roll showcase video clip';
-      colors = ['#10b981', '#06b6d4'];
-    } else if (a.type === 'audio') {
-      desc = 'Background track / music clip';
-      colors = ['#a78bfa'];
-    }
-
     const dims = a.metadata?.width && a.metadata?.height ? ` ${a.metadata.width}x${a.metadata.height}` : '';
     const dur = a.metadata?.duration ? ` (${a.metadata.duration.toFixed(1)}s)` : '';
-    
-    return `- Asset ID: "${a.id}" | Name: "${a.name}" | Type: ${a.type}${dims}${dur} | Visual Content: ${desc} | Key Palette: ${colors.join(', ')}`;
+    return `- id "${a.id}" · "${a.name}" · ${a.type}${dims}${dur}`;
   });
 
-  return `Available Assets in left sidebar tab:\n${lines.join('\n')}`;
+  return (
+    `Media the user has imported (available via create_media, but OPT-IN):\n${lines.join('\n')}\n` +
+    `Use these ONLY when the request explicitly asks for the user's own media (their logo, ` +
+    `photo, video, "my image", a named file, etc.). If the prompt does not mention media, IGNORE ` +
+    `this list entirely and design the scene from shapes and text — do not paste an imported file ` +
+    `into a video that did not ask for one.`
+  );
 }

@@ -49,10 +49,11 @@ import { drawToolOptions } from '@motion/workspace';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useProjectStore } from '@stores/projectStore';
 import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
-import { is3DEnabled } from '@core/scene/threeD';
+import { is3DEnabled, readNode3D } from '@core/scene/threeD';
 import { readSceneCamera } from '@core/scene/camera3d';
 import { Project3D, Matrix4Math } from '@motion/scene';
 import { useGuidesStore } from '@stores/guidesStore';
+import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
 import { addMaskPath, rectangleMask, ellipseMask, readNodeMask, setMaskPoints, MaskPath, MaskPoint } from '@core/effects/mask';
 
 // ── SceneGraphPort ────────────────────────────────────────────────
@@ -97,11 +98,19 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
 
   // The projection MUST match the renderer's (buildSnapshot) exactly, or the
   // selection outline drifts off the layer. Both branch on the same view mode.
+  // Custom views project through the STORED view camera (scene camera ignored),
+  // mirroring resolveViewCameraInput — and never through projectOrtho, whose
+  // basis table has no custom entries.
   const orthoView: import('@motion/scene').Project3D.OrthoView | null =
-    cameraMode === 'active' ? null : (cameraMode as import('@motion/scene').Project3D.OrthoView);
+    cameraMode === 'active' || isCustomViewId(cameraMode)
+      ? null
+      : (cameraMode as import('@motion/scene').Project3D.OrthoView);
   let project: (p: { x: number; y: number; z: number }) => import('@motion/scene').Project3D.Projected;
   if (orthoView) {
     project = (p) => Project3D.projectOrtho(p, orthoView, width, height);
+  } else if (isCustomViewId(cameraMode)) {
+    const camera = customViewCamera(useGuidesStore.getState().customViews[cameraMode], width, height);
+    project = (p) => Project3D.projectPoint(p, camera);
   } else {
     let camera: import('@motion/scene').Project3D.Camera3D;
     if (!cameraNode) {
@@ -150,7 +159,13 @@ function toWorkspaceNode(node: SceneNode, zIndex: number): WorkspaceNode | null 
   } else {
     const tr = Mat.multiply(Mat.translation(x, y), Mat.rotation((rotationDeg * Math.PI) / 180));
     const rs = Mat.multiply(tr, Mat.scaling(scaleX, scaleY));
-    worldMatrixVal = Mat.multiply(rs, Mat.translation(-anchorX, -anchorY));
+    const localMat = Mat.multiply(rs, Mat.translation(-anchorX, -anchorY));
+    if (node.parent) {
+      const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts);
+      worldMatrixVal = Mat.multiply(pw, localMat);
+    } else {
+      worldMatrixVal = localMat;
+    }
   }
 
   const localBoundsVal = localBounds(g);
@@ -205,6 +220,28 @@ export function createSceneGraphPort(): SceneGraphPort {
       const flat = flattenScene(defaultSceneGraph);
       const idx = flat.findIndex((n) => (n.id as string) === id);
       return toWorkspaceNode(node, idx < 0 ? 0 : idx) ?? undefined;
+    },
+    selectionGroup(id: NodeId): readonly NodeId[] | null {
+      const rootId = activeCompRootId() as string;
+      const start = defaultSceneGraph.getNode(id as ID);
+      if (!start) return null;
+      let top = start;
+      let guard = 0;
+      while (top.parent && (top.parent as string) !== rootId && guard++ < 256) {
+        const p = defaultSceneGraph.getNode(top.parent as ID);
+        if (!p) break;
+        top = p;
+      }
+      // If the parent group is ALREADY selected, select the clicked sub-layer directly!
+      const currentSelection = useSelectionStore.getState().ids;
+      if (top.id !== start.id && currentSelection.includes(top.id)) {
+        return [id];
+      }
+      // Otherwise, select the parent group so it moves & resizes as 1 body by default.
+      if (top.id !== start.id || defaultSceneGraph.getChildren(top.id).length > 0) {
+        return [top.id as NodeId];
+      }
+      return null;
     },
     onChanged(listener: () => void): () => void {
       const unsubScene = useSceneRevision.subscribe(listener);
@@ -378,6 +415,112 @@ function cidOf(node: SceneNode, prop: string): string {
  */
 function hasAnyTrack(nodeId: ID, props: readonly string[]): boolean {
   return defaultAnimation.tracksFor(nodeId).some((t) => props.includes(t.prop as string));
+}
+
+// ── 3D gizmo transform I/O (shared read/write path with canvas drags) ──
+
+/** The transform props the 3D gizmo reads & writes. */
+export interface Transform3DValues {
+  x: number;
+  y: number;
+  z: number;
+  rotationX: number;
+  rotationY: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+/**
+ * A node's transform SAMPLED at the current playhead (animated tracks win,
+ * base props fall through) — the same read the renderer does. The gizmo must
+ * anchor on this, not the static base props, or it desyncs off any keyframed
+ * layer (mirror of the light-icon fix in useWorkspace's paintOverlay).
+ */
+export function sampleTransform3DAtPlayhead(node: SceneNode): Transform3DValues {
+  const g = readGeometry(node);
+  const n3d = readNode3D(node);
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  const lt = getRemappedTime(node.id, rawTime);
+  const av = defaultAnimation.evaluateNode(node.id, lt);
+  return {
+    x: av.get('x') ?? g?.x ?? 0,
+    y: av.get('y') ?? g?.y ?? 0,
+    z: av.get('z') ?? n3d.z,
+    rotationX: av.get('rotationX') ?? n3d.rotationX,
+    rotationY: av.get('rotationY') ?? n3d.rotationY,
+    rotation: av.get('rotation') ?? g?.rotationDeg ?? 0,
+    scaleX: av.get('scaleX') ?? av.get('scale') ?? g?.scaleX ?? 1,
+    scaleY: av.get('scaleY') ?? av.get('scale') ?? g?.scaleY ?? 1,
+  };
+}
+
+/**
+ * Per-prop stopwatch groups: which existing tracks force a keyframe write for
+ * a given gizmo prop (position pair matches moveNodes; scale matches
+ * resizeNode's aliases).
+ */
+const GIZMO_TRACK_GROUPS: Record<keyof Transform3DValues, readonly string[]> = {
+  x: ['x', 'y'],
+  y: ['x', 'y'],
+  z: ['z'],
+  rotationX: ['rotationX'],
+  rotationY: ['rotationY'],
+  rotation: ['rotation'],
+  scaleX: ['scaleX', 'scaleY', 'scale'],
+  scaleY: ['scaleX', 'scaleY', 'scale'],
+};
+
+export interface Gizmo3DNodeUpdate {
+  id: string;
+  values: Partial<Transform3DValues>;
+}
+
+/**
+ * Apply 3D-gizmo transform writes through the SAME dual path the canvas drag
+ * uses (moveNodes/rotateNode/resizeNode): a prop with a lit stopwatch — or any
+ * prop while Auto-Keyframe is on — keyframes at the current remapped playhead
+ * (one coalesced undo entry per drag via the stable merge key); the static
+ * base always follows too (harmless when animated — animated reads win — and
+ * it keeps the inspector and every other consumer in agreement).
+ */
+export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): void {
+  if (updates.length === 0) return;
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+
+  const keyed: Array<{ nodeId: ID; prop: string; lt: number; value: number }> = [];
+  let changed = false;
+
+  for (const u of updates) {
+    const node = defaultSceneGraph.getNode(u.id as ID);
+    if (!node || node.locked) continue;
+    const transComp = node.components.find((c) => c.type === 'Transform');
+    if (!transComp) continue;
+    const lt = getRemappedTime(node.id, rawTime);
+    for (const [prop, value] of Object.entries(u.values)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+      if (autoKeyframe || hasAnyTrack(node.id, GIZMO_TRACK_GROUPS[prop as keyof Transform3DValues] ?? [prop])) {
+        keyed.push({ nodeId: node.id, prop, lt, value });
+      }
+      defaultSceneGraph.writeProp(node.id, transComp.id, prop, value);
+      changed = true;
+    }
+  }
+
+  if (keyed.length > 0) {
+    runAnimEdit(
+      'Keyframe 3D Transform',
+      () => {
+        for (const k of keyed) defaultAnimation.setKeyframe(k.nodeId, k.prop, k.lt, k.value);
+      },
+      // Stable for the whole drag (playhead can't move mid-drag) → ONE undo
+      // entry per gizmo drag, matching the canvas drag pattern above.
+      `gizmo3d:${rawTime}:${updates.map((u) => u.id).join(',')}`,
+    );
+  }
+
+  if (changed) bumpScene();
 }
 
 function moveNodes(payload: MoveNodesPayload): void {

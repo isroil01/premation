@@ -10,6 +10,10 @@
   width: 100%;
 }
 
+.fullWidth .field {
+  width: 100%;
+}
+
 .label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
@@ -27,7 +31,7 @@
   /* recessed style */
   background: var(--color-surface-0);
   border: 1px solid var(--color-border);
-  border-radius: 0;
+  border-radius: var(--radius-control, 4px);
   color: var(--color-text-primary);
   transition: var(--motion-hover-transition);
 }
@@ -42,10 +46,10 @@
   background: var(--color-slate-950);
 }
 
-.field.size-xs { height: 18px; padding: 0 var(--space-2); font-size: var(--font-size-xs); border-radius: 0; }
-.field.size-sm { height: 22px; padding: 0 var(--space-3); font-size: var(--font-size-sm); border-radius: 0; }
-.field.size-md { height: 24px; padding: 0 var(--space-3); font-size: var(--font-size-sm); border-radius: 0; }
-.field.size-lg { height: 30px; padding: 0 var(--space-4); font-size: var(--font-size-md); border-radius: 0; }
+.field.size-xs { height: 18px; padding: 0 var(--space-2); font-size: var(--font-size-xs); border-radius: var(--radius-control, 4px); }
+.field.size-sm { height: 22px; padding: 0 var(--space-3); font-size: var(--font-size-sm); border-radius: var(--radius-control, 4px); }
+.field.size-md { height: 24px; padding: 0 var(--space-3); font-size: var(--font-size-sm); border-radius: var(--radius-control, 4px); }
+.field.size-lg { height: 30px; padding: 0 var(--space-4); font-size: var(--font-size-md); border-radius: var(--radius-control, 4px); }
 
 .input {
   flex: 1;

@@ -23,6 +23,15 @@ export const RESOLUTION_LABELS: Record<PreviewResolution, string> = {
   4: 'Quarter',
 };
 
+/** The pixel fraction each resolution renders — shown next to the label so it's
+ *  clear this is a quality/speed lever, not a size change. */
+export const RESOLUTION_PERCENT: Record<PreviewResolution, string> = {
+  1: '100%',
+  2: '50%',
+  3: '33%',
+  4: '25%',
+};
+
 interface RenderQualityStore {
   draft: boolean;
   resolution: PreviewResolution;

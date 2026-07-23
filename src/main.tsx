@@ -3,7 +3,13 @@ import { createRoot } from 'react-dom/client';
 import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
+import { setLocalFirst } from '@core/config/flags';
 import './styles/global.css';
+
+// Read the LOCAL_FIRST build flag once, here at the entry — `import.meta.env` is
+// a Vite construct, and keeping it out of shared modules avoids Jest's CJS
+// `import.meta` breakage. Enables `.motion` directory-bundle save/open.
+setLocalFirst(import.meta.env.VITE_LOCAL_FIRST === '1' || import.meta.env.VITE_LOCAL_FIRST === 'true');
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

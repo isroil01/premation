@@ -22,7 +22,7 @@ describe('UI component presets', () => {
 
   it('exposes the expected preset set', () => {
     expect(UI_COMPONENT_PRESETS.map((p) => p.id)).toEqual(
-      ['browser', 'phone', 'card', 'button', 'chat', 'notification', 'chart',
+      ['code-editor', 'browser', 'phone', 'card', 'button', 'chat', 'notification', 'chart',
        'stat', 'avatar', 'toggle', 'input', 'progress', 'tabs', 'tablerow', 'cursor'],
     );
   });

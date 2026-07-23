@@ -73,6 +73,16 @@ export interface SceneGraphPort {
   getNode(id: NodeId): WorkspaceNode | undefined;
   /** Subscribe to structural/transform changes so the index can be rebuilt. */
   onChanged(listener: () => void): () => void;
+  /**
+   * Resolve a node to the set of ids that should be selected and transformed
+   * together as ONE body. Groups (e.g. an imported multi-part SVG icon) carry
+   * their visuals on leaf children; hit-testing returns a single leaf, but the
+   * user grabbed the whole icon — so the binding expands that leaf to every
+   * leaf of its top-level group. Returns `null`/omitted for a standalone node
+   * that stands alone (the caller then selects just that id). Optional: engines
+   * without grouping need not implement it.
+   */
+  selectionGroup?(id: NodeId): readonly NodeId[] | null;
 }
 
 /**

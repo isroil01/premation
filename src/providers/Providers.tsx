@@ -40,6 +40,8 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
+import { isLocalFirst } from '@core/config/flags';
+import { chooseBundleDir } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
 import { projectDocumentIO } from '@core/project/projectDocumentIO';
@@ -66,6 +68,7 @@ import { CommandPalette } from '@layout/CommandPalette';
 import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
 import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
+import { findNavTarget } from '@core/workspace/cameraNav';
 import { insertNull, moveNodeInStack } from '@core/scene/parenting';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
@@ -134,6 +137,71 @@ function buildToolCommands(): ReadonlyArray<Command> {
     enabled: () => true,
     execute: () => useUIStore.getState().setActiveTool(tool),
   }));
+}
+
+/**
+ * C — AE's camera tool: each press cycles the LEFT-drag mode
+ * orbit → pan → dolly (no Alt needed). Esc or picking any tool (V) exits.
+ * Live only when camera navigation is possible (a Camera layer + a 3D layer),
+ * so the bare key falls through harmlessly in flat comps.
+ */
+function buildCameraToolCommands(): ReadonlyArray<Command> {
+  return [
+    {
+      id: asCommandId('tool.cameraCycle'),
+      label: 'Camera Tool (Orbit / Pan / Dolly)',
+      icon: 'camera',
+      shortcut: { key: 'c' },
+      enabled: () => findNavTarget() !== null,
+      execute: () => {
+        useGuidesStore.getState().cycleCameraTool();
+        const mode = useGuidesStore.getState().cameraTool;
+        notify(`Camera tool: ${mode === 'pan' ? 'Pan (Track XY)' : mode === 'dolly' ? 'Dolly' : 'Orbit'} — Esc to exit`, 'info');
+      },
+    },
+    {
+      // Registered AFTER the builtin Deselect (same Escape chord): the
+      // ShortcutManager checks most-recently-added first, so while the camera
+      // tool is active Esc exits it; otherwise this is disabled and the chord
+      // falls through to Deselect as before.
+      id: asCommandId('tool.cameraExit'),
+      label: 'Exit Camera Tool',
+      icon: 'camera',
+      shortcut: { key: 'Escape' },
+      enabled: () => useGuidesStore.getState().cameraTool !== 'none',
+      execute: () => useGuidesStore.getState().setCameraTool('none'),
+    },
+  ];
+}
+
+/**
+ * Fast 3D-view switching (AE parity): `1` returns to Active Camera, `2` jumps
+ * to the LAST custom view used (Custom View 1 until one is picked). Bare
+ * digit keys are unclaimed in the shortcut registry (checked: no `1`/`2`
+ * chords anywhere), and the ShortcutManager already ignores typing in inputs.
+ */
+function buildViewSwitchCommands(): ReadonlyArray<Command> {
+  return [
+    {
+      id: asCommandId('view.activeCamera'),
+      label: '3D View: Active Camera',
+      icon: 'camera',
+      shortcut: { key: '1' },
+      enabled: () => true,
+      execute: () => useGuidesStore.getState().setCamera3dMode('active'),
+    },
+    {
+      id: asCommandId('view.lastCustom'),
+      label: '3D View: Last Custom View',
+      icon: 'camera',
+      shortcut: { key: '2' },
+      enabled: () => true,
+      execute: () => {
+        const s = useGuidesStore.getState();
+        s.setCamera3dMode(s.lastCustomView);
+      },
+    },
+  ];
 }
 
 /**
@@ -587,6 +655,22 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'o', meta: true },
       enabled: () => true,
       execute: async () => {
+        // Local-first: `.motion` is a directory bundle → use the native folder
+        // picker. In the browser build `chooseBundleDir` returns null, so this
+        // falls through to the normal file open.
+        if (isLocalFirst()) {
+          const dir = await chooseBundleDir();
+          if (dir) {
+            const opened = await getProjectManager().openPath(dir);
+            if (opened) {
+              bumpScene();
+              notify(`Opened “${opened.name}”`, 'success');
+            } else {
+              notify('Could not open that bundle', 'error');
+            }
+            return;
+          }
+        }
         // Cloud projects have no file picker — send the user to the dashboard,
         // which is the real "choose a project" surface.
         if (getFileManager().environment === 'api') {
@@ -719,6 +803,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         const registry = getCommandRegistry();
         for (const cmd of buildBuiltinCommands()) registry.register(cmd);
         for (const cmd of buildToolCommands()) registry.register(cmd);
+        for (const cmd of buildCameraToolCommands()) registry.register(cmd);
+        for (const cmd of buildViewSwitchCommands()) registry.register(cmd);
         for (const cmd of buildEasingCommands()) registry.register(cmd);
         for (const cmd of buildMergePathCommands()) registry.register(cmd);
         registry.register({
@@ -855,7 +941,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             },
           });
           registry.register({
-            id: asCommandId('view.presentation'), label: 'Present (Preview)', icon: 'eye',
+            id: asCommandId('view.presentation'), label: 'Present (Preview)', icon: 'tv',
             enabled: () => true, execute: () => usePresentationStore.getState().enter(),
           });
           registry.register({
@@ -863,7 +949,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true, execute: () => openPluginsModal(),
           });
           registry.register({
-            id: asCommandId('help.tour'), label: 'Take a Tour', icon: 'sparkles',
+            id: asCommandId('help.tour'), label: 'Take a Tour', icon: 'tour',
             enabled: () => true, execute: () => useOnboardingStore.getState().start(),
           });
           registry.register({

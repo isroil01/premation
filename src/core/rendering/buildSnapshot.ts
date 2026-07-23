@@ -19,7 +19,7 @@ import { assetUrl } from '@core/api/client';
 import { useAssetStore } from '@stores/assetStore';
 import { worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
-import { readNode3D, is3DEnabled } from '@core/scene/threeD';
+import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import { readNodeAutoOrient } from '@core/scene/autoOrient';
 import { autoOrientAngleDeg } from '@core/motion/motionPath';
 import { resolveRepeater, repeaterCopies } from '@core/scene/repeater';
@@ -32,11 +32,15 @@ import { measureTextNodeSize } from '@core/text/measureText';
 import { readEchoConfig } from '@core/effects/echo';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { readNodeMaterial } from '@core/scene/material';
+import { extrusionFaces, clampBevel, EXTRUSION_WALL_GAIN, EXTRUSION_BACK_GAIN, EXTRUSION_WALL_FALLBACK_FILL } from '@core/scene/extrusion';
+import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
 import { readNodeSequence, sequenceSrcAt } from '@core/scene/imageSequence';
 import { resolvePathOp, applyPathOp, shapeOutline } from '@core/scene/pathOps';
 import { corner } from '../../../packages/workspace/src/math/BezierPoint';
 import { resolveAnimators, evaluateTextAnimators } from '@core/text/textAnimators';
+import { layoutPerChar3D } from '@core/text/perChar3D';
+import type { ParagraphStyle } from '@core/text/textLayout';
 import { readRuns, normalizeRuns } from '@core/text/richText';
 import { resolveTextPath, resolveTextPathMask, flattenMaskPath } from '@core/text/textPath';
 import { bracketFrames } from './videoFrameCache';
@@ -76,6 +80,21 @@ export interface SnapshotComp {
   backgroundPaint?: FillPaint;
   transparent?: boolean;
   camera3dMode?: 'active' | Project3D.OrthoView;
+  /**
+   * View-camera override (AE custom views): when set (and the mode is not an
+   * ortho view), 3D layers project through THIS pre-built camera instead of
+   * the scene's Camera layer, and DOF is off (like ortho — you're inspecting,
+   * not shooting). The editor builds it from stored view params; export and
+   * headless paths never set it, so their output is untouched.
+   */
+  customViewCamera?: Project3D.Camera3D;
+  /**
+   * Draft 3D (AE's lightning bolt): skip depth-of-field blur and all lighting
+   * (light washes, Lambert shading, cast shadows) for a fast interactive
+   * preview. Pure input gate — projection/transforms are untouched. Absent =
+   * full quality (export/tests unchanged).
+   */
+  draft3d?: boolean;
   /** Comp length in seconds — used to clamp the layer in/out gate frame. */
   durationSeconds?: number;
   /**
@@ -392,9 +411,12 @@ export function buildSnapshot(
   // every projection site below is view-agnostic.
   const orthoView: Project3D.OrthoView | null =
     cameraMode === 'active' ? null : (cameraMode as Project3D.OrthoView);
+  // Custom views (AE parity): a pre-built view camera supplied by the editor
+  // replaces the scene camera — the shot camera is deliberately IGNORED.
+  const customCamera = orthoView ? null : comp.customViewCamera ?? null;
   const camera = orthoView
     ? null
-    : readSceneCamera(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p));
+    : customCamera ?? readSceneCamera(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p));
   const project = orthoView
     ? (p: { x: number; y: number; z: number }) => Project3D.projectOrtho(p, orthoView, comp.width, comp.height)
     : (p: { x: number; y: number; z: number }) => Project3D.projectPoint(p, camera!);
@@ -402,7 +424,10 @@ export function buildSnapshot(
   // Depth of field: layers blur by how far their depth sits from the camera's
   // focus distance (linear ramp, capped at `strength` px). Orthographic views
   // have no lens, so DOF is off.
-  const dof = orthoView ? null : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p));
+  // Draft 3D skips DOF entirely (dof = null ⇒ withDof/dofEffectOf no-op).
+  const dof = orthoView || customCamera || comp.draft3d
+    ? null
+    : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p));
   const withDof = (f: string | undefined, depth: number): string | undefined => {
     if (!dof) return f;
     const blur = dofBlurPx(depth, dof);
@@ -427,6 +452,7 @@ export function buildSnapshot(
   // masked layers all cast correctly. Keyframeable via the light's position
   // and intensity.
   const shadowLight = (() => {
+    if (comp.draft3d) return null; // Draft 3D: no cast shadows.
     for (const n of nodes) {
       if (readNodeKind(n) !== 'light') continue;
       const lt = readNodeLight(n);
@@ -441,6 +467,30 @@ export function buildSnapshot(
     }
     return null;
   })();
+  // Scene lights in world space, for per-quad Lambert shading of 3D layers
+  // that opt in via Material Options → Accepts Lights. Same pre-pass pattern
+  // as shadowLight (parenting of light layers is approximated by their own
+  // animated x/y/z, matching the wash rendering).
+  // Draft 3D collects no lights ⇒ per-quad shading, per-fragment shade3d and
+  // lights3d all fall away without touching the pipeline itself.
+  const sceneLights: SceneLight[] = [];
+  for (const n of comp.draft3d ? [] : nodes) {
+    if (readNodeKind(n) !== 'light') continue;
+    const lt = readNodeLight(n);
+    const av = valuesOf(n.id);
+    const g = readBase(n);
+    sceneLights.push({
+      ...lt,
+      intensity: av.get('intensity') ?? lt.intensity,
+      radius: av.get('radius') ?? lt.radius,
+      angle: av.get('lightAngle') ?? lt.angle,
+      cone: av.get('lightCone') ?? lt.cone,
+      x: av.get('x') ?? g.x,
+      y: av.get('y') ?? g.y,
+      z: av.get('z') ?? 0,
+    });
+  }
+
   const withShadow = (f: string | undefined, lx: number, ly: number): string | undefined => {
     if (!shadowLight) return f;
     let dx = lx - shadowLight.x;
@@ -509,6 +559,9 @@ export function buildSnapshot(
         if (!nodeClips.some((l) => l.isActiveAt(gateFrame))) continue;
       }
     }
+
+    // Draft 3D: light layers draw nothing (their glow wash IS lighting).
+    if (kind === 'light' && comp.draft3d) continue;
 
     // Light: a radial glow at its world position, composited (screen) to
     // brighten what's beneath. Intensity / radius are keyframeable.
@@ -644,7 +697,13 @@ export function buildSnapshot(
     const oriY = a?.get('orientationY') ?? d3.orientationY;
     const oriZ = a?.get('orientationZ') ?? d3.orientationZ;
     const anchorZ = a?.get('anchorZ') ?? d3.anchorZ;
-    const is3D = !isSolid && is3DEnabled(node);
+    // Extrusion depth (px): keyframeable via the same animated-value path as z.
+    // > 0 turns the flat plane into a real 3D object (back cap + walls below).
+    const extrusionDepth = Math.max(0, a?.get('extrusionDepth') ?? d3.extrusionDepth);
+    // Solids may take the 3D switch (AE parity): un-switched solids stay pinned
+    // full-comp exactly as before; a switched solid un-pins onto its own
+    // transform and projects like any layer.
+    const is3D = is3DEnabled(node);
     let px = world.x;
     let py = world.y;
     let sx = scaleX;
@@ -665,7 +724,7 @@ export function buildSnapshot(
       wx: number, wy: number, wz: number,
       rX: number, rY: number, rZ: number,
       sX: number, sY: number,
-    ): { matrix: readonly [number, number, number, number, number, number]; O: Project3D.Projected } => {
+    ): { matrix: readonly [number, number, number, number, number, number]; O: Project3D.Projected; world: import('@motion/scene').Matrix4 } => {
       const M = Matrix4Math.compose({
         position: { x: wx, y: wy, z: wz },
         // AE composes Orientation THEN Rotation about the same anchor; summing
@@ -679,15 +738,19 @@ export function buildSnapshot(
       const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
       const X = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
       const Y = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
-      return { matrix: [X.x - O.x, X.y - O.y, Y.x - O.x, Y.y - O.y, O.x, O.y], O };
+      return { matrix: [X.x - O.x, X.y - O.y, Y.x - O.x, Y.y - O.y, O.x, O.y], O, world: M };
     };
 
     let matrix: readonly [number, number, number, number, number, number] | undefined;
+    let world3d: readonly number[] | undefined;
     // Painter depth (distance from camera); far layers draw first.
     let depth = project({ x: world.x, y: world.y, z: z3 }).depth;
     if (is3D) {
-      const { matrix: m, O } = affineAt(world.x, world.y, z3, rotX, rotY, world.rotation, scaleX, scaleY);
+      const { matrix: m, O, world: M } = affineAt(world.x, world.y, z3, rotX, rotY, world.rotation, scaleX, scaleY);
       matrix = m;
+      // The full 4×4 world matrix rides along for the GPU depth-tested path;
+      // the projected affine stays as the universal fallback.
+      world3d = M;
       px = O.x;
       py = O.y;
       sx = Math.hypot(m[0], m[1]);
@@ -724,7 +787,7 @@ export function buildSnapshot(
         }
       }
     }
-    let finalFill = base.fill ?? KIND_FILL[kind];
+    let finalFill = base.fill ?? (kind === 'image' || kind === 'video' ? undefined : KIND_FILL[kind]);
     // A solid paint set via the Fill & Stroke panel lives on the fx component
     // and must beat the legacy Style fill string — Canvas2D's fillStyleFor
     // resolves solid paints to this fallback string, so bake it in here.
@@ -811,12 +874,13 @@ export function buildSnapshot(
         // Exactly on a frame boundary there is nothing to blend toward.
         return bracket.weight > 1e-3 ? bracket : undefined;
       })(),
-      x: isSolid ? comp.width / 2 : px,
-      y: isSolid ? comp.height / 2 : py,
-      rotation: isSolid ? 0 : rot,
-      scaleX: isSolid ? 1 : sx,
-      scaleY: isSolid ? 1 : sy,
-      matrix: isSolid ? undefined : matrix,
+      x: isSolid && !is3D ? comp.width / 2 : px,
+      y: isSolid && !is3D ? comp.height / 2 : py,
+      rotation: isSolid && !is3D ? 0 : rot,
+      scaleX: isSolid && !is3D ? 1 : sx,
+      scaleY: isSolid && !is3D ? 1 : sy,
+      matrix: isSolid && !is3D ? undefined : matrix,
+      world3d: isSolid && !is3D ? undefined : world3d,
       depth,
       opacity: ghost ? baseOpacity * GHOST_OPACITY : baseOpacity,
       width: layerW,
@@ -872,6 +936,23 @@ export function buildSnapshot(
       })(),
       assetId: base.assetId,
     };
+
+    // Per-quad Lambert lighting (Material Options → Accepts Lights, default
+    // off): the plane normal comes from the layer's 3D world matrix; the
+    // accumulated light gain rides the layer as an RGB multiplier which the
+    // adapter folds into the draw tint — identical on the GPU depth path and
+    // the affine fallback. No lights in the scene ⇒ identity ⇒ nothing added.
+    if (is3D && world3d && sceneLights.length > 0) {
+      const mat = readNodeMaterial(node);
+      if (mat.acceptsLights) {
+        const lit = shadeLayer(planeNormalOf(world3d), { x: world.x, y: world.y, z: z3 }, sceneLights);
+        if (lit) layer.lighting = lit;
+        // Per-fragment upgrade for the depth-tested GPU path: the adapter swaps
+        // the per-quad tint fold for real per-fragment Lambert + Blinn-Phong
+        // there (specular normalised to 0..1 for the shader).
+        layer.shade3d = { specular: mat.specular / 100, shininess: mat.shininess };
+      }
+    }
 
     // Anchor point (E4): shift the pivot. Keyframeable via anchorX/anchorY.
     const anchor = readNodeAnchor(node);
@@ -1128,8 +1209,11 @@ export function buildSnapshot(
           isAdjustment: undefined,
           motionSamples: undefined,
           ...(is3D && matrix
-            ? {
-                matrix: affineAt(
+            ? (() => {
+                // Rebuild BOTH forms at the echoed transform — spreading the
+                // base layer would leave the ghost's world3d at the live pose,
+                // so the GPU depth path would draw every echo in one place.
+                const g3 = affineAt(
                   world.x + ((anim.sample(node.id, 'x', ti) ?? eLocalX) - eLocalX),
                   world.y + ((anim.sample(node.id, 'y', ti) ?? eLocalY) - eLocalY),
                   anim.sample(node.id, 'z', ti) ?? z3,
@@ -1137,8 +1221,9 @@ export function buildSnapshot(
                   anim.sample(node.id, 'rotationY', ti) ?? rotY,
                   world.rotation + ((anim.sample(node.id, 'rotation', ti) ?? eLocalRot) - eLocalRot),
                   scaleX, scaleY,
-                ).matrix,
-              }
+                );
+                return { matrix: g3.matrix, world3d: g3.world as readonly number[] };
+              })()
             : { x: gx, y: gy, rotation: grot }),
         };
         emitLayer(ghost, node);
@@ -1170,7 +1255,238 @@ export function buildSnapshot(
         }, node);
       }
     } else {
-      emitLayer(layer, node);
+      // TRUE 3D extrusion: a 3D layer with extrusionDepth d > 0 is a real
+      // object — synthesize a back cap + side walls as extra RenderLayers
+      // ADJACENT in paint order (they share the front face's sort depth, so
+      // the painter sort — stable — keeps the run contiguous and
+      // CompositionPass groups all faces into ONE depth-tested pass; the
+      // depth buffer then resolves face occlusion automatically). Faces are
+      // snapshot-only: hit-testing / timeline read the scene graph, so the
+      // synthetic `::ext-*` ids are invisible to selection by construction.
+      // Front-cap inset (px per side) applied to the emitted front face when a
+      // bevel is active — the front face is the layer's own content (emitted
+      // below), which extrusionFaces cannot shrink, so we inset it here so the
+      // shrunk front edge meets the front chamfer ring. 0 = no bevel.
+      let frontInset = 0;
+      if (is3D && world3d && extrusionDepth > 0) {
+        const isComplexContent =
+          layer.kind === 'text' ||
+          (layer.kind === 'shape' && layer.primitive !== 'rect' && layer.primitive !== 'ellipse');
+
+        const extMat = readNodeMaterial(node);
+        const extLit = extMat.acceptsLights && sceneLights.length > 0;
+        const wallFill = typeof layer.fill === 'string' ? layer.fill : EXTRUSION_WALL_FALLBACK_FILL;
+
+        if (isComplexContent) {
+          // Contour Volume Extrusion: For text and complex shapes, slice the
+          // depth axis (z ∈ [1, extrusionDepth]) into continuous slices matching the exact
+          // glyph/path silhouette so text extrudes as a solid 3D body without empty gaps.
+          const stepPx = 1.5;
+          const sliceCount = Math.min(45, Math.max(2, Math.ceil(extrusionDepth / stepPx)));
+          const sliceStep = extrusionDepth / sliceCount;
+
+          for (let i = 1; i <= sliceCount; i++) {
+            const zOffset = i * sliceStep;
+            const isBackCap = i === sliceCount;
+            const sliceMat = Matrix4Math.compose({
+              position: { x: 0, y: 0, z: zOffset },
+              rotation: { x: 0, y: 0, z: 0 },
+              scale: { x: 1, y: 1, z: 1 },
+              anchor: { x: 0, y: 0, z: 0 },
+            });
+            const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, sliceMat);
+            const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+            const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+            const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+            const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
+
+            const sliceLayer: RenderLayer = {
+              ...layer,
+              id: `${layer.id}::ext-${isBackCap ? 'back' : `slice-${i}`}`,
+              x: O.x,
+              y: O.y,
+              rotation: Math.atan2(fm[1], fm[0]) / DEG,
+              scaleX: Math.hypot(fm[0], fm[1]),
+              scaleY: Math.hypot(fm[2], fm[3]),
+              matrix: fm,
+              world3d: M as readonly number[],
+              depth: layer.depth,
+              width: layerW,
+              height: layerH,
+            };
+
+            if (extLit) {
+              const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
+              if (lg) {
+                sliceLayer.lighting = lg;
+                sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess };
+              }
+            } else {
+              const g = isBackCap ? EXTRUSION_BACK_GAIN : EXTRUSION_WALL_GAIN;
+              sliceLayer.lighting = [g, g, g];
+            }
+            emitLayer(sliceLayer, node);
+          }
+        } else {
+          // Geometric Face Extrusion: For rect and ellipse primitives, use
+          // exact 3D wall planes + optional bevel chamfer rings.
+          const extShape = layer.kind === 'shape' && layer.primitive === 'ellipse' ? 'ellipse' : 'rect';
+          const bevelRequested = Math.max(0, a?.get('bevelDepth') ?? d3.bevelDepth);
+          const bevel = extShape === 'rect' ? clampBevel(layerW, layerH, extrusionDepth, bevelRequested) : 0;
+          frontInset = bevel;
+
+          for (const f of extrusionFaces(layerW, layerH, extrusionDepth, extShape, undefined, { bevel: bevelRequested, bevelStyle: d3.bevelStyle })) {
+            const M = Matrix4Math.multiply(
+              world3d as import('@motion/scene').Matrix4,
+              f.m,
+            );
+            const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+            const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+            const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+            const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
+            const common = {
+              id: `${layer.id}::ext-${f.suffix}`,
+              x: O.x,
+              y: O.y,
+              rotation: Math.atan2(fm[1], fm[0]) / DEG,
+              scaleX: Math.hypot(fm[0], fm[1]),
+              scaleY: Math.hypot(fm[2], fm[3]),
+              matrix: fm,
+              world3d: M as readonly number[],
+              depth: layer.depth,
+              width: f.w,
+              height: f.h,
+              matte: undefined,
+              isMatteSource: undefined,
+              isAdjustment: undefined,
+              motionSamples: undefined,
+              deformedMesh: undefined,
+              frameBlend: undefined,
+              effects: undefined,
+              lighting: undefined as RenderLayer['lighting'],
+              shade3d: undefined as RenderLayer['shade3d'],
+            };
+            const faceLayer: RenderLayer = f.role === 'back'
+              ? { ...layer, ...common }
+              : {
+                  id: common.id,
+                  kind: 'shape',
+                  blend: layer.blend,
+                  x: common.x,
+                  y: common.y,
+                  rotation: common.rotation,
+                  scaleX: common.scaleX,
+                  scaleY: common.scaleY,
+                  matrix: common.matrix,
+                  world3d: common.world3d,
+                  depth: common.depth,
+                  opacity: layer.opacity,
+                  width: f.w,
+                  height: f.h,
+                  fill: wallFill,
+                  visible: layer.visible,
+                  primitive: 'rect',
+                };
+            if (extLit) {
+              const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
+              if (lg) {
+                faceLayer.lighting = lg;
+                faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess };
+              }
+            } else {
+              const g = f.role === 'back' ? EXTRUSION_BACK_GAIN : EXTRUSION_WALL_GAIN;
+              faceLayer.lighting = [g, g, g];
+            }
+            emitLayer(faceLayer, node);
+          }
+        }
+      }
+      // Front face. With a bevel it shrinks by `frontInset` on each side
+      // (w−2b × h−2b), centred on the box so its edge meets the front chamfer
+      // ring; the depth-path bridge (model3dFor) re-centres the smaller quad on
+      // the same world3d origin, so it stays glued. No bevel ⇒ emitted verbatim
+      // (byte-identical).
+      // Per-character 3D: replace the single string plane with one plane per
+      // glyph, each carried by its own world matrix so glyphs depth-test,
+      // intersect, and light individually — and a text animator's z /
+      // rotationX / rotationY channels can tumble them in real 3D.
+      const perCharGlyphs =
+        is3D && world3d && layer.kind === 'text' && isPerChar3D(node)
+          ? layoutPerChar3D({
+              text: layer.text ?? '',
+              style: {
+                fontSize: layer.fontSize ?? 16,
+                fontFamily: layer.fontFamily,
+                fontWeight: layer.fontWeight,
+                fontStyle: layer.fontStyle,
+                letterSpacing: layer.letterSpacing,
+                fill: typeof layer.fill === 'string' ? layer.fill : undefined,
+                align: layer.align as ParagraphStyle['align'],
+                lineHeight: layer.lineHeight,
+                paragraphSpacing: layer.paragraphSpacing,
+              },
+              boxWidth: layerW,
+              transforms: layer.glyphs,
+              runs: layer.runs,
+            })
+          : [];
+
+      if (perCharGlyphs.length > 0 && world3d) {
+        const pcMat = readNodeMaterial(node);
+        const pcLit = pcMat.acceptsLights && sceneLights.length > 0;
+        for (const g of perCharGlyphs) {
+          // Glyph frame: offset within the text box, its own depth, tumble
+          // about its own axes, then the animator's uniform scale.
+          const gm = Matrix4Math.compose({
+            position: { x: g.offsetX, y: g.offsetY, z: g.offsetZ },
+            rotation: { x: g.rotationX * DEG, y: g.rotationY * DEG, z: g.rotation * DEG },
+            scale: { x: g.scale, y: g.scale, z: 1 },
+            anchor: { x: 0, y: 0, z: 0 },
+          });
+          const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, gm);
+          const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+          const GX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+          const GY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+          const gfm = [GX.x - O.x, GX.y - O.y, GY.x - O.x, GY.y - O.y, O.x, O.y] as const;
+          const glyphLayer: RenderLayer = {
+            ...layer,
+            // Synthetic id: snapshot-only, so hit-testing / timeline / layer
+            // list (which read the scene graph) never see the glyph planes.
+            id: `${layer.id}::ch${g.index}`,
+            text: g.char,
+            // One glyph per plane — the string's own animators/runs already
+            // resolved into this glyph's placement and fill.
+            glyphs: undefined,
+            runs: undefined,
+            width: g.width,
+            height: g.height,
+            x: O.x,
+            y: O.y,
+            rotation: Math.atan2(gfm[1], gfm[0]) / DEG,
+            scaleX: Math.hypot(gfm[0], gfm[1]),
+            scaleY: Math.hypot(gfm[2], gfm[3]),
+            matrix: gfm,
+            world3d: M as readonly number[],
+            depth: layer.depth,
+            opacity: layer.opacity * g.opacity,
+            ...(g.fill ? { fill: g.fill } : {}),
+            lighting: undefined,
+            shade3d: undefined,
+          };
+          if (pcLit) {
+            const lg = shadeLayer(planeNormalOf(M), { x: O.x, y: O.y, z: z3 + g.offsetZ }, sceneLights);
+            if (lg) {
+              glyphLayer.lighting = lg;
+              glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess };
+            }
+          }
+          emitLayer(glyphLayer, node);
+        }
+      } else if (frontInset > 0) {
+        emitLayer({ ...layer, width: layerW - 2 * frontInset, height: layerH - 2 * frontInset }, node);
+      } else {
+        emitLayer(layer, node);
+      }
     }
   }
 
@@ -1223,6 +1539,28 @@ export function buildSnapshot(
   }
 
   resolveMatteSources(layers);
+
+  // 3D camera in matrix form for the GPU depth-tested path — derived from the
+  // SAME scalar camera / ortho view the affine projection above used, so both
+  // paths place layers identically. Emitted only when the frame has 3D layers.
+  const hasWorld3d = (ls: ReadonlyArray<RenderLayer>): boolean =>
+    ls.some((l) => l.world3d !== undefined || (l.precompLayers ? hasWorld3d(l.precompLayers) : false));
+  const has3d = hasWorld3d(layers);
+  const camera3d = has3d
+    ? orthoView
+      ? Project3D.orthoCameraMatrices(orthoView, comp.width, comp.height)
+      : {
+          view: Project3D.cameraViewMatrix(camera!),
+          projection: Project3D.cameraProjectionMatrix(camera!),
+          // Eye for Blinn-Phong specular on the per-fragment path. Ortho views
+          // have no eye — specular degrades gracefully there (adapter omits it).
+          eye: [camera!.position.x, camera!.position.y, camera!.position.z] as const,
+        }
+    : undefined;
+  // Scene lights in shader terms — only worth carrying when a 3D layer exists
+  // (per-fragment shading is gated on Accepts Lights per layer anyway).
+  const lights3d = has3d && sceneLights.length > 0 ? toShaderLights(sceneLights) : undefined;
+
   return {
     width: comp.width,
     height: comp.height,
@@ -1233,6 +1571,8 @@ export function buildSnapshot(
     layers,
     overlays,
     view,
+    camera3d,
+    lights3d,
   };
 }
 

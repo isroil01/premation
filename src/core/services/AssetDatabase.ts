@@ -9,6 +9,13 @@ export interface DbAsset {
     duration?: number;
   };
   data: Blob;
+  /**
+   * Small (~96px) downscaled preview for the Assets panel. Painting the
+   * full-resolution original into a 32px slot decodes the entire image into
+   * memory (a 4000×3000 photo ≈ 48 MB RGBA) — with many imports that alone
+   * makes the editor crawl. The thumbnail is a few KB and decodes instantly.
+   */
+  thumb?: Blob;
 }
 
 const DB_NAME = 'motion-assets-db';

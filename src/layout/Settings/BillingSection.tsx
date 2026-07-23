@@ -14,8 +14,6 @@ import { Icon } from '@components/Icon';
 import { api, isAuthenticated, type BillingSummary, type PlanDto } from '@core/api/client';
 import styles from './BillingSection.module.css';
 
-/** Warn while there's still time to do something about it. */
-const LOW_CREDIT_FRACTION = 0.2;
 
 export function BillingSection(): JSX.Element {
   const [summary, setSummary] = useState<BillingSummary | null>(null);
@@ -60,42 +58,18 @@ export function BillingSection(): JSX.Element {
     }
   };
 
-  const allowance = summary?.plan.monthlyCredits ?? 0;
-  const credits = summary?.credits ?? 0;
-  const pct = allowance > 0 ? Math.min(100, (credits / allowance) * 100) : 0;
-  const low = allowance > 0 && credits / allowance <= LOW_CREDIT_FRACTION;
 
   return (
     <div className={styles.section}>
       <p className={styles.intro}>
-        Credits are only spent by Motion AI, our own AI account. Using your own provider API key
-        costs nothing here — you pay your provider directly.
+        Manage your plan. The AI assistant runs entirely on your own API key — there are no platform AI credits to manage.
       </p>
 
       {error ? <p className={styles.error}>{error}</p> : null}
 
       {summary ? (
         <>
-          <div>
-            <div className={styles.balance}>
-              <span className={styles.balanceValue}>{credits}</span>
-              <span className={styles.balanceLabel}>
-                Motion AI credits left{allowance > 0 ? ` of ${allowance}` : ''}
-              </span>
-            </div>
-            {allowance > 0 ? (
-              <div className={styles.meterTrack} style={{ marginTop: 8 }}>
-                <div
-                  className={`${styles.meterFill} ${low ? styles.meterLow : ''}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            ) : null}
-          </div>
-
           <div className={styles.usageRow}>
-            <span>Used in the last 30 days: {summary.creditsUsedLast30Days}</span>
-            <span>Used all time: {summary.creditsUsedAllTime}</span>
             <span>Member since {new Date(summary.memberSince).toLocaleDateString()}</span>
           </div>
 

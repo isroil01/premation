@@ -95,6 +95,18 @@ export class SelectTool implements Tool {
     ctx.requestRender();
   }
 
+  onDoubleClick(e: ToolPointerEvent, ctx: ToolContext): void {
+    // Drill into a group: a single click selects the whole group (so it moves as
+    // one body), but double-click reaches past that to the individual part under
+    // the cursor so it can be edited — recolour one shape of an SVG icon or a
+    // UI-kit component. Figma/Illustrator "enter group" behaviour.
+    const hit = ctx.hitTester.hitTest(e.world);
+    if (hit) {
+      ctx.selection.selectExact(hit.id);
+      ctx.requestRender();
+    }
+  }
+
   onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
     const sel = currentSelection(ctx);
     // Handle drag → resize/rotate the single selected node.

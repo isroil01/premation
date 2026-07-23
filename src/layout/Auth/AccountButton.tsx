@@ -64,7 +64,7 @@ export function AccountButton(): JSX.Element {
     const label = user.name || user.email.split('@')[0];
     return (
       <button type="button" onClick={() => openAccountMenu(user.email)} title={user.email} style={pill}>
-        <Icon name="info" size={11} />
+        <Icon name="user" size={11} />
         {label}
       </button>
     );
@@ -72,7 +72,7 @@ export function AccountButton(): JSX.Element {
 
   return (
     <button type="button" onClick={() => openAuthModal()} title="Sign in to sync to the cloud" style={pill}>
-      <Icon name="info" size={11} />
+      <Icon name="user" size={11} />
       Sign in
     </button>
   );

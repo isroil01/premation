@@ -1,19 +1,19 @@
-/* INTENTIONAL DARK CHROME: the title bar stays near-black in BOTH themes
-   (native-app frame convention, like VS Code / AE). Its background and the
-   white-alpha text/hover literals below are therefore deliberately NOT
-   theme-tokenized — swapping them for --color-titlebar/--color-text-* would
-   make the bar flip to light and break the fixed white-on-dark contrast. */
+/* INTENTIONAL DARK CHROME: the title bar uses the platform's theme surface tokens
+   with a subtle translucent surface blur and sleek divider seam. */
 .titleBar {
   height: 32px;
-  background: #09090b;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--color-titlebar, #141416);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--color-divider, rgba(255, 255, 255, 0.07));
   display: flex;
   align-items: center;
   justify-content: space-between;
   position: relative;
   user-select: none;
-  color: #fff;
+  color: var(--color-text-primary, #ffffff);
   z-index: 1000;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .dragRegion {
@@ -34,27 +34,34 @@
   z-index: 1;
 }
 
-.appIcon {
-  display: flex;
-  align-items: center;
-}
-
-.dashboardLogoMark {
+.appIconBadge {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 2px;
-  background: var(--color-primary, #2988ff);
-  color: #ffffff;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, rgba(41, 136, 255, 0.22) 0%, rgba(41, 136, 255, 0.06) 100%);
+  border: 1px solid rgba(41, 136, 255, 0.25);
+  color: var(--color-primary, #2988ff);
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.appIconBadge:hover {
+  background: linear-gradient(135deg, rgba(41, 136, 255, 0.32) 0%, rgba(41, 136, 255, 0.12) 100%);
+  border-color: rgba(41, 136, 255, 0.4);
 }
 
 .appName {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.8));
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .center {
@@ -62,11 +69,22 @@
   align-items: center;
   gap: 6px;
   z-index: 1;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.center:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.09);
 }
 
 .projectName {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
   max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -74,55 +92,34 @@
 }
 
 .dirtyDot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  /* Amber = the app's "modified" signal (see themes/dark.css --color-modified). */
   background: var(--color-modified, #e0a83c);
+  box-shadow: 0 0 6px rgba(224, 168, 60, 0.45);
+  flex-shrink: 0;
 }
 
 .right {
   display: flex;
+  align-items: center;
   height: 100%;
   z-index: 1;
   -webkit-app-region: no-drag;
 }
 
-.btn {
-  width: 46px;
-  height: 100%;
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-}
-
-.btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-}
-
-.btnClose:hover {
-  background: #e81123 !important;
-  color: #fff !important;
-}
-
 .editorControls {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-right: 12px;
+  gap: 4px;
+  margin-right: 8px;
 }
 
 .menuDivider {
   width: 1px;
-  height: 16px;
-  margin: 0 8px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 14px;
+  margin: 0 6px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .layoutToggle {
@@ -130,26 +127,35 @@
   background: transparent !important;
   box-shadow: none !important;
   color: rgba(255, 255, 255, 0.6) !important;
+  border-radius: 5px !important;
+  width: 26px !important;
+  height: 26px !important;
+  display: grid !important;
+  place-items: center !important;
   padding: 0 !important;
   cursor: pointer;
+  transition: background 0.12s ease-out, color 0.12s ease-out, transform 0.1s ease-out !important;
   -webkit-app-region: no-drag;
 }
 
 .layoutToggle:hover {
-  background: transparent !important;
-  color: #fff !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+}
+
+.layoutToggle:active {
+  transform: scale(0.94) !important;
 }
 
 .layoutToggle[data-active] {
-  background: transparent !important;
-  color: #38bdf8 !important;
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.16)) !important;
+  color: var(--color-primary, #2988ff) !important;
   border: none !important;
 }
 
 .layoutToggle[data-active]:hover {
-  background: transparent !important;
-  color: #7dd3fc !important;
-  border: none !important;
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.24)) !important;
+  color: var(--color-primary-hover, #4097ff) !important;
 }
 
 .appMenuBarWrapper {
@@ -185,3 +191,44 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Window Action Buttons (Minimize, Maximize, Close) */
+.windowActions {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.btn {
+  width: 44px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s ease-out, color 0.12s ease-out;
+  outline: none;
+}
+
+.btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ffffff;
+}
+
+.btn:active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.btnClose:hover {
+  background: #e81123 !important;
+  color: #ffffff !important;
+}
+
+.btnClose:active {
+  background: #c40e1e !important;
+  color: #ffffff !important;
+}
+

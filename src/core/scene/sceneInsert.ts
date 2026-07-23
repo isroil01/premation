@@ -16,13 +16,12 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { Project3D } from '@motion/scene';
 import { is3DEnabled } from './threeD';
+import type { LightType } from './light';
 import { flattenScene, readNodeKind } from './sceneDerive';
-import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { detectImageSequence } from '@core/scene/imageSequence';
-import { useWorkspaceStore } from '@stores/projectStore';
-import { defaultAnimation } from '@motion/animation';
 
 
 let seq = 0;
@@ -31,7 +30,7 @@ export { activeCompRootId } from './activeComp';
 import { activeCompRootId } from './activeComp';
 
 /** Build a fresh scene node of `kind` with sensible default components. */
-function makeNode(kind: SceneKind, name: string): SceneNode {
+export function makeNode(kind: SceneKind, name: string): SceneNode {
   const id = `${kind}_${(seq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
   const transform = { position: { x: 160, y: 120 }, rotation: 0, scale: { x: 1, y: 1 } };
   const components: SceneNode['components'] =
@@ -54,7 +53,45 @@ function makeNode(kind: SceneKind, name: string): SceneNode {
           { id: `${id}_c`, type: 'Text', props: { content: 'Text', fontSize: 32, opacity: 100 } },
         ]
       : kind === 'group'
-        ? [{ id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: kind } }]
+        ? [
+            {
+              id: `${id}_t`,
+              type: 'Transform',
+              props: {
+                [SCENE_KIND_PROP]: kind,
+                x: 160,
+                y: 120,
+                rotation: 0,
+                scaleX: 1,
+                scaleY: 1,
+                anchorX: 0,
+                anchorY: 0,
+                width: 280,
+                height: 280,
+              },
+            },
+            { id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: kind } },
+          ]
+        : kind === 'image' || kind === 'video'
+        ? [
+            {
+              id: `${id}_t`,
+              type: 'Transform',
+              props: {
+                [SCENE_KIND_PROP]: kind,
+                x: 160,
+                y: 120,
+                rotation: 0,
+                scaleX: 1,
+                scaleY: 1,
+                anchorX: 0,
+                anchorY: 0,
+                width: 100,
+                height: 100,
+              },
+            },
+            { id: `${id}_s`, type: 'Style', props: { opacity: 100 } },
+          ]
         : [
             {
               id: `${id}_t`,
@@ -99,23 +136,61 @@ function getParentIdForInsert(id: string) {
   return node?.parent ?? null;
 }
 
-/** Drop a freshly-made node at the centre of the REAL composition — makeNode's
- *  (160,120) default put every inserted layer in the top-left corner of a
- *  1920×1080 comp, which read as "shapes come in broken". */
-function centerInComp(node: SceneNode): void {
+import { useInfoStore } from '@stores/infoStore';
+
+/**
+ * Places an inserted node under the active pointer cursor (or comp center if off-canvas),
+ * and assigns a prominent, scene-proportional width/height/fontSize so elements are
+ * visibly clear, large, and easy to edit across any composition resolution (HD, 4K, Reel, etc.).
+ */
+export function placeInComp(
+  node: SceneNode,
+  opts?: { customW?: number; customH?: number; customFontSize?: number }
+): void {
   const activeTabId = useProjectStore.getState().activeTabId;
   const activeTab = useProjectStore.getState().tabs[activeTabId ?? ''];
   const compId = activeTab?.compositionId ?? 'comp_root';
   const comp = useProjectStore.getState().comps[compId] ?? useCompositionStore.getState();
-  const cx = comp.width / 2;
-  const cy = comp.height / 2;
+
+  // Target size ~28% of shorter comp edge (min 240px, max 960px)
+  const compMinDim = Math.min(comp.width, comp.height);
+  const targetSize = Math.max(240, Math.min(960, Math.round(compMinDim * 0.28)));
+
+  let width = opts?.customW && opts.customW > 0 ? opts.customW : targetSize;
+  let height = opts?.customH && opts.customH > 0 ? opts.customH : targetSize;
+
+  // Scale up small custom dimensions (e.g. 24px - 180px) so elements match scene scale
+  if (width < 220 && height < 220) {
+    const aspect = (width / height) || 1;
+    if (aspect >= 1) {
+      width = targetSize;
+      height = Math.round(targetSize / aspect);
+    } else {
+      height = targetSize;
+      width = Math.round(targetSize * aspect);
+    }
+  }
+
+  const info = useInfoStore.getState();
+  const px = info.present ? info.x : comp.width / 2;
+  const py = info.present ? info.y : comp.height / 2;
+
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
-    t.props.x = cx;
-    t.props.y = cy;
+    t.props.x = px;
+    t.props.y = py;
+    t.props.width = width;
+    t.props.height = height;
   }
-  node.transform.position.x = cx;
-  node.transform.position.y = cy;
+
+  const textComp = node.components.find((c) => c.type === 'Text');
+  if (textComp) {
+    const proportionalFontSize = opts?.customFontSize || Math.max(48, Math.round(comp.height * 0.065));
+    textComp.props.fontSize = proportionalFontSize;
+  }
+
+  node.transform.position.x = px;
+  node.transform.position.y = py;
 }
 
 /**
@@ -146,11 +221,96 @@ export function setNodeWorldPosition(nodeId: string, x: number, y: number): void
   bumpScene();
 }
 
+/**
+ * Insert an SVG as ONE editable, movable icon: a group of shape/text layers,
+ * scaled to a comfortable size and centered (or dropped at x/y), with the parts
+ * positioned RELATIVE to the group so it behaves as a single body. Only the
+ * GROUP is selected, so a drag moves the whole thing (mirrors the cursor lib).
+ *
+ * Returns the new group id, or null when the SVG has no vector geometry (caller
+ * should fall back to a faithful image).
+ */
+export function insertSvgShapeGroup(
+  svgText: string,
+  name: string,
+  opts?: { x?: number; y?: number; targetSize?: number },
+): string | null {
+  const shapes = parseSvgToShapes(svgText);
+  if (shapes.length === 0) return null;
+
+  const rootId = activeCompRootId();
+  const comp = useCompositionStore.getState();
+  const info = useInfoStore.getState();
+  const px = opts?.x ?? (info.present ? info.x : comp.width / 2);
+  const py = opts?.y ?? (info.present ? info.y : comp.height / 2);
+
+  // Union bounding box of every part (SVG user space) → overall center + size.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of shapes) {
+    minX = Math.min(minX, s.centerX - s.width / 2);
+    minY = Math.min(minY, s.centerY - s.height / 2);
+    maxX = Math.max(maxX, s.centerX + s.width / 2);
+    maxY = Math.max(maxY, s.centerY + s.height / 2);
+  }
+  const svgCx = (minX + maxX) / 2;
+  const svgCy = (minY + maxY) / 2;
+  const svgW = Math.max(1, maxX - minX);
+  const svgH = Math.max(1, maxY - minY);
+
+  // Scale so UI components and SVG groups land at a prominent, scene-proportional size.
+  const compMinDim = Math.min(comp.width, comp.height);
+  const proportionalTarget = Math.max(280, Math.min(960, Math.round(compMinDim * 0.32)));
+  const target = opts?.targetSize ? Math.max(opts.targetSize, proportionalTarget) : proportionalTarget;
+  const k = target / Math.max(svgW, svgH);
+
+  const group = makeNode('group', name);
+  group.transform.position.x = px;
+  group.transform.position.y = py;
+  defaultSceneGraph.addChild(rootId, group);
+
+  for (const s of shapes) {
+    const pathId = `shape_${(seq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
+    // Part offset from the group center, scaled — keeps every part in register.
+    const relX = (s.centerX - svgCx) * k;
+    const relY = (s.centerY - svgCy) * k;
+    const transform = { position: { x: relX, y: relY }, rotation: 0, scale: { x: 1, y: 1 } };
+
+    if (s.textContent) {
+      const components: SceneNode['components'] = [
+        { id: `${pathId}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'text', x: relX, y: relY, rotation: 0, width: s.width * k, height: s.height * k } },
+        { id: `${pathId}_txt`, type: 'Text', props: { content: s.textContent, fontSize: (s.fontSize ?? 14) * k, fill: s.fill && s.fill !== 'none' ? s.fill : '#ffffff', opacity: 100 } },
+      ];
+      defaultSceneGraph.addChild(group.id, { id: pathId, name: s.name, parent: group.id, children: [], transform, visible: true, locked: false, components });
+    } else {
+      const scaledPoints = s.points.map((p) => ({ x: p.x * k, y: p.y * k, inX: p.inX * k, inY: p.inY * k, outX: p.outX * k, outY: p.outY * k }));
+      const components: SceneNode['components'] = [
+        { id: `${pathId}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: relX, y: relY, rotation: 0, width: s.width * k, height: s.height * k } },
+        {
+          id: `${pathId}_s`,
+          type: 'Style',
+          props: {
+            opacity: 100,
+            fill: s.fill,
+            ...(s.strokeColor ? { stroke: { color: s.strokeColor, width: (s.strokeWidth ?? 2) * k, opacity: 1, cap: 'butt', join: 'miter', align: 'center', dash: [] } } : {}),
+          },
+        },
+        { id: `${pathId}_g`, type: 'Geometry', props: { points: scaledPoints, ...(s.closed ? {} : { open: true }) } },
+      ];
+      defaultSceneGraph.addChild(group.id, { id: pathId, name: s.name, parent: group.id, children: [], transform, visible: true, locked: false, components });
+    }
+  }
+
+  // Select ONLY the group — the icon is one selectable/movable body.
+  useSelectionStore.getState().set([group.id]);
+  bumpScene();
+  return group.id;
+}
+
 /** Insert a primitive at the composition root, select it, and refresh the UI. */
 export function insertPrimitive(kind: SceneKind, name: string): void {
   const rootId = activeCompRootId();
   const node = makeNode(kind, name);
-  centerInComp(node);
+  placeInComp(node);
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
@@ -302,20 +462,23 @@ function shapeOutlinePoints(shape: ShapeKind, w: number, h: number): Array<{ x: 
  * preset. `rect`/`ellipse` render as native SDF primitives; the others carry a
  * `Geometry` component so the renderer draws their real outline as a path.
  */
-export function insertShape(shape: ShapeKind, name: string): void {
+export function insertShape(shape: ShapeKind, name: string, pos?: { x: number; y: number }): void {
   const rootId = activeCompRootId();
   const node = makeNode('shape', name);
-  centerInComp(node);
-  const W = 220;
-  const H = 220;
+  placeInComp(node);
 
   const transform = node.components.find((c) => c.type === 'Transform');
+  const W = (transform?.props.width as number) || 280;
+  const H = (transform?.props.height as number) || 280;
+
   if (transform) {
     transform.props.width = W;
     transform.props.height = H;
-    // Explicit shape type — buildSnapshot reads this to pick the primitive,
-    // so it no longer depends on the layer's (renameable) name.
     transform.props.shapeType = shape;
+    if (pos) {
+      transform.props.x = Math.round(pos.x);
+      transform.props.y = Math.round(pos.y);
+    }
   }
 
   const pts = shapeOutlinePoints(shape, W, H);
@@ -397,7 +560,14 @@ export function insertPathNode(
 export function insertText(name: string, fontSize = 32, fontWeight = 400, extraProps: Record<string, any> = {}): void {
   const rootId = activeCompRootId();
   const node = makeNode('text', name);
-  centerInComp(node);
+  placeInComp(node, { customFontSize: fontSize > 36 ? fontSize : undefined });
+  if (extraProps.pos) {
+    const t = node.components.find((c) => c.type === 'Transform');
+    if (t) {
+      t.props.x = Math.round(extraProps.pos.x);
+      t.props.y = Math.round(extraProps.pos.y);
+    }
+  }
   const text = node.components.find((c) => c.type === 'Text');
   if (text) {
     text.props.content = name;
@@ -405,7 +575,7 @@ export function insertText(name: string, fontSize = 32, fontWeight = 400, extraP
     text.props.fontWeight = fontWeight;
     // Map extraProps onto Text component props
     for (const [key, value] of Object.entries(extraProps)) {
-      if (key !== 'fill') {
+      if (key !== 'fill' && key !== 'pos') {
         text.props[key] = value;
       }
     }
@@ -439,21 +609,39 @@ export function insertSolid(color = '#2b7eff'): void {
   bumpScene();
 }
 
+/** Optional seed params for {@link insertCamera} (AE New Camera dialog).
+ *  Every field defaults to the legacy silent-insert behavior. */
+export interface CameraSeed {
+  name?: string;
+  /** Focal length in comp px (see Project3D / CameraSection). */
+  focalLength?: number;
+  /** Two-node camera: seed a Point of Interest at the comp centre. */
+  twoNode?: boolean;
+}
+
 /** Insert a Camera layer, centred on the REAL comp and pulled back by its focal
  *  length so the comp plane renders 1:1. Position / z / focalLength are plain
  *  editable + keyframeable props (the inspector shows them automatically). */
-export function insertCamera(): void {
+export function insertCamera(seed: CameraSeed = {}): void {
   const rootId = activeCompRootId();
-  const node = makeNode('camera', 'Camera 1');
+  const node = makeNode('camera', seed.name?.trim() || 'Camera 1');
   const compSize = useCompositionStore.getState();
   const cam = Project3D.defaultCamera(compSize.width, compSize.height);
+  const focal = typeof seed.focalLength === 'number' && seed.focalLength > 0 ? seed.focalLength : cam.focalLength;
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
     // Seeded before the node enters the graph, so these become its base props.
+    // z = -focalLength keeps the comp plane 1:1 for ANY chosen lens.
     t.props.x = cam.position.x;
     t.props.y = cam.position.y;
-    t.props.z = cam.position.z;
-    t.props.focalLength = cam.focalLength;
+    t.props.z = -focal;
+    t.props.focalLength = focal;
+    if (seed.twoNode) {
+      // Two-node camera: an explicit Point of Interest the camera looks at.
+      t.props.poiX = compSize.width / 2;
+      t.props.poiY = compSize.height / 2;
+      t.props.poiZ = 0;
+    }
   }
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
@@ -475,10 +663,26 @@ export function insertCamera(): void {
   }
 }
 
+/** Optional seed params for {@link insertLight} (AE New Light dialog).
+ *  Every field defaults to the legacy silent-insert behavior. */
+export interface LightSeed {
+  name?: string;
+  /** Light kind (see readNodeLight): point (default), spot, parallel, ambient. */
+  type?: LightType;
+  /** Light colour (hex) — stored on Style.fill. */
+  color?: string;
+  /** Brightness percent (default 100). */
+  intensity?: number;
+  /** Spot only: full cone width, degrees. */
+  coneAngle?: number;
+  /** Cast 2.5D drop-shadows from this light. */
+  castShadows?: boolean;
+}
+
 /** Insert a Light layer */
-export function insertLight(): void {
+export function insertLight(seed: LightSeed = {}): void {
   const rootId = activeCompRootId();
-  const node = makeNode('light', 'Light 1');
+  const node = makeNode('light', seed.name?.trim() || 'Light 1');
   const compSize = useCompositionStore.getState();
   // Seed position + keyframeable intensity/radius; warm colour via Style.fill.
   // Radius scales with the comp so the glow reads on any size (a fixed 500px
@@ -487,14 +691,84 @@ export function insertLight(): void {
   if (t) {
     t.props.x = compSize.width / 2;
     t.props.y = compSize.height / 2;
-    t.props.intensity = 100;
+    t.props.intensity = typeof seed.intensity === 'number' ? seed.intensity : 100;
     t.props.radius = Math.round(Math.max(compSize.width, compSize.height) * 0.45);
+    // Only write the optional props when chosen — an unseeded light keeps the
+    // exact prop shape it always had (readNodeLight defaults cover the rest).
+    if (seed.type && seed.type !== 'point') t.props.lightType = seed.type;
+    if (seed.type === 'spot' && typeof seed.coneAngle === 'number') t.props.lightCone = seed.coneAngle;
+    if (seed.castShadows) t.props.castShadows = true;
   }
   const s = node.components.find((c) => c.type === 'Style');
-  if (s) s.props.fill = '#fff3c0';
+  if (s) s.props.fill = seed.color ?? '#fff3c0';
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
+}
+
+/** Insert a 3D Parametric Primitive Mesh layer (AE 3D Design Space). */
+export function insert3DPrimitive(type: 'cube' | 'sphere' | 'plane' | 'cylinder' = 'cube'): void {
+  const rootId = activeCompRootId();
+  const label = type === 'cube' ? '3D Cube' : type === 'sphere' ? '3D Sphere' : type === 'cylinder' ? '3D Cylinder' : '3D Plane';
+  const node = makeNode('shape', label);
+  const compSize = useCompositionStore.getState();
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (t) {
+    t.props.x = compSize.width / 2;
+    t.props.y = compSize.height / 2;
+    t.props.z = 0;
+    t.props.rotationX = 0;
+    t.props.rotationY = 0;
+    t.props.width = 240;
+    t.props.height = 240;
+    t.props.primitiveType = type;
+    t.props.castsShadows = true;
+    t.props.acceptsLights = true;
+    // Real extruded geometry: a Cube is a square extruded by its side length;
+    // a Cylinder is an extruded ellipse (segmented side wall). Spheres stay
+    // flat until real curved meshes exist. See buildSnapshot's extrusion pass.
+    if (type === 'cube' || type === 'cylinder') t.props.extrusionDepth = 240;
+    if (type === 'cylinder') t.props.shapeType = 'ellipse';
+  }
+  defaultSceneGraph.addChild(rootId, node);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+  useUIStore.getState().notify({
+    level: 'info',
+    message: `${label} added to 3D Design Space`,
+    durationMs: 3000,
+  });
+}
+/** Insert a 3D Extruded Text layer pre-configured with solid contour volume extrusion. */
+export function insert3DText(textLabel = '3D TEXT'): void {
+  const rootId = activeCompRootId();
+  const node = makeNode('text', textLabel);
+  placeInComp(node, { customFontSize: 64 });
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (t) {
+    t.props.z = 0;
+    t.props.rotationX = 0;
+    t.props.rotationY = 0;
+    t.props.is3D = true;
+    t.props.extrusionDepth = 35;
+    t.props.bevelDepth = 4;
+    t.props.castsShadows = true;
+    t.props.acceptsLights = true;
+  }
+  const textComp = node.components.find((c) => c.type === 'Text');
+  if (textComp) {
+    textComp.props.content = textLabel;
+    textComp.props.fontSize = 64;
+    textComp.props.fontWeight = 700;
+  }
+  defaultSceneGraph.addChild(rootId, node);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+  useUIStore.getState().notify({
+    level: 'info',
+    message: '3D Extruded Text added to scene',
+    durationMs: 3000,
+  });
 }
 
 /** Insert a Particle emitter layer, positioned at the comp centre with a
@@ -503,13 +777,23 @@ export function insertParticle(): void {
   const rootId = activeCompRootId();
   const node = makeNode('particle', 'Particles 1');
   const compSize = useCompositionStore.getState();
+  const w = compSize.width || 1920;
+  const h = compSize.height || 1080;
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
-    t.props.x = compSize.width / 2;
-    t.props.y = compSize.height / 2;
+    t.props.x = w / 2;
+    t.props.y = h / 2;
+    t.props.width = w;
+    t.props.height = h;
+    t.props.anchorX = w / 2;
+    t.props.anchorY = h / 2;
   }
   defaultSceneGraph.addChild(rootId, node);
-  defaultSceneGraph.setParticle(node.id, DEFAULT_PARTICLE_CONFIG);
+  defaultSceneGraph.setParticle(node.id, {
+    ...DEFAULT_PARTICLE_CONFIG,
+    emitterWidth: Math.round(w * 0.5),
+    emitterHeight: Math.round(h * 0.5),
+  });
   useSelectionStore.getState().set([node.id]);
   bumpScene();
 }
@@ -546,7 +830,7 @@ export function insertCompInstance(refCompId: string): string | null {
   }
   const refName = defaultSceneGraph.getNode(refCompId)?.name ?? 'Composition';
   const node = makeNode('comp', refName);
-  centerInComp(node);
+  placeInComp(node);
   // The instance composites its expanded content as one unit (precomp path)
   // and carries the reference the renderer expands.
   node.components.push({
@@ -635,91 +919,69 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
     return;
   }
 
-  // Intercept SVG files and parse them into editable vector shapes
-  if (asset.type === 'image' && asset.name.toLowerCase().endsWith('.svg')) {
-    try {
-      const res = await fetch(asset.src);
-      const svgText = await res.text();
-      const shapes = parseSvgToShapes(svgText);
-      if (shapes.length > 0) {
-        // Create a group for the SVG shapes to keep them organized
-        const group = makeNode('group', asset.name);
-        defaultSceneGraph.addChild(rootId, group);
-
-        const selectionIds: string[] = [];
-
-        for (const s of shapes) {
-          const pathId = `shape_${(seq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
-          const transform = { position: { x: s.centerX, y: s.centerY }, rotation: 0, scale: { x: 1, y: 1 } };
-          const components: SceneNode['components'] = [
-            {
-              id: `${pathId}_t`,
-              type: 'Transform',
-              props: {
-                [SCENE_KIND_PROP]: 'shape',
-                x: s.centerX,
-                y: s.centerY,
-                rotation: 0,
-                width: s.width,
-                height: s.height,
-              },
-            },
-            {
-              id: `${pathId}_s`,
-              type: 'Style',
-              props: {
-                opacity: 100,
-                fill: s.fill,
-                ...(s.strokeColor ? { stroke: { color: s.strokeColor, width: s.strokeWidth ?? 2, opacity: 1, cap: 'butt', join: 'miter', align: 'center', dash: [] } } : {}),
-              },
-            },
-            {
-              id: `${pathId}_g`,
-              type: 'Geometry',
-              // Open outlines (polyline / line / un-closed paths) must not wrap
-              // the last point back to the first at render time.
-              props: { points: s.points, ...(s.closed ? {} : { open: true }) },
-            },
-          ];
-
-          const pathNode: SceneNode = { id: pathId, name: s.name, parent: group.id, children: [], transform, visible: true, locked: false, components };
-          defaultSceneGraph.addChild(group.id, pathNode);
-          selectionIds.push(pathNode.id);
-        }
-
-        useSelectionStore.getState().set([group.id, ...selectionIds]);
-        bumpScene();
-        return;
-      }
-    } catch (e) {
-      console.error('[sceneInsert] failed to parse SVG asset to vector paths:', e);
-      // Fallback to static image insert below on error
-    }
-  }
-
+  // SVG routing (fidelity + editability, picking the right one automatically):
+  //
+  //  • SIMPLE SVGs (only flat-filled basic geometry) → editable vector shapes.
+  //    These convert losslessly, so the user gets crisp, fully customizable,
+  //    resolution-independent layers.
+  //  • COMPLEX SVGs (gradients, text, embedded raster, <use>, filters, masks…)
+  //    → faithful IMAGE. `parseSvgToShapes` can't reproduce those — it used to
+  //    silently drop them and turn `url(#gradient)` fills into garbage (the
+  //    "crashed" SVG). The renderer rasterizes the image faithfully instead
+  //    (high-resolution, see AppTextureProvider).
+  // SVG Assets: Insert as a unified, high-fidelity vector image layer.
+  // This renders all SVG gradients, styles, clip-paths, and text 100% pixel-perfect
+  // while ensuring the SVG icon moves as ONE solid, unbroken body on canvas.
   const kind = asset.type === 'video' ? 'video' : 'image';
   const width = asset.metadata?.width ?? 400;
   const height = asset.metadata?.height ?? 400;
 
   const node = makeNode(kind, asset.name);
-  // Add width/height and src/assetId to the transform component props
   const transform = node.components.find(c => c.type === 'Transform');
   if (transform) {
-    transform.props.width = width;
-    transform.props.height = height;
     transform.props.src = asset.src;
     transform.props.assetId = asset.id;
-    // Center it in the REAL composition (was hardcoded to 1080p).
-    const comp = useCompositionStore.getState();
-    transform.props.x = comp.width / 2;
-    transform.props.y = comp.height / 2;
-    node.transform.position.x = transform.props.x as number;
-    node.transform.position.y = transform.props.y as number;
   }
+  placeInComp(node, { customW: width, customH: height });
   
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
+}
+
+/**
+ * Insert a standalone image layer from a ready `src` (e.g. a UI Kit component's
+ * inline SVG data URL). No ImportedAsset / asset library entry — the src is
+ * stored directly on the layer, so it must be self-contained (a data URL) to
+ * survive reload. Returns the new node id.
+ */
+export function insertImageNode(opts: {
+  name: string;
+  src: string;
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+}): string {
+  const rootId = activeCompRootId();
+  const node = makeNode('image', opts.name);
+  const transform = node.components.find((c) => c.type === 'Transform');
+  if (transform) {
+    transform.props.src = opts.src;
+  }
+  placeInComp(node, { customW: opts.width, customH: opts.height });
+  if (opts.x !== undefined) {
+    if (transform) transform.props.x = opts.x;
+    node.transform.position.x = opts.x;
+  }
+  if (opts.y !== undefined) {
+    if (transform) transform.props.y = opts.y;
+    node.transform.position.y = opts.y;
+  }
+  defaultSceneGraph.addChild(rootId, node);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+  return node.id;
 }
 
 /**
@@ -925,325 +1187,93 @@ export const toggleSelectedLocked = (): void => toggleSelectionFlag('locked');
 export const toggleSelectedSolo = (): void => toggleSelectionFlag('solo');
 export const toggleSelectedVisible = (): void => toggleSelectionFlag('visible');
 
-// ── Asset Libraries Core Insertion Helpers ─────────────────────────────
+/**
+ * Group the currently selected nodes into a single master group body.
+ */
+export function groupSelectedNodes(groupName = 'Group Assembly'): string | null {
+  const selection = useSelectionStore.getState().ids;
+  if (selection.length === 0) return null;
 
-export function insertCursorLibraryItem(cursorId: string, name: string, x?: number, y?: number): string {
   const rootId = activeCompRootId();
-  const px = x ?? useCompositionStore.getState().width / 2;
-  const py = y ?? useCompositionStore.getState().height / 2;
+  const nodes = selection.map((id) => defaultSceneGraph.getNode(id)).filter((n): n is SceneNode => Boolean(n));
+  if (nodes.length === 0) return null;
 
-  if (cursorId === 'c2' || cursorId === 'c3') {
-    // Click Ripple or Double Burst group
-    const group = makeNode('group', name);
-    group.transform.position = { x: px, y: py };
-    defaultSceneGraph.addChild(rootId, group);
-
-    const arrow = makeNode('shape', 'Pointer');
-    arrow.transform.position = { x: 0, y: 0 };
-    const tArrow = arrow.components.find((c) => c.type === 'Transform');
-    if (tArrow) {
-      tArrow.props.width = 40;
-      tArrow.props.height = 40;
-      tArrow.props.shapeType = 'arrow';
-    }
-    const styleArrow = arrow.components.find((c) => c.type === 'Style');
-    if (styleArrow) styleArrow.props.fill = '#8b5cf6';
-    defaultSceneGraph.addChild(group.id, arrow);
-
-    const ripple = makeNode('shape', 'Ripple');
-    ripple.transform.position = { x: 0, y: 0 };
-    const tRipple = ripple.components.find((c) => c.type === 'Transform');
-    if (tRipple) {
-      tRipple.props.width = 80;
-      tRipple.props.height = 80;
-      tRipple.props.shapeType = 'ellipse';
-    }
-    const styleRipple = ripple.components.find((c) => c.type === 'Style');
-    if (styleRipple) styleRipple.props.fill = 'rgba(0,0,0,0)';
-    ripple.components.push({
-      id: `${ripple.id}_fx`,
-      type: 'fx',
-      props: {
-        stroke: { enabled: true, color: '#8b5cf6', width: 4, opacity: 1, cap: 'round', join: 'miter', align: 'center', dash: [] },
-      },
-    });
-    defaultSceneGraph.addChild(group.id, ripple);
-    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
-    const lt = compToKeyframeTime(ripple.id, t0);
-    defaultAnimation.setKeyframe(ripple.id, 'scaleX', lt, 0, 'easeOut');
-    defaultAnimation.setKeyframe(ripple.id, 'scaleY', lt, 0, 'easeOut');
-    defaultAnimation.setKeyframe(ripple.id, 'opacity', lt, 100, 'easeOut');
-
-    defaultAnimation.setKeyframe(ripple.id, 'scaleX', lt + 0.5, 1.5, 'easeOut');
-    defaultAnimation.setKeyframe(ripple.id, 'scaleY', lt + 0.5, 1.5, 'easeOut');
-    defaultAnimation.setKeyframe(ripple.id, 'opacity', lt + 0.5, 0, 'easeOut');
-
-    useSelectionStore.getState().set([group.id]);
-    bumpScene();
-    return group.id;
-  } else {
-    const node = makeNode('shape', name);
-    node.transform.position = { x: px, y: py };
-    const t = node.components.find((c) => c.type === 'Transform');
-    let fill = '#2988ff';
-    let shape: ShapeKind = 'arrow';
-    let size = 50;
-
-    if (cursorId === 'c4' || cursorId === 'c5' || cursorId === 'c6') {
-      shape = 'ellipse';
-      fill = cursorId === 'c4' ? '#10b981' : cursorId === 'c5' ? '#ec4899' : '#6366f1';
-      size = 30;
-    } else if (cursorId === 'c7' || cursorId === 'c8') {
-      shape = 'ellipse';
-      fill = cursorId === 'c7' ? 'rgba(249, 115, 22, 0.35)' : 'rgba(132, 204, 22, 0.3)';
-      size = 180;
-    } else if (cursorId === 'c9' || cursorId === 'c10') {
-      shape = 'triangle';
-      fill = '#14b8a6';
-      size = 45;
-    } else if (cursorId === 'c11') {
-      shape = 'cross';
-      fill = '#fb7185';
-      size = 40;
-    }
-
-    if (t) {
-      t.props.width = size;
-      t.props.height = size;
-      t.props.shapeType = shape;
-    }
-    const style = node.components.find((c) => c.type === 'Style');
-    if (style) style.props.fill = fill;
-
-    defaultSceneGraph.addChild(rootId, node);
-    useSelectionStore.getState().set([node.id]);
-    bumpScene();
-    return node.id;
+  // Calculate center of selected nodes
+  let sumX = 0, sumY = 0;
+  for (const n of nodes) {
+    sumX += n.transform.position.x;
+    sumY += n.transform.position.y;
   }
-}
+  const groupX = Math.round(sumX / nodes.length);
+  const groupY = Math.round(sumY / nodes.length);
 
-export function insertMotionGraphicLibraryItem(mgId: string, name: string, x?: number, y?: number): string {
-  const rootId = activeCompRootId();
-  const px = x ?? useCompositionStore.getState().width / 2;
-  const py = y ?? useCompositionStore.getState().height / 2;
+  const group = makeNode('group', groupName);
+  const tComp = group.components.find((c) => c.type === 'Transform');
+  if (tComp) {
+    tComp.props.x = groupX;
+    tComp.props.y = groupY;
+  }
+  group.transform.position.x = groupX;
+  group.transform.position.y = groupY;
 
-  const group = makeNode('group', name);
-  group.transform.position = { x: px, y: py };
   defaultSceneGraph.addChild(rootId, group);
 
-  const bg = makeNode('shape', 'Background Matte');
-  bg.transform.position = { x: 0, y: 0 };
-  const tBg = bg.components.find((c) => c.type === 'Transform');
-  if (tBg) {
-    tBg.props.width = 360;
-    tBg.props.height = 80;
-    tBg.props.shapeType = 'rect';
-    tBg.props.cornerRadius = 8;
+  // Re-parent selected nodes under the new group, offsetting position relative to group center
+  for (const n of nodes) {
+    defaultSceneGraph.setParent(n.id, group.id);
+    const relX = n.transform.position.x - groupX;
+    const relY = n.transform.position.y - groupY;
+    n.transform.position.x = relX;
+    n.transform.position.y = relY;
+    const t = n.components.find((c) => c.type === 'Transform');
+    if (t) {
+      t.props.x = relX;
+      t.props.y = relY;
+    }
   }
-  const styleBg = bg.components.find((c) => c.type === 'Style');
-  if (styleBg) {
-    styleBg.props.fill = mgId === 'mg1' ? 'rgba(41, 136, 255, 0.95)' : 'rgba(139, 92, 246, 0.95)';
-  }
-  defaultSceneGraph.addChild(group.id, bg);
-
-  const txt = makeNode('text', name);
-  txt.transform.position = { x: -140, y: -10 };
-  const tText = txt.components.find((c) => c.type === 'Text');
-  if (tText) {
-    tText.props.fontSize = 24;
-    tText.props.fill = '#ffffff';
-    tText.props.content = name;
-  }
-  defaultSceneGraph.addChild(group.id, txt);
-  const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
-  const ltBg = compToKeyframeTime(bg.id, t0);
-  const ltTxt = compToKeyframeTime(txt.id, t0);
-
-  defaultAnimation.setKeyframe(bg.id, 'scaleX', ltBg, 0, 'easeOut');
-  defaultAnimation.setKeyframe(bg.id, 'scaleX', ltBg + 0.4, 1, 'easeOut');
-
-  defaultAnimation.setKeyframe(txt.id, 'opacity', ltTxt, 0, 'easeInOut');
-  defaultAnimation.setKeyframe(txt.id, 'opacity', ltTxt + 0.2, 0, 'easeInOut');
-  defaultAnimation.setKeyframe(txt.id, 'opacity', ltTxt + 0.6, 100, 'easeInOut');
 
   useSelectionStore.getState().set([group.id]);
   bumpScene();
   return group.id;
 }
 
-export function insertTransitionLibraryItem(transId: string, name: string): string {
-  const rootId = activeCompRootId();
-  const comp = useCompositionStore.getState();
-  const W = comp.width || 1920;
+/**
+ * Ungroup / Detach a group node into standalone sub-layers.
+ */
+export function ungroupSelectedNode(targetId?: string): string[] {
+  const selection = targetId ? [targetId] : useSelectionStore.getState().ids;
+  const newSelection: string[] = [];
 
-  const node = makeNode('shape', name);
-  defaultSceneGraph.addChild(rootId, node);
-  defaultSceneGraph.setSolid(node.id, true);
+  for (const id of selection) {
+    const groupNode = defaultSceneGraph.getNode(id);
+    if (!groupNode) continue;
+    const children = defaultSceneGraph.getChildren(groupNode.id);
+    if (children.length === 0) continue;
 
-  const color = transId === 't2' ? '#2988ff' : transId === 't3' ? '#10b981' : '#8b5cf6';
-  defaultSceneGraph.setFill(node.id, { type: 'solid', color });
+    const rootId = activeCompRootId();
+    const gx = groupNode.transform.position.x;
+    const gy = groupNode.transform.position.y;
 
-  centerInComp(node);
-  const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
-  const lt = compToKeyframeTime(node.id, t0);
+    for (const child of children) {
+      defaultSceneGraph.setParent(child.id, rootId);
+      const absX = child.transform.position.x + gx;
+      const absY = child.transform.position.y + gy;
+      child.transform.position.x = absX;
+      child.transform.position.y = absY;
+      const t = child.components.find((c) => c.type === 'Transform');
+      if (t) {
+        t.props.x = absX;
+        t.props.y = absY;
+      }
+      newSelection.push(child.id);
+    }
 
-  if (transId === 't2' || transId === 't3') {
-    defaultAnimation.setKeyframe(node.id, 'x', lt, -W, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'x', lt + 0.4, 0, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'x', lt + 0.8, W, 'easeInOut');
-  } else if (transId === 't4' || transId === 't5') {
-    defaultAnimation.setKeyframe(node.id, 'scaleX', lt, 0, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleY', lt, 0, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.4, 1.5, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.4, 1.5, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.8, 0, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.8, 0, 'easeInOut');
-  } else {
-    defaultAnimation.setKeyframe(node.id, 'opacity', lt, 0, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'opacity', lt + 0.3, 100, 'easeInOut');
-    defaultAnimation.setKeyframe(node.id, 'opacity', lt + 0.6, 0, 'easeInOut');
+    defaultSceneGraph.removeNode(groupNode.id);
   }
 
-  useSelectionStore.getState().set([node.id]);
-  bumpScene();
-  return node.id;
-}
-
-export function insertSoundFxLibraryItem(sfxId: string, name: string): string {
-  const asset: ImportedAsset = {
-    id: `sfx_asset_${sfxId}_${Math.random().toString(36).slice(2, 6)}`,
-    name: name,
-    type: 'audio' as const,
-    src: 'sfx-dummy-silent.mp3',
-    size: 2048,
-    metadata: {
-      duration: sfxId.startsWith('s1') ? 0.2 : sfxId.startsWith('s4') ? 0.6 : 1.5,
-    },
-  };
-
-  insertAudio(asset);
-  const ids = useSelectionStore.getState().ids;
-  return ids[0] || '';
-}
-
-export function insertLottieLibraryItem(lottieId: string, name: string, x?: number, y?: number): string {
-  const rootId = activeCompRootId();
-  const px = x ?? useCompositionStore.getState().width / 2;
-  const py = y ?? useCompositionStore.getState().height / 2;
-
-  const color = lottieId === 'l1' ? '#10b981' : lottieId === 'l4' ? '#ec4899' : '#2988ff';
-
-  if (lottieId === 'l1') {
-    const group = makeNode('group', name);
-    group.transform.position = { x: px, y: py };
-    defaultSceneGraph.addChild(rootId, group);
-
-    const circle = makeNode('shape', 'Ring');
-    circle.transform.position = { x: 0, y: 0 };
-    const tCircle = circle.components.find((c) => c.type === 'Transform');
-    if (tCircle) {
-      tCircle.props.width = 100;
-      tCircle.props.height = 100;
-      tCircle.props.shapeType = 'ellipse';
-    }
-    const styleCircle = circle.components.find((c) => c.type === 'Style');
-    if (styleCircle) styleCircle.props.fill = 'rgba(0,0,0,0)';
-    circle.components.push({
-      id: `${circle.id}_fx`,
-      type: 'fx',
-      props: {
-        stroke: { enabled: true, color: color, width: 6, opacity: 1, cap: 'round', join: 'miter', align: 'center', dash: [] },
-      },
-    });
-    defaultSceneGraph.addChild(group.id, circle);
-
-    const check = makeNode('shape', 'Check');
-    check.transform.position = { x: 0, y: 0 };
-    const tCheck = check.components.find((c) => c.type === 'Transform');
-    if (tCheck) {
-      tCheck.props.width = 60;
-      tCheck.props.height = 60;
-      tCheck.props.shapeType = 'star';
-    }
-    const styleCheck = check.components.find((c) => c.type === 'Style');
-    if (styleCheck) styleCheck.props.fill = color;
-    defaultSceneGraph.addChild(group.id, check);
-    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
-    const ltC = compToKeyframeTime(circle.id, t0);
-    const ltH = compToKeyframeTime(check.id, t0);
-
-    defaultAnimation.setKeyframe(circle.id, 'scaleX', ltC, 0, 'easeOut');
-    defaultAnimation.setKeyframe(circle.id, 'scaleY', ltC, 0, 'easeOut');
-    defaultAnimation.setKeyframe(circle.id, 'scaleX', ltC + 0.4, 1, 'easeOut');
-    defaultAnimation.setKeyframe(circle.id, 'scaleY', ltC + 0.4, 1, 'easeOut');
-
-    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH, 0, 'easeOut');
-    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH, 0, 'easeOut');
-    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH + 0.3, 0, 'easeOut');
-    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH + 0.3, 0, 'easeOut');
-    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH + 0.6, 1.2, 'easeOut');
-    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH + 0.6, 1.2, 'easeOut');
-    defaultAnimation.setKeyframe(check.id, 'scaleX', ltH + 0.8, 1, 'easeOut');
-    defaultAnimation.setKeyframe(check.id, 'scaleY', ltH + 0.8, 1, 'easeOut');
-
-    useSelectionStore.getState().set([group.id]);
+  if (newSelection.length > 0) {
+    useSelectionStore.getState().set(newSelection);
     bumpScene();
-    return group.id;
-  } else if (lottieId === 'l2') {
-    const node = makeNode('shape', name);
-    node.transform.position = { x: px, y: py };
-    const t = node.components.find((c) => c.type === 'Transform');
-    if (t) {
-      t.props.width = 80;
-      t.props.height = 80;
-      t.props.shapeType = 'ellipse';
-    }
-    const style = node.components.find((c) => c.type === 'Style');
-    if (style) style.props.fill = 'rgba(0,0,0,0)';
-    node.components.push({
-      id: `${node.id}_fx`,
-      type: 'fx',
-      props: {
-        stroke: { enabled: true, color: color, width: 8, opacity: 1, cap: 'round', join: 'miter', align: 'center', dash: [30, 20] },
-      },
-    });
-    defaultSceneGraph.addChild(rootId, node);
-    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
-    const lt = compToKeyframeTime(node.id, t0);
-
-    defaultAnimation.setKeyframe(node.id, 'rotation', lt, 0, 'linear');
-    defaultAnimation.setKeyframe(node.id, 'rotation', lt + 2.0, 360, 'linear');
-
-    useSelectionStore.getState().set([node.id]);
-    bumpScene();
-    return node.id;
-  } else {
-    const node = makeNode('shape', name);
-    node.transform.position = { x: px, y: py };
-    const t = node.components.find((c) => c.type === 'Transform');
-    const shape = lottieId === 'l4' ? 'heart' : 'star';
-    if (t) {
-      t.props.width = 90;
-      t.props.height = 90;
-      t.props.shapeType = shape;
-    }
-    const style = node.components.find((c) => c.type === 'Style');
-    if (style) style.props.fill = color;
-    defaultSceneGraph.addChild(rootId, node);
-    const t0 = (useWorkspaceStore.getState().activeTabId ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.time : 0) ?? 0;
-    const lt = compToKeyframeTime(node.id, t0);
-
-    defaultAnimation.setKeyframe(node.id, 'scaleX', lt, 0, 'easeOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleY', lt, 0, 'easeOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.3, 1.3, 'easeOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.3, 1.3, 'easeOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleX', lt + 0.5, 1.0, 'easeOut');
-    defaultAnimation.setKeyframe(node.id, 'scaleY', lt + 0.5, 1.0, 'easeOut');
-
-    useSelectionStore.getState().set([node.id]);
-    bumpScene();
-    return node.id;
   }
+  return newSelection;
 }
-
-

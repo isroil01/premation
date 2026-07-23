@@ -34,12 +34,13 @@ import {
   insertText,
   insertMedia,
   setNodeWorldPosition,
-  insertCursorLibraryItem,
-  insertMotionGraphicLibraryItem,
-  insertTransitionLibraryItem,
-  insertSoundFxLibraryItem,
-  insertLottieLibraryItem
 } from '@core/scene/sceneInsert';
+import { insertCursorItem } from '@core/library/cursorLibrary';
+import { insertUiComponent } from '@core/library/uiKitLibrary';
+import { insertMographItem } from '@core/library/mographLibrary';
+import { applyTransitionItem } from '@core/library/transitionLibrary';
+import { insertSfxItem } from '@core/library/sfxLibrary';
+import { insertLottieItem } from '@core/library/lottieLibrary';
 import { useAssetStore } from '@stores/assetStore';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -47,12 +48,18 @@ import { useUIStore } from '@stores/uiStore';
 import { addEffect } from '@core/effects/effects';
 import { applyPresetByName } from '@core/animation/animationPresets';
 import { insertAnimPreset } from '@core/template/animPresets';
+import { UI_COMPONENT_PRESETS } from '@core/scene/uiComponents';
 
 import { ViewportHeader } from './ViewportHeader';
+import { SecondaryViewPane } from './SecondaryViewPane';
+import { useGuidesStore } from '@stores/guidesStore';
 import { FocusBreadcrumb } from '@layout/focus/FocusBreadcrumb';
 import { TextEditOverlay } from './TextEditOverlay';
 import { PuppetOverlay } from './PuppetOverlay';
 import { BoneOverlay } from './BoneOverlay';
+import { Gizmo3dOverlay } from './Gizmo3dOverlay';
+import { AxisWidgetOverlay } from './AxisWidgetOverlay';
+import { useGizmo3d } from './useGizmo3d';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { useWorkspace } from './useWorkspace';
 import styles from './Workspace.module.css';
@@ -64,6 +71,9 @@ export interface WorkspaceViewportProps {
   bottomRight?: ReactNode;
   className?: string;
 }
+
+/** Divider line between cells of the 4-up grid (matches the app border token). */
+const QUAD_DIVIDER = '1px solid var(--color-border, rgba(255,255,255,0.12))';
 
 /** Keys the viewport handles directly. */
 const VIEWPORT_KEYS = new Set([
@@ -82,6 +92,12 @@ export function WorkspaceViewport({
   const sceneRev = useSceneRevision((s) => s.rev);
   const transparent = useCompositionStore((s) => s.transparent);
   const workspaceMode = useWorkspaceViewStore((s) => s.mode);
+  // Multi-view (AE-style): '2' shrinks the interactive stage to the left half
+  // (one view-only pane on the right); '4' shrinks it to the top-left quadrant
+  // (three view-only panes fill the other cells of a 2×2 grid).
+  const viewLayout = useGuidesStore((s) => s.viewLayout);
+  const quadViewModes = useGuidesStore((s) => s.quadViewModes);
+  const setQuadViewMode = useGuidesStore((s) => s.setQuadViewMode);
 
   // Keep the engine camera's lock in sync with the persisted workspace mode.
   // The composition framing itself rides on the engine's normal first-fit, so
@@ -97,7 +113,7 @@ export function WorkspaceViewport({
   const { focus, focusKey } = useFocusContext();
 
 
-  useWorkspace({
+  const { ready, renderError } = useWorkspace({
     contentCanvasRef: canvasRef,
     overlayCanvasRef: overlayRef,
     stageRef,
@@ -106,6 +122,8 @@ export function WorkspaceViewport({
     focus,
     focusKey,
   });
+
+  const gizmo3dProps = useGizmo3d(overlayRef, stageRef);
 
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>): void => {
     const target = e.target as HTMLElement | null;
@@ -204,6 +222,14 @@ export function WorkspaceViewport({
         if (gid) setNodeWorldPosition(gid, world.x, world.y);
         break;
       }
+      case 'component-preset': {
+        const preset = UI_COMPONENT_PRESETS.find((p) => p.id === payload.presetId);
+        if (preset) {
+          const gid = preset.insert();
+          if (gid) setNodeWorldPosition(gid, world.x, world.y);
+        }
+        break;
+      }
       case 'effect': {
         // Effects apply to a layer — target the one under the cursor (AE-style).
         const node = controller.ws.hitTestScreen(local);
@@ -227,19 +253,24 @@ export function WorkspaceViewport({
         insertAnimPreset(payload.presetId, world.x, world.y);
         break;
       case 'cursor':
-        insertCursorLibraryItem(payload.cursorId, payload.name, world.x, world.y);
+        insertCursorItem(payload.cursorId, world.x, world.y);
+        break;
+      case 'uikit':
+        insertUiComponent(payload.componentId, world.x, world.y);
         break;
       case 'mograph':
-        insertMotionGraphicLibraryItem(payload.mographId, payload.name, world.x, world.y);
+        insertMographItem(payload.mographId, world.x, world.y);
         break;
       case 'transition':
-        insertTransitionLibraryItem(payload.transId, payload.name);
+        // Position-independent: applies to the selection at the playhead,
+        // or drops a choreographed solid.
+        applyTransitionItem(payload.transId);
         break;
       case 'sfx':
-        insertSoundFxLibraryItem(payload.sfxId, payload.name);
+        void insertSfxItem(payload.sfxId);
         break;
       case 'lottie':
-        insertLottieLibraryItem(payload.lottieId, payload.name, world.x, world.y);
+        insertLottieItem(payload.lottieId, world.x, world.y);
         break;
     }
   }, []);
@@ -266,14 +297,79 @@ export function WorkspaceViewport({
         <div
           className={transparent ? styles.stageTransparent : styles.stage}
           ref={stageRef}
+          // Multi-view: the interactive stage yields space to the view-only
+          // panes — the right half in 2-up, the top-left quadrant in 4-up. In
+          // both cases useWorkspace's ResizeObserver on stageRef re-fits the
+          // comp to the smaller rect automatically (no extra wiring here).
+          style={
+            viewLayout === '2' ? { right: '50%' }
+            : viewLayout === '4' ? { right: '50%', bottom: '50%' }
+            : undefined
+          }
         >
           <canvas ref={canvasRef} className={styles.canvas} />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
+          {/* Scene loading indicator — until the backend paints its first frame. */}
+          {!ready && !renderError && (
+            <div className={styles.loading} data-workspace-loading="">
+              <div className={styles.loadingSpinner} />
+            </div>
+          )}
+          {/* GPU init failed on every tier — say so instead of a blank stage. */}
+          {renderError && (
+            <div className={styles.loading} data-workspace-render-error="">
+              <div className={styles.renderError} role="alert">
+                <strong>Preview unavailable</strong>
+                <span>{renderError}</span>
+                <span>Close other GPU-heavy tabs or windows, then reopen this project.</span>
+              </div>
+            </div>
+          )}
           {/* On-canvas text editor — screen coords match the canvas' own space. */}
           <TextEditOverlay />
           <PuppetOverlay />
           <BoneOverlay />
+          {gizmo3dProps.is3D && gizmo3dProps.singleId && (
+            <Gizmo3dOverlay {...gizmo3dProps} nodeId={gizmo3dProps.singleId} />
+          )}
+          {/* Persistent view-orientation axis widget (whenever the comp is 3D). */}
+          <AxisWidgetOverlay />
         </div>
+
+        {/* View-only right pane (AE's 2 Views) — its own canvas + backend. */}
+        {viewLayout === '2' && <SecondaryViewPane />}
+
+        {/* View-only cells of the 2×2 "4 Views" grid. The top-left quadrant is
+            the interactive stage above (shrunk via right/bottom:50%); these
+            three panes fill the remaining quadrants, each its own GL context.
+            Only cells 1–3 exist here — cell 0 IS the interactive stage, so
+            selection / gizmos / camera-nav stay confined to the top-left, like
+            AE's single active viewport. `key` guarantees each pane's backend is
+            disposed and rebuilt on layout change rather than reused across
+            positions. Thin dividers = borders on the right-column / bottom-row
+            cells (no doubling), matching --color-border. */}
+        {viewLayout === '4' && (
+          <>
+            <SecondaryViewPane
+              key="quad-1"
+              mode={quadViewModes[1]}
+              onModeChange={(m) => setQuadViewMode(1, m)}
+              style={{ top: 0, bottom: '50%', left: '50%', right: 0, borderLeft: QUAD_DIVIDER, borderBottom: 'none' }}
+            />
+            <SecondaryViewPane
+              key="quad-2"
+              mode={quadViewModes[2]}
+              onModeChange={(m) => setQuadViewMode(2, m)}
+              style={{ top: '50%', bottom: 0, left: 0, right: '50%', borderLeft: 'none', borderTop: QUAD_DIVIDER }}
+            />
+            <SecondaryViewPane
+              key="quad-3"
+              mode={quadViewModes[3]}
+              onModeChange={(m) => setQuadViewMode(3, m)}
+              style={{ top: '50%', bottom: 0, left: '50%', right: 0, borderLeft: QUAD_DIVIDER, borderTop: QUAD_DIVIDER }}
+            />
+          </>
+        )}
 
         {/* Corner overlays */}
         <div className={styles.overlayTL}>{topLeft}</div>

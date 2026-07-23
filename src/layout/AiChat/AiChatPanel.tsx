@@ -26,7 +26,6 @@ const PROVIDER_OPTIONS: { id: GatewayProviderId; label: string }[] = [
   { id: 'anthropic', label: 'Claude' },
   { id: 'openai', label: 'OpenAI' },
   { id: 'gemini', label: 'Gemini' },
-  { id: 'motion', label: 'Motion AI' },
 ];
 
 /** Fixed preview snapshot size (16:9), independent of sidebar width. */
@@ -138,6 +137,24 @@ export function AiChatPanel(): JSX.Element {
 
   const providerReady = (id: GatewayProviderId): boolean =>
     id === 'motion' ? !!aiMotion?.present : !!aiStatus?.[id as AiProviderId]?.present;
+
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
+  const modelPickerRef = useRef<HTMLDivElement | null>(null);
+  const modePickerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+        setModelDropdownOpen(false);
+      }
+      if (modePickerRef.current && !modePickerRef.current.contains(e.target as Node)) {
+        setModeDropdownOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handleOutsideClick);
+    return () => window.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   const dropdownValue =
     aiProvider === 'motion'
@@ -300,9 +317,63 @@ export function AiChatPanel(): JSX.Element {
             </div>
           )}
           {messages.length === 0 && ready && (
-            <div className={styles.emptyNote}>
-              Describe the motion video you want — I plan it, build it, review it, and show you a
-              preview to apply or decline.
+            <div>
+              <div className={styles.emptyNote}>
+                Describe the motion video you want — I plan it, build it, review it, and show you a
+                preview to apply or decline.
+              </div>
+              <div className={styles.presetContainer}>
+                <div className={styles.presetTitle}>Quick Motion Presets</div>
+                <div className={styles.presetGrid}>
+                  {[
+                    {
+                      name: '🚀 SaaS Explainer',
+                      desc: '3-scene SaaS promo with indigo cards & floating orbs',
+                      prompt: 'Create a 3-scene SaaS promo video in saas style with indigo cards, floating ambient orbs, and clean kinetic text.',
+                    },
+                    {
+                      name: '🍎 Apple Minimal Reveal',
+                      desc: 'Product reveal with background depth & camera sweeps',
+                      prompt: 'Create an elegant Apple-style product reveal in premium style with deep background depth, subtle camera sweeps, and crisp typography.',
+                    },
+                    {
+                      name: '⚡ Cyberpunk Kinetic',
+                      desc: 'High-energy cyberpunk promo with neon glow & snappy motion',
+                      prompt: 'Create a high-energy cyberpunk promo in cyberpunk style with neon accent glow, word-by-word kinetic text, and snappy motion physics.',
+                    },
+                    {
+                      name: '🎬 Broadcast Lower Third',
+                      desc: 'Broadcast lower third with accent bar & slide-in title',
+                      prompt: 'Create a professional broadcast lower third with an accent bar and slide-in text for NextGen Motion.',
+                    },
+                    {
+                      name: '✨ Trim-Path Logo Reveal',
+                      desc: 'AE-style stroke trim-path outline reveal & glowing emblem',
+                      prompt: 'Build a trim-path stroke outline logo reveal for NextGen AI with glowing emblem pop and title entrance in cyberpunk style.',
+                    },
+                    {
+                      name: '💥 Radial Repeater Burst',
+                      desc: '12-copy radial repeater burst accent (HUD / particle ring)',
+                      prompt: 'Add a 12-copy radial repeater burst accent at the center of the frame in saas style.',
+                    },
+                    {
+                      name: '🌀 Organic Path Morph',
+                      desc: 'Liquid shape distortion with pucker/bloat morphing',
+                      prompt: 'Add an organic liquid pucker-bloat shape path morph with rotation in saas style.',
+                    },
+                  ].map((p, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className={styles.presetChip}
+                      onClick={() => void submit(p.prompt)}
+                    >
+                      <span className={styles.presetChipName}>{p.name}</span>
+                      <span className={styles.presetChipDesc}>{p.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
           {messages.map((m, i) =>
@@ -466,49 +537,98 @@ export function AiChatPanel(): JSX.Element {
                   }}
                 />
 
-                <div className={styles.modelPickerWrap} title={`AI Model: ${getModelLabel(dropdownValue)}`}>
+                <div
+                  ref={modelPickerRef}
+                  className={styles.modelPickerWrap}
+                  title={`AI Model: ${getModelLabel(dropdownValue)}`}
+                  onClick={() => setModelDropdownOpen((o) => !o)}
+                >
                   {renderProviderIcon(aiProvider)}
-                  <Icon name="chevron-down" size={9} className={styles.chevron} />
-                  <select
-                    className={styles.hiddenSelect}
-                    value={dropdownValue}
-                    onChange={(e) => onChangeModel(e.target.value)}
-                    title="AI model"
-                  >
-                    {PROVIDER_OPTIONS.map((p) =>
-                      p.id === 'motion' ? (
-                        <option key="motion" value="motion" disabled={!providerReady('motion')}>
-                          ✦ Motion AI{providerReady('motion') ? '' : ' · no key'}
-                        </option>
-                      ) : (
-                        <optgroup key={p.id} label={`${p.label}${providerReady(p.id) ? '' : ' · no key'}`}>
-                          {(MODEL_SUGGESTIONS[p.id as AiProviderId] ?? []).map((m) => (
-                            <option key={`${p.id}:${m}`} value={`${p.id}:${m}`}>
-                              {getModelLabel(`${p.id}:${m}`)}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ),
-                    )}
-                  </select>
+                  <span className={styles.modelPickerLabel}>{getModelLabel(dropdownValue)}</span>
+                  <Icon name="chevron-down" size={9} className={`${styles.chevron} ${modelDropdownOpen ? styles.chevronOpen : ''}`} />
+
+                  {modelDropdownOpen && (
+                    <div className={styles.customPopoverMenu} onClick={(e) => e.stopPropagation()}>
+                      <div className={styles.popoverHeader}>Select AI Model</div>
+                      {PROVIDER_OPTIONS.map((p) => {
+                        const ready = providerReady(p.id);
+                        const suggestions = MODEL_SUGGESTIONS[p.id as AiProviderId] ?? [];
+                        return (
+                          <div key={p.id} className={styles.popoverGroup}>
+                            <div className={styles.groupLabel}>
+                              {p.label} {!ready && <span className={styles.noKeyTag}>no key</span>}
+                            </div>
+                            {suggestions.map((m) => {
+                              const val = `${p.id}:${m}`;
+                              const active = dropdownValue === val;
+                              return (
+                                <button
+                                  key={val}
+                                  type="button"
+                                  className={`${styles.popoverOption} ${active ? styles.popoverOptionActive : ''}`}
+                                  disabled={!ready}
+                                  onClick={() => {
+                                    onChangeModel(val);
+                                    setModelDropdownOpen(false);
+                                  }}
+                                >
+                                  <span className={styles.optionLabel}>{getModelLabel(val)}</span>
+                                  {active && <Icon name="check" size={11} className={styles.optionCheck} />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className={styles.controlsRight}>
                 <div
+                  ref={modePickerRef}
                   className={styles.modePickerWrap}
                   title={`Execution mode: ${isManualMode ? 'Manual (Review preview)' : 'Auto (Direct apply)'}`}
+                  onClick={() => setModeDropdownOpen((o) => !o)}
                 >
                   <Icon name={isManualMode ? 'eye' : 'sparkles'} size={13} className={styles.modeIcon} />
-                  <Icon name="chevron-down" size={9} className={styles.chevron} />
-                  <select
-                    className={styles.hiddenSelect}
-                    value={isManualMode ? 'manual' : 'auto'}
-                    onChange={(e) => toggleManualMode(e.target.value === 'manual')}
-                  >
-                    <option value="auto">✦ Auto (Direct apply)</option>
-                    <option value="manual">👁 Manual (Review preview)</option>
-                  </select>
+                  <span className={styles.modePickerLabel}>{isManualMode ? 'Manual' : 'Auto'}</span>
+                  <Icon name="chevron-down" size={9} className={`${styles.chevron} ${modeDropdownOpen ? styles.chevronOpen : ''}`} />
+
+                  {modeDropdownOpen && (
+                    <div className={styles.customPopoverMenuRight} onClick={(e) => e.stopPropagation()}>
+                      <div className={styles.popoverHeader}>Execution Mode</div>
+                      <button
+                        type="button"
+                        className={`${styles.popoverOption} ${!isManualMode ? styles.popoverOptionActive : ''}`}
+                        onClick={() => {
+                          toggleManualMode(false);
+                          setModeDropdownOpen(false);
+                        }}
+                      >
+                        <div>
+                          <div className={styles.optionLabel}>Auto (Direct apply)</div>
+                          <div className={styles.optionSub}>AI changes apply immediately</div>
+                        </div>
+                        {!isManualMode && <Icon name="check" size={11} className={styles.optionCheck} />}
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles.popoverOption} ${isManualMode ? styles.popoverOptionActive : ''}`}
+                        onClick={() => {
+                          toggleManualMode(true);
+                          setModeDropdownOpen(false);
+                        }}
+                      >
+                        <div>
+                          <div className={styles.optionLabel}>Manual (Review preview)</div>
+                          <div className={styles.optionSub}>Review preview before applying</div>
+                        </div>
+                        {isManualMode && <Icon name="check" size={11} className={styles.optionCheck} />}
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <button
                   type="button"

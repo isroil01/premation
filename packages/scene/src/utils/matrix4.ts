@@ -66,6 +66,17 @@ export function transformPoint(m: Matrix4, p: Vec3): Vec3 {
   return { x, y, z };
 }
 
+/**
+ * Transform a 3D direction vector (ignores matrix translation, returns normalized vector).
+ */
+export function transformVector(m: Matrix4, v: Vec3): Vec3 {
+  const x = m[0] * v.x + m[4] * v.y + m[8] * v.z;
+  const y = m[1] * v.x + m[5] * v.y + m[9] * v.z;
+  const z = m[2] * v.x + m[6] * v.y + m[10] * v.z;
+  const len = Math.hypot(x, y, z) || 1;
+  return { x: x / len, y: y / len, z: z / len };
+}
+
 export interface TransformParts3D {
   /** World position of the anchor point. */
   position: Vec3;

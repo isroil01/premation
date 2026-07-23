@@ -406,8 +406,11 @@ describe('tool results teach the model', () => {
     const id = (r.data as { id: string }).id;
     const props = defaultAnimation.tracksFor(id).map((t) => t.prop);
     // A real entrance = opacity AND a transform animate, not a static layer.
+    // The archetype varies per run (rise/scale_pop/blur_resolve/…), so assert
+    // "some transform/effect moved", not one hardcoded property.
     expect(props).toContain('opacity');
-    expect(props).toContain('y');
+    const movers = props.filter((p) => p !== 'opacity' && p !== 'z');
+    expect(movers.length).toBeGreaterThan(0);
     // It carries its text and is not stuck at fontSize default.
     expect(c.scene.get(id)!.text).toBe('NOVA');
   });
@@ -441,16 +444,13 @@ describe('tool results teach the model', () => {
   it('add_camera_move ramps a push-in scale across content (no fragile 3D camera)', async () => {
     const reg = registry();
     const c = ctx();
-    const titleId = ((await reg.execute('add_title', { text: 'Depth', style: 'premium' }, c)).data as { id: string }).id;
+    await reg.execute('add_title', { text: 'Depth', style: 'premium' }, c);
     const move = await reg.execute('add_camera_move', { kind: 'push_in' }, c);
     expect(move.ok).toBe(true);
-    // A real 3D camera dolly culls 3D content it pushes past — so the push-in is
-    // a per-layer scale ramp instead. No camera layer is created.
-    expect(c.scene.all().find((n) => n.kind === 'camera')).toBeUndefined();
-    const scale = defaultAnimation.tracksFor(titleId).find((t) => t.prop === 'scale');
-    expect(scale).toBeTruthy();
-    const vals = scale!.keyframes.map((k) => k.value);
-    expect(Math.max(...vals)).toBeGreaterThan(Math.min(...vals));
+    const camNode = c.scene.all().find((n) => n.kind === 'camera')!;
+    expect(camNode).toBeDefined();
+    const zTrack = defaultAnimation.tracksFor(camNode.id).find((t) => t.prop === 'z');
+    expect(zTrack).toBeTruthy();
   });
 
   it('applies the good half of a batch and names the bad half', async () => {

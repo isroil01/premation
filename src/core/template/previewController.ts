@@ -20,6 +20,14 @@ export interface PreviewSpec {
   build: (g: SceneGraph) => void;
   /** The choreography, replayed against the preview engine in raw seconds. */
   animate?: (set: SetKf) => void;
+  /** Optional post-pass with direct access to the isolated preview engine —
+   *  attach expressions (loopOut/wiggle) or data keyframes (text.source) that
+   *  the plain numeric SetKf abstraction cannot carry. */
+  decorate?: (anim: AnimationEngine) => void;
+  /** Override the card's loop length (seconds). Needed for expression-driven
+   *  loops, whose motion outlives their finite keyframe span. When set, the
+   *  card loops seamlessly over exactly this window (no end-pose hold). */
+  duration?: number;
   width: number;
   height: number;
   background?: string;
@@ -129,7 +137,12 @@ export function mountPreview(canvas: HTMLCanvasElement, spec: PreviewSpec): { st
   const anim = new AnimationEngine();
   const rawSet: SetKf = (id, prop, time, value, ease) => anim.setKeyframe(id, prop, time, value, ease ?? 'easeInOut');
   if (spec.animate) spec.animate(rawSet);
-  const duration = spec.animate ? choreographyDuration(spec.animate) : 0;
+  try {
+    spec.decorate?.(anim);
+  } catch {
+    /* a bad decoration must not kill the card — keyframes still play */
+  }
+  const duration = spec.duration ?? (spec.animate ? choreographyDuration(spec.animate) : 0);
 
   const inst: Instance = {
     canvas,
@@ -137,7 +150,9 @@ export function mountPreview(canvas: HTMLCanvasElement, spec: PreviewSpec): { st
     anim,
     spec: { width: spec.width, height: spec.height, background: spec.background ?? '#0e0e12', rootId },
     duration,
-    loop: duration > 0 ? duration + 0.9 : 1, // hold on the final pose, then restart
+    // Explicit loop windows (expression loops) restart seamlessly; finite
+    // choreographies hold on the final pose, then restart.
+    loop: spec.duration !== undefined ? Math.max(0.1, spec.duration) : duration > 0 ? duration + 0.9 : 1,
     start: typeof performance !== 'undefined' ? performance.now() : 0,
     visible: true,
     lastW: 0,

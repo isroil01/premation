@@ -35,6 +35,9 @@ export const useRenderBackendStore = create<RenderBackendStore>((set) => ({
 }));
 
 // Automatic tier fallback on EngineError events emitted by MotionRendererBackend.
+// The backend itself now performs the ACTUAL recovery (disposing the failed
+// backend and re-initializing on the next tier, incl. a delayed WebGL2 retry);
+// this store just mirrors the state for the ViewportHeader badge.
 getEventBus().on('EngineError', (payload) => {
   const store = useRenderBackendStore.getState();
   if (payload.engine === 'motion-webgpu') {
@@ -46,4 +49,14 @@ getEventBus().on('EngineError', (payload) => {
     console.warn('[renderBackendStore] WebGL2 init failed, showing software badge.');
     store._setTier('software');
   }
+});
+
+// A successful init (including a fallback tier or the delayed WebGL2 retry
+// coming up AFTER an EngineError already flipped the badge) reports the tier
+// that actually rendered — this un-sticks a premature 'software' badge.
+getEventBus().on('EngineReady', (payload) => {
+  const store = useRenderBackendStore.getState();
+  if (payload.engine === 'motion-webgpu') store._setTier('webgpu');
+  else if (payload.engine === 'motion-webgl2') store._setTier('webgl2');
+  else if (payload.engine === 'motion-null') store._setTier('null');
 });

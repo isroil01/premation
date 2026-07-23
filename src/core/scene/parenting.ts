@@ -60,15 +60,22 @@ export function canReparent(childId: string, newParentId: string | null): boolea
 }
 
 /**
- * Reparent `childId` under `newParentId` (null → comp root) WITHOUT moving it on
- * screen: the child adopts the local transform that reproduces its current world
- * pose under the new parent. Returns false if the move would create a cycle.
+ * Reparent `childId` under `newParentId` (null → comp root). By default this
+ * does NOT move the layer on screen: the child adopts the local transform that
+ * reproduces its current world pose under the new parent (`preserveWorld: true`).
+ * Pass `{ preserveWorld: false }` to keep the child's LOCAL transform as-is —
+ * importers (e.g. Lottie) use this because their locals are already
+ * parent-relative. Returns false if the move would create a cycle.
  */
-export function reparentNode(childId: string, newParentId: string | null): boolean {
+export function reparentNode(
+  childId: string,
+  newParentId: string | null,
+  options: { preserveWorld?: boolean } = {},
+): boolean {
   if (!canReparent(childId, newParentId)) return false;
   const target = newParentId ?? COMP_ROOT;
 
-  defaultSceneGraph.setParent(childId, target, { preserveWorld: true });
+  defaultSceneGraph.setParent(childId, target, { preserveWorld: options.preserveWorld ?? true });
 
   getEventBus().emit('AnimationChanged', { nodeId: childId });
   bumpScene();

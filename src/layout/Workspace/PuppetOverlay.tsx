@@ -345,6 +345,12 @@ export function PuppetOverlay(): JSX.Element | null {
   };
 
   const onClickOverlay = (e: React.MouseEvent) => {
+    // A pointerdown on an existing pin (or a completed drag) sets this guard so
+    // the synthetic click that follows pointerup does NOT spawn a stray pin.
+    if (suppressClickAddRef.current) {
+      suppressClickAddRef.current = false;
+      return;
+    }
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
@@ -416,6 +422,7 @@ export function PuppetOverlay(): JSX.Element | null {
             key={`pin-g-${pin.id}`}
             style={{ cursor: 'pointer' }}
             onPointerDown={(e) => onPointerDownPin(e, pin.id)}
+            onClick={(e) => e.stopPropagation()}
             onDoubleClick={(e) => onDoubleClickPin(e, pin.id)}
             onMouseEnter={() => setHoveredPinId(pin.id)}
             onMouseLeave={() => setHoveredPinId(null)}

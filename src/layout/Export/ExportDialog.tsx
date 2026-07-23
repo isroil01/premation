@@ -167,7 +167,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         <Button
           variant="primary"
           size="md"
-          leftIcon={<Icon name="skip-forward" size={14} />}
+          leftIcon={<Icon name="export" size={14} />}
           onClick={doExport}
           disabled={busy}
         >

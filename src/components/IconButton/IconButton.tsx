@@ -25,12 +25,15 @@ export interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonEle
   type?: 'button' | 'submit' | 'reset';
 }
 
+import { usePreferenceStore } from '@stores/preferenceStore';
+
 function IconButtonInner(
   {
     variant = 'ghost',
     size = 'md',
     active = false,
     className,
+    style,
     children,
     disabled,
     type = 'button',
@@ -41,6 +44,10 @@ function IconButtonInner(
   }: IconButtonProps,
   ref: Ref<HTMLButtonElement>,
 ): JSX.Element {
+  const buttonPref = usePreferenceStore((s) => s.buttonSize);
+  const scaleMult = buttonPref === 'sm' ? 0.88 : buttonPref === 'lg' ? 1.15 : 1.0;
+  const mergedStyle = scaleMult !== 1 ? { transform: `scale(${scaleMult})`, transformOrigin: 'center center', ...style } : style;
+
   // Every icon-only button gets a styled Radix tooltip: explicit `tooltip`,
   // else legacy `title`, else the (required) accessible label. The native
   // `title` is dropped so the browser's own tooltip never doubles up.
@@ -54,6 +61,7 @@ function IconButtonInner(
       data-variant={variant}
       data-size={size}
       data-active={active || undefined}
+      style={mergedStyle}
       className={cn(styles.root, className)}
       {...rest}
     >

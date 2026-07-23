@@ -10,7 +10,7 @@ function node(props: Record<string, unknown>): SceneNode {
 }
 
 describe('threeD helpers', () => {
-  const ZERO = { z: 0, rotationX: 0, rotationY: 0, orientationX: 0, orientationY: 0, orientationZ: 0, anchorZ: 0 };
+  const ZERO = { z: 0, rotationX: 0, rotationY: 0, orientationX: 0, orientationY: 0, orientationZ: 0, anchorZ: 0, extrusionDepth: 0, bevelDepth: 0, bevelStyle: 'angular' };
 
   it('a plain 2D layer is not 3D and reads zeros', () => {
     const n = node({ x: 10, y: 20, rotation: 0 });
@@ -36,6 +36,20 @@ describe('threeD helpers', () => {
     expect(r.orientationY).toBe(-20);
     expect(r.orientationZ).toBe(90);
     expect(r.anchorZ).toBe(120);
+  });
+
+  it('reads extrusion depth back (clamped to ≥ 0)', () => {
+    expect(readNode3D(node({ z: 0, extrusionDepth: 120 })).extrusionDepth).toBe(120);
+    expect(readNode3D(node({ z: 0, extrusionDepth: -5 })).extrusionDepth).toBe(0);
+    expect(readNode3D(node({ z: 0 })).extrusionDepth).toBe(0);
+  });
+
+  it('reads bevel depth (clamped ≥ 0) and bevel style (default angular)', () => {
+    expect(readNode3D(node({ z: 0, bevelDepth: 24 })).bevelDepth).toBe(24);
+    expect(readNode3D(node({ z: 0, bevelDepth: -3 })).bevelDepth).toBe(0);
+    expect(readNode3D(node({ z: 0 })).bevelStyle).toBe('angular');
+    expect(readNode3D(node({ z: 0, bevelStyle: 'convex' })).bevelStyle).toBe('convex');
+    expect(readNode3D(node({ z: 0, bevelStyle: 'nonsense' })).bevelStyle).toBe('angular');
   });
 
   it('a node without a Transform component is never 3D', () => {

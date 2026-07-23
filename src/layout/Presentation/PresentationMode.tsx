@@ -281,7 +281,7 @@ export function PresentationMode(): JSX.Element | null {
             aria-label="Loop playback"
             aria-pressed={looping}
           >
-            <Icon name="rotate-cw" size={15} />
+            <Icon name="loop" size={15} />
           </button>
         </div>
       </div>

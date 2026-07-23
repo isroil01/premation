@@ -27,6 +27,9 @@ export interface MaterialDescriptor {
   layout: BindGroupLayoutEntry[];
   /** Optional custom vertex buffer layouts. If omitted, defaults to QUAD_LAYOUT. */
   buffers?: VertexBufferLayout[];
+  /** Depth-tested material (3D layer path). Pipelines built from it carry
+   *  depth state and are only valid inside passes with a depth attachment. */
+  depth?: { test: boolean; write: boolean };
 }
 
 /** Built-in material: solid-colored quad. Uniform block at binding 0. */
@@ -188,6 +191,44 @@ export const NOISE_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+// ── Depth-tested 3D materials (Classic-3D GPU path) ─────────────────────────
+// Same bindings as their 2D twins; mat4 MVP shaders + depth test/write so
+// intersecting 3D planes composite per-pixel. Drawn back-to-front within a 3D
+// render group (correct for opaque intersections; see CompositionPass).
+
+/** 3D solid (SDF rounded-rect / ellipse) quad with depth test+write. */
+export const SOLID3D_MATERIAL: MaterialDescriptor = {
+  shader: 'solid3d',
+  topology: 'triangle-list',
+  layout: [{ binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] }],
+  depth: { test: true, write: true },
+};
+
+/** 3D textured quad with depth test+write. */
+export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
+  shader: 'textured3d',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+  depth: { test: true, write: true },
+};
+
+/** 3D masked textured quad with depth test+write. */
+export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
+  shader: 'masked-textured3d',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+  depth: { test: true, write: true },
+};
+
 export const DEFORMED_MESH_LAYOUT: VertexBufferLayout = {
   strideBytes: 16,
   stepMode: 'vertex',
@@ -219,7 +260,16 @@ export class MaterialSystem {
   pipeline(material: MaterialDescriptor, blend: BlendMode, colorFormat: TextureFormat): PipelineHandle {
     const source = this.registry.require(material.shader);
     const shader = this.shaderCache.get(source);
-    const key = makeKey('pipeline', material.shader, this.shaderCache.keyOf(source), material.topology, blend, colorFormat);
+    const depth = material.depth;
+    const key = makeKey(
+      'pipeline',
+      material.shader,
+      this.shaderCache.keyOf(source),
+      material.topology,
+      blend,
+      colorFormat,
+      depth ? `d${depth.test ? 1 : 0}${depth.write ? 1 : 0}` : 'd00',
+    );
     return this.resources.pipeline(key, {
       label: `${material.shader}/${blend}`,
       shader,
@@ -228,6 +278,7 @@ export class MaterialSystem {
       topology: material.topology,
       blend,
       colorFormat,
+      ...(depth ? { depthTest: depth.test, depthWrite: depth.write, depthFormat: 'depth24plus' as const } : {}),
     });
   }
 }

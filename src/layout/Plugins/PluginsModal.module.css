@@ -67,3 +67,29 @@
   color: var(--color-text-muted);
   padding: var(--space-2) var(--space-1) 0;
 }
+
+.loadBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  border: 1px dashed var(--color-primary);
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background 120ms ease;
+  margin-bottom: var(--space-2);
+}
+
+.loadBtn:hover {
+  background: var(--color-surface-3);
+  transform: translateY(-1px);
+}
+
+.loadBtn:active {
+  transform: scale(0.97);
+}

@@ -6,10 +6,20 @@
 
 import type { Color } from '../core/math/Color';
 import type { Mat3 } from '../core/math/Mat3';
+import type { Mat4 } from '../core/math/Mat4';
 import type { Rect } from '../core/math/geometry';
 
 /** Floats occupied by a std140 mat3x3 (3 padded columns). */
 export const MAT3_STD140_FLOATS = 12;
+
+/** Floats occupied by a std140 mat4x4 (no padding needed). */
+export const MAT4_STD140_FLOATS = 16;
+
+/** Write a column-major Mat4 into `out` at `floatOffset` (std140: tight). */
+export function packMat4(m: Mat4, out: Float32Array, floatOffset: number): number {
+  for (let i = 0; i < 16; i++) out[floatOffset + i] = m[i]!;
+  return floatOffset + MAT4_STD140_FLOATS;
+}
 
 /** Write a column-major Mat3 into `out` at `floatOffset` with std140 padding. */
 export function packMat3(m: Mat3, out: Float32Array, floatOffset: number): number {
@@ -71,6 +81,106 @@ export function packSolid(mvp: Mat3, color: Color, opacity: number, shape: Solid
   return out;
 }
 
+// ── Per-fragment 3D lighting (Accepts Lights on the depth-tested path) ───────
+
+/** Hard cap on lights uploaded per draw; extra scene lights are truncated. */
+export const MAX_LIGHTS3D = 8;
+
+/** vec4 slots per packed light (posType, colorGain, radius/cone/aim). */
+export const LIGHT3D_VEC4S = 3;
+
+/** Floats occupied by the shade tail appended to every 3d material uniform:
+ *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×3 vec4). */
+export const SHADE3D_FLOATS = MAT4_STD140_FLOATS + 4 + 4 + MAX_LIGHTS3D * LIGHT3D_VEC4S * 4;
+
+/** One scene light in the shader's terms. Structurally compatible with the
+ *  FrameScene `SceneLight3D` DTO (kept independent so the pipeline layer does
+ *  not import scene types). */
+export interface Shade3DLight {
+  type: 'ambient' | 'point' | 'spot' | 'parallel';
+  color: { r: number; g: number; b: number };
+  /** intensity/100 (already normalised). */
+  gain: number;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  /** cos/sin of the light's 2D aim angle (spot cone aim / parallel direction). */
+  aimX: number;
+  aimY: number;
+  /** Spot half-cone in radians. */
+  halfConeRad: number;
+}
+
+const LIGHT3D_TYPE_ID: Record<Shade3DLight['type'], number> = { ambient: 0, point: 1, spot: 2, parallel: 3 };
+
+/** Per-draw lighting data for a 3D material. Absent → the shade tail packs as
+ *  zeros with the lit flag off, so the shader is a byte-exact no-op. */
+export interface Shade3D {
+  /** The renderable's world model matrix (unit quad → 3D comp space) — the
+   *  vertex stage re-derives per-fragment world position and the plane normal
+   *  (its +Z column) from it. */
+  model: ArrayLike<number>;
+  /** Camera world position (for the Blinn-Phong half vector). */
+  eye: readonly [number, number, number];
+  /** Specular intensity; 0 (the default) reduces to plain Lambert. */
+  specular: number;
+  /** Blinn-Phong exponent. */
+  shininess: number;
+  lights: ReadonlyArray<Shade3DLight>;
+}
+
+/** Write the shade tail (model + eye + params + light array). Returns the next
+ *  offset. `shade` undefined → zero-filled, lit flag 0 (identity shading). */
+export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shade3D): number {
+  const end = floatOffset + SHADE3D_FLOATS;
+  if (!shade) return end; // Float32Array is zero-initialised — lit flag stays 0.
+  let o = floatOffset;
+  for (let i = 0; i < 16; i++) out[o + i] = shade.model[i] ?? 0;
+  o += MAT4_STD140_FLOATS;
+  out[o + 0] = shade.eye[0];
+  out[o + 1] = shade.eye[1];
+  out[o + 2] = shade.eye[2];
+  out[o + 3] = 1; // lit flag
+  o += 4;
+  const lights = shade.lights.filter((l) => l.gain > 0).slice(0, MAX_LIGHTS3D);
+  out[o + 0] = lights.length;
+  out[o + 1] = shade.specular;
+  out[o + 2] = shade.shininess;
+  out[o + 3] = 0;
+  o += 4;
+  for (const l of lights) {
+    out[o + 0] = l.x;
+    out[o + 1] = l.y;
+    out[o + 2] = l.z;
+    out[o + 3] = LIGHT3D_TYPE_ID[l.type];
+    out[o + 4] = l.color.r;
+    out[o + 5] = l.color.g;
+    out[o + 6] = l.color.b;
+    out[o + 7] = l.gain;
+    out[o + 8] = l.radius;
+    out[o + 9] = l.halfConeRad;
+    out[o + 10] = l.aimX;
+    out[o + 11] = l.aimY;
+    o += 12;
+  }
+  return end;
+}
+
+/** solid3d uniform: mat4 mvp + vec4 color + vec4 shape (see packSolid) + the
+ *  shade tail (per-fragment Accepts-Lights data; zeros when unlit). */
+export function packSolid3D(mvp: Mat4, color: Color, opacity: number, shape: SolidShape = RECT_SHAPE, shade?: Shade3D): Float32Array {
+  const out = new Float32Array(MAT4_STD140_FLOATS + 4 + 4 + SHADE3D_FLOATS);
+  let o = packMat4(mvp, out, 0);
+  o = packColor(color, out, o, opacity);
+  out[o + 0] = shape.kind;
+  out[o + 1] = shape.radiusPx;
+  out[o + 2] = shape.width;
+  out[o + 3] = shape.height;
+  packShade3D(out, o + 4, shade);
+  return out;
+}
+
 /** A per-pixel colour transform: row-major 3×3 `m` + `offset` (out = M·rgb+off). */
 export interface ColorTransform {
   m: readonly number[];
@@ -110,6 +220,25 @@ export function packTextured(
   o = packRect(uvRect, out, o);
   o = packColor(tint, out, o, opacity);
   packColorRows(color, out, o);
+  return out;
+}
+
+/** textured3d / masked-textured3d / lut-textured3d uniform: mat4 mvp + same
+ *  tail as packTextured + the shade tail (zeros when unlit). */
+export function packTextured3D(
+  mvp: Mat4,
+  uvRect: Rect,
+  tint: Color,
+  opacity: number,
+  color: ColorTransform = IDENTITY_COLOR_TRANSFORM,
+  shade?: Shade3D,
+): Float32Array {
+  const out = new Float32Array(MAT4_STD140_FLOATS + 4 + 4 + 12 + SHADE3D_FLOATS);
+  let o = packMat4(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  o = packColor(tint, out, o, opacity);
+  o = packColorRows(color, out, o);
+  packShade3D(out, o, shade);
   return out;
 }
 

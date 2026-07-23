@@ -21,9 +21,10 @@ import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
 import { renderOffline, exportView, type OfflineRenderParams } from './offlineRenderer';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
-import { createStoreZip, type ZipEntry } from './zip';
+import { type ZipEntry } from './zip';
+import { encodeGifBytes, encodeZipBytes } from './encodeClient';
 import { mixdownAudio, mixdownBuffer } from '@core/audio/audioMixdown';
-import { createAnimatedGIF, type GifFrame } from './gifEncoder';
+import { type GifFrame } from './gifEncoder';
 import { api } from '@core/api/client';
 import { useUIStore } from '@stores/uiStore';
 
@@ -205,7 +206,9 @@ export async function renderSequenceZip(
     },
     signal,
   );
-  return createStoreZip([...entries, ...extraEntries]);
+  // Assemble the archive off the main thread (falls back to sync if no worker).
+  const bytes = await encodeZipBytes([...entries, ...extraEntries]);
+  return new Blob([bytes as BlobPart], { type: 'application/zip' });
 }
 
 async function exportPNG(opts: ExportOptions): Promise<void> {
@@ -355,7 +358,12 @@ export async function renderGIFBlob(
     signal,
   );
   if (frames.length === 0) throw new Error('No frames were rendered.');
-  return createAnimatedGIF(frames, opts.fps);
+  // LZW-encode the GIF off the main thread so the app stays responsive during
+  // the (previously blocking) encode pass. Falls back to sync if no worker.
+  const bytes = await encodeGifBytes(frames, opts.fps);
+  return bytes.length === 0
+    ? new Blob([], { type: 'image/gif' })
+    : new Blob([bytes as BlobPart], { type: 'image/gif' });
 }
 
 async function exportGIF(opts: ExportOptions): Promise<void> {

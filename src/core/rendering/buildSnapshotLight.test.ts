@@ -42,6 +42,34 @@ describe('lights', () => {
     expect(lt.cone).toBe(30);
   });
 
+  it('Draft 3D (comp.draft3d) suppresses light washes and cast shadows', () => {
+    const g = new SceneGraph();
+    const shadowCaster = light('L');
+    (shadowCaster.components[0]!.props as Record<string, unknown>).castShadows = true;
+    g.addNode(shadowCaster);
+    g.addNode({
+      id: 'box', name: 'box', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 100, y: 100 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        { id: 'box_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 100, y: 100, rotation: 0 } },
+        { id: 'box_s', type: 'Style', props: { opacity: 100, fill: '#3aa' } },
+      ],
+    } as unknown as SceneNode);
+
+    // Full quality: the light wash layer renders and the shape casts a shadow.
+    const full = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP).layers;
+    expect(full.some((l) => l.light)).toBe(true);
+    const fullShape = full.find((l) => l.id === 'box')!;
+    expect((fullShape.effects ?? []).some((fx) => fx.id === 'cast-shadow')).toBe(true);
+
+    // Draft 3D: same scene, lighting entirely gone — layer set and effects.
+    const draft = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, { ...COMP, draft3d: true }).layers;
+    expect(draft.some((l) => l.light)).toBe(false);
+    const draftShape = draft.find((l) => l.id === 'box')!;
+    expect((draftShape.effects ?? []).some((fx) => fx.id === 'cast-shadow' || fx.id === 'dof')).toBe(false);
+    expect(draftShape.filter ?? '').not.toContain('drop-shadow');
+  });
+
   it('buildSnapshot emits a light layer at the light position', () => {
     const g = new SceneGraph();
     g.addNode(light('L'));

@@ -21,7 +21,7 @@ import { cn } from '@utils/cn';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useRenderQualityStore, RESOLUTION_LABELS, type PreviewResolution } from '@stores/renderQualityStore';
+import { useRenderQualityStore, RESOLUTION_LABELS, RESOLUTION_PERCENT, type PreviewResolution } from '@stores/renderQualityStore';
 import { useUIStore } from '@stores/uiStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 
@@ -122,9 +122,9 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
     { type: 'checkbox', id: 'loop', label: 'Loop playback', checked: looping, onChange: setLooping },
     { type: 'checkbox', id: 'draft', label: 'Draft quality', checked: draftQuality, onChange: setDraftQuality },
     {
-      type: 'item', id: 'res', label: `Resolution: ${RESOLUTION_LABELS[previewResolution]}`,
+      type: 'item', id: 'res', label: `Preview quality: ${RESOLUTION_LABELS[previewResolution]}`,
       submenu: ([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
-        type: 'item' as const, id: `res-${r}`, label: RESOLUTION_LABELS[r],
+        type: 'item' as const, id: `res-${r}`, label: `${RESOLUTION_LABELS[r]} · ${RESOLUTION_PERCENT[r]}`,
         icon: (r === previewResolution ? 'check' : undefined) as IconName | undefined, onSelect: () => setResolution(r),
       })),
     },
@@ -250,24 +250,26 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   >
                     <Icon name="zap" size={12} />
                   </button>
-                  {/* Preview resolution — renders fewer pixels for faster playback. */}
+                  {/* Preview QUALITY — renders fewer pixels for faster playback.
+                      This does NOT change the composition size or the export. */}
                   <Dropdown
                     placement="top-start"
                     trigger={
                       <button
                         type="button"
                         className={previewResolution !== 1 ? styles.toggleBtnActive : styles.toggleBtn}
-                        title="Preview resolution (fewer pixels = faster)"
+                        title="Preview quality — lower = faster playback. Does not change size or export."
                       >
+                        <Icon name="graph-speed" size={11} />
                         {RESOLUTION_LABELS[previewResolution]}
                         <Icon name="chevron-down" size={10} />
                       </button>
                     }
                     items={([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
-                      type: 'item',
+                      type: 'item' as const,
                       id: `res-${r}`,
-                      label: RESOLUTION_LABELS[r],
-                      icon: r === previewResolution ? 'check' : undefined,
+                      label: `${RESOLUTION_LABELS[r]} · ${RESOLUTION_PERCENT[r]}`,
+                      icon: (r === previewResolution ? 'check' : undefined) as IconName | undefined,
                       onSelect: () => setResolution(r),
                     }))}
                   />

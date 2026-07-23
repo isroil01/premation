@@ -31,6 +31,8 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   type?: 'button' | 'submit' | 'reset';
 }
 
+import { usePreferenceStore } from '@stores/preferenceStore';
+
 function ButtonInner(
   {
     variant = 'secondary',
@@ -41,12 +43,17 @@ function ButtonInner(
     rightIcon,
     disabled,
     className,
+    style,
     children,
     type = 'button',
     ...rest
   }: ButtonProps,
   ref: Ref<HTMLButtonElement>,
 ): JSX.Element {
+  const buttonPref = usePreferenceStore((s) => s.buttonSize);
+  const scaleMult = buttonPref === 'sm' ? 0.88 : buttonPref === 'lg' ? 1.15 : 1.0;
+  const mergedStyle = scaleMult !== 1 ? { transform: `scale(${scaleMult})`, transformOrigin: 'center center', ...style } : style;
+
   const isDisabled = disabled || loading;
   return (
     <button
@@ -57,6 +64,7 @@ function ButtonInner(
       data-loading={loading || undefined}
       data-variant={variant}
       data-size={size}
+      style={mergedStyle}
       className={cn(
         styles.root,
         fullWidth && styles.fullWidth,

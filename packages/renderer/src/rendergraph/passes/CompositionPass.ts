@@ -1,10 +1,10 @@
 import { Color } from '../../core/math/Color';
 import { Rect } from '../../core/math/geometry';
-import type { Renderable, RenderableEffect, RenderableSdf } from '../../scene/FrameScene';
-import type { SolidShape } from '../../pipeline/uniforms';
+import { depthEligible3D, type Renderable, type RenderableEffect, type RenderableSdf } from '../../scene/FrameScene';
+import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, emitSolid, emitTextured, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv } from './passUtils';
+import { beginViewportPass, emitSolid, emitTextured, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
 import { BLUR_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
 import { packBlur, packGradientRamp, packFractalNoise, packDisplacementMap, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
@@ -313,27 +313,39 @@ export class CompositionPass extends RenderPass {
     const enc = beginViewportPass(ctx, 'layer-src', writeAttachment(ctx, dest, Color.transparent()));
     services.quad.execute(enc, cmds);
     enc.end();
-    let tex = ctx.services.backend.renderTargetTexture(ctx.target(dest)!);
+    const tex = ctx.services.backend.renderTargetTexture(ctx.target(dest)!);
     if (!tex) return null;
+    return this.applyLayerEffects(ctx, r, tex, dest, byId);
+  }
 
-    if (r.effects && r.effects.length > 0) {
-      const res = this.runEffectsChain(ctx, r.effects, tex, [dest, BLUR_TARGET1, BLUR_TARGET2], byId, r.id);
-      if (res.name !== dest) {
-        // Settle the result into `dest` so the caller's target contract holds
-        // (scratch targets are reused immediately after).
-        const clampSampler = services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
-        const copy = new CommandBuffer();
-        emitTextured(copy, screenMvp(), Color.white(), 1, 'none', res.tex, clampSampler, targetSampleUv(ctx));
-        const encC = beginViewportPass(ctx, 'layer-settle', writeAttachment(ctx, dest, Color.transparent()));
-        services.quad.execute(encC, copy);
-        encC.end();
-        tex = ctx.services.backend.renderTargetTexture(ctx.target(dest)!);
-        if (!tex) return null;
-      } else {
-        tex = res.tex;
-      }
-    }
-    return tex;
+  /**
+   * Run a layer's spatial-effects chain over `srcTex` (which must live in
+   * `dest`) and SETTLE the result back into `dest`, returning its texture — so
+   * the caller's "final texture lives in dest" contract holds and scratch
+   * targets are free to reuse immediately after. A no-op (returns `srcTex`) when
+   * the layer has no effects. Shared by layerIntoTarget (matte / advanced-blend
+   * routing) and resolveEffect3DTexture (the depth-tested 3D group path), so a
+   * matted, advanced-blended, OR 3D layer runs the identical effect pipeline.
+   */
+  private applyLayerEffects(
+    ctx: RenderPassContext,
+    r: Renderable,
+    srcTex: TextureHandle,
+    dest: string,
+    byId: ReadonlyMap<string, Renderable>,
+  ): TextureHandle | null {
+    if (!r.effects || r.effects.length === 0) return srcTex;
+    const { services } = ctx;
+    const res = this.runEffectsChain(ctx, r.effects, srcTex, [dest, BLUR_TARGET1, BLUR_TARGET2], byId, r.id);
+    if (res.name === dest) return res.tex;
+    // Settle the result into `dest` (scratch targets are reused immediately after).
+    const clampSampler = services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
+    const copy = new CommandBuffer();
+    emitTextured(copy, screenMvp(), Color.white(), 1, 'none', res.tex, clampSampler, targetSampleUv(ctx));
+    const encC = beginViewportPass(ctx, 'layer-settle', writeAttachment(ctx, dest, Color.transparent()));
+    services.quad.execute(encC, copy);
+    encC.end();
+    return ctx.services.backend.renderTargetTexture(ctx.target(dest)!) ?? null;
   }
 
   /**
@@ -430,6 +442,176 @@ export class CompositionPass extends RenderPass {
     this.renderList(ctx, ctx.scene.renderables, EffectPass.activeColorTarget, 0);
   }
 
+  // Depth-group eligibility lives in FrameScene.depthEligible3D — SHARED with
+  // the snapshot adapter so the "who folds the light gain" decision and the
+  // partitioning below can never disagree.
+
+  /**
+   * Draw a 3D layer's CONTENT (solid fill / texture / masked texture) FLAT into
+   * the whole of the current target — the unit quad mapped to the full target
+   * via screenMvp, so the layer occupies [0,1]² in "layer space" — at opacity 1,
+   * blend normal, with its colour grade. This is the input the effect chain runs
+   * over; the resolved texture is then sampled 1:1 by the depth-tested quad.
+   * (No lighting/shade here — that is applied per-fragment on the resolved quad.)
+   */
+  private fill3DContentCmds(ctx: RenderPassContext, r: Renderable): CommandBuffer {
+    const { services } = ctx;
+    const cmds = new CommandBuffer();
+    const mvp = screenMvp();
+    const smp = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
+    const uv = r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 };
+    const isSolid = r.kind === 'rect' || r.kind === 'path' || r.kind === 'group';
+    const isTextured = r.kind === 'image' || r.kind === 'video' || r.kind === 'text';
+    if (r.maskTextureKey) {
+      const maskTex = services.textures.get(r.maskTextureKey);
+      let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
+      if (isSolid && !tex) tex = services.textures.get('texture:white');
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
+    } else if (isSolid && r.color) {
+      emitSolid(cmds, mvp, r.color, 1, 'normal', toSolidShape(r.sdf));
+    } else if (isTextured && r.textureKey) {
+      const tex = this.texFor(ctx, r.textureKey);
+      const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix);
+      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix);
+    }
+    return cmds;
+  }
+
+  /**
+   * Pre-resolve an effect-laden 3D layer's effect chain into a single texture
+   * (living in LAYER_TARGET). The layer content is drawn flat into LAYER_TARGET
+   * (layer space), then its spatial-effects chain runs over it via the SHARED
+   * applyLayerEffects / runEffectsChain machinery (the identical pipeline the 2D
+   * offscreen route uses), settling back into LAYER_TARGET. The caller then draws
+   * that texture as a textured3d quad inside the depth pass. MUST run BEFORE (and
+   * outside) the depth pass — you cannot sample a target you are writing.
+   * Returns null when the layer has no drawable content.
+   */
+  private resolveEffect3DTexture(
+    ctx: RenderPassContext,
+    r: Renderable,
+    byId: ReadonlyMap<string, Renderable>,
+  ): TextureHandle | null {
+    const cmds = this.fill3DContentCmds(ctx, r);
+    if (cmds.length === 0) return null;
+    const enc = beginViewportPass(ctx, 'threed-fx-src', writeAttachment(ctx, LAYER_TARGET, Color.transparent()));
+    ctx.services.quad.execute(enc, cmds);
+    enc.end();
+    const tex = ctx.services.backend.renderTargetTexture(ctx.target(LAYER_TARGET)!);
+    if (!tex) return null;
+    return this.applyLayerEffects(ctx, r, tex, LAYER_TARGET, byId);
+  }
+
+  /**
+   * Render a contiguous run of 3D renderables as depth-tested pass(es) into
+   * `out` (which must be an offscreen target created with a depth buffer).
+   * The run arrives back-to-front (buildSnapshot's painter sort), and we ALSO
+   * depth-test/write — correct for the dominant case of intersecting opaque
+   * planes, and the standard pragmatic compromise for semi-transparent ones
+   * (documented limitation: mutually-overlapping semi-transparent planes
+   * resolve per-pixel by depth, not by true per-fragment sorting).
+   *
+   * Effect-laden members (blur/glow/drop-shadow/…) are PRE-RESOLVED to a texture
+   * in 2D layer space (resolveEffect3DTexture) and drawn as a textured3d quad,
+   * so the effect result plane depth-tests / intersects / lights with its 3D
+   * siblings. The resolve settles into LAYER_TARGET, so as soon as a queued draw
+   * samples it we must flush the depth pass before the NEXT resolve overwrites
+   * it; those extra flushes reuse the SAME depth buffer (cleared only on the
+   * first sub-pass), so per-pixel intersection is preserved across them.
+   */
+  private render3DGroup(
+    ctx: RenderPassContext,
+    group: ReadonlyArray<Renderable>,
+    out: string,
+    byId: ReadonlyMap<string, Renderable>,
+  ): void {
+    const { viewport, services } = ctx;
+    const camera3d = ctx.scene.camera3d!;
+    const lights = ctx.scene.lights3d;
+    const targetUv = targetSampleUv(ctx);
+    const clampSampler = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
+    // Per-fragment Accepts-Lights shading: build the shade tail for renderables
+    // that carry shade data, when the scene delivered lights. No eye (ortho
+    // view) → specular is skipped but diffuse still runs per-fragment. No
+    // scene lights at all → fall back to multiplying the CPU per-quad gain
+    // into the tint, so lighting is never silently lost.
+    const shadeFor = (r: Renderable): Shade3D | undefined => {
+      const s = r.threeD?.shade;
+      if (!s || !lights || lights.length === 0) return undefined;
+      return {
+        model: r.threeD!.model,
+        eye: camera3d.eye ?? [0, 0, -1e6],
+        specular: camera3d.eye ? s.specular : 0,
+        shininess: s.shininess,
+        lights,
+      };
+    };
+    const litColor = (r: Renderable, c: Color, shaded: Shade3D | undefined): Color => {
+      const g = r.threeD?.shade?.quadGain;
+      if (shaded || !g) return c;
+      return { r: c.r * g[0], g: c.g * g[1], b: c.b * g[2], a: c.a };
+    };
+
+    let cmds = new CommandBuffer();
+    let depthCleared = false;
+    // True when `cmds` holds a queued draw sampling the resolved-effect texture
+    // in LAYER_TARGET — that draw must execute before LAYER_TARGET is reused.
+    let pendingResolved = false;
+    const flush = (): void => {
+      if (cmds.length === 0) return;
+      const enc = beginViewportPass(ctx, 'composition-3d', writeAttachment(ctx, out), depthCleared ? {} : { clearDepth: 1 });
+      services.quad.execute(enc, cmds);
+      enc.end();
+      cmds = new CommandBuffer();
+      depthCleared = true;
+      pendingResolved = false;
+    };
+
+    for (const r of group) {
+      if (r.opacity <= 0) continue;
+      const mvp = mvp3dFor(viewport, camera3d, r.threeD!.model);
+      const uv = r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 };
+      const isSolid = r.kind === 'rect' || r.kind === 'path' || r.kind === 'group';
+      const isTextured = r.kind === 'image' || r.kind === 'video' || r.kind === 'text';
+      const shade = shadeFor(r);
+
+      if (r.effects && r.effects.length > 0) {
+        // Free LAYER_TARGET first if a prior resolved draw still samples it.
+        if (pendingResolved) flush();
+        const resolved = this.resolveEffect3DTexture(ctx, r, byId);
+        if (resolved) {
+          // Colour is baked into the resolved texture; the quad's tint is white
+          // (or the per-quad light gain when no scene lights were delivered),
+          // and shade lights the effect result per-fragment.
+          const tint = litColor(r, Color.white(), shade);
+          emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, resolved, clampSampler(), targetUv, undefined, shade);
+          pendingResolved = true;
+        }
+        continue;
+      }
+
+      const tint = litColor(r, r.color ?? Color.white(), shade);
+      if (r.maskTextureKey) {
+        const maskTex = services.textures.get(r.maskTextureKey);
+        let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
+        if (isSolid && !tex) tex = services.textures.get('texture:white');
+        if (maskTex && tex) {
+          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade);
+        }
+      } else if (isSolid && r.color) {
+        emitSolid3D(cmds, mvp, tint, r.opacity, r.blend, toSolidShape(r.sdf), shade);
+      } else if (isTextured && r.textureKey) {
+        const tex = this.texFor(ctx, r.textureKey);
+        // Known limitation: no LUT variant in the 3D material set — a 3D layer
+        // carrying a colour LUT keeps its affine grade rows but skips the LUT
+        // remap inside a depth group (rare combination).
+        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade);
+      }
+    }
+    flush();
+  }
+
   /** Render a paint-ordered renderable list into `out` (the scene colour target
    *  at depth 0, a precomp target when isolating a nested comp). */
   private renderList(ctx: RenderPassContext, renderables: ReadonlyArray<Renderable>, out: string, depth: number): void {
@@ -449,7 +631,34 @@ export class CompositionPass extends RenderPass {
       flushMain,
       byId: new Map(renderables.map((r) => [r.id, r] as const)),
     };
-    for (const r of renderables) this.processRenderable(ctx, r, st);
+    // 3D render groups need (a) the scene camera matrices and (b) an offscreen
+    // out target (created with a depth buffer). On the raw surface there is no
+    // guaranteed depth attachment — fall back to the CPU-affine path there
+    // (the adapter routes 3D frames through the scene colour target anyway).
+    const canDepthGroup = !!ctx.scene.camera3d && ctx.target(out) !== null;
+    const visible = ctx.viewport.visibleWorldRect;
+    let i = 0;
+    while (i < renderables.length) {
+      const r = renderables[i]!;
+      if (canDepthGroup && depthEligible3D(r)) {
+        // Contiguous run of depth-eligible 3D renderables → one depth pass.
+        // (2D layers, mattes, adjustments, effect layers break the run —
+        // exactly the barriers buildSnapshot's painter sort respects.)
+        const group: Renderable[] = [];
+        while (i < renderables.length && depthEligible3D(renderables[i]!)) {
+          const g = renderables[i]!;
+          if (Rect.intersects(visible, g.bounds) && g.opacity > 0) group.push(g);
+          i += 1;
+        }
+        if (group.length > 0) {
+          st.flushMain();
+          this.render3DGroup(ctx, group, out, st.byId);
+        }
+        continue;
+      }
+      this.processRenderable(ctx, r, st);
+      i += 1;
+    }
     flushMain();
   }
 
@@ -465,10 +674,21 @@ export class CompositionPass extends RenderPass {
     // MATTE_TARGET below) — never drawn to the scene directly.
     if (r0.matteSource) return;
 
+    // Safety net: a depth-eligible lit 3D renderable normally never reaches
+    // this 2D path (renderList routes it to render3DGroup), but when the run
+    // can't depth-group (no camera3d / non-samplable target) it falls through
+    // here with its light gain UNfolded — fold the per-quad fallback in so the
+    // layer doesn't lose its lighting.
+    let r = r0;
+    const quadGain = r0.threeD?.shade?.quadGain;
+    if (quadGain && r0.color) {
+      const c = r0.color;
+      r = { ...r0, color: { r: c.r * quadGain[0], g: c.g * quadGain[1], b: c.b * quadGain[2], a: c.a } };
+    }
+
     // Isolated precomp: render its subtree offscreen and continue as a plain
     // textured renderable — every branch below (matte, advanced blend, effects,
     // motion blur, direct draw) then composites the group as one unit.
-    let r = r0;
     if (r0.precomp) {
       if (!Rect.intersects(visible, r0.bounds) || r0.opacity <= 0) return;
       const prepared = this.prepareIsolatedPrecomp(ctx, r0, st, st.depth, true);

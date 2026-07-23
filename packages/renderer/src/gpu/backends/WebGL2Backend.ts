@@ -50,6 +50,9 @@ interface NativePipeline {
   blend: BlendMode;
   topology: PrimitiveTopology;
   layout: VertexBufferLayout[];
+  /** Depth-tested pipeline (3D layer path); applied at bind time. */
+  depthTest: boolean;
+  depthWrite: boolean;
   texUniform: WebGLUniformLocation | null;
   /** Secondary sampler (uMaskTex / uMapTex / uLutTex) for two-texture shaders —
    *  masks, displacement map, colour LUT. Previously never resolved or set, so
@@ -59,6 +62,8 @@ interface NativePipeline {
 interface NativeRenderTarget {
   fbo: WebGLFramebuffer;
   texture: WebGLTexture;
+  /** Depth renderbuffer, present when the target was created with depth. */
+  depth?: WebGLRenderbuffer;
 }
 
 function h<K extends string>(kind: K, native: unknown): ResourceHandle<K> {
@@ -94,6 +99,20 @@ export class WebGL2Backend implements RenderBackend {
   private gl!: GL;
   private vao: WebGLVertexArrayObject | null = null;
 
+  // Every GL object this backend allocates, so dispose() can release them all
+  // and then explicitly lose the context. Without this, each editor
+  // enter/leave leaked a live WebGL2 context (only the VAO was deleted) until
+  // Chrome's per-page context cap made getContext('webgl2') return null —
+  // the intermittent blank-canvas-on-reentry bug.
+  private readonly liveBuffers = new Set<WebGLBuffer>();
+  private readonly liveTextures = new Set<WebGLTexture>();
+  private readonly liveSamplers = new Set<WebGLSampler>();
+  private readonly livePrograms = new Set<WebGLProgram>();
+  private readonly liveFramebuffers = new Set<WebGLFramebuffer>();
+  /** Depth renderbuffers (3D render targets) — tracked like every other GL
+   *  object so dispose() stays leak-free. */
+  private readonly liveRenderbuffers = new Set<WebGLRenderbuffer>();
+
   async initialize(surface?: RenderSurface): Promise<void> {
     if (!surface) throw new Error('WebGL2Backend requires a canvas surface');
     const gl = surface.canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true }) as GL | null;
@@ -115,6 +134,7 @@ export class WebGL2Backend implements RenderBackend {
     gl.bindBuffer(target, buffer);
     if (desc.data) gl.bufferData(target, desc.data as unknown as BufferSource, gl.DYNAMIC_DRAW);
     else gl.bufferData(target, desc.sizeBytes, gl.DYNAMIC_DRAW);
+    this.liveBuffers.add(buffer);
     return h('buffer', { buffer, target } satisfies NativeBuffer);
   }
   writeBuffer(buffer: BufferHandle, byteOffset: number, data: ArrayBufferView): void {
@@ -124,7 +144,9 @@ export class WebGL2Backend implements RenderBackend {
     gl.bufferSubData(nb.target, byteOffset, data as unknown as BufferSource);
   }
   destroyBuffer(buffer: BufferHandle): void {
-    this.gl.deleteBuffer((buffer.native as NativeBuffer).buffer);
+    const b = (buffer.native as NativeBuffer).buffer;
+    this.liveBuffers.delete(b);
+    this.gl.deleteBuffer(b);
   }
 
   createTexture(desc: TextureDescriptor): TextureHandle {
@@ -132,6 +154,7 @@ export class WebGL2Backend implements RenderBackend {
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, desc.width, desc.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    this.liveTextures.add(texture);
     return h('texture', texture);
   }
   writeTexture(texture: TextureHandle, source: TextureSource): void {
@@ -145,7 +168,9 @@ export class WebGL2Backend implements RenderBackend {
     }
   }
   destroyTexture(texture: TextureHandle): void {
-    this.gl.deleteTexture(texture.native as WebGLTexture);
+    const t = texture.native as WebGLTexture;
+    this.liveTextures.delete(t);
+    this.gl.deleteTexture(t);
   }
 
   createSampler(desc: SamplerDescriptor): SamplerHandle {
@@ -158,10 +183,13 @@ export class WebGL2Backend implements RenderBackend {
     gl.samplerParameteri(sampler, gl.TEXTURE_MAG_FILTER, filter(desc.mag));
     gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_S, wrap(desc.addressU));
     gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_T, wrap(desc.addressV));
+    this.liveSamplers.add(sampler);
     return h('sampler', sampler);
   }
   destroySampler(sampler: SamplerHandle): void {
-    this.gl.deleteSampler(sampler.native as WebGLSampler);
+    const s = sampler.native as WebGLSampler;
+    this.liveSamplers.delete(s);
+    this.gl.deleteSampler(s);
   }
 
   createShaderModule(desc: ShaderModuleDescriptor): ShaderModuleHandle {
@@ -170,10 +198,13 @@ export class WebGL2Backend implements RenderBackend {
     const program = link(gl, compile(gl, gl.VERTEX_SHADER, desc.glsl.vertex), compile(gl, gl.FRAGMENT_SHADER, desc.glsl.fragment));
     const blockIndex = gl.getUniformBlockIndex(program, 'Object');
     if (blockIndex !== gl.INVALID_INDEX) gl.uniformBlockBinding(program, blockIndex, 0);
+    this.livePrograms.add(program);
     return h('shader', { program } satisfies NativeProgram);
   }
   destroyShaderModule(shader: ShaderModuleHandle): void {
-    this.gl.deleteProgram((shader.native as NativeProgram).program);
+    const p = (shader.native as NativeProgram).program;
+    this.livePrograms.delete(p);
+    this.gl.deleteProgram(p);
   }
 
   createPipeline(desc: PipelineDescriptor): PipelineHandle {
@@ -192,6 +223,8 @@ export class WebGL2Backend implements RenderBackend {
       blend: desc.blend,
       topology: desc.topology,
       layout: desc.buffers,
+      depthTest: desc.depthTest === true,
+      depthWrite: desc.depthWrite ?? desc.depthTest === true,
       texUniform,
       tex1Uniform,
     } satisfies NativePipeline);
@@ -212,16 +245,33 @@ export class WebGL2Backend implements RenderBackend {
     const fbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    let depth: WebGLRenderbuffer | undefined;
+    if (desc.depth) {
+      depth = gl.createRenderbuffer()!;
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, desc.width, desc.height);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+      this.liveRenderbuffers.add(depth);
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return { kind: 'render-target', id: nextId(), native: { fbo, texture } satisfies NativeRenderTarget };
+    this.liveTextures.add(texture);
+    this.liveFramebuffers.add(fbo);
+    return { kind: 'render-target', id: nextId(), native: { fbo, texture, depth } satisfies NativeRenderTarget };
   }
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
     return { kind: 'texture', id: target.id, native: (target.native as NativeRenderTarget).texture };
   }
   destroyRenderTarget(target: RenderTargetHandle): void {
     const rt = target.native as NativeRenderTarget;
+    this.liveFramebuffers.delete(rt.fbo);
+    this.liveTextures.delete(rt.texture);
     this.gl.deleteFramebuffer(rt.fbo);
     this.gl.deleteTexture(rt.texture);
+    if (rt.depth) {
+      this.liveRenderbuffers.delete(rt.depth);
+      this.gl.deleteRenderbuffer(rt.depth);
+    }
   }
 
   /** Surface clip rect (surface px, top-left origin), or null. */
@@ -245,13 +295,23 @@ export class WebGL2Backend implements RenderBackend {
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     const toSurface = fbo === null;
     gl.bindVertexArray(this.vao);
+    // Depth state is per-pipeline (applied at bind time); start every pass with
+    // it off and writes enabled so clears work and 2D passes are unaffected.
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(true);
     // Clears are always full-canvas (the pasteboard outside the comp keeps the
     // clear colour); only DRAWS are scissored, and only on the surface.
     gl.disable(gl.SCISSOR_TEST);
+    let clearBits = 0;
     if (attach.clear) {
       gl.clearColor(attach.clear.r, attach.clear.g, attach.clear.b, attach.clear.a);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      clearBits |= gl.COLOR_BUFFER_BIT;
     }
+    if (desc.depth) {
+      gl.clearDepth(desc.depth.clearDepth ?? 1);
+      clearBits |= gl.DEPTH_BUFFER_BIT;
+    }
+    if (clearBits) gl.clear(clearBits);
     const clip = toSurface ? this.frameClip : null;
     if (clip) {
       // gl.scissor is bottom-left origin; the contract is top-left.
@@ -283,7 +343,32 @@ export class WebGL2Backend implements RenderBackend {
     );
   }
   dispose(): void {
-    if (this.vao) this.gl.deleteVertexArray(this.vao);
+    // May be called before initialize() succeeded (getContext returned null),
+    // or twice (Renderer.dispose is idempotent but defensive callers exist).
+    const gl = this.gl as GL | undefined;
+    if (!gl) return;
+    for (const fbo of this.liveFramebuffers) gl.deleteFramebuffer(fbo);
+    for (const tex of this.liveTextures) gl.deleteTexture(tex);
+    for (const rb of this.liveRenderbuffers) gl.deleteRenderbuffer(rb);
+    for (const buf of this.liveBuffers) gl.deleteBuffer(buf);
+    for (const s of this.liveSamplers) gl.deleteSampler(s);
+    for (const p of this.livePrograms) gl.deleteProgram(p);
+    this.liveFramebuffers.clear();
+    this.liveTextures.clear();
+    this.liveRenderbuffers.clear();
+    this.liveBuffers.clear();
+    this.liveSamplers.clear();
+    this.livePrograms.clear();
+    if (this.vao) {
+      gl.deleteVertexArray(this.vao);
+      this.vao = null;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // Release the context itself. Browsers cap live WebGL contexts per page
+    // (~16 in Chromium); relying on GC to reclaim them made re-entry blank
+    // once the cap was hit. Explicit loseContext frees the slot immediately.
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    this.gl = undefined as unknown as GL;
   }
 }
 
@@ -298,6 +383,15 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     this.pipeline = pipeline.native as NativePipeline;
     this.gl.useProgram(this.pipeline.program);
     applyBlend(this.gl, this.pipeline.blend);
+    // Depth state rides the pipeline (mirrors WebGPU, where it is baked in).
+    if (this.pipeline.depthTest) {
+      this.gl.enable(this.gl.DEPTH_TEST);
+      this.gl.depthFunc(this.gl.LEQUAL);
+      this.gl.depthMask(this.pipeline.depthWrite);
+    } else {
+      this.gl.disable(this.gl.DEPTH_TEST);
+      this.gl.depthMask(true);
+    }
   }
   setBindGroup(_index: number, group: BindGroupHandle): void {
     const gl = this.gl;

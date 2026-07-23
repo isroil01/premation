@@ -7,7 +7,6 @@
 import { createPortal } from 'react-dom';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
-import { Checkbox } from '@components/Checkbox/Checkbox';
 import { cn } from '@utils/cn';
 import { useOnboardingStore, TOUR_STEPS } from '@stores/onboardingStore';
 import styles from './OnboardingOverlay.module.css';
@@ -15,10 +14,8 @@ import styles from './OnboardingOverlay.module.css';
 export function OnboardingOverlay({ onDone }: { onDone: () => void }): JSX.Element | null {
   const active = useOnboardingStore((s) => s.active);
   const step = useOnboardingStore((s) => s.step);
-  const aeShortcuts = useOnboardingStore((s) => s.aeShortcuts);
   const next = useOnboardingStore((s) => s.next);
   const back = useOnboardingStore((s) => s.back);
-  const toggleAe = useOnboardingStore((s) => s.toggleAe);
   const finish = useOnboardingStore((s) => s.finish);
 
   if (!active) return null;
@@ -36,13 +33,6 @@ export function OnboardingOverlay({ onDone }: { onDone: () => void }): JSX.Eleme
         <h2 className={styles.title}>{s.title}</h2>
         <p className={styles.body}>{s.body}</p>
         <div className={styles.hint}><Icon name="info" size={12} /> {s.hint}</div>
-
-        {isFirst ? (
-          <label className={styles.ae}>
-            <Checkbox checked={aeShortcuts} onChange={() => toggleAe()} />
-            <span>Import my After Effects shortcuts</span>
-          </label>
-        ) : null}
 
         <div className={styles.dots}>
           {TOUR_STEPS.map((_, i) => (

@@ -130,7 +130,11 @@ const NEAR = 1;
 const DEG = Math.PI / 180;
 
 /** Project a comp-space point through the camera to screen space + scale + depth. */
+/** Project a comp-space point through the camera to screen space + scale + depth. */
 export function projectPoint(p: Vec3, cam: Camera3D): Projected {
+  if (!cam || !cam.position || !cam.principal) {
+    cam = defaultCamera(1920, 1080);
+  }
   const yaw = cam.orientation?.yaw ?? 0;
   const pitch = cam.orientation?.pitch ?? 0;
   if (yaw !== 0 || pitch !== 0) {
@@ -172,6 +176,115 @@ export function projectPoint(p: Vec3, cam: Camera3D): Projected {
     scale,
     depth: clamped,
   };
+}
+
+// ── GPU matrix forms ─────────────────────────────────────────────────────────
+// The depth-tested GPU pipeline needs the SAME camera as `projectPoint` /
+// `projectOrtho`, but as 4×4 view + projection matrices (column-major, the
+// Matrix4 convention). These are derived to be algebraically identical to the
+// scalar projections above: for any point p,
+//   transformPoint(projection · view, p)  ===  { projectPoint(p).x/y, zNdc }
+// (with the perspective divide by camera-space z happening in hardware).
+// Keeping both forms in this one file is what guarantees the CPU affine
+// fallback (hit-testing, painter sort, Canvas2D offline path) and the GPU
+// mat4 path never disagree about where a layer sits on screen.
+
+import type { Matrix4 } from '../types';
+
+/** Near plane distance (matches the NEAR clamp of `projectPoint`). */
+export const PERSPECTIVE_NEAR = NEAR;
+/** Far plane for depth-buffer normalisation. Generous — comp z rarely exceeds
+ *  a few tens of thousands of px. Only depth PRECISION depends on it. */
+export const PERSPECTIVE_FAR = 100000;
+/** Half-range of the orthographic depth window (±px around the comp plane). */
+export const ORTHO_DEPTH_RANGE = 50000;
+
+/**
+ * World → camera-space view matrix: V = Rx(−pitch) · Ry(−yaw) · T(−eye).
+ * Matches `projectPoint`'s rotated path exactly (translate by the eye, undo
+ * yaw about Y, then pitch about X). Zero orientation reduces to a translation.
+ */
+export function cameraViewMatrix(cam: Camera3D): Matrix4 {
+  if (!cam || !cam.position) cam = defaultCamera(1920, 1080);
+  const yaw = (cam.orientation?.yaw ?? 0) * DEG;
+  const pitch = (cam.orientation?.pitch ?? 0) * DEG;
+  const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
+  const cx = Math.cos(-pitch), sx = Math.sin(-pitch);
+  // R = Rx(−pitch) · Ry(−yaw), row-major rows:
+  //   projectPoint applies Ry(−yaw) first: x1 = cy·vx + sy·vz ; z1 = −sy·vx + cy·vz
+  //   then Rx(−pitch):                     y2 = cx·vy − sx·z1 ; z2 = sx·vy + cx·z1
+  const r00 = cy,        r01 = 0,  r02 = sy;
+  const r10 = -sx * -sy, r11 = cx, r12 = -sx * cy;
+  const r20 = cx * -sy,  r21 = sx, r22 = cx * cy;
+  const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
+  // Column-major store; translation column = −R·eye.
+  return [
+    r00, r10, r20, 0,
+    r01, r11, r21, 0,
+    r02, r12, r22, 0,
+    -(r00 * ex + r01 * ey + r02 * ez),
+    -(r10 * ex + r11 * ey + r12 * ez),
+    -(r20 * ex + r21 * ey + r22 * ez),
+    1,
+  ];
+}
+
+/**
+ * Camera space → homogeneous COMP-SPACE clip: after the divide by w (= camera z),
+ * x/y are comp px identical to `projectPoint` (principal + f·v/z) and z is a
+ * [0,1] normalised depth (monotonic in camera z) for the depth buffer. The 2D
+ * pan/zoom camera is applied AFTER this, as a lifted mat3 (see the renderer).
+ */
+export function cameraProjectionMatrix(cam: Camera3D): Matrix4 {
+  if (!cam || !cam.principal) cam = defaultCamera(1920, 1080);
+  const f = cam.focalLength;
+  const px = cam.principal.x;
+  const py = cam.principal.y;
+  const n = PERSPECTIVE_NEAR;
+  const fr = PERSPECTIVE_FAR;
+  const a = fr / (fr - n);
+  const b = (-fr * n) / (fr - n);
+  return [
+    f, 0, 0, 0,
+    0, f, 0, 0,
+    px, py, a, 1,
+    0, 0, b, 0,
+  ];
+}
+
+/**
+ * The orthographic twin: view rotates comp space into the axis view's basis
+ * about the comp centre; projection is identity in x/y (scale 1, no divide,
+ * w = 1) with depth normalised into [0,1] across ±ORTHO_DEPTH_RANGE. Matches
+ * `projectOrtho` exactly for x/y and ordering for depth.
+ */
+export function orthoCameraMatrices(
+  view: OrthoView,
+  width: number,
+  height: number,
+): { view: Matrix4; projection: Matrix4 } {
+  const { right, down } = ORTHO_BASIS[view];
+  const into = cross3(right, down);
+  const cx = width / 2;
+  const cy = height / 2;
+  // v = B·(p − center): rows are right / down / into.
+  const V: Matrix4 = [
+    right[0], down[0], into[0], 0,
+    right[1], down[1], into[1], 0,
+    right[2], down[2], into[2], 0,
+    -(right[0] * cx + right[1] * cy),
+    -(down[0] * cx + down[1] * cy),
+    -(into[0] * cx + into[1] * cy),
+    1,
+  ];
+  const R = ORTHO_DEPTH_RANGE;
+  const P: Matrix4 = [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1 / (2 * R), 0,
+    cx, cy, 0.5, 1,
+  ];
+  return { view: V, projection: P };
 }
 
 /**
@@ -229,3 +342,128 @@ export function orbitCamera(
     orientation: { yaw, pitch },
   };
 }
+
+export interface Ray3D {
+  origin: Vec3;
+  direction: Vec3;
+}
+
+/**
+ * Unproject a screen coordinate (px) into a 3D ray in composition space.
+ */
+export function unprojectScreenRay(
+  screenX: number,
+  screenY: number,
+  cam: Camera3D,
+  orthoView?: OrthoView | null,
+  width: number = 1920,
+  height: number = 1080,
+): Ray3D {
+  if (!cam || !cam.principal || !cam.position) {
+    cam = defaultCamera(width, height);
+  }
+  if (orthoView) {
+    const { right, down } = ORTHO_BASIS[orthoView];
+    const into = cross3(right, down);
+    const cx = width / 2;
+    const cy = height / 2;
+    const dx = screenX - cx;
+    const dy = screenY - cy;
+    const origin: Vec3 = {
+      x: cx + right[0] * dx + down[0] * dy - into[0] * ORTHO_DEPTH_RANGE,
+      y: cy + right[1] * dx + down[1] * dy - into[1] * ORTHO_DEPTH_RANGE,
+      z: right[2] * dx + down[2] * dy - into[2] * ORTHO_DEPTH_RANGE,
+    };
+    return {
+      origin,
+      direction: { x: into[0], y: into[1], z: into[2] },
+    };
+  }
+
+  const dx = (screenX - cam.principal.x) / cam.focalLength;
+  const dy = (screenY - cam.principal.y) / cam.focalLength;
+  let vx = dx;
+  let vy = dy;
+  let vz = 1;
+
+  const yaw = (cam.orientation?.yaw ?? 0) * DEG;
+  const pitch = (cam.orientation?.pitch ?? 0) * DEG;
+  if (yaw !== 0 || pitch !== 0) {
+    // Forward rotation R = Ry(yaw) · Rx(pitch)
+    const cx = Math.cos(pitch), sx = Math.sin(pitch);
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const y1 = cx * vy - sx * vz;
+    const z1 = sx * vy + cx * vz;
+    const x2 = cy * vx + sy * z1;
+    const z2 = -sy * vx + cy * z1;
+    vx = x2;
+    vy = y1;
+    vz = z2;
+  }
+
+  const len = Math.hypot(vx, vy, vz) || 1;
+  return {
+    origin: { ...cam.position },
+    direction: { x: vx / len, y: vy / len, z: vz / len },
+  };
+}
+
+/**
+ * Intersect a 3D ray with a plane defined by a point and normal vector.
+ */
+export function intersectRayPlane(ray: Ray3D, planePoint: Vec3, planeNormal: Vec3): Vec3 | null {
+  const denom = ray.direction.x * planeNormal.x + ray.direction.y * planeNormal.y + ray.direction.z * planeNormal.z;
+  if (Math.abs(denom) < 1e-6) return null;
+  const num = (planePoint.x - ray.origin.x) * planeNormal.x +
+              (planePoint.y - ray.origin.y) * planeNormal.y +
+              (planePoint.z - ray.origin.z) * planeNormal.z;
+  const t = num / denom;
+  return {
+    x: ray.origin.x + t * ray.direction.x,
+    y: ray.origin.y + t * ray.direction.y,
+    z: ray.origin.z + t * ray.direction.z,
+  };
+}
+
+/**
+ * Find closest points between a 3D ray and a 3D line axis.
+ * Returns parameter `tAxis` along axisDir from axisOrigin.
+ */
+export function closestPointRayAxis(
+  ray: Ray3D,
+  axisOrigin: Vec3,
+  axisDir: Vec3,
+): { tAxis: number; tRay: number; pointOnAxis: Vec3 } {
+  const w0x = ray.origin.x - axisOrigin.x;
+  const w0y = ray.origin.y - axisOrigin.y;
+  const w0z = ray.origin.z - axisOrigin.z;
+
+  const a = ray.direction.x * ray.direction.x + ray.direction.y * ray.direction.y + ray.direction.z * ray.direction.z;
+  const b = ray.direction.x * axisDir.x + ray.direction.y * axisDir.y + ray.direction.z * axisDir.z;
+  const c = axisDir.x * axisDir.x + axisDir.y * axisDir.y + axisDir.z * axisDir.z;
+  const d = ray.direction.x * w0x + ray.direction.y * w0y + ray.direction.z * w0z;
+  const e = axisDir.x * w0x + axisDir.y * w0y + axisDir.z * w0z;
+
+  const denom = a * c - b * b;
+  if (Math.abs(denom) < 1e-6) {
+    return {
+      tAxis: 0,
+      tRay: 0,
+      pointOnAxis: { ...axisOrigin },
+    };
+  }
+
+  const tRay = (b * e - c * d) / denom;
+  const tAxis = (a * e - b * d) / denom;
+
+  return {
+    tAxis,
+    tRay,
+    pointOnAxis: {
+      x: axisOrigin.x + tAxis * axisDir.x,
+      y: axisOrigin.y + tAxis * axisDir.y,
+      z: axisOrigin.z + tAxis * axisDir.z,
+    },
+  };
+}
+

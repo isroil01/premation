@@ -17,7 +17,8 @@ import {
   MIN_DIMENSION, MAX_DIMENSION, MIN_FPS, MAX_FPS, MIN_DURATION, MAX_DURATION,
   clampDimension, clampFps, clampDuration, describeSize, describeDuration, findSizePreset,
 } from '@core/composition/presets';
-import { api, type AccountRecord, type ImportedAssetDto, type RenderJobDto, type TrashedProject } from '@core/api/client';
+import { useAssetStore, type AssetFolder } from '@stores/assetStore';
+import { api, type AccountRecord, type RenderJobDto, type TrashedProject } from '@core/api/client';
 import { clearRecovery } from '@core/persistence/recovery';
 import { useCompositionStore, type CompositionSettings } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -37,8 +38,7 @@ function timeAgo(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-type TabType = 'home' | 'projects' | 'assets' | 'renders' | 'trash' | 'settings'
-  | 'cursors' | 'motion-graphics' | 'transitions' | 'sound-fx' | 'lottie';
+type TabType = 'home' | 'projects' | 'assets' | 'renders' | 'trash' | 'settings';
 
 type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -133,28 +133,32 @@ export function DashboardPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabType>(() => {
     const t = searchParams.get('tab');
     return t === 'settings' || t === 'projects' || t === 'assets' || t === 'renders' || t === 'trash'
-      || t === 'cursors' || t === 'motion-graphics' || t === 'transitions' || t === 'sound-fx' || t === 'lottie'
       ? (t as TabType)
       : 'home';
   });
-
-  // Library sub-filters
-  const [cursorFilter, setCursorFilter] = useState<'all' | 'click' | 'trail' | 'spotlight' | 'hand'>('all');
-  const [mgFilter, setMgFilter] = useState<'all' | 'lower-thirds' | 'callouts' | 'shapes' | 'titles'>('all');
-  const [transFilter, setTransFilter] = useState<'all' | 'wipe' | 'zoom' | 'push' | 'glitch'>('all');
-  const [sfxFilter, setSfxFilter] = useState<'all' | 'whoosh' | 'click' | 'impact' | 'ambient'>('all');
-  const [lottieFilter, setLottieFilter] = useState<'all' | 'icons' | 'loaders' | 'illustrations' | 'stickers'>('all');
 
   // Search & Filter States for Projects
   const [searchQuery, setSearchQuery] = useState('');
   const [orientationFilter, setOrientationFilter] = useState<'all' | Orientation>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
+
+  // Shared AssetStore (synchronized with Editor Assets tab)
+  const storeAssets = useAssetStore((s) => s.assets);
+  const folders = useAssetStore((s) => s.folders);
+  const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
+  const removeAsset = useAssetStore((s) => s.removeAsset);
+  const createFolder = useAssetStore((s) => s.createFolder);
+  const renameFolder = useAssetStore((s) => s.renameFolder);
+  const removeFolder = useAssetStore((s) => s.removeFolder);
+
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
 
   // Assets & renders — both come from the backend. They used to be hardcoded
   // arrays (`intro_backdrop.mp4`, a job frozen at "Rendering 45%") that ignored
   // the real /assets and /render endpoints entirely.
   const [assetTypeFilter, setAssetTypeFilter] = useState<'all' | 'video' | 'image' | 'audio'>('all');
-  const [assetsList, setAssetsList] = useState<ImportedAssetDto[]>([]);
   const [assetsBusy, setAssetsBusy] = useState(false);
   const [rendersList, setRendersList] = useState<RenderJobDto[]>([]);
   const [trash, setTrash] = useState<TrashedProject[]>([]);
@@ -191,13 +195,11 @@ export function DashboardPage(): JSX.Element {
     let live = true;
     void (async () => {
       try {
-        const [assets, renders, me] = await Promise.all([
-          api.listAssets(undefined, { limit: 100 }),
+        const [renders, me] = await Promise.all([
           api.listRenders({ limit: 50 }),
           api.me(),
         ]);
         if (!live) return;
-        setAssetsList(assets.items);
         setRendersList(renders.items);
         setAccount(me);
       } catch (err) {
@@ -212,6 +214,100 @@ export function DashboardPage(): JSX.Element {
     if (activeTab === 'trash') void loadTrash();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  const PRESET_TEMPLATES = [
+    {
+      id: 'reel',
+      title: 'Social Reel / Story',
+      desc: '1080 × 1920 · 60 fps · 15s',
+      icon: 'camera' as const,
+      width: 1080,
+      height: 1920,
+      fps: 60,
+      duration: 15,
+      badge: '9:16 Portrait',
+      color: '#8b5cf6',
+    },
+    {
+      id: 'youtube',
+      title: 'YouTube 4K Video',
+      desc: '3840 × 2160 · 30 fps · 30s',
+      icon: 'video' as const,
+      width: 3840,
+      height: 2160,
+      fps: 30,
+      duration: 30,
+      badge: '16:9 4K',
+      color: '#3170e6',
+    },
+    {
+      id: 'lottie',
+      title: 'Vector Lottie',
+      desc: '512 × 512 · 60 fps · 5s',
+      icon: 'sparkles' as const,
+      width: 512,
+      height: 512,
+      fps: 60,
+      duration: 5,
+      badge: '1:1 Square',
+      color: '#10b981',
+    },
+    {
+      id: 'mograph',
+      title: 'Motion Graphic HD',
+      desc: '1920 × 1080 · 60 fps · 10s',
+      icon: 'layout' as const,
+      width: 1920,
+      height: 1080,
+      fps: 60,
+      duration: 10,
+      badge: '16:9 HD',
+      color: '#f5b84b',
+    },
+  ];
+
+  const onQuickCreatePreset = async (title: string, width: number, height: number, fps: number, durationSeconds: number) => {
+    setCreating(true);
+    try {
+      clearRecovery();
+      const initialComp: CompositionSettings = {
+        id: `comp_${Date.now()}`,
+        name: title,
+        width,
+        height,
+        fps,
+        durationSeconds,
+        background: '#101014',
+        transparent: false,
+        startFrame: 0,
+      };
+      useCompositionStore.setState(initialComp);
+      getTimelineController().setFrameRate(fps);
+      getTimelineController().setDurationSeconds(durationSeconds);
+      const initialDoc: EditorDocument = {
+        version: '1.0.0',
+        scene: sceneProjectIO.createEmpty(title),
+        animation: { tracks: {}, expressions: {} },
+        comp: initialComp,
+      };
+      const p = await create(title, initialDoc);
+      if (!p?.id) throw new Error('Failed to create project.');
+      navigate(`/editor/${p.id}`);
+    } catch (err) {
+      useUIStore.getState().notify({
+        level: 'error',
+        message: `Failed to launch preset: ${(err as Error).message}`,
+        durationMs: 4000,
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const mostRecentProject = useMemo(() => {
+    if (projects.length === 0) return null;
+    return [...projects].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0] || null;
+  }, [projects]);
 
   const onCreate = () => {
     setSetupTitle('Untitled composition');
@@ -324,17 +420,90 @@ export function DashboardPage(): JSX.Element {
   // Assets Import Simulation
   /** Upload real files the user picks. Replaces a handler that invented an
    *  asset from a random name and never touched the network. */
-  const handleImportAsset = async (files: FileList | null): Promise<void> => {
+  const handleImportAssetFiles = async (files: FileList | null): Promise<void> => {
     if (!files?.length) return;
     setAssetsBusy(true);
     setDataError('');
     try {
-      const uploaded = await Promise.all([...files].map((f) => api.uploadAsset(f)));
-      setAssetsList((prev) => [...uploaded, ...prev]);
+      const items = [...files].map((f) => ({ file: f, folderId: currentFolderId }));
+      await addAssetsBatch(items);
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
       setAssetsBusy(false);
+    }
+  };
+
+  const handleImportFolder = async (files: FileList | null): Promise<void> => {
+    if (!files?.length) return;
+    setAssetsBusy(true);
+    setDataError('');
+    try {
+      const pathToId = new Map<string, string | null>();
+      pathToId.set('', currentFolderId);
+      const ensureFolder = (segments: string[]): string | null => {
+        let parentId = currentFolderId;
+        let key = '';
+        for (const seg of segments) {
+          key = key ? `${key}/${seg}` : seg;
+          if (!pathToId.has(key)) {
+            const created = createFolder(seg, parentId);
+            pathToId.set(key, created.id);
+          }
+          parentId = pathToId.get(key) ?? null;
+        }
+        return parentId;
+      };
+      const items: Array<{ file: File; folderId: string | null }> = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (!file) continue;
+        const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+        const parts = rel.split('/');
+        const folderSegments = parts.slice(0, -1);
+        const targetFolder = ensureFolder(folderSegments);
+        items.push({ file, folderId: targetFolder });
+      }
+      if (items.length > 0) {
+        await addAssetsBatch(items);
+      }
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : 'Folder import failed.');
+    } finally {
+      setAssetsBusy(false);
+    }
+  };
+
+  const handleNewFolder = () => {
+    const siblings = folders.filter((f) => f.parentId === currentFolderId);
+    const base = 'New Folder';
+    let name = base;
+    let n = 2;
+    while (siblings.some((f) => f.name === name)) name = `${base} ${n++}`;
+    const created = createFolder(name, currentFolderId);
+    setRenamingFolderId(created.id);
+  };
+
+  const handleDeleteFolder = async (folder: AssetFolder): Promise<void> => {
+    const assetCount = storeAssets.filter((a) => a.folderId === folder.id).length;
+    const subCount = folders.filter((f) => f.parentId === folder.id).length;
+    const ok = await customConfirm(
+      `Delete “${folder.name}”`,
+      assetCount || subCount
+        ? `This deletes the folder and everything inside it (${assetCount} asset${assetCount === 1 ? '' : 's'}${subCount ? `, ${subCount} subfolder${subCount === 1 ? '' : 's'}` : ''}). This can’t be undone.`
+        : 'Delete this empty folder?',
+      { confirmLabel: 'Delete', isDanger: true }
+    );
+    if (ok) removeFolder(folder.id);
+  };
+
+  const handleDeleteAsset = async (id: string, name: string): Promise<void> => {
+    if (!await customConfirm('Delete Asset', `Delete “${name}”? This cannot be undone.`, { isDanger: true, confirmLabel: 'Delete' })) return;
+    try {
+      removeAsset(id);
+      await api.deleteAsset(id).catch(() => undefined);
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : 'Could not delete that asset.');
     }
   };
 
@@ -351,15 +520,13 @@ export function DashboardPage(): JSX.Element {
     try {
       await api.restoreProject(id);
       setTrash((t) => t.filter((p) => p.id !== id));
-      void load(searchQuery); // it belongs back in the live list
+      void load(searchQuery);
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Could not restore that project.');
     }
   };
 
   const handleDestroy = async (id: string, name: string): Promise<void> => {
-    // The one place in the app where "cannot be undone" is actually true, so
-    // it says so — and it takes two deliberate steps to get here.
     if (!await customConfirm(
       'Permanently Delete Project',
       `Permanently delete “${name}”? This cannot be undone — the project and all of its version history will be gone for good.`,
@@ -382,20 +549,24 @@ export function DashboardPage(): JSX.Element {
     }
   };
 
-  const handleDeleteAsset = async (id: string, name: string): Promise<void> => {
-    if (!await customConfirm('Delete Asset', `Delete “${name}”? This cannot be undone.`, { isDanger: true, confirmLabel: 'Delete' })) return;
-    try {
-      await api.deleteAsset(id);
-      setAssetsList((prev) => prev.filter((a) => a.id !== id));
-    } catch (err) {
-      setDataError(err instanceof Error ? err.message : 'Could not delete that asset.');
+  const currentBreadcrumb: AssetFolder[] = [];
+  {
+    let cursor = currentFolderId;
+    const byId = new Map(folders.map((f) => [f.id, f] as const));
+    while (cursor) {
+      const f = byId.get(cursor);
+      if (!f) break;
+      currentBreadcrumb.unshift(f);
+      cursor = f.parentId;
     }
-  };
+  }
 
-  const filteredAssets = useMemo(() => {
-    if (assetTypeFilter === 'all') return assetsList;
-    return assetsList.filter((a) => a.type === assetTypeFilter);
-  }, [assetsList, assetTypeFilter]);
+  const subfoldersInView = folders.filter((f) => f.parentId === currentFolderId);
+  const visibleAssetsInView = storeAssets.filter((a) => {
+    const matchesType = assetTypeFilter === 'all' || a.type === assetTypeFilter;
+    const inFolder = (a.folderId ?? null) === currentFolderId;
+    return matchesType && inFolder;
+  });
 
   const activeRenders = useMemo(
     () => rendersList.filter((r) => r.status === 'queued' || r.status === 'running').length,
@@ -408,6 +579,58 @@ export function DashboardPage(): JSX.Element {
       case 'home':
         return (
           <>
+            {/* Continue Editing Hero Banner */}
+            {mostRecentProject && (
+              <div className={styles.heroBanner}>
+                <div className={styles.heroBadge}>
+                  <Icon name="sparkles" size={13} />
+                  <span>Pick up where you left off</span>
+                </div>
+                <h2 className={styles.heroTitle}>{mostRecentProject.name}</h2>
+                <p className={styles.heroSubtitle}>
+                  Edited {timeAgo(mostRecentProject.updatedAt)} · {describeSize(mostRecentProject.width, mostRecentProject.height)} · {mostRecentProject.fps} fps · {mostRecentProject.layerCount} {mostRecentProject.layerCount === 1 ? 'layer' : 'layers'}
+                </p>
+                <div className={styles.heroActions}>
+                  <button
+                    type="button"
+                    className={styles.heroBtnPrimary}
+                    onClick={() => navigate(`/editor/${mostRecentProject.id}`)}
+                  >
+                    <Icon name="play" size={15} />
+                    <span>Resume Editing</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Start Presets Launchpad */}
+            <div className={styles.launchpadSection}>
+              <div className={styles.sectionHeaderRow}>
+                <h2 className={styles.sectionTitle}>
+                  Quick Start Launchpad
+                  <span className={styles.sectionHint}>1-click composition setup</span>
+                </h2>
+              </div>
+              <div className={styles.launchpadGrid}>
+                {PRESET_TEMPLATES.map((tmpl) => (
+                  <div
+                    key={tmpl.id}
+                    className={styles.launchpadCard}
+                    onClick={() => void onQuickCreatePreset(tmpl.title, tmpl.width, tmpl.height, tmpl.fps, tmpl.duration)}
+                  >
+                    <div className={styles.launchpadHeader}>
+                      <div className={styles.launchpadIcon} style={{ background: `color-mix(in srgb, ${tmpl.color} 15%, transparent)`, color: tmpl.color }}>
+                        <Icon name={tmpl.icon} size={18} />
+                      </div>
+                      <span className={styles.launchpadBadge}>{tmpl.badge}</span>
+                    </div>
+                    <div className={styles.launchpadTitle}>{tmpl.title}</div>
+                    <div className={styles.launchpadDesc}>{tmpl.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Stats Summary Cards Row */}
             <div className={styles.statsGrid}>
               <div className={styles.statCard}>
@@ -433,7 +656,6 @@ export function DashboardPage(): JSX.Element {
                   <Icon name="image" size={16} />
                 </div>
                 <div className={styles.statMeta}>
-                  {/* Summed from the real asset records, not a literal. */}
                   <div className={styles.statValue}>{formatBytes(account?.storageBytes ?? 0)}</div>
                   <div className={styles.statLabel}>Storage Used</div>
                 </div>
@@ -486,37 +708,139 @@ export function DashboardPage(): JSX.Element {
                 </button>
               </div>
 
-              <label className={styles.btnPrimary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
-                <Icon name="plus" size={14} />
-                <span>{assetsBusy ? 'Uploading…' : 'Import Asset'}</span>
-                <input
-                  type="file"
-                  multiple
-                  accept="image/*,video/*,audio/*"
-                  style={{ display: 'none' }}
-                  disabled={assetsBusy}
-                  onChange={(e) => {
-                    void handleImportAsset(e.currentTarget.files);
-                    e.currentTarget.value = '';
-                  }}
-                />
-              </label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={handleNewFolder}
+                  title="Create new folder"
+                >
+                  <Icon name="folder-plus" size={14} />
+                  <span>New Folder</span>
+                </button>
+
+                <label className={styles.btnSecondary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
+                  <Icon name="folder-open" size={14} />
+                  <span>Import Folder</span>
+                  <input
+                    type="file"
+                    multiple
+                    style={{ display: 'none' }}
+                    disabled={assetsBusy}
+                    onChange={(e) => {
+                      void handleImportFolder(e.currentTarget.files);
+                      e.currentTarget.value = '';
+                    }}
+                    {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                  />
+                </label>
+
+                <label className={styles.btnPrimary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
+                  <Icon name="plus" size={14} />
+                  <span>{assetsBusy ? 'Uploading…' : 'Import Asset'}</span>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,video/*,audio/*"
+                    style={{ display: 'none' }}
+                    disabled={assetsBusy}
+                    onChange={(e) => {
+                      void handleImportAssetFiles(e.currentTarget.files);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Breadcrumb Navigation */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--color-text-secondary)', padding: '4px 0' }}>
+              <button
+                type="button"
+                className={currentFolderId === null ? styles.assetTabActive : styles.assetTab}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: currentFolderId === null ? '#fff' : 'var(--color-text-secondary)' }}
+                onClick={() => setCurrentFolderId(null)}
+              >
+                All Assets
+              </button>
+              {currentBreadcrumb.map((f, i) => (
+                <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  <span>/</span>
+                  <button
+                    type="button"
+                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: i === currentBreadcrumb.length - 1 ? '#fff' : 'var(--color-text-secondary)', fontWeight: i === currentBreadcrumb.length - 1 ? 600 : 400 }}
+                    onClick={() => setCurrentFolderId(f.id)}
+                  >
+                    {f.name}
+                  </button>
+                </span>
+              ))}
             </div>
 
             {dataError ? <p className={styles.emptyHint}>{dataError}</p> : null}
 
-            {filteredAssets.length === 0 ? (
+            {subfoldersInView.length === 0 && visibleAssetsInView.length === 0 ? (
               <div className={styles.emptyState}>
-                <Icon name="folder" size={28} />
-                <p>{assetsList.length === 0 ? 'No assets yet. Import an image, video, or audio file to use in your compositions.' : 'No assets of this type.'}</p>
+                <Icon name="folder" size={32} />
+                <p>{currentFolderId === null ? 'No assets yet. Import files, upload a folder, or create a new folder.' : 'This folder is empty. Import assets or create subfolders here.'}</p>
               </div>
             ) : (
               <div className={styles.assetsGrid}>
-                {filteredAssets.map((asset) => (
+                {/* Render folders first */}
+                {subfoldersInView.map((folder) => {
+                  const count = storeAssets.filter((a) => a.folderId === folder.id).length
+                    + folders.filter((f) => f.parentId === folder.id).length;
+                  return (
+                    <div
+                      key={folder.id}
+                      className={styles.assetCard}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => { if (renamingFolderId !== folder.id) setCurrentFolderId(folder.id); }}
+                    >
+                      <div className={styles.assetPreview} style={{ color: 'var(--color-primary)' }}>
+                        <Icon name="folder" size={20} />
+                      </div>
+                      <div className={styles.assetMeta}>
+                        {renamingFolderId === folder.id ? (
+                          <input
+                            autoFocus
+                            defaultValue={folder.name}
+                            className={styles.assetName}
+                            style={{ background: 'var(--color-surface-0)', border: '1px solid var(--color-primary)', borderRadius: 3, color: 'var(--color-text-primary)', width: '100%' }}
+                            onClick={(e) => e.stopPropagation()}
+                            onBlur={(e) => { renameFolder(folder.id, e.target.value); setRenamingFolderId(null); }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { renameFolder(folder.id, (e.target as HTMLInputElement).value); setRenamingFolderId(null); }
+                              if (e.key === 'Escape') setRenamingFolderId(null);
+                            }}
+                          />
+                        ) : (
+                          <div
+                            className={styles.assetName}
+                            title={folder.name}
+                            onDoubleClick={(e) => { e.stopPropagation(); setRenamingFolderId(folder.id); }}
+                          >
+                            {folder.name}
+                          </div>
+                        )}
+                        <div className={styles.assetDetails}>{count} item{count === 1 ? '' : 's'}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        title="Delete folder"
+                        onClick={(e) => { e.stopPropagation(); void handleDeleteFolder(folder); }}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {/* Render assets */}
+                {visibleAssetsInView.map((asset) => (
                   <div key={asset.id} className={styles.assetCard}>
                     <div className={styles.assetPreview}>
-                      {/* A real thumbnail when the file is an image; the icon
-                          is the fallback, not the whole story. */}
                       {asset.type === 'image' ? (
                         <img src={asset.src} alt="" className={styles.assetPreviewImg} />
                       ) : (
@@ -552,83 +876,99 @@ export function DashboardPage(): JSX.Element {
       case 'renders':
         return (
           <div className={styles.tableCard}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Job Name</th>
-                  <th>Format</th>
-                  <th>Progress</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th style={{ width: '60px', textAlign: 'center' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Real jobs from /render. This table used to list four
-                    hardcoded ones, including a job pinned at "45%" forever. */}
-                {rendersList.map((job) => {
-                  const project = projects.find((p) => p.id === job.projectId);
-                  return (
-                    <tr key={job.id}>
-                      <td>
-                        <div className={styles.jobCell}>
-                          <Icon name="video" size={16} style={{ color: 'var(--color-primary)' }} />
-                          <span style={{ fontWeight: 600 }}>{project?.name ?? 'Untitled render'}</span>
-                        </div>
-                      </td>
-                      <td className={styles.monoCell}>{job.format.toUpperCase()}</td>
-                      <td>
-                        <div className={styles.progressCellWrapper}>
-                          <div className={styles.progressBar}>
-                            <div className={styles.progressFill} style={{ width: `${Math.round(job.progress * 100)}%` }} />
+            {dataError ? <p className={styles.emptyHint}>{dataError}</p> : null}
+            {rendersList.length === 0 ? (
+              <div className={styles.emptyState}>
+                <Icon name="queue" size={48} className={styles.emptyStateIcon} />
+                <h3>No renders in queue</h3>
+                <p>Export a project from the composition editor to send render jobs to the queue.</p>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={() => setActiveTab('projects')}
+                  style={{ marginTop: '8px' }}
+                >
+                  <Icon name="folder" size={14} />
+                  <span>Go to Projects</span>
+                </button>
+              </div>
+            ) : (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Job Name</th>
+                    <th>Format</th>
+                    <th>Progress</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th style={{ width: '60px', textAlign: 'center' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rendersList.map((job) => {
+                    const project = projects.find((p) => p.id === job.projectId);
+                    return (
+                      <tr key={job.id}>
+                        <td>
+                          <div className={styles.jobCell}>
+                            <Icon name="video" size={16} style={{ color: 'var(--color-primary)' }} />
+                            <span style={{ fontWeight: 600 }}>{project?.name ?? 'Untitled render'}</span>
                           </div>
-                          <span className={styles.progressText}>{Math.round(job.progress * 100)}%</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span
-                          className={`${styles.badge} ${
-                            job.status === 'completed'
-                              ? styles.badgeSuccess
-                              : job.status === 'running'
-                                ? styles.badgeProgress
-                                : job.status === 'failed'
-                                  ? styles.badgeDanger
-                                  : styles.badgeDefault
-                          }`}
-                          title={job.error ?? undefined}
-                        >
-                          {job.status === 'running' && <span className={styles.pulseDot} />}
-                          {job.status.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className={styles.monoCell}>{timeAgo(job.createdAt)}</td>
-                      <td style={{ textAlign: 'center' }}>
-                        {job.resultUrl ? (
-                          <a
-                            href={job.resultUrl}
-                            download
-                            className={styles.actionBtn}
-                            title="Download result"
+                        </td>
+                        <td className={styles.monoCell}>{job.format.toUpperCase()}</td>
+                        <td>
+                          <div className={styles.progressCellWrapper}>
+                            <div className={styles.progressBar}>
+                              <div className={styles.progressFill} style={{ width: `${Math.round(job.progress * 100)}%` }} />
+                            </div>
+                            <span className={styles.progressText}>{Math.round(job.progress * 100)}%</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span
+                            className={`${styles.badge} ${
+                              job.status === 'completed'
+                                ? styles.badgeSuccess
+                                : job.status === 'running'
+                                  ? styles.badgeProgress
+                                  : job.status === 'failed'
+                                    ? styles.badgeDanger
+                                    : styles.badgeDefault
+                            }`}
+                            title={job.error ?? undefined}
                           >
-                            <Icon name="download" size={14} />
-                          </a>
-                        ) : job.status === 'queued' || job.status === 'running' ? (
-                          <button
-                            type="button"
-                            className={styles.actionBtn}
-                            title="Cancel render"
-                            onClick={() => void handleCancelRender(job.id)}
-                          >
-                            <Icon name="close" size={14} />
-                          </button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            {job.status === 'running' && <span className={styles.pulseDot} />}
+                            {job.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className={styles.monoCell}>{timeAgo(job.createdAt)}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          {job.resultUrl ? (
+                            <a
+                              href={job.resultUrl}
+                              download
+                              className={styles.actionBtn}
+                              title="Download result"
+                            >
+                              <Icon name="download" size={14} />
+                            </a>
+                          ) : job.status === 'queued' || job.status === 'running' ? (
+                            <button
+                              type="button"
+                              className={styles.actionBtn}
+                              title="Cancel render"
+                              onClick={() => void handleCancelRender(job.id)}
+                            >
+                              <Icon name="close" size={14} />
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         );
 
@@ -642,64 +982,135 @@ export function DashboardPage(): JSX.Element {
                 <p>The trash is empty. Deleted projects rest here for 30 days before they're gone for good.</p>
               </div>
             ) : (
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Project</th>
-                    <th>Deleted</th>
-                    <th>Purges in</th>
-                    <th style={{ width: '150px', textAlign: 'center' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trash.map((p) => (
-                    <tr key={p.id}>
-                      <td>
-                        <div className={styles.projectCell}>
-                          <div className={styles.projectThumb}>
-                            {p.thumbnailUrl
-                              ? <img src={p.thumbnailUrl} alt="" className={styles.thumbImg} />
-                              : <Icon name="video" size={18} className={styles.thumbIcon} />}
-                          </div>
-                          <div>
-                            <div className={styles.projectName}>{p.name}</div>
-                            <div className={styles.projectTime}>
-                              {describeSize(p.width, p.height)} · {describeDuration(p.durationSeconds)}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className={styles.monoCell}>{timeAgo(p.deletedAt)}</td>
-                      <td className={styles.monoCell}>
-                        {/* The server counts this down, so the warning is real. */}
-                        <span className={p.purgesInDays <= 3 ? styles.purgeSoon : undefined}>
-                          {p.purgesInDays} {p.purgesInDays === 1 ? 'day' : 'days'}
-                        </span>
-                      </td>
-                      <td>
-                        <div className={styles.trashActions}>
-                          <button
-                            type="button"
-                            className={styles.btnSecondary}
-                            onClick={() => void handleRestore(p.id)}
-                          >
-                            <Icon name="undo" size={13} />
-                            <span>Restore</span>
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.actionBtn}
-                            title="Delete permanently"
-                            onClick={() => void handleDestroy(p.id, p.name)}
-                          >
-                            <Icon name="trash" size={14} />
-                          </button>
-                        </div>
-                      </td>
+              <>
+                {selectedTrashIds.size > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 16px', background: 'var(--color-surface-2)', borderBottom: '1px solid var(--color-border-strong)' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+                      {selectedTrashIds.size} {selectedTrashIds.size === 1 ? 'project' : 'projects'} selected
+                    </span>
+                    <button
+                      type="button"
+                      className={styles.btnSecondary}
+                      onClick={async () => {
+                        for (const id of selectedTrashIds) {
+                          await handleRestore(id).catch(() => undefined);
+                        }
+                        setSelectedTrashIds(new Set());
+                      }}
+                    >
+                      <Icon name="undo" size={13} />
+                      <span>Restore selected ({selectedTrashIds.size})</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.btnDanger}
+                      onClick={async () => {
+                        if (!await customConfirm(
+                          'Permanently Delete Projects',
+                          `Permanently delete ${selectedTrashIds.size} selected projects? This cannot be undone.`,
+                          { isDanger: true, confirmLabel: 'Permanently Delete' }
+                        )) return;
+                        for (const id of selectedTrashIds) {
+                          try {
+                            await api.destroyProject(id);
+                          } catch { /* ignore individual fail */ }
+                        }
+                        setTrash((t) => t.filter((p) => !selectedTrashIds.has(p.id)));
+                        setSelectedTrashIds(new Set());
+                      }}
+                    >
+                      <Icon name="trash" size={13} />
+                      <span>Delete permanently ({selectedTrashIds.size})</span>
+                    </button>
+                  </div>
+                )}
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px', textAlign: 'center' }}>
+                        <Checkbox
+                          checked={selectedTrashIds.size === trash.length && trash.length > 0}
+                          indeterminate={selectedTrashIds.size > 0 && selectedTrashIds.size < trash.length}
+                          onChange={() => {
+                            if (selectedTrashIds.size === trash.length) {
+                              setSelectedTrashIds(new Set());
+                            } else {
+                              setSelectedTrashIds(new Set(trash.map((p) => p.id)));
+                            }
+                          }}
+                        />
+                      </th>
+                      <th>Project</th>
+                      <th>Deleted</th>
+                      <th>Purges in</th>
+                      <th style={{ width: '150px', textAlign: 'center' }}>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {trash.map((p) => {
+                      const isSelected = selectedTrashIds.has(p.id);
+                      return (
+                        <tr key={p.id} className={isSelected ? styles.rowSelected : ''}>
+                          <td style={{ textAlign: 'center' }}>
+                            <Checkbox
+                              checked={isSelected}
+                              onChange={() => {
+                                setSelectedTrashIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(p.id)) next.delete(p.id);
+                                  else next.add(p.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <div className={styles.projectCell}>
+                              <div className={styles.projectThumb}>
+                                {p.thumbnailUrl
+                                  ? <img src={p.thumbnailUrl} alt="" className={styles.thumbImg} />
+                                  : <Icon name="video" size={18} className={styles.thumbIcon} />}
+                              </div>
+                              <div>
+                                <div className={styles.projectName}>{p.name}</div>
+                                <div className={styles.projectTime}>
+                                  {describeSize(p.width, p.height)} · {describeDuration(p.durationSeconds)}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className={styles.monoCell}>{timeAgo(p.deletedAt)}</td>
+                          <td className={styles.monoCell}>
+                            <span className={p.purgesInDays <= 3 ? styles.purgeSoon : undefined}>
+                              {p.purgesInDays} {p.purgesInDays === 1 ? 'day' : 'days'}
+                            </span>
+                          </td>
+                          <td>
+                            <div className={styles.trashActions}>
+                              <button
+                                type="button"
+                                className={styles.btnSecondary}
+                                onClick={() => void handleRestore(p.id)}
+                              >
+                                <Icon name="undo" size={13} />
+                                <span>Restore</span>
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.actionBtn}
+                                title="Delete permanently"
+                                onClick={() => void handleDestroy(p.id, p.name)}
+                              >
+                                <Icon name="trash" size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </>
             )}
           </div>
         );
@@ -718,16 +1129,12 @@ export function DashboardPage(): JSX.Element {
                     {user?.name || user?.email?.split('@')[0] || 'Account'}
                   </div>
                   <div className={styles.profileEmailText}>{user?.email}</div>
-                  {/* The real plan, from /auth/me. This badge used to read
-                      "Active Node: AE-9 Enterprise" — an invented tier. */}
                   <div className={styles.profileNodeBadge}>
                     {account ? `${account.plan === 'pro' ? 'Pro' : 'Free'} plan · member since ${new Date(account.createdAt).toLocaleDateString()}` : '—'}
                   </div>
                 </div>
               </div>
 
-              {/* Real storage: the sum of this account's stored assets. There
-                  is no quota to show against yet, so we don't invent one. */}
               <div className={styles.storageBarSection}>
                 <div className={styles.storageBarHeader}>
                   <span>Cloud Workspace Storage</span>
@@ -738,25 +1145,19 @@ export function DashboardPage(): JSX.Element {
               </div>
             </div>
 
-            {/* Assistant — how the AI is powered (platform AI or your own key). */}
+            {/* Assistant — how the AI is powered */}
             <div className={styles.settingsCard} id="ai-settings">
               <h3 className={styles.settingsLabel}>Assistant</h3>
               <AiSettingsSection />
             </div>
 
-            {/* Plan & credits — sits right under the AI setup it meters. */}
+            {/* Plan & credits */}
             <div className={styles.settingsCard} id="billing">
               <h3 className={styles.settingsLabel}>Plan & Credits</h3>
               <BillingSection />
             </div>
 
-            {/* Editor preferences — every control here is backed by
-                usePreferenceStore, which persists and applies to the DOM.
-                The cards that used to sit here ("Auto-save compositions",
-                "Hardware GPU Acceleration", "Default Resolution/Frame Rate",
-                "Audio Sample Rate", "Viewport & Render Cache") were pure
-                useState: never saved, never read, and autosave ignored its
-                own checkbox entirely. */}
+            {/* Editor preferences */}
             <div className={styles.settingsCard}>
               <h3 className={styles.settingsLabel}>Editor Preferences</h3>
 
@@ -807,16 +1208,15 @@ export function DashboardPage(): JSX.Element {
 
               <div className={styles.settingsRowSelect}>
                 <label className={styles.selectLabelField}>
-                  <span>Interface Scale</span>
+                  <span>Sidebar Items Density</span>
                   <select
-                    value={String(prefs.uiScale)}
-                    onChange={(e) => setPref('uiScale', Number(e.target.value))}
+                    value={String(prefs.sidebarDensity || 'default')}
+                    onChange={(e) => setPref('sidebarDensity', e.target.value as any)}
                     className={styles.filterDropdown}
                   >
-                    <option value="0.9">90% High density</option>
-                    <option value="1">100% Native (default)</option>
-                    <option value="1.1">110% Comfortable</option>
-                    <option value="1.25">125% Large</option>
+                    <option value="compact">Compact</option>
+                    <option value="default">Default</option>
+                    <option value="comfortable">Comfortable</option>
                   </select>
                 </label>
               </div>
@@ -835,22 +1235,6 @@ export function DashboardPage(): JSX.Element {
 
           </div>
         );
-
-      case 'cursors':
-        return renderCursorLibrary();
-
-      case 'motion-graphics':
-        return renderMotionGraphicsLibrary();
-
-      case 'transitions':
-        return renderTransitionsLibrary();
-
-      case 'sound-fx':
-        return renderSoundFxLibrary();
-
-      case 'lottie':
-        return renderLottieLibrary();
-
     }
   };
 
@@ -913,15 +1297,9 @@ export function DashboardPage(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {/* Every column below is a fact the server stores. The previous
-                  version derived Category/Resolution/Status from `revision %`,
-                  so a 4K comp displayed as 1080×1920 and its category changed
-                  each time it was saved. */}
               {filteredProjects.map((p) => {
                 const isSelected = selectedIds.has(p.id);
                 const orientation = orientationOf(p);
-                // The server hands us a URL; building one from a storage key
-                // here meant knowing where files live, which is its business.
                 const thumb = p.thumbnailUrl;
 
                 return (
@@ -981,8 +1359,6 @@ export function DashboardPage(): JSX.Element {
           </table>
         )}
 
-        {/* The list is a page, so say how much of it you're looking at —
-            "20 of 143" is honest where a bare 20 pretends to be everything. */}
         {status === 'ready' && total > 0 && (
           <div className={styles.pageFoot}>
             <span className={styles.pageCount}>
@@ -998,347 +1374,6 @@ export function DashboardPage(): JSX.Element {
       </div>
     );
   };
-
-  // ── Cursor Library ────────────────────────────────────────────────────────
-  const CURSOR_ITEMS = [
-    { id: 'c1', name: 'Default Arrow', category: 'click', tag: 'FREE', preview: '#2988ff', animated: false },
-    { id: 'c2', name: 'Click Ripple', category: 'click', tag: 'FREE', preview: '#8b5cf6', animated: true },
-    { id: 'c3', name: 'Double Click Burst', category: 'click', tag: 'FREE', preview: '#f59e0b', animated: true },
-    { id: 'c4', name: 'Glow Trail', category: 'trail', tag: 'PRO', preview: '#10b981', animated: true },
-    { id: 'c5', name: 'Neon Trail', category: 'trail', tag: 'PRO', preview: '#ec4899', animated: true },
-    { id: 'c6', name: 'Particle Trail', category: 'trail', tag: 'PRO', preview: '#6366f1', animated: true },
-    { id: 'c7', name: 'Spotlight Circle', category: 'spotlight', tag: 'FREE', preview: '#f97316', animated: false },
-    { id: 'c8', name: 'Soft Spotlight', category: 'spotlight', tag: 'FREE', preview: '#84cc16', animated: false },
-    { id: 'c9', name: 'Hand Pointer', category: 'hand', tag: 'FREE', preview: '#14b8a6', animated: false },
-    { id: 'c10', name: 'Hand Click', category: 'hand', tag: 'FREE', preview: '#a78bfa', animated: true },
-    { id: 'c11', name: 'Crosshair', category: 'click', tag: 'PRO', preview: '#fb7185', animated: false },
-    { id: 'c12', name: 'Magnetic Pull', category: 'trail', tag: 'PRO', preview: '#38bdf8', animated: true },
-  ] as const;
-
-  const renderCursorLibrary = () => (
-    <div className={styles.libraryContainer}>
-      <div className={styles.libraryFilterBar}>
-        {(['all', 'click', 'trail', 'spotlight', 'hand'] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`${styles.libraryPill} ${cursorFilter === f ? styles.libraryPillActive : ''}`}
-            onClick={() => setCursorFilter(f)}
-          >
-            {f === 'all' ? 'All Cursors' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-        <div className={styles.libraryPillSpacer} />
-        <span className={styles.libraryHint}>Drag into timeline to overlay on any layer</span>
-      </div>
-      <div className={styles.libraryGrid}>
-        {CURSOR_ITEMS
-          .filter((c) => cursorFilter === 'all' || c.category === cursorFilter)
-          .map((item) => (
-            <div key={item.id} className={styles.libraryCard}>
-              <div
-                className={styles.cursorPreview}
-                style={{ background: `radial-gradient(ellipse at 40% 40%, ${item.preview}33 0%, transparent 70%), linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)` }}
-              >
-                <div className={styles.cursorDot} style={{ background: item.preview, boxShadow: `0 0 12px ${item.preview}` }} />
-                {item.animated && <div className={styles.cursorRipple} style={{ borderColor: item.preview }} />}
-              </div>
-              <div className={styles.libraryCardMeta}>
-                <div className={styles.libraryCardName}>{item.name}</div>
-                <div className={styles.libraryCardBadgeRow}>
-                  <span className={`${styles.libraryBadge} ${item.tag === 'PRO' ? styles.libraryBadgePro : styles.libraryBadgeFree}`}>
-                    {item.tag}
-                  </span>
-                  {item.animated && <span className={styles.libraryBadgeAnimated}>ANIMATED</span>}
-                </div>
-              </div>
-              <button
-                type="button"
-                className={styles.libraryCardAdd}
-                title="Add to timeline"
-                onClick={() => useUIStore.getState().notify({ level: 'info', message: `"${item.name}" added to timeline`, durationMs: 2000 })}
-              >
-                <Icon name="plus" size={12} />
-              </button>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-
-  // ── Motion Graphics Library ───────────────────────────────────────────────
-  const MG_ITEMS = [
-    { id: 'mg1', name: 'Clean Lower Third', category: 'lower-thirds', tag: 'FREE', color: '#2988ff', duration: '3s' },
-    { id: 'mg2', name: 'Bold Name Plate', category: 'lower-thirds', tag: 'FREE', color: '#8b5cf6', duration: '4s' },
-    { id: 'mg3', name: 'News Ticker', category: 'lower-thirds', tag: 'PRO', color: '#f59e0b', duration: 'Loop' },
-    { id: 'mg4', name: 'Speech Bubble', category: 'callouts', tag: 'FREE', color: '#10b981', duration: '2s' },
-    { id: 'mg5', name: 'Arrow Callout', category: 'callouts', tag: 'FREE', color: '#ec4899', duration: '1.5s' },
-    { id: 'mg6', name: 'Highlight Box', category: 'callouts', tag: 'FREE', color: '#6366f1', duration: '2s' },
-    { id: 'mg7', name: 'Geometric Circle', category: 'shapes', tag: 'FREE', color: '#f97316', duration: 'Loop' },
-    { id: 'mg8', name: 'Particle Burst', category: 'shapes', tag: 'PRO', color: '#84cc16', duration: '2s' },
-    { id: 'mg9', name: 'Grid Reveal', category: 'shapes', tag: 'PRO', color: '#14b8a6', duration: '1.5s' },
-    { id: 'mg10', name: 'Kinetic Title', category: 'titles', tag: 'FREE', color: '#a78bfa', duration: '3s' },
-    { id: 'mg11', name: 'Glitch Title', category: 'titles', tag: 'PRO', color: '#fb7185', duration: '2s' },
-    { id: 'mg12', name: 'Neon Glow Title', category: 'titles', tag: 'PRO', color: '#38bdf8', duration: '4s' },
-  ] as const;
-
-  const renderMotionGraphicsLibrary = () => (
-    <div className={styles.libraryContainer}>
-      <div className={styles.libraryFilterBar}>
-        {(['all', 'lower-thirds', 'callouts', 'shapes', 'titles'] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`${styles.libraryPill} ${mgFilter === f ? styles.libraryPillActive : ''}`}
-            onClick={() => setMgFilter(f)}
-          >
-            {f === 'all' ? 'All' : f === 'lower-thirds' ? 'Lower Thirds' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-        <div className={styles.libraryPillSpacer} />
-        <span className={styles.libraryHint}>Drag to composition timeline</span>
-      </div>
-      <div className={styles.libraryGrid}>
-        {MG_ITEMS
-          .filter((m) => mgFilter === 'all' || m.category === mgFilter)
-          .map((item) => (
-            <div key={item.id} className={styles.libraryCard}>
-              <div
-                className={styles.mgPreview}
-                style={{ background: `linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%)` }}
-              >
-                <div className={styles.mgBar} style={{ background: item.color }} />
-                <div className={styles.mgTextLines}>
-                  <div className={styles.mgTextLine1} style={{ background: item.color }} />
-                  <div className={styles.mgTextLine2} />
-                </div>
-              </div>
-              <div className={styles.libraryCardMeta}>
-                <div className={styles.libraryCardName}>{item.name}</div>
-                <div className={styles.libraryCardBadgeRow}>
-                  <span className={`${styles.libraryBadge} ${item.tag === 'PRO' ? styles.libraryBadgePro : styles.libraryBadgeFree}`}>
-                    {item.tag}
-                  </span>
-                  <span className={styles.libraryDuration}>{item.duration}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className={styles.libraryCardAdd}
-                title="Add to timeline"
-                onClick={() => useUIStore.getState().notify({ level: 'info', message: `"${item.name}" added to timeline`, durationMs: 2000 })}
-              >
-                <Icon name="plus" size={12} />
-              </button>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-
-  // ── Transitions Library ───────────────────────────────────────────────────
-  const TRANSITION_ITEMS = [
-    { id: 't1', name: 'Clean Cut', category: 'wipe', tag: 'FREE', fromColor: '#2988ff', toColor: '#8b5cf6' },
-    { id: 't2', name: 'Horizontal Wipe', category: 'wipe', tag: 'FREE', fromColor: '#1a1a2e', toColor: '#2988ff' },
-    { id: 't3', name: 'Diagonal Wipe', category: 'wipe', tag: 'FREE', fromColor: '#10b981', toColor: '#1a1a2e' },
-    { id: 't4', name: 'Zoom In', category: 'zoom', tag: 'FREE', fromColor: '#f59e0b', toColor: '#1a1a2e' },
-    { id: 't5', name: 'Zoom Out', category: 'zoom', tag: 'FREE', fromColor: '#ec4899', toColor: '#1a1a2e' },
-    { id: 't6', name: 'Whip Pan Zoom', category: 'zoom', tag: 'PRO', fromColor: '#6366f1', toColor: '#f97316' },
-    { id: 't7', name: 'Push Left', category: 'push', tag: 'FREE', fromColor: '#84cc16', toColor: '#1a1a2e' },
-    { id: 't8', name: 'Push Right', category: 'push', tag: 'FREE', fromColor: '#14b8a6', toColor: '#1a1a2e' },
-    { id: 't9', name: 'Push Down', category: 'push', tag: 'PRO', fromColor: '#a78bfa', toColor: '#1a1a2e' },
-    { id: 't10', name: 'Glitch Slice', category: 'glitch', tag: 'PRO', fromColor: '#fb7185', toColor: '#38bdf8' },
-    { id: 't11', name: 'RGB Split', category: 'glitch', tag: 'PRO', fromColor: '#f43f5e', toColor: '#06b6d4' },
-    { id: 't12', name: 'VHS Glitch', category: 'glitch', tag: 'PRO', fromColor: '#ef4444', toColor: '#22c55e' },
-  ] as const;
-
-  const renderTransitionsLibrary = () => (
-    <div className={styles.libraryContainer}>
-      <div className={styles.libraryFilterBar}>
-        {(['all', 'wipe', 'zoom', 'push', 'glitch'] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`${styles.libraryPill} ${transFilter === f ? styles.libraryPillActive : ''}`}
-            onClick={() => setTransFilter(f)}
-          >
-            {f === 'all' ? 'All Transitions' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-        <div className={styles.libraryPillSpacer} />
-        <span className={styles.libraryHint}>Drop between two clips on timeline</span>
-      </div>
-      <div className={styles.libraryGrid}>
-        {TRANSITION_ITEMS
-          .filter((t) => transFilter === 'all' || t.category === transFilter)
-          .map((item) => (
-            <div key={item.id} className={styles.libraryCard}>
-              <div className={styles.transPreview}>
-                <div className={styles.transLeft} style={{ background: item.fromColor }} />
-                <div className={styles.transRight} style={{ background: item.toColor }} />
-                <div className={styles.transDivider} />
-              </div>
-              <div className={styles.libraryCardMeta}>
-                <div className={styles.libraryCardName}>{item.name}</div>
-                <div className={styles.libraryCardBadgeRow}>
-                  <span className={`${styles.libraryBadge} ${item.tag === 'PRO' ? styles.libraryBadgePro : styles.libraryBadgeFree}`}>
-                    {item.tag}
-                  </span>
-                  <span className={styles.libraryDuration}>{item.category.toUpperCase()}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className={styles.libraryCardAdd}
-                title="Add to timeline"
-                onClick={() => useUIStore.getState().notify({ level: 'info', message: `"${item.name}" transition added`, durationMs: 2000 })}
-              >
-                <Icon name="plus" size={12} />
-              </button>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-
-  // ── Sound FX Library ──────────────────────────────────────────────────────
-  const SFX_ITEMS = [
-    { id: 's1', name: 'UI Click', category: 'click', tag: 'FREE', duration: '0.1s', waveColor: '#2988ff' },
-    { id: 's2', name: 'Button Pop', category: 'click', tag: 'FREE', duration: '0.2s', waveColor: '#8b5cf6' },
-    { id: 's3', name: 'Toggle Switch', category: 'click', tag: 'FREE', duration: '0.15s', waveColor: '#10b981' },
-    { id: 's4', name: 'Fast Whoosh', category: 'whoosh', tag: 'FREE', duration: '0.4s', waveColor: '#f59e0b' },
-    { id: 's5', name: 'Heavy Whoosh', category: 'whoosh', tag: 'FREE', duration: '0.6s', waveColor: '#ec4899' },
-    { id: 's6', name: 'Wind Sweep', category: 'whoosh', tag: 'PRO', duration: '0.8s', waveColor: '#6366f1' },
-    { id: 's7', name: 'Hit Impact', category: 'impact', tag: 'FREE', duration: '0.3s', waveColor: '#f97316' },
-    { id: 's8', name: 'Thud', category: 'impact', tag: 'FREE', duration: '0.5s', waveColor: '#ef4444' },
-    { id: 's9', name: 'Cinematic Boom', category: 'impact', tag: 'PRO', duration: '1.2s', waveColor: '#7c3aed' },
-    { id: 's10', name: 'Room Tone', category: 'ambient', tag: 'FREE', duration: 'Loop', waveColor: '#14b8a6' },
-    { id: 's11', name: 'City Noise', category: 'ambient', tag: 'FREE', duration: 'Loop', waveColor: '#84cc16' },
-    { id: 's12', name: 'Studio Hum', category: 'ambient', tag: 'PRO', duration: 'Loop', waveColor: '#38bdf8' },
-  ] as const;
-
-  const renderSoundFxLibrary = () => (
-    <div className={styles.libraryContainer}>
-      <div className={styles.libraryFilterBar}>
-        {(['all', 'click', 'whoosh', 'impact', 'ambient'] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`${styles.libraryPill} ${sfxFilter === f ? styles.libraryPillActive : ''}`}
-            onClick={() => setSfxFilter(f)}
-          >
-            {f === 'all' ? 'All SFX' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-        <div className={styles.libraryPillSpacer} />
-        <span className={styles.libraryHint}>Sync to keyframe or drop on audio track</span>
-      </div>
-      <div className={styles.libraryGrid}>
-        {SFX_ITEMS
-          .filter((s) => sfxFilter === 'all' || s.category === sfxFilter)
-          .map((item) => (
-            <div key={item.id} className={styles.libraryCard}>
-              <div className={styles.sfxPreview}>
-                {[4, 7, 12, 9, 14, 8, 11, 6, 10, 13, 5, 9, 7].map((h, i) => (
-                  <div
-                    key={i}
-                    className={styles.sfxBar}
-                    style={{ height: `${h * 3}px`, background: item.waveColor, opacity: 0.6 + (i % 3) * 0.15 }}
-                  />
-                ))}
-              </div>
-              <div className={styles.libraryCardMeta}>
-                <div className={styles.libraryCardName}>{item.name}</div>
-                <div className={styles.libraryCardBadgeRow}>
-                  <span className={`${styles.libraryBadge} ${item.tag === 'PRO' ? styles.libraryBadgePro : styles.libraryBadgeFree}`}>
-                    {item.tag}
-                  </span>
-                  <span className={styles.libraryDuration}>{item.duration}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className={styles.libraryCardAdd}
-                title="Add to timeline"
-                onClick={() => useUIStore.getState().notify({ level: 'info', message: `"${item.name}" added to audio track`, durationMs: 2000 })}
-              >
-                <Icon name="plus" size={12} />
-              </button>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-
-  // ── Lottie & JSON Library ─────────────────────────────────────────────────
-  const LOTTIE_ITEMS = [
-    { id: 'l1', name: 'Success Check', category: 'icons', tag: 'FREE', color: '#10b981', frames: 60, size: '4.2 KB' },
-    { id: 'l2', name: 'Loading Spinner', category: 'loaders', tag: 'FREE', color: '#2988ff', frames: 120, size: '2.8 KB' },
-    { id: 'l3', name: 'Warning Alert', category: 'icons', tag: 'FREE', color: '#f59e0b', frames: 90, size: '3.5 KB' },
-    { id: 'l4', name: 'Heart Like', category: 'icons', tag: 'FREE', color: '#ec4899', frames: 45, size: '5.1 KB' },
-    { id: 'l5', name: 'Dots Loader', category: 'loaders', tag: 'FREE', color: '#8b5cf6', frames: 60, size: '1.9 KB' },
-    { id: 'l6', name: 'Progress Ring', category: 'loaders', tag: 'PRO', color: '#6366f1', frames: 90, size: '3.2 KB' },
-    { id: 'l7', name: 'Globe Spin', category: 'illustrations', tag: 'PRO', color: '#14b8a6', frames: 180, size: '22 KB' },
-    { id: 'l8', name: 'Rocket Launch', category: 'illustrations', tag: 'PRO', color: '#f97316', frames: 120, size: '18 KB' },
-    { id: 'l9', name: 'Thumbs Up', category: 'stickers', tag: 'FREE', color: '#84cc16', frames: 60, size: '8.4 KB' },
-    { id: 'l10', name: 'Fire Flame', category: 'stickers', tag: 'FREE', color: '#ef4444', frames: 120, size: '6.7 KB' },
-    { id: 'l11', name: 'Star Burst', category: 'stickers', tag: 'PRO', color: '#fbbf24', frames: 45, size: '5.2 KB' },
-    { id: 'l12', name: 'Confetti Pop', category: 'illustrations', tag: 'PRO', color: '#a78bfa', frames: 150, size: '14 KB' },
-  ] as const;
-
-  const renderLottieLibrary = () => (
-    <div className={styles.libraryContainer}>
-      <div className={styles.libraryFilterBar}>
-        {(['all', 'icons', 'loaders', 'illustrations', 'stickers'] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`${styles.libraryPill} ${lottieFilter === f ? styles.libraryPillActive : ''}`}
-            onClick={() => setLottieFilter(f)}
-          >
-            {f === 'all' ? 'All Lottie' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-        <div className={styles.libraryPillSpacer} />
-        <span className={styles.libraryHint}>Import JSON · plays in comp at native FPS</span>
-      </div>
-      <div className={styles.libraryGrid}>
-        {LOTTIE_ITEMS
-          .filter((l) => lottieFilter === 'all' || l.category === lottieFilter)
-          .map((item) => (
-            <div key={item.id} className={styles.libraryCard}>
-              <div
-                className={styles.lottiePreview}
-                style={{ background: `radial-gradient(circle at 50% 45%, ${item.color}22 0%, transparent 65%), #0f0f1a` }}
-              >
-                <div
-                  className={styles.lottieOrb}
-                  style={{ background: `conic-gradient(from 0deg, ${item.color}, ${item.color}44, ${item.color})`, boxShadow: `0 0 20px ${item.color}55` }}
-                />
-                <span className={styles.lottieJsonBadge}>JSON</span>
-              </div>
-              <div className={styles.libraryCardMeta}>
-                <div className={styles.libraryCardName}>{item.name}</div>
-                <div className={styles.libraryCardBadgeRow}>
-                  <span className={`${styles.libraryBadge} ${item.tag === 'PRO' ? styles.libraryBadgePro : styles.libraryBadgeFree}`}>
-                    {item.tag}
-                  </span>
-                  <span className={styles.libraryDuration}>{item.frames}f · {item.size}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className={styles.libraryCardAdd}
-                title="Import Lottie"
-                onClick={() => useUIStore.getState().notify({ level: 'info', message: `"${item.name}" Lottie imported`, durationMs: 2000 })}
-              >
-                <Icon name="plus" size={12} />
-              </button>
-            </div>
-          ))}
-      </div>
-    </div>
-  );
 
   // Resolve active titles and page details dynamically for tab headers
   const headerDetails = useMemo(() => {
@@ -1373,31 +1408,6 @@ export function DashboardPage(): JSX.Element {
           title: 'Dashboard settings',
           desc: 'Configure application preferences, auto-save settings, and project defaults.',
         };
-      case 'cursors':
-        return {
-          title: 'Cursor Library',
-          desc: 'Animated cursor overlays, click ripples, trails and spotlights — perfect for screen recordings & tutorials.',
-        };
-      case 'motion-graphics':
-        return {
-          title: 'Motion Graphics',
-          desc: 'Pre-built animated lower-thirds, callouts, shape bursts and kinetic title cards.',
-        };
-      case 'transitions':
-        return {
-          title: 'Transitions',
-          desc: 'Wipe, push, zoom and glitch transitions. Drop between two clips on the timeline.',
-        };
-      case 'sound-fx':
-        return {
-          title: 'Sound FX',
-          desc: 'Short motion-accent sounds — UI clicks, whooshes, impacts and ambient loops.',
-        };
-      case 'lottie':
-        return {
-          title: 'Lottie & JSON',
-          desc: 'Import Lottie JSON animations directly into your composition — icons, loaders, illustrations and stickers.',
-        };
     }
   }, [activeTab]);
 
@@ -1411,7 +1421,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'home' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('home')}
           >
-            <Icon name="layout" size={16} className={styles.navIcon} />
+            <Icon name="home" size={16} className={styles.navIcon} />
             <span>Home</span>
           </button>
           <button
@@ -1430,57 +1440,12 @@ export function DashboardPage(): JSX.Element {
             <Icon name="image" size={16} className={styles.navIcon} />
             <span>Assets Library</span>
           </button>
-
-          {/* ── Asset Libraries section ─────────────────────────────── */}
-          <div className={styles.navSectionLabel}>Libraries</div>
-
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'cursors' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('cursors')}
-          >
-            <Icon name="mouse-pointer" size={16} className={styles.navIcon} />
-            <span>Cursors</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'motion-graphics' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('motion-graphics')}
-          >
-            <Icon name="layers" size={16} className={styles.navIcon} />
-            <span>Motion Graphics</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'transitions' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('transitions')}
-          >
-            <Icon name="scissors" size={16} className={styles.navIcon} />
-            <span>Transitions</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'sound-fx' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('sound-fx')}
-          >
-            <Icon name="zap" size={16} className={styles.navIcon} />
-            <span>Sound FX</span>
-          </button>
-          <button
-            type="button"
-            className={`${styles.navLink} ${activeTab === 'lottie' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('lottie')}
-          >
-            <Icon name="ease" size={16} className={styles.navIcon} />
-            <span>Lottie & JSON</span>
-          </button>
-
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'renders' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('renders')}
           >
-            <Icon name="video" size={16} className={styles.navIcon} />
+            <Icon name="queue" size={16} className={styles.navIcon} />
             <span>Render Queue</span>
           </button>
           <button

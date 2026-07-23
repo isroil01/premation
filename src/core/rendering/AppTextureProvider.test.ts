@@ -75,7 +75,7 @@ describe('AppTextureProvider', () => {
   });
 
   it('does not re-decode the same (key, src)', async () => {
-    const loader = jest.fn<Promise<ImageBitmap>, [string]>(async () => fakeBitmap());
+    const loader = jest.fn<Promise<ImageBitmap>, [string, string?]>(async () => fakeBitmap());
     const { provider } = setup(loader);
     provider.setImage('asset:a', 'blob:photo');
     provider.setImage('asset:a', 'blob:photo');
@@ -86,14 +86,14 @@ describe('AppTextureProvider', () => {
   });
 
   it('re-decodes when the src changes for a key', async () => {
-    const loader = jest.fn<Promise<ImageBitmap>, [string]>(async () => fakeBitmap());
+    const loader = jest.fn<Promise<ImageBitmap>, [string, string?]>(async () => fakeBitmap());
     const { provider } = setup(loader);
     provider.setImage('asset:a', 'blob:one');
     await flush();
     provider.setImage('asset:a', 'blob:two');
     await flush();
     expect(loader).toHaveBeenCalledTimes(2);
-    expect(loader).toHaveBeenLastCalledWith('blob:two');
+    expect(loader).toHaveBeenLastCalledWith('blob:two', undefined);
   });
 
   it('keeps showing the placeholder if a decode throws (broken source)', async () => {

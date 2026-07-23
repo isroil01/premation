@@ -35,6 +35,7 @@ function createLayer(L: PlannedLayer, ctx: ToolContext, ox: number, oy: number):
     const first = (L.pointsTrack.keyframes[0]?.value as DataPoint[] | undefined) ?? [];
     return insertPathNode(L.name, toBezierPoints(first), { closed: L.pointsTrack.closed, x: L.x + ox, y: L.y + oy });
   }
+  // 'group' is the precomp container — a null-like node others parent under.
   return ctx.scene.create(facadeKind(L.kind), L.name, { x: L.x + ox, y: L.y + oy });
 }
 
@@ -64,19 +65,19 @@ export function applyImportPlan(
   const ox = opts.offset?.x ?? 0;
   const oy = opts.offset?.y ?? 0;
 
-  const idByInd = new Map<number, string>();
+  const idByUid = new Map<string, string>();
   const nodeIds: string[] = [];
 
   // Pass 1 — create nodes, write props + tracks.
   for (const L of plan.layers) {
-    // Offsets shift ROOT layers only — parented layers are parent-relative
-    // (their world position moves with the offset parent).
-    const isRoot = L.parentInd === undefined;
+    // Offsets shift top-level ROOT layers only — nested/parented layers are
+    // parent-relative (their world position moves with the offset parent).
+    const isRoot = L.parentUid === undefined;
     const lox = isRoot ? ox : 0;
     const loy = isRoot ? oy : 0;
     const nodeId = createLayer(L, ctx, lox, loy);
     if (!nodeId) continue; // facade could not create this kind — skip, keep going
-    idByInd.set(L.ind, nodeId);
+    idByUid.set(L.uid, nodeId);
     nodeIds.push(nodeId);
 
     for (const [prop, value] of Object.entries(L.staticProps)) ctx.scene.setProp(nodeId, prop, value);
@@ -103,12 +104,19 @@ export function applyImportPlan(
     }
   }
 
-  // Pass 2 — parent links (all ids now exist).
+  // Pass 2 — parent links (all ids now exist). Uses uid, so precomp children
+  // parent under their expanded group even though their Lottie `ind`s collide
+  // with layers in other scopes.
+  //
+  // preserveWorld: false — the plan's child transforms are already PARENT-
+  // relative (Lottie locals). The default world-preserving reparent would
+  // recompute them to cancel the parent's transform, collapsing nested
+  // content back to raw Lottie coords (usually off-frame → invisible).
   for (const L of plan.layers) {
-    if (L.parentInd === undefined) continue;
-    const child = idByInd.get(L.ind);
-    const parent = idByInd.get(L.parentInd);
-    if (child && parent) ctx.scene.reparent(child, parent);
+    if (L.parentUid === undefined) continue;
+    const child = idByUid.get(L.uid);
+    const parent = idByUid.get(L.parentUid);
+    if (child && parent) ctx.scene.reparent(child, parent, { preserveWorld: false });
   }
 
   return { nodeIds, warnings: plan.warnings };

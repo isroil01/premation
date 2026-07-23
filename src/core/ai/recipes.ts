@@ -7,9 +7,11 @@
  */
 
 import type { ToolContext } from '@motion/ai-tools';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { set3DEnabled } from '@core/scene/threeD';
 import { PHYSICS, type Bezier, type MotionStyle } from './design';
 import { activeSceneWindow, nextSceneElementStart, beginSceneWindow } from './sceneWindow';
+import { applyEntrance, nonUniformStagger, type EntranceArchetype } from './archetypes';
 
 type KfPoint = { t: number; value: number; easing?: string; bezier?: Bezier };
 
@@ -50,22 +52,10 @@ function applySceneExit(ctx: ToolContext, id: string, cy: number): void {
   ]);
 }
 
-/** The canonical 3D entrance: fade up + rise from below + slight 3D tilt with the style's curve. */
-function entranceRise3D(ctx: ToolContext, id: string, start: number, s: MotionStyle, cy: number): void {
-  set3DEnabled(id, true);
-  kf(ctx, id, 'opacity', [
-    { t: start, value: 0, easing: 'easeOut' },
-    { t: start + s.entranceDur * 0.55, value: 100, easing: 'easeOut' },
-  ]);
-  kf(ctx, id, 'y', [
-    { t: start, value: cy + s.travelPx, easing: 'bezier', bezier: s.entranceCurve },
-    { t: start + s.entranceDur, value: cy, easing: 'bezier', bezier: s.entranceCurve },
-  ]);
-  kf(ctx, id, 'rotationX', [
-    { t: start, value: 15, easing: 'bezier', bezier: s.entranceCurve },
-    { t: start + s.entranceDur, value: 0, easing: 'bezier', bezier: s.entranceCurve },
-  ]);
-}
+// The old canonical entrance (fade + rise + 3D tilt) is now ONE archetype of
+// six — see archetypes.ts. Recipes call applyEntrance, which varies the
+// archetype by role, style personality and the per-run seed (or honours an
+// explicit `entrance` request from the tool call).
 
 function addGlow(ctx: ToolContext, id: string, amount: number): void {
   const fx = ctx.scene.addEffect(id, 'glow');
@@ -153,21 +143,37 @@ export function recipeTransition(
   return id;
 }
 
+/** Compute dynamic vertical position based on existing text layers to avoid visual overlap. */
+function computeDynamicY(ctx: ToolContext, level: 'title' | 'subtitle' | 'tagline', requestedY?: number): number {
+  if (requestedY !== undefined) return requestedY;
+  const comp = ctx.comp.get();
+  const existingTexts = ctx.scene.all().filter((n) => n.kind === 'text');
+  if (!existingTexts.length) {
+    return level === 'title' ? comp.height * 0.42 : level === 'subtitle' ? comp.height * 0.56 : comp.height * 0.65;
+  }
+
+  let lastY = comp.height * 0.40;
+  let lastFontSize = 64;
+  for (const n of existingTexts) {
+    if (n.y >= lastY) {
+      lastY = n.y;
+      lastFontSize = n.fontSize ?? 48;
+    }
+  }
+
+  const gap = Math.max(28, Math.round(lastFontSize * 0.75));
+  return Math.min(comp.height * 0.85, lastY + gap);
+}
+
 /** A 3D title / subtitle / tagline, positioned in 3D space with spatial Z depth. */
 export function recipeText(
   ctx: ToolContext,
   s: MotionStyle,
-  opts: { text: string; level: 'title' | 'subtitle' | 'tagline'; y?: number },
+  opts: { text: string; level: 'title' | 'subtitle' | 'tagline'; y?: number; entrance?: EntranceArchetype },
 ): string {
   const comp = ctx.comp.get();
   const cx = comp.width / 2;
-  const cy =
-    opts.y ??
-    (opts.level === 'title'
-      ? comp.height * 0.44
-      : opts.level === 'subtitle'
-        ? comp.height * 0.56
-        : comp.height * 0.63);
+  const cy = computeDynamicY(ctx, opts.level, opts.y);
   const px = opts.level === 'title' ? s.type.titlePx : opts.level === 'subtitle' ? s.type.subtitlePx : s.type.taglinePx;
 
   const id = ctx.scene.create('text', opts.text.slice(0, 24) || opts.level, { x: cx, y: cy });
@@ -176,18 +182,23 @@ export function recipeText(
   ctx.scene.setProp(id, 'fontWeight', opts.level === 'title' ? s.type.weightTitle : s.type.weightBody);
   ctx.scene.setProp(id, 'fill', opts.level === 'title' ? s.palette.fg : s.palette.muted);
 
-  // Position at distinct Z-depth for 3D parallax
+  // Position at distinct Z-depth for 3D parallax (3D switch needed for the z track)
+  set3DEnabled(id, true);
   const zDepth = opts.level === 'title' ? -80 : opts.level === 'subtitle' ? -40 : 0;
   kf(ctx, id, 'z', [{ t: 0, value: zDepth }]);
 
-  entranceRise3D(ctx, id, nextStartAt(ctx, s), s, cy);
+  applyEntrance(ctx, id, nextStartAt(ctx, s), s, cy, { archetype: opts.entrance, role: opts.level });
   if (s.glow && opts.level === 'title') addGlow(ctx, id, 18);
   applySceneExit(ctx, id, cy);
   return id;
 }
 
 /** A glowing circular 3D emblem that flips in on 3D Y-axis with overshoot, then pulses. */
-export function recipeEmblem(ctx: ToolContext, s: MotionStyle, opts: { y?: number; size?: number }): string {
+export function recipeEmblem(
+  ctx: ToolContext,
+  s: MotionStyle,
+  opts: { y?: number; size?: number; entrance?: EntranceArchetype },
+): string {
   const comp = ctx.comp.get();
   const d = opts.size ?? Math.round(Math.min(comp.width, comp.height) * 0.16);
   const cx = comp.width / 2;
@@ -202,19 +213,24 @@ export function recipeEmblem(ctx: ToolContext, s: MotionStyle, opts: { y?: numbe
   kf(ctx, id, 'z', [{ t: 0, value: 0 }]);
 
   const start = nextStartAt(ctx, s);
-  kf(ctx, id, 'opacity', [
-    { t: start, value: 0, easing: 'easeOut' },
-    { t: start + s.entranceDur * 0.5, value: 100, easing: 'easeOut' },
-  ]);
-  // 3D Y-axis flip entrance with spring overshoot
-  kf(ctx, id, 'rotationY', [
-    { t: start, value: 90, easing: 'bezier', bezier: PHYSICS.overshoot },
-    { t: start + s.entranceDur, value: 0, easing: 'bezier', bezier: PHYSICS.overshoot },
-  ]);
-  kf(ctx, id, 'scale', [
-    { t: start, value: 0.6, easing: 'bezier', bezier: PHYSICS.overshoot },
-    { t: start + s.entranceDur, value: 1, easing: 'bezier', bezier: PHYSICS.overshoot },
-  ]);
+  if (opts.entrance) {
+    // Explicit archetype requested — use it instead of the signature flip.
+    applyEntrance(ctx, id, start, s, cy, { archetype: opts.entrance, role: 'emblem' });
+  } else {
+    kf(ctx, id, 'opacity', [
+      { t: start, value: 0, easing: 'easeOut' },
+      { t: start + s.entranceDur * 0.5, value: 100, easing: 'easeOut' },
+    ]);
+    // 3D Y-axis flip entrance with spring overshoot
+    kf(ctx, id, 'rotationY', [
+      { t: start, value: 90, easing: 'bezier', bezier: PHYSICS.overshoot },
+      { t: start + s.entranceDur, value: 0, easing: 'bezier', bezier: PHYSICS.overshoot },
+    ]);
+    kf(ctx, id, 'scale', [
+      { t: start, value: 0.6, easing: 'bezier', bezier: PHYSICS.overshoot },
+      { t: start + s.entranceDur, value: 1, easing: 'bezier', bezier: PHYSICS.overshoot },
+    ]);
+  }
   const p = start + s.entranceDur + 0.35;
   kf(ctx, id, 'scale', [
     { t: p, value: 1, easing: 'easeInOut' },
@@ -227,7 +243,11 @@ export function recipeEmblem(ctx: ToolContext, s: MotionStyle, opts: { y?: numbe
 }
 
 /** A centred row of evenly-spaced 3D cards that rotate and stagger in. */
-export function recipeCards(ctx: ToolContext, s: MotionStyle, opts: { count?: number; y?: number }): string[] {
+export function recipeCards(
+  ctx: ToolContext,
+  s: MotionStyle,
+  opts: { count?: number; y?: number; entrance?: EntranceArchetype },
+): string[] {
   const comp = ctx.comp.get();
   const n = Math.max(1, Math.min(opts.count ?? 3, 8));
   const cy = opts.y ?? comp.height * 0.5;
@@ -237,6 +257,10 @@ export function recipeCards(ctx: ToolContext, s: MotionStyle, opts: { count?: nu
   const totalW = cardW * n + gap * (n - 1);
   const firstX = comp.width / 2 - totalW / 2 + cardW / 2;
   const base = nextStartAt(ctx, s);
+  // Deliberate asymmetry: a breathing (non-uniform) stagger, and ONE accent
+  // card — the centre — that travels further than its siblings.
+  const offsets = nonUniformStagger(n, s.staggerSec);
+  const accent = Math.floor((n - 1) / 2);
   const ids: string[] = [];
   for (let i = 0; i < n; i++) {
     const x = firstX + i * (cardW + gap);
@@ -246,25 +270,53 @@ export function recipeCards(ctx: ToolContext, s: MotionStyle, opts: { count?: nu
     ctx.scene.setProp(id, 'height', cardH);
     ctx.scene.setProp(id, 'fill', s.palette.card);
     set3DEnabled(id, true);
-    kf(ctx, id, 'z', [{ t: 0, value: -20 }]);
+
+    // 3D fan perspective & depth stagger
+    const centerOffset = i - (n - 1) / 2;
+    const cardZ = -35 * (1 - Math.abs(centerOffset) * 0.4);
+    const startRotY = centerOffset * -16;
+    const start = base + (offsets[i] ?? i * s.staggerSec);
+
+    kf(ctx, id, 'z', [{ t: 0, value: cardZ }]);
     kf(ctx, id, 'rotationY', [
-      { t: base + i * s.staggerSec, value: -18, easing: 'bezier', bezier: s.entranceCurve },
-      { t: base + i * s.staggerSec + s.entranceDur, value: 0, easing: 'bezier', bezier: s.entranceCurve },
+      { t: start, value: startRotY, easing: 'bezier', bezier: s.entranceCurve },
+      { t: start + s.entranceDur, value: startRotY * 0.25, easing: 'bezier', bezier: s.entranceCurve },
     ]);
-    entranceRise3D(ctx, id, base + i * s.staggerSec, s, cy);
+    applyEntrance(ctx, id, start, s, cy, {
+      archetype: opts.entrance,
+      role: 'card',
+      // All cards in a row share ONE archetype (index 0) — a row where every
+      // card enters differently reads as noise, not design. The accent card
+      // stands out by travel, not by archetype.
+      index: 0,
+      travelScale: i === accent ? 1.6 : 1,
+    });
     applySceneExit(ctx, id, cy);
     ids.push(id);
   }
   return ids;
 }
 
-/** Apply a staggered 3D entrance to layers that already exist. */
-export function recipeStaggerIn(ctx: ToolContext, s: MotionStyle, nodeIds: string[]): number {
+/** Apply a staggered entrance to layers that already exist. */
+export function recipeStaggerIn(
+  ctx: ToolContext,
+  s: MotionStyle,
+  nodeIds: string[],
+  entrance?: EntranceArchetype,
+): number {
+  const offsets = nonUniformStagger(nodeIds.length, s.staggerSec);
   let i = 0;
   for (const id of nodeIds) {
     const v = ctx.scene.get(id);
     if (!v) continue;
-    entranceRise3D(ctx, id, i * s.staggerSec, s, v.y);
+    // One shared archetype per group (index 0); the FIRST element leads with
+    // extra travel so the group has a visible protagonist.
+    applyEntrance(ctx, id, offsets[i] ?? i * s.staggerSec, s, v.y, {
+      archetype: entrance,
+      role: 'generic',
+      index: 0,
+      travelScale: i === 0 ? 1.5 : 1,
+    });
     i++;
   }
   return i;
@@ -293,6 +345,8 @@ export function recipeKineticText(
   let cursor = comp.width / 2 - totalW / 2;
   const base = nextStartAt(ctx, s);
   const beat = Math.max(s.staggerSec, 0.1);
+  // Words land on a breathing beat, not a metronome.
+  const beatOffsets = nonUniformStagger(words.length, beat);
   const ids: string[] = [];
   words.forEach((word, i) => {
     const w = wordW[i] ?? px;
@@ -303,7 +357,7 @@ export function recipeKineticText(
     ctx.scene.setProp(id, 'fontSize', Math.round(px));
     ctx.scene.setProp(id, 'fontWeight', s.type.weightTitle);
     ctx.scene.setProp(id, 'fill', s.palette.fg);
-    const t0 = base + i * beat;
+    const t0 = base + (beatOffsets[i] ?? i * beat);
     kf(ctx, id, 'opacity', [
       { t: t0, value: 0, easing: 'easeOut' },
       { t: t0 + 0.18, value: 100, easing: 'easeOut' },
@@ -472,23 +526,205 @@ export function recipeCameraMove(
 ): number {
   const comp = ctx.comp.get();
   const dur = opts.durationSec ?? comp.durationSeconds;
-  const from = opts.kind === 'pull_out' ? 1.06 : 1;
-  const to = opts.kind === 'pull_out' ? 1 : 1.06;
+  const isPull = opts.kind === 'pull_out';
 
-  // Content layers only — skip solids (backgrounds/transitions), cameras, lights.
+  // 1. Enable 3D on all content nodes for real spatial parallax
   const targets = ctx.scene
     .all()
     .filter((n) => n.kind === 'shape' || n.kind === 'text' || n.kind === 'image');
 
-  let count = 0;
   for (const n of targets) {
-    // Don't fight a layer that already scales itself (entrance/pulse/overshoot).
-    if (n.animated.includes('scale')) continue;
-    kf(ctx, n.id, 'scale', [
-      { t: 0, value: from, easing: 'bezier', bezier: PHYSICS.smooth },
-      { t: dur, value: to, easing: 'bezier', bezier: PHYSICS.smooth },
-    ]);
-    count += 1;
+    set3DEnabled(n.id, true);
   }
-  return count;
+
+  // 2. Find or create a dedicated 3D Camera layer
+  let camId = ctx.scene.all().find((n) => n.kind === 'camera')?.id;
+  if (!camId) {
+    camId = ctx.scene.create('camera', '3D Camera');
+  }
+
+  const startZ = isPull ? -1200 : -2200;
+  const endZ = isPull ? -2200 : -1350;
+
+  // 3. Animate 3D dolly (Z position) and 3D parallax orbit sweep (orbitYaw)
+  kf(ctx, camId, 'z', [
+    { t: 0, value: startZ, easing: 'bezier', bezier: PHYSICS.smooth },
+    { t: dur, value: endZ, easing: 'bezier', bezier: PHYSICS.smooth },
+  ]);
+
+  kf(ctx, camId, 'orbitYaw', [
+    { t: 0, value: isPull ? 6 : -8, easing: 'bezier', bezier: PHYSICS.smooth },
+    { t: dur, value: isPull ? -6 : 8, easing: 'bezier', bezier: PHYSICS.smooth },
+  ]);
+
+  return targets.length + 1;
+}
+
+/**
+ * A After Effects-style stroke trim-path logo reveal: shape outline draws in,
+ * followed by glowing emblem pop and title entrance.
+ */
+export function recipeLogoReveal(
+  ctx: ToolContext,
+  s: MotionStyle,
+  opts: { text: string; shape?: 'ellipse' | 'star' | 'rect' },
+): string[] {
+  const comp = ctx.comp.get();
+  const cx = comp.width / 2;
+  const cy = comp.height * 0.4;
+  const d = Math.round(Math.min(comp.width, comp.height) * 0.2);
+  const start = nextStartAt(ctx, s);
+  const ids: string[] = [];
+
+  // 1. Outline Trim-Path Shape
+  const outline = ctx.scene.create('shape', 'Trim Outline', { x: cx, y: cy });
+  ctx.scene.setProp(outline, 'shapeType', opts.shape ?? 'ellipse');
+  ctx.scene.setProp(outline, 'width', d);
+  ctx.scene.setProp(outline, 'height', d);
+  ctx.scene.setProp(outline, 'fill', 'transparent');
+  ctx.scene.setProp(outline, 'stroke', s.palette.accent);
+  ctx.scene.setProp(outline, 'strokeWidth', 4);
+  set3DEnabled(outline, true);
+  
+  // Trim path draw-in keyframes
+  kf(ctx, outline, 'trimStart', [
+    { t: start, value: 0, easing: 'bezier', bezier: PHYSICS.softOut },
+    { t: start + 0.75, value: 100, easing: 'bezier', bezier: PHYSICS.softOut },
+  ]);
+  kf(ctx, outline, 'opacity', [
+    { t: start, value: 0, easing: 'easeOut' },
+    { t: start + 0.2, value: 100, easing: 'easeOut' },
+  ]);
+  ids.push(outline);
+
+  // 2. Inner Emblem Pop
+  const emblem = ctx.scene.create('shape', 'Logo Emblem', { x: cx, y: cy });
+  ctx.scene.setProp(emblem, 'shapeType', opts.shape ?? 'ellipse');
+  ctx.scene.setProp(emblem, 'width', Math.round(d * 0.65));
+  ctx.scene.setProp(emblem, 'height', Math.round(d * 0.65));
+  ctx.scene.setProp(emblem, 'fill', s.palette.accent);
+  set3DEnabled(emblem, true);
+
+  const tEmblem = start + 0.45;
+  kf(ctx, emblem, 'scale', [
+    { t: tEmblem, value: 0.3, easing: 'bezier', bezier: PHYSICS.overshoot },
+    { t: tEmblem + 0.5, value: 1, easing: 'bezier', bezier: PHYSICS.overshoot },
+  ]);
+  kf(ctx, emblem, 'opacity', [
+    { t: tEmblem, value: 0, easing: 'easeOut' },
+    { t: tEmblem + 0.25, value: 100, easing: 'easeOut' },
+  ]);
+  if (s.glow) addGlow(ctx, emblem, 32);
+  ids.push(emblem);
+
+  // 3. Title entrance
+  const titleY = comp.height * 0.64;
+  const title = ctx.scene.create('text', opts.text.slice(0, 24) || 'Title', { x: cx, y: titleY });
+  ctx.scene.setProp(title, 'content', opts.text);
+  ctx.scene.setProp(title, 'fontSize', s.type.titlePx);
+  ctx.scene.setProp(title, 'fontWeight', s.type.weightTitle);
+  ctx.scene.setProp(title, 'fill', s.palette.fg);
+  set3DEnabled(title, true);
+
+  const tTitle = start + 0.6;
+  applyEntrance(ctx, title, tTitle, s, titleY, { role: 'title' });
+  ids.push(title);
+
+  for (const id of ids) {
+    applySceneExit(ctx, id, cy);
+  }
+
+  return ids;
+}
+
+/**
+ * A radial shape repeater burst — explosive motion graphics accent (HUD / particle ring).
+ */
+export function recipeRadialBurst(
+  ctx: ToolContext,
+  s: MotionStyle,
+  opts: { count?: number; x?: number; y?: number; atSec?: number },
+): string {
+  const comp = ctx.comp.get();
+  const cx = opts.x ?? comp.width / 2;
+  const cy = opts.y ?? comp.height / 2;
+  const copies = Math.max(4, Math.min(opts.count ?? 8, 16));
+  const t0 = opts.atSec ?? nextStartAt(ctx, s);
+
+  const id = ctx.scene.create('shape', 'Radial Burst', { x: cx, y: cy });
+  ctx.scene.setProp(id, 'shapeType', 'ellipse');
+  ctx.scene.setProp(id, 'width', 16);
+  ctx.scene.setProp(id, 'height', 16);
+  ctx.scene.setProp(id, 'fill', s.palette.accent);
+  set3DEnabled(id, true);
+
+  // Add repeater component
+  const node = defaultSceneGraph.getNode(id);
+  if (node) {
+    const fx = node.components.find((c: any) => c.type === 'fx') ?? { id: `${id}_fx`, type: 'fx', props: {} };
+    if (!node.components.includes(fx)) node.components.push(fx);
+    fx.props.repeater = {
+      copies,
+      positionX: 42,
+      positionY: 0,
+      rotation: Math.round(360 / copies),
+      scaleX: 1,
+      scaleY: 1,
+      startOpacity: 100,
+      endOpacity: 100,
+    };
+  }
+
+  kf(ctx, id, 'scale', [
+    { t: t0, value: 0.2, easing: 'bezier', bezier: PHYSICS.overshoot },
+    { t: t0 + 0.55, value: 1.8, easing: 'bezier', bezier: PHYSICS.softOut },
+  ]);
+  kf(ctx, id, 'opacity', [
+    { t: t0, value: 100, easing: 'easeOut' },
+    { t: t0 + 0.55, value: 0, easing: 'easeIn' },
+  ]);
+
+  return id;
+}
+
+/**
+ * Organic shape morphing distortion (pucker/bloat / zigzag).
+ */
+export function recipePathMorph(
+  ctx: ToolContext,
+  s: MotionStyle,
+  opts: { op?: 'puckerBloat' | 'zigzag'; amount?: number; durationSec?: number },
+): string {
+  const comp = ctx.comp.get();
+  const cx = comp.width / 2;
+  const cy = comp.height / 2;
+  const dur = opts.durationSec ?? 1.2;
+  const opType = opts.op ?? 'puckerBloat';
+  const amount = opts.amount ?? 35;
+  const t0 = nextStartAt(ctx, s);
+
+  const id = ctx.scene.create('shape', 'Morph Shape', { x: cx, y: cy });
+  ctx.scene.setProp(id, 'shapeType', 'star');
+  ctx.scene.setProp(id, 'width', 160);
+  ctx.scene.setProp(id, 'height', 160);
+  ctx.scene.setProp(id, 'fill', s.palette.card);
+  ctx.scene.setProp(id, 'stroke', s.palette.accent);
+  ctx.scene.setProp(id, 'strokeWidth', 3);
+  set3DEnabled(id, true);
+
+  const node = defaultSceneGraph.getNode(id);
+  if (node) {
+    const fx = node.components.find((c: any) => c.type === 'fx') ?? { id: `${id}_fx`, type: 'fx', props: {} };
+    if (!node.components.includes(fx)) node.components.push(fx);
+    fx.props.pathOp = { type: opType, amount };
+  }
+
+  kf(ctx, id, 'rotation', [
+    { t: t0, value: 0, easing: 'bezier', bezier: PHYSICS.smooth },
+    { t: t0 + dur, value: 180, easing: 'bezier', bezier: PHYSICS.smooth },
+  ]);
+
+  applyEntrance(ctx, id, t0, s, cy, { role: 'generic' });
+  applySceneExit(ctx, id, cy);
+  return id;
 }

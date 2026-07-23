@@ -19,6 +19,9 @@ import { beginAiTransaction, type AiTransaction } from './aiTransaction';
 import { SYSTEM_PROMPT, buildContextPreamble } from './buildContext';
 import { apiBaseUrl, getToken, type GatewayProviderId } from '@core/api/client';
 import { Router, PipelineOrchestrator } from './pipeline';
+import { runBackendDirector } from './DirectorRunner';
+import { deriveStyleFromBrief, setRuntimeStyle } from './design';
+import { buildExemplarBlock } from './exemplars';
 
 /**
  * Enough for look → plan → act → LOOK (render + self-critique) → fix → answer,
@@ -55,6 +58,12 @@ export interface AgentEvents {
 
 /** How many times a single run may render, look at its work, and self-correct. */
 const MAX_CRITIQUES = 2;
+/**
+ * Generative runs get one more: their first "critique" is the seeded review of
+ * the plan-executed scene, so 3 keeps at least two genuine render→look→fix
+ * passes on the paths that author the most.
+ */
+const MAX_CRITIQUES_GENERATIVE = 3;
 
 const CRITIQUE_PROMPT =
   'Here are rendered frames of what you just built (roughly early, middle, and the final held frame). ' +
@@ -65,6 +74,8 @@ const CRITIQUE_PROMPT =
   '- Motion: across the three frames, are things actually moving, staggered and eased — or static and flat?\n' +
   '- Does it match the brief\'s mood and look finished, not like a first draft?\n' +
   'If you see ANY problem, fix it now with tools (reposition, resize, restyle, re-time, add missing pieces). ' +
+  'You have FULL authority to make substantial revisions — delete and rebuild a weak element, change the palette, ' +
+  'retime a whole scene — not just nudge positions. ' +
   'Only if it genuinely looks good: briefly tell the user what you made, and stop.';
 
 export interface AgentResult {
@@ -235,38 +246,80 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
 
   let requestPrompt = prompt;
   let pipelinePlan: any = null;
-  /** Frames rendered after a successful pipeline run — seeds the polish pass. */
+  /**
+   * True once a programmatic plan (backend director OR client pipeline) has
+   * executed against the scene. Both paths then flow into the SAME sighted
+   * polish pass below — no path ships work nothing has looked at.
+   */
+  let planExecuted = false;
+  let planSummary = '';
+  /** How many render→look→fix passes this run may take. */
+  let maxCritiques = MAX_CRITIQUES;
+  let isGenerative = false;
+  /** Frames rendered after a successful plan run — seeds the polish pass. */
   let pipelineReviewShots: AiImage[] = [];
   let finalText = '';
   let toolCallCount = 0;
   const produced: AiMessage[] = [];
+
+  // Runtime palette: when the brief itself names brand colours, derive the
+  // run's style from THEM so compose defaults are on-brief instead of one of
+  // the six anchors. Explicit preset names in tool calls still win.
+  setRuntimeStyle(deriveStyleFromBrief(prompt));
 
   try {
     // 1. Router Classification & Pipeline Orchestration
     try {
       const router = new Router({ provider, dialect, model, signal });
       const classification = await router.classify(prompt);
-      
-      if (classification === 'generative') {
-        events?.onActivity?.('Orchestrating production pipeline…');
-        const orchestrator = new PipelineOrchestrator({
-          provider,
-          dialect,
-          model,
-          history: opts.history,
-          images: opts.images,
-          signal,
-          existingLayerNames: ctx.scene.all().map((n) => n.name),
-          events: {
-            onActivity: (label) => events?.onActivity?.(label),
-          },
-        });
 
-        const compPreamble = buildContextPreamble(ctx);
-        const planContext = await orchestrator.execute(prompt, compPreamble);
-        
-        if (planContext.toolPlan) {
-          pipelinePlan = planContext.toolPlan.executionPlan;
+      if (classification === 'generative') {
+        isGenerative = true;
+        maxCritiques = MAX_CRITIQUES_GENERATIVE;
+        events?.onActivity?.('Connecting to Director Service…');
+        let backendRan = false;
+        try {
+          const dirRes = await runBackendDirector(
+            { provider, model, prompt, signal, events },
+            ctx,
+            reg,
+            writeNames,
+          );
+          if (dirRes.ok) {
+            // Do NOT return here. The director authored the scene blind; the
+            // sighted polish pass below is what turns "executed" into "looks
+            // right". Same treatment as the client-pipeline path.
+            backendRan = true;
+            planExecuted = true;
+            toolCallCount += dirRes.toolCallCount;
+            changes.push(...dirRes.changes);
+            planSummary = `Executed ${dirRes.toolCallCount} director production steps.`;
+          }
+        } catch {
+          // Backend director unavailable or unsupported — fall back to client orchestrator
+        }
+
+        if (!backendRan) {
+          events?.onActivity?.('Orchestrating production pipeline…');
+          const orchestrator = new PipelineOrchestrator({
+            provider,
+            dialect,
+            model,
+            history: opts.history,
+            images: opts.images,
+            signal,
+            existingLayerNames: ctx.scene.all().map((n) => n.name),
+            events: {
+              onActivity: (label) => events?.onActivity?.(label),
+            },
+          });
+
+          const compPreamble = buildContextPreamble(ctx);
+          const planContext = await orchestrator.execute(prompt, compPreamble);
+          
+          if (planContext.toolPlan) {
+            pipelinePlan = planContext.toolPlan.executionPlan;
+          }
         }
       }
     } catch (err) {
@@ -312,16 +365,20 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         const toolTurn: AiMessage = { role: 'tool', id: `step_${step.stepIndex}`, name: step.tool, content: res.content, isError: false };
         produced.push(toolTurn);
       }
+      planExecuted = true;
+      planSummary = `Successfully executed ${pipelinePlan.length} planned production steps.`;
+    }
 
-      // 3. Sighted polish pass — the pipeline authored the scene, but nothing
-      // has LOOKED at it yet. Render key frames and fall through into the
-      // direct loop seeded with those shots + the critique prompt, so the
-      // model can fix what the plan got wrong (overlaps, contrast, dead
-      // zones) with the full toolset. Previously the pipeline path returned
-      // here without ever seeing a frame — the visual loop only guarded the
-      // fallback path, i.e. it was dead on exactly the path most generative
-      // prompts take. If rendering fails or feedback is off, the plan result
-      // stands on its own (the old behavior).
+    // 3. Sighted polish pass — a plan (backend director OR client pipeline)
+    // authored the scene, but nothing has LOOKED at it yet. Render key frames
+    // and fall through into the direct loop seeded with those shots + the
+    // critique prompt, so the model can fix what the plan got wrong (overlaps,
+    // contrast, dead zones) with the full toolset. Previously the backend-
+    // director path returned before ever seeing a frame — the visual loop was
+    // dead on exactly the path most generative prompts take. If rendering
+    // fails or feedback is off, the plan result stands on its own (the old
+    // behavior).
+    if (planExecuted) {
       if (opts.visualFeedback !== false && changes.length > 0 && !signal.aborted) {
         events?.onActivity?.('Reviewing the result');
         try {
@@ -333,7 +390,7 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         }
       }
       if (!pipelineReviewShots.length) {
-        finalText = `Successfully executed ${pipelinePlan.length} planned production steps.`;
+        finalText = planSummary;
         const assistantTurn: AiMessage = { role: 'assistant', content: finalText };
         produced.push(assistantTurn);
 
@@ -345,22 +402,25 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
       }
     }
 
-    // Fallback: The preamble is rebuilt per run so the model sees the document as it is now.
+    // Fallback: The preamble is rebuilt per run so the model sees the document
+    // as it is now. When the model is AUTHORING (no plan ran), 1–2 intent-
+    // matched exemplars show it the shape of professional structure first.
+    const exemplarBlock = isGenerative && !planExecuted ? buildExemplarBlock(requestPrompt) : '';
     const messages: AiMessage[] = [
       ...(opts.history ?? []),
       {
         role: 'user',
-        content: `${buildContextPreamble(ctx)}\n\n---\n\n${requestPrompt}`,
+        content: `${buildContextPreamble(ctx)}${exemplarBlock}\n\n---\n\n${requestPrompt}`,
         ...(opts.images?.length ? { images: opts.images } : {}),
       },
     ];
     const seen = new Map<string, number>();
     let critiques = 0;
-    // Pipeline handoff: the plan already executed — tell the model what was
+    // Plan handoff: the plan already executed — tell the model what was
     // built and show it the rendered frames, so its first turn is a sighted
     // review, not a blind re-author. Counts as the first critique so the
     // total number of render passes stays bounded.
-    if (pipelinePlan && pipelineReviewShots.length) {
+    if (planExecuted && pipelineReviewShots.length) {
       messages.push({
         role: 'assistant',
         content: `I executed a planned production sequence. Changes applied:\n${changes.map((c) => `- ${c}`).join('\n')}`,
@@ -395,7 +455,7 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         const worthReviewing =
           opts.visualFeedback !== false &&
           changes.length > 0 &&
-          critiques < MAX_CRITIQUES &&
+          critiques < maxCritiques &&
           !signal.aborted;
 
         if (worthReviewing) {

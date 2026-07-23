@@ -199,16 +199,19 @@ function AppearanceTab(): JSX.Element {
   const [accent, setAccent] = useState<string>(() => getAccentColor());
   const applyAccent = (c: string): void => { setAccent(c); setAccentColor(c); };
 
-  const uiScale = usePreferenceStore((s) => s.uiScale);
+  const buttonSize = usePreferenceStore((s) => s.buttonSize ?? 'md');
+  const iconSize = usePreferenceStore((s) => s.iconSize ?? 'md');
+  const sidebarDensity = usePreferenceStore((s) => s.sidebarDensity ?? 'default');
   const reduceMotion = usePreferenceStore((s) => s.editorReduceMotion);
   const confirmOnClose = usePreferenceStore((s) => s.confirmOnClose);
   const setPref = usePreferenceStore((s) => s.set);
 
-
-
   const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition);
   const rightInspectorPos = useLayoutStore((s) => s.rightInspectorPosition);
   const timelinePos = useLayoutStore((s) => s.timelinePosition);
+
+  const leftSidebarWidth = useLayoutStore((s) => s.regions.leftSidebar?.size ?? 340);
+  const setRegionSize = useLayoutStore((s) => s.setRegionSize);
 
   const setLeftSidebarPos = useLayoutStore((s) => s.setLeftSidebarPosition);
   const setRightInspectorPos = useLayoutStore((s) => s.setRightInspectorPosition);
@@ -230,6 +233,51 @@ function AppearanceTab(): JSX.Element {
         </div>
       </div>
 
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Button Size</span>
+        <div className={styles.rowRight}>
+          <Button variant={buttonSize === 'sm' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('buttonSize', 'sm')}>Small</Button>
+          <Button variant={buttonSize === 'md' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('buttonSize', 'md')}>Medium</Button>
+          <Button variant={buttonSize === 'lg' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('buttonSize', 'lg')}>Large</Button>
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Icon Size</span>
+        <div className={styles.rowRight}>
+          <Button variant={iconSize === 'sm' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('iconSize', 'sm')}>Small</Button>
+          <Button variant={iconSize === 'md' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('iconSize', 'md')}>Medium</Button>
+          <Button variant={iconSize === 'lg' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('iconSize', 'lg')}>Large</Button>
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Sidebar Items Density</span>
+        <div className={styles.rowRight}>
+          <Button variant={sidebarDensity === 'compact' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'compact')}>Compact</Button>
+          <Button variant={sidebarDensity === 'default' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'default')}>Default</Button>
+          <Button variant={sidebarDensity === 'comfortable' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'comfortable')}>Comfortable</Button>
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Sidebar Width Resizer</span>
+        <div className={styles.rowRight}>
+          <input
+            type="range"
+            min={260}
+            max={540}
+            step={10}
+            value={leftSidebarWidth}
+            onChange={(e) => setRegionSize('leftSidebar', Number(e.target.value))}
+            aria-label="Left sidebar width resizer"
+          />
+          <span style={{ minWidth: 46, textAlign: 'right' }}>{leftSidebarWidth}px</span>
+          <Button variant="ghost" size="sm" onClick={() => setRegionSize('leftSidebar', 340)} disabled={leftSidebarWidth === 340}>
+            Reset
+          </Button>
+        </div>
+      </div>
 
       <div className={styles.row}>
         <span className={styles.rowLabel}>Left Sidebar Position</span>
@@ -287,25 +335,6 @@ function AppearanceTab(): JSX.Element {
             onClick={() => setTimelinePos('top')}
           >
             Top
-          </Button>
-        </div>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>UI Scale</span>
-        <div className={styles.rowRight}>
-          <input
-            type="range"
-            min={0.75}
-            max={1.5}
-            step={0.05}
-            value={uiScale}
-            onChange={(e) => setPref('uiScale', Number(e.target.value))}
-            aria-label="UI scale"
-          />
-          <span style={{ minWidth: 42, textAlign: 'right' }}>{Math.round(uiScale * 100)}%</span>
-          <Button variant="ghost" size="sm" onClick={() => setPref('uiScale', 1)} disabled={uiScale === 1}>
-            Reset
           </Button>
         </div>
       </div>

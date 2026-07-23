@@ -14,7 +14,7 @@ import { getRemappedTime } from '@core/timeline/TimelineController';
  * render loop now drives both content and interaction (consolidated).
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import type { RenderBackend } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
@@ -31,6 +31,7 @@ import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 
 
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
@@ -54,6 +55,17 @@ import { useInfoStore } from '@stores/infoStore';
 import { samplePixelRgba } from '@core/workspace/pixelSample';
 import { readGeometry } from '@core/workspace/geometry';
 import {
+  cancelSmoothDolly,
+  dollyNavBy,
+  findNavTarget,
+  orbitNavBy,
+  resolveViewCameraInput,
+  smoothDollyNavBy,
+  trackNavBy,
+  type CameraNavMode,
+  type NavTarget,
+} from '@core/workspace/cameraNav';
+import {
   duplicateSelectedLayers,
   deleteSelectedLayers,
   toggleSelectedLocked,
@@ -63,6 +75,8 @@ import {
   precomposeSelected,
 } from '@core/scene/sceneInsert';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
+import { moveNodeInStack } from '@core/scene/parenting';
+import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
@@ -134,11 +148,18 @@ export interface UseWorkspaceArgs {
   focusKey?: string;
 }
 
-export function useWorkspace(args: UseWorkspaceArgs): void {
+export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderError: string | null } {
   const { contentCanvasRef, overlayCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
 
   const backendRef = useRef<RenderBackend | null>(null);
   const dprRef = useRef(1);
+  // False until the GPU backend has come up and painted the first frame, so the
+  // viewport can show a loading state instead of a blank canvas on (re-)entry.
+  const [ready, setReady] = useState(false);
+  // Non-null when GPU init FAILED on every tier (readyPromise resolves either
+  // way — see MotionRendererBackend.initFailed). The viewport shows a visible
+  // error instead of dismissing the spinner into a silent blank canvas.
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   // Active on-canvas motion-path drag (E4): a keyframe point or one of its
   // spatial tangent handles ('in'/'out'), or null.
@@ -160,12 +181,20 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
   const gridDivisions = useGuidesStore((s) => s.gridDivisions);
   const safeArea = useGuidesStore((s) => s.safeArea);
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
+  // Custom-view params: nav writes replace the record, so this subscription
+  // re-fires the render effect while orbiting a custom view.
+  const customViews = useGuidesStore((s) => s.customViews);
   const overlaysRef = useRef({ rulers, grid, gridDivisions, safeArea });
   overlaysRef.current = { rulers, grid, gridDivisions, safeArea };
   // Via ref so the mount-scoped render closure always reads the CURRENT view
   // mode — the raw closure froze it at mount and deadened the 3D/2D toggle.
   const camera3dModeRef = useRef(camera3dMode);
   camera3dModeRef.current = camera3dMode;
+  // Draft 3D (fast preview: no DOF, no lighting) — same ref pattern, same
+  // reason. Flows into buildSnapshot as a comp INPUT, never into the pipeline.
+  const draft3d = useGuidesStore((s) => s.draft3d);
+  const draft3dRef = useRef(draft3d);
+  draft3dRef.current = draft3d;
 
   const mbEnabled = useMotionBlurStore((s) => s.enabled);
   const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
@@ -213,7 +242,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     let animRev = 0;
 
     const paintChrome = (): void => {
-      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null);
+      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current);
       paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
     };
 
@@ -236,7 +265,15 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
           // it, buildSnapshot flattens every root and draws all comps stacked on
           // top of each other — and the preview (which DOES pass rootId) then
           // showed a different picture than the editor. Both scope the same now.
-          { ...compRef.current, rootId: compRef.current.id, camera3dMode: camera3dModeRef.current },
+          {
+            ...compRef.current,
+            rootId: compRef.current.id,
+            // Custom views resolve to a pre-built override camera; ortho /
+            // active pass straight through (resolveViewCameraInput reads the
+            // live store, so the closure never freezes a stale view).
+            ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
+            draft3d: draft3dRef.current,
+          },
         ),
       );
 
@@ -245,6 +282,10 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     };
     controller.onRender(render);
 
+    // One-shot guard: frame the comp the first time the stage settles this
+    // mount. The WorkspaceController is a singleton, so its camera/auto-fit
+    // state outlives a single editor visit.
+    let didInitialFit = false;
     const sizeAll = (): void => {
       const rect = stage.getBoundingClientRect();
       // Skip degenerate layouts (0×0 during mount/transition) so we never poison
@@ -267,7 +308,18 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       // behind the onboarding tour), which would pin the zoom to ~5%. A manual
       // zoom/pan turns auto-fit off, so this stops honoring it until "Fit".
       const settled = rect.width >= 240 && rect.height >= 160;
-      controller.resize(rect.width, rect.height, dpr, controller.autoFit && settled);
+      // On a fresh mount (crucially, RE-ENTERING a project), frame the comp once
+      // the stage settles. The singleton controller keeps the camera + auto-fit
+      // flag from a previous visit, so a prior pan/zoom would otherwise leave the
+      // composition framed out of view — the canvas reads as blank while the rest
+      // of the editor renders. After the initial fit, honor the live auto-fit.
+      if (settled && !didInitialFit) {
+        didInitialFit = true;
+        controller.resize(rect.width, rect.height, dpr, false);
+        controller.fitComposition();
+      } else {
+        controller.resize(rect.width, rect.height, dpr, controller.autoFit && settled);
+      }
       render();
     };
     const ro = new ResizeObserver(sizeAll);
@@ -279,6 +331,35 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     // the ResizeObserver misses a late layout settle (observed on first load).
     window.addEventListener('resize', sizeAll);
     const settleTimer = setTimeout(sizeAll, 600);
+
+    // The GPU backend initializes asynchronously; frames requested before it's
+    // ready coalesce to a single pending frame. Re-size + fit the instant it
+    // comes up so a freshly opened project paints immediately instead of waiting
+    // on the 600ms backstop — the cause of the scene appearing late on load.
+    let readyCancelled = false;
+    if (backend.readyPromise) {
+      backend.readyPromise.then(() => {
+        if (!readyCancelled && backendRef.current === backend) {
+          // readyPromise resolving is NOT success — a failed GPU init also
+          // resolves it (so awaiters never hang). Only flip to ready when the
+          // backend can actually paint; otherwise surface the error instead
+          // of dismissing the spinner into a silent blank canvas.
+          if (backend.initFailed) {
+            setRenderError(
+              backend.initErrorMessage ??
+                'GPU rendering could not be initialized (WebGL2/WebGPU unavailable).',
+            );
+            return;
+          }
+          setRenderError(null);
+          sizeAll();
+          setReady(true);
+        }
+      });
+    } else {
+      // Canvas2D / synchronous backends are ready immediately.
+      setReady(true);
+    }
 
     // Re-size the content buffer when the preview-resolution dropdown changes
     // (sizeAll re-reads the store), so Full/Half/Third/Quarter takes effect in
@@ -303,6 +384,7 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     overlay.style.cursor = controller.ws.cursor.css;
 
     return () => {
+      readyCancelled = true;
       cancelAnimationFrame(raf);
       clearTimeout(settleTimer);
       window.removeEventListener('resize', sizeAll);
@@ -316,10 +398,23 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     };
   }, [contentCanvasRef, overlayCanvasRef, stageRef]);
 
+  // ── Channel Filter Effect ──────────────────────────────────────────
+  const channel = useGuidesStore((s) => s.channel);
+  useEffect(() => {
+    const canvas = contentCanvasRef.current;
+    if (!canvas) return;
+    ensureSvgChannelFilters();
+    if (channel === 'red') canvas.style.filter = 'url(#filter-channel-red)';
+    else if (channel === 'green') canvas.style.filter = 'url(#filter-channel-green)';
+    else if (channel === 'blue') canvas.style.filter = 'url(#filter-channel-blue)';
+    else if (channel === 'alpha') canvas.style.filter = 'url(#filter-channel-alpha)';
+    else canvas.style.filter = 'none';
+  }, [channel, contentCanvasRef]);
+
   // ── Re-render on scene / playhead / guide changes ──────────────────
   useEffect(() => {
     getWorkspaceController().requestRender();
-  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, draft, mbEnabled, mbShutter, mbSamples, compKey]);
+  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, customViews, draft3d, channel, draft, mbEnabled, mbShutter, mbSamples, compKey]);
 
   // ── Auto-fit on comp-size change ───────────────────────────────────
   // Switching resolution (e.g. a 9:16 reel ↔ 16:9) re-frames the comp to fill
@@ -383,8 +478,110 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       pointerId: e.pointerId,
     });
 
+    // ── AE-style viewport camera navigation ─────────────────────────
+    // Orbit:  Alt+drag on the canvas        → orbitYaw / orbitPitch
+    // Track:  Shift+Alt+drag or Alt+middle  → camera x/y (+ POI when two-node)
+    // Dolly:  Alt+wheel                     → camera z along the view axis
+    // Plus the C-key camera tool (guidesStore.cameraTool): left-drag runs the
+    // active mode with NO modifier; Esc or any tool pick returns to selection.
+    // Active when the comp has a Camera layer AND at least one 3D layer — or,
+    // in a CUSTOM view, whenever the comp has any 3D layer (custom views need
+    // no camera: nav writes the view's stored params, not scene nodes).
+    // The write logic itself lives in @core/workspace/cameraNav (shared).
+    let camNav: { target: NavTarget; mode: CameraNavMode; last: { x: number; y: number }; pointerId: number } | null = null;
+    let altHintCursor = false;
+
+    const cameraToolCursor = (mode: CameraNavMode): string =>
+      mode === 'pan' ? 'grab' : mode === 'dolly' ? 'ns-resize' : 'move';
+
+    const startCameraNav = (e: PointerEvent, mode: CameraNavMode): boolean => {
+      const target = findNavTarget();
+      if (!target) return false;
+      camNav = { target, mode, last: local(e), pointerId: e.pointerId };
+      e.preventDefault();
+      try {
+        overlay.setPointerCapture(e.pointerId);
+      } catch {
+        /* best-effort */
+      }
+      useUIStore.getState().setDragging(true);
+      overlay.style.cursor = mode === 'pan' ? 'grabbing' : cameraToolCursor(mode);
+      return true;
+    };
+
+    const moveCameraNav = (e: PointerEvent): void => {
+      const nav = camNav;
+      if (!nav) return;
+      const p = local(e);
+      const dx = p.x - nav.last.x;
+      const dy = p.y - nav.last.y;
+      nav.last = p;
+      if (dx === 0 && dy === 0) return;
+      if (nav.mode === 'orbit') {
+        orbitNavBy(nav.target, dx, dy);
+      } else if (nav.mode === 'dolly') {
+        // Drag up (dy < 0) = dolly IN, matching Alt+wheel-up. Direct (unsmoothed)
+        // writes: a drag is already continuous, easing would add lag.
+        dollyNavBy(nav.target, dy, compRef.current.width, compRef.current.height);
+      } else {
+        trackNavBy(nav.target, dx, dy, controller.getView().scale || 1, compRef.current.width, compRef.current.height);
+      }
+    };
+
+    const endCameraNav = (): void => {
+      camNav = null;
+      useUIStore.getState().setDragging(false);
+      const tool = useGuidesStore.getState().cameraTool;
+      overlay.style.cursor = tool !== 'none' ? cameraToolCursor(tool) : controller.ws.cursor.css;
+    };
+
+    // Cursor hint while Alt is held over the canvas and camera nav is possible;
+    // Escape leaves the C-key camera tool (back to plain selection).
+    const onAltDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && useGuidesStore.getState().cameraTool !== 'none') {
+        useGuidesStore.getState().setCameraTool('none');
+        return;
+      }
+      if (e.key !== 'Alt' || camNav || altHintCursor) return;
+      if (!findNavTarget()) return;
+      overlay.style.cursor = 'move';
+      altHintCursor = true;
+    };
+    const onAltUp = (e: KeyboardEvent): void => {
+      if (e.key !== 'Alt' || !altHintCursor) return;
+      altHintCursor = false;
+      if (!camNav) overlay.style.cursor = controller.ws.cursor.css;
+    };
+
+    // The camera tool owns the viewport cursor while active; picking any
+    // toolbar tool (V etc.) exits camera mode — AE's "V returns to selection".
+    const guidesSub = useGuidesStore.subscribe((s, prev) => {
+      if (s.cameraTool !== prev.cameraTool && !camNav) {
+        overlay.style.cursor =
+          s.cameraTool !== 'none' ? cameraToolCursor(s.cameraTool) : controller.ws.cursor.css;
+      }
+      // Leaving the camera tool cancels any in-flight eased wheel dolly.
+      if (s.cameraTool === 'none' && prev.cameraTool !== 'none') cancelSmoothDolly();
+    });
+    const toolSub = useUIStore.subscribe(
+      (s) => s.activeTool,
+      () => {
+        if (useGuidesStore.getState().cameraTool !== 'none') {
+          useGuidesStore.getState().setCameraTool('none');
+        }
+      },
+    );
+
     const onDown = (e: PointerEvent): void => {
+      // Alt+middle-drag = camera Track XY — claim before the left-button guard.
+      if (e.button === 1 && e.altKey && startCameraNav(e, 'pan')) return;
       if (e.button !== 0) return; // left-button interactions only
+      // C-key camera tool: plain left-drag runs the active orbit/pan/dolly
+      // mode (no Alt needed). Claims the press before any canvas interaction.
+      {
+        const camTool = useGuidesStore.getState().cameraTool;
+        if (camTool !== 'none' && startCameraNav(e, camTool)) return;
+      }
       // Ruler guides: pointer-down inside a ruler strip drags out a NEW guide
       // (top strip → horizontal 'y' guide, left strip → vertical 'x' guide).
       // Checked before anything is forwarded to the engine.
@@ -415,17 +612,23 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
         if (ids.length === 1) {
           const node = defaultSceneGraph.getNode(ids[0]!);
           if (node && isPaintableKind(node)) {
-            e.preventDefault();
-            const cp = controller.ws.screenToWorld(local(e));
-            paintDragRef.current = { nodeId: node.id, comp: [cp], screen: [local(e)] };
-            try {
-              overlay.setPointerCapture(e.pointerId);
-            } catch {
-              /* best-effort */
+            const hitNode = controller.ws.hitTestScreen(local(e));
+            if (hitNode && hitNode.id === node.id) {
+              e.preventDefault();
+              const cp = controller.ws.screenToWorld(local(e));
+              paintDragRef.current = { nodeId: node.id, comp: [cp], screen: [local(e)] };
+              try {
+                overlay.setPointerCapture(e.pointerId);
+              } catch {
+                /* best-effort */
+              }
+              useUIStore.getState().setDragging(true);
+              controller.requestRender();
+              return;
             }
-            useUIStore.getState().setDragging(true);
-            controller.requestRender();
-            return;
+            if (!hitNode) {
+              useSelectionStore.getState().clear();
+            }
           }
         }
       }
@@ -443,6 +646,11 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
         useUIStore.getState().setDragging(true);
         return;
       }
+      // AE-style camera navigation: Alt+drag orbits, Shift+Alt+drag tracks XY.
+      // Checked AFTER the motion-path handle test above, so Alt+dragging a path
+      // tangent handle keeps its break-the-pair behavior (see onMove's
+      // setPathTangent), and camera nav only claims presses on open canvas.
+      if (e.altKey && startCameraNav(e, e.shiftKey ? 'pan' : 'orbit')) return;
       // Ruler guides: grabbing an existing guide line (rulers visible) moves it.
       if (overlaysRef.current.rulers) {
         const p = local(e);
@@ -470,6 +678,11 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       controller.ws.feedPointerDown(toPointer(e));
     };
     const onMove = (e: PointerEvent): void => {
+      // Active viewport-camera navigation (orbit / track) claims the move.
+      if (camNav && camNav.pointerId === e.pointerId) {
+        moveCameraNav(e);
+        return;
+      }
       // Info readout (AE Info panel): comp-space position + sampled pixel under
       // the cursor. Runs for every move regardless of the active tool/drag.
       {
@@ -563,6 +776,11 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
         if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
       } catch {
         /* ignore */
+      }
+      // Finish a viewport-camera navigation drag (props already written live).
+      if (camNav && camNav.pointerId === e.pointerId) {
+        endCameraNav();
+        return;
       }
       // Commit the Brush paint pass: map every sample into layer space and add
       // ONE stroke (one undo step), then clear the wet-stroke preview.
@@ -661,6 +879,17 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     };
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault();
+      // Alt+wheel = camera dolly along the view axis (toward/away from POI).
+      // Default z is -focalLength (comp plane 1:1), so wheel-up (deltaY < 0)
+      // pushes z toward 0 = dolly IN.
+      if (e.altKey || useGuidesStore.getState().cameraTool === 'dolly') {
+        if (findNavTarget()) {
+          // Smooth dolly: wheel ticks feed an rAF easer instead of stepping z
+          // (or a custom view's distance) directly — see cameraNav.ts.
+          smoothDollyNavBy(e.deltaY, compRef.current.width, compRef.current.height);
+          return;
+        }
+      }
       const w: WheelInput = {
         position: local(e),
         deltaX: e.deltaX,
@@ -683,6 +912,8 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
     overlay.addEventListener('dblclick', onDoubleClick);
     overlay.addEventListener('contextmenu', onContextMenu);
     overlay.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('keydown', onAltDown);
+    window.addEventListener('keyup', onAltUp);
 
     return () => {
       overlay.removeEventListener('pointerdown', onDown);
@@ -693,8 +924,15 @@ export function useWorkspace(args: UseWorkspaceArgs): void {
       overlay.removeEventListener('dblclick', onDoubleClick);
       overlay.removeEventListener('contextmenu', onContextMenu);
       overlay.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onAltDown);
+      window.removeEventListener('keyup', onAltUp);
+      guidesSub();
+      toolSub();
+      cancelSmoothDolly();
     };
   }, [overlayCanvasRef, stageRef]);
+
+  return { ready, renderError };
 }
 
 // ── Canvas context menus ─────────────────────────────────────────────
@@ -741,6 +979,28 @@ function addKeyframesAtPlayhead(id: string, label: string, props: readonly strin
   });
 }
 
+function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
+  const sel = useSelectionStore.getState().ids;
+  const ids: string[] = sel.includes(targetId) ? [...sel] : [targetId];
+  const node = defaultSceneGraph.getNode(targetId);
+  const current = node ? readNodeLabelColor(node) : undefined;
+  return [
+    {
+      id: 'label-none',
+      label: 'None (Default)',
+      icon: current === undefined ? 'check' : undefined,
+      onSelect: () => setNodeLabelColor(ids, undefined),
+    },
+    { id: 'label-sep', separator: true },
+    ...LABEL_COLORS.map((c): ContextMenuItem => ({
+      id: `label-${c.id}`,
+      label: c.label,
+      icon: current === c.color ? 'check' : undefined,
+      onSelect: () => setNodeLabelColor(ids, c.color),
+    })),
+  ];
+}
+
 function nodeContextMenuItems(id: string): ContextMenuItem[] {
   const node = defaultSceneGraph.getNode(id);
   const hidden = node?.visible === false;
@@ -753,10 +1013,25 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
     n.visible = n.visible === false;
     bumpScene();
   };
+  const renameNode = (): void => {
+    const n = defaultSceneGraph.getNode(id);
+    if (!n) return;
+    const newName = window.prompt('Rename layer:', n.name);
+    if (newName && newName.trim()) {
+      n.name = newName.trim();
+      bumpScene();
+    }
+  };
   return [
-    // AE-style quick keyframing straight from the canvas — this existed
-    // nowhere before (users had to find the stopwatch in the inspector or
-    // twirl the timeline), which made starting an animation feel complex.
+    { id: 'rename', label: 'Rename…', onSelect: renameNode },
+    { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
+    { id: 'arrange', label: 'Arrange', children: [
+      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'front'); } },
+      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'forward'); } },
+      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'backward'); } },
+      { id: 'arr-back', label: 'Send to Back', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'back'); } },
+    ] },
+    { id: 'sep0', separator: true },
     { id: 'kf', label: 'Add Keyframe', children: [
       { id: 'kf-pos', label: 'Position', onSelect: () => addKeyframesAtPlayhead(id, 'Position', ['x', 'y']) },
       { id: 'kf-scale', label: 'Scale', onSelect: () => addKeyframesAtPlayhead(id, 'Scale', ['scaleX', 'scaleY']) },
@@ -764,12 +1039,23 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
       { id: 'kf-op', label: 'Opacity', onSelect: () => addKeyframesAtPlayhead(id, 'Opacity', ['opacity']) },
       { id: 'kf-all', label: 'All Transform', onSelect: () => addKeyframesAtPlayhead(id, 'Transform', ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']) },
     ] },
-    { id: 'sep0', separator: true },
-    { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
     { id: 'sep1', separator: true },
     { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleVisible },
     { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked() },
     { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => toggleSelectedSolo() },
+    {
+      id: 'toggle-3d',
+      label: node && is3DEnabled(node) ? 'Disable 3D Layer' : 'Enable 3D Layer',
+      onSelect: () => {
+        const ids = useSelectionStore.getState().ids;
+        for (const nid of (ids.includes(id) ? ids : [id])) {
+          const n = defaultSceneGraph.getNode(nid);
+          if (n && canBe3D(n)) set3DEnabled(nid, !is3DEnabled(n));
+        }
+        bumpScene();
+      },
+    },
+    { id: 'labelColor', label: 'Label Color', children: labelColorCanvasMenuItems(id) },
     { id: 'sep2', separator: true },
     { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
     ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
@@ -818,6 +1104,7 @@ function paintOverlay(
   guideDrag: GuideDrag | null = null,
   controller?: WorkspaceController,
   paintStroke: Array<{ x: number; y: number }> | null = null,
+  time = 0,
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -826,6 +1113,11 @@ function paintOverlay(
 
   const cssW = canvas.width / dpr;
   const cssH = canvas.height / dpr;
+
+  const guidesState = useGuidesStore.getState();
+  if (guidesState.safeArea && controller) {
+    paintSafeArea(ctx, controller);
+  }
 
   // Wet-stroke preview: the Brush's in-flight samples (screen space), drawn as
   // round-capped ink at brush width so what you drag IS what commits on release.
@@ -1077,14 +1369,22 @@ function paintOverlay(
       if (kind === 'camera' || kind === 'light') {
         const geometry = readGeometry(node);
         if (!geometry) continue;
-        
+
+        // Sample ANIMATED values at the current playhead (mirrors buildSnapshot)
+        // so the icon tracks a keyframed/orbited camera or light instead of
+        // sitting at the static base position.
+        const v = defaultAnimation.evaluateNode(node.id, getRemappedTime(node.id, time));
+        const x = v.get('x') ?? geometry.x;
+        const y = v.get('y') ?? geometry.y;
+        const rotationDeg = v.get('rotation') ?? geometry.rotationDeg;
+
         // Calculate screen position from world position
-        const screenPos = controller.ws.worldToScreen({ x: geometry.x, y: geometry.y });
+        const screenPos = controller.ws.worldToScreen({ x, y });
         const selected = useSelectionStore.getState().isSelected(node.id);
-        
+
         ctx.save();
         ctx.translate(screenPos.x, screenPos.y);
-        ctx.rotate((geometry.rotationDeg * Math.PI) / 180);
+        ctx.rotate((rotationDeg * Math.PI) / 180);
         
         if (kind === 'camera') {
           // Draw a beautiful camera guide shape
@@ -1128,6 +1428,10 @@ function paintOverlay(
         ctx.restore();
       }
     }
+  }
+
+  if (guidesState.rulers && controller) {
+    paintRulers(ctx, controller, cssW, cssH);
   }
 }
 
@@ -1245,3 +1549,231 @@ function paintMotionPath(
 function strokeRect(ctx: CanvasRenderingContext2D, r: { x: number; y: number; width: number; height: number }): void {
   ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.width, r.height);
 }
+
+function ensureSvgChannelFilters(): void {
+  if (typeof document === 'undefined' || document.getElementById('motion-editor-channel-filters')) return;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'motion-editor-channel-filters';
+  svg.style.position = 'absolute';
+  svg.style.width = '0';
+  svg.style.height = '0';
+  svg.style.overflow = 'hidden';
+  svg.innerHTML = `
+    <defs>
+      <filter id="filter-channel-red">
+        <feColorMatrix type="matrix" values="1 0 0 0 0  1 0 0 0 0  1 0 0 0 0  0 0 0 1 0" />
+      </filter>
+      <filter id="filter-channel-green">
+        <feColorMatrix type="matrix" values="0 1 0 0 0  0 1 0 0 0  0 1 0 0 0  0 0 0 1 0" />
+      </filter>
+      <filter id="filter-channel-blue">
+        <feColorMatrix type="matrix" values="0 0 1 0 0  0 0 1 0 0  0 0 1 0 0  0 0 0 1 0" />
+      </filter>
+      <filter id="filter-channel-alpha">
+        <feColorMatrix type="matrix" values="0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 1 0" />
+      </filter>
+    </defs>
+  `;
+  document.body.appendChild(svg);
+}
+
+function paintSafeArea(ctx: CanvasRenderingContext2D, controller: WorkspaceController): void {
+  try {
+    const comp = useCompositionStore.getState();
+    if (!comp || comp.width <= 0 || comp.height <= 0) return;
+    const p0 = controller.ws.worldToScreen({ x: 0, y: 0 });
+    const p1 = controller.ws.worldToScreen({ x: comp.width, y: comp.height });
+    if (!Number.isFinite(p0.x) || !Number.isFinite(p0.y) || !Number.isFinite(p1.x) || !Number.isFinite(p1.y)) return;
+    const w = p1.x - p0.x;
+    const h = p1.y - p0.y;
+    if (w <= 0 || h <= 0) return;
+
+    ctx.save();
+    ctx.lineWidth = 1;
+
+    // Action Safe Box (90%)
+    const asX = p0.x + w * 0.05;
+    const asY = p0.y + h * 0.05;
+    const asW = w * 0.9;
+    const asH = h * 0.9;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(asX + 0.5, asY + 0.5, asW, asH);
+
+    // Title Safe Box (80%)
+    const tsX = p0.x + w * 0.1;
+    const tsY = p0.y + h * 0.1;
+    const tsW = w * 0.8;
+    const tsH = h * 0.8;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+    ctx.setLineDash([2, 2]);
+    ctx.strokeRect(tsX + 0.5, tsY + 0.5, tsW, tsH);
+
+    // Center crosshair
+    const cx = p0.x + w / 2;
+    const cy = p0.y + h / 2;
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, cy + 0.5); ctx.lineTo(cx + 10, cy + 0.5);
+    ctx.moveTo(cx + 0.5, cy - 10); ctx.lineTo(cx + 0.5, cy + 10);
+    ctx.stroke();
+
+    // Clean labels
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.75)';
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.fillText('ACTION SAFE 90%', asX + 4, asY + 12);
+    ctx.fillText('TITLE SAFE 80%', tsX + 4, tsY + 12);
+
+    ctx.restore();
+  } catch (e) {
+    console.error('[paintSafeArea] Error rendering safe area:', e);
+  }
+}
+
+function paintRulers(
+  ctx: CanvasRenderingContext2D,
+  controller: WorkspaceController,
+  cssW: number,
+  cssH: number,
+): void {
+  try {
+    const rulerHeight = 22; // Crisp 22px ruler bar
+
+    ctx.save();
+
+    // Top & Left ruler background strip
+    ctx.fillStyle = '#12131a';
+    ctx.fillRect(0, 0, cssW, rulerHeight);
+    ctx.fillRect(0, 0, rulerHeight, cssH);
+
+    // Border lines
+    ctx.strokeStyle = '#2e3440';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, rulerHeight + 0.5);
+    ctx.lineTo(cssW, rulerHeight + 0.5);
+    ctx.moveTo(rulerHeight + 0.5, 0);
+    ctx.lineTo(rulerHeight + 0.5, cssH);
+    ctx.stroke();
+
+    // Corner (0,0) square
+    ctx.fillStyle = '#1a1b26';
+    ctx.fillRect(0, 0, rulerHeight, rulerHeight);
+    ctx.strokeStyle = '#3b4252';
+    ctx.strokeRect(0.5, 0.5, rulerHeight, rulerHeight);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('px', rulerHeight / 2, rulerHeight / 2);
+
+    // Step sizing based on zoom scale
+    const scale = Math.max(0.01, controller.getView().scale ?? 1);
+    let stepWorld = 100;
+    if (scale > 3) stepWorld = 10;
+    else if (scale > 1.5) stepWorld = 20;
+    else if (scale > 0.8) stepWorld = 50;
+    else if (scale < 0.3) stepWorld = 500;
+    else if (scale < 0.6) stepWorld = 200;
+
+    const w1 = controller.ws.screenToWorld({ x: rulerHeight, y: 0 });
+    const w2 = controller.ws.screenToWorld({ x: cssW, y: 0 });
+    if (!Number.isFinite(w1.x) || !Number.isFinite(w2.x)) {
+      ctx.restore();
+      return;
+    }
+
+    const minXWorld = Math.floor(Math.min(w1.x, w2.x) / stepWorld) * stepWorld;
+    const maxXWorld = Math.ceil(Math.max(w1.x, w2.x) / stepWorld) * stepWorld;
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    const MAX_TICKS = 150;
+    let ticksX = 0;
+    for (let x = minXWorld; x <= maxXWorld && ticksX < MAX_TICKS; x += stepWorld) {
+      ticksX++;
+      const sx = controller.ws.worldToScreen({ x, y: 0 }).x;
+      if (Number.isFinite(sx) && sx >= rulerHeight && sx <= cssW) {
+        const isZero = x === 0;
+        ctx.beginPath();
+        ctx.moveTo(Math.floor(sx) + 0.5, rulerHeight - 7);
+        ctx.lineTo(Math.floor(sx) + 0.5, rulerHeight);
+        ctx.strokeStyle = isZero ? '#38bdf8' : 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = isZero ? 1.5 : 1;
+        ctx.stroke();
+
+        ctx.font = isZero ? 'bold 10px monospace' : '10px monospace';
+        ctx.fillStyle = isZero ? '#38bdf8' : '#e2e8f0';
+        ctx.fillText(String(x), Math.floor(sx), 2);
+
+        const minorStep = stepWorld / 5;
+        for (let m = 1; m < 5; m++) {
+          const msx = controller.ws.worldToScreen({ x: x + m * minorStep, y: 0 }).x;
+          if (Number.isFinite(msx) && msx >= rulerHeight && msx <= cssW) {
+            ctx.beginPath();
+            ctx.moveTo(Math.floor(msx) + 0.5, rulerHeight - 4);
+            ctx.lineTo(Math.floor(msx) + 0.5, rulerHeight);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    // Left Ruler (Y Axis)
+    const h1 = controller.ws.screenToWorld({ x: 0, y: rulerHeight });
+    const h2 = controller.ws.screenToWorld({ x: 0, y: cssH });
+    if (!Number.isFinite(h1.y) || !Number.isFinite(h2.y)) {
+      ctx.restore();
+      return;
+    }
+
+    const minYWorld = Math.floor(Math.min(h1.y, h2.y) / stepWorld) * stepWorld;
+    const maxYWorld = Math.ceil(Math.max(h1.y, h2.y) / stepWorld) * stepWorld;
+
+    let ticksY = 0;
+    for (let y = minYWorld; y <= maxYWorld && ticksY < MAX_TICKS; y += stepWorld) {
+      ticksY++;
+      const sy = controller.ws.worldToScreen({ x: 0, y }).y;
+      if (Number.isFinite(sy) && sy >= rulerHeight && sy <= cssH) {
+        const isZero = y === 0;
+        ctx.beginPath();
+        ctx.moveTo(rulerHeight - 7, Math.floor(sy) + 0.5);
+        ctx.lineTo(rulerHeight, Math.floor(sy) + 0.5);
+        ctx.strokeStyle = isZero ? '#38bdf8' : 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = isZero ? 1.5 : 1;
+        ctx.stroke();
+
+        ctx.save();
+        ctx.translate(2, Math.floor(sy) - 2);
+        ctx.font = isZero ? 'bold 9px monospace' : '9px monospace';
+        ctx.fillStyle = isZero ? '#38bdf8' : '#e2e8f0';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(String(y), 0, 0);
+        ctx.restore();
+
+        const minorStep = stepWorld / 5;
+        for (let m = 1; m < 5; m++) {
+          const msy = controller.ws.worldToScreen({ x: 0, y: y + m * minorStep }).y;
+          if (Number.isFinite(msy) && msy >= rulerHeight && msy <= cssH) {
+            ctx.beginPath();
+            ctx.moveTo(rulerHeight - 4, Math.floor(msy) + 0.5);
+            ctx.lineTo(rulerHeight, Math.floor(msy) + 0.5);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    ctx.restore();
+  } catch (e) {
+    console.error('[paintRulers] Error rendering rulers:', e);
+  }
+}
+

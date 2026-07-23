@@ -23,6 +23,7 @@ import {
 } from 'react';
 import { cn } from '@utils/cn';
 import { applyValueExpression } from '@utils/evalMath';
+import { stepScale, clamp, format, scrubValue, SCRUB_DEAD_ZONE_PX } from './scrubMath';
 import styles from './ValueField.module.css';
 
 export interface ValueFieldProps {
@@ -42,22 +43,7 @@ export interface ValueFieldProps {
   'aria-label'?: string;
 }
 
-function clamp(v: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, v));
-}
-
-function format(v: number, precision: number): string {
-  if (!Number.isFinite(v)) return '0';
-  // Trim trailing zeros while respecting max precision.
-  return String(Number(v.toFixed(precision)));
-}
-
-/** Step multiplier from modifier keys: Shift = 10×, Alt = 0.1×. */
-function stepScale(e: { shiftKey: boolean; altKey: boolean }): number {
-  if (e.shiftKey) return 10;
-  if (e.altKey) return 0.1;
-  return 1;
-}
+// clamp / format / stepScale live in scrubMath.ts (pure + unit-tested).
 
 export function ValueField({
   value,
@@ -156,13 +142,12 @@ export function ValueField({
     (e: PointerEvent) => {
       const s = scrub.current;
       const dx = e.clientX - s.startX;
-      if (!s.moved && Math.abs(dx) < 3) return; // dead-zone: distinguish click
+      if (!s.moved && Math.abs(dx) < SCRUB_DEAD_ZONE_PX) return; // dead-zone: distinguish click
       if (!s.moved) {
         s.moved = true;
         setDragging(true);
       }
-      const delta = dx * step * stepScale(e);
-      const next = clamp(s.startVal + delta, min, max);
+      const next = scrubValue(s.startVal, dx, step, e, min, max);
       s.live = next;
       commitScrub(next);
     },

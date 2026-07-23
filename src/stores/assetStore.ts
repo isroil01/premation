@@ -3,6 +3,8 @@ import { immer } from 'zustand/middleware/immer';
 import { shortId } from '@utils/lang';
 import { api, isAuthenticated } from '@core/api/client';
 import { AssetDatabase } from '@core/services/AssetDatabase';
+import { isLocalFirst } from '@core/config/flags';
+import { importLocalAsset } from '@core/assets/local/importLocalAsset';
 
 export interface ImportedAsset {
   id: string;
@@ -12,11 +14,92 @@ export interface ImportedAsset {
   size: number;
   /** Folder this asset lives in (null = library root). Organisation only. */
   folderId?: string | null;
+  /**
+   * Small preview object URL for the Assets panel grid. Falls back to `src`
+   * when absent (SVG, video, audio, or thumbnailing failed). Using this instead
+   * of the full-res `src` is what keeps the panel fast with many images.
+   */
+  thumbSrc?: string;
   metadata?: {
     width?: number;
     height?: number;
     duration?: number;
   };
+}
+
+/** Longest edge (px) of a generated panel thumbnail — comfortably sharp for the
+ *  32px slot on hi-dpi displays while staying a few KB. */
+const THUMB_MAX = 96;
+
+/**
+ * Decode an image file and re-encode a small thumbnail. Uses createImageBitmap
+ * (off-main-thread decode) + an OffscreenCanvas when available. Returns null for
+ * vector/undecodable inputs so the caller keeps the original as its own preview.
+ */
+async function makeImageThumb(file: File): Promise<Blob | null> {
+  // SVG is vector text — tiny already, and rasterizing loses crispness.
+  if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) return null;
+  if (typeof createImageBitmap !== 'function') return null;
+  let bmp: ImageBitmap | null = null;
+  try {
+    bmp = await createImageBitmap(file);
+    const scale = Math.min(1, THUMB_MAX / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    if (typeof OffscreenCanvas !== 'undefined') {
+      const canvas = new OffscreenCanvas(w, h);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(bmp, 0, 0, w, h);
+      return await canvas.convertToBlob({ type: 'image/webp', quality: 0.82 });
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    return await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/webp', 0.82));
+  } catch {
+    return null;
+  } finally {
+    bmp?.close();
+  }
+}
+
+/**
+ * Read an SVG's intrinsic pixel size from its `width`/`height` attributes, or
+ * failing that from the `viewBox` aspect. Returns null if the text can't be
+ * parsed, so the caller can fall back to the <img> probe.
+ */
+async function readSvgIntrinsicSize(file: File): Promise<{ width: number; height: number } | null> {
+  try {
+    const text = await file.text();
+    const svg = new DOMParser().parseFromString(text, 'image/svg+xml').querySelector('svg');
+    if (!svg) return null;
+    const parseLen = (v: string | null): number | null => {
+      if (!v) return null;
+      const n = parseFloat(v); // ignores unit suffixes (px, pt) and %
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const w = parseLen(svg.getAttribute('width'));
+    const h = parseLen(svg.getAttribute('height'));
+    if (w && h) return { width: w, height: h };
+
+    const vb = svg.getAttribute('viewBox');
+    if (vb) {
+      const parts = vb.split(/[\s,]+/).map(Number);
+      if (parts.length === 4 && parts[2]! > 0 && parts[3]! > 0) {
+        // One known dimension pins the scale; otherwise use the viewBox px size.
+        if (w) return { width: w, height: (w * parts[3]!) / parts[2]! };
+        if (h) return { width: (h * parts[2]!) / parts[3]!, height: h };
+        return { width: parts[2]!, height: parts[3]! };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /** A user-created folder for organising assets (After Effects "Project" folders). */
@@ -35,6 +118,8 @@ interface AssetStoreState {
 interface AssetStoreActions {
   /** Import a file, optionally into a folder, and add it to the library. */
   addAsset: (file: File, folderId?: string | null) => Promise<ImportedAsset>;
+  /** High-performance batch import for multiple files/folders. */
+  addAssetsBatch: (items: Array<{ file: File; folderId?: string | null }>) => Promise<ImportedAsset[]>;
   removeAsset: (id: string) => void;
   /** Create a folder and return it. */
   createFolder: (name: string, parentId?: string | null) => AssetFolder;
@@ -109,9 +194,35 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     folders: loadFolders(),
 
     addAsset: async (file: File, folderId: string | null = null) => {
+      // Local-first (principles 2 & 3): content-address the bytes into the open
+      // project bundle and render from disk — never upload. Falls through to the
+      // in-memory object-URL path (still upload-free) if no bundle is open.
+      if (isLocalFirst()) {
+        const imported = await importLocalAsset(file);
+        if (imported) {
+          const type: 'image' | 'video' | 'audio' =
+            imported.record.type === 'video' ? 'video' : imported.record.type === 'audio' ? 'audio' : 'image';
+          const asset: ImportedAsset = {
+            id: imported.record.id,
+            name: file.name,
+            type,
+            src: imported.src,
+            size: file.size,
+            folderId,
+            ...(imported.metadata ? { metadata: imported.metadata } : {}),
+          };
+          set((s) => {
+            s.assets.push(asset);
+          });
+          saveAssignments(get().assets);
+          return asset;
+        }
+      }
+
       // Signed in → upload to the backend and use the served URL (persists,
       // fetchable by the render service). Otherwise fall back to a local blob.
-      if (isAuthenticated()) {
+      // Skipped entirely under local-first, which never auto-uploads.
+      if (isAuthenticated() && !isLocalFirst()) {
         try {
           const uploaded = await api.uploadAsset(file);
           const withFolder = { ...uploaded, folderId };
@@ -143,15 +254,25 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
 
       // Read dimensions or duration if possible
       if (type === 'image') {
-        await new Promise<void>((resolve) => {
-          const img = new Image();
-          img.onload = () => {
-            asset.metadata = { width: img.width, height: img.height };
-            resolve();
-          };
-          img.onerror = () => resolve();
-          img.src = src;
-        });
+        // SVG: derive intrinsic size from width/height or viewBox. An <img>
+        // reports a bogus 300×150 default for viewBox-only SVGs, which would
+        // give the inserted layer the wrong aspect ratio.
+        const svgSize = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
+          ? await readSvgIntrinsicSize(file)
+          : null;
+        if (svgSize) {
+          asset.metadata = svgSize;
+        } else {
+          await new Promise<void>((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              asset.metadata = { width: img.width, height: img.height };
+              resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = src;
+          });
+        }
       } else if (type === 'audio') {
         await new Promise<void>((resolve) => {
           const audio = new Audio();
@@ -178,6 +299,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         });
       }
 
+      // Downscaled panel preview (images only) — keeps the grid fast.
+      const thumb = type === 'image' ? await makeImageThumb(file) : null;
+      if (thumb) asset.thumbSrc = URL.createObjectURL(thumb);
+
       // Save to IndexedDB for local persistence
       await AssetDatabase.saveAsset({
         id,
@@ -186,6 +311,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         size: file.size,
         metadata: asset.metadata,
         data: file,
+        thumb: thumb ?? undefined,
       }).catch((err) => console.error('[AssetStore] failed to save to IndexedDB:', err));
 
       set((s) => {
@@ -196,13 +322,88 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       return asset;
     },
 
+    addAssetsBatch: async (items: Array<{ file: File; folderId?: string | null }>): Promise<ImportedAsset[]> => {
+      if (items.length === 0) return [];
+      const createdAssets: ImportedAsset[] = [];
+      // Thumbnail blobs, index-aligned with createdAssets (null = keep original).
+      const thumbs: Array<Blob | null> = [];
+
+      // Process metadata + thumbnails in parallel chunks of 10 for max speed
+      const CHUNK = 10;
+      for (let i = 0; i < items.length; i += CHUNK) {
+        const chunk = items.slice(i, i + CHUNK);
+        const chunkResults = await Promise.all(
+          chunk.map(async ({ file, folderId }) => {
+            const id = `asset_${shortId()}`;
+            const src = URL.createObjectURL(file);
+            let type: 'image' | 'video' | 'audio' = 'image';
+
+            if (file.type.startsWith('video/')) type = 'video';
+            else if (file.type.startsWith('audio/')) type = 'audio';
+
+            const asset: ImportedAsset = {
+              id,
+              name: file.name,
+              type,
+              src,
+              size: file.size,
+              folderId: folderId ?? null,
+            };
+
+            let thumb: Blob | null = null;
+            if (type === 'image') {
+              const svgSize = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
+                ? await readSvgIntrinsicSize(file)
+                : null;
+              if (svgSize) {
+                asset.metadata = svgSize;
+              }
+              // Downscaled preview so the panel doesn't decode full-res originals.
+              thumb = await makeImageThumb(file);
+              if (thumb) asset.thumbSrc = URL.createObjectURL(thumb);
+            }
+            return { asset, thumb };
+          })
+        );
+        for (const r of chunkResults) {
+          createdAssets.push(r.asset);
+          thumbs.push(r.thumb);
+        }
+      }
+
+      // Save to IndexedDB in parallel
+      await Promise.all(
+        createdAssets.map((asset, index) => {
+          const file = items[index]?.file;
+          if (!file) return Promise.resolve();
+          return AssetDatabase.saveAsset({
+            id: asset.id,
+            name: asset.name,
+            type: asset.type,
+            size: asset.size,
+            metadata: asset.metadata,
+            data: file,
+            thumb: thumbs[index] ?? undefined,
+          }).catch((err) => console.error('[AssetStore] failed to save to IndexedDB:', err));
+        })
+      );
+
+      // Single Zustand state update + single localStorage assignment save
+      set((s) => {
+        s.assets.push(...createdAssets);
+      });
+      saveAssignments(get().assets);
+
+      return createdAssets;
+    },
+
     removeAsset: (id) => {
       const asset = get().assets.find((a) => a.id === id);
       if (asset) {
-        // Only blob URLs need revoking; served cloud URLs are plain http(s).
         if (asset.src.startsWith('blob:')) URL.revokeObjectURL(asset.src);
+        if (asset.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(asset.thumbSrc);
+        void AssetDatabase.deleteAsset(id).catch(() => undefined);
         if (isAuthenticated()) void api.deleteAsset(id).catch(() => undefined);
-        else void AssetDatabase.deleteAsset(id).catch(() => undefined);
       }
       set((s) => {
         s.assets = s.assets.filter((a) => a.id !== id);
@@ -228,13 +429,31 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     },
 
     removeFolder: (id) => {
+      const state = get();
+      // Collect the folder and ALL nested descendant folders.
+      const doomedFolders = new Set<string>([id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const f of state.folders) {
+          if (f.parentId && doomedFolders.has(f.parentId) && !doomedFolders.has(f.id)) {
+            doomedFolders.add(f.id);
+            grew = true;
+          }
+        }
+      }
+      // Delete every asset inside any doomed folder (with the same cleanup as
+      // removeAsset — revoke blob URLs and delete from the backend/local DB).
+      const doomedAssets = state.assets.filter((a) => a.folderId != null && doomedFolders.has(a.folderId));
+      for (const a of doomedAssets) {
+        if (a.src.startsWith('blob:')) URL.revokeObjectURL(a.src);
+        if (a.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(a.thumbSrc);
+        void AssetDatabase.deleteAsset(a.id).catch(() => undefined);
+        if (isAuthenticated()) void api.deleteAsset(a.id).catch(() => undefined);
+      }
       set((s) => {
-        const target = s.folders.find((f) => f.id === id);
-        const parent = target?.parentId ?? null;
-        // Reparent direct child folders and lift assets to the deleted folder's parent.
-        for (const f of s.folders) if (f.parentId === id) f.parentId = parent;
-        for (const a of s.assets) if (a.folderId === id) a.folderId = parent;
-        s.folders = s.folders.filter((f) => f.id !== id);
+        s.folders = s.folders.filter((f) => !doomedFolders.has(f.id));
+        s.assets = s.assets.filter((a) => !(a.folderId != null && doomedFolders.has(a.folderId)));
       });
       saveFolders(get().folders);
       saveAssignments(get().assets);
@@ -270,6 +489,8 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           src: URL.createObjectURL(dbAsset.data),
           size: dbAsset.size,
           metadata: dbAsset.metadata,
+          // Reuse the persisted thumbnail so reload stays as fast as import.
+          thumbSrc: dbAsset.thumb ? URL.createObjectURL(dbAsset.thumb) : undefined,
         }));
         set((s) => {
           const existingIds = new Set(s.assets.map((a) => a.id));

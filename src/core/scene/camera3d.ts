@@ -80,7 +80,7 @@ function cameraFromNode(
       focalLength,
       position: orbited.position,
       principal: def.principal,
-      ...(orientation.yaw !== 0 || orientation.pitch !== 0 ? { orientation } : {}),
+      ...(orientation && (orientation.yaw !== 0 || orientation.pitch !== 0) ? { orientation } : {}),
     };
   }
 
@@ -99,7 +99,7 @@ function cameraFromNode(
     // The optical axis stays on the comp centre no matter where the camera
     // moves — that's what makes panning the camera shift the frame.
     principal: def.principal,
-    ...(orbited.orientation.yaw !== 0 || orbited.orientation.pitch !== 0
+    ...(orbited?.orientation && (orbited.orientation.yaw !== 0 || orbited.orientation.pitch !== 0)
       ? { orientation: orbited.orientation }
       : {}),
   };

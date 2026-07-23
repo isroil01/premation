@@ -37,6 +37,7 @@ export default defineConfig({
         manualChunks: {
           react: ['react', 'react-dom'],
           state: ['zustand', 'immer'],
+          renderer: ['@motion/renderer'],
         },
       },
     },

@@ -112,30 +112,11 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
     }
     try {
       const keysResponse = await api.getAiKeys();
-      const providers: AiProviderId[] = ['anthropic', 'openai', 'gemini'];
-      let updated = false;
-
-      for (const p of providers) {
-        if (!keysResponse[p]?.present) {
-          try {
-            const localKey = localStorage.getItem(`motion_editor_local_ai_key_${p}`);
-            if (localKey && localKey.trim()) {
-              const saveRes = await api.saveAiKey(p, localKey.trim());
-              if (saveRes.ok) {
-                updated = true;
-              }
-            }
-          } catch (e) {
-            console.error(`Failed to auto-sync local key for ${p}`, e);
-          }
-        }
-      }
-
-      const finalKeys = updated ? await api.getAiKeys() : keysResponse;
-      const { motion, ...keys } = finalKeys;
+      const { motion, ...keys } = keysResponse;
       set({ status: keys, motion });
     } catch {
       set({ status: null, motion: null });
     }
   },
+  // Ensure we export it properly
 }));

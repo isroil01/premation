@@ -232,3 +232,22 @@
     padding: var(--space-4, 16px);
   }
 }
+
+@media (max-width: 480px) {
+  .panel {
+    padding: var(--space-3, 12px);
+  }
+  .card {
+    padding: var(--space-3, 12px);
+  }
+  .title {
+    font-size: 1.25rem;
+  }
+  .subtitle {
+    font-size: 0.82rem;
+  }
+  .submit {
+    padding: 10px 12px;
+  }
+}
+

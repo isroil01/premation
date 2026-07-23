@@ -60,7 +60,8 @@ import { readNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
 import { readNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { readNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
 import { reparentNode, moveNodeAdjacent } from '@core/scene/parenting';
-import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
+import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
+import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { openPalette } from '@stores/commandPaletteStore';
 import { AccountButton } from '@layout/Auth/AccountButton';
 import { FpsMeter } from '@layout/StatusBar/FpsMeter';
@@ -156,32 +157,45 @@ function EditorShellInner(): JSX.Element {
   // Enable responsive UI auto-collapsing behaviors
   useResponsiveLayout();
 
+  // Context-aware auto-switching inspector panel on selection
+  const lastSelectedNodeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedIds.length === 0) {
+      lastSelectedNodeRef.current = null;
+      return;
+    }
+    const primaryId = selectedIds[0];
+    if (!primaryId || primaryId === lastSelectedNodeRef.current) return;
+    lastSelectedNodeRef.current = primaryId;
+
+    const node = defaultSceneGraph.getNode(primaryId as any);
+    if (!node) return;
+    const kind = readNodeKind(node);
+    if (kind === 'text') {
+      useLayoutStore.getState().openPanel('style');
+    } else if (kind === 'shape' || kind === 'image' || kind === 'video' || kind === 'camera' || kind === 'light') {
+      useLayoutStore.getState().openPanel('properties');
+    }
+  }, [selectedIds]);
+
   // Register the default panels exactly once.
   useEffect(() => {
     // The old "Project" (Compositions) tab was removed — compositions are created
     // from the dashboard, one project per composition, so an in-editor comp list
     // is redundant. Its Folder icon also collided with Assets. Scene now leads.
-    registerPanel({ id: 'ai',          title: 'Assistant',    icon: 'sparkles',      region: 'leftSidebar',   weight: 7, closable: false });
-    registerPanel({ id: 'templates',   title: 'Templates',    icon: 'grid',          region: 'leftSidebar',   weight: 6, closable: false });
-    registerPanel({ id: 'scene',       title: 'Scene',        icon: 'layers',        region: 'leftSidebar',   weight: 5, closable: false });
-    registerPanel({ id: 'assets',      title: 'Assets',       icon: 'media',         region: 'leftSidebar',   weight: 4, closable: false });
-    registerPanel({ id: 'components',  title: 'Components',   icon: 'component',     region: 'leftSidebar',   weight: 2, closable: false });
-    registerPanel({ id: 'shapes',      title: 'Shapes',       icon: 'shape',         region: 'leftSidebar',   weight: 1, closable: false });
-    registerPanel({ id: 'text',        title: 'Text',         icon: 'type',          region: 'leftSidebar',   weight: 1, closable: false });
-    // ── Asset Libraries ───────────────────────────────────────────────────────
-    registerPanel({ id: 'lib-cursors', title: 'Cursors',      icon: 'mouse-pointer', region: 'leftSidebar',   weight: 0.9, closable: false });
-    registerPanel({ id: 'lib-mograph',title: 'Motion GFX',   icon: 'component',     region: 'leftSidebar',   weight: 0.8, closable: false });
-    registerPanel({ id: 'lib-trans',  title: 'Transitions',  icon: 'scissors',      region: 'leftSidebar',   weight: 0.7, closable: false });
-    registerPanel({ id: 'lib-sfx',    title: 'Sound FX',     icon: 'zap',           region: 'leftSidebar',   weight: 0.6, closable: false });
-    registerPanel({ id: 'lib-lottie', title: 'Lottie',       icon: 'ease',          region: 'leftSidebar',   weight: 0.5, closable: false });
+    // ── Left Sidebar (4 Core Workstation Categories) ──────────────────────────
+    registerPanel({ id: 'scene',       title: 'Scene & Layers', icon: 'layout',        region: 'leftSidebar',   weight: 10, closable: false });
+    registerPanel({ id: 'assets',      title: 'Assets & Media', icon: 'image',         region: 'leftSidebar',   weight: 8, closable: false });
+    registerPanel({ id: 'library',     title: 'Elements & Library', icon: 'sparkles',  region: 'leftSidebar',   weight: 6, closable: false });
+    registerPanel({ id: 'ai',          title: 'AI Assistant',   icon: 'ai',            region: 'leftSidebar',   weight: 4, closable: false });
     // ── Right Inspector ───────────────────────────────────────────────────────
-    registerPanel({ id: 'properties',  title: 'Transform',    icon: 'settings',      region: 'rightInspector', weight: 5, closable: false });
+    registerPanel({ id: 'properties',  title: 'Transform',    icon: 'move',          region: 'rightInspector', weight: 5, closable: false });
     registerPanel({ id: 'style',       title: 'Style',        icon: 'brush',         region: 'rightInspector', weight: 4, closable: false });
     registerPanel({ id: 'rig',         title: 'Rigging',      icon: 'bone',          region: 'rightInspector', weight: 3.5, closable: false });
-    registerPanel({ id: 'effects',     title: 'Effects',      icon: 'sparkles',      region: 'rightInspector', weight: 3, closable: false });
-    registerPanel({ id: 'motion',      title: 'Easing',       icon: 'keyframe',      region: 'rightInspector', weight: 2, closable: false });
-    registerPanel({ id: 'presets',     title: 'Presets',      icon: 'zap',           region: 'rightInspector', weight: 1, closable: false });
-    registerPanel({ id: 'misc',        title: 'Settings',     icon: 'sliders-h',     region: 'rightInspector', weight: 0, closable: false });
+    registerPanel({ id: 'effects',     title: 'Effects',      icon: 'zap',           region: 'rightInspector', weight: 3, closable: false });
+    registerPanel({ id: 'motion',      title: 'Easing',       icon: 'ease',          region: 'rightInspector', weight: 2, closable: false });
+    registerPanel({ id: 'presets',     title: 'Presets',      icon: 'star',          region: 'rightInspector', weight: 1, closable: false });
+    registerPanel({ id: 'misc',        title: 'Settings',     icon: 'settings',      region: 'rightInspector', weight: 0, closable: false });
     // ── On-demand panels (Window menu / F6 / ExportDialog) ───────────────────
     // These renderers exist in getAllPanelRenderers() but were never registered,
     // and layoutStore's openPanel/togglePanel bail on unknown ids — so F6,
@@ -194,7 +208,6 @@ function EditorShellInner(): JSX.Element {
     const openBefore = new Set(Object.values(useLayoutStore.getState().panelOrder).flat());
     const onDemand = [
       { id: 'project',     title: 'Project',      icon: 'folder',  region: 'leftSidebar' as const,    weight: 3,   closable: true },
-      { id: 'comments',    title: 'Comments',     icon: 'user',    region: 'rightInspector' as const, weight: 0.9, closable: true },
       { id: 'history',     title: 'History',      icon: 'history', region: 'rightInspector' as const, weight: 0.8, closable: true },
       { id: 'renderQueue', title: 'Render Queue', icon: 'queue',   region: 'rightInspector' as const, weight: 0.7, closable: true },
     ];
@@ -336,27 +349,40 @@ function EditorShellInner(): JSX.Element {
         const has = (...props: string[]) => properties.some((p) => props.includes(p.prop));
         const placeholders: TimelinePropertyTrack[] = [];
         // AE shows units beside timeline values; keep them in one place.
-        const UNIT_OF: Record<string, string> = { anchor: 'px', position: 'px', scale: 'x', rotation: '°', opacity: '%' };
+        const UNIT_OF: Record<string, string> = { anchor: 'px', position: 'px', scale: 'x', rotation: '°', orientation: '°', opacity: '%' };
         const placeholder = (key: string, label: string, stopwatchProps: string[]) =>
           placeholders.push({ prop: `__static:${key}`, label, keyframes: [], animated: false, stopwatchProps,
             // A static row is still editable: AE lets you set a value before
             // keyframing, and the props it would key are the props it edits.
             valueProps: stopwatchProps, valueUnit: UNIT_OF[key] });
-        if (kind !== 'camera' && !has('anchorX', 'anchorY')) placeholder('anchor', 'Anchor Point', ['anchorX', 'anchorY']);
-        if (!has(POSITION_PSEUDO_PROP, 'x', 'y', 'z')) placeholder('position', 'Position', ['x', 'y']);
-        if (kind !== 'camera' && !has('scale', 'scaleX', 'scaleY')) placeholder('scale', 'Scale', ['scaleX', 'scaleY']);
-        if (kind !== 'camera' && !has('rotation', 'rotationX', 'rotationY')) placeholder('rotation', 'Rotation', ['rotation']);
+        const is3DNode = is3DEnabled(node);
+        if (kind !== 'camera' && !has('anchorX', 'anchorY', 'anchorZ')) {
+          placeholder('anchor', 'Anchor Point', is3DNode ? ['anchorX', 'anchorY', 'anchorZ'] : ['anchorX', 'anchorY']);
+        }
+        if (!has(POSITION_PSEUDO_PROP, 'x', 'y', 'z')) {
+          placeholder('position', 'Position', is3DNode || kind === 'camera' ? ['x', 'y', 'z'] : ['x', 'y']);
+        }
+        if (kind !== 'camera' && !has('scale', 'scaleX', 'scaleY', 'scaleZ')) {
+          placeholder('scale', 'Scale', is3DNode ? ['scaleX', 'scaleY', 'scaleZ'] : ['scaleX', 'scaleY']);
+        }
+        if (kind !== 'camera' && !has('rotation', 'rotationX', 'rotationY', 'orientationX', 'orientationY', 'orientationZ')) {
+          placeholder('rotation', 'Rotation', is3DNode ? ['rotation', 'rotationX', 'rotationY'] : ['rotation']);
+        }
+        if (is3DNode && kind !== 'camera' && !has('orientationX', 'orientationY', 'orientationZ')) {
+          placeholder('orientation', 'Orientation', ['orientationX', 'orientationY', 'orientationZ']);
+        }
         if (hasStyle && !has('opacity')) placeholder('opacity', 'Opacity', ['opacity']);
         // Stable-sort into AE's canonical Transform order (Anchor → Position →
-        // Scale → Rotation → Opacity), leaving non-transform rows after them
+        // Scale → Rotation → Orientation → Opacity), leaving non-transform rows after them
         // in their original relative order.
         const groupOf = (prop: string): number => {
-          if (prop === 'anchorX' || prop === 'anchorY' || prop === '__static:anchor') return 0;
+          if (prop === 'anchorX' || prop === 'anchorY' || prop === 'anchorZ' || prop === '__static:anchor') return 0;
           if (prop === POSITION_PSEUDO_PROP || prop === 'x' || prop === 'y' || prop === 'z' || prop === '__static:position') return 1;
           if (prop.startsWith('scale') || prop === '__static:scale') return 2;
           if (prop.startsWith('rotation') || prop === '__static:rotation') return 3;
-          if (prop === 'opacity' || prop === '__static:opacity') return 4;
-          return 5;
+          if (prop.startsWith('orientation') || prop === '__static:orientation') return 4;
+          if (prop === 'opacity' || prop === '__static:opacity') return 5;
+          return 6;
         };
         properties = [...placeholders, ...properties].sort((a, b) => groupOf(a.prop) - groupOf(b.prop));
       }
@@ -1105,7 +1131,24 @@ function EditorShellInner(): JSX.Element {
                 // changed, while the inspector's equivalent switch (writing the
                 // `fx` component) changed pixels without lighting the icon.
                 if (flag === 'threeD') {
-                  set3DEnabled(trackId, !is3DEnabled(n));
+                  // Honest gating: kinds the renderer can't project in 3D
+                  // (groups/nulls/cameras/lights/solids/particles/audio) must
+                  // not light a cube that changes no pixel.
+                  if (!canBe3D(n)) {
+                    useUIStore.getState().notify({
+                      level: 'warning',
+                      message: `3D isn't available for ${readNodeKind(n)} layers`,
+                      durationMs: 2600,
+                    });
+                    return;
+                  }
+                  const next = !is3DEnabled(n);
+                  set3DEnabled(trackId, next);
+                  if (next) {
+                    notifyCameraTipIfMissing((message, level) =>
+                      useUIStore.getState().notify({ level, message, durationMs: 3200 }),
+                    );
+                  }
                 } else if (flag === 'motionBlur') {
                   setNodeMotionBlur(trackId, !readNodeMotionBlur(n));
                 } else if (flag === 'adjustment') {

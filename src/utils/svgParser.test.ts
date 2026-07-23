@@ -226,7 +226,7 @@ describe('transforms + viewBox + traversal', () => {
 
 describe('robustness', () => {
   it('unknown elements are skipped, not fatal', () => {
-    const shapes = parseSvgToShapes(svg('<text x="0" y="0">hi</text><rect id="r" x="0" y="0" width="10" height="10"/><foreignObject/>'));
+    const shapes = parseSvgToShapes(svg('<rect id="r" x="0" y="0" width="10" height="10"/><foreignObject/>'));
     expect(shapes.map((s) => s.name)).toEqual(['r']);
   });
 

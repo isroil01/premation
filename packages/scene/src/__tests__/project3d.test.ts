@@ -189,3 +189,42 @@ describe('lookAtOrientation (two-node camera)', () => {
     expect(proj.y).toBeCloseTo(0, 3);
   });
 });
+
+describe('3D Raycasting & Intersection Math', () => {
+  const { unprojectScreenRay, intersectRayPlane, closestPointRayAxis } = require('../utils/project3d');
+
+  it('unprojects screen center through default camera along +Z ray direction', () => {
+    const cam = defaultCamera(1920, 1080);
+    const ray = unprojectScreenRay(960, 540, cam);
+
+    expect(ray.origin.x).toBe(960);
+    expect(ray.origin.y).toBe(540);
+    expect(ray.direction.x).toBeCloseTo(0);
+    expect(ray.direction.y).toBeCloseTo(0);
+    expect(ray.direction.z).toBeCloseTo(1);
+  });
+
+  it('intersects ray with comp plane Z=0 correctly', () => {
+    const ray = { origin: { x: 960, y: 540, z: -1000 }, direction: { x: 0, y: 0, z: 1 } };
+    const hit = intersectRayPlane(ray, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+
+    expect(hit).not.toBeNull();
+    expect(hit?.x).toBeCloseTo(960);
+    expect(hit?.y).toBeCloseTo(540);
+    expect(hit?.z).toBeCloseTo(0);
+  });
+
+  it('finds closest point between screen ray and X axis line', () => {
+    const ray = { origin: { x: 500, y: 540, z: -1000 }, direction: { x: 0, y: 0, z: 1 } };
+    const { tAxis, pointOnAxis } = closestPointRayAxis(
+      ray,
+      { x: 960, y: 540, z: 0 },
+      { x: 1, y: 0, z: 0 }
+    );
+
+    expect(pointOnAxis.y).toBeCloseTo(540);
+    expect(pointOnAxis.z).toBeCloseTo(0);
+    expect(tAxis).toBeCloseTo(-460);
+  });
+});
+

@@ -46,6 +46,9 @@ export function buildDefaultGraph(): RenderGraph {
     width: vp.pixelSize.width,
     height: vp.pixelSize.height,
     format: 'rgba8unorm',
+    // 3D render groups depth-test into the scene target (the adapter routes
+    // any frame containing 3D layers through it via hasEffects).
+    depth: true,
   }));
   graph.declareTarget(LAYER_TARGET, (vp) => ({
     label: LAYER_TARGET,
@@ -72,12 +75,14 @@ export function buildDefaultGraph(): RenderGraph {
     format: 'rgba8unorm',
   }));
   // One isolated-precomp target per nesting depth (see CompositionPass).
+  // Depth-capable so a 3D group INSIDE an isolated precomp depth-tests too.
   for (const name of PRECOMP_TARGETS) {
     graph.declareTarget(name, (vp) => ({
       label: name,
       width: vp.pixelSize.width,
       height: vp.pixelSize.height,
       format: 'rgba8unorm',
+      depth: true,
     }));
   }
 

@@ -35,6 +35,7 @@ import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake } from '@core/effects/effectBake';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
+import { isLocalBlobRef, loadLocalBlobObjectUrl } from './localBlobSource';
 
 interface PathEntry {
   kind: 'path';
@@ -49,12 +50,150 @@ interface MaskEntry {
 }
 
 /** Decodes a source URL to something the GPU can upload. Injectable for tests. */
-export type ImageLoader = (src: string) => Promise<ImageBitmap>;
+export type ImageLoader = (src: string, fillColor?: string) => Promise<ImageBitmap>;
 
-const defaultLoader: ImageLoader = async (src) => {
-  const res = await fetch(src);
-  const blob = await res.blob();
-  return createImageBitmap(blob);
+const RASTER_MAX = 4096;
+
+/** Draw an already-decoded <img> to a canvas at w×h and hand back a bitmap. */
+async function imageToBitmap(img: HTMLImageElement, w: number, h: number): Promise<ImageBitmap> {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.min(RASTER_MAX, Math.round(w)));
+  canvas.height = Math.max(1, Math.min(RASTER_MAX, Math.round(h)));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return createImageBitmap(img);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return createImageBitmap(canvas);
+}
+
+/**
+ * Faithfully rasterize an SVG. The browser draws the vector exactly as authored
+ * — gradients, text, clips, embedded raster, filters — none of which the shape
+ * parser could reproduce. We fetch the source, inject explicit `width`/`height`
+ * (derived from the existing size or the viewBox aspect) so the <img> can't
+ * letterbox a viewBox-only file into its bogus 300×150 default, then draw it to
+ * a canvas. This also sidesteps Chromium's flaky `createImageBitmap(svgBlob)`.
+ */
+function decodeSvgDataUrl(src: string): string {
+  const comma = src.indexOf(',');
+  const meta = src.slice(0, comma);
+  const body = src.slice(comma + 1);
+  return /;base64/i.test(meta) ? atob(body) : decodeURIComponent(body);
+}
+
+async function rasterizeSvg(src: string, fillColor?: string): Promise<ImageBitmap> {
+  // `data:` SVGs are decoded inline — the app's CSP `connect-src` forbids
+  // fetch(data:), and there's no need to round-trip through the network anyway.
+  const text = src.startsWith('data:') ? decodeSvgDataUrl(src) : await (await fetch(src)).text();
+  const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+  const svg = doc.documentElement;
+
+  if (fillColor && fillColor !== 'none' && fillColor !== 'transparent') {
+    const styleEl = doc.createElementNS('http://www.w3.org/2000/svg', 'style');
+    styleEl.textContent = `path, circle, rect, polygon, polyline, ellipse, text { fill: ${fillColor} !important; }`;
+    svg.appendChild(styleEl);
+  }
+
+  const parseLen = (v: string | null): number => {
+    if (!v) return 0;
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  let w = parseLen(svg.getAttribute('width'));
+  let h = parseLen(svg.getAttribute('height'));
+  const vb = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+  const vbW = vb.length === 4 && vb[2]! > 0 ? vb[2]! : 0;
+  const vbH = vb.length === 4 && vb[3]! > 0 ? vb[3]! : 0;
+  if ((!w || !h) && vbW && vbH) {
+    if (w && !h) h = (w * vbH) / vbW;
+    else if (h && !w) w = (h * vbW) / vbH;
+    else { w = vbW; h = vbH; }
+  }
+  if (!w || !h) { w = 512; h = 512; }
+
+  // Rasterize crisply, preserving aspect. SVG is resolution-independent, so a
+  // small intrinsic size (a 24px icon, a 200px logo) must NOT dictate the raster
+  // size — otherwise scaling the layer up in the scene reveals a blurry, low-res
+  // texture. Target a generous 2048px long edge so enlarged SVGs stay sharp,
+  // bounded by RASTER_MAX (4096) and never downscaling a source that's smaller.
+  const SVG_TARGET_LONG = 2048;
+  const longEdge = Math.max(w, h);
+  const targetLong = Math.min(RASTER_MAX, Math.max(longEdge, SVG_TARGET_LONG));
+  const scale = targetLong / longEdge;
+  const rw = Math.max(1, Math.min(RASTER_MAX, Math.round(w * scale)));
+  const rh = Math.max(1, Math.min(RASTER_MAX, Math.round(h * scale)));
+  svg.setAttribute('width', String(rw));
+  svg.setAttribute('height', String(rh));
+  if (!svg.getAttribute('viewBox') && vbW === 0) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+
+  const serialized = new XMLSerializer().serializeToString(svg);
+  const url = URL.createObjectURL(new Blob([serialized], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return await imageToBitmap(img, rw, rh);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Decode the first frame of any browser-displayable format (GIF/WebP/exotic). */
+async function rasterizeViaImage(src: string): Promise<ImageBitmap> {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = src;
+  await img.decode();
+  return imageToBitmap(img, img.naturalWidth || 512, img.naturalHeight || 512);
+}
+
+/** True when the blob/data URL is an SVG. */
+function isSvgBlob(blob: Blob, src: string): boolean {
+  return blob.type === 'image/svg+xml' || /^data:image\/svg\+xml/i.test(src) || /\.svg(\?|#|$)/i.test(src);
+}
+
+const defaultLoader: ImageLoader = async (src, fillColor) => {
+  // Local-first asset (`motion-blob:<hash>`): resolve bytes from the bundle blob
+  // store to a temporary object URL, decode it, then revoke. No network — the
+  // bytes are already on disk (RFC §6).
+  if (isLocalBlobRef(src)) {
+    const url = await loadLocalBlobObjectUrl(src);
+    if (!url) return rasterizeViaImage(src); // resolver missing → let <img> try (and fail visibly)
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      if (isSvgBlob(blob, src)) return await rasterizeSvg(url, fillColor);
+      try {
+        return await createImageBitmap(blob);
+      } catch {
+        return await rasterizeViaImage(url);
+      }
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  // Inline SVG (UI Kit components, etc.) — decode directly; fetch(data:) is
+  // CSP-blocked and createImageBitmap can't handle SVG anyway.
+  if (/^data:image\/svg\+xml/i.test(src)) return rasterizeSvg(src, fillColor);
+  let blob: Blob;
+  try {
+    const res = await fetch(src);
+    blob = await res.blob();
+  } catch {
+    // Unfetchable — let the <img> element try directly.
+    return rasterizeViaImage(src);
+  }
+  // SVG must be rasterized explicitly: createImageBitmap on an SVG blob is
+  // unreliable in Chromium and is the reason uploaded SVGs rendered broken.
+  if (isSvgBlob(blob, src)) return rasterizeSvg(src, fillColor);
+  try {
+    return await createImageBitmap(blob);
+  } catch {
+    // GIF/WebP/exotic types createImageBitmap chokes on — fall back to <img>,
+    // which decodes the first frame of any format the browser can display.
+    return rasterizeViaImage(src);
+  }
 };
 
 interface ImageEntry {
@@ -268,14 +407,15 @@ export class AppTextureProvider implements TextureProvider {
 
   /**
    * Register/refresh the image source behind a renderable key. Idempotent: the
-   * same (key, src) never re-decodes. A changed src supersedes the old decode.
+   * same (key, src, fillColor) never re-decodes. A changed src supersedes the old decode.
    */
-  setImage(key: string, src: string): void {
+  setImage(key: string, src: string, fillColor?: string): void {
+    const fullKey = fillColor ? `${src}#fill=${fillColor}` : src;
     const existing = this.entries.get(key);
-    if (existing && existing.src === src) return; // already loading or loaded
-    const entry: ImageEntry = { kind: 'image', src, texture: null, bitmap: null, width: 1, height: 1, ready: false };
+    if (existing && existing.src === fullKey) return; // already loading or loaded
+    const entry: ImageEntry = { kind: 'image', src: fullKey, texture: null, bitmap: null, width: 1, height: 1, ready: false };
     this.entries.set(key, entry);
-    void this.decode(key, src, entry);
+    void this.decode(key, src, fillColor, entry);
   }
 
   /**
@@ -503,10 +643,19 @@ export class AppTextureProvider implements TextureProvider {
    * One persistent texture per key is rewritten in place (the setVideo
    * pattern), so playback doesn't churn GPU allocations.
    */
-  setParticles(key: string, cfg: ParticleConfig, timeSec: number, fieldW: number, fieldH: number): void {
+  setParticles(
+    key: string,
+    cfg: ParticleConfig,
+    timeSec: number,
+    fieldW: number,
+    fieldH: number,
+    transformScale = 1,
+  ): void {
     const w = Math.max(1, Math.round(fieldW));
     const h = Math.max(1, Math.round(fieldH));
-    const scale = Math.max(0.1, Math.min(this.rasterScale, PARTICLE_TEX_MAX / Math.max(w, h)));
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const requestedScale = dpr * Math.max(1, transformScale) * (this.rasterScale || 1);
+    const scale = Math.max(0.5, Math.min(requestedScale, PARTICLE_TEX_MAX / Math.max(w, h)));
     const time = Math.max(0, timeSec);
     const signature = particleFieldSignature(cfg, time, w, h, scale);
     let entry = this.particleEntries.get(key);
@@ -570,10 +719,10 @@ export class AppTextureProvider implements TextureProvider {
     }
   }
 
-  private async decode(key: string, src: string, entry: ImageEntry): Promise<void> {
+  private async decode(key: string, src: string, fillColor: string | undefined, entry: ImageEntry): Promise<void> {
     let bitmap: ImageBitmap;
     try {
-      bitmap = await this.loader(src);
+      bitmap = await this.loader(src, fillColor);
     } catch {
       return; // broken source — leave the placeholder in place
     }

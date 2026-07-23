@@ -111,7 +111,11 @@ export class WebGPUBackend implements RenderBackend {
   async initialize(surface?: RenderSurface): Promise<void> {
     const gpu = (globalThis.navigator as Navigator | undefined)?.gpu;
     if (!gpu) throw new Error('WebGPU is not available');
-    const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
+    let adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
+    if (!adapter) {
+      // Fall back to default adapter if discrete/high-performance request is null
+      adapter = await gpu.requestAdapter();
+    }
     if (!adapter) throw new Error('No WebGPU adapter');
     this.device = await adapter.requestDevice();
     this.surfaceFormat = gpu.getPreferredCanvasFormat();
@@ -230,6 +234,17 @@ export class WebGPUBackend implements RenderBackend {
         targets: [{ format: desc.colorFormat, blend: blendState(desc.blend) }],
       },
       primitive: { topology: desc.topology },
+      // Depth state is baked into WebGPU pipelines; a depth-tested pipeline is
+      // only valid inside a pass carrying a depth attachment (and vice versa).
+      ...(desc.depthTest
+        ? {
+            depthStencil: {
+              format: desc.depthFormat ?? 'depth24plus',
+              depthWriteEnabled: desc.depthWrite ?? true,
+              depthCompare: 'less-equal',
+            },
+          }
+        : {}),
     });
     return h('pipeline', { pipeline, bgl });
   }
@@ -253,14 +268,33 @@ export class WebGPUBackend implements RenderBackend {
       format: desc.format,
       usage: TEX.RENDER_ATTACHMENT | TEX.TEXTURE_BINDING,
     });
-    return { kind: 'render-target', id: nextId(), native: { texture, view: texture.createView() } };
+    // Depth attachment for 3D group rendering (created only when asked for —
+    // effect scratch targets stay colour-only).
+    let depthTexture: GPUTexture | undefined;
+    let depthView: GPUTextureView | undefined;
+    if (desc.depth) {
+      depthTexture = this.device.createTexture({
+        label: desc.label ? `${desc.label}/depth` : 'render-target-depth',
+        size: { width: desc.width, height: desc.height },
+        format: 'depth24plus',
+        usage: TEX.RENDER_ATTACHMENT,
+      });
+      depthView = depthTexture.createView();
+    }
+    return {
+      kind: 'render-target',
+      id: nextId(),
+      native: { texture, view: texture.createView(), depthTexture, depthView },
+    };
   }
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
     const { texture } = target.native as { texture: GPUTexture };
     return { kind: 'texture', id: target.id, native: texture };
   }
   destroyRenderTarget(target: RenderTargetHandle): void {
-    (target.native as { texture: GPUTexture }).texture.destroy();
+    const native = target.native as { texture: GPUTexture; depthTexture?: GPUTexture };
+    native.texture.destroy();
+    native.depthTexture?.destroy();
   }
 
   beginFrame(): void {
@@ -285,6 +319,13 @@ export class WebGPUBackend implements RenderBackend {
       ? this.context.getCurrentTexture().createView()
       : (attach.target.native as { view: GPUTextureView }).view;
     const clear = attach.clear;
+    // Depth attachment only when the pass asks for it AND the target carries
+    // one — the surface has no depth texture, and a depth-tested pipeline is
+    // never routed at it (CompositionPass only forms 3D groups on offscreen
+    // targets created with depth).
+    const depthView = !toSurface && desc.depth
+      ? (attach.target.native as { depthView?: GPUTextureView }).depthView
+      : undefined;
     const pass = this.encoder.beginRenderPass({
       label: desc.label,
       colorAttachments: [
@@ -295,6 +336,16 @@ export class WebGPUBackend implements RenderBackend {
           storeOp: 'store',
         },
       ],
+      ...(depthView
+        ? {
+            depthStencilAttachment: {
+              view: depthView,
+              depthClearValue: desc.depth?.clearDepth ?? 1,
+              depthLoadOp: 'clear',
+              depthStoreOp: 'store',
+            },
+          }
+        : {}),
     });
     // The clear above is full-canvas (loadOp runs before the scissor applies);
     // draws after this are clipped to the comp rect. Surface only —
@@ -327,7 +378,20 @@ export class WebGPUBackend implements RenderBackend {
     if (this.context) this.context.configure({ device: this.device, format: this.surfaceFormat, alphaMode: 'premultiplied', size: { width: this.surfaceW, height: this.surfaceH } });
   }
   dispose(): void {
+    // Drop any half-built frame, detach from the canvas, then destroy the
+    // device. destroy() releases every resource created from it (buffers,
+    // textures, pipelines — WebGPU's ownership model), so per-resource
+    // teardown is unnecessary; unconfigure frees the canvas' swap chain so a
+    // fresh backend can reconfigure the same canvas on re-entry.
+    this.encoder = null;
+    try {
+      (this.context as unknown as { unconfigure?: () => void } | undefined)?.unconfigure?.();
+    } catch {
+      /* best-effort — context may already be lost */
+    }
     this.device?.destroy();
+    this.device = undefined as unknown as GPUDevice;
+    this.context = undefined as unknown as GPUCanvasContext;
   }
 }
 

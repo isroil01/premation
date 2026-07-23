@@ -109,6 +109,8 @@ export function drawParticleField(
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.save();
   ctx.scale(scale, scale);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.globalCompositeOperation = particleCompositeOp(cfg.blend);
   for (const s of particleSprites(cfg, time, fieldW, fieldH)) {
     if (s.size <= 0 || s.opacity <= 0) continue;

@@ -9,7 +9,7 @@ import { Icon } from '@components/Icon';
 import { Input } from '@components/Input';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import { listPresets, saveCurrentAsPreset, deletePreset } from '@core/animation/animationPresets';
 import styles from './PresetsBar.module.css';
@@ -57,7 +57,13 @@ export function PresetsBar(): JSX.Element {
           trigger={<button type="button" className={styles.manageBtn} title="Manage saved presets">⋯</button>}
           items={userPresets.map((p): DropdownItem => ({
             type: 'item', id: `del:${p.name}`, label: `Delete “${p.name}”`, danger: true,
-            onSelect: () => deletePreset(p.name),
+            onSelect: () => {
+              // deletePreset only writes localStorage — bump the scene revision
+              // (which this bar subscribes to) so the deleted preset disappears.
+              deletePreset(p.name);
+              notify({ level: 'success', message: `Deleted preset “${p.name}”`, durationMs: 1600 });
+              bumpScene();
+            },
           }))}
         />
       ) : null}

@@ -117,6 +117,85 @@ export interface Renderable {
     vertices: Float32Array;
     triangles: Uint16Array;
   };
+  /**
+   * True 3D placement (AE Classic-3D GPU path). `model` is the 16-number
+   * column-major world matrix mapping the unit quad [0,1]² onto the layer's
+   * plane in 3D comp space (the w×h + centre bridge already folded in). When
+   * present AND the scene carries `camera3d`, CompositionPass renders the
+   * layer through the depth-tested mat4 pipeline so intersecting 3D planes
+   * composite per-pixel. `modelMatrix` above remains the CPU-projected affine
+   * FALLBACK — hit-testing, bounds, and any branch the 3D group path can't
+   * take (effects / mattes / adjustment / advanced blend / deformed meshes)
+   * keep using it, so nothing ever renders in the wrong place.
+   */
+  threeD?: {
+    model: readonly number[];
+    /**
+     * Per-fragment shading (Material Options → Accepts Lights). When the
+     * renderable draws through the depth-tested group path, the 3d shaders run
+     * real per-fragment Lambert + Blinn-Phong specular using the scene's
+     * `lights3d` and camera eye. `quadGain` is the CPU per-quad gain fallback:
+     * any branch that can't shade per-fragment (no scene lights delivered, or
+     * the renderable dropped to the affine painter path) multiplies it into
+     * the tint instead, so lighting is never silently lost or double-applied.
+     */
+    shade?: {
+      /** Blinn-Phong specular intensity, normalised 0..1 (0 = plain Lambert). */
+      specular: number;
+      /** Blinn-Phong exponent. */
+      shininess: number;
+      /** Per-quad Lambert gain fallback (adapter-computed). */
+      quadGain?: readonly [number, number, number];
+    };
+  };
+}
+
+/**
+ * True when a renderable can render through the depth-tested 3D group path.
+ *
+ * Excluded cases genuinely need multi-target compositing (track mattes,
+ * adjustment layers, advanced blend, precomp isolation), an accumulation target
+ * (motion blur), or non-quad geometry (deformed meshes) — those fall back to the
+ * CPU-projected affine `modelMatrix`.
+ *
+ * Spatial EFFECTS (blur/glow/drop-shadow/…) are ALLOWED: a 3D layer's effect
+ * chain resolves to a single texture in 2D layer space, which CompositionPass's
+ * render3DGroup pre-resolves into an offscreen target and then draws as a
+ * textured3d quad INSIDE the depth pass — so the effect RESULT plane depth-
+ * tests / intersects / lights like any other 3D quad, instead of dropping to the
+ * affine painter path and losing per-pixel intersection with its 3D siblings.
+ *
+ * SHARED by CompositionPass (which partitions groups with it) and the snapshot
+ * adapter (which decides whether to pre-fold the per-quad light gain into the
+ * tint) — the two MUST agree or lit layers double- or under-light. A lit layer
+ * that also carries an effect is now depth-eligible, so the adapter attaches
+ * `threeD.shade` (per-fragment lighting on the effect result) rather than
+ * folding the per-quad gain — the correct, desired behaviour.
+ */
+export function depthEligible3D(r: Renderable): boolean {
+  if (!r.threeD) return false;
+  if (r.matteSource || r.matte || r.adjustment || r.precomp) return false;
+  if (r.advancedBlend && r.advancedBlend > 0) return false;
+  if (r.motionSamples && r.motionSamples.length > 1) return false;
+  if (r.deformedMesh) return false;
+  return true;
+}
+
+/** A scene light in shader terms for the per-fragment 3D lighting path. */
+export interface SceneLight3D {
+  type: 'ambient' | 'point' | 'spot' | 'parallel';
+  color: { r: number; g: number; b: number };
+  /** intensity/100. */
+  gain: number;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  /** cos/sin of the light's 2D aim angle. */
+  aimX: number;
+  aimY: number;
+  /** Spot half-cone in radians. */
+  halfConeRad: number;
 }
 
 export interface CompositionInfo {
@@ -133,6 +212,22 @@ export interface FrameScene {
   selection?: string[];
   /** True if any layer in the frame has post-processing effects. */
   hasEffects?: boolean;
+  /**
+   * 3D camera for the depth-tested layer path: column-major 4×4 view and
+   * projection (world → homogeneous COMP-space clip; the 2D pan/zoom camera is
+   * lifted on top at draw time). Present when the frame contains 3D layers;
+   * produced by the adapter from the SAME scalar camera the CPU affine
+   * projection uses, so both paths agree.
+   */
+  camera3d?: {
+    view: readonly number[];
+    projection: readonly number[];
+    /** Camera world position — the Blinn-Phong eye. Absent for ortho views
+     *  (specular is skipped there). */
+    eye?: readonly [number, number, number];
+  };
+  /** Scene lights for per-fragment Accepts-Lights shading in 3D groups. */
+  lights3d?: ReadonlyArray<SceneLight3D>;
 }
 
 /** An empty scene for a given composition. */

@@ -33,6 +33,11 @@ export type SelectorMode = 'range' | 'wiggly';
 export const ANIMATOR_PARAMS = [
   'start', 'end', 'offset', 'x', 'y', 'scale', 'rotation', 'opacity', 'tracking',
   'skew', 'wiggleFreq',
+  // Per-character 3D channels. Only meaningful on a 3D text layer with
+  // "Enable Per-character 3D" — each glyph becomes its own 3D plane, so an
+  // animator can push glyphs in Z and tumble them about X/Y (AE parity).
+  // On a 2D text layer these evaluate but the flat backend ignores them.
+  'z', 'rotationX', 'rotationY',
 ] as const;
 export type AnimatorParam = (typeof ANIMATOR_PARAMS)[number];
 
@@ -58,6 +63,11 @@ export interface TextAnimatorData {
   scale: number;
   /** Rotation offset, degrees. */
   rotation: number;
+  /** Depth offset, comp px (per-character 3D only). */
+  z?: number;
+  /** Tumble about the glyph's own X / Y axis, degrees (per-character 3D only). */
+  rotationX?: number;
+  rotationY?: number;
   /** Opacity, percent (100 = no change). */
   opacity: number;
   /** Extra tracking, px. */
@@ -84,6 +94,11 @@ export interface ResolvedAnimator {
   y: number;
   scale: number;
   rotation: number;
+  /** Per-character 3D channels; absent on animators authored before the
+   *  feature (and on flat text, where they have no effect). */
+  z?: number;
+  rotationX?: number;
+  rotationY?: number;
   opacity: number;
   tracking: number;
   skew: number;
@@ -97,6 +112,11 @@ export interface GlyphTransform {
   /** Position offset, comp px. */
   dx: number;
   dy: number;
+  /** Depth offset, comp px (per-character 3D only; absent on flat text). */
+  dz?: number;
+  /** Tumble about the glyph's own X / Y axis, degrees (per-character 3D only). */
+  rotationX?: number;
+  rotationY?: number;
   /** Scale multiplier (1 = none). */
   scale: number;
   /** Rotation, degrees. */
@@ -125,6 +145,9 @@ export function defaultAnimator(): TextAnimatorData {
     y: 0,
     scale: 100,
     rotation: 0,
+    z: 0,
+    rotationX: 0,
+    rotationY: 0,
     opacity: 100,
     tracking: 0,
     skew: 0,
@@ -263,6 +286,9 @@ export function evaluateTextAnimators(
       const g = glyphs[i]!;
       g.dx += a.x * w;
       g.dy += a.y * w;
+      if (a.z) g.dz = (g.dz ?? 0) + a.z * w;
+      if (a.rotationX) g.rotationX = (g.rotationX ?? 0) + a.rotationX * w;
+      if (a.rotationY) g.rotationY = (g.rotationY ?? 0) + a.rotationY * w;
       g.rotation += a.rotation * w;
       g.tracking += a.tracking * w;
       g.skew += a.skew * w;
@@ -324,6 +350,9 @@ export function resolveAnimators(
       y: val('y', d.y),
       scale: val('scale', d.scale),
       rotation: val('rotation', d.rotation),
+      z: val('z', d.z ?? 0),
+      rotationX: val('rotationX', d.rotationX ?? 0),
+      rotationY: val('rotationY', d.rotationY ?? 0),
       opacity: val('opacity', d.opacity),
       tracking: val('tracking', d.tracking),
       skew: val('skew', d.skew ?? 0),

@@ -9,15 +9,31 @@
   font-size: 11px;
   font-family: 'Inter', system-ui, sans-serif;
   user-select: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.root::-webkit-scrollbar {
+  display: none;
 }
 
 .group {
   display: flex;
   align-items: center;
   height: 100%;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
-.spacer { flex: 1; }
+.spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
 
 .compName {
   display: flex;
@@ -37,6 +53,8 @@
   max-width: 200px;
   letter-spacing: 0.01em;
   transition: background 0.1s;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .compName:hover {
@@ -70,6 +88,7 @@
   margin-left: 2px;
   font-size: 11px;
   white-space: nowrap;
+  flex-shrink: 0;
   transition: all 0.1s;
 }
 
@@ -114,6 +133,24 @@
 
 .select:hover {
   color: var(--color-text-primary);
+  border-color: var(--color-primary, #2988ff);
+}
+
+/* Compact header dropdown (3D axis mode: Local / World / View). */
+.headerSelect {
+  height: 22px;
+  font-size: 11px;
+  font-family: inherit;
+  background: var(--color-surface-1, #1e1e24);
+  color: var(--color-text-main, #ffffff);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: 4px;
+  padding: 0 4px;
+  cursor: pointer;
+  outline: none;
+}
+
+.headerSelect:hover {
   border-color: var(--color-primary, #2988ff);
 }
 

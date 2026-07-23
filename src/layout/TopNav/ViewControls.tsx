@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { Icon } from '@components/Icon';
 import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode, type ViewChannel } from '@stores/guidesStore';
+import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useRenderQualityStore, RESOLUTION_LABELS, type PreviewResolution } from '@stores/renderQualityStore';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -105,9 +106,10 @@ function ScrubField({
 }
 
 /** Human labels for the 3D view modes. */
-const CAMERA_VIEW_LABEL: Record<Camera3dMode, string> = {
+export const CAMERA_VIEW_LABEL: Record<Camera3dMode, string> = {
   active: 'Active Camera', front: 'Front', back: 'Back',
   left: 'Left', right: 'Right', top: 'Top', bottom: 'Bottom',
+  ...CUSTOM_VIEW_LABEL,
 };
 
 const CHANNEL_LABEL: Record<ViewChannel, string> = {
@@ -205,6 +207,8 @@ export function ViewControls(): JSX.Element {
 
   const roi = useGuidesStore((s) => s.roi);
   const setRoi = useGuidesStore((s) => s.setRoi);
+  const viewLayout = useGuidesStore((s) => s.viewLayout);
+  const setViewLayout = useGuidesStore((s) => s.setViewLayout);
   // Set the ROI to the composition's centre half — a sensible starting region
   // the user then drags to taste on the canvas.
   const setCentreRoi = (): void => {
@@ -221,11 +225,63 @@ export function ViewControls(): JSX.Element {
     });
 
   const hasActiveGuides =
-    grid || rulers || safeArea || camera3dMode !== 'active' || channel !== 'rgb' || autoKeyframe || previewResolution !== 1;
+    grid || rulers || safeArea || camera3dMode !== 'active' || channel !== 'rgb' || autoKeyframe || previewResolution !== 1 || viewLayout !== '1';
 
   return (
     <div className={styles.toolGroup}>
       <span className={styles.toolDivider} aria-hidden />
+
+      {/* Direct Rulers quick toggle */}
+      <button
+        type="button"
+        className={rulers ? styles.toolActive : styles.tool}
+        aria-label="Toggle Rulers"
+        aria-pressed={rulers}
+        title={rulers ? 'Hide Rulers (Ctrl+R)' : 'Show Rulers (Ctrl+R)'}
+        onClick={toggleRulers}
+      >
+        <Icon name="ruler" size={14} />
+      </button>
+
+      {/* Direct Safe Areas quick toggle */}
+      <button
+        type="button"
+        className={safeArea ? styles.toolActive : styles.tool}
+        aria-label="Toggle Safe Areas"
+        aria-pressed={safeArea}
+        title={safeArea ? 'Hide Safe Areas' : 'Show Safe Areas'}
+        onClick={toggleSafeArea}
+      >
+        <Icon name="frame" size={14} />
+      </button>
+
+      {/* Direct Channel Selector */}
+      <Dropdown
+        placement="bottom-end"
+        trigger={
+          <button
+            type="button"
+            className={channel !== 'rgb' ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+            title={`Channel View: ${CHANNEL_LABEL[channel]}`}
+          >
+            <span style={{ fontSize: '11px', fontWeight: 600, padding: '0 2px' }}>{CHANNEL_LABEL[channel]}</span>
+            <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+          </button>
+        }
+        items={([
+          ['rgb', 'RGB (color)'],
+          ['red', 'Red Channel'],
+          ['green', 'Green Channel'],
+          ['blue', 'Blue Channel'],
+          ['alpha', 'Alpha Channel (Matte)'],
+        ] as const).map(([c, label]) => ({
+          type: 'checkbox' as const,
+          id: `toolbar-channel-${c}`,
+          label,
+          checked: channel === c,
+          onChange: () => setChannel(c),
+        }))}
+      />
 
       {/* View Options & Overlays Dropdown */}
       <Dropdown
@@ -264,6 +320,44 @@ export function ViewControls(): JSX.Element {
                 checked: camera3dMode === v,
                 onChange: () => setCamera3dMode(v),
               })),
+              { type: 'separator' as const },
+              // Custom views (AE parity): navigable perspective views that never
+              // touch the scene camera — Alt+drag/wheel re-frames the VIEW.
+              ...CUSTOM_VIEW_IDS.map((v) => ({
+                type: 'checkbox' as const,
+                id: `cam-${v}`,
+                label: CAMERA_VIEW_LABEL[v],
+                checked: camera3dMode === v,
+                onChange: () => setCamera3dMode(v),
+              })),
+            ],
+          },
+          {
+            type: 'item',
+            id: 'view-layout',
+            label: `Layout: ${viewLayout === '4' ? '4 Views' : viewLayout === '2' ? '2 Views' : '1 View'}`,
+            submenu: [
+              {
+                type: 'checkbox' as const,
+                id: 'layout-1',
+                label: '1 View',
+                checked: viewLayout === '1',
+                onChange: () => setViewLayout('1'),
+              },
+              {
+                type: 'checkbox' as const,
+                id: 'layout-2',
+                label: '2 Views (view-only right pane)',
+                checked: viewLayout === '2',
+                onChange: () => setViewLayout('2'),
+              },
+              {
+                type: 'checkbox' as const,
+                id: 'layout-4',
+                label: '4 Views (2×2 grid; top-left interactive)',
+                checked: viewLayout === '4',
+                onChange: () => setViewLayout('4'),
+              },
             ],
           },
           {

@@ -21,7 +21,18 @@
   border-bottom: 1px solid var(--color-border);
   flex: none;
   user-select: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
+
+.header::-webkit-scrollbar {
+  display: none;
+}
+
 
 /* ── Timecode ──────────────────────────────────────────────────────── */
 .timecode {
@@ -44,6 +55,7 @@
   box-sizing: border-box;
   margin-right: 4px;
   transition: all 120ms ease;
+  flex-shrink: 0;
 }
 
 .timecode:hover {
@@ -70,11 +82,12 @@
   border-radius: 6px;
   padding: 0 8px;
   height: 24px;
-  flex: 1 1 160px;
-  min-width: 120px;
+  flex: 0 0 160px;
+  min-width: 100px;
   max-width: 220px;
   margin: 0 4px;
   transition: all 120ms ease;
+  flex-shrink: 0;
 }
 
 .searchContainer:hover {
@@ -132,6 +145,7 @@
   display: flex;
   align-items: center;
   gap: 1px;
+  flex-shrink: 0;
 }
 
 /* Play button — the one circle. AE has it as the focal point */
@@ -160,6 +174,7 @@ button.play:hover {
   padding: 0 6px;
   border-left: 1px solid var(--color-border);
   border-right: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .toggleBtn {
@@ -180,6 +195,7 @@ button.play:hover {
   cursor: pointer;
   transition: all 120ms ease;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .toggleBtn:hover {
   color: var(--color-text-primary);
@@ -225,6 +241,7 @@ button.play:hover {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .zoomLabel {

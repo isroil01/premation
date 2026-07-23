@@ -103,6 +103,23 @@ export interface RenderLayer {
    *  shear that x/y/rotation/scale can't); when set it supersedes them for
    *  drawing. `x/y/scaleX/scaleY/rotation` remain as the decomposed fallback. */
   matrix?: readonly [number, number, number, number, number, number];
+  /** Full 4×4 column-major WORLD matrix for a 3D layer (local centered pixels →
+   *  3D comp space; same compose as `matrix`'s projection input). Present only
+   *  for 3D layers. The GPU path renders it through the depth-tested mat4
+   *  pipeline; `matrix` remains the CPU-projected affine fallback used for
+   *  hit-testing, bounds, and Canvas2D/offline paths. */
+  world3d?: readonly number[];
+  /** Per-quad Lambert light gain (Material Options → Accepts Lights, 3D only).
+   *  Multiplied into the layer's draw tint by the adapter; absent = unlit
+   *  pipeline (identity). */
+  lighting?: readonly [number, number, number];
+  /** Per-fragment shading params (Accepts Lights on the depth-tested GPU path):
+   *  Blinn-Phong specular intensity (already normalised 0..1) and exponent.
+   *  Present only alongside `lighting`; the adapter attaches it (plus the
+   *  snapshot's `lights3d`/camera eye) to renderables that take the depth path,
+   *  where the shader replaces the per-quad tint fold with real per-fragment
+   *  Lambert + specular. */
+  shade3d?: { specular: number; shininess: number };
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */
   depth?: number;
@@ -110,7 +127,7 @@ export interface RenderLayer {
   width: number;
   height: number;
   /** Solid fallback colour (legacy). `fillPaint` supersedes it when present. */
-  fill: string;
+  fill?: string;
   /** Rich fill: solid / linear / radial gradient. The GPU rasterizer renders
    *  all gradient types and stop counts via the Canvas2DVectorRasterizer. */
   fillPaint?: FillPaint;
@@ -252,6 +269,32 @@ export interface RenderSnapshot {
   roi?: { x: number; y: number; width: number; height: number };
   /** Camera-driven comp→canvas transform (falls back to fit when omitted). */
   view?: RenderView;
+  /** 3D camera as column-major 4×4 view/projection matrices (world →
+   *  homogeneous comp-space clip). Emitted only when the frame contains 3D
+   *  layers; derived from the SAME scalar camera the affine projection uses,
+   *  so the GPU depth path and the CPU fallback agree. */
+  camera3d?: {
+    view: readonly number[];
+    projection: readonly number[];
+    /** Camera world position — the eye for Blinn-Phong specular. */
+    eye?: readonly [number, number, number];
+  };
+  /** Scene lights in shader terms (per-fragment Accepts-Lights shading on the
+   *  depth path). Emitted only when the frame has 3D layers AND lights. Colors
+   *  are linear 0..1 RGB; `gain` = intensity/100; `aimX/aimY` = cos/sin of the
+   *  light's 2D aim angle; `halfConeRad` is the spot half-cone in radians. */
+  lights3d?: ReadonlyArray<{
+    type: 'ambient' | 'point' | 'spot' | 'parallel';
+    color: { r: number; g: number; b: number };
+    gain: number;
+    x: number;
+    y: number;
+    z: number;
+    radius: number;
+    aimX: number;
+    aimY: number;
+    halfConeRad: number;
+  }>;
 }
 
 export interface RenderBackend {
@@ -264,8 +307,15 @@ export interface RenderBackend {
    *  Left off for export so transparent comps yield real alpha. */
   setPreviewChrome?(on: boolean): void;
   dispose(): void;
-  /** Promise that resolves when the backend is fully initialized (e.g. GPU compilation). */
+  /** Promise that resolves when async initialization FINISHED (success or
+   *  failure — check `initFailed` after it resolves; resolving is not a
+   *  success signal, so awaiters never hang on a failed GPU init). */
   readyPromise?: Promise<void>;
+  /** True when async init finished but the backend cannot render (all GPU
+   *  tiers failed). The UI must surface an error instead of a blank canvas. */
+  initFailed?: boolean;
+  /** Human-readable failure reason when `initFailed` is true. */
+  initErrorMessage?: string | null;
   /**
    * Exact media timing for offline export. On, video layers seek with a
    * sub-millisecond deadband (the live path tolerates 0.05s ≈ ±1.5 frames to

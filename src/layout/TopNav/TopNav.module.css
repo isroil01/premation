@@ -251,6 +251,13 @@
   .compMeta {
     display: none;
   }
+  .toolRow {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .toolRow::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @media (max-width: 768px) {
@@ -261,10 +268,26 @@
     display: none;
   }
   .compName {
-    max-width: 120px;
+    max-width: 110px;
   }
   .toolHint {
     display: none;
   }
+  .inner {
+    gap: 2px;
+  }
+  .action {
+    padding-inline: var(--space-2);
+  }
 }
+
+@media (max-width: 520px) {
+  .comp {
+    display: none;
+  }
+  .menuRow {
+    padding: 0 var(--space-2);
+  }
+}
+
 

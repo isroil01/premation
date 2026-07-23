@@ -29,6 +29,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodePuppet } from '@core/rig/puppet';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { resetSceneWindow } from './sceneWindow';
+import { setRuntimeStyle } from './design';
+import { setEntranceSeed } from './archetypes';
 import { defaultAnimation, upsertDataKeyframe, type EasingKind } from '@motion/animation';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
@@ -38,6 +40,7 @@ import { insertCamera, insertLight, insertAdjustmentLayer, insertParticle } from
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
+import { updateUiComponentSvg } from '@core/library/uiKitLibrary';
 import { addEffect, updateEffect, removeEffect, getNodeEffects } from '@core/effects/effects';
 import type { EffectType } from '@core/effects/effects';
 import { applyPresetByName, listPresets } from '@core/animation/animationPresets';
@@ -265,8 +268,8 @@ export function createSceneFacade(): SceneFacade {
       defaultSceneGraph.removeNode(id as ID);
       bumpScene();
     },
-    reparent: (id, parentId) => {
-      reparentNode(id, parentId);
+    reparent: (id, parentId, options) => {
+      reparentNode(id, parentId, options);
       bumpScene();
     },
     setProp: (nodeId, prop, value) => {
@@ -288,7 +291,20 @@ export function createSceneFacade(): SceneFacade {
               : transformComponent(node);
       if (!owner) return false;
       const ok = defaultSceneGraph.writeProp(node.id, owner.id, prop, value);
-      if (ok) bumpScene();
+      if (ok) {
+        if ((node as any).rawUiSvg && (prop === 'fill' || prop === 'content')) {
+          const style = node.components.find((c) => c.type === 'Style');
+          const text = node.components.find((c) => c.type === 'Text');
+          const currentFill = String((style?.props as any)?.fill ?? '');
+          const currentText = String((text?.props as any)?.content ?? '');
+          const newSvg = updateUiComponentSvg((node as any).rawUiSvg, currentFill, currentText);
+          const transform = transformComponent(node);
+          if (transform) {
+            defaultSceneGraph.writeProp(node.id, transform.id, 'src', `data:image/svg+xml,${encodeURIComponent(newSvg)}`);
+          }
+        }
+        bumpScene();
+      }
       return ok;
     },
 
@@ -389,8 +405,12 @@ export function createToolContext(
   signal: AbortSignal,
   images?: readonly { mediaType: string; dataBase64: string }[],
 ): ToolContext {
-  // A fresh run never inherits a scene window left open by the previous one.
+  // A fresh run never inherits a scene window left open by the previous one,
+  // nor the previous run's custom style; and each run gets its own entrance
+  // variation seed so two runs of the same prompt differ.
   resetSceneWindow();
+  setRuntimeStyle(null);
+  setEntranceSeed((Math.random() * 0xffffffff) >>> 0);
   return {
     scene: createSceneFacade(),
     anim: createAnimFacade(),

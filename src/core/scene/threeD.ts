@@ -16,7 +16,11 @@
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { bumpScene } from '@stores/sceneStore';
+import { type BevelStyle, DEFAULT_BEVEL_STYLE } from '@core/scene/extrusion';
+
+const BEVEL_STYLES: readonly BevelStyle[] = ['angular', 'concave', 'convex'];
 
 /** The depth props that mark a layer as 3D-enabled. */
 export const THREE_D_PROPS = ['z', 'rotationX', 'rotationY'] as const;
@@ -36,21 +40,59 @@ export interface Node3D {
   /** Anchor-point depth (px). matrix4 pivots rotation/scale around it; absent →
    *  0 (the layer plane), which is why it was invisibly dropped before. */
   anchorZ: number;
+  /** Extrusion depth (px, ≥ 0). When > 0 the renderer synthesizes a back cap
+   *  and side walls so the layer is a REAL 3D object, not a flat plane.
+   *  Keyframeable like every other Transform prop; 0 = classic flat layer. */
+  extrusionDepth: number;
+  /** Bevel (chamfer) depth (px, ≥ 0). When > 0 (and extruded) the renderer
+   *  insets the front/back caps and bridges them to the walls with a 45°
+   *  chamfer ring, so the object's edges catch light. Keyframeable; clamped to
+   *  min(w,h)/2 and depth/2 at render time. 0 = hard square edges. */
+  bevelDepth: number;
+  /** Bevel profile. `angular` (default) is a single 45° chamfer; other styles
+   *  are stored but currently render as `angular`. */
+  bevelStyle: BevelStyle;
 }
 
 const ZERO_3D: Node3D = {
   z: 0, rotationX: 0, rotationY: 0,
   orientationX: 0, orientationY: 0, orientationZ: 0, anchorZ: 0,
+  extrusionDepth: 0, bevelDepth: 0, bevelStyle: DEFAULT_BEVEL_STYLE,
 };
 
-/** Extra 3D props beyond the depth markers — orientation + anchor Z. Seeded on
- *  demand (they don't mark a layer 3D; z/rotationX/rotationY already do). */
-export const THREE_D_EXTRA_PROPS = ['orientationX', 'orientationY', 'orientationZ', 'anchorZ'] as const;
+/** Extra 3D props beyond the depth markers — orientation + anchor Z +
+ *  extrusion. Seeded on demand (they don't mark a layer 3D; z/rotationX/
+ *  rotationY already do). */
+export const THREE_D_EXTRA_PROPS = ['orientationX', 'orientationY', 'orientationZ', 'anchorZ', 'extrusionDepth', 'bevelDepth'] as const;
 
 function transformComponent(node: SceneNode): { id: string; props: Record<string, unknown> } | undefined {
   return node.components.find((c) => c.type === 'Transform') as
     | { id: string; props: Record<string, unknown> }
     | undefined;
+}
+
+/**
+ * The layer kinds the renderer can actually project in 3D. Everything else is
+ * either structural (group/null/comp — never draws), a scene device (camera/
+ * light — they DRIVE 3D rather than being 3D), non-visual (audio), or a layer
+ * type buildSnapshot draws outside the 3D projection path (particle,
+ * adjustment). Solids are kind 'shape' and eligible — see canBe3D.
+ */
+const THREE_D_CAPABLE_KINDS = new Set(['shape', 'text', 'image', 'video']);
+
+/**
+ * True when this node can meaningfully take the 3D switch: content kind and
+ * carries a Transform. Every 3D affordance (inspector switch, timeline cube,
+ * viewport badge, "Make all 3D") gates on this ONE predicate so a switch never
+ * lights up without pixels changing.
+ *
+ * Solids ARE eligible (AE parity — a solid is just a layer): an UN-switched
+ * solid stays pinned full-comp exactly as before; flipping its 3D switch
+ * un-pins it onto its own transform, so it projects/tilts like any layer.
+ */
+export function canBe3D(node: SceneNode): boolean {
+  if (!node.components.some((c) => c.type === 'Transform')) return false;
+  return THREE_D_CAPABLE_KINDS.has(readNodeKind(node));
 }
 
 /** True when the layer carries the 3D depth props (i.e. is a 3D layer). */
@@ -73,7 +115,80 @@ export function readNode3D(node: SceneNode): Node3D {
     orientationY: n(t.props.orientationY),
     orientationZ: n(t.props.orientationZ),
     anchorZ: n(t.props.anchorZ),
+    extrusionDepth: Math.max(0, n(t.props.extrusionDepth)),
+    bevelDepth: Math.max(0, n(t.props.bevelDepth)),
+    bevelStyle: BEVEL_STYLES.includes(t.props.bevelStyle as BevelStyle)
+      ? (t.props.bevelStyle as BevelStyle)
+      : DEFAULT_BEVEL_STYLE,
   };
+}
+
+/**
+ * Set a layer's extrusion depth (px). Stored only when > 0 so classic flat
+ * layers add nothing to file; renders through buildSnapshot's geometry
+ * synthesis. Keyframe tracks on 'extrusionDepth' beat this static value.
+ */
+export function setNodeExtrusionDepth(nodeId: string, depth: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const t = transformComponent(node);
+  if (!t) return;
+  const v = Math.max(0, Math.min(1000, depth));
+  defaultSceneGraph.writeProp(nodeId, t.id, 'extrusionDepth', v > 0 ? v : undefined);
+  bumpScene();
+}
+
+/**
+ * Set a layer's bevel (chamfer) depth (px). Stored only when > 0 so square-edge
+ * layers add nothing to file. Clamped to 0–200 here; the renderer clamps again
+ * to the geometry-safe max (min(w,h)/2, depth/2). Keyframe tracks on
+ * 'bevelDepth' beat this static value.
+ */
+export function setNodeBevelDepth(nodeId: string, depth: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const t = transformComponent(node);
+  if (!t) return;
+  const v = Math.max(0, Math.min(200, depth));
+  defaultSceneGraph.writeProp(nodeId, t.id, 'bevelDepth', v > 0 ? v : undefined);
+  bumpScene();
+}
+
+/**
+ * Enable/disable per-character 3D on a TEXT layer (AE's "Enable Per-character
+ * 3D"). When on, buildSnapshot emits one 3D plane per glyph instead of a single
+ * plane for the whole string, so glyphs intersect, light, and animate in 3D
+ * individually. Stored only when true — off costs nothing and renders exactly
+ * as a plain 3D text layer.
+ */
+export function setNodePerChar3D(nodeId: string, enabled: boolean): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const t = transformComponent(node);
+  if (!t) return;
+  defaultSceneGraph.writeProp(nodeId, t.id, 'perChar3D', enabled ? true : undefined);
+  bumpScene();
+}
+
+/** True when the node is a 3D text layer with per-character 3D enabled. */
+export function isPerChar3D(node: SceneNode): boolean {
+  const t = transformComponent(node);
+  const props = (t?.props ?? {}) as Record<string, unknown>;
+  return props.perChar3D === true;
+}
+
+/**
+ * Set a layer's bevel profile. Stored only when non-default (`angular`) so
+ * existing layers add nothing to file.
+ */
+export function setNodeBevelStyle(nodeId: string, style: BevelStyle): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const t = transformComponent(node);
+  if (!t) return;
+  const valid = BEVEL_STYLES.includes(style) ? style : DEFAULT_BEVEL_STYLE;
+  defaultSceneGraph.writeProp(nodeId, t.id, 'bevelStyle', valid !== DEFAULT_BEVEL_STYLE ? valid : undefined);
+  bumpScene();
 }
 
 /**

@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { api, isAuthenticated, type AiKeyStatus, type AiMotionStatus, type AiProviderId } from '@core/api/client';
+import { api, isAuthenticated, type AiKeyStatus, type AiProviderId } from '@core/api/client';
 import { useAiProviderStore, MODEL_SUGGESTIONS } from '@stores/aiProviderStore';
 import styles from './AiSettingsSection.module.css';
 
@@ -37,7 +37,6 @@ const EMPTY: AiKeyStatus = { present: false, hint: '' };
 
 export function AiSettingsSection(): JSX.Element {
   const [status, setStatus] = useState<Record<AiProviderId, AiKeyStatus> | null>(null);
-  const [motion, setMotion] = useState<AiMotionStatus | null>(null);
   const [drafts, setDrafts] = useState<Partial<Record<AiProviderId, string>>>({});
   const [busy, setBusy] = useState<AiProviderId | null>(null);
   const [error, setError] = useState<string>('');
@@ -73,7 +72,6 @@ export function AiSettingsSection(): JSX.Element {
 
       const finalKeys = updated ? await api.getAiKeys() : keysResponse;
       setStatus(finalKeys);
-      setMotion(finalKeys.motion ?? null);
       // Keep the assistant's "has a key" gate in sync with what we just saved.
       void refreshStore();
     } catch {
@@ -142,71 +140,17 @@ export function AiSettingsSection(): JSX.Element {
     }
   };
 
-  const usingMotion = provider === 'motion';
-
   return (
     <div className={styles.section}>
       <p className={styles.intro}>
-        Choose how the assistant is powered. Either way your prompts go straight to the model —
-        we never filter or rewrite them.
+        Connect your own AI API keys (Anthropic, OpenAI, or Gemini). Your prompts go straight to your provider account with no added fees.
       </p>
-
-      <div className={styles.choices}>
-        <button
-          type="button"
-          className={`${styles.choice} ${usingMotion ? styles.choiceOn : ''}`}
-          disabled={!motion?.present}
-          onClick={() => setProvider('motion')}
-        >
-          <span className={styles.choiceTitle}>
-            <Icon name="sparkles" size={14} />
-            Motion AI
-            <span className={`${styles.badge} ${motion?.present ? styles.badgeOn : ''}`}>
-              {!motion
-                ? '—'
-                : !motion.entitled
-                  ? 'Pro plan'
-                  : motion.credits > 0
-                    ? `${motion.credits} credits`
-                    : motion.dialect && motion.creditsUsed > 0
-                      ? 'No credits'
-                      : 'Coming soon'}
-            </span>
-          </span>
-          <span className={styles.choiceDesc}>
-            {!motion?.entitled
-              ? 'Runs on our AI account with nothing to set up. Available on the Pro plan.'
-              : motion.credits > 0
-                ? `Runs on our AI account — nothing to set up. You have ${motion.credits} free credits (1 per request).`
-                : motion.creditsUsed > 0
-                  ? "You've used all your free credits. Connect your own key below to keep going."
-                  : 'Runs on our AI account with nothing to set up. Still in development — connect your own key for now.'}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          className={`${styles.choice} ${!usingMotion ? styles.choiceOn : ''}`}
-          onClick={() => setProvider(provider === 'motion' ? 'anthropic' : provider)}
-        >
-          <span className={styles.choiceTitle}>
-            <Icon name="keyframe" size={14} />
-            Your own API key
-            <span className={`${styles.badge} ${!usingMotion ? styles.badgeOn : ''}`}>Free</span>
-          </span>
-          <span className={styles.choiceDesc}>
-            Connect an OpenAI, Anthropic, or Gemini account. You pay the provider directly; we add
-            nothing on top.
-          </span>
-        </button>
-      </div>
 
       {error ? <p className={styles.error}>{error}</p> : null}
 
-      {!usingMotion ? (
-        <div className={styles.providers}>
-          {PROVIDERS.map((p) => {
-            const s = status?.[p.id] ?? EMPTY;
+      <div className={styles.providers}>
+        {PROVIDERS.map((p) => {
+          const s = status?.[p.id] ?? EMPTY;
             const draft = drafts[p.id] ?? '';
             const isActive = provider === p.id;
             return (
@@ -295,7 +239,6 @@ export function AiSettingsSection(): JSX.Element {
             ))}
           </p>
         </div>
-      ) : null}
     </div>
   );
 }

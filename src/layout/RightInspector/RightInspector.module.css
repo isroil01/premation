@@ -18,4 +18,15 @@
   align-items: center;
   padding: var(--space-3) var(--space-3) var(--space-3);
   background: var(--color-panel-header);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
+
+.header::-webkit-scrollbar {
+  display: none;
+}
+

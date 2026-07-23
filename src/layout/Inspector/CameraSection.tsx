@@ -14,8 +14,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useCompositionStore } from '@stores/compositionStore';
 import { Project3D } from '@motion/scene';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
+import { flattenScene } from '@core/scene/sceneDerive';
+import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import styles from './TransformSection.module.css';
 
 /** Classic lens presets → horizontal field of view (deg). */
@@ -56,10 +56,10 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
   // The #1 "camera does nothing" trap: it only moves layers whose 3D switch
   // is ON. Show the live count and offer the one-click fix right here.
-  const contentLayers = flattenScene(defaultSceneGraph).filter((n) => {
-    const k = readNodeKind(n);
-    return k !== 'camera' && k !== 'light' && k !== 'audio' && k !== 'group' && k !== 'null';
-  });
+  // canBe3D = the shared "renderer can actually project this in 3D" predicate
+  // — it also excludes solids/particles, which the old kind list let through
+  // ("Make all 3D" lit switches that changed no pixel on those).
+  const contentLayers = flattenScene(defaultSceneGraph).filter((n) => canBe3D(n));
   const threeDCount = contentLayers.filter((n) => is3DEnabled(n)).length;
   const enableAll3D = (): void => {
     for (const n of contentLayers) set3DEnabled(n.id, true);
@@ -122,9 +122,10 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           />
         </div>
         <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Swings the camera around the comp centre, keeping it framed.
-          On canvas: Alt+drag with the camera selected. Keyframeable
-          (orbitYaw / orbitPitch tracks).
+          Swings the camera around its point of interest, keeping it framed.
+          On canvas: Alt+drag orbits, Shift+Alt+drag (or Alt+middle-drag)
+          tracks XY, Alt+wheel dollies. Keyframeable (orbitYaw / orbitPitch
+          tracks).
         </p>
 
         <div className={styles.subhead} style={{ marginTop: 8 }}>Point of Interest</div>

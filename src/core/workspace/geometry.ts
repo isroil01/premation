@@ -11,7 +11,14 @@ import type { SceneNode } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { measureTextNodeSize } from '@core/text/measureText';
+import { useCompositionStore } from '@stores/compositionStore';
 import { Mat, Rect, type Vec2, type Mat2D } from '@motion/workspace';
+
+/** Active comp dimensions (hit box for full-frame comp-instance layers). */
+function compositionSize(): { width: number; height: number } {
+  const c = useCompositionStore.getState();
+  return { width: c.width || 1920, height: c.height || 1080 };
+}
 
 /** The workspace's plain rectangle value type. */
 type WRect = ReturnType<typeof Rect.rect>;
@@ -28,9 +35,18 @@ export interface NodeGeometry {
   ellipse: boolean;
 }
 
-/** True for kinds that actually draw or are selectable in viewport (groups have no geometry). */
+/**
+ * True for kinds that are selectable/draggable in the viewport.
+ * Everything a user inserts should be grabbable on canvas: particles get an
+ * emitter gizmo box, comp instances a full-frame box, nulls an AE-style
+ * gizmo. Only kinds with no canvas presence stay out (group = children carry
+ * the geometry; audio = no visual; adjustment = invisible full-frame overlay
+ * that would swallow every click above the layers it grades).
+ */
 export function isDrawableKind(kind: string): boolean {
-  return kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video' || kind === 'light' || kind === 'camera';
+  return kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video'
+    || kind === 'light' || kind === 'camera'
+    || kind === 'particle' || kind === 'comp' || kind === 'null' || kind === 'group';
 }
 
 /** Read a node's on-canvas geometry from its components (base/authoring props). */
@@ -66,6 +82,10 @@ export function readGeometry(node: SceneNode): NodeGeometry | null {
   const size = measured ? { w: measured.w, h: measured.h }
              : kind === 'light' ? { w: 100, h: 100 }
              : kind === 'camera' ? { w: 80, h: 80 }
+             : kind === 'particle' ? { w: 140, h: 140 }
+             : kind === 'null' ? { w: 60, h: 60 }
+             : kind === 'group' ? { w: 280, h: 280 }
+             : kind === 'comp' ? { w: compositionSize().width, h: compositionSize().height }
              : (SIZE as any)[kind] ?? { w: 100, h: 100 };
   const name = (node.name ?? '').toLowerCase();
   return {

@@ -203,7 +203,9 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   },
 
   clearFinished() {
-    set((s) => ({ jobs: s.jobs.filter((j) => j.status === 'queued' || j.status === 'rendering') }));
+    // "Clear Done" — remove only completed jobs. Failed/skipped jobs stay so a
+    // failure isn't silently discarded (they were being deleted too).
+    set((s) => ({ jobs: s.jobs.filter((j) => j.status !== 'done') }));
   },
 
   startAll() {
@@ -225,10 +227,21 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
         if (!job) break;
         const started = Date.now();
         get().updateJob(job.id, { status: 'rendering', progress: 0 });
+        // Coalesce progress writes: the renderer fires per-frame, and each write
+        // rebuilds the jobs array and reconciles the panel. Writing only on ≥1%
+        // moves (and always on completion) drops that from dozens/sec to ~100
+        // total — the render loop and the UI share one thread, so this is what
+        // keeps the app (and cursor) responsive during an export.
+        let lastProgress = -1;
+        const onProgress = (f: number): void => {
+          if (f < 1 && lastProgress >= 0 && f - lastProgress < 0.01) return;
+          lastProgress = f;
+          get().updateJob(job.id, { progress: f });
+        };
         try {
           const { blob, ext } = await renderJobBlob(
             job,
-            (f) => get().updateJob(job.id, { progress: f }),
+            onProgress,
             abort.signal,
             (backendId) => set({ _backendJobId: backendId }),
           );

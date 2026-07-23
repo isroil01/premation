@@ -118,6 +118,12 @@
   border: 1px solid transparent;
   transition: background 0.1s, border-color 0.1s;
   cursor: default;
+  /* Near-virtualization: the browser skips layout/paint (and image decode) for
+     rows scrolled out of view, so a folder of hundreds of assets stays smooth
+     without restructuring the list. contain-intrinsic-size reserves each row's
+     height so the scrollbar stays accurate. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 46px;
 }
 
 .assetItem:hover {
@@ -319,14 +325,28 @@
 .libTabs {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   padding: 6px 8px 0;
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-surface-1);
   flex: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
 }
+
+.libTabs::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
 .libTab {
-  padding: 4px 10px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 5px 12px;
   border-radius: 4px 4px 0 0;
   background: transparent;
   border: 1px solid transparent;
@@ -336,6 +356,7 @@
   font-family: inherit;
   cursor: pointer;
   transition: color 0.12s, background 0.12s;
+  user-select: none;
 }
 .libTab:hover { color: var(--color-text-primary); background: var(--color-hover); }
 .libTabActive {
@@ -353,8 +374,10 @@
 }
 .libGrid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .libChip {
   display: flex;
@@ -362,7 +385,8 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 10px 4px;
+  min-width: 0;
+  padding: var(--sidebar-item-padding, 10px 4px);
   border-radius: 6px;
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
@@ -376,7 +400,7 @@
   border-color: var(--color-border-strong);
 }
 .libChipLabel {
-  font-size: 10px;
+  font-size: var(--sidebar-item-font-size, 10px);
   font-family: inherit;
   letter-spacing: 0.02em;
   text-align: center;

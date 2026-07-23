@@ -12,6 +12,7 @@
 import type { VersionedDocument } from '@core/types';
 import type { ProjectService } from '@core/persistence/ProjectService';
 import type { FileManager } from '@core/files/FileManager';
+import type { ProjectStorage } from '@core/persistence/ProjectStorage';
 import type { RecentProjects } from '@core/project/RecentProjects';
 import type { Logger } from '@core/logging/Logger';
 import { getEventBus } from '@core/events/EventBus';
@@ -55,6 +56,8 @@ export interface ProjectManagerDeps {
   recent: RecentProjects;
   logger?: Logger;
   io?: ProjectDocumentIO;
+  /** How documents reach disk. Defaults to the legacy single-file blob. */
+  storage?: ProjectStorage;
   now?: () => number;
   newId?: () => string;
 }
@@ -62,8 +65,9 @@ export interface ProjectManagerDeps {
 export class ProjectManager {
   private state: ProjectState = { current: null, dirty: false };
   private io: ProjectDocumentIO;
+  private readonly storage: ProjectStorage;
   private readonly listeners = new Set<(s: ProjectState) => void>();
-  private readonly deps: Required<Omit<ProjectManagerDeps, 'logger' | 'io'>> & Pick<ProjectManagerDeps, 'logger'>;
+  private readonly deps: Required<Omit<ProjectManagerDeps, 'logger' | 'io' | 'storage'>> & Pick<ProjectManagerDeps, 'logger'>;
 
   constructor(deps: ProjectManagerDeps) {
     this.io = deps.io ?? emptyDocumentIO;
@@ -74,6 +78,15 @@ export class ProjectManager {
       logger: deps.logger,
       now: deps.now ?? (() => Date.now()),
       newId: deps.newId ?? (() => `proj_${Math.random().toString(36).slice(2, 10)}`),
+    };
+    // Default storage reproduces the legacy single-file behaviour exactly, so a
+    // ProjectManager built without a `storage` dep is byte-for-byte unchanged.
+    this.storage = deps.storage ?? {
+      save: (path, doc) => this.deps.files.write(path, this.deps.service.serialize(doc)),
+      load: async (path) => {
+        const contents = await this.deps.files.read(path);
+        return contents == null ? null : this.deps.service.parse(contents);
+      },
     };
   }
 
@@ -113,17 +126,35 @@ export class ProjectManager {
   }
 
   async openPath(path: string): Promise<ProjectRef | null> {
-    const contents = await this.deps.files.read(path);
-    if (contents == null) {
+    let file: VersionedDocument | null;
+    try {
+      file = await this.storage.load(path);
+    } catch (err) {
+      this.deps.logger?.error('Failed to open project', err);
+      return null;
+    }
+    if (file == null) {
       this.deps.logger?.warn(`Project not found at ${path}`);
       return null;
     }
-    return this.load(contents, path.replace(/\.[^.]+$/, ''), path);
+    return this.applyLoadedDoc(file, path.replace(/\.[^.]+$/, ''), path);
   }
 
+  /** Open from an already-read string (the native Open dialog path). */
   private load(contents: string, name: string, path: string | null): ProjectRef | null {
+    let file: VersionedDocument;
     try {
-      const file = this.deps.service.parse(contents);
+      file = this.deps.service.parse(contents);
+    } catch (err) {
+      this.deps.logger?.error('Failed to open project', err);
+      return null;
+    }
+    return this.applyLoadedDoc(file, name, path);
+  }
+
+  /** Restore a parsed document into the engines and become the current project. */
+  private applyLoadedDoc(file: VersionedDocument, name: string, path: string | null): ProjectRef | null {
+    try {
       this.io.restore(file);
       const ref: ProjectRef = { id: this.deps.newId(), name, path };
       this.state = { current: ref, dirty: false };
@@ -157,7 +188,7 @@ export class ProjectManager {
   private async writeTo(ref: ProjectRef, path: string): Promise<boolean> {
     try {
       const file = this.io.capture();
-      await this.deps.files.write(path, this.deps.service.serialize(file));
+      await this.storage.save(path, file);
       this.state = { current: { ...ref, path }, dirty: false };
       this.emit();
       this.recordRecent(this.state.current!);
