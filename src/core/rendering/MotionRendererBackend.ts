@@ -67,8 +67,11 @@ export class MotionRendererBackend implements RenderBackend {
   /** Layer ids whose texture feed already failed — warn once, not every frame. */
   private readonly warnedTextureLayers = new Set<string>();
 
-  constructor(preferred: RendererBackendKind = 'webgl2') {
+  readonly role: 'viewport' | 'auxiliary';
+
+  constructor(preferred: RendererBackendKind = 'webgl2', role: 'viewport' | 'auxiliary' = 'viewport') {
     this.preferred = preferred;
+    this.role = role;
     this.kind = `motion-${preferred}`;
     this.readyPromise = new Promise<void>((resolve) => {
       this.resolveReady = resolve;
@@ -110,7 +113,9 @@ export class MotionRendererBackend implements RenderBackend {
 
   private async init(canvas: HTMLCanvasElement): Promise<void> {
     let lastError: unknown = null;
-    for (const attempt of this.initAttempts()) {
+    const attempts = this.initAttempts();
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i]!;
       if (this.disposed) break;
       if (attempt.delayMs) {
         await new Promise((resolve) => setTimeout(resolve, attempt.delayMs));
@@ -142,7 +147,12 @@ export class MotionRendererBackend implements RenderBackend {
           /* teardown of a half-initialized renderer is best-effort */
         }
         this.textures = null;
-        getEventBus().emit('EngineError', { engine: `motion-${attempt.kind}`, error: err as Error });
+        const isFinalAttempt = i === attempts.length - 1;
+        // Only emit EngineError if this is webgpu (stepping down to webgl2) or the final retry attempt,
+        // so temporary context races on an intermediate attempt don't trigger premature software badges.
+        if (attempt.kind === 'webgpu' || isFinalAttempt) {
+          getEventBus().emit('EngineError', { engine: `motion-${attempt.kind}`, role: this.role, error: err as Error });
+        }
         continue;
       }
       if (this.disposed) {
@@ -160,7 +170,7 @@ export class MotionRendererBackend implements RenderBackend {
       this.ready = true;
       // Corrects the tier badge after a successful fallback/retry (an earlier
       // EngineError may have flipped it to 'software' prematurely).
-      getEventBus().emit('EngineReady', { engine: `motion-${attempt.kind}` });
+      getEventBus().emit('EngineReady', { engine: `motion-${attempt.kind}`, role: this.role });
       this.resolveReady();
 
       if (this.pending) {

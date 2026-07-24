@@ -28,6 +28,7 @@ import { SplitPane } from '@components/SplitPane';
 import { LeftSidebar } from '@layout/LeftSidebar';
 import { RightInspector } from '@layout/RightInspector';
 import { WorkspaceViewport, type WorkspaceViewportProps } from '@layout/Workspace';
+import { Icon } from '@components/Icon';
 import { useLayoutStore } from '@stores/layoutStore';
 import styles from './EditorLayout.module.css';
 
@@ -60,6 +61,11 @@ export function EditorLayout({
   const setLeftSize = useLayoutStore((s) => s.setRegionSize);
   const setRightSize = useLayoutStore((s) => s.setRegionSize);
   const setBottomSize = useLayoutStore((s) => s.setRegionSize);
+  const externalPanels = useLayoutStore((s) => s.externalPanels);
+  const dockPanel = useLayoutStore((s) => s.dockPanel);
+
+  const isViewportExternal = externalPanels.includes('viewport');
+  const isTimelineExternal = externalPanels.includes('timeline');
 
   const leftSidebarEl = (
     <LeftSidebar renderers={sidebarRenderers} className={left.collapsed ? 'sidebar-collapsed-view' : ''} />
@@ -83,7 +89,17 @@ export function EditorLayout({
       onResizeEnd={(s) => setRightSize('rightInspector', s)}
     >
       <div className={styles.workspacePane}>
-        <WorkspaceViewport {...(workspaceExtras ?? {})} />
+        {isViewportExternal ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.6)', gap: 12 }}>
+            <Icon name="export" size={24} />
+            <span style={{ fontSize: 13, fontWeight: 500 }}>Preview Canvas is open in an external window</span>
+            <button onClick={() => dockPanel('viewport')} style={{ padding: '6px 16px', background: 'var(--color-primary, #2b7eff)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+              Re-dock Preview to Main Window
+            </button>
+          </div>
+        ) : (
+          <WorkspaceViewport {...(workspaceExtras ?? {})} />
+        )}
       </div>
       {rightInspectorEl}
     </SplitPane>
@@ -104,7 +120,19 @@ export function EditorLayout({
       onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
     >
       {topContent}
-      <div className={styles.timelinePane}>{timeline}</div>
+      <div className={styles.timelinePane}>
+        {isTimelineExternal ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.6)', gap: 12, background: 'var(--color-surface-2, #181819)' }}>
+            <Icon name="export" size={16} />
+            <span style={{ fontSize: 12 }}>Timeline is open in an external window</span>
+            <button onClick={() => dockPanel('timeline')} style={{ padding: '4px 12px', background: 'var(--color-primary, #2b7eff)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+              Re-dock Timeline
+            </button>
+          </div>
+        ) : (
+          timeline
+        )}
+      </div>
     </SplitPane>
   );
 
@@ -136,3 +164,4 @@ export function EditorLayout({
     </div>
   );
 }
+

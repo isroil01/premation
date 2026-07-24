@@ -147,6 +147,9 @@ function EditorShellInner(): JSX.Element {
   const addSelected = useSelectionStore((s) => s.add);
   const sceneRev = useSceneRevision((s) => s.rev);
   const active = useActiveWorkspace();
+  // Fine-grained time selector — only subscribes to the playhead value so that
+  // 60fps playback ticks don't re-render EditorShellInner via useActiveWorkspace.
+  const activeTime = useProjectStore((s) => s.activeTabId ? (s.tabs[s.activeTabId]?.time ?? 0) : 0);
   
   const compFps = useCompositionStore((s) => s.fps);
   const compWidth = useCompositionStore((s) => s.width);
@@ -197,7 +200,6 @@ function EditorShellInner(): JSX.Element {
     registerPanel({ id: 'style',       title: 'Style',        icon: 'brush',         region: 'rightInspector', weight: 4, closable: false });
     registerPanel({ id: 'rig',         title: 'Rigging',      icon: 'bone',          region: 'rightInspector', weight: 3.5, closable: false });
     registerPanel({ id: 'effects',     title: 'Effects',      icon: 'zap',           region: 'rightInspector', weight: 3, closable: false });
-    registerPanel({ id: 'motion',      title: 'Easing',       icon: 'ease',          region: 'rightInspector', weight: 2, closable: false });
     registerPanel({ id: 'motiontools',  title: 'Motion Tools', icon: 'sliders-h',     region: 'rightInspector', weight: 1.5, closable: false });
     registerPanel({ id: 'presets',     title: 'Presets',      icon: 'star',          region: 'rightInspector', weight: 1, closable: false });
     registerPanel({ id: 'misc',        title: 'Settings',     icon: 'settings',      region: 'rightInspector', weight: 0, closable: false });
@@ -447,12 +449,15 @@ function EditorShellInner(): JSX.Element {
     return result;
   }, [sceneRev, clipRev, compFps, expandedIds, active?.compositionId]);
 
-  // Mirror the scene graph into the Timeline Engine's layers whenever the scene
-  // changes (structural, non-undoable). The engine then owns the time domain.
+  // Mirror the scene graph into the Timeline Engine's layers on STRUCTURAL
+  // changes only (add/remove/reparent). Pure keyframe or property edits do not
+  // change layer geometry, so there is no need to walk the whole scene for them.
+  // Previously this was keyed on sceneRev, which fired on every drag tick and
+  // caused a full syncFromScene walk 30-60 times/second during a slider drag.
   useEffect(() => {
-    void sceneRev;
-    getTimelineController().syncFromScene();
-  }, [sceneRev]);
+    const sub = getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene());
+    return () => sub.dispose();
+  }, []);
 
   // Session hydration is owned by AppRouter (before any route renders), so the
   // editor must NOT re-hydrate here — doing so flips auth status to 'loading'
@@ -697,18 +702,27 @@ function EditorShellInner(): JSX.Element {
     };
   }, [compFps]);
 
-  // Model object carries the live playhead (currentTime) without rebuilding tracks.
+  // Model object for the timeline — deliberately does NOT include the live
+  // playhead time (activeTime). BottomTimeline reads ws?.time directly and
+  // passes it to <Timeline> as a separate `playheadTime` prop, so the model
+  // object stays referentially stable across playback frames. Without this,
+  // timelineModel was a new object 60×/s and forced the entire row tree to
+  // re-evaluate on every frame tick.
   const timelineModel = useMemo<TimelineModel>(() => ({
     duration: compDuration,
     frameRate: compFps,
     startFrame: compStartFrame,
-    currentTime: active?.time ?? 0,
+    // Keep currentTime in the model as a fallback for consumers that read it
+    // directly (GraphEditor, timecode display in BottomTimeline header). Its
+    // identity doesn't affect the timeline row tree because BottomTimeline
+    // prefers the separate playheadTime prop.
+    currentTime: activeTime,
     pixelsPerSecond: pps,
     markers,
     tracks: focusTracks,
     cachedRanges,
     ...(workArea ? { workArea } : {}),
-  }), [focusTracks, active?.time, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges]);
+  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges, activeTime]);
 
   // Real-time playback clock: pumps the Timeline Engine while `playing` is set.
   usePlaybackClock();
@@ -838,7 +852,7 @@ function EditorShellInner(): JSX.Element {
   const handlePropertyKeyframeToggle = (trackId: string, prop: string): void => {
     // Same source as the model's currentTime, so what the navigator draws and
     // what this writes can't disagree.
-    const layerT = getRemappedTime(trackId, active?.time ?? 0);
+    const layerT = getRemappedTime(trackId, activeTime);
     const at = (p: string) =>
       (defaultAnimation.getTrackKeyframes(trackId, p) ?? []).find(
         (k) => Math.abs(k.t - layerT) < KEYFRAME_EPSILON,
@@ -885,7 +899,7 @@ function EditorShellInner(): JSX.Element {
       });
       return;
     }
-    const layerT = getRemappedTime(trackId, active?.time ?? 0);
+    const layerT = getRemappedTime(trackId, activeTime);
     runAnimEdit('Enable animation', () => {
       for (const p of props) defaultAnimation.setKeyframe(trackId, p, layerT, propertyValueAt(trackId, p, layerT));
     });
@@ -901,12 +915,12 @@ function EditorShellInner(): JSX.Element {
    * keyframe at 1s.
    */
   const handlePropertyValue = (trackId: string, prop: string): number =>
-    propertyValueAt(trackId, prop, getRemappedTime(trackId, active?.time ?? 0));
+    propertyValueAt(trackId, prop, getRemappedTime(trackId, activeTime));
 
   const handlePropertyValueChange = (trackId: string, prop: string, value: number): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node || node.locked) return;
-    const rawTime = active?.time ?? 0;
+    const rawTime = activeTime;
     const layerT = getRemappedTime(trackId, rawTime);
     // Same contract as the inspector: an animated property keyframes at the
     // playhead; an un-animated one edits its static base.
@@ -1101,7 +1115,7 @@ function EditorShellInner(): JSX.Element {
                   <FpsMeter />
                   <span style={{ opacity: 0.4 }}>·</span>
                   <span style={{ fontFamily: 'var(--font-family-mono)', fontVariantNumeric: 'tabular-nums' }}>
-                    {framesToTimecode(active?.time ?? 0, compFps, compStartFrame)}
+                    {framesToTimecode(activeTime, compFps, compStartFrame)}
                   </span>
                   <span style={{ opacity: 0.4 }}>·</span>
                   <button

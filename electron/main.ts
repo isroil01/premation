@@ -1,6 +1,6 @@
 import { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol, net, type MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
-import { readFile, writeFile, mkdir, rename, unlink, readdir, access } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { startBackend, stopBackend } from './backend';
@@ -255,7 +255,10 @@ function registerRenderIpc(): void {
   ipcMain.handle('render:stageFrame', async (_e, jobId: string, index: number, bytes: Uint8Array) => {
     const dir = jobs.get(jobId);
     if (!dir) throw new Error('unknown render job');
-    await writeFile(path.join(dir, `frame_${String(index).padStart(6, '0')}.png`), Buffer.from(bytes));
+    // Frame naming must match the producer (exportManager.ts frameFileName):
+    // 4-digit zero-padding, JPEG extension. This is a cross-repo contract —
+    // FRAME_SEQUENCE_PAD=4 and the .jpg extension are the authoritative spec.
+    await writeFile(path.join(dir, `frame_${String(index).padStart(4, '0')}.jpg`), Buffer.from(bytes));
   });
 
   ipcMain.handle('render:stageAudio', async (_e, jobId: string, bytes: Uint8Array) => {
@@ -269,10 +272,22 @@ function registerRenderIpc(): void {
     if (!dir) throw new Error('unknown render job');
     const out = path.join(dir, 'out.mp4');
     const audio = opts.hasAudio ? path.join(dir, 'audio.wav') : null;
+
+    // Validate that at least one frame was staged before invoking FFmpeg.
+    // FFmpeg will write a valid, playable container with no video stream and
+    // exit code 0 when given an empty glob — producing exactly the reported
+    // "blank MP4" symptom. Fail loudly instead.
+    const stagedFiles = await readdir(dir);
+    const frameCount = stagedFiles.filter((f) => /^frame_\d+\.jpg$/i.test(f)).length;
+    if (frameCount === 0) {
+      throw new Error('render:muxMp4: no frames were staged — aborting to avoid a silent blank output');
+    }
+
     const args = [
       '-y',
       '-framerate', String(opts.fps),
-      '-i', path.join(dir, 'frame_%06d.png'),
+      // Pattern matches the 4-digit JPEG frames written by render:stageFrame.
+      '-i', path.join(dir, 'frame_%04d.jpg'),
       ...(audio ? ['-i', audio] : []),
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
@@ -282,6 +297,17 @@ function registerRenderIpc(): void {
     ];
     await runFfmpeg(args);
     return { path: out };
+  });
+
+  ipcMain.handle('render:cleanJob', async (_e, jobId: string) => {
+    const dir = jobs.get(jobId);
+    if (!dir) return;
+    jobs.delete(jobId);
+    try {
+      await rm(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore cleanup errors */
+    }
   });
 }
 
@@ -360,8 +386,25 @@ function createMainWindow(): BrowserWindow {
 
   win.once('ready-to-show', () => win.show());
 
-  // External links open in the default browser, never in-app.
+  // External links open in default browser; pop-out window links spawn internal Electron desktop windows.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.includes('popout') || url.includes('#/popout/')) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          frame: false,
+          autoHideMenuBar: true,
+          backgroundColor: '#0a0a0b',
+          webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+            webgl: true,
+          },
+        },
+      };
+    }
     void shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -375,6 +418,49 @@ function createMainWindow(): BrowserWindow {
   }
 
   return win;
+}
+
+function registerPopoutIpc(): void {
+  ipcMain.handle('popout:spawnWindow', (event, panelId: string) => {
+    const parentWin = BrowserWindow.fromWebContents(event.sender);
+    const popoutWin = new BrowserWindow({
+      width: 1000,
+      height: 700,
+      minWidth: 400,
+      minHeight: 300,
+      title: `${panelId} — Motion Editor`,
+      backgroundColor: '#0a0a0b',
+      autoHideMenuBar: true,
+      frame: false,
+      parent: parentWin ?? undefined,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        webgl: true,
+      },
+    });
+
+    const isDev = process.env.NODE_ENV === 'development';
+    const popoutUrl = isDev
+      ? `http://localhost:5173/#/popout/${panelId}`
+      : `file://${path.join(__dirname, '..', 'dist', 'index.html')}#/popout/${panelId}`;
+
+    void popoutWin.loadURL(popoutUrl);
+    popoutWin.once('ready-to-show', () => popoutWin.show());
+  });
+
+  ipcMain.handle('monitors:get', () => {
+    const { screen } = require('electron');
+    return screen.getAllDisplays().map((d: any) => ({
+      id: String(d.id),
+      label: d.label || `Display ${d.id}`,
+      bounds: d.bounds,
+      isPrimary: d.bounds.x === 0 && d.bounds.y === 0,
+      scaleFactor: d.scaleFactor,
+    }));
+  });
 }
 
 app.whenReady().then(() => {
@@ -394,6 +480,7 @@ app.whenReady().then(() => {
   registerBlobIpc();
   registerIndexIpc(ipcMain, app);
   registerRenderIpc();
+  registerPopoutIpc();
   // NOTE: no AI IPC any more. AI runs through the backend gateway
   // (POST /ai/stream) with the user's keys stored server-side — this process
   // holds no AI privileges at all.

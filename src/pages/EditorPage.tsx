@@ -97,6 +97,7 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
 // CloudThumbnail removed; using worker component instead
 
 import { Suspense, lazy } from 'react';
+import { LoadingScreen } from '@components/LoadingScreen';
 
 const LazyEditorShell = lazy(() => import('../App').then(m => ({ default: m.EditorShell })));
 
@@ -104,7 +105,7 @@ export function EditorPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
   return (
     <Providers>
-      <Suspense fallback={<div>Loading editor…</div>}>
+      <Suspense fallback={<LoadingScreen message="Loading editor…" />}>
         {projectId ? <ProjectLoader projectId={projectId} /> : null}
         {projectId ? <CloudAutosave projectId={projectId} /> : null}
         {projectId ? <CloudThumbnailWorker projectId={projectId} /> : null}

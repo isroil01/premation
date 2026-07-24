@@ -4,8 +4,8 @@
  * trail, and the active-set (used to dim timeline/tree rows).
  */
 
+import { useMemo } from 'react';
 import { useFocusStore, focusActiveSet, isFocusActive } from '@stores/focusStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SnapshotFocus } from '@core/rendering/buildSnapshot';
 
@@ -30,10 +30,24 @@ const nameOf = (id: string): string => defaultSceneGraph.getNode(id)?.name ?? 'L
 export function useFocusContext(): FocusContext {
   const path = useFocusStore((s) => s.path);
   const isolatedId = useFocusStore((s) => s.isolatedId);
-  // Subtree membership can change as the scene changes.
-  useSceneRevision((s) => s.rev);
 
-  const activeSet = focusActiveSet(path, isolatedId);
+  // Memoised so the Set identity is stable between sceneRev bumps. Previously
+  // useFocusContext subscribed to sceneRev, causing focusActiveSet() to return
+  // a new Set on every scene edit — even when focus state hadn't changed — which
+  // invalidated the focusTracks memo and cascaded into a full timelineModel
+  // rebuild on every property drag tick.
+  //
+  // The activeSet only needs to recompute when path/isolatedId change (i.e. when
+  // the user enters or exits focus mode). The renderer updates independently via
+  // its own sceneRev path; timeline ghosting is a visual hint, not a gate.
+  const activeSet = useMemo(
+    () => focusActiveSet(path, isolatedId),
+    // path is a ReadonlyArray — compare by joining so a new array with the same
+    // contents (Zustand shallow-copy) doesn't bust the memo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [path.join(','), isolatedId],
+  );
+
   const active = isFocusActive({ path, isolatedId });
   const focus: SnapshotFocus | undefined = activeSet
     ? { isGhost: (id) => !activeSet.has(id) }

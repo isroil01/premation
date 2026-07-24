@@ -35,6 +35,8 @@ import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isRiggableLeafNode } from '@core/scene/rigLogo';
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
+import { getWorkspaceManager } from '@core/layout/workspaceManager';
+import { useLayoutStore } from '@stores/layoutStore';
 import styles from './TopNav.module.css';
 
 interface ToolDef {
@@ -685,11 +687,43 @@ export function TopNav(): JSX.Element {
             </>
           )}
 
-          {/* Customize / Settings */}
+          {/* Customize / Settings & Workspaces */}
           {!hideCustomize && (
             <>
               <span className={styles.toolDivider} aria-hidden />
               <div className={styles.toolGroup}>
+                <Dropdown
+                  placement="bottom-end"
+                  trigger={
+                    <button
+                      type="button"
+                      className={styles.toolDropdownTrigger}
+                      aria-label="Workspaces"
+                      title="Workspaces & Layout Presets"
+                    >
+                      <Icon name="layout" size={16} />
+                      <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+                    </button>
+                  }
+                  items={[
+                    { type: 'item', id: 'ws-default', label: 'Default Layout', icon: 'layout', onSelect: () => getWorkspaceManager().applyWorkspace('default') },
+                    { type: 'item', id: 'ws-motion', label: 'Motion Design', icon: 'sparkles', onSelect: () => getWorkspaceManager().applyWorkspace('motion-design') },
+                    { type: 'item', id: 'ws-ai', label: 'AI Focus', icon: 'ai', onSelect: () => getWorkspaceManager().applyWorkspace('ai-focus') },
+                    { type: 'item', id: 'ws-anim', label: 'Animation', icon: 'keyframe', onSelect: () => getWorkspaceManager().applyWorkspace('animation') },
+                    { type: 'item', id: 'ws-vfx', label: 'Color & VFX', icon: 'brush', onSelect: () => getWorkspaceManager().applyWorkspace('color-grading') },
+                    { type: 'separator' },
+                    { type: 'item', id: 'ws-dual', label: 'Dual Monitor Studio', icon: 'tv', onSelect: () => getWorkspaceManager().applyWorkspace('dual-monitor-studio') },
+                    { type: 'item', id: 'ws-present', label: 'Presentation Mode', icon: 'play', onSelect: () => getWorkspaceManager().applyWorkspace('presentation') },
+                    { type: 'item', id: 'ws-minimal', label: 'Minimal Canvas', icon: 'fit', onSelect: () => getWorkspaceManager().applyWorkspace('minimal') },
+                    { type: 'separator' },
+                    { type: 'item', id: 'ws-save', label: 'Save Current Workspace…', icon: 'download', onSelect: () => {
+                        const name = window.prompt('Enter a name for your custom workspace layout:');
+                        if (name) getWorkspaceManager().saveCurrentWorkspace(name);
+                      }
+                    },
+                    { type: 'item', id: 'ws-reset', label: 'Reset Layout to Default', icon: 'undo', onSelect: () => useLayoutStore.getState().resetLayout() },
+                  ]}
+                />
                 <button
                   type="button"
                   className={styles.tool}

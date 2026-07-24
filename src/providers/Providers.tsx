@@ -40,6 +40,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
+import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
 import { chooseBundleDir } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
@@ -1159,18 +1160,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
   }, []);
 
   if (!ready) {
-    return (
-      <div
-        style={{
-          height: '100%',
-          display: 'grid',
-          placeItems: 'center',
-          color: 'var(--color-text-muted)',
-        }}
-      >
-        Loading editor…
-      </div>
-    );
+    return <LoadingScreen message="Loading editor…" />;
   }
 
   // TooltipProvider is mounted at the app root (main.tsx) so it also covers the

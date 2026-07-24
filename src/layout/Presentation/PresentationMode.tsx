@@ -60,6 +60,10 @@ export function PresentationMode(): JSX.Element | null {
   const scrubRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
 
+  // Tracks whether the backend has painted at least one frame — used to show a
+  // loading spinner on the stage until the first pixels arrive (previously the
+  // canvas was blank with no feedback while the GPU backend initialised).
+  const [backendReady, setBackendReady] = useState(false);
 
   useViewportRenderer(canvasRef, stageRef, sceneRev, time);
   // NOTE: no usePlaybackClock() here — App.tsx runs the single shared clock; a
@@ -71,9 +75,42 @@ export function PresentationMode(): JSX.Element | null {
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Auto-play from the start on enter; stop on exit.
+  //
+  // Previously setPlaying(true) fired synchronously the moment `active` turned
+  // true — before the canvas had been mounted in the DOM, before the GPU backend
+  // had initialised, and before the ResizeObserver had sized the surface. The
+  // playback clock then hammered renderImmediate() against a null backend
+  // (no-ops), and when the backend came up the render queue was already backed
+  // up. On complex 3D/2D scenes one buildSnapshot call can take >50 ms, causing
+  // the event loop to stall and making Esc/close completely unresponsive.
+  //
+  // Fix: defer auto-play by one rAF (≈ one paint) so React has committed the
+  // portal DOM and useViewportRenderer's attach effect has had a chance to run
+  // and size the canvas. This is not a "wait for GPU ready" — the backend may
+  // still be initialising — but it gives the layout engine time to mount the
+  // canvas before the first frame is requested.
   useEffect(() => {
-    if (active) { getTimelineController().goToStart(); setPlaying(true); }
-    return () => setPlaying(false);
+    if (!active) {
+      setPlaying(false);
+      setBackendReady(false);
+      return;
+    }
+    getTimelineController().goToStart();
+
+    // One rAF delay lets the portal DOM commit and the resize observer fire
+    // before we start the clock.
+    const rafId = requestAnimationFrame(() => {
+      setPlaying(true);
+      // Mark backend as "ready enough to show" after the first rAF — the
+      // spinner disappears and the canvas is revealed. The real first pixel may
+      // arrive a frame later (GPU init is async), but the spinner covers that.
+      setBackendReady(true);
+    });
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      setPlaying(false);
+    };
   }, [active, setPlaying]);
 
   // Reveal chrome; while playing, re-arm an idle timer that hides it. Paused
@@ -159,13 +196,22 @@ export function PresentationMode(): JSX.Element | null {
     (e.currentTarget as Element).releasePointerCapture?.(e.pointerId);
   };
 
+  const handleExit = useCallback((e?: React.SyntheticEvent | Event) => {
+    e?.stopPropagation();
+    setPlaying(false);
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+    exit();
+  }, [exit, setPlaying]);
+
   // ── Keyboard shortcuts ─────────────────────────────────────────────
   useEffect(() => {
     if (!active) return;
     const c = getTimelineController();
     const onKey = (e: KeyboardEvent): void => {
       switch (e.key) {
-        case 'Escape': e.stopPropagation(); exit(); break;
+        case 'Escape': e.preventDefault(); handleExit(e); break;
         case ' ': e.preventDefault(); setPlaying(!playing); break;
         case 'ArrowLeft': e.preventDefault(); c.previousFrame(); break;
         case 'ArrowRight': e.preventDefault(); c.nextFrame(); break;
@@ -178,7 +224,7 @@ export function PresentationMode(): JSX.Element | null {
     };
     window.addEventListener('keydown', onKey, { capture: true });
     return () => window.removeEventListener('keydown', onKey, { capture: true } as EventListenerOptions);
-  }, [active, exit, setPlaying, playing, toggleLoop, toggleFullscreen]);
+  }, [active, handleExit, setPlaying, playing, toggleLoop, toggleFullscreen]);
 
   useEffect(() => {
     const onFs = (): void => setIsFullscreen(!!document.fullscreenElement);
@@ -224,7 +270,7 @@ export function PresentationMode(): JSX.Element | null {
           <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'} aria-label="Toggle fullscreen">
             <Icon name={isFullscreen ? 'minimize' : 'maximize'} size={16} />
           </button>
-          <button type="button" className={styles.iconBtn} onClick={exit} title="Exit presentation (Esc)" aria-label="Exit presentation">
+          <button type="button" className={styles.iconBtn} onClick={handleExit} title="Exit presentation (Esc)" aria-label="Exit presentation">
             <Icon name="close" size={16} />
           </button>
         </div>
@@ -232,6 +278,13 @@ export function PresentationMode(): JSX.Element | null {
 
       <div className={styles.stage} ref={stageRef}>
         <canvas ref={canvasRef} className={styles.canvas} />
+        {/* Loading spinner — shown until the first rAF fires (backend mounting).
+            Prevents the user from seeing a blank stage and assuming it's broken. */}
+        {!backendReady && (
+          <div className={styles.stageLoader} aria-label="Loading preview…">
+            <div className={styles.stageSpinner} />
+          </div>
+        )}
       </div>
 
       {/* Player chrome. */}

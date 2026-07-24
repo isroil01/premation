@@ -88,32 +88,66 @@ export function useViewportRenderer(
   const motionBlurRef = useRef({ enabled: mbEnabled, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps });
   motionBlurRef.current = { enabled: mbEnabled, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps };
 
-  const render = useCallback(() => {
+  const rafIdRef = useRef<number | null>(null);
+
+  // Wrap in try/finally so a buildSnapshot/renderFrame exception never
+  // permanently wedges rafIdRef.current at a non-null handle — if it got
+  // stuck, the RAF deduplication guard would silently halt all future renders.
+  const renderImmediate = useCallback(() => {
     const b = backendRef.current;
     if (!b) return;
-    b.renderFrame({
-      ...buildSnapshot(
-        defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
-        overlaysRef.current, undefined, motionBlurRef.current,
-        // rootId scopes the render to THIS composition's subtree. Custom views
-        // resolve to a pre-built override camera (scene camera ignored).
-        {
-          ...compRef.current,
-          rootId: compRef.current.id,
-          ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
-        },
-      ),
-      // View-only: the channel never reaches export, which always writes colour.
-      channel: channelRef.current,
-    });
+    try {
+      b.renderFrame({
+        ...buildSnapshot(
+          defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
+          overlaysRef.current, undefined, motionBlurRef.current,
+          // rootId scopes the render to THIS composition's subtree. Custom views
+          // resolve to a pre-built override camera (scene camera ignored).
+          {
+            ...compRef.current,
+            rootId: compRef.current.id,
+            ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
+          },
+        ),
+        // View-only: the channel never reaches export, which always writes colour.
+        channel: channelRef.current,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[useViewportRenderer] renderImmediate failed:', err);
+    } finally {
+      // Always clear the guard so future render() calls can schedule a new RAF.
+      rafIdRef.current = null;
+    }
   }, []);
 
-  // Attach the backend + observe size. Refs in a dependency array never re-fire
-  // an effect, so the old `[canvasRef.current]` deps left the backend
-  // unattached (blank canvas) whenever the refs filled in after the first
-  // render — e.g. Presentation Mode's conditional portal. Instead this effect
-  // runs on every commit, manages the attach lifecycle manually (attach is
-  // idempotent per canvas), and a separate unmount effect tears down.
+  // Coalesce render requests into requestAnimationFrame so complex 2D/3D frames
+  // yield execution to the browser event loop between renders. Without RAF
+  // coalescing, synchronous rendering at 60 FPS on heavy 3D scenes locks up
+  // the main thread and prevents user interactions (clicks, keyboard, Esc) from
+  // processing.
+  const render = useCallback(() => {
+    if (rafIdRef.current !== null) return;
+    rafIdRef.current = requestAnimationFrame(() => {
+      // rafIdRef.current is reset inside renderImmediate's finally block,
+      // which covers both the success and exception paths.
+      renderImmediate();
+    });
+  }, [renderImmediate]);
+
+  // Attach the backend + observe size.
+  //
+  // NOTE: The dep array is intentionally [] (not [canvasRef.current, ...]).
+  // Ref `.current` values are NOT reactive — React won't re-run the effect
+  // when they change, so listing them as deps is incorrect and the backend
+  // never re-attached when PresentationMode opened a new canvas (blank stage).
+  // Instead we rely on:
+  //   a) Reading current DOM nodes at effect run-time (set before paint).
+  //   b) The `attachedRef.current === canvas` identity guard to skip
+  //      redundant re-attaches (idempotent).
+  //   c) The hook being mounted inside components that re-mount when the
+  //      portal opens/closes (PresentationMode, SecondaryViewPane), so the
+  //      [] effect re-runs naturally whenever a fresh canvas is mounted.
   const attachedRef = useRef<HTMLCanvasElement | null>(null);
   const teardownRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -143,7 +177,7 @@ export function useViewportRenderer(
     const doResize = (): void => {
       const r = container.getBoundingClientRect();
       backend.resize(r.width, r.height, dpr / resolutionRef.current);
-      render();
+      renderImmediate();
     };
     const ro = new ResizeObserver(doResize);
     ro.observe(container);
@@ -152,8 +186,7 @@ export function useViewportRenderer(
     // The GPU backend initializes asynchronously; its first renderFrame before
     // that coalesces to a pending frame. Re-render once it's ready so the
     // preview isn't left blank when the comp is small or the container settled
-    // before the device came up (the editor viewport has many retry triggers;
-    // this lighter surface had almost none).
+    // before the device came up.
     let cancelled = false;
     backend.readyPromise?.then(() => {
       if (!cancelled && backendRef.current === backend) doResize();
@@ -164,6 +197,10 @@ export function useViewportRenderer(
 
     teardownRef.current = () => {
       cancelled = true;
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
       ro.disconnect();
       sub.dispose();
       backend.dispose();
@@ -171,9 +208,19 @@ export function useViewportRenderer(
       attachedRef.current = null;
       teardownRef.current = null;
     };
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Final unmount teardown.
-  useEffect(() => () => teardownRef.current?.(), []);
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      teardownRef.current?.();
+    };
+  }, []);
 
   // Re-render on scene change, playhead move, focus change, guide toggle, or
   // camera view-mode flip (camera3dMode was previously missing — the 3D/2D

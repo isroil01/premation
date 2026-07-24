@@ -177,7 +177,7 @@
   top: 0;
   z-index: var(--z-index-popover, 1360);
   min-width: 180px;
-  background: color-mix(in srgb, var(--color-surface-raised) 88%, transparent);
+  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid var(--color-border-strong);
@@ -187,6 +187,11 @@
   list-style: none;
   margin: 0;
   box-shadow: var(--shadow-popover);
+}
+
+.moveMenuRightInspector {
+  left: auto !important;
+  right: 110% !important;
 }
 
 .moveMenuLabel {

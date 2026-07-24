@@ -216,6 +216,17 @@ export function ViewportHeader(): JSX.Element {
           <Icon name={workspaceMode === 'fixed' ? 'lock' : 'hand'} size={12} />
         </button>
         <ViewControls />
+        <button
+          className={styles.headerBtn}
+          onClick={() => {
+            const url = `${window.location.origin}${window.location.pathname}#/popout/viewport`;
+            window.open(url, 'popout-viewport', 'width=1280,height=720,resizable=yes');
+          }}
+          title="Pop Out Viewport Preview into Window"
+          style={{ marginLeft: 4 }}
+        >
+          <Icon name="export" size={12} />
+        </button>
       </div>
     </div>
   );

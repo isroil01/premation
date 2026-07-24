@@ -137,12 +137,25 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
     setMoveMenuOpen(false);
   };
 
+  const popoutActivePanel = () => {
+    if (targetPanelId) {
+      useLayoutStore.getState().popoutPanel(targetPanelId);
+      if (window.motionEditor?.popout?.spawnWindow) {
+        window.motionEditor.popout.spawnWindow(targetPanelId);
+      } else {
+        const url = `${window.location.origin}${window.location.pathname}#/popout/${targetPanelId}`;
+        window.open(url, `popout-${targetPanelId}`, 'width=900,height=650,resizable=yes');
+      }
+    }
+    setMoveMenuOpen(false);
+  };
+
   const gripButton = (
     <div className={styles.gripWrap} ref={popoverRef}>
       <button
         type="button"
         className={cn(styles.gripBtn, moveMenuOpen && styles.gripBtnActive)}
-        title={`Move “${targetLabel}” to another region`}
+        title={`Move or Detach “${targetLabel}”`}
         aria-label="Move panel to another region"
         aria-haspopup="true"
         aria-expanded={moveMenuOpen}
@@ -151,8 +164,21 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
         <Icon name="grip-vertical" size={12} />
       </button>
       {moveMenuOpen && (
-        <ul className={styles.moveMenu} role="menu">
-          <li className={styles.moveMenuLabel} role="none">Move “{targetLabel}” to…</li>
+        <ul className={cn(styles.moveMenu, isRightInspector && styles.moveMenuRightInspector)} role="menu">
+          <li className={styles.moveMenuLabel} role="none">Panel “{targetLabel}”</li>
+
+          <li role="none">
+            <button
+              type="button"
+              role="menuitem"
+              className={styles.moveMenuItem}
+              onClick={popoutActivePanel}
+            >
+              Pop Out into Window
+            </button>
+          </li>
+
+          <li className={styles.moveMenuLabel} style={{ marginTop: 6 }} role="none">Move Dock to…</li>
           {destinations.map((dest) => (
             <li key={dest} role="none">
               <button

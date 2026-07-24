@@ -97,22 +97,22 @@ export async function renderOffline(
   signal?: AbortSignal,
 ): Promise<number> {
   const canvas = document.createElement('canvas');
-  const backend = createRenderBackend();
-  backend.attach(canvas);
-  backend.resize(params.width, params.height, 1);
-  // Frame-accurate media: sub-millisecond video seeks + collected waits, so a
-  // captured frame can never show the PREVIOUS frame's footage. Without this,
-  // seeks were async fire-and-forget with a ±0.05s deadband — every exported
-  // video layer lagged a frame and stuttered at ~half rate.
-  backend.setExactMediaTiming?.(true);
-
-  if (backend.readyPromise) {
-    await backend.readyPromise;
-  }
-
-  const { start, end } = resolveRange(params);
-  const total = end - start + 1;
+  const backend = createRenderBackend('auto', 'auxiliary');
   try {
+    backend.attach(canvas);
+    backend.resize(params.width, params.height, 1);
+    // Frame-accurate media: sub-millisecond video seeks + collected waits, so a
+    // captured frame can never show the PREVIOUS frame's footage. Without this,
+    // seeks were async fire-and-forget with a ±0.05s deadband — every exported
+    // video layer lagged a frame and stuttered at ~half rate.
+    backend.setExactMediaTiming?.(true);
+
+    if (backend.readyPromise) {
+      await backend.readyPromise;
+    }
+
+    const { start, end } = resolveRange(params);
+    const total = end - start + 1;
     for (let i = start; i <= end; i++) {
       if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
       const t = frameTimeAt(i, params.fps);
@@ -141,10 +141,10 @@ export async function renderOffline(
       // Yield so progress paints and cancellation can interrupt.
       await new Promise<void>((r) => setTimeout(r, 0));
     }
+    return total;
   } finally {
     backend.dispose();
   }
-  return total;
 }
 
 /**

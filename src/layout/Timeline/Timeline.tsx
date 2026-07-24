@@ -16,6 +16,7 @@
  */
 
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -126,9 +127,18 @@ export interface TimelineProps {
   className?: string;
   searchQuery?: string;
   globalShy?: boolean;
+  /**
+   * Playhead time in seconds, supplied SEPARATELY from `model` so playback
+   * (60 fps) does not rebuild the model and force the entire row tree to
+   * re-render. When set, the playhead visual, the per-property "at playhead"
+   * markers, the playhead-keyboard nudge, and the PropertyHeader time all
+   * read from this value; `model.currentTime` is then used only for
+   * non-realtime consumers (GraphEditor, BottomTimeline timecode).
+   */
+  playheadTime?: number;
 }
 
-export function Timeline({
+function Timeline({
   model,
   onScrub,
   onWorkAreaChange,
@@ -164,6 +174,7 @@ export function Timeline({
   searchQuery,
   globalShy,
   onDurationChange,
+  playheadTime,
 }: TimelineProps): JSX.Element {
   const rulerHeight = model.rulerHeight ?? RULER_HEIGHT_DEFAULT;
   const trackHeight = model.trackHeight ?? TRACK_HEIGHT_DEFAULT;
@@ -174,6 +185,12 @@ export function Timeline({
   const prefHeaderWidth = usePreferenceStore((s) => s.timelineHeaderWidth);
   const setPref = usePreferenceStore((s) => s.set);
   const headerWidth = model.trackHeaderWidth ?? prefHeaderWidth ?? TRACK_HEADER_WIDTH_DEFAULT;
+
+  // Playhead is the one value that changes 60×/s during playback. We accept
+  // it as a separate prop so the model can stay referentially stable and the
+  // row tree (memos below) doesn't recompute. Fall back to model.currentTime
+  // for callers that still pass the time inside the model.
+  const currentTime = playheadTime ?? model.currentTime;
 
   const lanesRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -556,10 +573,10 @@ export function Timeline({
       let next: number | null = null;
       switch (e.key) {
         case 'ArrowLeft':
-          next = model.currentTime - (e.shiftKey ? 1 : frame);
+          next = currentTime - (e.shiftKey ? 1 : frame);
           break;
         case 'ArrowRight':
-          next = model.currentTime + (e.shiftKey ? 1 : frame);
+          next = currentTime + (e.shiftKey ? 1 : frame);
           break;
         case 'Home':
           next = 0;
@@ -573,7 +590,7 @@ export function Timeline({
       e.preventDefault();
       onScrub?.(clamp(next, 0, totalSeconds));
     },
-    [model.frameRate, model.currentTime, totalSeconds, onScrub],
+    [model.frameRate, currentTime, totalSeconds, onScrub],
   );
 
   // ── Track row reorder ──────────────────────────────────────────────────────
@@ -849,7 +866,7 @@ export function Timeline({
     [model.tracks],
   );
 
-  const playheadX = model.currentTime * pps;
+  const playheadX = currentTime * pps;
 
   return (
     <div ref={containerRef} className={cn(styles.root, className)} onWheel={onWheel}>
@@ -861,7 +878,20 @@ export function Timeline({
         <div className={styles.ruler} style={{ height: rulerHeight }}>
           {/* Column heads for the switches and modes (AE layout). */}
           <div className={styles.colHeads} aria-hidden>
-            <span className={styles.colHeadLayer}>Layer Name</span>
+            <span className={styles.colHeadLayer} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>Layer Name</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
+                  window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
+                }}
+                title="Pop Out Timeline into Separate Window"
+                style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, display: 'inline-flex' }}
+              >
+                <Icon name="export" size={12} />
+              </button>
+            </span>
             <span className={styles.colHeadMode}>Mode</span>
             <span className={styles.colHeadMatte}>Track Matte</span>
             <span className={styles.colHeadParent}>Parent & Link</span>
@@ -928,7 +958,7 @@ export function Timeline({
                   label={row.prop.label}
                   style={rowStyle}
                   keyframes={row.prop.keyframes}
-                  currentTime={model.currentTime}
+                  currentTime={currentTime}
                   animated={row.prop.animated !== false}
                   onToggleKeyframe={
                     onPropertyKeyframeToggle
@@ -1198,8 +1228,8 @@ export function Timeline({
               aria-orientation="horizontal"
               aria-valuemin={0}
               aria-valuemax={model.duration}
-              aria-valuenow={model.currentTime}
-              aria-valuetext={`${model.currentTime.toFixed(2)} seconds`}
+              aria-valuenow={currentTime}
+              aria-valuetext={`${currentTime.toFixed(2)} seconds`}
             >
               <div className={styles.playheadHead} />
             </div>
@@ -1224,6 +1254,20 @@ export function Timeline({
     </div>
   );
 }
+
+/**
+ * Memoize so that the row tree (and its many sub-memos) does not re-run
+ * whenever the host re-renders for an unrelated reason — the entire point
+ * of the `playheadTime` prop is that the model can stay referentially
+ * stable across playback frames, and a plain `React.memo` on this entry
+ * point makes that promise real.
+ *
+ * The file is consumed as `import { Timeline } from './Timeline'`; this
+ * `React.memo` wrap is what that name resolves to, so consumers get the
+ * skipped-render behavior for free.
+ */
+const MemoizedTimeline = memo(Timeline);
+export { MemoizedTimeline as Timeline };
 
 /** Vertical overview of all rows with a draggable viewport window. */
 function Minimap({

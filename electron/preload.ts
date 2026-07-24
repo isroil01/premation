@@ -45,6 +45,7 @@ const bridge = {
     stageAudio: (jobId: string, bytes: Uint8Array) => ipcRenderer.invoke('render:stageAudio', jobId, bytes),
     muxMp4: (jobId: string, opts: { fps: number; hasAudio?: boolean }) =>
       ipcRenderer.invoke('render:muxMp4', jobId, opts),
+    cleanJob: (jobId: string) => ipcRenderer.invoke('render:cleanJob', jobId),
   },
 
   index: {
@@ -58,6 +59,12 @@ const bridge = {
     listRecovery: (projectId: string) => ipcRenderer.invoke('index:listRecovery', projectId),
     clearRecovery: (projectId: string) => ipcRenderer.invoke('index:clearRecovery', projectId),
   },
+
+  popout: {
+    spawnWindow: (panelId: string) => ipcRenderer.invoke('popout:spawnWindow', panelId),
+  },
+
+  getMonitors: () => ipcRenderer.invoke('monitors:get'),
 
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

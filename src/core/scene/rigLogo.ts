@@ -251,6 +251,7 @@ export async function rasterizeSelection(roots: readonly string[], graph: SceneG
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
 
+  let backend: import('@core/rendering/RenderBackend').RenderBackend | null = null;
   try {
     // Lazy-load the render engine so this module (and its pure helpers) stays
     // importable in environments without a GPU/canvas.
@@ -265,7 +266,7 @@ export async function rasterizeSelection(roots: readonly string[], graph: SceneG
     const dpr = Math.min(dpr0, MAX_RASTER_DIM / Math.max(w, h));
 
     const canvas = document.createElement('canvas');
-    const backend = createRenderBackend();
+    backend = createRenderBackend('auto', 'auxiliary');
     backend.attach(canvas);
     backend.setPreviewChrome?.(false);
     backend.resize(w, h, dpr);
@@ -294,19 +295,17 @@ export async function rasterizeSelection(roots: readonly string[], graph: SceneG
     scratch.width = Math.max(1, Math.round(w * dpr));
     scratch.height = Math.max(1, Math.round(h * dpr));
     const ctx = scratch.getContext('2d');
-    if (!ctx) {
-      backend.dispose();
-      return null;
-    }
+    if (!ctx) return null;
     ctx.drawImage(canvas, 0, 0);
     const dataUrl = scratch.toDataURL('image/png');
-    backend.dispose();
 
     const first = graph.getNode(roots[0]!);
     const baseName = (first?.name ?? 'Logo').replace(/\s*\(Rigged\)\s*$/i, '');
     return { dataUrl, compWidth: w, compHeight: h, centerX, centerY, name: `${baseName} (Rigged)` };
   } catch {
     return null;
+  } finally {
+    backend?.dispose();
   }
 }
 

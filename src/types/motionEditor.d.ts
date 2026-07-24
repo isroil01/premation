@@ -62,6 +62,7 @@ export interface MotionEditorApi {
     stageFrame?(jobId: string, index: number, bytes: Uint8Array): Promise<void>;
     stageAudio?(jobId: string, bytes: Uint8Array): Promise<void>;
     muxMp4?(jobId: string, opts: { fps: number; hasAudio?: boolean }): Promise<{ path: string }>;
+    cleanJob?(jobId: string): Promise<void>;
   };
   /**
    * Local project index (SQLite in the main process). Every method mirrors the
@@ -84,6 +85,12 @@ export interface MotionEditorApi {
     maximize?(): Promise<void>;
     close?(): Promise<void>;
   };
+  popout?: {
+    spawnWindow?(panelId: string): void;
+    sendStateUpdate?(data: unknown): void;
+    onStateSync?(handler: (data: unknown) => void): () => void;
+  };
+  getMonitors?(): Promise<Array<{ id: string; label: string; bounds: { x: number; y: number; width: number; height: number }; isPrimary: boolean; scaleFactor: number }>>;
   app?: {
     quit?(): Promise<void>;
     version?(): Promise<string>;

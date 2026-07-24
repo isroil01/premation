@@ -97,6 +97,7 @@ export function onComponentThumbReady(fn: () => void): () => void {
 }
 
 async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
+  const backend = createRenderBackend('auto', 'auxiliary');
   try {
     const b = treeBounds(def.root as unknown as SerializedNodeLike);
     const pad = 12;
@@ -109,7 +110,6 @@ async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
     addTree(graph, def.root as unknown as SerializedNodeLike, null, pad - b.minX, pad - b.minY);
     const scale = Math.min(THUMB_W / w, THUMB_H / h);
     const canvas = document.createElement('canvas');
-    const backend = createRenderBackend();
     backend.attach(canvas);
     backend.setPreviewChrome?.(false);
     backend.resize(THUMB_W, THUMB_H, 1);
@@ -145,12 +145,13 @@ async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
     if (!ctx) throw new Error('no 2d context');
     ctx.drawImage(canvas, 0, 0);
     const url = scratch.toDataURL('image/png');
-    backend.dispose();
     cache.set(key, url);
     listeners.forEach((fn) => fn());
   } catch {
     // Rendering unavailable (tests without canvas/GPU) — leave uncached so the
     // caller keeps its icon fallback.
+  } finally {
+    backend.dispose();
   }
 }
 

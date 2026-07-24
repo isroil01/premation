@@ -37,10 +37,13 @@ export function resolveGpuKind(): RendererBackendKind {
  * Omit the argument (or pass `'auto'`) to let the factory pick the best
  * available GPU tier.
  */
-export function createRenderBackend(choice: BackendChoice = 'auto'): RenderBackend {
+export function createRenderBackend(
+  choice: BackendChoice = 'auto',
+  role: 'viewport' | 'auxiliary' = 'viewport',
+): RenderBackend {
   const kind: RendererBackendKind =
     choice === 'auto' ? resolveGpuKind() :
     choice === 'null'  ? 'null' :
     choice;
-  return new MotionRendererBackend(kind);
+  return new MotionRendererBackend(kind, role);
 }

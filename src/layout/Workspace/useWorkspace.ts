@@ -412,9 +412,37 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   }, [channel, contentCanvasRef]);
 
   // ── Re-render on scene / playhead / guide changes ──────────────────
+  //
+  // Throttle snapshots during a property drag. `sceneRev` fires on every
+  // property-edit tick (a single slider drag = 30-60 revs/second), and each
+  // one rebuilds the whole snapshot — a 3D project with per-character
+  // extrusion makes that expensive. Coalesce mid-drag ticks into ONE
+  // trailing snapshot after the drag settles (rAF + a 50ms grace). Outside
+  // a drag, render eagerly so the next paint reflects the latest edit.
+  //
+  // `time` is intentionally exempt: it's the playhead (60×/s during
+  // playback) and rAF coalescing already gives a single snapshot per
+  // frame, which is exactly the cadence we want.
+  const isDragging = useUIStore((s) => s.isDragging);
+  useEffect(() => {
+    const controller = getWorkspaceController();
+    if (!isDragging) {
+      controller.requestRender();
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      if (cancelled) return;
+      controller.requestRender();
+    }, 50);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [sceneRev, isDragging]);
   useEffect(() => {
     getWorkspaceController().requestRender();
-  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, customViews, draft3d, channel, draft, mbEnabled, mbShutter, mbSamples, compKey]);
+  }, [time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, customViews, draft3d, channel, draft, mbEnabled, mbShutter, mbSamples, compKey]);
 
   // ── Auto-fit on comp-size change ───────────────────────────────────
   // Switching resolution (e.g. a 9:16 reel ↔ 16:9) re-frames the comp to fill

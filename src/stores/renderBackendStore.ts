@@ -39,6 +39,7 @@ export const useRenderBackendStore = create<RenderBackendStore>((set) => ({
 // backend and re-initializing on the next tier, incl. a delayed WebGL2 retry);
 // this store just mirrors the state for the ViewportHeader badge.
 getEventBus().on('EngineError', (payload) => {
+  if (payload.role === 'auxiliary') return;
   const store = useRenderBackendStore.getState();
   if (payload.engine === 'motion-webgpu') {
     // eslint-disable-next-line no-console
@@ -55,6 +56,7 @@ getEventBus().on('EngineError', (payload) => {
 // coming up AFTER an EngineError already flipped the badge) reports the tier
 // that actually rendered — this un-sticks a premature 'software' badge.
 getEventBus().on('EngineReady', (payload) => {
+  if (payload.role === 'auxiliary') return;
   const store = useRenderBackendStore.getState();
   if (payload.engine === 'motion-webgpu') store._setTier('webgpu');
   else if (payload.engine === 'motion-webgl2') store._setTier('webgl2');

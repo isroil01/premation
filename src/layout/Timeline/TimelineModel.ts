@@ -135,6 +135,14 @@ export interface TimelineModel {
   markers: ReadonlyArray<TimelineMarker>;
   duration: number;
   frameRate: number;
+  /**
+   * Playhead time in seconds. The playhead is a per-frame value, so prefer
+   * the host passing it via the separate `playheadTime` prop — that lets the
+   * model object keep a stable identity across playback frames. Required
+   * because non-realtime consumers (timecode display, GraphEditor) read it
+   * from the model; <Timeline> itself falls back to `model.currentTime`
+   * when the host doesn't pass `playheadTime` as a separate prop.
+   */
   currentTime: number;
   /** Frame the DISPLAYED timecode starts from (comp start timecode). Ruler
    *  labels add it; tick positions stay 0-based. Default 0. */

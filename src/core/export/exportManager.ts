@@ -25,7 +25,7 @@ import { type ZipEntry } from './zip';
 import { encodeGifBytes, encodeZipBytes } from './encodeClient';
 import { mixdownAudio, mixdownBuffer } from '@core/audio/audioMixdown';
 import { type GifFrame } from './gifEncoder';
-import { api } from '@core/api/client';
+
 import { useUIStore } from '@stores/uiStore';
 
 export type ExportFormat = 'webm' | 'png' | 'png-sequence' | 'jpg-sequence' | 'json' | 'lottie' | 'mp4' | 'gif';
@@ -138,7 +138,7 @@ function download(blob: Blob, filename: string): void {
 
 function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; backend: RenderBackend } {
   const canvas = document.createElement('canvas');
-  const backend = createRenderBackend();
+  const backend = createRenderBackend('auto', 'auxiliary');
   backend.attach(canvas);
   backend.resize(w, h, 1);
   return { canvas, backend };
@@ -594,8 +594,8 @@ function exportRange(opts: ExportOptions): { startSec: number; endSec: number } 
 
 /**
  * The mixed comp audio as a zip entry (`audio.wav`), or [] when the comp is
- * silent. Shared by the video export paths so audio and frames always cover the
- * same window.
+ * silent. Shared by the video export paths so audio and frames cover the
+ * exact same window.
  */
 async function exportAudioEntries(opts: ExportOptions): Promise<ZipEntry[]> {
   const { startSec, endSec } = exportRange(opts);
@@ -708,81 +708,87 @@ function downloadRecordedVideo(blob: Blob): void {
   download(blob, `motion-export-${Date.now()}.${isMp4 ? 'mp4' : 'webm'}`);
 }
 
+import { canMuxMp4Local, muxMp4Local } from './muxMp4Local';
+
 async function exportMP4(opts: ExportOptions): Promise<void> {
   const signal = opts.signal;
-  // The backend job id, once created — an abort mid-flight also cancels the
-  // server-side render instead of leaving it burning in the queue.
-  let jobId: string | null = null;
-  try {
-    const renderJob = await api.createRender({
-      format: 'mp4',
-      width: opts.width,
-      height: opts.height,
-      fps: opts.fps,
-      duration: opts.duration,
-      transparent: false,
-    });
-    jobId = renderJob.id;
-    opts.onProgress?.(0.1);
-    // Mix the comp's audio over the export range; bundled into the frames zip
-    // as audio.wav for the backend to mux. Empty when the comp has no audio.
-    const audioEntries = await exportAudioEntries(opts);
-    const zipBlob = await renderSequenceZip(opts, 'jpg', (f) => opts.onProgress?.(0.1 + f * 0.4), signal, audioEntries);
-    opts.onProgress?.(0.5);
-    throwIfAborted(signal);
-    await api.uploadRenderFrames(renderJob.id, zipBlob, 'zip');
 
-    while (true) {
+  // ── Desktop path: deterministic offline render → local FFmpeg mux ─────────
+  // This is the primary path on Electron. `canMuxMp4Local` is true when the
+  // preload bridge exposes render:beginJob / render:stageFrame / render:muxMp4.
+  if (canMuxMp4Local()) {
+    let jobId: string | null = null;
+    try {
+      // Collect frames as JPEG byte arrays.
+      const frameArrays: Uint8Array[] = [];
+      const audioEntries = await exportAudioEntries(opts);
+      const audioEntry = audioEntries.find((e) => e.name === 'audio.wav');
+
+      await renderOffline(
+        offlineParams(opts),
+        async (canvas, frame, count) => {
+          frameArrays.push(await frameBytes(canvas, 'image/jpeg', 0.92));
+          opts.onProgress?.(0.1 + (frame / count) * 0.8);
+        },
+        signal,
+      );
       throwIfAborted(signal);
-      const status = await api.getRender(renderJob.id);
-      if (status.status === 'completed' && status.resultUrl) {
-        opts.onProgress?.(1.0);
-        const res = await fetch(status.resultUrl, signal ? { signal } : undefined);
-        const blob = await res.blob();
-        download(blob, `motion-export-${Date.now()}.mp4`);
-        return;
+
+      if (frameArrays.length === 0) {
+        throw new Error('MP4 export: no frames were rendered.');
       }
-      if (status.status === 'failed' || status.status === 'canceled') {
-        throw new Error(status.error || `Backend render ${status.status}`);
-      }
-      opts.onProgress?.(0.5 + status.progress * 0.45);
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  } catch (err) {
-    // User cancellation: also cancel the server-side job, then propagate —
-    // never treated as "backend offline" or reported as a failure.
-    if (isAbortError(err)) {
-      if (jobId) void api.cancelRender(jobId).catch(() => undefined);
-      throw err;
-    }
-    // Report what actually failed. This used to blame the network for every
-    // error, which masked a frame-naming bug that broke most MP4 exports.
-    const reason = (err as Error)?.message ?? String(err);
-    const offline = err instanceof TypeError || /fetch|network|ECONNREFUSED|Failed to fetch/i.test(reason);
-    if (offline) {
-      useUIStore.getState().notify({
-        level: 'info',
-        message: 'Render backend offline. Falling back to local MP4 recording...',
-        durationMs: 4000,
+
+      opts.onProgress?.(0.9);
+      const muxResult = await muxMp4Local({
+        frames: frameArrays,
+        fps: opts.fps,
+        audio: audioEntry ? (audioEntry.data as Uint8Array) : undefined,
       });
-      try {
-        const blob = await renderMP4Blob(opts, opts.onProgress, signal);
-        opts.onProgress?.(1.0);
-        downloadRecordedVideo(blob);
-        return;
-      } catch (localErr) {
-        if (isAbortError(localErr)) throw localErr;
-        useUIStore.getState().notify({
-          level: 'error',
-          message: `Local MP4 export failed: ${(localErr as Error)?.message || localErr}`,
-          durationMs: 5000,
-        });
-        throw localErr;
+      if (!muxResult) throw new Error('Local mux returned no output path.');
+      jobId = muxResult.jobId;
+
+      // Read the muxed file back via fetch(file://…). Robust normalization for Windows.
+      opts.onProgress?.(0.95);
+      const normalizedPath = muxResult.path.replace(/\\/g, '/');
+      const fileUrl = normalizedPath.startsWith('/')
+        ? `file://${encodeURI(normalizedPath)}`
+        : `file:///${encodeURI(normalizedPath)}`;
+      const res = await fetch(fileUrl, signal ? { signal } : undefined);
+      if (!res.ok) throw new Error(`Could not read muxed MP4 (${res.status})`);
+      const blob = await res.blob();
+      opts.onProgress?.(1.0);
+      download(blob, `motion-export-${Date.now()}.mp4`);
+      return;
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      const reason = (err as Error)?.message ?? String(err);
+      useUIStore.getState().notify({
+        level: 'error',
+        message: `MP4 export failed: ${reason}`,
+        durationMs: 5000,
+      });
+      throw err;
+    } finally {
+      // Clean up the temporary staging directory on disk so temp files don't accumulate.
+      if (jobId && window.motionEditor?.render?.cleanJob) {
+        void window.motionEditor.render.cleanJob(jobId).catch(() => undefined);
       }
     }
+  }
+
+  // ── Browser fallback: MediaRecorder (non-Electron) ────────────────────────
+  // MediaRecorder cannot reliably produce mp4 in most browsers/Electron builds;
+  // downloadRecordedVideo names the file honestly (.webm if the recorder fell
+  // back) and notifies the user.
+  try {
+    const blob = await renderMP4Blob(opts, opts.onProgress, signal);
+    opts.onProgress?.(1.0);
+    downloadRecordedVideo(blob);
+  } catch (err) {
+    if (isAbortError(err)) throw err;
     useUIStore.getState().notify({
       level: 'error',
-      message: `MP4 export failed: ${reason}`,
+      message: `MP4 export failed: ${(err as Error)?.message || err}`,
       durationMs: 5000,
     });
     throw err;

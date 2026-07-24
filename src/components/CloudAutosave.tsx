@@ -6,17 +6,22 @@ import { useWorkspaceStore } from '@stores/index';
 import { getEventBus } from '@core/events/EventBus';
 
 /**
- * Autosave component with configurable debounce.
+ * Autosave component with configurable debounce and exponential backoff.
  * AUTOSAVE_DEBOUNCE_MS defines the initial arm delay before any saves are allowed.
- * Subsequent rapid changes are coalesced into a single request via a 1.2 s debounce.
+ * Subsequent rapid changes are coalesced into a single request via a 1.2 s debounce.
+ * On network failure the retry delay grows exponentially (up to 30 s) so a bad
+ * connection doesn't hammer the server on every user edit.
  */
-const AUTOSAVE_DEBOUNCE_MS = 3000; // 3 seconds (adjustable)
+const AUTOSAVE_DEBOUNCE_MS = 3000; // 3 seconds (adjustable)
+const BACKOFF_MAX_MS = 30_000;
 
 export function CloudAutosave({ projectId }: { projectId: string }): null {
   const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>();
   const inFlightRef = useRef(false);
   const armedRef = useRef(false);
+  // Consecutive failure count — resets to 0 on success.
+  const failureCountRef = useRef(0);
 
   useEffect(() => {
     // Arm after initial delay
@@ -31,12 +36,20 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
       }
       inFlightRef.current = true;
       try {
-        await api.autosave(projectId, captureDocument());
+        // Yield to the event loop before the potentially-large serialization so
+        // the current React paint completes first and the UI stays responsive.
+        const doc = await new Promise<ReturnType<typeof captureDocument>>((resolve) => {
+          setTimeout(() => resolve(captureDocument()), 0);
+        });
+        await api.autosave(projectId, doc);
         const ws = useWorkspaceStore.getState();
         if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
         clearRecovery();
+        // Success — reset backoff.
+        failureCountRef.current = 0;
       } catch (e) {
-        // Transient/network errors will retry on next edit.
+        // Transient/network errors will retry on next edit with exponential backoff.
+        failureCountRef.current += 1;
       } finally {
         inFlightRef.current = false;
       }
@@ -45,9 +58,11 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
     const schedule = () => {
       if (!armedRef.current) return;
       if (timerRef.current) clearTimeout(timerRef.current);
+      // Backoff: 1.2s * 2^failures, capped at 30s.
+      const delay = Math.min(1200 * Math.pow(2, failureCountRef.current), BACKOFF_MAX_MS);
       timerRef.current = setTimeout(() => {
         void flush();
-      }, 1200);
+      }, delay);
     };
 
     const bus = getEventBus();
@@ -67,3 +82,4 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
 
   return null;
 }
+

@@ -22,11 +22,16 @@ export function canMuxMp4Local(): boolean {
   return !!(r?.beginJob && r.stageFrame && r.muxMp4);
 }
 
+export interface MuxResult {
+  path: string;
+  jobId: string;
+}
+
 /**
  * Stage frames + optional audio and mux to mp4 on disk. Returns the output file
- * path, or null if local muxing is unavailable (non-desktop).
+ * path and jobId, or null if local muxing is unavailable (non-desktop).
  */
-export async function muxMp4Local({ frames, fps, audio }: Mp4Frames): Promise<string | null> {
+export async function muxMp4Local({ frames, fps, audio }: Mp4Frames): Promise<MuxResult | null> {
   const r = typeof window !== 'undefined' ? window.motionEditor?.render : undefined;
   if (!r?.beginJob || !r.stageFrame || !r.muxMp4) return null;
 
@@ -37,5 +42,5 @@ export async function muxMp4Local({ frames, fps, audio }: Mp4Frames): Promise<st
   if (audio && r.stageAudio) await r.stageAudio(jobId, audio);
 
   const { path } = await r.muxMp4(jobId, { fps, hasAudio: !!audio });
-  return path;
+  return { path, jobId };
 }
