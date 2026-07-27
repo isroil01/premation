@@ -128,7 +128,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  height: 30px;
   padding: 0 8px;
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
@@ -146,7 +146,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  height: 30px;
   padding: 0 8px;
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -154,18 +154,6 @@
   background: var(--color-primary-subtle);
   color: var(--color-primary);
   border: 1px solid transparent;
-  position: relative;
-}
-
-.toolDropdownTriggerActive::after {
-  content: "";
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 0;
-  height: 2px;
-  background: var(--color-primary);
-  border-radius: var(--radius-full);
 }
 
 .toolGroup {
@@ -182,8 +170,8 @@
 }
 
 .tool {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   border-radius: var(--radius-md);
@@ -191,7 +179,6 @@
   border: 1px solid transparent;
   cursor: pointer;
   transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
-  position: relative;
 }
 
 .tool:hover {
@@ -204,10 +191,10 @@
   transform: scale(0.92);
 }
 
-/* Active tool — blue bottom-edge line, white icon */
+/* Active tool — background color only, no border, no bottom line */
 .toolActive {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   border-radius: var(--radius-md);
@@ -216,18 +203,6 @@
   background: var(--color-primary-subtle);
   color: var(--color-primary);
   border: 1px solid transparent;
-  position: relative;
-}
-
-.toolActive::after {
-  content: "";
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 0;
-  height: 2px;
-  background: var(--color-primary);
-  border-radius: var(--radius-full);
 }
 
 .layoutToggle {

@@ -256,8 +256,15 @@ export class MaterialSystem {
     private readonly shaderCache: ShaderCache,
   ) {}
 
-  /** Get (or build) the pipeline for a material + blend + target format. */
-  pipeline(material: MaterialDescriptor, blend: BlendMode, colorFormat: TextureFormat): PipelineHandle {
+  /**
+   * Get (or build) the pipeline for a material + blend + target format.
+   *
+   * `samples` is part of the identity, not a detail: on WebGPU a pipeline is
+   * only valid in a pass whose attachments have the same sample count, so a
+   * cache shared between the MSAA 3D target and the single-sample surface would
+   * hand back a pipeline the next pass rejects.
+   */
+  pipeline(material: MaterialDescriptor, blend: BlendMode, colorFormat: TextureFormat, samples = 1): PipelineHandle {
     const source = this.registry.require(material.shader);
     const shader = this.shaderCache.get(source);
     const depth = material.depth;
@@ -269,6 +276,7 @@ export class MaterialSystem {
       blend,
       colorFormat,
       depth ? `d${depth.test ? 1 : 0}${depth.write ? 1 : 0}` : 'd00',
+      `s${samples}`,
     );
     return this.resources.pipeline(key, {
       label: `${material.shader}/${blend}`,
@@ -279,6 +287,7 @@ export class MaterialSystem {
       blend,
       colorFormat,
       ...(depth ? { depthTest: depth.test, depthWrite: depth.write, depthFormat: 'depth24plus' as const } : {}),
+      ...(samples > 1 ? { samples } : {}),
     });
   }
 }

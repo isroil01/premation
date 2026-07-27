@@ -8,9 +8,21 @@ interface PanelHeaderProps {
   title: string;
   icon?: string;
   closable?: boolean;
+  /**
+   * True when this header renders inside a DETACHED pop-out window.
+   *
+   * It cannot be inferred. `placement` is read from the layout store, but
+   * `registerPanel` is only ever called by EditorShellInner — and a pop-out
+   * window renders PopoutRoute, never EditorShell. So in that window
+   * `panels[panelId]` is `undefined`, `placement` fell back to `'docked'`, and
+   * the header cheerfully offered "Pop Out into Window" (in a window that is
+   * already popped out) plus three "Dock …" items that all hit
+   * `if (!panel) return` and did nothing at all.
+   */
+  isPopout?: boolean;
 }
 
-export function PanelHeader({ panelId, title, icon, closable = true }: PanelHeaderProps): JSX.Element {
+export function PanelHeader({ panelId, title, icon, closable = true, isPopout = false }: PanelHeaderProps): JSX.Element {
   const {
     panels,
     workspaceLocked,
@@ -23,7 +35,7 @@ export function PanelHeader({ panelId, title, icon, closable = true }: PanelHead
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const panel = panels[panelId];
-  const placement = panel?.placement ?? 'docked';
+  const placement = isPopout ? 'external' : (panel?.placement ?? 'docked');
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -61,8 +73,12 @@ export function PanelHeader({ panelId, title, icon, closable = true }: PanelHead
       </div>
 
       <div className={styles.rightGroup} style={{ position: 'relative' }}>
-        {/* Panel Options Menu Button */}
-        {!workspaceLocked && (
+        {/* In a pop-out window every menu item below is either self-referential
+            ("Pop Out" from an already-popped-out window) or a guaranteed no-op
+            (the three "Dock …" items act on a store with no registered panels),
+            so the whole menu goes away and the header becomes title-only.
+            Closing the window is the OS/window control's job. */}
+        {!workspaceLocked && !isPopout && (
           <button
             type="button"
             className={styles.actionBtn}

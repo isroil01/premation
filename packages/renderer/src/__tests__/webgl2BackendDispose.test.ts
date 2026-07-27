@@ -13,11 +13,20 @@ import { WebGL2Backend } from '../gpu/backends/WebGL2Backend';
 interface GlStub {
   gl: Record<string, jest.Mock | number>;
   loseContext: jest.Mock;
+  restoreContext: jest.Mock;
 }
 
-function makeGl(): GlStub {
+function makeGl(opts: { lost?: boolean; restorable?: boolean } = {}): GlStub {
   const loseContext = jest.fn();
+  // A canvas hands back the SAME (still-lost) context object after
+  // loseContext(), so `initialize` must probe isContextLost() rather than trust a
+  // non-null getContext. `lost` models that state.
+  let lost = opts.lost ?? false;
+  const restoreContext = jest.fn(() => {
+    if (opts.restorable !== false) lost = false;
+  });
   const gl: Record<string, jest.Mock | number> = {
+    isContextLost: jest.fn(() => lost),
     MAX_TEXTURE_SIZE: 0x0d33,
     FRAMEBUFFER: 0x8d40,
     getParameter: jest.fn(() => 4096),
@@ -49,13 +58,24 @@ function makeGl(): GlStub {
     framebufferRenderbuffer: jest.fn(),
     deleteRenderbuffer: jest.fn(),
     deleteProgram: jest.fn(),
-    getExtension: jest.fn((name: string) => (name === 'WEBGL_lose_context' ? { loseContext } : null)),
+    getExtension: jest.fn((name: string) =>
+      name === 'WEBGL_lose_context' ? { loseContext, restoreContext } : null,
+    ),
   };
-  return { gl, loseContext };
+  return { gl, loseContext, restoreContext };
 }
 
 function surfaceFor(gl: unknown): { canvas: HTMLCanvasElement } {
-  return { canvas: { getContext: jest.fn(() => gl) } as unknown as HTMLCanvasElement };
+  // addEventListener/removeEventListener are real canvas members — the backend
+  // now subscribes to webglcontextlost/restored so a driver reset surfaces as an
+  // error instead of a silently frozen viewport.
+  return {
+    canvas: {
+      getContext: jest.fn(() => gl),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    } as unknown as HTMLCanvasElement,
+  };
 }
 
 describe('WebGL2Backend.dispose', () => {
@@ -155,5 +175,37 @@ describe('WebGL2Backend.dispose', () => {
     await expect(backend.initialize(surface)).rejects.toThrow('WebGL2 is not available');
     // And disposing that failed backend must not throw either.
     expect(() => backend.dispose()).not.toThrow();
+  });
+
+  // Re-attaching to a canvas whose context was killed by a previous dispose().
+  // getContext returns the same LOST context rather than null, so the plain
+  // null-check passes and every later GL call silently no-ops — the blank
+  // viewport after a StrictMode/HMR remount.
+  test('initialize restores a lost context instead of returning a dead one', async () => {
+    const { gl, restoreContext } = makeGl({ lost: true });
+    const backend = new WebGL2Backend();
+    await expect(backend.initialize(surfaceFor(gl))).resolves.toBeUndefined();
+    expect(restoreContext).toHaveBeenCalledTimes(1);
+    expect(gl.getParameter).toHaveBeenCalled(); // proceeded to real setup
+  });
+
+  test('initialize throws when a lost context cannot be restored', async () => {
+    const { gl } = makeGl({ lost: true, restorable: false });
+    const backend = new WebGL2Backend();
+    await expect(backend.initialize(surfaceFor(gl))).rejects.toThrow(/context is lost/);
+  });
+
+  test('dispose detaches the context-loss listeners it registered', async () => {
+    const { gl } = makeGl();
+    const surface = surfaceFor(gl);
+    const backend = new WebGL2Backend();
+    await backend.initialize(surface);
+    expect(surface.canvas.addEventListener).toHaveBeenCalledWith('webglcontextlost', expect.any(Function));
+    expect(surface.canvas.addEventListener).toHaveBeenCalledWith('webglcontextrestored', expect.any(Function));
+    backend.dispose();
+    // Must come off BEFORE dispose's own loseContext() fires, or the backend
+    // reports its own teardown as an unexpected context loss.
+    expect(surface.canvas.removeEventListener).toHaveBeenCalledWith('webglcontextlost', expect.any(Function));
+    expect(surface.canvas.removeEventListener).toHaveBeenCalledWith('webglcontextrestored', expect.any(Function));
   });
 });

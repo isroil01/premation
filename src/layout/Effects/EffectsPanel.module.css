@@ -260,13 +260,71 @@
   padding: 8px 10px;
 }
 
+/* ── Active Applied Effects Accordion Stack ────────────────────── */
+.stackList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.effectCardItem {
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-2) 40%, transparent);
+  overflow: hidden;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.effectCardItem:hover {
+  border-color: var(--color-border-strong);
+}
+
+.effectCardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--color-surface-2) 65%, transparent);
+  user-select: none;
+}
+
+.disclosureBtn {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex: none;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.disclosureBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.effectParamsBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px 28px;
+  border-top: 1px solid var(--color-border-subtle);
+  background: transparent;
+}
+
 .effectRowCard {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 12px;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;

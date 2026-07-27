@@ -32,6 +32,7 @@ export interface HitResult {
 
 export class HitTester {
   private index: SpatialIndex;
+  private dirty = false;
 
   constructor(
     private readonly scene: SceneGraphPort,
@@ -41,8 +42,23 @@ export class HitTester {
     this.rebuild();
   }
 
+  /**
+   * Note that the scene changed; the index rebuilds on the next query.
+   *
+   * Scene changes arrive far more often than hit-tests consume them — every
+   * keyframe write, every playhead tick, every step of a bulk import bumps the
+   * scene, but the index is only read when the pointer interacts with the
+   * canvas. Rebuilding eagerly made every bump pay for a full scene enumeration
+   * up front (seconds during an import); deferring moves that cost to the next
+   * click, where one rebuild answers for any number of bumps.
+   */
+  markDirty(): void {
+    this.dirty = true;
+  }
+
   /** Rebuild the spatial index from the current scene. Call on scene change. */
   rebuild(): void {
+    this.dirty = false;
     const items = [];
     for (const node of this.scene.getNodes()) {
       items.push({ id: node.id, bounds: node.worldBounds });
@@ -50,7 +66,12 @@ export class HitTester {
     this.index.rebuild(items);
   }
 
+  private ensureFresh(): void {
+    if (this.dirty) this.rebuild();
+  }
+
   get indexSize(): number {
+    this.ensureFresh();
     return this.index.size;
   }
 
@@ -62,6 +83,7 @@ export class HitTester {
 
   /** Every node under the point, ordered topmost-first. */
   hitTestAll(worldPoint: Vec2, opts: HitOptions = {}): HitResult[] {
+    this.ensureFresh();
     const tolerance = opts.tolerance ?? 0;
     const probe: Rect = {
       x: worldPoint.x - tolerance,
@@ -86,6 +108,7 @@ export class HitTester {
    * containment (window-select); `'intersect'` accepts any overlap (crossing).
    */
   hitTestRegion(region: Rect, mode: 'intersect' | 'contain' = 'intersect', opts: HitOptions = {}): WorkspaceNode[] {
+    this.ensureFresh();
     const candidates = this.index.queryRect(region);
     const out: WorkspaceNode[] = [];
     for (const cand of candidates) {

@@ -14,6 +14,7 @@ import type { IconName } from '@components/Icon';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
+import { panelDef } from '@layout/EditorLayout/panelDefs';
 import styles from './DockPanel.module.css';
 
 export interface DockPanelProps {
@@ -64,12 +65,15 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
     return panelOrder
       .map((id) => panels[id])
       .filter((p): p is NonNullable<typeof p> => !!p)
-      .map((p) => ({
-        id: p.id,
-        label: p.title,
-        icon: p.icon as IconName | undefined,
-        closable: p.closable ?? false,
-      }));
+      .map((p) => {
+        const def = panelDef(p.id);
+        return {
+          id: p.id,
+          label: p.title,
+          icon: p.icon as IconName | undefined,
+          closable: def ? def.closable : (p.closable ?? false),
+        };
+      });
   }, [panelOrder, panels]);
 
   if (items.length === 0) return null;
@@ -161,7 +165,7 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
         aria-expanded={moveMenuOpen}
         onClick={() => setMoveMenuOpen((v) => !v)}
       >
-        <Icon name="grip-vertical" size={12} />
+        <Icon name="grip-vertical" size={16} />
       </button>
       {moveMenuOpen && (
         <ul className={cn(styles.moveMenu, isRightInspector && styles.moveMenuRightInspector)} role="menu">
@@ -243,8 +247,14 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
               onChange={(id) => openPanel(id)}
               items={[{
                 id: item.id,
+                // Icon-only by design — the rail stays narrow. Discoverability
+                // comes from each panel having a DISTINCT glyph (several used to
+                // alias the same Phosphor component) plus the title tooltip below.
                 label: '',
-                icon: item.icon ? <Icon name={item.icon} size={14} /> : undefined,
+                // The tooltip on the wrapper covers sighted users; this is what
+                // a screen reader announces for an otherwise nameless button.
+                ariaLabel: typeof item.label === 'string' ? item.label : item.id,
+                icon: item.icon ? <Icon name={item.icon} size={18} /> : undefined,
                 // Honour the panel's own flag. Every panel registers
                 // `closable: true` and this hardcoded `false` threw it away, so
                 // `Tabs` never rendered the button and `onClose` was dead.

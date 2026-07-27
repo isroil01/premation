@@ -279,48 +279,6 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
   const selectedIds = useSelectionStore((s) => s.ids);
   const isGroupNode = node ? defaultSceneGraph.getChildren(node.id).length > 0 || (node.components.some(c => c.type === 'group')) : false;
 
-  const applyPresetStyle = (preset: 'glass' | 'neon' | 'purple' | 'emerald' | 'sunset' | 'dark') => {
-    switch (preset) {
-      case 'glass':
-        setNodeFill(nodeId, { type: 'solid', color: 'rgba(255, 255, 255, 0.08)' });
-        updateNodeStroke(nodeId, { width: 1.5, color: '#ffffff', enabled: true, align: 'inside' });
-        setCornerRadius(16);
-        break;
-      case 'neon':
-        setNodeFill(nodeId, { type: 'solid', color: '#0f172a' });
-        updateNodeStroke(nodeId, { width: 2, color: '#38bdf8', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-      case 'purple':
-        setNodeFill(nodeId, { type: 'solid', color: '#1e1b4b' });
-        updateNodeStroke(nodeId, { width: 2, color: '#a855f7', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-      case 'emerald':
-        setNodeFill(nodeId, { type: 'solid', color: '#064e3b' });
-        updateNodeStroke(nodeId, { width: 1.5, color: '#34d399', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-      case 'sunset':
-        setNodeFill(nodeId, {
-          type: 'linear',
-          angle: 135,
-          stops: [
-            { id: 's1', offset: 0, color: '#f43f5e' },
-            { id: 's2', offset: 1, color: '#fb923c' },
-          ],
-        });
-        updateNodeStroke(nodeId, { width: 1.5, color: '#ffffff', enabled: true, align: 'inside' });
-        setCornerRadius(16);
-        break;
-      case 'dark':
-        setNodeFill(nodeId, { type: 'solid', color: '#18181b' });
-        updateNodeStroke(nodeId, { width: 1, color: '#27272a', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-    }
-  };
-
   return (
     <div className={styles.section}>
       <h4 className={styles.title}>Appearance & Assembly</h4>
@@ -349,59 +307,12 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
         )}
       </div>
 
-      {/* 1-Click Pro Quick Style Presets Bar */}
-      <div className={styles.subhead} style={{ marginBottom: 6 }}>Quick Style Presets</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 14, padding: '0 4px' }}>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('glass')}
-        >
-          💎 Glass
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('neon')}
-        >
-          🌌 Neon Cyan
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('purple')}
-        >
-          ⚡ Purple
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('emerald')}
-        >
-          🍃 Emerald
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('sunset')}
-        >
-          🌅 Sunset
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('dark')}
-        >
-          🖤 Dark Card
-        </button>
-      </div>
-
+      {/* A six-button "Quick Style Presets" grid lived here — a second preset
+          grid ONE ACCORDION away from the registry-backed Style Presets section
+          in this same panel, with its own hard-coded looks that bypassed
+          `applyStylePreset`. Removed rather than kept in sync: the presets
+          section previews the real paint stack and covers all four categories
+          plus 3D materials. */}
       <div className={styles.inlineRows}>
         <div className={styles.subhead}>
           Fill

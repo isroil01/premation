@@ -204,7 +204,16 @@ function AuthoringSection(): JSX.Element {
   );
 }
 
-function ActiveTemplateFields(): JSX.Element {
+/**
+ * The exposed fields of the applied template.
+ *
+ * Exported so the inspector can host it. The whole `TemplateFieldsPanel` was
+ * only reachable through a renderer id that was never registered — a built
+ * MOGRT-style field editor with no way in — and its other half (the gallery)
+ * duplicates the Library panel's Templates section, so surfacing THIS half is
+ * the part that adds something.
+ */
+export function ActiveTemplateFields(): JSX.Element {
   const active = useTemplateStore((s) => s.active)!;
   const exit = useTemplateStore((s) => s.exit);
 

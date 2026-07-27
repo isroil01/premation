@@ -218,7 +218,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 className={styles.play}
                 onClick={() => getTimelineController().togglePlay()}
               >
-                <Icon name={ws?.playing ? 'pause' : 'play'} size={12} />
+                <Icon name={ws?.playing ? 'pause' : 'play'} size={15} />
               </IconButton>
               <IconButton aria-label="Next frame" title="Next frame (Page Down)" size="sm" onClick={() => getTimelineController().nextFrame()}>
                 <Icon name="chevron-right" size={13} />

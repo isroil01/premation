@@ -1,4 +1,5 @@
 import type { BezierPoint } from '@motion/workspace';
+import { scanSvgAnimations, buildShapeAnimation, type SvgShapeAnimation, type SvgAnimationOptions } from './svgAnimation';
 
 export interface ParsedShape {
   name: string;
@@ -15,6 +16,11 @@ export interface ParsedShape {
   centerY: number;
   textContent?: string;
   fontSize?: number;
+  /**
+   * Keyframes translated from the element's SMIL animation, if any. Present
+   * only when the SVG actually animates — see `svgAnimation.ts`.
+   */
+  animation?: SvgShapeAnimation;
 }
 
 // ---------------------------------------------------------------------------
@@ -22,11 +28,11 @@ export interface ParsedShape {
 //   x' = a*x + c*y + e
 //   y' = b*x + d*y + f
 // ---------------------------------------------------------------------------
-type Mat = readonly [number, number, number, number, number, number];
+export type Mat = readonly [number, number, number, number, number, number];
 const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
 
 /** Compose two matrices: result applies `n` first, then `m` (m * n). */
-function matMul(m: Mat, n: Mat): Mat {
+export function matMul(m: Mat, n: Mat): Mat {
   return [
     m[0] * n[0] + m[2] * n[1],
     m[1] * n[0] + m[3] * n[1],
@@ -37,14 +43,25 @@ function matMul(m: Mat, n: Mat): Mat {
   ];
 }
 
-function applyMat(m: Mat, x: number, y: number): { x: number; y: number } {
+export function applyMat(m: Mat, x: number, y: number): { x: number; y: number } {
   return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
+
+/** Inverse of a 2x3 affine matrix, or null when it is degenerate. */
+export function matInvert(m: Mat): Mat | null {
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const a = m[3] / det;
+  const b = -m[1] / det;
+  const c = -m[2] / det;
+  const d = m[0] / det;
+  return [a, b, c, d, -(a * m[4] + c * m[5]), -(b * m[4] + d * m[5])];
 }
 
 const DEG = Math.PI / 180;
 
 /** Parse an SVG `transform` attribute into a single composed matrix. */
-function parseTransform(str: string | null): Mat {
+export function parseTransform(str: string | null): Mat {
   if (!str) return IDENTITY;
   let result: Mat = IDENTITY;
   const re = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/g;
@@ -555,6 +572,10 @@ interface RawShape {
   style: StyleCtx;
   textContent?: string;
   fontSize?: number;
+  /** This element and its ancestors (root last) — SMIL on a <g> affects it too. */
+  chain: Element[];
+  /** The fully composed static matrix baked into `points`. */
+  matrix: Mat;
 }
 
 /** Extract user-space geometry for a single shape element (null if none). */
@@ -646,12 +667,13 @@ const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'pol
 const SKIP_TAGS = new Set(['defs', 'clippath', 'mask', 'symbol', 'lineargradient', 'radialgradient', 'filter', 'metadata', 'title', 'desc', 'style', 'marker', 'pattern']);
 
 /** Recursively collect shapes with accumulated transform + inherited style. */
-function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[]): void {
+function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[], ancestors: Element[] = []): void {
   const tag = el.tagName.toLowerCase().replace(/^svg:/, '');
   if (SKIP_TAGS.has(tag)) return;
 
   const localMatrix = matMul(matrix, parseTransform(el.getAttribute('transform')));
   const localStyle = resolveStyle(el, style);
+  const chain = [el, ...ancestors];
 
   if (SHAPE_TAGS.has(tag)) {
     const geom = elementGeometry(el);
@@ -663,6 +685,8 @@ function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[]): v
         style: localStyle,
         textContent: geom.textContent,
         fontSize: geom.fontSize,
+        chain,
+        matrix: localMatrix,
       });
     }
     return;
@@ -670,7 +694,7 @@ function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[]): v
 
   // Containers (svg, g, a, switch, ...) — recurse into children.
   for (let i = 0; i < el.children.length; i++) {
-    traverse(el.children[i]!, localMatrix, localStyle, out);
+    traverse(el.children[i]!, localMatrix, localStyle, out, chain);
   }
 }
 
@@ -706,7 +730,7 @@ function rootMatrixFromSvg(svg: Element): Mat {
 }
 
 /** Parses XML string of SVG and returns list of parsed shapes with centered bounding boxes. */
-export function parseSvgToShapes(svgContent: string): ParsedShape[] {
+export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions): ParsedShape[] {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgContent, 'image/svg+xml');
   const svg = doc.documentElement;
@@ -741,6 +765,11 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
   // The <svg> element itself may carry a transform; start traversal from it.
   traverse(svg, rootMatrix, rootStyle, raw);
 
+  // Animation, read once for the whole document and attached per shape.
+  const scan = scanSvgAnimations(doc, opts);
+
+  let keyframeBudget = MAX_IMPORT_KEYFRAMES;
+
   const shapes: ParsedShape[] = [];
   for (const r of raw) {
     const points = r.points;
@@ -774,6 +803,14 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
     const strokeColor = strokeRaw && strokeRaw !== 'none' ? strokeRaw : undefined;
     const strokeWidth = r.style.strokeWidth != null && Number.isFinite(r.style.strokeWidth) ? r.style.strokeWidth : undefined;
 
+    // Budget is spent across the whole file, not per shape: one pathological
+    // artwork must not be able to generate work the app cannot absorb. Past the
+    // ceiling the remaining shapes still import — they just import static.
+    const animation = scan.anims.length > 0 && keyframeBudget > 0
+      ? buildShapeAnimation(r.chain, scan, r.matrix, { x: centerX, y: centerY }) ?? undefined
+      : undefined;
+    if (animation) keyframeBudget -= countKeyframes(animation);
+
     shapes.push({
       name: r.name,
       points: centeredPoints,
@@ -787,6 +824,7 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
       centerY,
       textContent: r.textContent,
       fontSize: r.fontSize,
+      ...(animation ? { animation } : {}),
     });
   }
 
@@ -794,12 +832,58 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
 }
 
 /**
- * True when an SVG can be parsed into vector shapes & text elements.
+ * Total keyframes one imported file may generate.
+ *
+ * A backstop, not a working limit: simplification keeps a real animated icon in
+ * the tens, so a file that reaches this is pathological (hundreds of separately
+ * animated parts). It exists because the failure mode without it is not a slow
+ * import, it is a frozen application — every keyframe is an insert into a
+ * sorted track and a change notification, and both are paid again by history
+ * and by every frame that samples the result.
+ */
+export const MAX_IMPORT_KEYFRAMES = 20000;
+
+function countKeyframes(a: SvgShapeAnimation): number {
+  return (a.x?.length ?? 0) + (a.y?.length ?? 0) + (a.rotation?.length ?? 0)
+    + (a.scaleX?.length ?? 0) + (a.scaleY?.length ?? 0) + (a.opacity?.length ?? 0);
+}
+
+/**
+ * Most vector shapes an SVG may explode into before it is rasterized instead.
+ *
+ * Every parsed shape becomes its own scene layer, and the per-frame cost of a
+ * layer is not free: `buildSnapshot` walks all of them every frame and each
+ * path gets its own rasterized GPU texture. A 1500-path illustration measured
+ * 132 ms per snapshot — the app stops responding, which is exactly the
+ * "dropping an SVG freezes the whole desktop app" report. Below the ceiling the
+ * user gets editable vectors; above it, one faithful image layer.
+ */
+export const MAX_VECTOR_SHAPES = 300;
+
+/**
+ * Features `parseSvgToShapes` cannot reproduce, so an SVG using any of them
+ * must be rasterized as an image rather than silently degraded.
+ *
+ * This used to be `<image|use|foreignObject>` alone, which let essentially
+ * every real-world SVG through: gradients collapsed to their first stop,
+ * filters/masks/clip-paths/patterns were dropped outright, and the result was a
+ * pile of flat shapes that did not look like the file the user imported. The
+ * insert path documented this routing all along — it just never had a predicate
+ * that implemented it.
+ */
+const UNSUPPORTED_TAGS = /<(image|use|foreignobject|filter|mask|clippath|pattern|marker|symbol)[\s>]/;
+const UNSUPPORTED_ATTRS = /\b(filter|mask|clip-path)\s*=\s*["']?[^"'\s>]*url\(/;
+
+/**
+ * True when an SVG converts LOSSLESSLY into vector shapes & text elements.
+ * Anything else should be rasterized (see `insertMedia`).
  */
 export function isSimpleSvg(svgContent: string): boolean {
   const s = svgContent.toLowerCase();
-  if (/<(image|use|foreignobject)[\s>]/.test(s)) {
-    return false;
-  }
+  if (UNSUPPORTED_TAGS.test(s)) return false;
+  if (UNSUPPORTED_ATTRS.test(s)) return false;
+  // Gradients survive only as their first stop — a visible downgrade on any
+  // artwork that actually uses one, so hand those to the rasterizer too.
+  if (/<(lineargradient|radialgradient)[\s>]/.test(s)) return false;
   return true;
 }

@@ -101,6 +101,14 @@ export interface TimelineTrack {
   keyframes?: ReadonlyArray<TimelineKeyframeRef>;
   /** Clips to render on this lane. */
   clips?: ReadonlyArray<TimelineClip>;
+  /**
+   * The layer's own markers, already converted to COMP seconds.
+   *
+   * Stored layer-relative on the engine side so they travel with a trimmed
+   * layer; the conversion happens once, in `getLayerMarkers`, so this row can be
+   * drawn on the same axis as everything else on it.
+   */
+  markers?: ReadonlyArray<TimelineMarker>;
   /** Animatable properties, revealed as sub-rows when the track is expanded. */
   properties?: ReadonlyArray<TimelinePropertyTrack>;
   /** Optional custom header content (icons, etc.). */

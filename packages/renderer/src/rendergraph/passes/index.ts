@@ -24,6 +24,12 @@ export * from './passUtils';
  * transient targets declared, ready to enable. Pass order is *derived* from each
  * pass's `after`/reads/writes by the graph, not from this insertion order.
  */
+/**
+ * MSAA samples for the depth-capable 3D targets. 4× is the standard
+ * quality/bandwidth trade and is universally supported where MSAA exists at all.
+ */
+export const MSAA_SAMPLES = 4;
+
 export function buildDefaultGraph(): RenderGraph {
   const graph = new RenderGraph();
   graph
@@ -49,6 +55,12 @@ export function buildDefaultGraph(): RenderGraph {
     // 3D render groups depth-test into the scene target (the adapter routes
     // any frame containing 3D layers through it via hasEffects).
     depth: true,
+    // 4× MSAA. Extruded 3D objects draw each face as its own alpha-blended quad
+    // with SDF edge AA; where two faces share an edge both contribute partial
+    // coverage and the nearer one wins the depth test, so the join showed as a
+    // seam. Multisampling resolves that coverage properly. Backends clamp to the
+    // device max and fall back to single-sample if the combination is refused.
+    samples: MSAA_SAMPLES,
   }));
   graph.declareTarget(LAYER_TARGET, (vp) => ({
     label: LAYER_TARGET,
@@ -83,6 +95,8 @@ export function buildDefaultGraph(): RenderGraph {
       height: vp.pixelSize.height,
       format: 'rgba8unorm',
       depth: true,
+      // A 3D group inside an isolated precomp needs the same treatment.
+      samples: MSAA_SAMPLES,
     }));
   }
 

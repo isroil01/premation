@@ -221,7 +221,14 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
 
     registerPanel: (panel) =>
       set((s) => {
-        if (s.panels[panel.id]) return; // idempotent
+        const existing = s.panels[panel.id];
+        if (existing) {
+          existing.closable = panel.closable;
+          existing.title = panel.title;
+          existing.icon = panel.icon;
+          existing.weight = panel.weight;
+          return;
+        }
         const persistedRegion = (Object.keys(s.panelOrder) as RegionId[]).find((r) =>
           s.panelOrder[r].includes(panel.id),
         );
@@ -346,22 +353,27 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       getEventBus().emit('LayoutChanged', undefined);
     },
 
-    floatPanel: (panelId, bounds) =>
+    /**
+     * In-window floating panels are GONE — this docks instead.
+     *
+     * `FloatingPanelHost` (the only component that could render a floating
+     * panel) was never mounted, and nothing could reach `floatPanel` anyway:
+     * there was no menu item or button, `aiLayoutAPI` has zero importers, and no
+     * built-in workspace defines `floatingPanels`. Meanwhile "detach a panel"
+     * is fully served by pop-out windows, which are live-synced to the editor —
+     * a strictly better answer for the multi-monitor case this was for.
+     *
+     * It still must not be a no-op: `placement: 'floating'` can arrive from an
+     * old persisted layout or an imported workspace, and with no host that panel
+     * would render NOWHERE. Docking is the safe landing.
+     */
+    floatPanel: (panelId) =>
       set((s) => {
         const panel = s.panels[panelId];
         if (!panel) return;
-        panel.placement = 'floating';
-        const maxZ = Math.max(100, ...Object.values(s.panels).map((p) => p.floatingBounds?.zIndex ?? 100));
-        panel.floatingBounds = {
-          x: bounds?.x ?? panel.floatingBounds?.x ?? 80,
-          y: bounds?.y ?? panel.floatingBounds?.y ?? 80,
-          width: bounds?.width ?? panel.floatingBounds?.width ?? 360,
-          height: bounds?.height ?? panel.floatingBounds?.height ?? 480,
-          zIndex: maxZ + 1,
-        };
-        if (!s.floatingPanels.includes(panelId)) {
-          s.floatingPanels.push(panelId);
-        }
+        panel.placement = 'docked';
+        panel.region = panel.homeRegion ?? panel.region ?? 'leftSidebar';
+        s.floatingPanels = s.floatingPanels.filter((id) => id !== panelId);
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
         getEventBus().emit('LayoutChanged', undefined);
       }),

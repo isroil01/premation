@@ -6,7 +6,6 @@ import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
 import { getNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { getNodeQuality, setNodeQuality } from '@core/effects/layerQuality';
-import { getNodeCastsShadows, setNodeCastsShadows } from '@core/scene/material';
 import styles from '../Effects/EffectsPanel.module.css';
 
 export function LayerSwitchesControls({ nodeId }: { nodeId: string }): JSX.Element {
@@ -16,7 +15,6 @@ export function LayerSwitchesControls({ nodeId }: { nodeId: string }): JSX.Eleme
   const isAdjustment = getNodeAdjustment(nodeId);
   const motionBlur = getNodeMotionBlur(nodeId);
   const quality = getNodeQuality(nodeId);
-  const castsShadows = getNodeCastsShadows(nodeId);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -80,14 +78,10 @@ export function LayerSwitchesControls({ nodeId }: { nodeId: string }): JSX.Eleme
         />
       </div>
 
-      <div className={styles.blendRow}>
-        <span className={styles.blendLabel} title="Material option: whether this layer throws a shadow from a shadow-casting light">Casts Shadows</span>
-        <Switch
-          checked={castsShadows}
-          onChange={(e) => setNodeCastsShadows(nodeId, e.currentTarget.checked)}
-          aria-label="Casts shadows"
-        />
-      </div>
+      {/* "Casts Shadows" is NOT here. It is an AE Material Option and lives with
+          the rest of them in ThreeDControl — having a second switch for the same
+          value in a different tab meant two controls could visibly disagree
+          until one was re-rendered. One property, one owner. */}
     </div>
   );
 }

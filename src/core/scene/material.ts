@@ -29,10 +29,12 @@ export interface MaterialOptions {
    */
   acceptsLights: boolean;
   /**
-   * Reserved (AE parity): whether this layer RECEIVES cast shadows. Cast
-   * shadows currently render as the 2.5D silhouette drop-shadow on the caster,
-   * so this flag is read/persisted but not yet consumed by the renderer.
-   * Default false = current visual output.
+   * Whether this 3D layer RECEIVES cast shadows from layers in front of it.
+   *
+   * No longer reserved: buildSnapshot now projects each shadow-casting layer
+   * onto the plane of every accepting 3D layer behind it, so a shadow lands on
+   * real geometry and moves with Z. Defaults TRUE — a receiver that silently
+   * ignored shadows was the reason 3D scenes read as flat cut-outs.
    */
   acceptsShadows: boolean;
   /**
@@ -54,7 +56,7 @@ export function readNodeMaterial(node: SceneNode): MaterialOptions {
   return {
     castsShadows: p.castsShadows !== false,
     acceptsLights: p.acceptsLights === true,
-    acceptsShadows: p.acceptsShadows === true,
+    acceptsShadows: p.acceptsShadows !== false,
     specular: typeof p.specular === 'number' ? Math.max(0, Math.min(100, p.specular)) : 0,
     shininess: typeof p.shininess === 'number' ? Math.max(1, p.shininess) : 32,
   };

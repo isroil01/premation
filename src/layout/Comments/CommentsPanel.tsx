@@ -11,8 +11,8 @@ import { ReviewBar } from './ReviewBar';
 import { useCommentsStore } from '@stores/commentsStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
-import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import styles from './CommentsPanel.module.css';
 
 export function CommentsPanel(): JSX.Element {
@@ -22,8 +22,6 @@ export function CommentsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   const setSelected = useSelectionStore((s) => s.set);
   const time = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0)) ?? 0;
-  const setTime = useWorkspaceStore((s) => s.actions.setTime);
-  const fps = useCompositionStore((s) => s.fps);
 
   const [draft, setDraft] = useState('');
   const node = primary ? defaultSceneGraph.getNode(primary) : null;
@@ -37,7 +35,8 @@ export function CommentsPanel(): JSX.Element {
 
   const jumpTo = (c: { nodeId: string; time: number }): void => {
     setSelected([c.nodeId]);
-    setTime(c.time, Math.round(c.time * fps));
+    // Through the timeline so the engine playhead follows too.
+    getTimelineController().seekSeconds(c.time);
   };
 
   return (

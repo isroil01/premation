@@ -44,7 +44,7 @@ export function TitleBar(): JSX.Element | null {
       <div className={styles.dragRegion} />
       <div className={styles.left}>
         <span className={styles.appIconBadge} title="Motion Editor">
-          <Icon name="shape" size={13} />
+          <Icon name="shape" size={15} />
         </span>
         {isEditor && (
           <>
@@ -55,7 +55,6 @@ export function TitleBar(): JSX.Element | null {
           </>
         )}
       </div>
-      <div className={styles.center} />
       <div className={styles.right}>
         {isEditor && (
           <div className={styles.editorControls}>
@@ -67,7 +66,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Left Sidebar"
               onClick={() => useLayoutStore.getState().toggleRegion('leftSidebar')}
             >
-              <Icon name="panel-left" size={14} />
+              <Icon name="panel-left" size={16} />
             </IconButton>
             <IconButton
               aria-label="Toggle Bottom Timeline"
@@ -77,7 +76,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Bottom Timeline"
               onClick={() => useLayoutStore.getState().toggleRegion('bottomTimeline')}
             >
-              <Icon name="panel-bottom" size={14} />
+              <Icon name="panel-bottom" size={16} />
             </IconButton>
             <IconButton
               aria-label="Toggle Right Inspector"
@@ -87,7 +86,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Right Inspector"
               onClick={() => useLayoutStore.getState().toggleRegion('rightInspector')}
             >
-              <Icon name="panel-right" size={14} />
+              <Icon name="panel-right" size={16} />
             </IconButton>
             <span className={styles.menuDivider} aria-hidden />
             <IconButton
@@ -97,7 +96,7 @@ export function TitleBar(): JSX.Element | null {
               title="Preview"
               onClick={() => enterPresentation()}
             >
-              <Icon name="eye" size={14} />
+              <Icon name="eye" size={16} />
             </IconButton>
             <IconButton
               aria-label="Export"
@@ -106,7 +105,7 @@ export function TitleBar(): JSX.Element | null {
               title="Export"
               onClick={() => openExportDialog(compDuration, compFps)}
             >
-              <Icon name="export" size={14} />
+              <Icon name="export" size={16} />
             </IconButton>
           </div>
         )}

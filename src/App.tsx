@@ -26,7 +26,7 @@ import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
+import { useProjectStore } from '@stores/projectStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
@@ -40,6 +40,7 @@ import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
 import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
+import { PANEL_DEFS } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineClip } from '@layout/Timeline';
 import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -146,9 +147,17 @@ function EditorShellInner(): JSX.Element {
   const setSelected = useSelectionStore((s) => s.set);
   const addSelected = useSelectionStore((s) => s.add);
   const sceneRev = useSceneRevision((s) => s.rev);
-  const active = useActiveWorkspace();
-  // Fine-grained time selector — only subscribes to the playhead value so that
-  // 60fps playback ticks don't re-render EditorShellInner via useActiveWorkspace.
+  // Scalar selectors, NOT `useActiveWorkspace()`.
+  //
+  // `useActiveWorkspace` returns the whole tab OBJECT, which immer replaces on
+  // every `setTime` — 60×/s during playback. That subscription sat right next to
+  // a comment claiming it had been removed for exactly this reason, so this
+  // ~1200-line component (which hosts the entire editor tree, and whose children
+  // are almost all unmemoized) re-rendered every playback frame. Only three
+  // fields were ever read off it, and none of them change per frame.
+  const activeCompId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
+  const activeDirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty ?? false : false));
+  const activeTitle = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.title : undefined));
   const activeTime = useProjectStore((s) => s.activeTabId ? (s.tabs[s.activeTabId]?.time ?? 0) : 0);
   
   const compFps = useCompositionStore((s) => s.fps);
@@ -177,50 +186,35 @@ function EditorShellInner(): JSX.Element {
     const node = defaultSceneGraph.getNode(primaryId as any);
     if (!node) return;
     const kind = readNodeKind(node);
-    if (kind === 'text') {
-      useLayoutStore.getState().openPanel('style');
-    } else if (kind === 'shape' || kind === 'image' || kind === 'video' || kind === 'camera' || kind === 'light') {
-      useLayoutStore.getState().openPanel('properties');
+
+    // Only ever open a tab the current one CANNOT serve — never move the user off
+    // a tab that still applies.
+    //
+    // This used to force 'style' for text and 'properties' for everything else on
+    // every selection change, so reading Transform and clicking a text layer
+    // yanked you to Style; adjusting a fill and clicking the next shape yanked you
+    // back. Both target tabs are valid for both kinds, so the switch was pure
+    // disruption. Kinds with a genuinely dedicated home (camera/light live in
+    // Settings) are the only case worth acting on, and only when the active tab
+    // has nothing to show for them.
+    const active = useLayoutStore.getState().activePanelByRegion.rightInspector;
+    const NEEDS_SETTINGS = kind === 'camera' || kind === 'light' || kind === 'particle';
+    if (NEEDS_SETTINGS && active !== 'misc') {
+      useLayoutStore.getState().openPanel('misc');
     }
   }, [selectedIds]);
 
   // Register the default panels exactly once.
   useEffect(() => {
-    // The old "Project" (Compositions) tab was removed — compositions are created
-    // from the dashboard, one project per composition, so an in-editor comp list
-    // is redundant. Its Folder icon also collided with Assets. Scene now leads.
-    // ── Left Sidebar (4 Core Workstation Categories) ──────────────────────────
-    registerPanel({ id: 'scene',       title: 'Scene & Layers', icon: 'layout',        region: 'leftSidebar',   weight: 10, closable: false });
-    registerPanel({ id: 'assets',      title: 'Assets & Media', icon: 'image',         region: 'leftSidebar',   weight: 8, closable: false });
-    registerPanel({ id: 'flow',        title: 'Flow & EaseCopy', icon: 'ease',         region: 'leftSidebar',   weight: 7, closable: false });
-    registerPanel({ id: 'library',     title: 'Elements & Library', icon: 'sparkles',  region: 'leftSidebar',   weight: 6, closable: false });
-    registerPanel({ id: 'ai',          title: 'AI Assistant',   icon: 'ai',            region: 'leftSidebar',   weight: 4, closable: false });
-    // ── Right Inspector ───────────────────────────────────────────────────────
-    registerPanel({ id: 'properties',  title: 'Transform',    icon: 'move',          region: 'rightInspector', weight: 5, closable: false });
-    registerPanel({ id: 'style',       title: 'Style',        icon: 'brush',         region: 'rightInspector', weight: 4, closable: false });
-    registerPanel({ id: 'rig',         title: 'Rigging',      icon: 'bone',          region: 'rightInspector', weight: 3.5, closable: false });
-    registerPanel({ id: 'effects',     title: 'Effects',      icon: 'zap',           region: 'rightInspector', weight: 3, closable: false });
-    registerPanel({ id: 'motiontools',  title: 'Motion Tools', icon: 'sliders-h',     region: 'rightInspector', weight: 1.5, closable: false });
-    registerPanel({ id: 'presets',     title: 'Presets',      icon: 'star',          region: 'rightInspector', weight: 1, closable: false });
-    registerPanel({ id: 'misc',        title: 'Settings',     icon: 'settings',      region: 'rightInspector', weight: 0, closable: false });
-    // ── On-demand panels (Window menu / F6 / ExportDialog) ───────────────────
-    // These renderers exist in getAllPanelRenderers() but were never registered,
-    // and layoutStore's openPanel/togglePanel bail on unknown ids — so F6,
-    // Window ▸ Project and ExportDialog's "Added to Render Queue (F6)" toast
-    // all silently did nothing. Register them closable, then close any a
-    // persisted layout didn't already keep open (registerPanel appends to the
-    // tab strip): fresh sessions get them on demand, not by default. Regions
-    // match workspaceLayouts' DEFAULT_PANEL_ORDER (rightInspector) — except
-    // Project, an AE-style bin that belongs with the left-sidebar lists.
+    // Registrations come from the SHARED registry (panelDefs.ts) so a pop-out
+    // window can resolve the same titles/icons — it renders PopoutRoute, never
+    // EditorShell, so it never runs this effect and used to show a raw id.
+    // On-demand panels are registered (so menus/shortcuts can open them) then
+    // closed unless a persisted layout already had them open.
     const openBefore = new Set(Object.values(useLayoutStore.getState().panelOrder).flat());
-    const onDemand = [
-      { id: 'project',     title: 'Project',      icon: 'folder',  region: 'leftSidebar' as const,    weight: 3,   closable: true },
-      { id: 'history',     title: 'History',      icon: 'history', region: 'rightInspector' as const, weight: 0.8, closable: true },
-      { id: 'renderQueue', title: 'Render Queue', icon: 'queue',   region: 'rightInspector' as const, weight: 0.7, closable: true },
-    ];
-    for (const p of onDemand) {
-      registerPanel(p);
-      if (!openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
+    for (const p of PANEL_DEFS) {
+      registerPanel({ id: p.id, title: p.title, icon: p.icon, region: p.region, weight: p.weight, closable: p.closable });
+      if (p.onDemand && !openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
     }
   }, [registerPanel]);
 
@@ -231,13 +225,19 @@ function EditorShellInner(): JSX.Element {
 
   const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
 
+  // Re-read engine markers + work area when they change (add/remove, in/out).
+  // Declared here rather than beside its effect because the track model reads
+  // layer markers, so it has to re-derive when one is added or removed.
+  const [markerRev, setMarkerRev] = useState(0);
+
   // Timeline tracks derived from the scene graph — one track per node, in
   // layer order. Clip bars come from the Timeline Engine's layers for that node.
   const tracks = useMemo<TimelineTrack[]>(() => {
     void sceneRev;
     void clipRev;
+    void markerRev;
     const controller = getTimelineController();
-    const compId = active?.compositionId || 'comp_root';
+    const compId = activeCompId || 'comp_root';
 
     const result: TimelineTrack[] = [];
 
@@ -432,6 +432,13 @@ function EditorShellInner(): JSX.Element {
         keyframes,
         properties,
         clips,
+        // Layer markers, already on the comp axis (see getLayerMarkers).
+        markers: controller.getLayerMarkers(node.id).map((m) => ({
+          id: m.id,
+          time: m.time,
+          label: m.label,
+          ...(m.color ? { color: m.color } : {}),
+        })),
         depth,
         isGroup: kind === 'group',
         expanded: expandedIds.includes(node.id),
@@ -447,7 +454,7 @@ function EditorShellInner(): JSX.Element {
     
     traverse(compId, 0);
     return result;
-  }, [sceneRev, clipRev, compFps, expandedIds, active?.compositionId]);
+  }, [sceneRev, clipRev, markerRev, compFps, expandedIds, activeCompId]);
 
   // Mirror the scene graph into the Timeline Engine's layers on STRUCTURAL
   // changes only (add/remove/reparent). Pure keyframe or property edits do not
@@ -463,8 +470,6 @@ function EditorShellInner(): JSX.Element {
   // editor must NOT re-hydrate here — doing so flips auth status to 'loading'
   // mid-session and bounces RequireAuth back to /login.
 
-  // Re-read engine markers + work area when they change (add/remove, in/out).
-  const [markerRev, setMarkerRev] = useState(0);
   // Bumped on timeline zoom changes (engine owns pixels-per-frame).
   const [viewRev, setViewRev] = useState(0);
   useEffect(() => {
@@ -485,7 +490,7 @@ function EditorShellInner(): JSX.Element {
     return () => {
       for (const s of subs) s.dispose();
     };
-  }, [active?.compositionId]);
+  }, [activeCompId]);
 
   // Track visibility / lock toggles → scene node state.
   const toggleTrackVisible = (trackId: string): void => {
@@ -1053,8 +1058,8 @@ function EditorShellInner(): JSX.Element {
               left={
                 <>
                   {/* Real state, not a hardcoded "Ready": amber while unsaved. */}
-                  <span style={{ color: active?.dirty ? 'var(--color-modified)' : 'var(--color-success)' }}>●</span>
-                  <span>{active?.dirty ? 'Unsaved changes' : 'Ready'}</span>
+                  <span style={{ color: activeDirty ? 'var(--color-modified)' : 'var(--color-success)' }}>●</span>
+                  <span>{activeDirty ? 'Unsaved changes' : 'Ready'}</span>
                   <span style={{ opacity: 0.4 }}>·</span>
                   <span>{tracks.length} layers</span>
                   {selectionCount > 0 ? (
@@ -1096,11 +1101,11 @@ function EditorShellInner(): JSX.Element {
                   }}
                 >
                   <Icon name="layers" size={11} style={{ color: 'var(--color-text-tertiary)' }} />
-                  <span style={{ fontWeight: 500 }}>{active?.title ?? 'Untitled'}</span>
+                  <span style={{ fontWeight: 500 }}>{activeTitle ?? 'Untitled'}</span>
                   <span style={{ fontFamily: 'var(--font-family-mono)', fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
                     {compWidth}×{compHeight} · {compFps}fps
                   </span>
-                  {active?.dirty ? (
+                  {activeDirty ? (
                     <span
                       aria-label="Unsaved changes"
                       title="Unsaved changes"

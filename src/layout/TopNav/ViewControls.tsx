@@ -224,9 +224,6 @@ export function ViewControls(): JSX.Element {
       onChange: () => setMotionPathDots(id),
     });
 
-  const hasActiveGuides =
-    grid || rulers || safeArea || camera3dMode !== 'active' || channel !== 'rgb' || autoKeyframe || previewResolution !== 1 || viewLayout !== '1';
-
   return (
     <div className={styles.toolGroup}>
       <span className={styles.toolDivider} aria-hidden />
@@ -261,7 +258,7 @@ export function ViewControls(): JSX.Element {
         trigger={
           <button
             type="button"
-            className={channel !== 'rgb' ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+            className={styles.toolDropdownTrigger}
             title={`Channel View: ${CHANNEL_LABEL[channel]}`}
           >
             <span style={{ fontSize: '11px', fontWeight: 600, padding: '0 2px' }}>{CHANNEL_LABEL[channel]}</span>
@@ -289,7 +286,7 @@ export function ViewControls(): JSX.Element {
         trigger={
           <button
             type="button"
-            className={hasActiveGuides ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+            className={styles.toolDropdownTrigger}
             title="View Options"
           >
             <Icon name="sliders-h" size={16} />

@@ -216,11 +216,15 @@ async function exportPNG(opts: ExportOptions): Promise<void> {
   try {
     if (backend.readyPromise) await backend.readyPromise;
     throwIfAborted(opts.signal);
-    backend.renderFrame(exportSnapshot(opts, opts.time));
+    // Snap to the frame grid the video/sequence exporter uses (`i / fps`), so a
+    // still saved from the playhead is the SAME image as that frame in a
+    // rendered sequence rather than one sampled between two of them.
+    const frameTime = opts.fps > 0 ? Math.round(opts.time * opts.fps) / opts.fps : opts.time;
+    backend.renderFrame(exportSnapshot(opts, frameTime));
     opts.onProgress?.(1);
     const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
     throwIfAborted(opts.signal);
-    if (blob) download(blob, `motion-frame-${opts.time.toFixed(2)}s.png`);
+    if (blob) download(blob, `motion-frame-${frameTime.toFixed(2)}s.png`);
   } finally {
     backend.dispose();
   }

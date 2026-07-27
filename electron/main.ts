@@ -20,8 +20,17 @@ app.commandLine.appendSwitch('force_high_performance_gpu');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 // ANGLE: D3D11 is the stable default on Windows; D3D9 on very old HW.
-// Don't force Vulkan here — it conflicts with ANGLE on some drivers.
+// This governs the WebGL2 FALLBACK rung only — WebGPU goes straight to D3D12
+// on Windows and Metal on macOS and never touches ANGLE.
 app.commandLine.appendSwitch('use-angle', 'default');
+// Linux is the one platform where Chromium still gates WebGPU behind Vulkan;
+// without this, `navigator.gpu` is undefined there and the app silently spends
+// its whole life on the WebGL2 fallback. Windows (D3D12) and macOS (Metal)
+// have WebGPU on by default in Electron 32 / Chromium 128, and enabling Vulkan
+// on those platforms is what conflicts with ANGLE — hence the platform gate.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-features', 'Vulkan');
+}
 
 // Privileged local-file protocol for assets in Electron
 protocol.registerSchemesAsPrivileged([

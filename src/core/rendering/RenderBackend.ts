@@ -139,6 +139,12 @@ export interface RenderLayer {
   /** Multi-stroke stack (bottom→top). Supersedes `stroke` when present;
    *  entry 0 mirrors `stroke`. */
   strokes?: Stroke[];
+  /**
+   * Frosted-glass backdrop blur radius (comp px). Blurs what is BEHIND the layer
+   * and shows it through the layer's alpha — a normal `blur` effect blurs the
+   * layer itself, which is why glass could not be expressed before.
+   */
+  backdropBlur?: number;
   /** Layer color (e.g. for label tagging in the UI). */
   color?: string;
   visible: boolean;
@@ -267,6 +273,13 @@ export interface RenderSnapshot {
    * Export ignores this — a render always covers the whole comp.
    */
   roi?: { x: number; y: number; width: number; height: number };
+  /**
+   * False when the frame is being rendered through an ORTHO or CUSTOM view
+   * rather than the active camera. Those are inspection views and must not be
+   * clipped to the composition rectangle — a Top view exists precisely to show
+   * where layers sit outside the render frame. Defaults to true (clip).
+   */
+  viewIsActiveCamera?: boolean;
   /** Camera-driven comp→canvas transform (falls back to fit when omitted). */
   view?: RenderView;
   /** 3D camera as column-major 4×4 view/projection matrices (world →

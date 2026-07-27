@@ -18,7 +18,15 @@ import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { bumpScene } from '@stores/sceneStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { defaultAnimation } from '@motion/animation';
 import { type BevelStyle, DEFAULT_BEVEL_STYLE } from '@core/scene/extrusion';
+
+/** A Solid layer — the renderer pins its transform to the comp box while 2D.
+ *  Mirrors buildSnapshot's own `isSolid` test so the two cannot drift. */
+function isSolidNode(node: SceneNode): boolean {
+  return node.components.find((c) => c.type === 'fx')?.props.solid === true;
+}
 
 const BEVEL_STYLES: readonly BevelStyle[] = ['angular', 'concave', 'convex'];
 
@@ -59,11 +67,6 @@ const ZERO_3D: Node3D = {
   orientationX: 0, orientationY: 0, orientationZ: 0, anchorZ: 0,
   extrusionDepth: 0, bevelDepth: 0, bevelStyle: DEFAULT_BEVEL_STYLE,
 };
-
-/** Extra 3D props beyond the depth markers — orientation + anchor Z +
- *  extrusion. Seeded on demand (they don't mark a layer 3D; z/rotationX/
- *  rotationY already do). */
-export const THREE_D_EXTRA_PROPS = ['orientationX', 'orientationY', 'orientationZ', 'anchorZ', 'extrusionDepth', 'bevelDepth'] as const;
 
 function transformComponent(node: SceneNode): { id: string; props: Record<string, unknown> } | undefined {
   return node.components.find((c) => c.type === 'Transform') as
@@ -201,10 +204,53 @@ export function set3DEnabled(nodeId: string, on: boolean): void {
   if (!node) return;
   const t = transformComponent(node);
   if (!t) return;
+
+  // Solids need their pinned 2D placement written into the transform BEFORE the
+  // 3D switch flips.
+  //
+  // While a solid is 2D the renderer overrides its transform — it draws at
+  // comp-centre, unrotated, unscaled, at comp size (buildSnapshot's
+  // `isSolid && !is3D` branch). Those overrides drop away the instant the layer
+  // becomes 3D, revealing whatever the transform actually holds — and
+  // `insertSolid` never wrote x/y, so it is still `makeNode`'s default
+  // (160, 120) with a top-left anchor. Net effect: making a 1920×1080 background
+  // 3D teleported it so its corner sat at (160, 120). Seeding the values the
+  // renderer was already using makes the switch visually a no-op, which is what
+  // "make this layer 3D" should be.
+  if (on && isSolidNode(node)) {
+    const comp = useCompositionStore.getState();
+    const seed: Record<string, number> = {
+      x: comp.width / 2,
+      y: comp.height / 2,
+      width: comp.width,
+      height: comp.height,
+      anchorX: comp.width / 2,
+      anchorY: comp.height / 2,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    };
+    for (const [prop, value] of Object.entries(seed)) {
+      defaultSceneGraph.writeProp(nodeId, t.id, prop, value);
+    }
+  }
+
   // The plain-view components are rebuilt on read, so props must be persisted
   // through the graph's writeProp, not mutated in place.
   for (const p of THREE_D_PROPS) {
     defaultSceneGraph.writeProp(nodeId, t.id, p, on ? (typeof t.props[p] === 'number' ? t.props[p] : 0) : undefined);
   }
+
+  // Turning 3D OFF must also drop the depth ANIMATION, not just the base props.
+  // A leftover `z` track kept feeding a moving depth into the painter sort of a
+  // layer that is nominally 2D again, and re-enabling 3D resurrected an animation
+  // the user thought they had removed. (This is what the doc comment above always
+  // claimed happened.)
+  if (!on) {
+    for (const p of THREE_D_PROPS) {
+      if (defaultAnimation.isAnimated(nodeId, p)) defaultAnimation.removeTrack(nodeId, p);
+    }
+  }
+
   bumpScene();
 }

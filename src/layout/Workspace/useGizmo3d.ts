@@ -10,7 +10,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSceneRevision } from '@stores/sceneStore';
-import { is3DEnabled } from '@core/scene/threeD';
+import { is3DEnabled, canBe3D } from '@core/scene/threeD';
 import {
   sampleTransform3DAtPlayhead,
   applyGizmo3DTransforms,
@@ -74,10 +74,17 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
   const [activeHandle, setActiveHandle] = useState<GizmoHandleType | null>(null);
   const [dragState, setDragState] = useState<DragState3D | null>(null);
 
-  // Filter selected nodes to those with 3D enabled (AE multi-layer 3D selection)
+  // Filter selected nodes to those with 3D enabled (AE multi-layer 3D selection).
+  //
+  // `canBe3D` — not bare `is3DEnabled` — is the gate, and it is the SAME predicate
+  // the renderer, the selection chrome (ports.ts) and the axis widget use.
+  // insertCamera writes `z = -focalLength`, so every camera satisfies
+  // `is3DEnabled` and used to get a full layer transform gizmo whose drags wrote
+  // camera x/y/z; lights had the same problem. Cameras and lights are positioned
+  // with the camera-navigation tools and their own inspector, not this gizmo.
   const selected3DNodes = selectedIds
     .map((id) => defaultSceneGraph.getNode(id))
-    .filter((node): node is SceneNode => node != null && is3DEnabled(node));
+    .filter((node): node is SceneNode => node != null && canBe3D(node) && is3DEnabled(node));
 
   const is3D = selected3DNodes.length > 0;
   const singleId = selectedIds.length === 1 ? selectedIds[0] : (selected3DNodes[0]?.id ?? null);
@@ -180,6 +187,11 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
       compWidth,
       compHeight,
     );
+  } else {
+    // Clear it. Leaving the last gizmo behind meant the capture-phase pointerdown
+    // handler could hit-test against a stale gizmo for a selection that is no
+    // longer 3D (or no longer selected) and swallow the click.
+    renderedGizmoRef.current = null;
   }
 
   // Pointer event handlers for 3D Gizmo interaction
@@ -222,7 +234,20 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
         if (handle === 'pos_x' || handle === 'pos_y' || handle === 'pos_z') {
           const axisDir = handle === 'pos_x' ? basis.x : handle === 'pos_y' ? basis.y : basis.z;
-          const { tAxis } = Project3D.closestPointRayAxis(ray, dragState.startPos3D, axisDir);
+          // Ray/axis intersection is SINGULAR when the axis points at the camera:
+          // `closestPointRayAxis` divides by `a*c - b*b`, which goes to 0, and
+          // returns tAxis = 0 — so dragging the Z arrow in a front view (the
+          // default view, where basis.z faces the viewer) did precisely nothing.
+          // Fall back to vertical screen travel, AE-style: drag up pushes the
+          // layer along +axis, away from the camera.
+          const axisEntry = renderedGizmoRef.current?.axes.find((a) => a.type === handle);
+          let tAxis: number;
+          if (axisEntry?.degenerate) {
+            const viewScale = getWorkspaceController().getView().scale || 1;
+            tAxis = -(stagePt.y - dragState.startMouseScreen.y) / viewScale;
+          } else {
+            tAxis = Project3D.closestPointRayAxis(ray, dragState.startPos3D, axisDir).tAxis;
+          }
           newPos = {
             x: dragState.startPos3D.x + axisDir.x * tAxis,
             y: dragState.startPos3D.y + axisDir.y * tAxis,
@@ -260,9 +285,17 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
           if (handle === 'rot_x') newRot.rotX = dragState.startRot3D.rotX + deltaDeg;
           else if (handle === 'rot_y') newRot.rotY = dragState.startRot3D.rotY + deltaDeg;
           else newRot.rotZ = dragState.startRot3D.rotZ + deltaDeg;
-        } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_z' || handle === 'scale_center') {
-          const dx = (stagePt.x - dragState.startMouseScreen.x) * 0.01;
-          const factor = Math.max(0.05, 1 + dx);
+        } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_center') {
+          // Each handle follows the axis it points along. Every scale handle used
+          // to read `stagePt.x` only, so the VERTICAL Y-scale handle grew when you
+          // dragged sideways and ignored vertical motion entirely.
+          const dxPx = stagePt.x - dragState.startMouseScreen.x;
+          const dyPx = stagePt.y - dragState.startMouseScreen.y;
+          const travel =
+            handle === 'scale_y' ? -dyPx
+            : handle === 'scale_center' ? (dxPx - dyPx) / 2
+            : dxPx;
+          const factor = Math.max(0.05, 1 + travel * 0.01);
           if (handle === 'scale_x' || handle === 'scale_center') newScale.scaleX = dragState.startScale3D.scaleX * factor;
           if (handle === 'scale_y' || handle === 'scale_center') newScale.scaleY = dragState.startScale3D.scaleY * factor;
         }
@@ -275,7 +308,11 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
         const deltaRotY = newRot.rotY - dragState.startRot3D.rotY;
         const deltaRotZ = newRot.rotZ - dragState.startRot3D.rotZ;
 
-        const scaleFactor = newScale.scaleX / Math.max(0.001, dragState.startScale3D.scaleX);
+        // Per-axis factors. A single factor derived from scaleX made `scale_y` a
+        // no-op: that handle only changes scaleY, so the X ratio stayed 1 and the
+        // update below multiplied both axes by 1.
+        const scaleFactorX = newScale.scaleX / Math.max(0.001, dragState.startScale3D.scaleX);
+        const scaleFactorY = newScale.scaleY / Math.max(0.001, dragState.startScale3D.scaleY);
 
         // Apply to all selected 3D nodes through ports' dual write path: props
         // with a lit stopwatch (or Auto-Keyframe on) keyframe at the playhead —
@@ -299,7 +336,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
               ? { rotation: st.rot.rotZ + deltaRotZ }
               : {}),
             ...(isScaleHandle
-              ? { scaleX: st.scale.scaleX * scaleFactor, scaleY: st.scale.scaleY * scaleFactor }
+              ? { scaleX: st.scale.scaleX * scaleFactorX, scaleY: st.scale.scaleY * scaleFactorY }
               : {}),
           },
         }));

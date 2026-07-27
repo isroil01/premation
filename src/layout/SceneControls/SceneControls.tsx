@@ -1,13 +1,38 @@
 // src/layout/SceneControls/SceneControls.tsx
-import { useGuidesStore } from '@stores/guidesStore';
-import { useRenderBackendStore } from '@stores/renderBackendStore';
-import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
-import { Icon } from '@components/Icon';
-import { insert3DPrimitive, insert3DText, insertLight, insertCamera } from '@core/scene/sceneInsert';
+/**
+ * SceneControls — the 3D VIEWPORT NAVIGATION cluster in the toolbar (AE's
+ * camera-tool + gizmo-mode group). Nothing else: this bar navigates and
+ * manipulates, it does not create.
+ *
+ * Deliberately NOT here (each had exactly one other, better home):
+ *  - Free/Fixed workspace lock → ViewportHeader, next to the canvas it locks.
+ *  - Insert camera / light / cube / sphere / cylinder / 3D text → the TopNav
+ *    "New layer" dropdown, the single home for creating layers.
+ *  - "CPU fallback" badge → ViewportHeader, beside the comp it describes.
+ *
+ * Icon note: orbit/pan/dolly and the ground plane use dedicated glyphs
+ * (`orbit`, `hand-grab`, `perspective`, `ground-grid`) instead of borrowing
+ * `refresh`/`hand`/`zoom-in`/`grid`, which are the Hand tool, the Zoom tool and
+ * the 2D grid overlay elsewhere in this same toolbar.
+ */
+import { useGuidesStore, type CameraTool, type Gizmo3dState } from '@stores/guidesStore';
+import { Icon, type IconName } from '@components/Icon';
 import styles from './SceneControls.module.css';
 
+const CAMERA_TOOLS: ReadonlyArray<{ id: CameraTool; icon: IconName; label: string }> = [
+  { id: 'orbit', icon: 'orbit', label: 'Orbit Around Cursor' },
+  { id: 'pan', icon: 'pan-camera', label: 'Pan Camera' },
+  { id: 'dolly', icon: 'perspective', label: 'Dolly Camera (towards/away)' },
+];
+
+const GIZMO_MODES: ReadonlyArray<{ id: Gizmo3dState; icon: IconName; label: string }> = [
+  { id: 'universal', icon: 'axis-3d', label: 'Universal Gizmo (move · rotate · scale)' },
+  { id: 'position', icon: 'move', label: 'Position Gizmo' },
+  { id: 'scale', icon: 'scale', label: 'Scale Gizmo' },
+  { id: 'rotation', icon: 'rotate-cw', label: 'Rotation Gizmo' },
+];
+
 export function SceneControls(): JSX.Element {
-  // Reuse existing stores and actions from ViewportHeader
   const cameraTool = useGuidesStore((s) => s.cameraTool);
   const setCameraTool = useGuidesStore((s) => s.setCameraTool);
   const gizmo3dState = useGuidesStore((s) => s.gizmo3dState);
@@ -16,121 +41,64 @@ export function SceneControls(): JSX.Element {
   const toggleDraft3d = useGuidesStore((s) => s.toggleDraft3d);
   const groundGridVisible = useGuidesStore((s) => s.groundGridVisible);
   const toggleGroundGridVisible = useGuidesStore((s) => s.toggleGroundGridVisible);
-  const workspaceMode = useWorkspaceViewStore((s) => s.mode);
-  const toggleWorkspaceMode = useWorkspaceViewStore((s) => s.toggleMode);
-  const isSoftware = useRenderBackendStore((s) => s.isSoftwareFallback);
 
   return (
     <div className={styles.sceneControls}>
-      {/* Camera Tools */}
-      {['orbit', 'pan', 'dolly'].map((mode) => (
+      {/* Camera navigation — click to arm, click again to disarm (C cycles). */}
+      {CAMERA_TOOLS.map(({ id, icon, label }) => (
         <button
-          key={mode}
-          className={`${styles.button} ${cameraTool === mode ? styles.buttonActive : ''}`}
-          onClick={() => setCameraTool(cameraTool === mode ? 'none' : (mode as any))}
-          aria-pressed={cameraTool === mode}
-          title={`Camera ${mode.toUpperCase()} (C key)`}
+          key={id}
+          type="button"
+          className={`${styles.button} ${cameraTool === id ? styles.buttonActive : ''}`}
+          onClick={() => setCameraTool(cameraTool === id ? 'none' : id)}
+          aria-pressed={cameraTool === id}
+          title={`${label} — hold Alt to use temporarily, C to cycle`}
         >
-          <Icon name={mode === 'orbit' ? 'refresh' : mode === 'pan' ? 'hand' : 'zoom-in'} size={13} />
+          <Icon name={icon} size={16} />
         </button>
       ))}
 
       <div className={styles.divider} />
 
-      {/* 3D Gizmo Modes */}
-      {['universal', 'position', 'scale', 'rotation'].map((g) => (
+      {/* 3D gizmo mode for the selection. */}
+      {GIZMO_MODES.map(({ id, icon, label }) => (
         <button
-          key={g}
-          className={`${styles.button} ${gizmo3dState === g ? styles.buttonActive : ''}`}
-          onClick={() => setGizmo3dState(g as any)}
-          aria-pressed={gizmo3dState === g}
-          title={`3D Gizmo: ${g.charAt(0).toUpperCase() + g.slice(1)}`}
+          key={id}
+          type="button"
+          className={`${styles.button} ${gizmo3dState === id ? styles.buttonActive : ''}`}
+          onClick={() => setGizmo3dState(id)}
+          aria-pressed={gizmo3dState === id}
+          title={label}
         >
-          <Icon name={g === 'universal' ? 'cube' : g === 'position' ? 'move' : g === 'scale' ? 'scale' : 'rotate-cw'} size={13} />
+          <Icon name={icon} size={16} />
         </button>
       ))}
 
       <div className={styles.divider} />
 
-      {/* Viewport Toggles */}
       <button
+        type="button"
         className={`${styles.button} ${draft3d ? styles.buttonActive : ''}`}
         onClick={toggleDraft3d}
         aria-pressed={draft3d}
-        title={draft3d ? 'Draft 3D enabled' : 'Draft 3D disabled'}
+        title={
+          draft3d
+            ? 'Draft 3D ON — lights, shadows and depth-of-field skipped for speed'
+            : 'Draft 3D OFF — full 3D shading. Click to preview faster.'
+        }
       >
-        <Icon name="zap" size={13} />
+        <Icon name="zap" size={16} />
       </button>
 
       <button
+        type="button"
         className={`${styles.button} ${groundGridVisible ? styles.buttonActive : ''}`}
         onClick={toggleGroundGridVisible}
         aria-pressed={groundGridVisible}
-        title={groundGridVisible ? 'Hide Ground Grid' : 'Show Ground Grid'}
+        title={groundGridVisible ? 'Hide 3D ground plane' : 'Show 3D ground plane'}
       >
-        <Icon name="grid" size={13} />
+        <Icon name="ground-grid" size={16} />
       </button>
-
-      <button
-        className={styles.button}
-        onClick={toggleWorkspaceMode}
-        title={workspaceMode === 'fixed' ? 'Switch to Free Workspace' : 'Switch to Fixed Workspace'}
-      >
-        <Icon name={workspaceMode === 'fixed' ? 'lock' : 'hand'} size={13} />
-      </button>
-
-      <div className={styles.divider} />
-
-      {/* 3D Primitive Shortcuts */}
-      <button
-        className={styles.button}
-        onClick={() => insert3DText('3D TEXT')}
-        title="Insert 3D Extruded Text"
-      >
-        <Icon name="type" size={13} />
-      </button>
-      <button
-        className={styles.button}
-        onClick={() => insert3DPrimitive('cube')}
-        title="Insert 3D Cube"
-      >
-        <Icon name="cube" size={13} />
-      </button>
-      <button
-        className={styles.button}
-        onClick={() => insert3DPrimitive('sphere')}
-        title="Insert 3D Sphere"
-      >
-        <Icon name="circle" size={13} />
-      </button>
-      <button
-        className={styles.button}
-        onClick={() => insert3DPrimitive('cylinder')}
-        title="Insert 3D Cylinder"
-      >
-        <Icon name="shape" size={13} />
-      </button>
-      <button
-        className={styles.button}
-        onClick={() => insertLight()}
-        title="Insert 3D Light"
-      >
-        <Icon name="light" size={13} />
-      </button>
-      <button
-        className={styles.button}
-        onClick={() => insertCamera()}
-        title="Insert 3D Camera"
-      >
-        <Icon name="camera" size={13} />
-      </button>
-
-      {/* Software GPU Fallback Badge */}
-      {isSoftware && (
-        <span className={styles.softwareBadge} title="GPU hardware acceleration inactive. Running CPU renderer fallback.">
-          <Icon name="warning" size={11} /> CPU Fallback
-        </span>
-      )}
     </div>
   );
 }

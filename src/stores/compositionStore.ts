@@ -12,6 +12,7 @@
  * until the user edits the comp.
  */
 
+import { useMemo } from 'react';
 import { useProjectStore, type CompositionSettings } from './projectStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
 
@@ -83,12 +84,23 @@ export interface CompositionStoreFn {
 export const useCompositionStore = function <T>(selector?: (state: CompositionStore) => T): T | CompositionStore {
   // Hooks must be unconditional — a null↔set transition of activeTabId while
   // consumers stay mounted would otherwise change the hook count and crash.
-  const tab = useProjectStore(s => (s.activeTabId ? s.tabs[s.activeTabId] : undefined)) ?? null;
-  const compId = tab?.compositionId;
+  //
+  // Subscribe to the tab's compositionId (a STRING), never to the tab object.
+  // The tab is re-created by immer on every `setTime`, i.e. 60×/s during playback,
+  // and because this is a plain hook rather than a real zustand store the selector
+  // runs AFTER the subscription — so `useCompositionStore(s => s.fps)` gave zero
+  // granularity and re-rendered all ~39 call sites across 17 components on every
+  // playback frame (TitleBar, ViewportHeader, inspector sections, ExportDialog…),
+  // none of which care about time. A scalar id is stable across those writes.
+  const compId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
   const compData = useProjectStore(s => (compId ? s.comps[compId] : undefined)) ?? DEFAULT_COMPOSITION;
   const updateComp = useProjectStore(s => s.actions.updateComp);
 
-  const state: CompositionStore = {
+  // Memoized so the returned identity is stable between renders. Without this
+  // every consumer that selects an object/function off this store (`comp`, `key`,
+  // `update`) saw a fresh reference each render, defeating downstream memo and
+  // putting unstable values into effect dependency arrays.
+  const state = useMemo<CompositionStore>(() => ({
     ...compData,
     update: (patch) => { if (compId) updateComp(compId, sanitize(patch)); },
     setBackground: (hex) => { if (compId) updateComp(compId, { background: hex, backgroundPaint: undefined }); },
@@ -100,7 +112,7 @@ export const useCompositionStore = function <T>(selector?: (state: CompositionSt
     setTransparent: (v) => { if (compId) updateComp(compId, { transparent: v }); },
     comp: () => compData,
     key: () => compKeyFor(compData),
-  };
+  }), [compData, compId, updateComp]);
 
   return selector ? selector(state) : state;
 } as CompositionStoreFn;

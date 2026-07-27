@@ -31,9 +31,37 @@ import { getEventBus } from '@core/events/EventBus';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
+/** Minimal structural shapes for the WebGPU probe — the DOM lib in this repo
+ *  does not ship @webgpu/types, and the probe needs only these members. */
+interface GpuLike {
+  requestAdapter(): Promise<{ requestDevice(): Promise<{ destroy?: () => void }> } | null>;
+  getPreferredCanvasFormat(): string;
+}
+interface GpuCanvasLike {
+  configure(config: { device: unknown; format: string }): void;
+  unconfigure?(): void;
+}
+
 /** Void color behind the composition — transparent so the workspace shows
  *  through, matching Canvas2DBackend which clears the canvas to transparent. */
 const VOID: Color = { r: 0, g: 0, b: 0, a: 0 };
+
+/**
+ * Ceiling on a single init attempt. `adapter.requestDevice()` has no timeout of
+ * its own and can hang indefinitely on a wedged driver; without this the whole
+ * ladder stalls, readyPromise never settles and the viewport spins forever.
+ */
+const INIT_TIMEOUT_MS = 6000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
 
 export class MotionRendererBackend implements RenderBackend {
   readonly kind: string;
@@ -69,7 +97,18 @@ export class MotionRendererBackend implements RenderBackend {
 
   readonly role: 'viewport' | 'auxiliary';
 
-  constructor(preferred: RendererBackendKind = 'webgl2', role: 'viewport' | 'auxiliary' = 'viewport') {
+  /**
+   * WebGPU is this product's PRIMARY engine; WebGL2 is the fallback rung.
+   *
+   * The default used to be `'webgl2'`, and that is not a cosmetic preference:
+   * `initAttempts` only probes WebGPU when `preferred === 'webgpu'`, so any
+   * caller that omitted the argument silently opted the whole process out of
+   * WebGPU — it was never even attempted. `createRenderBackend` always passes a
+   * resolved kind, so the shipping path was unaffected, but the default had the
+   * wrong polarity for every other caller (tests, tools, future call sites).
+   * `initAttempts` still degrades to WebGL2 on any hardware that can't deliver.
+   */
+  constructor(preferred: RendererBackendKind = 'webgpu', role: 'viewport' | 'auxiliary' = 'viewport') {
     this.preferred = preferred;
     this.role = role;
     this.kind = `motion-${preferred}`;
@@ -80,7 +119,58 @@ export class MotionRendererBackend implements RenderBackend {
 
   attach(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
-    void this.init(canvas);
+    // init() resolves readyPromise in a finally block and records initFailed, so
+    // it should never reject — but attach() is sync and an escaped rejection here
+    // would be an unhandled promise rejection with the spinner left spinning.
+    this.init(canvas).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error('[MotionRendererBackend] init threw unexpectedly:', err);
+      this.initFailed = true;
+      this.initErrorMessage = err instanceof Error ? err.message : String(err);
+      this.resolveReady();
+    });
+  }
+
+  /**
+   * Can this document create AND configure a WebGPU context at all?
+   *
+   * Probed once per page on a THROWAWAY canvas. `getContext()` permanently binds
+   * a canvas element to one context type: if we asked the real viewport canvas
+   * for 'webgpu' and `configure()` then threw (device lost, format mismatch — the
+   * classic intermittent on Windows hybrid graphics), that canvas could never
+   * afterwards be given a 'webgl2' context. Both WebGL2 rungs of the ladder would
+   * then see `getContext('webgl2') === null` and a recoverable WebGPU hiccup
+   * would surface as a hard "Preview unavailable" on a perfectly good GPU.
+   *
+   * Probing first means the real canvas is only ever handed to a tier we already
+   * know works.
+   */
+  private static webgpuProbe: Promise<boolean> | null = null;
+
+  private static probeWebGpu(): Promise<boolean> {
+    MotionRendererBackend.webgpuProbe ??= (async (): Promise<boolean> => {
+      let device: { destroy?: () => void } | null = null;
+      try {
+        const gpu = (navigator as unknown as { gpu?: GpuLike }).gpu;
+        if (!gpu || typeof document === 'undefined') return false;
+        const adapter = await withTimeout(gpu.requestAdapter(), INIT_TIMEOUT_MS, 'requestAdapter');
+        if (!adapter) return false;
+        device = await withTimeout(adapter.requestDevice(), INIT_TIMEOUT_MS, 'requestDevice');
+        if (!device) return false;
+        const ctx = document.createElement('canvas').getContext('webgpu') as GpuCanvasLike | null;
+        if (!ctx) return false;
+        ctx.configure({ device, format: gpu.getPreferredCanvasFormat() });
+        ctx.unconfigure?.();
+        return true;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[MotionRendererBackend] WebGPU probe failed, using WebGL2:', err);
+        return false;
+      } finally {
+        device?.destroy?.();
+      }
+    })();
+    return MotionRendererBackend.webgpuProbe;
   }
 
   private createGpuBackendFor(kind: RendererBackendKind): GpuBackend {
@@ -90,21 +180,66 @@ export class MotionRendererBackend implements RenderBackend {
   }
 
   /**
+   * The context type a canvas ELEMENT has already been bound to.
+   *
+   * `getContext()` binds a canvas to one context type permanently — asking the
+   * same element for a different type afterwards returns null forever. The
+   * throwaway-canvas probe protects the FIRST attempt from that, but nothing
+   * protected the ladder itself: once the real WebGPU attempt called
+   * `getContext('webgpu')`, the element was burned, and the WebGL2 rungs below
+   * it could only ever get null. So a WebGPU attempt that failed for a purely
+   * transient reason (device lost, init timeout while the project loads, a
+   * resize race) took the whole ladder down with it and surfaced as
+   * "WebGL2 is not available" on a machine where WebGPU works fine — the
+   * intermittent blank preview on entering a project.
+   */
+  private static boundKind = new WeakMap<HTMLCanvasElement, RendererBackendKind>();
+
+  /**
+   * Record what this canvas is bound to after an attempt touched it.
+   *
+   * Asking for the kind we JUST tried is safe and cannot bind anything new: it
+   * either hands back the context that attempt created, or null because it
+   * never got one. Never call this for a kind that has not been attempted — that
+   * would do the binding it is meant to detect.
+   */
+  private static noteBinding(canvas: HTMLCanvasElement, kind: RendererBackendKind): void {
+    if (kind === 'null') return;
+    const ctx = canvas.getContext(kind === 'webgpu' ? ('webgpu' as 'webgl2') : 'webgl2');
+    if (ctx) MotionRendererBackend.boundKind.set(canvas, kind);
+  }
+
+  /**
    * The ladder of init attempts, in order. Real recovery, not just a badge:
-   *   webgpu (when preferred + available) → webgl2 → webgl2 retry (delayed).
-   * The delayed WebGL2 retry exists because a failed getContext usually means
-   * the page hit the browser's live-context cap; backend.dispose() now
-   * explicitly loses its context, so a slot frees up almost immediately and a
-   * short-delay retry succeeds where the first attempt raced the release.
+   *   webgpu → webgpu retry → webgl2 → webgl2 retry (all delayed after the first).
+   *
+   * Two reasons a delayed same-tier retry beats stepping straight down:
+   *  - A failed getContext usually means the page hit the browser's live-context
+   *    cap; `dispose()` explicitly loses its context, so a slot frees almost
+   *    immediately and a short-delay retry succeeds where the first raced it.
+   *  - Once a tier has bound the canvas (see `boundKind`), it is the ONLY tier
+   *    that can ever succeed on that element. Retrying it is not optimism, it is
+   *    the only move left — and `initLadder` skips the mismatched rungs rather
+   *    than burning the ladder on guaranteed-null getContext calls.
+   *
    * (NullBackend is NOT a fallback tier here — it produces no pixels, which is
    * indistinguishable from the blank-canvas bug this fixes. Total failure is
    * surfaced via initFailed instead.)
    */
-  private initAttempts(): Array<{ kind: RendererBackendKind; delayMs?: number }> {
+  private async initAttempts(): Promise<Array<{ kind: RendererBackendKind; delayMs?: number }>> {
     if (this.preferred === 'null') return [{ kind: 'null' }];
     const attempts: Array<{ kind: RendererBackendKind; delayMs?: number }> = [];
-    if (this.preferred === 'webgpu' && typeof navigator !== 'undefined' && 'gpu' in navigator) {
+    // Only offer WebGPU once the throwaway-canvas probe has proven the whole
+    // adapter → device → configure path works. `'gpu' in navigator` alone is not
+    // evidence of that, and being wrong there poisons the real canvas.
+    if (
+      this.preferred === 'webgpu' &&
+      typeof navigator !== 'undefined' &&
+      'gpu' in navigator &&
+      (await MotionRendererBackend.probeWebGpu())
+    ) {
       attempts.push({ kind: 'webgpu' });
+      attempts.push({ kind: 'webgpu', delayMs: 250 });
     }
     attempts.push({ kind: 'webgl2' });
     attempts.push({ kind: 'webgl2', delayMs: 250 });
@@ -112,11 +247,37 @@ export class MotionRendererBackend implements RenderBackend {
   }
 
   private async init(canvas: HTMLCanvasElement): Promise<void> {
+    try {
+      await this.initLadder(canvas);
+    } finally {
+      // Unconditional: several statements below the initialize() try/catch (the
+      // Renderer constructor, createViewport, resize, the EngineReady emit) can
+      // throw, and if resolveReady were only called on the success and
+      // exhausted-ladder paths, readyPromise would stay pending forever and the
+      // viewport would spin with no error to show.
+      this.resolveReady();
+    }
+  }
+
+  private async initLadder(canvas: HTMLCanvasElement): Promise<void> {
     let lastError: unknown = null;
-    const attempts = this.initAttempts();
+    /** True when a rung was skipped because the canvas is bound to another type. */
+    let skippedForBinding = false;
+    const attempts = await this.initAttempts();
+    if (this.disposed) return;
     for (let i = 0; i < attempts.length; i++) {
       const attempt = attempts[i]!;
       if (this.disposed) break;
+      // Skip any rung whose context type this canvas can no longer produce.
+      // Once an earlier attempt bound the element, `getContext` for a different
+      // type returns null forever — attempting it wastes a rung and, worse,
+      // makes the LAST error "WebGL2 is not available" on a machine whose only
+      // real problem was one transient WebGPU hiccup.
+      const bound = MotionRendererBackend.boundKind.get(canvas);
+      if (bound && bound !== attempt.kind) {
+        skippedForBinding = true;
+        continue;
+      }
       if (attempt.delayMs) {
         await new Promise((resolve) => setTimeout(resolve, attempt.delayMs));
         if (this.disposed) break;
@@ -134,10 +295,15 @@ export class MotionRendererBackend implements RenderBackend {
           getEventBus().emit('AnimationChanged', { nodeId: '__texture__' });
       }
       try {
-        await renderer.initialize({ canvas });
+        await withTimeout(renderer.initialize({ canvas }), INIT_TIMEOUT_MS, `${attempt.kind} initialize`);
       } catch (err) {
         // No context for this tier (or context lost mid-init). Dispose the
         // failed renderer+backend and step down to the next attempt.
+        //
+        // Record the binding FIRST: a WebGPU attempt that got its context and
+        // then failed to configure has still burned the element, and the rungs
+        // below must know that before they try.
+        MotionRendererBackend.noteBinding(canvas, attempt.kind);
         lastError = err;
         // eslint-disable-next-line no-console
         console.warn(`[MotionRendererBackend] init failed for ${attempt.kind}:`, err);
@@ -155,6 +321,11 @@ export class MotionRendererBackend implements RenderBackend {
         }
         continue;
       }
+      // A SUCCESSFUL attempt binds the element too. Recording it matters for the
+      // NEXT backend attached to this same canvas (re-entering a project reuses
+      // the element): without it, a later backend that preferred the other tier
+      // would spend its rungs on getContext calls that can only return null.
+      MotionRendererBackend.noteBinding(canvas, attempt.kind);
       if (this.disposed) {
         renderer.dispose();
         break;
@@ -171,8 +342,9 @@ export class MotionRendererBackend implements RenderBackend {
       // Corrects the tier badge after a successful fallback/retry (an earlier
       // EngineError may have flipped it to 'software' prematurely).
       getEventBus().emit('EngineReady', { engine: `motion-${attempt.kind}`, role: this.role });
-      this.resolveReady();
-
+      // readyPromise is resolved by init()'s finally — do not resolve here, or a
+      // throw in the flush below would skip nothing but still split the contract
+      // across two places.
       if (this.pending) {
         const snapshot = this.pending;
         this.pending = null;
@@ -185,12 +357,14 @@ export class MotionRendererBackend implements RenderBackend {
     // error state instead of dismissing the spinner into a blank canvas.
     if (!this.disposed) {
       this.initFailed = true;
-      this.initErrorMessage =
-        lastError instanceof Error
-          ? lastError.message
-          : 'GPU rendering could not be initialized (WebGL2/WebGPU unavailable).';
+      const detail = lastError instanceof Error ? lastError.message : null;
+      this.initErrorMessage = skippedForBinding
+        // Don't blame a tier that was never allowed to run. The canvas was
+        // already bound to another context type, so the fallback rungs were
+        // skipped by design and quoting their error would be a lie.
+        ? `The preview surface could not be re-initialized${detail ? ` (${detail})` : ''}. Reopening the project rebuilds it.`
+        : detail ?? 'GPU rendering could not be initialized (WebGPU/WebGL2 unavailable).';
     }
-    this.resolveReady();
   }
 
   /** The renderer's backend only sets the GL viewport; the canvas backing store
@@ -388,12 +562,38 @@ export class MotionRendererBackend implements RenderBackend {
     // has always done this with ctx.clip()). Without it, a layer dragged off
     // the composition kept rendering on the pasteboard. Camera mapping:
     // screenCss = (world − center)·zoom + css/2, then × dpr for surface px.
-    this.renderer.backend.setFrameClip?.({
-      x: ((0 - cam.center.x) * cam.zoom + this.cssW / 2) * this.dpr,
-      y: ((0 - cam.center.y) * cam.zoom + this.cssH / 2) * this.dpr,
-      width: snapshot.width * cam.zoom * this.dpr,
-      height: snapshot.height * cam.zoom * this.dpr,
-    });
+    //
+    // Region of Interest narrows that rect further. `snapshot.roi` was a declared
+    // field with no producer and no consumer, so "Restrict to Region" / "Region to
+    // Centre" toggled a checkbox and changed nothing on screen; clipping to it is
+    // what makes the region actually restrict the render (and skip the work
+    // outside it), which is the whole point of the feature.
+    // Only the ACTIVE-CAMERA view is clipped to the comp frame.
+    //
+    // Ortho (Top/Front/Left/…) and custom views are inspection views: their whole
+    // purpose is to show where layers sit in space, including well outside the
+    // render frame. Clipping them to the comp rect meant a Top view of a 1080-tall
+    // comp discarded everything outside z ∈ (−540, +540) — most of the scene —
+    // which is a large part of "the 3D views don't work correctly". AE frames
+    // those views to the viewport and draws the comp box as a guide instead.
+    const roi = snapshot.roi;
+    const clipsToFrame = snapshot.viewIsActiveCamera !== false;
+    if (roi || clipsToFrame) {
+      const clipX = roi ? roi.x : 0;
+      const clipY = roi ? roi.y : 0;
+      const clipW = roi ? roi.width : snapshot.width;
+      const clipH = roi ? roi.height : snapshot.height;
+      const toScreen = (world: number, center: number, cssExtent: number): number =>
+        ((world - center) * cam.zoom + cssExtent / 2) * this.dpr;
+      this.renderer.backend.setFrameClip?.({
+        x: toScreen(clipX, cam.center.x, this.cssW),
+        y: toScreen(clipY, cam.center.y, this.cssH),
+        width: clipW * cam.zoom * this.dpr,
+        height: clipH * cam.zoom * this.dpr,
+      });
+    } else {
+      this.renderer.backend.setFrameClip?.(null);
+    }
 
     // Overlays: transparent void + only the guides the app has toggled on.
     vp.overlays.background = VOID;
@@ -421,6 +621,13 @@ export class MotionRendererBackend implements RenderBackend {
     this.disposed = true;
     this.ready = false;
     this.pending = null;
+    // Release retained media BEFORE the renderer goes: <video> elements keep a
+    // decoder running and ImageBitmaps hold off-heap pixels, and neither is
+    // reachable once `textures` is nulled. Also drop cached video frames — nothing
+    // called retain/clear on that cache, so every source ever scrubbed kept its
+    // hidden <video> and frame canvases alive for the whole page lifetime.
+    this.textures?.dispose();
+    viewportVideoFrames.clear();
     this.renderer?.dispose();
     this.renderer = null;
     this.viewport = null;

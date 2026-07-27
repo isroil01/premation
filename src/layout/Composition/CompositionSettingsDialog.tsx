@@ -134,17 +134,17 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
       <div className={styles.section}>
         <div className={styles.label}>Scene Background</div>
         <p className={styles.hint} style={{ marginTop: 0, marginBottom: 8 }}>
-          The composition's own background — this is what appears on the video screen and in exports.
+          The composition's background — rendered on canvas and captured in video exports.
         </p>
         <div className={styles.bgRow}>
-          {/* Style selector — solid colour, or a linear / radial gradient. */}
-          <div className={styles.chips} style={{ margin: 0 }}>
+          {/* Segmented Control style selector — Solid, Linear, or Radial gradient. */}
+          <div className={styles.segmentedControl}>
             {(['solid', 'linear', 'radial'] as FillType[]).map((t) => (
               <button
                 key={t}
                 type="button"
                 title={`${t[0]!.toUpperCase()}${t.slice(1)} background`}
-                className={bgPaint.type === t ? styles.chipOn : styles.chip}
+                className={bgPaint.type === t ? styles.segmentBtnActive : styles.segmentBtn}
                 disabled={s.transparent}
                 onClick={() => setBgType(t)}
               >
@@ -160,19 +160,21 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         </div>
 
         {!s.transparent && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
             {bgPaint.type === 'solid' && (
-              <ColorPicker
-                value={s.background}
-                onChange={(hex) => s.setBackgroundPaint(solidFill(hex))}
-                className={styles.colorTrigger}
-                aria-label="Background color"
-              />
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Solid Fill Color</span>
+                <ColorPicker
+                  value={s.background}
+                  onChange={(hex) => s.setBackgroundPaint(solidFill(hex))}
+                  aria-label="Background color"
+                />
+              </div>
             )}
 
             {bgPaint.type === 'linear' && (
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Angle</span>
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Gradient Angle</span>
                 <ValueField
                   value={bgPaint.angle}
                   onChange={(angle) => s.setBackgroundPaint({ ...bgPaint, angle })}
@@ -182,12 +184,12 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                   unit="°"
                   aria-label="Gradient angle"
                 />
-              </label>
+              </div>
             )}
 
             {bgPaint.type === 'radial' && (
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Radius</span>
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Gradient Radius</span>
                 <ValueField
                   value={Math.round(bgPaint.radius * 100)}
                   onChange={(v) => s.setBackgroundPaint({ ...bgPaint, radius: v / 100 })}
@@ -197,14 +199,14 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                   unit="%"
                   aria-label="Gradient radius"
                 />
-              </label>
+              </div>
             )}
 
             {bgPaint.type !== 'solid' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span className={styles.fieldLabel}>Gradient stops</span>
+              <div className={styles.stopsContainer}>
+                <span className={styles.colorCardLabel} style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Gradient Stops</span>
                 {sortedStops(bgPaint.stops).map((stop) => (
-                  <div key={stop.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div key={stop.id} className={styles.stopRow}>
                     <ColorPicker
                       compact
                       value={stop.color}
@@ -226,6 +228,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                       title="Remove stop"
                       disabled={bgPaint.stops.length <= 2}
                       onClick={() => removeStop(stop.id)}
+                      style={{ height: 26, width: 26, padding: 0, display: 'grid', placeItems: 'center' }}
                     >
                       <Icon name="trash" size={12} />
                     </button>
@@ -236,8 +239,9 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                   size="sm"
                   leftIcon={<Icon name="plus" size={12} />}
                   onClick={addStop}
+                  style={{ alignSelf: 'flex-start', marginTop: 2 }}
                 >
-                  Add stop
+                  Add Stop
                 </Button>
               </div>
             )}
@@ -245,7 +249,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         )}
 
         {s.transparent ? (
-          <p className={styles.hint}>The comp has no background — exports keep an alpha channel.</p>
+          <p className={styles.hint} style={{ marginTop: 6 }}>The comp has no background — exports keep an alpha channel.</p>
         ) : null}
       </div>
 
@@ -268,15 +272,14 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                 aria-label="Grid divisions"
               />
             </label>
-            <label className={styles.field}>
+            <div className={styles.field}>
               <span className={styles.fieldLabel}>Line color</span>
               <ColorPicker
                 value={gridColor}
                 onChange={setGridColor}
-                className={styles.colorTrigger}
                 aria-label="Grid line color"
               />
-            </label>
+            </div>
           </div>
         )}
         <p className={styles.hint}>Overlay only — the grid never renders into exports.</p>

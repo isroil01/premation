@@ -133,7 +133,7 @@
   align-items: center;
   justify-content: center;
   padding: 2px;
-  border-radius: 50%;
+  border-radius: 4px;
   margin-right: -4px;
 }
 
@@ -150,9 +150,9 @@
   flex-shrink: 0;
 }
 
-/* Play button — the one circle. AE has it as the focal point */
+/* Play button — matches editor toolbar design vibe */
 button.play {
-  border-radius: 50%;
+  border-radius: 6px;
   width: 30px;
   height: 30px;
   background: var(--color-primary);

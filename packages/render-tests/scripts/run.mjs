@@ -34,6 +34,21 @@ const ARTIFACTS = path.join(PKG, '.artifacts');
 const ACTUAL = path.join(ARTIFACTS, 'actual');
 const MANIFEST_OUT = path.join(ARTIFACTS, 'manifest.json');
 
+/**
+ * The backend the references are blessed from and the gate compares against.
+ *
+ * NOT the product's primary engine — that is WebGPU. The references were blessed
+ * from WebGL2 and WebGPU does not yet reproduce them in the offscreen harness
+ * (see reportSecondaryBackend), so gating on WebGPU today would fail 80 of 93
+ * scenes for reasons nobody has isolated to the renderer. Moving this to
+ * 'webgpu' is the goal; it needs the divergence diagnosed on real hardware and
+ * the references re-blessed first.
+ */
+const GATE_BACKEND = process.env.HARNESS_GATE_BACKEND || 'webgl2';
+
+/** Rendered every run. The gate backend is forced in regardless. */
+const DEFAULT_BACKENDS = ['webgl2', 'webgpu'];
+
 // ── args ──────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 const updateMode = argv.includes('--update');
@@ -77,6 +92,25 @@ function runElectron(backends) {
   });
 }
 
+/**
+ * Render each backend in its OWN Electron process.
+ *
+ * Never batch them into one run. WebGPU's Vulkan/SwiftShader adapter and the
+ * ANGLE/SwiftShader GL context poison each other inside a single page: measured
+ * on this suite, `HARNESS_BACKENDS=webgpu,webgl2` reported 52 failures where
+ * webgl2 alone reported 3, with scenes like paint-strokes and
+ * hires-4x-stroke-text flipping pass↔fail purely on whether WebGPU had run
+ * first. Process isolation is what makes a per-backend comparison mean anything.
+ */
+async function renderBackendsIsolated(backends) {
+  for (const backend of backends) {
+    process.stdout.write(dim(`· rendering [${backend}] in its own offscreen Electron…\n`));
+    const code = await runElectron([backend]);
+    if (code !== 0) return { ok: false, backend, code };
+  }
+  return { ok: true };
+}
+
 async function loadManifest() {
   const raw = await fs.readFile(MANIFEST_OUT, 'utf8');
   let scenes = JSON.parse(raw);
@@ -88,7 +122,7 @@ async function bless(scenes) {
   const targets =
     updateTargets.length > 0 ? scenes.filter((s) => updateTargets.includes(s.id)) : scenes;
   for (const s of targets) {
-    const oracleBackend = 'webgl2';
+    const oracleBackend = GATE_BACKEND;
     for (const frame of s.frames) {
       const from = path.join(ACTUAL, oracleBackend, s.id, `${frame}.png`);
       const toDir = path.join(REFERENCES, s.id);
@@ -104,6 +138,50 @@ async function bless(scenes) {
   );
 }
 
+/**
+ * Non-gating parity report for a secondary backend.
+ *
+ * WebGPU is the product's PRIMARY engine, but its references cannot be gated
+ * yet: rendered in the offscreen harness it diverges from the WebGL2-blessed
+ * PNGs on 80 of 93 scenes, and spot-checking the pixels shows whole layers
+ * missing (blend-add comes back as flat background where the reference has
+ * content) rather than a sub-pixel parity gap. That is either a WebGPU-backend
+ * bug or a SwiftShader-Vulkan limitation, and telling those apart needs real
+ * hardware — neither conclusion should be reached by turning the build red.
+ *
+ * So: measure it, print it every run, gate nothing on it. The number moving is
+ * the signal; when it reaches parity, promote this to the gate.
+ */
+async function reportSecondaryBackend(scenes, backend) {
+  let compared = 0;
+  let matched = 0;
+  let missing = 0;
+  const worst = [];
+  for (const s of scenes) {
+    for (const frame of s.frames) {
+      const actual = await readPngSafe(path.join(ACTUAL, backend, s.id, `${frame}.png`));
+      const reference = await readPngSafe(path.join(REFERENCES, s.id, `${frame}.png`));
+      if (!actual || !reference) {
+        missing++;
+        continue;
+      }
+      compared++;
+      const { pass, ratio } = compareFrames(actual, reference, { tolerance: s.tolerance });
+      if (pass) matched++;
+      else worst.push({ id: `${s.id}#${frame}`, ratio });
+    }
+  }
+  if (compared === 0 && missing === 0) return;
+  worst.sort((a, b) => b.ratio - a.ratio);
+  process.stdout.write('\n' + dim(`  ${backend} parity report (measured, NOT gated):\n`));
+  process.stdout.write(dim(`  · ${matched}/${compared} frame(s) match the committed reference`));
+  process.stdout.write(missing > 0 ? dim(` · ${missing} not rendered\n`) : '\n');
+  for (const w of worst.slice(0, 5)) {
+    process.stdout.write(dim(`  · ${w.id} ${pct(w.ratio)}\n`));
+  }
+  if (worst.length > 5) process.stdout.write(dim(`  · …and ${worst.length - 5} more\n`));
+}
+
 async function compareAll(scenes) {
   let parityFail = 0;
   let parityKnownGap = 0;
@@ -114,11 +192,11 @@ async function compareAll(scenes) {
     const isExpectPass = s.oracle === 'gpu' || (s.gpuParity ?? 'expect-pass') === 'expect-pass';
     for (const frame of s.frames) {
       const ref = path.join(REFERENCES, s.id, `${frame}.png`);
-      const actual = await readPngSafe(path.join(ACTUAL, 'webgl2', s.id, `${frame}.png`));
+      const actual = await readPngSafe(path.join(ACTUAL, GATE_BACKEND, s.id, `${frame}.png`));
 
       let result;
       if (!actual) {
-        result = { pass: false, ratio: 1, mismatchReason: 'webgl2 actual missing' };
+        result = { pass: false, ratio: 1, mismatchReason: `${GATE_BACKEND} actual missing` };
       } else {
         result = await compareAgainstReference({
           actual,
@@ -195,14 +273,15 @@ async function main() {
 
   await buildHarness();
 
-  // Run the test harness on the single unified engine (WebGL2 by default).
-  // HARNESS_BACKENDS=webgl2,webgpu additionally renders WebGPU actuals for
-  // orientation/parity spot-checks (the gate itself still compares webgl2).
-  const backends = (process.env.HARNESS_BACKENDS || 'webgl2').split(',').map((s) => s.trim()).filter(Boolean);
-  process.stdout.write(dim(`· rendering [${backends.join(', ')}] in offscreen Electron…\n`));
-  const code = await runElectron(backends);
-  if (code !== 0) {
-    process.stdout.write(red(`\n✗ render harness exited ${code} — no pixels produced.\n`));
+  // Every backend renders in its own process (see renderBackendsIsolated).
+  // GATE_BACKEND is the one whose output must match the references; any others
+  // are measured and printed but never fail the build.
+  const backends = (process.env.HARNESS_BACKENDS || DEFAULT_BACKENDS.join(','))
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  if (!backends.includes(GATE_BACKEND)) backends.unshift(GATE_BACKEND);
+  const run = await renderBackendsIsolated(backends);
+  if (!run.ok) {
+    process.stdout.write(red(`\n✗ render harness exited ${run.code} on [${run.backend}] — no pixels produced.\n`));
     process.exit(1);
   }
 
@@ -229,6 +308,12 @@ async function main() {
   }
   if (parityKnownGap > 0) {
     process.stdout.write(dim(`  · ${parityKnownGap} scene(s) have accepted visual gaps against baseline Canvas2D.\n`));
+  }
+
+  // Every non-gating backend that rendered gets a measured parity line, so the
+  // primary engine's standing is visible on every run instead of unknown.
+  for (const backend of backends) {
+    if (backend !== GATE_BACKEND) await reportSecondaryBackend(scenes, backend);
   }
 
   if (parityFail === 0) {

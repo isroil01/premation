@@ -16,6 +16,7 @@ import {
   getSkeletonBinding,
   skinRigVertices,
   unskinPoint,
+  skinPointAt,
   type IkTargetResolved,
   type SkeletonBinding,
 } from '@core/rig/rigDeform';
@@ -288,7 +289,11 @@ export function PuppetOverlay(): JSX.Element | null {
     const rect = svg.getBoundingClientRect();
     const currentScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
 
-    const localCoords = screenToLocal(currentScreen.x, currentScreen.y);
+    // Rest space, like the rotate branch below already does. Pin POSITION tracks
+    // are stored in rest space (the puppet solve runs in rest space before the
+    // skeleton skins on top), so writing a posed-space coordinate here made a pin
+    // jump the moment a layer had both a skeleton and puppet pins.
+    const localCoords = toRestSpace(screenToLocal(currentScreen.x, currentScreen.y));
 
     if (drag.mode === 'rotate') {
       // Live update the pin rotation (scalar keyframe track) directly.
@@ -413,7 +418,17 @@ export function PuppetOverlay(): JSX.Element | null {
       {/* Render pin dots */}
       {pins.map((pin) => {
         const animPin = animatedPins.find((p) => p.id === pin.id) ?? pin;
-        const screen = localToScreen(animPin.x, animPin.y);
+        // Draw the handle where the mesh actually IS, not where it rests.
+        //
+        // Pin positions are stored in REST space (the puppet solve runs before
+        // the skeleton skins on top), so on a layer with both rigs the dot sat
+        // off the mesh it controls. `skinPointAt` exists for exactly this — its
+        // docstring says "so a puppet pin's dot lands on the composed mesh" —
+        // and it had no callers.
+        const posed = skelBinding && skelPoseWorld
+          ? skinPointAt({ x: animPin.x, y: animPin.y }, { x: animPin.x, y: animPin.y }, skelBinding, skelPoseWorld)
+          : { x: animPin.x, y: animPin.y };
+        const screen = localToScreen(posed.x, posed.y);
         const isSelected = selectedPinId === pin.id;
         const isHovered = hoveredPinId === pin.id;
 

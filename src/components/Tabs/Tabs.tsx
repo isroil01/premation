@@ -21,7 +21,19 @@ import styles from './Tabs.module.css';
 export interface TabsProps {
   value: string;
   onChange: (value: string) => void;
-  items: ReadonlyArray<{ id: string; label: ReactNode; icon?: ReactNode; closable?: boolean; onClose?: () => void }>;
+  items: ReadonlyArray<{
+    id: string;
+    label: ReactNode;
+    icon?: ReactNode;
+    closable?: boolean;
+    onClose?: () => void;
+    /**
+     * Accessible name for an ICON-ONLY tab. With `label: ''` the button has no
+     * text and an unlabelled `<svg>`, so assistive tech announces nothing at
+     * all — the sidebar rail reads as a column of anonymous buttons.
+     */
+    ariaLabel?: string;
+  }>;
   size?: 'sm' | 'md';
   variant?: 'default' | 'bordered' | 'pill';
   orientation?: 'horizontal' | 'vertical';
@@ -74,6 +86,7 @@ export function Tabs({
             role="tab"
             type="button"
             aria-selected={selected}
+            aria-label={item.ariaLabel}
             tabIndex={selected ? 0 : -1}
             data-selected={selected || undefined}
             className={cn(styles.tab, selected && styles.selected)}

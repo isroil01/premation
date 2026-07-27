@@ -75,7 +75,46 @@ export class AnimationEngine {
   /** Per-property expressions that override the sampled value each frame. */
   private expressions = new Map<string, Map<PropPath, CompiledExpression>>();
   /** Change sink — no-op until the host binds one via setChangeListener(). */
-  private notifyChange: AnimationChangeListener = () => {};
+  private changeListener: AnimationChangeListener = () => {};
+  /** >0 while inside batch(); notifications are held until the batch closes. */
+  private batchDepth = 0;
+  /** True when any mutation happened inside the current batch. */
+  private batchDirty = false;
+
+  /**
+   * Route every mutation's change signal through here.
+   *
+   * The app's listener chain is EXPENSIVE — a scene bump, a hit-test rebuild,
+   * autosave scheduling — and it runs synchronously. That is the right trade
+   * for one interactive edit, and exactly wrong for a bulk write: importing an
+   * animated SVG fired it once per track and froze the app for the sum.
+   */
+  private notifyChange(nodeId: string): void {
+    if (this.batchDepth > 0) {
+      this.batchDirty = true;
+      return;
+    }
+    this.changeListener(nodeId);
+  }
+
+  /**
+   * Run `fn` with change notifications held, then emit ONE `'*'` (all nodes)
+   * notification if anything changed. Nests; only the outermost batch flushes.
+   * The flush fires even when `fn` throws — listeners must not be left stale
+   * about mutations that happened before the error.
+   */
+  batch<T>(fn: () => T): T {
+    this.batchDepth++;
+    try {
+      return fn();
+    } finally {
+      this.batchDepth--;
+      if (this.batchDepth === 0 && this.batchDirty) {
+        this.batchDirty = false;
+        this.changeListener('*');
+      }
+    }
+  }
   /** Audio amplitude source — 0 until the host binds the AudioEngine. */
   private audioLevel: AudioLevelProvider = () => 0;
   /** Slider-control source — 0 until the host binds the scene rig lookup. */
@@ -104,7 +143,7 @@ export class AnimationEngine {
    * so the render cache, timeline, inspector and history stay in sync).
    */
   setChangeListener(listener: AnimationChangeListener): void {
-    this.notifyChange = listener;
+    this.changeListener = listener;
   }
 
   /** Bind the audio-amplitude source used by the `audio` expression accessor. */
@@ -147,6 +186,38 @@ export class AnimationEngine {
 
   hasAnimation(nodeId: string): boolean {
     return (this.tracks.get(nodeId)?.size ?? 0) > 0;
+  }
+
+  /**
+   * Replace a whole track in one shot.
+   *
+   * `setKeyframe` is built for interactive authoring: it re-scans and re-sorts
+   * the track and fires a change notification PER CALL. That is right for one
+   * keyframe from one drag and quadratic for a generated track — importing an
+   * animated SVG drove it with hundreds of keyframes per track and thousands of
+   * notifications, which froze the app for as long as the import took. Bulk
+   * writes sort once and notify once.
+   *
+   * Existing keyframes on the track are discarded; callers building a track
+   * from scratch are the only intended users.
+   */
+  setKeyframes(nodeId: string, prop: PropPath, keyframes: readonly Keyframe[]): void {
+    if (keyframes.length === 0) {
+      this.tracks.get(nodeId)?.delete(prop);
+      this.notifyChange(nodeId);
+      return;
+    }
+    let byProp = this.tracks.get(nodeId);
+    if (!byProp) {
+      byProp = new Map();
+      this.tracks.set(nodeId, byProp);
+    }
+    // De-duplicate by time (last wins), then sort — one pass, not one per key.
+    const byTime = new Map<number, Keyframe>();
+    for (const kf of keyframes) byTime.set(kf.t, { ...kf });
+    const sorted = Array.from(byTime.values()).sort((a, b) => a.t - b.t);
+    byProp.set(prop, { nodeId, prop, keyframes: sorted });
+    this.notifyChange(nodeId);
   }
 
   /**

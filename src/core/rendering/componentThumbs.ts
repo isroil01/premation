@@ -90,14 +90,78 @@ function treeBounds(def: SerializedNodeLike): { minX: number; minY: number; maxX
 const listeners = new Set<() => void>();
 const pending = new Set<string>();
 
+/**
+ * Thumbnail renders run ONE AT A TIME.
+ *
+ * `componentThumb` is called during render for every card in the component grid,
+ * and each cache miss used to fire an independent `renderThumbAsync` — each of
+ * which creates a full GPU backend and holds that context across up to four
+ * awaited media-convergence passes. With N saved components that is N live
+ * WebGL2/WebGPU contexts at once. Chromium caps live contexts per page (~16) and
+ * evicts the oldest to honour a new request — and the oldest is the VIEWPORT's.
+ * That is the "GPU could not be initialized" / blank-preview-on-entry that only
+ * appears sometimes: it depends on how many components you saved and whether the
+ * thumb cache was warm.
+ *
+ * `templatePreview.ts` avoids the same trap by rendering gallery cards on
+ * Canvas2D. Thumbnails need the real pipeline for fidelity, so they queue
+ * instead — one context, reused sequentially, never competing with the viewport.
+ */
+let thumbQueue: Promise<void> = Promise.resolve();
+
+function enqueueThumb(task: () => Promise<void>): Promise<void> {
+  const run = thumbQueue.then(task, task);
+  // Keep the chain alive regardless of individual failures.
+  thumbQueue = run.catch(() => undefined);
+  return run;
+}
+
 /** Subscribe to "a thumbnail just became available" — repaint your grid. */
 export function onComponentThumbReady(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
 
-async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
+/**
+ * The ONE auxiliary backend every thumbnail draws through, plus its canvas.
+ *
+ * The queue above already guaranteed only one was ALIVE at a time, but each
+ * thumbnail still built a fresh backend and disposed it — so N components meant
+ * N sequential engine initialisations. That was merely wasteful on WebGL2;
+ * with WebGPU as the primary tier it means N × (requestAdapter → requestDevice
+ * → configure) plus N cold shader/pipeline caches, all of which are per-device.
+ *
+ * Held for the session instead, exactly like the viewport's. Cleared on failure
+ * so a lost context self-heals on the next thumbnail rather than poisoning the
+ * whole grid.
+ */
+let sharedBackend: ReturnType<typeof createRenderBackend> | null = null;
+let sharedCanvas: HTMLCanvasElement | null = null;
+
+function releaseSharedBackend(): void {
+  try {
+    sharedBackend?.dispose();
+  } catch {
+    /* disposing a already-lost context is best-effort */
+  }
+  sharedBackend = null;
+  sharedCanvas = null;
+}
+
+async function acquireSharedBackend(): Promise<ReturnType<typeof createRenderBackend>> {
+  if (sharedBackend && sharedCanvas) return sharedBackend;
   const backend = createRenderBackend('auto', 'auxiliary');
+  const canvas = document.createElement('canvas');
+  backend.attach(canvas);
+  backend.setPreviewChrome?.(false);
+  backend.resize(THUMB_W, THUMB_H, 1);
+  if (backend.readyPromise) await backend.readyPromise;
+  sharedBackend = backend;
+  sharedCanvas = canvas;
+  return backend;
+}
+
+async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
   try {
     const b = treeBounds(def.root as unknown as SerializedNodeLike);
     const pad = 12;
@@ -109,11 +173,8 @@ async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
     const graph = new SceneGraph();
     addTree(graph, def.root as unknown as SerializedNodeLike, null, pad - b.minX, pad - b.minY);
     const scale = Math.min(THUMB_W / w, THUMB_H / h);
-    const canvas = document.createElement('canvas');
-    backend.attach(canvas);
-    backend.setPreviewChrome?.(false);
-    backend.resize(THUMB_W, THUMB_H, 1);
-    if (backend.readyPromise) await backend.readyPromise;
+    const backend = await acquireSharedBackend();
+    const canvas = sharedCanvas!;
     const snapshot = buildSnapshot(
       graph,
       new AnimationEngine(),
@@ -149,9 +210,10 @@ async function renderThumbAsync(def: ComponentDef, key: string): Promise<void> {
     listeners.forEach((fn) => fn());
   } catch {
     // Rendering unavailable (tests without canvas/GPU) — leave uncached so the
-    // caller keeps its icon fallback.
-  } finally {
-    backend.dispose();
+    // caller keeps its icon fallback. Drop the shared backend too: a lost
+    // context would otherwise fail every remaining thumbnail in the grid, where
+    // before (create-per-thumb) each attempt got a clean engine.
+    releaseSharedBackend();
   }
 }
 
@@ -166,7 +228,7 @@ export function componentThumb(def: ComponentDef): string | null {
   if (hit) return hit;
   if (!pending.has(key)) {
     pending.add(key);
-    void renderThumbAsync(def, key).finally(() => pending.delete(key));
+    void enqueueThumb(() => renderThumbAsync(def, key)).finally(() => pending.delete(key));
   }
   return null;
 }

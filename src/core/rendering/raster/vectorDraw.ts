@@ -16,9 +16,74 @@ import type { RenderLayer } from '../RenderBackend';
 import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import { trimPolyline, type Pt } from '@core/scene/trimPath';
+import { effectNumber } from '@core/effects/effects';
+import { effectsNeedCpuBake } from '@core/effects/effectBake';
 
 function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
+}
+
+/** A Gaussian is visually dead by ~3σ, and `filter: blur(Npx)` uses σ = N. */
+const BLUR_EXTENT = 3;
+
+/** Ceiling on effect bleed (px). A 100px softness would otherwise quadruple the
+ *  texture area; past this the clipped tail is too faint to see anyway. */
+const MAX_EFFECT_PAD = 256;
+
+/**
+ * How far a CPU-BAKED effect chain paints outside the layer's own box.
+ *
+ * This only applies to chains that `effectsNeedCpuBake` sends down the Canvas2D
+ * path — one Canvas2D-only effect (Fill / Stroke / Beam / Sharpen / Noise /
+ * Wave Warp / Turbulent Displace / Keylight / 4-Colour Gradient) forces the
+ * WHOLE stack, blurs and shadows included, to bake into the layer's raster.
+ * `applyEffectChain` then runs inside a canvas sized to the layer box, so every
+ * halo is sliced off flat at the texture edge instead of fading out — measured
+ * on a blurred star: 567 border pixels still carrying ink.
+ *
+ * A pure-GPU stack does NOT need this. Those effects run in CompositionPass
+ * over a viewport-sized LAYER_TARGET, so their halos already have room; padding
+ * them would only grow textures for nothing.
+ */
+function bakedEffectSpread(layer: RenderLayer): number {
+  if (!effectsNeedCpuBake(layer.effects)) return 0;
+  let spread = 0;
+  for (const e of layer.effects!) {
+    if (e.enabled === false) continue;
+    let s = 0;
+    switch (e.type) {
+      case 'blur':
+        s = effectNumber(e, 'amount') * BLUR_EXTENT;
+        break;
+      case 'glow':
+        s = effectNumber(e, 'radius') * BLUR_EXTENT;
+        break;
+      case 'drop-shadow':
+        s = effectNumber(e, 'distance') + effectNumber(e, 'softness') * BLUR_EXTENT;
+        break;
+      // The Stroke EFFECT dilates the layer's alpha by ring offsets, so it
+      // straddles the edge. Translation-invariant, so padding only un-clips it.
+      case 'stroke':
+        s = effectNumber(e, 'width');
+        break;
+      // NOT wave-warp / turbulent-displace, even though they clearly do push
+      // pixels outward. Both index their displacement field by ABSOLUTE canvas
+      // coordinates — `along = x·px + y·py` in waveWarpData, the noise lookup in
+      // turbulentDisplaceData — so padding shifts every pixel by `pad` and moves
+      // the wave/noise PATTERN across the artwork. The golden suite caught it:
+      // effect-wave-warp diverged 18.99% and effect-turbulent-displace 9.34%,
+      // which is a changed distortion, not a recovered halo. Padding these needs
+      // an origin offset threaded into the warp math first; until then, leaving
+      // them unpadded keeps the (correct) appearance and costs only the tail of
+      // a displacement that reaches past the layer box.
+      default:
+        // Everything else (colour grades, LUTs, generators, sharpen, noise,
+        // keylight) is a per-pixel pass — it cannot paint outside the box.
+        s = 0;
+    }
+    if (s > spread) spread = s;
+  }
+  return Math.min(spread, MAX_EFFECT_PAD);
 }
 
 /**
@@ -39,8 +104,10 @@ function clamp01(n: number): number {
  * perturb them.
  */
 export function rasterPadding(layer: RenderLayer): number {
-  if (layer.kind !== 'shape') return 0;
-  let pad = 0;
+  // Baked effect bleed applies to every rasterized kind (shape AND text) —
+  // it is a property of the effect chain, not of the geometry.
+  let pad = bakedEffectSpread(layer);
+  if (layer.kind !== 'shape') return pad > 0 ? Math.ceil(pad + 1) : 0;
   const strokes = layer.strokes && layer.strokes.length > 0 ? layer.strokes : layer.stroke ? [layer.stroke] : [];
   for (const s of strokes) {
     if (!s || s.width <= 0) continue;

@@ -235,3 +235,90 @@ describe('buildDimensionalGuideData (drag feedback, keyed by `handle`)', () => {
     expect(d.badgeScreen).toEqual({ x: 116, y: 76 });
   });
 });
+
+/**
+ * Regressions for "the gizmo is only selectable on one side".
+ *
+ * Two defects produced that symptom together:
+ *   1. the rotation rings were built at 0.85× the arrow length, so an edge-on
+ *      ring lay entirely UNDER the position arrows on the positive side; and
+ *   2. hit-testing was a priority cascade (axes → planes → arcs → centre) that
+ *      returned the first handle within tolerance, so on any overlap the axis
+ *      won — even though the ring and the centre dot are painted on top.
+ * The net effect in the default `universal` gizmo, viewed head-on, was that only
+ * the half of each rotation ring lying on the NEGATIVE side of an axis could be
+ * grabbed, the centre uniform-scale dot could never be grabbed at all, and the Z
+ * arrow collapsed to a zero-length segment that swallowed the origin.
+ */
+describe('gizmo3d handle reachability (one-side-only regressions)', () => {
+  const universal = build('universal');
+
+  it('the X rotation ring is grabbable on BOTH sides of the origin', () => {
+    const arc = universal.arcs.find((a) => a.type === 'rot_x');
+    expect(arc).toBeDefined();
+    const above = arc!.pointsScreen.reduce((best, p) => (p.y < best.y ? p : best));
+    const below = arc!.pointsScreen.reduce((best, p) => (p.y > best.y ? p : best));
+    // Both extremes must be reachable — previously `pos_y` covered the lower half.
+    expect(hitTestGizmo3D(above, universal, 6)).toBe('rot_x');
+    expect(hitTestGizmo3D(below, universal, 6)).toBe('rot_x');
+  });
+
+  it('the Y rotation ring is grabbable on BOTH sides of the origin', () => {
+    const arc = universal.arcs.find((a) => a.type === 'rot_y');
+    expect(arc).toBeDefined();
+    const left = arc!.pointsScreen.reduce((best, p) => (p.x < best.x ? p : best));
+    const right = arc!.pointsScreen.reduce((best, p) => (p.x > best.x ? p : best));
+    expect(hitTestGizmo3D(left, universal, 6)).toBe('rot_y');
+    expect(hitTestGizmo3D(right, universal, 6)).toBe('rot_y');
+  });
+
+  it('rings extend beyond the arrow tips, so each has an unambiguous outer band', () => {
+    const posX = universal.axes.find((a) => a.type === 'pos_x');
+    const arcY = universal.arcs.find((a) => a.type === 'rot_y');
+    expect(posX).toBeDefined();
+    expect(arcY).toBeDefined();
+    const armLen = Math.hypot(
+      posX!.endScreen.x - universal.centerScreen.x,
+      posX!.endScreen.y - universal.centerScreen.y,
+    );
+    expect(arcY!.radiusPx).toBeGreaterThan(armLen);
+  });
+
+  it('the centre uniform-scale handle is reachable (an axis used to claim the origin)', () => {
+    expect(hitTestGizmo3D({ x: universal.centerScreen.x, y: universal.centerScreen.y }, universal, 10))
+      .toBe('scale_center');
+  });
+
+  it('a head-on Z arm is marked degenerate and excluded from hit-testing', () => {
+    // Default camera looks straight down -Z, so basis.z projects to a point.
+    const posZ = universal.axes.find((a) => a.type === 'pos_z');
+    expect(posZ).toBeDefined();
+    expect(posZ!.degenerate).toBe(true);
+    // A degenerate arm must never win: its zero-length segment measures distance
+    // to the ORIGIN, which would let it claim a full-tolerance disc there.
+    const hit = hitTestGizmo3D({ x: universal.centerScreen.x, y: universal.centerScreen.y }, universal, 10);
+    expect(hit).not.toBe('pos_z');
+  });
+
+  it('still hits a position arrow along its own shaft', () => {
+    const posX = universal.axes.find((a) => a.type === 'pos_x');
+    expect(posX!.degenerate).toBe(false);
+    const mid = {
+      x: (universal.centerScreen.x + posX!.endScreen.x) / 2,
+      y: (universal.centerScreen.y + posX!.endScreen.y) / 2,
+    };
+    expect(hitTestGizmo3D(mid, universal, 6)).toBe('pos_x');
+  });
+
+  it('returns null well outside every handle', () => {
+    expect(hitTestGizmo3D({ x: 10, y: 10 }, universal, 10)).toBeNull();
+  });
+
+  it('X and Y arms are each ~gizmoLengthPx long despite unequal foreshortening', () => {
+    for (const type of ['pos_x', 'pos_y'] as const) {
+      const axis = universal.axes.find((a) => a.type === type);
+      expect(axis!.screenLen).toBeGreaterThan(70);
+      expect(axis!.screenLen).toBeLessThan(100);
+    }
+  });
+});

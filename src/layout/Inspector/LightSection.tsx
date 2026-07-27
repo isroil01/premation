@@ -6,73 +6,13 @@
  */
 
 import { useMemo } from 'react';
-import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
-import { useActiveWorkspace } from '@stores/projectStore';
-import { usePreferenceStore } from '@stores/preferenceStore';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import styles from './TransformSection.module.css';
-
-function KfRow({
-  nodeId,
-  prop,
-  label,
-  value,
-  unit,
-  min,
-  onStatic,
-}: {
-  nodeId: string;
-  prop: string;
-  label: string;
-  value: number;
-  unit: string;
-  min?: number;
-  onStatic: (v: number) => void;
-}): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
-  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
-  const animated = defaultAnimation.isAnimated(nodeId, prop);
-  // The canonical keyframe axis — what the renderer samples for this node.
-  const layerT = compToKeyframeTime(nodeId, time);
-  const display = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
-
-  const handleChange = (v: number) => {
-    if (animated || autoKeyframe) {
-      runAnimEdit(
-        `Set ${prop}`,
-        () => defaultAnimation.setKeyframe(nodeId, prop, layerT, v),
-        `set:${nodeId}:${prop}:${layerT}`,
-      );
-    } else {
-      onStatic(v);
-    }
-  };
-
-  return (
-    <div className={styles.popoverRow}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
-        <Checkbox
-          checked={animated}
-          onChange={() => {
-            if (animated) runAnimEdit(`Remove ${prop} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
-            else runAnimEdit(`Animate ${prop}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
-          }}
-          title="Toggle Keyframes"
-          style={{ width: 13, height: 13 }}
-        />
-        <span className={styles.popoverLabel}>{label}</span>
-      </div>
-      <ValueField value={Math.round(display ?? 0)} unit={unit} {...(min !== undefined ? { min } : {})} onChange={(v) => handleChange(Number(v))} aria-label={label} />
-    </div>
-  );
-}
+import { KeyframeRow as KfRow } from './KeyframeRow';
 
 export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);

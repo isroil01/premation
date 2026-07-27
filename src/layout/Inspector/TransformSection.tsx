@@ -44,10 +44,14 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const node = defaultSceneGraph.getNode(nodeId);
   const [linkedScale, setLinkedScale] = useState(true);
 
-  if (!node) return null;
-
-  const tComp = useMemo(() => node.components.find((c) => c.type === 'Transform'), [node]);
-  const sComp = useMemo(() => node.components.find((c) => c.type === 'Style' || c.type === 'Text'), [node]);
+  // NO early return before the hooks below. `if (!node) return null` used to sit
+  // here, above ~22 more hooks (two useMemo + twenty useNodeComponentProp), so
+  // selecting a layer whose node lookup misses — or deselecting while this panel
+  // stays mounted — changed the hook count between renders and React threw
+  // "Rendered fewer hooks than expected", taking the whole Properties tab down.
+  // The hooks all tolerate `undefined` ids; the render guard moved below them.
+  const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
+  const sComp = useMemo(() => node?.components.find((c) => c.type === 'Style' || c.type === 'Text'), [node]);
 
   const [xValRaw, setXVal] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'x');
   const [yValRaw, setYVal] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'y');
@@ -85,7 +89,9 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const rotYVal = typeof rotYValRaw === 'number' ? rotYValRaw : 0;
   const opacityVal = typeof opacityValRaw === 'number' ? opacityValRaw : 100;
 
-  if (!tComp) return null;
+  // Single render guard, AFTER every hook — so the hook order is identical on
+  // every render regardless of what is selected.
+  if (!node || !tComp) return null;
 
   const renderAnimPropInner = (
     label: string,

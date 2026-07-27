@@ -151,13 +151,24 @@ export class TimelineController {
     this.compositionTrackIds.set(compId, track.id);
     timeline.setZoom(80 / compSettings.fps);
 
-    timeline.events.on('CurrentTimeChanged', ({ frame, seconds }) => {
+    timeline.events.on('CurrentTimeChanged', ({ frame }) => {
       // Only mirror to the store if this is the active comp's timeline!
       const ws = useWorkspaceStore.getState();
       const activeTabId = ws.activeTabId;
       const tab = activeTabId ? ws.tabs[activeTabId] : null;
       if (tab?.compositionId === compId) {
-        ws.actions.setTime(seconds, Math.round(frame));
+        // Mirror a FRAME-EXACT time, not the raw fractional one.
+        //
+        // The playhead runs fractionally on purpose (smooth accumulation across
+        // rAF deltas), but the viewport renders from these `seconds` while the
+        // exporter renders at `i / fps`. Mirroring the fraction meant playback
+        // preview sampled BETWEEN export frames: keyframe interpolation,
+        // expressions and particles all landed on values no exported frame ever
+        // shows. Rounding here keeps the smooth internal clock and makes what
+        // you watch the frame you get — and it re-couples `seconds` with the
+        // `frame` beside it, which was already rounded.
+        const snapped = Math.round(frame);
+        ws.actions.setTime(framesToSeconds(snapped, timeline.getFrameRate()), snapped);
       }
     });
 
@@ -694,12 +705,21 @@ export class TimelineController {
       defaultSceneGraph.traverse((n) => nodeIds.push(n.id));
     }
     const times = new Set<number>();
-    
+
     for (const nodeId of nodeIds) {
       const tracks = defaultAnimation.tracksFor(nodeId);
       for (const track of tracks) {
         for (const kf of track.keyframes) {
-          times.add(kf.t);
+          // `kf.t` is LAYER time — the canonical keyframe axis. The playhead
+          // these are compared against is COMP time, so they must be converted
+          // or navigation runs on a different clock than the diamonds it is
+          // meant to land on. On a layer whose bar starts at 2s, keyframes at
+          // layer 0s/2s draw at comp 2s/4s but were offered as 0s/2s: J/K
+          // jumped to the wrong frames and then dead-ended, because no raw
+          // layer time was ever greater than the comp-time playhead.
+          // Same conversion the timeline rows already use to place the
+          // diamonds, so navigation and display finally agree.
+          times.add(keyframeToCompTime(nodeId, kf.t, track.prop as string));
         }
       }
     }
@@ -734,6 +754,33 @@ export class TimelineController {
       label: m.name || 'Marker',
       color: m.color,
     }));
+  }
+
+  /**
+   * A node's LAYER markers, converted back to comp time.
+   *
+   * Layer markers are stored layer-relative (0 = the layer's in-point) so they
+   * travel with a trimmed or slid layer. Everything that draws them works in
+   * comp seconds, so the inverse of the `toLayerTime` used when writing has to
+   * be applied here — without it a marker on a layer starting at 2 s would draw
+   * 2 s early. `toAbsoluteTime` existed for exactly this and had no callers,
+   * because there was no read path at all: `addLayerMarkerAtPlayhead` wrote into
+   * `layer.markers`, which nothing ever listed, so layer markers were invisible.
+   */
+  getLayerMarkers(nodeId: string): TimelineMarkerView[] {
+    const rate = this.timeline.getFrameRate();
+    const out: TimelineMarkerView[] = [];
+    for (const layer of this.getLayersForNode(nodeId)) {
+      for (const m of layer.markers.list()) {
+        out.push({
+          id: m.id,
+          time: this.toAbsoluteTime(nodeId, framesToSeconds(m.frame, rate)),
+          label: m.name || 'Marker',
+          color: m.color,
+        });
+      }
+    }
+    return out;
   }
 
   // ── Persistence ──────────────────────────────────────────────────

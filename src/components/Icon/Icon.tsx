@@ -32,6 +32,8 @@ import {
   Lightning, Images, CubeFocus, Package, FolderPlus, FolderOpen, UploadSimple,
   Repeat, Wind, ArrowLineLeft, ArrowLineRight, Rectangle, ChartLine, Gauge, Resize,
   Export, ClockCounterClockwise, ShareNetwork, Link, PushPin, Bone, House,
+  Globe, HandGrabbing, Perspective, VectorThree, GridNine, Sphere, Cylinder,
+  Textbox, PictureInPicture, GraphicsCard,
   type Icon as PhosphorIcon, type IconWeight
 } from '@phosphor-icons/react';
 
@@ -78,6 +80,13 @@ export const ICON_NAMES = [
   'loop', 'motion-blur', 'trim-in', 'trim-out', 'solid',
   'graph-value', 'graph-speed', 'export', 'history', 'share', 'link', 'puppet-pin', 'push-pin', 'bone',
   'home', 'app', 'voice', 'sound', 'mic', 'ai', 'brain', 'tv', 'tour', 'text-left', 'text-center', 'text-right',
+  // 3D viewport vocabulary — each of these exists because the glyph it replaced
+  // was already spoken for by a DIFFERENT action in the same toolbar (orbit was
+  // `refresh` = undo-ish, pan-camera was `hand` = the Hand tool, dolly was
+  // `zoom-in` = the Zoom tool, the ground plane was `grid` = the 2D grid
+  // overlay, and the 3D primitives borrowed the shape/text tool glyphs).
+  'orbit', 'hand-grab', 'pan-camera', 'perspective', 'axis-3d', 'ground-grid',
+  'sphere', 'cylinder', 'text-3d', 'pop-out', 'gpu',
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -234,6 +243,17 @@ const PHOSPHOR_MAP: Record<IconName, PhosphorIcon> = {
   'text-left': AlignLeft,
   'text-center': AlignCenterHorizontal,
   'text-right': AlignRight,
+  orbit: Globe,
+  'hand-grab': HandGrabbing,
+  'pan-camera': HandGrabbing,
+  perspective: Perspective,
+  'axis-3d': VectorThree,
+  'ground-grid': GridNine,
+  sphere: Sphere,
+  cylinder: Cylinder,
+  'text-3d': Textbox,
+  'pop-out': PictureInPicture,
+  gpu: GraphicsCard,
 };
 
 export interface IconProps {
@@ -282,6 +302,25 @@ function IconInner({
     ...style,
     ...(transform ? { transform: [transform, style?.transform].filter(Boolean).join(' ') } : {}),
   };
+
+  if (name === 'pan-camera') {
+    return (
+      <span
+        className={className}
+        style={mergedStyle}
+        onClick={onClick}
+        aria-label={ariaLabel ?? title}
+        aria-hidden={(ariaLabel ?? title) ? undefined : true}
+      >
+        <svg width={computedSize} height={computedSize} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+          <path d="m9.5 3.5 2.5-2.5 2.5 2.5M9.5 20.5l2.5 2.5 2.5-2.5M3.5 9.5 1 12l2.5 2.5M20.5 9.5l2.5 2.5-2.5 2.5" />
+          <rect x="7" y="7" width="10" height="10" rx="2" />
+          <circle cx="12" cy="12" r="2.5" />
+        </svg>
+      </span>
+    );
+  }
 
   if (name === 'ai') {
     return (

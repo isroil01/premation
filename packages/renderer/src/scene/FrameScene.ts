@@ -64,6 +64,16 @@ export interface Renderable {
    *  'normal' and CompositionPass routes the layer through the backdrop-sampling
    *  BLEND_COMBINE shader instead. 0/undefined = simple blend via `blend`. */
   advancedBlend?: number;
+  /**
+   * Frosted-glass backdrop blur radius in device px (0/undefined = off).
+   *
+   * Blurs what is BEHIND the layer and shows it through the layer's own alpha —
+   * the one primitive a "glass" look cannot be faked without, since a normal
+   * blur effect blurs the layer itself. Needs a samplable out target, exactly
+   * like `advancedBlend`, so the adapter forces `hasEffects` when any layer
+   * requests it.
+   */
+  backdropBlur?: number;
   /** Fill/tint color (rect, text). */
   color?: Color;
   /** SDF geometry for solid shapes (rounded-rect / ellipse). */

@@ -113,6 +113,7 @@
 
 /* Scene content (below) + interaction overlay (above, receives input). */
 .canvas,
+.cacheCanvas,
 .overlay {
   display: block;
   position: absolute;
@@ -123,6 +124,19 @@
 
 .canvas {
   pointer-events: none;
+}
+
+/* RAM-preview blit layer. A cached frame cannot be drawn back INTO the WebGL
+   content canvas (a canvas has one context for life), so a cached frame is
+   painted on this 2D layer directly above it and the content canvas shows
+   through whenever it is hidden. */
+.cacheCanvas {
+  pointer-events: none;
+  display: none;
+}
+
+.cacheCanvasVisible {
+  display: block;
 }
 
 .overlay {

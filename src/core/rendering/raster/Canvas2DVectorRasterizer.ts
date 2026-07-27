@@ -24,6 +24,13 @@ export interface RasterStats {
   misses: number;
 }
 
+/** Pool key under which a cache entry's texture is registered. Must match the
+ *  string handed to `resources.texture()` — freeing by anything else is a
+ *  silent no-op (see the note in `releaseEntry`). */
+function poolKeyFor(cacheKey: string): string {
+  return `raster:${cacheKey}`;
+}
+
 export class Canvas2DVectorRasterizer implements VectorRasterizer {
   private cache = new Map<string, { texture: TextureHandle; bytes: number; w: number; h: number }>();
   private currentBytes = 0;
@@ -42,16 +49,32 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     };
   }
 
+  /**
+   * Drop a cache entry and actually release its GPU texture.
+   *
+   * Both eviction paths used to call `freeTexture(entry.texture.id.toString())`.
+   * `TextureHandle.id` is a plain allocation counter, but the ResourceManager
+   * pool is keyed by the STRING passed to `texture()` — here `raster:<cacheKey>`.
+   * So `freeTexture("137")` missed the pool and returned silently: `currentBytes`
+   * dropped below the 512 MB cap (so eviction stopped) while not one WebGL
+   * texture was ever deleted. Combined with `pinned: true`, which excludes the
+   * entry from the pool's own idle GC, every distinct
+   * (contentHash, resolutionScale, padding) leaked a full-resolution texture for
+   * the whole session — typing in a text layer, animating a morphing path, or
+   * just zooming (which changes resolutionScale) allocated a permanent one each.
+   */
+  private releaseEntry(cacheKey: string): void {
+    const entry = this.cache.get(cacheKey);
+    if (entry) {
+      this.currentBytes -= entry.bytes;
+      this.resources.freeTexture(poolKeyFor(cacheKey));
+    }
+    this.cache.delete(cacheKey);
+  }
+
   invalidate(contentHash: string): void {
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(contentHash)) {
-        const entry = this.cache.get(key);
-        if (entry) {
-          this.currentBytes -= entry.bytes;
-          this.resources.freeTexture(entry.texture.id.toString());
-        }
-        this.cache.delete(key);
-      }
+    for (const key of [...this.cache.keys()]) {
+      if (key.startsWith(contentHash)) this.releaseEntry(key);
     }
   }
 
@@ -86,9 +109,8 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
 
     const canvas = this.drawToCanvas(drawable, resolutionScale, padding);
 
-    const sigKey = `raster:${key}`;
     const tex = this.resources.texture(
-      sigKey,
+      poolKeyFor(key),
       { label: `raster:${drawable.contentHash}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
       /* pinned */ true,
     );
@@ -99,16 +121,12 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     this.cache.set(key, { texture: tex, bytes, w: canvas.width, h: canvas.height });
     this.currentBytes += bytes;
 
-    while (this.currentBytes > this.maxBytes && this.cache.size > 0) {
+    // `> 1` keeps the entry we just inserted — evicting the only entry would free
+    // the texture the caller is about to draw with.
+    while (this.currentBytes > this.maxBytes && this.cache.size > 1) {
       const oldestKey = this.cache.keys().next().value;
-      if (oldestKey !== undefined) {
-        const oldestEntry = this.cache.get(oldestKey);
-        if (oldestEntry) {
-          this.currentBytes -= oldestEntry.bytes;
-          this.resources.freeTexture(oldestEntry.texture.id.toString());
-        }
-        this.cache.delete(oldestKey);
-      }
+      if (oldestKey === undefined) break;
+      this.releaseEntry(oldestKey);
     }
 
     return {
@@ -129,7 +147,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
 
   private drawToCanvas(drawable: any, resolutionScale: number, padding: number): HTMLCanvasElement {
     if (drawable.kind === 'text') {
-      return this.drawText(drawable, resolutionScale);
+      return this.drawText(drawable, resolutionScale, padding);
     } else if (drawable.kind === 'mask') {
       return this.drawMask(drawable, resolutionScale);
     } else {
@@ -137,11 +155,16 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     }
   }
 
-  private drawText(spec: any, tier: number): HTMLCanvasElement {
+  private drawText(spec: any, tier: number, pad = 0): HTMLCanvasElement {
     const bake = effectsNeedCpuBake(spec.effects);
     const ss = bake ? tier : tier * 2; // TEXT_SUPERSAMPLE = 2
-    const w = Math.max(1, Math.round(spec.width * ss));
-    const h = Math.max(1, Math.round(spec.height * ss));
+    // Padded box, so a baked drop shadow / glow / blur has somewhere to fade
+    // out instead of being sliced at the texture edge. `pad` is 0 for every
+    // stack the GPU handles natively, which is the overwhelming majority.
+    const bw = spec.width + 2 * pad;
+    const bh = spec.height + 2 * pad;
+    const w = Math.max(1, Math.round(bw * ss));
+    const h = Math.max(1, Math.round(bh * ss));
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -155,7 +178,9 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
           matte.width = w; matte.height = h;
           const mc = matte.getContext('2d');
           if (mc) {
-            mc.setTransform(1, 0, 0, 1, spec.width / 2, spec.height / 2);
+            // Centre of the PADDED box — the same origin the glyphs were drawn
+            // around, or the matte slides by `pad` against the content.
+            mc.setTransform(1, 0, 0, 1, bw / 2, bh / 2);
             paintMaskMatte(mc, spec.mask, spec.width, spec.height);
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.globalCompositeOperation = 'destination-in';
@@ -174,6 +199,8 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     };
 
     ctx.scale(ss, ss);
+    // Everything below lays out in the UNPADDED box, so shift into it once.
+    ctx.translate(pad, pad);
     ctx.font = textCssFont(spec);
     ctx.textBaseline = 'middle';
     ctx.letterSpacing = spec.letterSpacing ? `${spec.letterSpacing}px` : '0px';
@@ -184,9 +211,10 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     if (!spec.runs || spec.runs.length === 0) {
       const size = spec.fontSize;
       const align = spec.align ?? 'left';
+      const padX = 12;
       let anchorX = spec.width / 2;
-      if (align === 'left' || align === 'justify') { ctx.textAlign = 'left'; anchorX = 0; }
-      else if (align === 'right') { ctx.textAlign = 'right'; anchorX = spec.width; }
+      if (align === 'left' || align === 'justify') { ctx.textAlign = 'left'; anchorX = padX; }
+      else if (align === 'right') { ctx.textAlign = 'right'; anchorX = spec.width - padX; }
       else { ctx.textAlign = 'center'; anchorX = spec.width / 2; }
 
       const lines = text.split('\n');
@@ -282,7 +310,9 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         matte.width = w; matte.height = h;
         const mc = matte.getContext('2d');
         if (mc) {
-          mc.setTransform(1, 0, 0, 1, layer.width / 2, layer.height / 2);
+          // Centre of the PADDED box — matches the content's `translate(bw/2,
+          // bh/2)` above. Using the unpadded centre slid the matte by `pad`.
+          mc.setTransform(1, 0, 0, 1, bw / 2, bh / 2);
           paintMaskMatte(mc, layer.mask, layer.width, layer.height);
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.globalCompositeOperation = 'destination-in';

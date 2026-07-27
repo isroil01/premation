@@ -10,7 +10,9 @@ import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
-import { parseSvgToShapes } from '../../utils/svgParser';
+import { parseSvgToShapes, isSimpleSvg, MAX_VECTOR_SHAPES, type ParsedShape } from '../../utils/svgParser';
+import { scanSvgAnimations, type SvgShapeAnimation } from '../../utils/svgAnimation';
+import { defaultAnimation } from '@motion/animation';
 import { bezierCorner as corner } from '@motion/workspace';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -22,6 +24,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { detectImageSequence } from '@core/scene/imageSequence';
+import { trimPropPath, defaultTrim } from '@core/scene/trimPath';
 
 
 let seq = 0;
@@ -233,13 +236,16 @@ export function setNodeWorldPosition(nodeId: string, x: number, y: number): void
 export function insertSvgShapeGroup(
   svgText: string,
   name: string,
-  opts?: { x?: number; y?: number; targetSize?: number },
+  opts?: { x?: number; y?: number; targetSize?: number; shapes?: ParsedShape[] },
 ): string | null {
-  const shapes = parseSvgToShapes(svgText);
+  const comp = useCompositionStore.getState();
+  // Callers that already parsed (to decide the route) pass the result back in;
+  // parsing is the expensive half of an import and it is deterministic.
+  const shapes = opts?.shapes
+    ?? parseSvgToShapes(svgText, { maxDurationSeconds: comp.durationSeconds });
   if (shapes.length === 0) return null;
 
   const rootId = activeCompRootId();
-  const comp = useCompositionStore.getState();
   const info = useInfoStore.getState();
   const px = opts?.x ?? (info.present ? info.x : comp.width / 2);
   const py = opts?.y ?? (info.present ? info.y : comp.height / 2);
@@ -268,6 +274,11 @@ export function insertSvgShapeGroup(
   group.transform.position.y = py;
   defaultSceneGraph.addChild(rootId, group);
 
+  // ONE change notification for the whole import. Unbatched, every track wrote
+  // through the full AnimationChanged listener chain (scene bump → synchronous
+  // hit-test rebuild → autosave scheduling), which is what froze the app on
+  // multi-shape animated files. The final bumpScene below is the visible one.
+  defaultAnimation.batch(() => {
   for (const s of shapes) {
     const pathId = `shape_${(seq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
     // Part offset from the group center, scaled — keeps every part in register.
@@ -298,12 +309,67 @@ export function insertSvgShapeGroup(
       ];
       defaultSceneGraph.addChild(group.id, { id: pathId, name: s.name, parent: group.id, children: [], transform, visible: true, locked: false, components });
     }
+
+    // SMIL animation → real keyframe tracks on this part. Offsets arrive in SVG
+    // user units, so they scale with the group exactly like the geometry did.
+    if (s.animation) writeSvgAnimation(pathId, s.animation, relX, relY, k);
   }
+  });
 
   // Select ONLY the group — the icon is one selectable/movable body.
   useSelectionStore.getState().set([group.id]);
   bumpScene();
   return group.id;
+}
+
+/**
+ * Write an imported SVG's keyframes onto a shape node.
+ *
+ * `x`/`y` arrive as OFFSETS from the part's static position and in SVG user
+ * units, so they are scaled by the same `k` the geometry was and re-based onto
+ * `relX`/`relY` — otherwise an animated part would snap to the group origin the
+ * moment its first keyframe was written.
+ *
+ * These writes go straight to the animation engine, which emits nothing on its
+ * own, so they are only captured by history because the caller finishes with
+ * `bumpScene()` (history snapshots the animation engine alongside the scene).
+ * A future caller that skips that bump would write keyframes undo cannot reach.
+ */
+function writeSvgAnimation(
+  nodeId: string,
+  anim: SvgShapeAnimation,
+  relX: number,
+  relY: number,
+  k: number,
+): void {
+  const write = (prop: string, kfs: ReadonlyArray<{ time: number; value: number; hold?: boolean }> | undefined, map: (v: number) => number): void => {
+    if (!kfs || kfs.length === 0) return;
+    // One bulk write per track. Writing keyframe-at-a-time re-sorted the track
+    // and fired a change notification for every one of them, which is what made
+    // importing an animated SVG hang the app.
+    defaultAnimation.setKeyframes(nodeId, prop, kfs.map((kf) => ({
+      t: kf.time,
+      value: map(kf.value),
+      // `calcMode="discrete"` and `<set>` must step, not glide.
+      ...(kf.hold ? { easing: 'hold' as const } : {}),
+    })));
+    // An endless loop is baked as ONE cycle plus this expression, so its cost
+    // does not grow with the composition's length.
+    if (anim.loop) defaultAnimation.setExpression(nodeId, prop, `loopOut('${anim.loop}')`);
+  };
+  write('x', anim.x, (v) => relX + v * k);
+  write('y', anim.y, (v) => relY + v * k);
+  write('rotation', anim.rotation, (v) => v);
+  write('scaleX', anim.scaleX, (v) => v);
+  write('scaleY', anim.scaleY, (v) => v);
+  write('opacity', anim.opacity, (v) => v);
+  // Draw-on (stroke-dashoffset) arrives as trim-END percent. The animated
+  // values only apply where a trim CONFIG exists on the layer (resolveTrim
+  // returns null otherwise), so the base config is written alongside.
+  if (anim.trimEnd) {
+    defaultSceneGraph.setTrimPath(nodeId, defaultTrim());
+    write(trimPropPath('end'), anim.trimEnd, (v) => v);
+  }
 }
 
 /** Insert a primitive at the composition root, select it, and refresh the UI. */
@@ -697,7 +763,14 @@ export function insertLight(seed: LightSeed = {}): void {
     // exact prop shape it always had (readNodeLight defaults cover the rest).
     if (seed.type && seed.type !== 'point') t.props.lightType = seed.type;
     if (seed.type === 'spot' && typeof seed.coneAngle === 'number') t.props.lightCone = seed.coneAngle;
-    if (seed.castShadows) t.props.castShadows = true;
+    // Cast shadows ON for a NEW light unless the caller says otherwise.
+    //
+    // `readNodeLight` treats a missing prop as false, so adding a light did
+    // nothing but wash the scene — the shadow projection could never engage and
+    // there was no hint that a switch elsewhere was gating it. Writing the prop
+    // explicitly only affects lights created from here; existing lights keep
+    // whatever they were saved with.
+    t.props.castShadows = seed.castShadows !== false;
   }
   const s = node.components.find((c) => c.type === 'Style');
   if (s) s.props.fill = seed.color ?? '#fff3c0';
@@ -724,11 +797,19 @@ export function insert3DPrimitive(type: 'cube' | 'sphere' | 'plane' | 'cylinder'
     t.props.primitiveType = type;
     t.props.castsShadows = true;
     t.props.acceptsLights = true;
-    // Real extruded geometry: a Cube is a square extruded by its side length;
-    // a Cylinder is an extruded ellipse (segmented side wall). Spheres stay
-    // flat until real curved meshes exist. See buildSnapshot's extrusion pass.
+    // Real extruded geometry: a Cube is a square extruded by its side length; a
+    // Cylinder and a Sphere are both extruded ELLIPSES (`shapeType`), which is
+    // what buildSnapshot's extrusion pass understands.
+    //
+    // "3D Sphere" used to set only `primitiveType`, and nothing in the codebase
+    // reads that prop — so it inserted a flat 240×240 SQUARE. The name-based
+    // fallback (/circle|ellip|dot|orb/) doesn't match "3D Sphere" either. Giving
+    // it an ellipse profile and depth makes it a real, shaded, lit 3D body; it is
+    // a capsule rather than a true sphere until curved meshes exist, which the
+    // label below now says out loud instead of silently shipping a square.
+    if (type === 'sphere' || type === 'cylinder') t.props.shapeType = 'ellipse';
     if (type === 'cube' || type === 'cylinder') t.props.extrusionDepth = 240;
-    if (type === 'cylinder') t.props.shapeType = 'ellipse';
+    if (type === 'sphere') t.props.extrusionDepth = 240;
   }
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
@@ -779,20 +860,22 @@ export function insertParticle(): void {
   const compSize = useCompositionStore.getState();
   const w = compSize.width || 1920;
   const h = compSize.height || 1080;
+  const pW = 400;
+  const pH = 400;
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
     t.props.x = w / 2;
     t.props.y = h / 2;
-    t.props.width = w;
-    t.props.height = h;
-    t.props.anchorX = w / 2;
-    t.props.anchorY = h / 2;
+    t.props.width = pW;
+    t.props.height = pH;
+    t.props.anchorX = 0;
+    t.props.anchorY = 0;
   }
   defaultSceneGraph.addChild(rootId, node);
   defaultSceneGraph.setParticle(node.id, {
     ...DEFAULT_PARTICLE_CONFIG,
-    emitterWidth: Math.round(w * 0.5),
-    emitterHeight: Math.round(h * 0.5),
+    emitterWidth: pW,
+    emitterHeight: pH,
   });
   useSelectionStore.getState().set([node.id]);
   bumpScene();
@@ -911,6 +994,92 @@ export function insertAudio(asset: ImportedAsset): void {
   bumpScene();
 }
 
+/** An SVG asset. Detected by extension — an object URL carries no mime type,
+ *  and `ImportedAsset.metadata` records only width/height/duration. */
+function isSvgAsset(asset: ImportedAsset): boolean {
+  return asset.type === 'image' && /\.svg(\?|#|$)/i.test(asset.name);
+}
+
+/** SMIL or CSS animation baked into the markup — neither survives rasterizing. */
+function hasSvgAnimation(svgText: string): boolean {
+  return /<(animate|animateTransform|animateMotion|set)[\s>]/i.test(svgText)
+    || /@keyframes|animation\s*:/i.test(svgText);
+}
+
+/**
+ * Tell the user what came across and what did not.
+ *
+ * The features the translator does not cover (motion paths, colour animation,
+ * geometry morphs, event-driven `begin`) are silently absent otherwise — the
+ * user would just see part of their file not moving and have no idea why.
+ */
+function reportSvgAnimation(svgText: string, name: string): void {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgText, 'image/svg+xml');
+  if (doc.getElementsByTagName('parsererror').length > 0) return;
+  const { anims, unsupported } = scanSvgAnimations(doc);
+  if (anims.length === 0 && unsupported.size === 0) return;
+
+  if (anims.length > 0 && unsupported.size === 0) {
+    useUIStore.getState().notify({
+      level: 'success',
+      message: `“${name}” imported with its animation as editable keyframes.`,
+      durationMs: 4000,
+    });
+    return;
+  }
+  const skipped = [...unsupported].slice(0, 3).join(', ');
+  useUIStore.getState().notify({
+    level: 'warning',
+    message: anims.length > 0
+      ? `“${name}” imported with keyframes, but some animation could not be converted (${skipped}).`
+      : `“${name}” imported as shapes; its animation could not be converted (${skipped}).`,
+    durationMs: 6000,
+  });
+}
+
+/**
+ * Why an animated SVG could not be converted, in the user's words.
+ *
+ * "It imports static" with no reason is the least actionable message the
+ * importer can give — this is what turns it into something the user can act on
+ * (re-export without a motion path, flatten a colour animation, and so on).
+ */
+function svgAnimationBlockers(svgText: string): string[] {
+  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+  if (doc.getElementsByTagName('parsererror').length > 0) return ['unreadable SVG'];
+  return [...scanSvgAnimations(doc).unsupported];
+}
+
+/**
+ * True when vectorizing this SVG would flood the scene with layers.
+ *
+ * Counted from the parsed shapes rather than a tag regex, so `<g>` wrappers and
+ * `<defs>` don't inflate it. Warns, because "my SVG imported as a flat image"
+ * is otherwise indistinguishable from a bug.
+ */
+function isOversizedSvg(count: number, name: string): boolean {
+  if (count <= MAX_VECTOR_SHAPES) return false;
+  useUIStore.getState().notify({
+    level: 'warning',
+    message: `“${name}” has ${count} vector paths — too many to edit as layers, so it imported as one image. Simplify or flatten it in your vector tool to keep the paths editable.`,
+    durationMs: 7000,
+  });
+  return true;
+}
+
+/** Read an asset's SVG source. Object URLs and data URLs both fetch fine. */
+async function readSvgText(src: string): Promise<string | null> {
+  try {
+    const res = await fetch(src);
+    if (!res.ok) return null;
+    const text = await res.text();
+    return text.includes('<svg') ? text : null;
+  } catch {
+    return null; // unreadable source — fall back to the image path
+  }
+}
+
 /** Insert an imported media asset (image or video) at native size */
 export async function insertMedia(asset: ImportedAsset): Promise<void> {
   const rootId = activeCompRootId();
@@ -929,9 +1098,63 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
   //    silently drop them and turn `url(#gradient)` fills into garbage (the
   //    "crashed" SVG). The renderer rasterizes the image faithfully instead
   //    (high-resolution, see AppTextureProvider).
-  // SVG Assets: Insert as a unified, high-fidelity vector image layer.
-  // This renders all SVG gradients, styles, clip-paths, and text 100% pixel-perfect
-  // while ensuring the SVG icon moves as ONE solid, unbroken body on canvas.
+  // …and here is the code that finally does it. Until now this fell straight
+  // through to `kind = 'image'`, so EVERY svg became a flat bitmap: `makeNode
+  // ('image')` carries a Transform component only — no Style, no Geometry — which
+  // is exactly why an imported SVG could not be recoloured or reshaped. It was
+  // also decoded once and cached forever, so an animated SVG froze on frame 0
+  // even though it animates in the Assets grid (that preview is a real <img>).
+  if (isSvgAsset(asset)) {
+    const svgText = await readSvgText(asset.src);
+    if (svgText) {
+      // SMIL and CSS `@keyframes` are both translated to real keyframes (see
+      // svgAnimation.ts / svgCss.ts), so an animated SVG takes the VECTOR path
+      // — it used to be rasterized, which is what froze it on frame 0.
+      // Unrolled only as far as the composition can play — keyframes past the
+      // end of the comp are cost with no possible benefit.
+      const shapes = parseSvgToShapes(svgText, {
+        maxDurationSeconds: useCompositionStore.getState().durationSeconds,
+      });
+      const convertible = shapes.some((s) => s.animation);
+      // ANIMATION OUTRANKS STATIC FIDELITY. The `isSimpleSvg` gate exists so a
+      // gradient/clip-path/mask file is rasterized rather than degraded — but
+      // rasterizing an animated file does not degrade it, it KILLS it: the
+      // image decodes once and is cached forever, so the layer is a dead frame
+      // 0. A gradient flattened to its first stop is a colour the user can fix
+      // in the inspector; a lost animation is not recoverable at all. So when
+      // the animation converts, the vector path wins and we say what it cost.
+      const simple = isSimpleSvg(svgText);
+      const degraded = convertible && !simple;
+      if ((simple || convertible) && !isOversizedSvg(shapes.length, asset.name)) {
+        const size = Math.max(asset.metadata?.width ?? 0, asset.metadata?.height ?? 0) || 400;
+        const id = insertSvgShapeGroup(svgText, asset.name, { targetSize: size, shapes });
+        if (id) {
+          if (degraded) {
+            useUIStore.getState().notify({
+              level: 'warning',
+              message: `“${asset.name}” imported with its animation as keyframes. Gradients, masks and filters are flattened to solid fills — adjust them in the inspector.`,
+              durationMs: 7000,
+            });
+          } else {
+            reportSvgAnimation(svgText, asset.name);
+          }
+          return; // editable vector shapes — fills/strokes/paths/keyframes live
+        }
+      }
+      // Rasterized: whatever animation it had cannot survive, so say so.
+      if (hasSvgAnimation(svgText)) {
+        useUIStore.getState().notify({
+          level: 'warning',
+          message: `“${asset.name}” animates, but its animation could not be converted (${svgAnimationBlockers(svgText).slice(0, 3).join(', ') || 'unsupported features'}) — it imports static. A Lottie/JSON export keeps the animation.`,
+          durationMs: 7000,
+        });
+      }
+    }
+    // Falls through to the image path: gradients, filters, <use>, embedded
+    // raster and text are reproduced faithfully by rasterizing, which the shape
+    // parser cannot do.
+  }
+
   const kind = asset.type === 'video' ? 'video' : 'image';
   const width = asset.metadata?.width ?? 400;
   const height = asset.metadata?.height ?? 400;

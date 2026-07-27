@@ -773,6 +773,69 @@ export class CompositionPass extends RenderPass {
 
     if (!Rect.intersects(visible, r.bounds) || r.opacity <= 0) return;
 
+    if (r.backdropBlur && r.backdropBlur > 0) {
+      // Frosted glass: blur what is BEHIND the layer and show it through the
+      // layer's own alpha. Same preconditions and ordering hazards as the
+      // advanced-blend branch below — needs a samplable out target, and the
+      // layer render must happen FIRST because its effect chain borrows the
+      // blur pool this then uses for the backdrop.
+      flushMain();
+      const sceneTarget = ctx.target(st.out);
+      const sceneTex = sceneTarget ? ctx.services.backend.renderTargetTexture(sceneTarget) : null;
+      if (sceneTex) {
+        const full = targetUv;
+        const fullMvp = screenMvp();
+        // 1. The layer itself → MATTE_TARGET. Its ALPHA is the glass silhouette
+        //    (so a rounded card, text, or a masked shape all cut correctly) and
+        //    its COLOUR is the tint drawn over the blur.
+        const layerTex = this.layerIntoTarget(ctx, r, r.opacity, MATTE_TARGET, byId);
+        // 2. Copy the backdrop out — a target cannot be sampled while written.
+        const copyCmds = new CommandBuffer();
+        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full);
+        const encCopy = beginViewportPass(ctx, 'backdrop-copy', writeAttachment(ctx, BLUR_TARGET1, Color.transparent()));
+        services.quad.execute(encCopy, copyCmds);
+        encCopy.end();
+        const copyTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET1)!);
+        // 3. Separable blur: BLUR_TARGET1 → BLUR_TARGET2 (H) → BLUR_TARGET1 (V).
+        let blurredTex = copyTex;
+        if (copyTex) {
+          const hCmds = new CommandBuffer();
+          hCmds.add({
+            batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
+            uniforms: packBlur(fullMvp, full, 1 / viewport.pixelSize.width, 0, r.backdropBlur),
+            texture: copyTex, sampler: clampSampler(),
+          });
+          const encH = beginViewportPass(ctx, 'backdrop-blurH', writeAttachment(ctx, BLUR_TARGET2, Color.transparent()));
+          services.quad.execute(encH, hCmds);
+          encH.end();
+          const hTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET2)!);
+          if (hTex) {
+            const vCmds = new CommandBuffer();
+            vCmds.add({
+              batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
+              uniforms: packBlur(fullMvp, full, 0, 1 / viewport.pixelSize.height, r.backdropBlur),
+              texture: hTex, sampler: clampSampler(),
+            });
+            const encV = beginViewportPass(ctx, 'backdrop-blurV', writeAttachment(ctx, BLUR_TARGET1, Color.transparent()));
+            services.quad.execute(encV, vCmds);
+            encV.end();
+            blurredTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET1)!);
+          }
+        }
+        // 4. Composite over the scene: blurred backdrop clipped to the layer's
+        //    alpha, then the layer's own colour on top. Both are full-screen
+        //    textures sampled with the SAME targetUv, so there is no new
+        //    coordinate or per-backend V-flip maths to get wrong.
+        if (blurredTex && layerTex) {
+          emitMaskedTextured(mainCmds, fullMvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), layerTex, full);
+          emitTextured(mainCmds, fullMvp, Color.white(), 1, r.blend, layerTex, clampSampler(), full);
+        }
+        return;
+      }
+      // Not samplable (drawing straight to the surface) — fall through and draw
+      // the layer normally; it simply will not frost.
+    }
+
     if (r.advancedBlend && r.advancedBlend > 0) {
       // Advanced blend (overlay/hard-light/HSL/…): fixed-function GL can't do
       // these — composite the layer against the accumulated backdrop through

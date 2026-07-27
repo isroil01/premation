@@ -9,13 +9,14 @@
 
 import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled, set3DEnabled, canBe3D, readNode3D, setNodeExtrusionDepth, setNodeBevelDepth, isPerChar3D, setNodePerChar3D } from '@core/scene/threeD';
 import { hasTextComponent } from '@core/text/textAnimators';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { useUIStore } from '@stores/uiStore';
 import styles from './ParentControl.module.css';
+import { FaceMaterialsSection } from './FaceMaterialsSection';
 
 import { readNodeMaterial, setNodeCastsShadows, setNodeAcceptsLights, setNodeSpecular, setNodeShininess } from '@core/scene/material';
 
@@ -95,6 +96,7 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
               />
             </div>
           )}
+          <FaceMaterialsSection nodeId={nodeId} />
           <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2, marginTop: 4 }}>
             Material Options
           </span>
@@ -144,45 +146,12 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
               </div>
             </>
           )}
-          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2, marginTop: 6 }}>
-            Pro 3D Material Presets
-          </span>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, marginBottom: 4 }}>
-            {[
-              { id: 'steel', label: '⚙️ Steel', color: '#8a99a8', spec: 85, shin: 64 },
-              { id: 'gold', label: '🥇 Gold', color: '#ffd700', spec: 95, shin: 80 },
-              { id: 'plastic', label: '🎨 Plastic', color: '#2988ff', spec: 30, shin: 24 },
-              { id: 'glass', label: '🧊 Glass', color: '#e0f7fa', spec: 95, shin: 96 },
-              { id: 'neon', label: '⚡ Neon', color: '#ff007f', spec: 100, shin: 120 },
-              { id: 'obsidian', label: '🖤 Obsidian', color: '#1a1a1e', spec: 50, shin: 70 },
-            ].map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                style={{
-                  padding: '3px 4px',
-                  borderRadius: 4,
-                  fontSize: 10,
-                  fontWeight: 600,
-                  background: 'var(--color-surface-2, rgba(255,255,255,0.06))',
-                  border: '1px solid var(--color-border-subtle, rgba(255,255,255,0.12))',
-                  color: 'var(--color-text-primary, #fff)',
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                }}
-                onClick={() => {
-                  setNodeSpecular(nodeId, p.spec);
-                  setNodeShininess(nodeId, p.shin);
-                  defaultSceneGraph.setFill(nodeId, { type: 'solid', color: p.color });
-                  useUIStore.getState().notify({ level: 'info', message: `Applied 3D Material: ${p.label}`, durationMs: 2000 });
-                  bumpScene();
-                }}
-                title={`Apply ${p.label} Material`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          {/* The "Pro 3D Material Presets" grid lived here. It was a third
+              hard-coded preset grid, in a panel that does not own fill — picking
+              one silently replaced the layer's colour. The same six materials
+              are now in the Style panel's preset registry under "Material",
+              alongside every other look, and they set specular/shininess through
+              the same apply path. */}
         </div>
       )}
     </div>

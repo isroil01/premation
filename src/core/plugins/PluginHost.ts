@@ -48,6 +48,8 @@ class PluginHost {
   private selectionProvider: () => ReadonlyArray<string> = () => [];
   private notifier: (msg: string) => void = () => {};
   private onChange: (() => void)[] = [];
+  /** Plugin frames allowed on the postMessage bridge → their expected origin. */
+  private readonly frames = new Map<MessageEventSource, string>();
 
   constructor() {
     this.setupPostMessageBridge();
@@ -127,23 +129,47 @@ class PluginHost {
   }
 
   /**
-   * Sets up iframe / webview postMessage listener so web extensions can send keyframe commands.
+   * Register a plugin frame as allowed to drive the postMessage bridge.
+   *
+   * Whoever creates a plugin iframe/webview calls this with the window it
+   * created and the origin it was loaded from. Nothing else can talk to the
+   * bridge — see `setupPostMessageBridge`.
+   */
+  registerFrame(source: MessageEventSource, origin: string): () => void {
+    this.frames.set(source, origin);
+    return () => { this.frames.delete(source); };
+  }
+
+  /**
+   * postMessage bridge for plugin frames — keyframe commands and notifications.
+   *
+   * Gated on `registerFrame`. It used to accept ANY message from ANY window:
+   * `window.addEventListener('message')` fires for anything that can reach this
+   * window (an embedder, an opener, an injected frame), and the handler wrote
+   * straight into the user's animation data and popped arbitrary toast text. No
+   * frame is registered until the app itself creates one, so an unsolicited
+   * message now has no sender it can claim to be.
    */
   private setupPostMessageBridge(): () => void {
     if (typeof window === 'undefined') return () => {};
     const listener = (event: MessageEvent) => {
+      // Sender must be a frame we created, still registered, and still on the
+      // origin it was registered with (a navigated frame is a different app).
+      const expected = event.source ? this.frames.get(event.source) : undefined;
+      if (expected === undefined || event.origin !== expected) return;
+
       const data = event.data;
       if (!data || typeof data !== 'object') return;
-      if (data.type === 'SET_KEYFRAME' && data.nodeId && data.property) {
-        defaultAnimation.setKeyframe(
-          data.nodeId,
-          data.property,
-          Number(data.time) || 0,
-          Number(data.value) || 0
-        );
+      if (data.type === 'SET_KEYFRAME' && typeof data.nodeId === 'string' && typeof data.property === 'string') {
+        const time = Number(data.time);
+        const value = Number(data.value);
+        // A NaN would poison the track silently; reject rather than coerce to 0,
+        // which would look like a deliberate keyframe at the start of the comp.
+        if (!Number.isFinite(time) || !Number.isFinite(value)) return;
+        defaultAnimation.setKeyframe(data.nodeId, data.property, time, value);
         this.notifier(`Extension updated keyframe: ${data.property}`);
-      } else if (data.type === 'NOTIFY' && data.message) {
-        this.notifier(String(data.message));
+      } else if (data.type === 'NOTIFY' && typeof data.message === 'string') {
+        this.notifier(data.message);
       }
     };
     window.addEventListener('message', listener);

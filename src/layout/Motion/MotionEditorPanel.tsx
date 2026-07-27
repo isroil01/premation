@@ -17,7 +17,9 @@ import { EmptyState } from '@components/EmptyState';
 import { PresetsBar } from './PresetsBar';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
-import { defaultAnimation, sampleTrack, sampleSpeed, EASY_EASE_BEZIER, type EasingKind, type PropertyTrack } from '@motion/animation';
+import { defaultAnimation, sampleTrack, sampleSpeed, makeKeyframeId, EASY_EASE_BEZIER, type EasingKind, type PropertyTrack } from '@motion/animation';
+import { useEaseClipboardStore } from '@stores/easeClipboardStore';
+import { Icon } from '@components/Icon';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { ExpressionEditor } from './ExpressionEditor';
 import { MotionControls } from '@layout/Inspector/MotionControls';
@@ -156,6 +158,7 @@ export function MotionEditorPanel(): JSX.Element {
   }, [track, bounds, rev, graphMode]);
 
   const selectedKf = track?.keyframes.find((k) => k.t === selT) ?? null;
+  const { copyEase, pasteEase, copied: hasCopiedEase } = useEaseClipboardStore();
 
   // ── Keyframe drag (value = vertical, time = horizontal) ──────────
   const onPointGrab = (t: number, e: ReactPointerEvent<SVGCircleElement>): void => {
@@ -500,6 +503,33 @@ export function MotionEditorPanel(): JSX.Element {
       </>
       ) : (
         <div className={styles.hint}>No keyframes on “{prop}” — drive it with an expression below.</div>
+      )}
+
+      {/* Copy/paste an easing curve between keyframes. Moved here from the
+          left-sidebar Flow panel, which was a SECOND full bezier editor for the
+          same keyframes — it wrote through a different path and only re-synced
+          its handles when `easing === 'bezier'`, so it showed a stale curve
+          after any preset applied from here. This was its one unique action. */}
+      {selectedKf && (
+        <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.actionChip}
+            onClick={() => copyEase(makeKeyframeId(primary, prop, selectedKf.t))}
+            title="Copy this keyframe's easing"
+          >
+            <Icon name="copy" size={12} /> Copy Ease
+          </button>
+          <button
+            type="button"
+            className={styles.actionChip}
+            disabled={!hasCopiedEase}
+            onClick={() => pasteEase([makeKeyframeId(primary, prop, selectedKf.t)])}
+            title={hasCopiedEase ? 'Paste the copied easing here' : 'Nothing copied yet'}
+          >
+            <Icon name="download" size={12} /> Paste Ease
+          </button>
+        </div>
       )}
 
       {/* Expression editor — drives this property with a formula each frame. */}

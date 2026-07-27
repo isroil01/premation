@@ -131,10 +131,14 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
 
             <div className={styles.paramRow}>
               <span className={styles.paramLabel}>Rest Angle</span>
+              {/* `Bone.rotation` is stored in RADIANS (skeleton.ts). This field
+                  displayed the raw radian value under a ° label and wrote whatever
+                  you typed straight back — so typing "45" set 45 radians ≈ 2578°
+                  and folded the limb into itself. Convert at the display boundary. */}
               <ValueField
-                value={bone.rotation}
+                value={(bone.rotation * 180) / Math.PI}
                 unit="°"
-                onChange={(v) => updateBone(nodeId, bone.id, { rotation: v })}
+                onChange={(v) => updateBone(nodeId, bone.id, { rotation: (v * Math.PI) / 180 })}
                 aria-label={`${bone.id} rotation`}
               />
             </div>

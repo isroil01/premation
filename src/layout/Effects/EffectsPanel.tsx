@@ -99,11 +99,11 @@ export function EffectsPanel(): JSX.Element {
   const browserAccordionItems = useMemo((): AccordionItem[] => {
     return Object.entries(effectGroups)
       .filter(([_, items]) => items.length > 0)
-      .map(([cat, items]) => ({
+      .map(([cat, items], index) => ({
         id: cat,
         title: cat,
         badge: <span className={styles.catBadge}>{items.length}</span>,
-        defaultOpen: true,
+        defaultOpen: index === 0,
         content: (
           <div className={styles.effectRowsList}>
             {items.map((d) => {
@@ -143,8 +143,12 @@ export function EffectsPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
-      {/* Effects browser — searchable list of effect types to add. */}
-      <div className={styles.sectionTitle}>Effects &amp; presets</div>
+      {/* Active Applied Effects — front and center at the top for easy access */}
+      <div className={styles.sectionTitle}>Active Layer Effects</div>
+      <EffectStack nodeId={primary} />
+
+      {/* Effects & presets browser — list of effect types to add */}
+      <div className={styles.sectionTitle}>Add Effect &amp; Presets</div>
       <div className={styles.browser}>
         <Input
           value={effectQuery}
@@ -159,10 +163,7 @@ export function EffectsPanel(): JSX.Element {
         ) : (
           <div className={styles.hint}>No effects match “{effectQuery}”.</div>
         )}
-
       </div>
-
-      <EffectStack nodeId={primary} />
 
       <div className={styles.sectionTitle}>Masks</div>
       <div className={styles.addRow}>

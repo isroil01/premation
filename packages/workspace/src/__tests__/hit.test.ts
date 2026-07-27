@@ -97,3 +97,49 @@ describe('HitTester', () => {
     expect(ht.hitTest({ x: 320, y: 320 })?.id).toBe('new');
   });
 });
+
+describe('HitTester lazy rebuild', () => {
+  // Scene changes vastly outnumber pointer interactions — every keyframe write
+  // and playhead tick invalidates the index, but only a click consumes it.
+  // markDirty must defer the (full scene enumeration) rebuild to the next
+  // query, and one rebuild must answer for any number of bumps.
+
+  it('markDirty defers the rebuild until a query needs it', () => {
+    const s = new MemoryScene([{ id: 'a', bounds: R.rect(0, 0, 10, 10) }]);
+    const ht = new HitTester(s);
+    let enumerations = 0;
+    const orig = s.getNodes.bind(s);
+    s.getNodes = () => { enumerations++; return orig(); };
+
+    ht.markDirty();
+    ht.markDirty();
+    ht.markDirty();
+    expect(enumerations).toBe(0); // no query yet — nothing paid
+
+    expect(ht.hitTest({ x: 5, y: 5 })?.id).toBe('a');
+    expect(enumerations).toBe(1); // all three bumps answered by ONE rebuild
+
+    expect(ht.hitTest({ x: 5, y: 5 })?.id).toBe('a');
+    expect(enumerations).toBe(1); // clean index is not rebuilt again
+  });
+
+  it('a query after markDirty sees the changed scene', () => {
+    const s = new MemoryScene([{ id: 'a', bounds: R.rect(0, 0, 10, 10) }]);
+    const ht = new HitTester(s);
+    expect(ht.hitTest({ x: 105, y: 105 })).toBeNull();
+
+    s.put({ id: 'b', bounds: R.rect(100, 100, 10, 10) }, false);
+    ht.markDirty();
+    expect(ht.hitTest({ x: 105, y: 105 })?.id).toBe('b');
+  });
+
+  it('hitTestRegion and indexSize also refresh a dirty index', () => {
+    const s = new MemoryScene([{ id: 'a', bounds: R.rect(0, 0, 10, 10) }]);
+    const ht = new HitTester(s);
+    s.put({ id: 'b', bounds: R.rect(50, 50, 10, 10) }, false);
+    ht.markDirty();
+    expect(ht.hitTestRegion(R.rect(40, 40, 30, 30)).map((n) => n.id)).toEqual(['b']);
+    ht.markDirty();
+    expect(ht.indexSize).toBe(2);
+  });
+});

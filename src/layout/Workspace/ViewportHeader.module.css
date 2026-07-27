@@ -47,7 +47,6 @@
   background: transparent;
   border: none;
   border-right: 1px solid var(--color-border-strong);
-  border-left: 1px solid var(--color-border-strong);
   color: var(--color-text-primary);
   font-size: 11.5px;
   font-weight: 500;
@@ -102,14 +101,16 @@
 }
 
 .headerBtnActive {
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15));
-  color: var(--color-primary, #2988ff);
-  border: 1px solid rgba(41, 136, 255, 0.25);
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.18)) !important;
+  color: var(--color-primary, #2988ff) !important;
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
 }
 
 .headerBtnActive:hover {
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.2));
-  color: var(--color-primary, #2988ff);
+  background: color-mix(in srgb, var(--color-primary, #2988ff) 25%, transparent) !important;
+  color: var(--color-primary, #2988ff) !important;
+  border: 1px solid transparent !important;
 }
 
 .sep {
@@ -207,4 +208,32 @@
   border: 1px solid rgba(245, 158, 11, 0.25);
   border-radius: 10px;
   white-space: nowrap;
+}
+
+/* Active render engine. Neutral on WebGPU (the expected state — an always-on
+   green badge would just be chrome noise); amber on the WebGL2 fallback, which
+   is genuinely worth noticing. */
+.engineBadge,
+.engineBadgeFallback {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.engineBadge {
+  color: var(--color-text-tertiary, #8b8b93);
+  background: var(--color-bg-tertiary, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.engineBadgeFallback {
+  color: var(--color-warning, #f59e0b);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.22);
 }

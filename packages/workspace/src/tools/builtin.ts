@@ -48,6 +48,8 @@ export class SelectTool implements Tool {
   private downHandle: HandleId | null = null;
   private moveIds: NodeId[] = [];
   private startBounds: Rect | null = null;
+  /** Scale at the moment a resize drag began — the base the ratio applies to. */
+  private startScale: { x: number; y: number } | null = null;
   private appliedDelta: Vec2 = { x: 0, y: 0 };
   private excludeIds: Set<string> = new Set();
   // Transform (single-node) state.
@@ -120,6 +122,14 @@ export class SelectTool implements Tool {
         this.transformStartRotation = node ? Math.atan2(node.worldMatrix.b, node.worldMatrix.a) : 0;
       } else {
         this.mode = 'resize';
+        // Capture the scale the drag starts from, so the drag can be applied as
+        // a RATIO. Derived from the world matrix because that is what the
+        // selection box was measured in; for an unparented layer it equals the
+        // node's own scaleX/scaleY.
+        const rn = ctx.scene.getNode(this.transformId);
+        this.startScale = rn
+          ? { x: Math.hypot(rn.worldMatrix.a, rn.worldMatrix.b), y: Math.hypot(rn.worldMatrix.c, rn.worldMatrix.d) }
+          : { x: 1, y: 1 };
       }
       return;
     }
@@ -147,7 +157,19 @@ export class SelectTool implements Tool {
     if (this.mode === 'resize' && this.transformId && this.startBounds && this.downHandle) {
       // Alt = scale from center, Shift = constrain aspect ratio (AE/Figma).
       const bounds = resizeBounds(this.startBounds, this.downHandle, e.currentWorld, e.modifiers.alt, undefined, e.modifiers.shift);
-      ctx.execute(commands.resizeNode(this.transformId, bounds));
+      // Express the drag as a ratio of the STARTING bounds and apply it to the
+      // starting scale. Absolute-AABB-over-local-width made rotated and 3D
+      // layers lurch and grow (see ResizeNodePayload).
+      const from = this.startBounds;
+      const base = this.startScale ?? { x: 1, y: 1 };
+      const scale = {
+        x: from.width > 0 ? base.x * (bounds.width / from.width) : base.x,
+        y: from.height > 0 ? base.y * (bounds.height / from.height) : base.y,
+      };
+      // The AABB of a rotated rectangle stays centred on the rectangle, so the
+      // AABB centre is the layer's position even when rotated.
+      const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center));
       ctx.requestRender();
       return;
     }
@@ -643,14 +665,51 @@ interface BrushSample extends Vec2 {
 }
 
 /**
+ * Stylus pressure that should paint exactly `brushSize`.
+ *
+ * Raw pressure used to be a direct multiplier, so the configured size was only
+ * ever reached by pressing all the way down — every normal stroke came out
+ * thinner than advertised. Normalising against the neutral value makes "Size:
+ * 14 px" mean 14 px, with lighter/heavier pressure deviating around it.
+ */
+const NEUTRAL_PRESSURE = 0.5;
+
+/**
  * Build the closed outline of a variable-width stroke: offset each centreline
  * point along its normal by half the local width (pressure × taper), walk the
  * left side forward and the right side back. Returned smoothed, so the ink
  * commits as flowing curves.
  */
 export function ribbonOutline(samples: readonly BrushSample[], size: number, taperPct: number, usePressure: boolean): BezierPoint[] {
+  if (samples.length < 2) return [];
+
+  // Densify a 2–3 sample flick before building the taper profile.
+  //
+  // The taper ramps from 0 at each end to full width in the middle. With only
+  // two samples there IS no middle sample: both points sit at taper 0, get
+  // clamped to the 0.05 floor, and the whole stroke collapses to the width floor
+  // — a hairline instead of a mark. Any quick flick produced one. Interpolating
+  // gives the profile somewhere to reach full width. Strokes of 4+ samples
+  // already have an interior point and are left untouched.
+  const MIN_SAMPLES = 9;
+  let work: BrushSample[] = [...samples];
+  if (work.length < 4) {
+    const dense: BrushSample[] = [];
+    const segs = work.length - 1;
+    const per = Math.ceil((MIN_SAMPLES - 1) / segs);
+    for (let s = 0; s < segs; s++) {
+      const a = work[s]!;
+      const b = work[s + 1]!;
+      for (let k = 0; k < per; k++) {
+        const u = k / per;
+        dense.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, pressure: a.pressure + (b.pressure - a.pressure) * u });
+      }
+    }
+    dense.push(work[work.length - 1]!);
+    work = dense;
+  }
+  samples = work;
   const n = samples.length;
-  if (n < 2) return [];
 
   // Cumulative arc length for the taper profile.
   const arc: number[] = [0];
@@ -667,13 +726,22 @@ export function ribbonOutline(samples: readonly BrushSample[], size: number, tap
     const p0 = samples[Math.max(0, i - 1)]!.pressure;
     const p1 = samples[i]!.pressure;
     const p2 = samples[Math.min(n - 1, i + 1)]!.pressure;
-    const p = usePressure ? Math.max(0.15, Math.min(1, (p0 + p1 + p2) / 3 || 0.5)) : 1;
+    // Normalized so a stylus at its NEUTRAL pressure paints the size the user
+    // set, and only lighter/heavier pressure deviates from it. Raw pressure was
+    // used as a direct multiplier, so even a real stylus never reached the
+    // configured width unless the user pressed all the way down.
+    const p = usePressure
+      ? Math.max(0.15, Math.min(1.4, ((p0 + p1 + p2) / 3 || 0.5) / NEUTRAL_PRESSURE))
+      : 1;
     let taper = 1;
     if (taperLen > 0) {
       taper = Math.min(1, arc[i]! / taperLen, (total - arc[i]!) / taperLen);
       taper = Math.max(0.05, taper);
     }
-    return Math.max(0.5, size * p * taper);
+    // Floor proportional to the brush, not a fixed half-pixel. A 0.5px absolute
+    // floor is invisible for any realistic brush size and is what made tapered
+    // ends and short strokes read as a thin outline rather than ink.
+    return Math.max(Math.min(size, 0.5), Math.min(size * 1.4, size * p * taper));
   };
 
   const left: Vec2[] = [];
@@ -705,15 +773,31 @@ export class BrushTool implements Tool {
 
   private pts: BrushSample[] = [];
   private drawing = false;
+  /**
+   * Whether THIS stroke came from a stylus.
+   *
+   * Pressure must only modulate width for a real pen. A mouse reports a flat
+   * 0.5 (Chromium) or 0, and the Pressure option defaults ON — so with a mouse
+   * every stroke was silently painted at half the configured size, and a fast
+   * flick collapsed to a hairline. Gating on the device, not on the number,
+   * keeps genuine stylus sensitivity intact (including a deliberately light,
+   * constant-pressure stroke) while a mouse always paints the size that is set.
+   */
+  private isPen = false;
+
+  private get pressureActive(): boolean {
+    return drawToolOptions.brushPressure && this.isPen;
+  }
 
   /** Live preview: the actual ribbon outline (painted filled by the host). */
   get pendingPoints(): readonly BezierPoint[] {
     const o = drawToolOptions;
-    return ribbonOutline(this.pts, o.brushSize, o.brushTaper, o.brushPressure);
+    return ribbonOutline(this.pts, o.brushSize, o.brushTaper, this.pressureActive);
   }
 
   onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
     this.drawing = true;
+    this.isPen = e.pointer.pointerType === 'pen';
     this.pts = [{ x: e.startWorld.x, y: e.startWorld.y, pressure: e.pointer.pressure }];
     ctx.requestRender();
   }
@@ -741,7 +825,7 @@ export class BrushTool implements Tool {
       const keepIdx = simplifyPathIndices(this.pts, 1.25);
       const centre = keepIdx.map((i) => this.pts[i]!);
       const o = drawToolOptions;
-      const outline = ribbonOutline(centre, o.brushSize, o.brushTaper, o.brushPressure);
+      const outline = ribbonOutline(centre, o.brushSize, o.brushTaper, this.pressureActive);
       if (outline.length >= 3) {
         const bounds = R.bounds(outline.map((p) => R.rect(p.x, p.y, 0, 0))) ?? R.rect();
         const cx = bounds.x + bounds.width / 2;

@@ -13,6 +13,7 @@
  */
 
 import { captureDocument, restoreDocument } from '@core/api/cloudDocument';
+import { baselineHistory } from '@stores/historyStore';
 import { BundleRepository } from './BundleRepository';
 import { ProjectBundleService } from './ProjectBundleService';
 import type { VersionEntry, VersionKind } from './VersionStore';
@@ -55,6 +56,10 @@ export async function openProjectBundle(root: string, repo = getBundleRepository
   const doc = await repo.load(root);
   if (!doc) return false;
   restoreDocument(doc);
+  // The loaded document IS the baseline. Without this, undo's "before" is still
+  // the seeded starter scene from boot, so one Ctrl+Z replaces the project the
+  // user just opened.
+  baselineHistory('Open');
   return true;
 }
 
@@ -87,6 +92,7 @@ export async function restoreProjectVersion(
   const doc = await svc.restoreVersion(root, rev);
   if (!doc) return false;
   restoreDocument(doc);
+  baselineHistory(`Restored v${rev}`);
   return true;
 }
 

@@ -429,10 +429,14 @@ export class Workspace implements InputSink {
         this.renderer.markDirty();
       }),
     );
-    // Rebuild the spatial index whenever the graph changes structurally.
+    // Invalidate the spatial index whenever the graph changes structurally.
+    // Deferred, not rebuilt: this listener fires on every scene bump AND every
+    // playhead tick (onChanged also subscribes to time), and an eager rebuild
+    // enumerated the whole scene each time — the index is only consumed on
+    // pointer interaction, where HitTester.ensureFresh() rebuilds once.
     this.disposers.push(
       this.scene.onChanged(() => {
-        this.hitTester.rebuild();
+        this.hitTester.markDirty();
         this.pushOverlay();
         this.renderer.markDirty();
       }),

@@ -26,6 +26,7 @@ import type {
   ToolContext,
 } from '@motion/ai-tools';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { THREE_D_PROPS } from '@core/scene/threeD';
 import { readNodePuppet } from '@core/rig/puppet';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { resetSceneWindow } from './sceneWindow';
@@ -55,7 +56,10 @@ import type { ID, SceneNode } from '@core/types';
  * happen. This list is the real contract, and it is the single place it lives.
  */
 export const TRANSFORM_PROPS = ['x', 'y', 'rotation', 'scale', 'scaleX', 'scaleY', 'opacity'] as const;
-export const THREE_D_PROPS = ['z', 'rotationX', 'rotationY'] as const;
+// Imported from the scene layer, NOT re-declared. Two copies of the list that
+// decides whether a layer counts as 3D is two chances to disagree — and this
+// file's own docstring above insists the contract lives in ONE place.
+export { THREE_D_PROPS };
 export const SPECIAL_PROPS = ['timeRemap', 'precompTime'] as const;
 /**
  * Camera-only props. The renderer samples any keyframed prop on the camera node

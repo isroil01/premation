@@ -29,6 +29,13 @@ export class MonitorManager {
     return MonitorManager.instance;
   }
 
+  /** The ScreenDetails object we are currently subscribed to (see initDetection). */
+  private screenDetails: { addEventListener: (t: string, fn: () => void) => void; removeEventListener: (t: string, fn: () => void) => void } | null = null;
+  /** Stable handler reference, so it can actually be removed. */
+  private readonly onScreensChange = (): void => {
+    void this.initDetection();
+  };
+
   private async initDetection(): Promise<void> {
     if (typeof window === 'undefined') return;
 
@@ -54,9 +61,20 @@ export class MonitorManager {
         }));
         this.updateDisplays(mapped);
 
-        details.addEventListener('screenschange', () => {
-          this.refreshMonitors();
-        });
+        // Bind ONCE per ScreenDetails object.
+        //
+        // This used to add a fresh anonymous listener on every initDetection(),
+        // and the listener itself calls refreshMonitors() → initDetection() → add
+        // another. So each real screenschange doubled the listener count
+        // (1 → 2 → 4 → 8…), every copy re-running getScreenDetails() and
+        // re-emitting MonitorDetected/MonitorRemoved. Plugging a monitor in and
+        // out a few times left hundreds of handlers, and nothing ever removed
+        // them.
+        if (this.screenDetails !== details) {
+          this.screenDetails?.removeEventListener('screenschange', this.onScreensChange);
+          details.addEventListener('screenschange', this.onScreensChange);
+          this.screenDetails = details;
+        }
       } catch {
         // Default fallback single monitor
         this.updateDisplays([

@@ -21,12 +21,7 @@ export type WorkspaceMode = 'free' | 'fixed';
 const PERSIST_KEY = 'motion-editor.workspaceMode.v1';
 
 function loadMode(): WorkspaceMode {
-  try {
-    const raw = localStorage.getItem(PERSIST_KEY);
-    return raw === 'fixed' ? 'fixed' : 'free';
-  } catch {
-    return 'free';
-  }
+  return 'fixed';
 }
 
 /** Push the mode down to the engine camera and re-frame when locking. */

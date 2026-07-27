@@ -403,10 +403,15 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
         {renderTextPropInner('Leading', 'lineHeight', lineHeightVal, setLineHeight, 'em', 1.2)}
         {renderTextPropInner('Paragraph', 'paragraphSpacing', paragraphSpacingVal, setParagraphSpacing, 'px', 0)}
 
+        {/* NOT the same control as Appearance's fill, though it writes the same
+            prop when nothing is selected: with a character range selected this
+            writes a per-RUN colour, which Appearance cannot do. It was labelled
+            "Color" in both places, so the two rows looked like a duplicate of
+            each other — the label now says which one this is. */}
         <ColorKfRow
           nodeId={nodeId}
           propPrefix="fill"
-          label="Color"
+          label="Character Color"
           value={String(fillChar.value ?? '#ffffff')}
           setValue={(val) => setCharProp('fill', val, (v) => setFill(v))}
         />

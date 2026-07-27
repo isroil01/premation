@@ -95,6 +95,18 @@ function write(nodeId: string, styles: LayerStyles): void {
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 
+/**
+ * Replace a layer's entire style set in one write.
+ *
+ * The toggles and patch helpers below are incremental; a style PRESET needs to
+ * state the whole result at once, including clearing styles it does not use —
+ * doing that by composing toggles would depend on the current state and emit a
+ * write per style.
+ */
+export function setLayerStyles(nodeId: string, styles: LayerStyles): void {
+  write(nodeId, styles);
+}
+
 /** Toggle a style on/off (creating it with defaults when first enabled). */
 export function toggleDropShadow(nodeId: string): void {
   const cur = getNodeLayerStyles(nodeId);

@@ -19,11 +19,11 @@ import { openCompositionSettings } from '@layout/Composition/CompositionSettings
 import { useFocusStore } from '@stores/focusStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { getEventBus } from '@core/events/EventBus';
 import { hasPositionAnimation, smoothMotionPath, straightenMotionPath, hasPathTangents } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { defaultAnimation } from '@motion/animation';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { ViewControls } from '@layout/TopNav/ViewControls';
 import { useRenderBackendStore } from '@stores/renderBackendStore';
 import styles from './ViewportHeader.module.css';
@@ -43,9 +43,13 @@ export function ViewportHeader(): JSX.Element {
   const jumpTo = useFocusStore((s) => s.jumpTo);
   const motionPathVisible = useGuidesStore((s) => s.motionPathVisible);
   const toggleMotionPath = useGuidesStore((s) => s.toggleMotionPath);
-  const workspaceMode = useWorkspaceViewStore((s) => s.mode);
-  const toggleWorkspaceMode = useWorkspaceViewStore((s) => s.toggleMode);
   const isSoftware = useRenderBackendStore((s) => s.isSoftwareFallback);
+  const engineTier = useRenderBackendStore((s) => s.activeTier);
+
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
+  const toggleAutoKeyframe = (): void => {
+    usePreferenceStore.getState().set('timelineAutoKeyframe', !autoKeyframe);
+  };
 
   // Scene mutations (3D switches, camera/light inserts) must refresh the
   // header's availability checks below.
@@ -97,11 +101,11 @@ export function ViewportHeader(): JSX.Element {
             title="Go Back"
             style={{ marginRight: 4 }}
           >
-            <Icon name="arrow-left" size={12} />
+            <Icon name="arrow-left" size={14} />
           </button>
         )}
         <button className={styles.compName} onClick={() => openCompositionSettings()} title="Composition Settings">
-          <Icon name="layers" size={12} className={styles.compIcon} />
+          <Icon name="layers" size={14} className={styles.compIcon} />
           <span className={styles.compLabel}>{name}</span>
         </button>
 
@@ -115,18 +119,39 @@ export function ViewportHeader(): JSX.Element {
               onClick={() => setCamera3dMode('active')}
               title="Viewing through a 3D view — click to return to Active Camera (1)"
             >
-              <Icon name="camera" size={11} />
+              <Icon name="camera" size={13} />
               <span style={{ marginLeft: 4 }}>{CAMERA_VIEW_LABEL[camera3dMode]}</span>
             </button>
+          </>
+        )}
+
+        {/* Which engine is actually rendering. WebGPU is the primary tier and
+            WebGL2 the fallback, but until now nothing surfaced which one won —
+            so "are we on WebGPU?" was unanswerable without a debugger. Hidden
+            while pending and on the happy path is a quiet neutral chip; the
+            fallback rung reads as a warning because it IS a degraded state. */}
+        {engineTier !== 'pending' && engineTier !== 'software' && (
+          <>
+            <span className={styles.sep} />
+            <span
+              className={engineTier === 'webgpu' ? styles.engineBadge : styles.engineBadgeFallback}
+              title={
+                engineTier === 'webgpu'
+                  ? 'Rendering on WebGPU — the primary engine.'
+                  : 'WebGPU was unavailable on this machine, so the preview fell back to WebGL2. Rendering is correct but slower.'
+              }
+            >
+              {engineTier === 'webgpu' ? 'WebGPU' : 'WebGL2'}
+            </span>
           </>
         )}
 
         {isSoftware && (
           <>
             <span className={styles.sep} />
-            <span className={styles.softwareBadge} title="GPU context creation failed. Renders via rasterizer CPU fallback.">
-              <Icon name="warning" size={11} />
-              Software rendering
+            <span className={styles.softwareBadge} title="Both WebGPU and WebGL2 failed to initialize, so the preview cannot render. Close other GPU-heavy windows and reopen the project.">
+              <Icon name="warning" size={13} />
+              GPU unavailable
             </span>
           </>
         )}
@@ -144,14 +169,14 @@ export function ViewportHeader(): JSX.Element {
             aria-pressed={motionPathVisible}
             title={motionPathVisible ? 'Hide Motion Path (Ctrl+Alt+M)' : 'Show Motion Path (Ctrl+Alt+M)'}
           >
-            <Icon name="path" size={12} />
+            <Icon name="path" size={14} />
           </button>
           <button
             className={styles.headerBtn}
             onClick={() => singleId && runAnimEdit('Smooth motion path', () => smoothMotionPath(singleId!))}
             title="Auto-Bezier: smooth path through all keyframes (Ctrl+Alt+S)"
           >
-            <Icon name="curvature" size={12} />
+            <Icon name="curvature" size={14} />
           </button>
           {hasTangents && (
             <button
@@ -159,7 +184,7 @@ export function ViewportHeader(): JSX.Element {
               onClick={() => singleId && runAnimEdit('Straighten motion path', () => straightenMotionPath(singleId!))}
               title="Straighten: remove spatial tangents"
             >
-              <Icon name="line" size={12} />
+              <Icon name="line" size={14} />
             </button>
           )}
         </div>
@@ -169,7 +194,7 @@ export function ViewportHeader(): JSX.Element {
         <div className={styles.group}>
           <span className={styles.sep} />
           <span className={styles.animatedChip} title="This layer has keyframes (twirl it open in the timeline)">
-            <Icon name="stopwatch" size={11} />
+            <Icon name="stopwatch" size={13} />
             Animated
           </span>
         </div>
@@ -189,31 +214,22 @@ export function ViewportHeader(): JSX.Element {
                 : `Make ${eligible3D.length > 1 ? `${eligible3D.length} selected layers` : 'the selected layer'} 3D (adds Z position + X/Y rotation)`
             }
           >
-            <Icon name="3d" size={12} />
+            <Icon name="3d" size={14} />
           </button>
         </div>
       )}
 
-
-
-
-
-      {/* Zoom, fit, lock, and view controls (grid/rulers/safe/channel/resolution) */}
+      {/* Zoom, fit, and view controls (grid/rulers/safe/channel/resolution) */}
       <div className={styles.group}>
         <span className={styles.sep} />
-        {/* Free (pan/zoom everywhere) vs Fixed (comp locked & centred) */}
         <button
-          className={`${styles.headerBtn} ${workspaceMode === 'fixed' ? styles.headerBtnActive : ''}`}
-          onClick={toggleWorkspaceMode}
-          aria-pressed={workspaceMode === 'fixed'}
-          title={
-            workspaceMode === 'fixed'
-              ? 'Workspace: Fixed — composition is locked & centred. Click for a free, pannable canvas.'
-              : 'Workspace: Free — pan and zoom anywhere. Click to lock the composition in view.'
-          }
-          style={{ marginRight: 4 }}
+          className={`${styles.headerBtn} ${autoKeyframe ? styles.headerBtnActive : ''}`}
+          onClick={toggleAutoKeyframe}
+          aria-pressed={autoKeyframe}
+          title={autoKeyframe ? 'Auto-Keyframe Mode is ON (Click to turn OFF)' : 'Auto-Keyframe Mode is OFF (Click to turn ON)'}
         >
-          <Icon name={workspaceMode === 'fixed' ? 'lock' : 'hand'} size={12} />
+          <Icon name="stopwatch" size={14} />
+          {autoKeyframe && <span style={{ fontSize: 10, fontWeight: 700, marginLeft: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>REC</span>}
         </button>
         <ViewControls />
         <button
@@ -225,7 +241,7 @@ export function ViewportHeader(): JSX.Element {
           title="Pop Out Viewport Preview into Window"
           style={{ marginLeft: 4 }}
         >
-          <Icon name="export" size={12} />
+          <Icon name="pop-out" size={14} />
         </button>
       </div>
     </div>

@@ -36,8 +36,8 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 260, collapsed: false },
     },
     panelOrder: {
-      leftSidebar: ['scene', 'assets', 'flow', 'library', 'ai'],
-      rightInspector: ['properties', 'style', 'rig', 'effects', 'motiontools', 'presets', 'misc'],
+      leftSidebar: ['scene', 'assets', 'library', 'ai'],
+      rightInspector: ['properties', 'style', 'rig', 'effects', 'presets', 'misc'],
       centerWorkspace: [],
       bottomTimeline: [],
     },
@@ -53,12 +53,12 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 380, collapsed: false },
     },
     panelOrder: {
-      leftSidebar: ['flow', 'scene', 'assets', 'library'],
-      rightInspector: ['properties', 'effects', 'motiontools', 'style'],
+      leftSidebar: ['scene', 'assets', 'library'],
+      rightInspector: ['properties', 'effects', 'style'],
       centerWorkspace: [],
       bottomTimeline: [],
     },
-    activePanelByRegion: { leftSidebar: 'flow', rightInspector: 'properties' },
+    activePanelByRegion: { leftSidebar: 'scene', rightInspector: 'properties' },
   },
   {
     id: 'ai-focus',
@@ -87,8 +87,8 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 440, collapsed: false },
     },
     panelOrder: {
-      leftSidebar: ['scene', 'flow'],
-      rightInspector: ['properties', 'rig', 'motiontools'],
+      leftSidebar: ['scene'],
+      rightInspector: ['properties', 'rig'],
       centerWorkspace: [],
       bottomTimeline: [],
     },

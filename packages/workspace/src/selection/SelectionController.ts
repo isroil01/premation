@@ -126,10 +126,22 @@ export class SelectionController {
     return R.bounds(rects);
   }
 
-  /** Resize/rotate handles in world space, or [] when nothing is selected. */
+  /**
+   * Resize/rotate handles in world space, or [] when nothing is selected.
+   *
+   * Also [] for a single 3D layer: its transform belongs to the 3D gizmo, and
+   * these handles work in axis-aligned world bounds, which do not describe a
+   * projected 3D layer. Returning none here means the tool cannot grab them
+   * either — hiding them in the painter alone would leave invisible hit targets.
+   */
   handles(rotateOffsetWorld = 24): Handle[] {
     const bounds = this.selectionBounds();
     if (!bounds) return [];
+    const ids = this.selection.get();
+    if (ids.length === 1) {
+      const only = this.scene.getNode(ids[0]!);
+      if (only?.is3D) return [];
+    }
     return computeHandles(bounds, { rotateOffset: rotateOffsetWorld });
   }
 

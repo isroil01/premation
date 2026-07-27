@@ -391,6 +391,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     color: textured ? Color.white() : gradedSolidColor(layer),
     // Texture-backed kinds resolve via the provider
     ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
@@ -475,6 +476,7 @@ function precompToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpaci
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     color: Color.white(),
     textureKey: `precomp:${layer.id}`,
     ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
@@ -507,6 +509,7 @@ function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpa
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : fieldAdd ? 'add' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     color: Color.white(),
     textureKey: `particles:${layer.id}`,
     ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
@@ -718,13 +721,15 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   // Advanced blend layers need the samplable SCENE_COLOR_TARGET (they sample the
   // backdrop), same precondition as effects — force it on when any are present.
   const hasAdvancedBlend = renderables.some((r) => (r.advancedBlend ?? 0) > 0);
+  // Backdrop blur samples the scene beneath the layer — same precondition.
+  const hasBackdropBlur = renderables.some((r) => (r.backdropBlur ?? 0) > 0);
   // 3D depth groups need a depth-capable colour target; the surface has no
   // guaranteed depth attachment, so any 3D frame routes through the scene
   // colour target too (it is declared with depth: true).
   const checkThreeD = (rs: ReadonlyArray<Renderable>): boolean =>
     rs.some((r) => !!r.threeD || (r.precomp ? checkThreeD(r.precomp.renderables) : false));
   const has3d = !!snapshot.camera3d && checkThreeD(renderables);
-  const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend || has3d;
+  const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend || hasBackdropBlur || has3d;
   return {
     composition: {
       id: 'composition',

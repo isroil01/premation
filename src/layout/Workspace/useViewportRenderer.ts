@@ -22,6 +22,7 @@ import { resolveViewCameraInput } from '@core/workspace/cameraNav';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
+import { useProjectStore } from '@stores/projectStore';
 
 
 
@@ -90,6 +91,22 @@ export function useViewportRenderer(
 
   const rafIdRef = useRef<number | null>(null);
 
+  // Threaded via ref so the stable render callbacks read the live value without
+  // being re-created (and without re-running the mount effect) on play/pause.
+  // Scalar selector — `playing` lives on the active TAB, and selecting the tab
+  // object would re-render this hook on every setTime (60×/s).
+  const playing = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.playing ?? false : false));
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+
+  // Draft 3D was passed by the main viewport but never by the panes, so with the
+  // speed lever ON the three reference cells still rendered full lighting,
+  // shadows and depth of field — slower than the main view, and visibly different
+  // from it.
+  const draft3d = useGuidesStore((s) => s.draft3d);
+  const draft3dRef = useRef(draft3d);
+  draft3dRef.current = draft3d;
+
   // Wrap in try/finally so a buildSnapshot/renderFrame exception never
   // permanently wedges rafIdRef.current at a non-null handle — if it got
   // stuck, the RAF deduplication guard would silently halt all future renders.
@@ -106,6 +123,7 @@ export function useViewportRenderer(
           {
             ...compRef.current,
             rootId: compRef.current.id,
+            draft3d: draft3dRef.current,
             ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
           },
         ),
@@ -134,6 +152,29 @@ export function useViewportRenderer(
       renderImmediate();
     });
   }, [renderImmediate]);
+
+  /**
+   * Inspection panes render at a fraction of the main viewport's rate while the
+   * comp is PLAYING.
+   *
+   * Every pane owns its own backend, its own rAF loop and its own
+   * `buildSnapshot()` — nothing is shared, because the camera is baked into the
+   * snapshot at build time. So a 2×2 layout cost 4 full scene walks (puppet
+   * deform, skinning, IK, particles, content hashing) and 4 GPU frames every
+   * single playback frame, at full device resolution, with no throttle anywhere.
+   * The main viewport is what you watch during playback; the Top/Front/custom
+   * cells are reference views, and 15fps is plenty for them. Scrubbing and
+   * editing stay immediate — this only bites during continuous playback.
+   */
+  const PANE_PLAYBACK_FPS = 15;
+  const lastPaneRenderRef = useRef(0);
+  const renderThrottled = useCallback(() => {
+    if (!playingRef.current) { render(); return; }
+    const now = performance.now();
+    if (now - lastPaneRenderRef.current < 1000 / PANE_PLAYBACK_FPS) return;
+    lastPaneRenderRef.current = now;
+    render();
+  }, [render]);
 
   // Attach the backend + observe size.
   //
@@ -168,16 +209,30 @@ export function useViewportRenderer(
     teardownRef.current?.(); // canvas swapped — release the previous backend
     attachedRef.current = canvas;
 
-    const backend = createRenderBackend();
+    // 'auxiliary', not the default 'viewport': this hook drives the 2-up/4-up
+    // secondary panes, Presentation Mode and the popout window. Those are the 5th
+    // through 17th GPU contexts on the page — exactly the ones that fail when the
+    // browser's live-context cap is reached — and registering them as 'viewport'
+    // meant one failing pane flipped the global "GPU unavailable" badge while the
+    // real viewport was fine.
+    const backend = createRenderBackend('auto', 'auxiliary');
     backend.attach(canvas);
     backend.setPreviewChrome?.(true);
     backendRef.current = backend;
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const doResize = (): void => {
       const r = container.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return;
+      // Re-read dpr each time. Capturing it once in this mount-scoped effect left
+      // a pane rendering at the old scale forever after the window moved to a
+      // monitor with different DPI (blurry, or needlessly oversampled).
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       backend.resize(r.width, r.height, dpr / resolutionRef.current);
-      renderImmediate();
+      // Go through the rAF coalescer, not renderImmediate: three panes each with
+      // their own ResizeObserver otherwise ran three synchronous full
+      // buildSnapshot + renderFrame passes per notification while dragging a
+      // splitter or the window edge.
+      render();
     };
     const ro = new ResizeObserver(doResize);
     ro.observe(container);
@@ -189,7 +244,16 @@ export function useViewportRenderer(
     // before the device came up.
     let cancelled = false;
     backend.readyPromise?.then(() => {
-      if (!cancelled && backendRef.current === backend) doResize();
+      if (cancelled || backendRef.current !== backend) return;
+      // readyPromise resolving is NOT success — it also settles when every tier
+      // failed. Without this check a dead backend silently painted nothing, which
+      // is the same bug useWorkspace already guards against.
+      if (backend.initFailed) {
+        // eslint-disable-next-line no-console
+        console.warn('[useViewportRenderer] GPU init failed for this pane:', backend.initErrorMessage);
+        return;
+      }
+      doResize();
     });
 
     // Re-render when animation changes (e.g. keyframe edits).
@@ -226,8 +290,8 @@ export function useViewportRenderer(
   // camera view-mode flip (camera3dMode was previously missing — the 3D/2D
   // toggle never repainted this surface).
   useEffect(() => {
-    render();
-  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, gridColor, safeArea, camera3dMode, customViews, mbEnabled, mbShutter, mbSamples, compKey, render]);
+    renderThrottled();
+  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, gridColor, safeArea, camera3dMode, customViews, draft3d, mbEnabled, mbShutter, mbSamples, compKey, renderThrottled]);
 
   // Preview-quality change: re-size the content buffer (dpr/N) and repaint.
   useEffect(() => {

@@ -35,6 +35,16 @@ export interface RenderSurface {
 
 /** Records draw state for one render pass; ended before the next pass begins. */
 export interface RenderPassEncoder {
+  /**
+   * MSAA sample count of the attachments this pass writes (1 = single-sample).
+   *
+   * WebGPU bakes the sample count into the PIPELINE, and a pipeline whose count
+   * differs from the pass's attachments is invalid — so a draw has to know what
+   * it is rendering into before it picks a pipeline. WebGL2 has no such
+   * coupling (multisampling is purely a property of the framebuffer) and simply
+   * reports 1; its pipelines ignore the field.
+   */
+  readonly samples?: number;
   setPipeline(pipeline: PipelineHandle): void;
   setBindGroup(index: number, group: BindGroupHandle): void;
   setVertexBuffer(slot: number, buffer: BufferHandle): void;

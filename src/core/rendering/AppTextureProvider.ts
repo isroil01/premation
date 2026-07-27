@@ -303,6 +303,14 @@ interface VideoEntry {
   texture: TextureHandle | null;
   w: number;
   h: number;
+  /** Kept so `releaseVideoEntry` can detach it — an anonymous handler could not
+   *  be removed, and it drives renders via `onChange`. */
+  onSeeked?: (() => void) | undefined;
+  /** ResourceManager pool key of `texture`, so it can actually be freed. */
+  poolKey?: string | undefined;
+  /** Last time we ASKED the element to seek to (not where it landed). Breaks the
+   *  seek → render → seek feedback loop; see setVideo. */
+  requestedTime: number | null;
 }
 
 interface ParticleEntry {
@@ -365,7 +373,7 @@ export class AppTextureProvider implements TextureProvider {
   private readonly gradientEntries = new Map<string, GradientEntry>();
   private readonly lutEntries = new Map<string, LutEntry>();
   /** Externally-rasterized frames (decoded video frames for Frame Mix). */
-  private readonly frameEntries = new Map<string, { signature: string; texture: TextureHandle }>();
+  private readonly frameEntries = new Map<string, { signature: string; texture: TextureHandle; poolKey: string }>();
   private readonly particleEntries = new Map<string, ParticleEntry>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
@@ -434,6 +442,9 @@ export class AppTextureProvider implements TextureProvider {
       `|${spec.paragraphSpacing ?? 0}|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}` +
       `|t${resolutionTier(effectiveScale)}`;
 
+    // Non-zero only when a CPU-baked chain would bleed outside the text box
+    // (see rasterPadding) — otherwise this stays 0 exactly as before.
+    const pad = rasterPadding({ ...spec, kind: 'text' } as unknown as RenderLayer);
     const result = this.rasterizer.rasterize({
       drawable: {
         ...spec,
@@ -441,10 +452,10 @@ export class AppTextureProvider implements TextureProvider {
         contentHash: signature,
       },
       resolutionScale: effectiveScale,
-      padding: 0,
+      padding: pad,
     });
 
-    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~0`;
+    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~${paddingClass(pad)}`;
     const texture = this.resources.texture(texKey, {
       label: `raster:${signature}`,
       width: result.texture.width,
@@ -581,12 +592,16 @@ export class AppTextureProvider implements TextureProvider {
   setVideo(key: string, src: string, timeSec: number): void {
     let entry = this.videoEntries.get(key);
     if (!entry || entry.src !== src) {
-      entry = { kind: 'video', src, video: this.videoFactory(src), texture: null, w: 1, h: 1 };
+      // Swapping the source must release the outgoing element and its texture —
+      // replacing the map entry alone left a decoding <video> and a pinned texture
+      // alive for the rest of the session.
+      if (entry) this.releaseVideoEntry(entry);
+      const video = this.videoFactory(src);
+      const onSeeked = (): void => this.onChange?.();
+      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null };
       this.videoEntries.set(key, entry);
-      
-      const notifyReady = () => this.onChange?.();
-      entry.video.addEventListener('loadeddata', notifyReady, { once: true });
-      entry.video.addEventListener('seeked', notifyReady);
+      video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
+      video.addEventListener('seeked', onSeeked);
     }
     const v = entry.video;
     if (v.readyState < HAVE_CURRENT_DATA) {
@@ -596,7 +611,16 @@ export class AppTextureProvider implements TextureProvider {
       return; // not decoded yet → placeholder
     }
     const deadband = this.exactMediaTiming ? 1e-4 : SEEK_EPSILON;
-    if (Math.abs(v.currentTime - timeSec) > deadband) {
+    // Seek only when the TARGET changes, not whenever the element's currentTime is
+    // off-target. `seeked` fires onChange → requestRender → setVideo, and on
+    // long-GOP sources the decoder often cannot land within the deadband — so
+    // re-requesting the same time on every pass was a self-sustaining full-render
+    // loop at rAF rate even with playback paused.
+    const wantsSeek =
+      Math.abs(v.currentTime - timeSec) > deadband &&
+      (entry.requestedTime === null || Math.abs(entry.requestedTime - timeSec) > deadband);
+    if (wantsSeek) {
+      entry.requestedTime = timeSec;
       v.currentTime = timeSec;
       if (this.exactMediaTiming) {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'seeked'));
@@ -605,6 +629,7 @@ export class AppTextureProvider implements TextureProvider {
     const w = v.videoWidth || 1;
     const h = v.videoHeight || 1;
     if (entry.texture === null || entry.w !== w || entry.h !== h) {
+      if (entry.texture) this.resources.freeTexture(`vid:${key}:${entry.w}x${entry.h}`);
       entry.texture = this.resources.texture(
         `vid:${key}:${w}x${h}`,
         { label: `video:${key}`, width: w, height: h, format: 'rgba8unorm', externalCopy: true },
@@ -612,6 +637,7 @@ export class AppTextureProvider implements TextureProvider {
       );
       entry.w = w;
       entry.h = h;
+      entry.poolKey = `vid:${key}:${w}x${h}`;
     }
     this.resources.writeTexture(entry.texture, { type: 'video', video: v });
   }
@@ -625,13 +651,26 @@ export class AppTextureProvider implements TextureProvider {
     if (canvas.width < 1 || canvas.height < 1) return;
     const existing = this.frameEntries.get(key);
     if (existing && existing.signature === signature) return;
-    const tex = this.resources.texture(
-      `frame:${key}:${signature}`,
-      { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
-      /* pinned */ true,
-    );
+    // ONE texture per key, rewritten in place — the setVideo/setParticles pattern.
+    //
+    // This used to include `signature` (the source TIME) in the pool key, so every
+    // decoded frame minted a brand-new `pinned: true` texture. Pinned entries are
+    // skipped by the pool's idle GC, and overwriting `frameEntries[key]` threw away
+    // the only record of the previous pool key — so nothing could ever free it.
+    // Playing ten seconds of 1080p footage with Frame Mix on leaked ~600 textures,
+    // several GB of VRAM.
+    const poolKey = `frame:${key}:${canvas.width}x${canvas.height}`;
+    let tex = existing?.texture;
+    if (!tex || existing?.poolKey !== poolKey) {
+      if (existing?.poolKey) this.resources.freeTexture(existing.poolKey);
+      tex = this.resources.texture(
+        poolKey,
+        { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+        /* pinned */ true,
+      );
+    }
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
-    this.frameEntries.set(key, { signature, texture: tex });
+    this.frameEntries.set(key, { signature, texture: tex, poolKey });
   }
 
   /**
@@ -688,16 +727,33 @@ export class AppTextureProvider implements TextureProvider {
     entry.signature = signature;
   }
 
-  /** Forget keys no longer present in the scene (frees the GPU textures via GC). */
+  /**
+   * Release keys no longer present in the scene.
+   *
+   * This used to only `delete` from the maps, on the stated assumption that GC
+   * would reclaim the textures. It does not: every texture here is created
+   * `pinned: true`, which excludes it from the ResourceManager pool's idle GC, and
+   * the pool holds the handle (and the live WebGLTexture) regardless of whether
+   * this class still references it. Dropping a video entry additionally abandoned
+   * an HTMLVideoElement that still owned a decoder pipeline and two live
+   * listeners, and an image entry's decoded ImageBitmap holds off-heap pixel
+   * memory until explicitly closed. Deleting a layer while scrubbing therefore
+   * stranded a texture, a decoder and a bitmap every time.
+   */
   retain(activeKeys: ReadonlySet<string>): void {
-    for (const key of this.entries.keys()) {
-      if (!activeKeys.has(key)) this.entries.delete(key);
+    for (const [key, entry] of [...this.entries]) {
+      if (activeKeys.has(key)) continue;
+      this.resources.freeTexture(`img:${entry.src}`);
+      entry.bitmap?.close();
+      this.entries.delete(key);
     }
     for (const key of this.textEntries.keys()) {
       if (!activeKeys.has(key)) this.textEntries.delete(key);
     }
-    for (const key of this.videoEntries.keys()) {
-      if (!activeKeys.has(key)) this.videoEntries.delete(key);
+    for (const [key, entry] of [...this.videoEntries]) {
+      if (activeKeys.has(key)) continue;
+      this.releaseVideoEntry(entry);
+      this.videoEntries.delete(key);
     }
     for (const key of this.pathEntries.keys()) {
       if (!activeKeys.has(key)) this.pathEntries.delete(key);
@@ -711,12 +767,37 @@ export class AppTextureProvider implements TextureProvider {
     for (const key of this.gradientEntries.keys()) {
       if (!activeKeys.has(key)) this.gradientEntries.delete(key);
     }
-    for (const key of this.frameEntries.keys()) {
-      if (!activeKeys.has(key)) this.frameEntries.delete(key);
+    for (const [key, entry] of [...this.frameEntries]) {
+      if (activeKeys.has(key)) continue;
+      this.resources.freeTexture(entry.poolKey);
+      this.frameEntries.delete(key);
     }
     for (const key of this.particleEntries.keys()) {
       if (!activeKeys.has(key)) this.particleEntries.delete(key);
     }
+  }
+
+  /**
+   * Tear a video entry all the way down. `src = ''` alone does not reliably stop
+   * Chromium's decoder; pause + removeAttribute + load() does, and the `seeked`
+   * listener must go with it — it calls `onChange`, which requests a render, so a
+   * stranded element could still drive the render loop after its layer was gone.
+   */
+  private releaseVideoEntry(entry: VideoEntry): void {
+    if (entry.onSeeked) entry.video.removeEventListener('seeked', entry.onSeeked);
+    try {
+      entry.video.pause();
+      entry.video.removeAttribute('src');
+      entry.video.load();
+    } catch {
+      /* element already detached — nothing left to release */
+    }
+    if (entry.poolKey) this.resources.freeTexture(entry.poolKey);
+  }
+
+  /** Release every retained GPU/media resource. Call before dropping the provider. */
+  dispose(): void {
+    this.retain(new Set());
   }
 
   private async decode(key: string, src: string, fillColor: string | undefined, entry: ImageEntry): Promise<void> {

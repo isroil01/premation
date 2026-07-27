@@ -8,7 +8,6 @@
  */
 
 import { useMemo } from 'react';
-import { ValueField } from '@components/ValueField';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
@@ -17,6 +16,7 @@ import { Project3D } from '@motion/scene';
 import { flattenScene } from '@core/scene/sceneDerive';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import styles from './TransformSection.module.css';
+import { KeyframeRow } from './KeyframeRow';
 
 /** Classic lens presets → horizontal field of view (deg). */
 const LENS_PRESETS: Array<{ label: string; fov: number }> = [
@@ -88,10 +88,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             ))}
           </select>
         </div>
-        <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Focal length</span>
-          <ValueField value={Math.round(focal)} unit="px" min={50} onChange={(v) => setFocal(Number(v))} aria-label="Focal length" />
-        </div>
+        <KeyframeRow nodeId={nodeId} prop="focalLength" label="Focal length" value={focal} unit="px" min={50} onStatic={(v) => setFocal(v)} />
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Field of view</span>
           <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
@@ -99,33 +96,12 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           </span>
         </div>
         <div className={styles.subhead} style={{ marginTop: 8 }}>Orbit</div>
-        <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Yaw</span>
-          <ValueField
-            value={Math.round(typeof yawRaw === 'number' ? yawRaw : 0)}
-            unit="°"
-            min={-180}
-            max={180}
-            onChange={(v) => setYaw(Number(v))}
-            aria-label="Orbit yaw"
-          />
-        </div>
-        <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Pitch</span>
-          <ValueField
-            value={Math.round(typeof pitchRaw === 'number' ? pitchRaw : 0)}
-            unit="°"
-            min={-89}
-            max={89}
-            onChange={(v) => setPitch(Number(v))}
-            aria-label="Orbit pitch"
-          />
-        </div>
+        <KeyframeRow nodeId={nodeId} prop="orbitYaw" label="Yaw" value={typeof yawRaw === 'number' ? yawRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setYaw(v)} />
+        <KeyframeRow nodeId={nodeId} prop="orbitPitch" label="Pitch" value={typeof pitchRaw === 'number' ? pitchRaw : 0} unit="°" min={-89} max={89} onStatic={(v) => setPitch(v)} />
         <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Swings the camera around its point of interest, keeping it framed.
           On canvas: Alt+drag orbits, Shift+Alt+drag (or Alt+middle-drag)
-          tracks XY, Alt+wheel dollies. Keyframeable (orbitYaw / orbitPitch
-          tracks).
+          tracks XY, Alt+wheel dollies. Tick a stopwatch to keyframe any of these.
         </p>
 
         <div className={styles.subhead} style={{ marginTop: 8 }}>Point of Interest</div>
@@ -159,18 +135,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           }
           return (
             <>
-              <div className={styles.popoverRow}>
-                <span className={styles.popoverLabel}>Target X</span>
-                <ValueField value={Math.round(typeof poiXRaw === 'number' ? poiXRaw : compWidth / 2)} unit="px" onChange={(v) => setPoiX(Number(v))} aria-label="Point of interest X" />
-              </div>
-              <div className={styles.popoverRow}>
-                <span className={styles.popoverLabel}>Target Y</span>
-                <ValueField value={Math.round(typeof poiYRaw === 'number' ? poiYRaw : compHeight / 2)} unit="px" onChange={(v) => setPoiY(Number(v))} aria-label="Point of interest Y" />
-              </div>
-              <div className={styles.popoverRow}>
-                <span className={styles.popoverLabel}>Target Z</span>
-                <ValueField value={Math.round(typeof poiZRaw === 'number' ? poiZRaw : 0)} unit="px" onChange={(v) => setPoiZ(Number(v))} aria-label="Point of interest Z" />
-              </div>
+              <KeyframeRow nodeId={nodeId} prop="poiX" label="Target X" value={typeof poiXRaw === 'number' ? poiXRaw : compWidth / 2} unit="px" onStatic={(v) => setPoiX(v)} />
+              <KeyframeRow nodeId={nodeId} prop="poiY" label="Target Y" value={typeof poiYRaw === 'number' ? poiYRaw : compHeight / 2} unit="px" onStatic={(v) => setPoiY(v)} />
+              <KeyframeRow nodeId={nodeId} prop="poiZ" label="Target Z" value={typeof poiZRaw === 'number' ? poiZRaw : 0} unit="px" onStatic={(v) => setPoiZ(v)} />
               <div className={styles.popoverRow} style={{ marginTop: 2 }}>
                 <button
                   type="button"
@@ -190,39 +157,11 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
         })()}
 
         <div className={styles.subhead} style={{ marginTop: 8 }}>Depth of field</div>
-        <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Blur strength</span>
-          <ValueField
-            value={typeof dofRaw === 'number' ? dofRaw : 0}
-            unit="px"
-            min={0}
-            max={60}
-            onChange={(v) => setDofStrength(Number(v))}
-            aria-label="Depth of field strength"
-          />
-        </div>
+        <KeyframeRow nodeId={nodeId} prop="dofStrength" label="Blur strength" value={typeof dofRaw === 'number' ? dofRaw : 0} unit="px" min={0} max={60} onStatic={(v) => setDofStrength(v)} />
         {typeof dofRaw === 'number' && dofRaw > 0 && (
           <>
-            <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Focus distance</span>
-              <ValueField
-                value={Math.round(typeof focusRaw === 'number' ? focusRaw : focal)}
-                unit="px"
-                min={1}
-                onChange={(v) => setFocusDistance(Number(v))}
-                aria-label="Focus distance"
-              />
-            </div>
-            <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel} title="How fast defocus turns into blur (wider aperture = shallower depth of field). Defaults to the blur strength.">Aperture</span>
-              <ValueField
-                value={Math.round(typeof apertureRaw === 'number' ? apertureRaw : (typeof dofRaw === 'number' ? dofRaw : 0))}
-                unit="px"
-                min={0}
-                onChange={(v) => setAperture(Number(v))}
-                aria-label="Aperture"
-              />
-            </div>
+            <KeyframeRow nodeId={nodeId} prop="focusDistance" label="Focus distance" value={typeof focusRaw === 'number' ? focusRaw : focal} unit="px" min={1} onStatic={(v) => setFocusDistance(v)} />
+            <KeyframeRow nodeId={nodeId} prop="dofAperture" label="Aperture" value={typeof apertureRaw === 'number' ? apertureRaw : (typeof dofRaw === 'number' ? dofRaw : 0)} unit="px" min={0} onStatic={(v) => setAperture(v)} />
           </>
         )}
 

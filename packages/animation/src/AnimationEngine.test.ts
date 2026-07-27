@@ -354,3 +354,68 @@ describe('spatial tangents (engine)', () => {
     expect(kf.si).toBe(-15);
   });
 });
+
+describe('batch()', () => {
+  // The app's change listener runs a synchronous scene bump + hit-test
+  // invalidation + autosave scheduling. One interactive edit affords that; a
+  // bulk import firing it per track froze the app. batch() holds notifications
+  // and flushes ONE '*' at the end.
+
+  test('coalesces every notification inside into one final "*"', () => {
+    const a = new AnimationEngine();
+    const seen: string[] = [];
+    a.setChangeListener((id) => seen.push(id));
+    a.batch(() => {
+      for (let i = 0; i < 50; i++) a.setKeyframe(`n${i}`, 'x', 0, i);
+      a.setKeyframes('bulk', 'y', [{ t: 0, value: 0 }, { t: 1, value: 10 }]);
+    });
+    expect(seen).toEqual(['*']);
+    // The writes themselves all landed.
+    expect(a.tracksFor('n49')).toHaveLength(1);
+    expect(a.tracksFor('bulk')[0]!.keyframes).toHaveLength(2);
+  });
+
+  test('emits nothing when the batch made no changes', () => {
+    const a = new AnimationEngine();
+    const seen: string[] = [];
+    a.setChangeListener((id) => seen.push(id));
+    a.batch(() => {});
+    expect(seen).toEqual([]);
+  });
+
+  test('nested batches flush once, at the outermost close', () => {
+    const a = new AnimationEngine();
+    const seen: string[] = [];
+    a.setChangeListener((id) => seen.push(id));
+    a.batch(() => {
+      a.setKeyframe('n1', 'x', 0, 1);
+      a.batch(() => a.setKeyframe('n2', 'x', 0, 2));
+      expect(seen).toEqual([]); // inner close must not flush
+    });
+    expect(seen).toEqual(['*']);
+  });
+
+  test('still flushes when the batched function throws', () => {
+    // Listeners must not be left stale about mutations that landed before the
+    // error — a half-imported file still has to show up.
+    const a = new AnimationEngine();
+    const seen: string[] = [];
+    a.setChangeListener((id) => seen.push(id));
+    expect(() =>
+      a.batch(() => {
+        a.setKeyframe('n1', 'x', 0, 1);
+        throw new Error('boom');
+      }),
+    ).toThrow('boom');
+    expect(seen).toEqual(['*']);
+  });
+
+  test('notifications outside a batch still fire per call', () => {
+    const a = new AnimationEngine();
+    const seen: string[] = [];
+    a.setChangeListener((id) => seen.push(id));
+    a.setKeyframe('n1', 'x', 0, 1);
+    a.setKeyframe('n1', 'x', 1, 2);
+    expect(seen).toEqual(['n1', 'n1']);
+  });
+});

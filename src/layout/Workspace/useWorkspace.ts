@@ -21,17 +21,22 @@ import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot
 import type { Guide, GuideAxis, WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, drawToolOptions, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
+import { viewportFrameCache } from '@core/rendering/frameCache';
+import { useWorkspaceStore } from '@stores/projectStore';
+import workspaceStyles from './Workspace.module.css';
 import { useProjectStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
+import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { useUIStore } from '@stores/uiStore';
+import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
+import { is3DEnabled, set3DEnabled, canBe3D, readNode3D } from '@core/scene/threeD';
+import { currentViewProjector } from '@core/workspace/viewProjection';
 
 
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
@@ -77,6 +82,8 @@ import {
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { moveNodeInStack } from '@core/scene/parenting';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
+import { useFaceSelectionStore } from '@stores/faceSelectionStore';
+import { facesOfNode, pickFace } from '@core/scene/facePicking';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
@@ -141,6 +148,8 @@ const guideCursor = (axis: GuideAxis): string => (axis === 'x' ? 'ew-resize' : '
 export interface UseWorkspaceArgs {
   contentCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   overlayCanvasRef: React.RefObject<HTMLCanvasElement | null>;
+  /** RAM-preview blit layer (optional — the aux viewport has none). */
+  cacheCanvasRef?: React.RefObject<HTMLCanvasElement | null>;
   stageRef: React.RefObject<HTMLElement | null>;
   sceneRev: number;
   time: number;
@@ -149,7 +158,7 @@ export interface UseWorkspaceArgs {
 }
 
 export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderError: string | null } {
-  const { contentCanvasRef, overlayCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
+  const { contentCanvasRef, overlayCanvasRef, cacheCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
 
   const backendRef = useRef<RenderBackend | null>(null);
   const dprRef = useRef(1);
@@ -167,8 +176,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   // Active Brush-tool paint pass: comp[] commits to the layer on release,
   // screen[] previews the wet stroke on the overlay while dragging.
   const paintDragRef = useRef<{ nodeId: string; comp: Array<{ x: number; y: number }>; screen: Array<{ x: number; y: number }> } | null>(null);
+  const creationDragRef = useRef<{ start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null>(null);
   // Active ruler-guide drag (drag-out / move / delete), or null.
   const guideDragRef = useRef<GuideDrag | null>(null);
+  /** Active Region-of-Interest grip drag (comp space). */
+  const roiDragRef = useRef<{ handle: RoiHandle; pointerId: number } | null>(null);
   // True while we override the engine cursor with a guide resize cursor.
   const guideCursorRef = useRef(false);
   const timeRef = useRef(time);
@@ -192,6 +204,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   camera3dModeRef.current = camera3dMode;
   // Draft 3D (fast preview: no DOF, no lighting) — same ref pattern, same
   // reason. Flows into buildSnapshot as a comp INPUT, never into the pipeline.
+  // In the render deps so toggling the Region of Interest repaints immediately.
+  const roi = useGuidesStore((s) => s.roi);
   const draft3d = useGuidesStore((s) => s.draft3d);
   const draft3dRef = useRef(draft3d);
   draft3dRef.current = draft3d;
@@ -240,20 +254,81 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // AnimationChanged revision — part of the cache key so a keyframe edit
     // during a playing loop invalidates every cached frame.
     let animRev = 0;
+    const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
 
     const paintChrome = (): void => {
-      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current);
+      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current, creationDragRef.current);
       paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
+      paintRoi(overlay, controller, dprRef.current);
+      paintFaceSelection(overlay, controller, dprRef.current);
     };
 
     const render = (): void => {
       const b = backendRef.current;
       if (!b) return;
 
+      // ── RAM preview ────────────────────────────────────────────────
+      //
+      // Fill AND serve only while PLAYING: an interactive repaint (a canvas
+      // drag, a hover) can happen mid-gesture without bumping any revision, so
+      // caching those would blit half-dragged pixels back later. That is the
+      // contract `frameCache` was written for; nothing had ever called it, so
+      // the cache stayed empty, `ranges()` always returned [] and the timeline's
+      // cache bar could never draw.
+      const ws = useWorkspaceStore.getState();
+      const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : null;
+      const playing = tab?.playing === true;
+      const fps = compRef.current.fps || 60;
+      const frame = Math.round(timeRef.current * fps);
+      if (playing) {
+        // Everything that changes pixels goes in the key; a change clears all.
+        // Built from scalars rather than JSON.stringify — this runs every frame
+        // while playing, including on the cache-hit path below.
+        const view = controller.getView();
+        const ov = overlaysRef.current;
+        const mb = motionBlurRef.current;
+        const roiK = useGuidesStore.getState().roi;
+        viewportFrameCache.setKey(
+          [
+            sceneRevRef.current, animRev, focusKeyRef.current,
+            compRef.current.id, compRef.current.width, compRef.current.height, fps,
+            camera3dModeRef.current, draft3dRef.current ? 1 : 0,
+            useRenderQualityStore.getState().resolution,
+            view.scale, view.offsetX, view.offsetY,
+            ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridDivisions, ov.safeArea ? 1 : 0,
+            mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
+            roiK ? `${roiK.x},${roiK.y},${roiK.width},${roiK.height}` : '-',
+          ].join(':'),
+          content.width,
+          content.height,
+        );
+        const hit = viewportFrameCache.get(frame);
+        const cacheCanvas = cacheCanvasRef?.current;
+        if (hit && cacheCanvas) {
+          // Blit instead of re-rendering the whole comp — the entire point of a
+          // RAM preview: the second pass over a heavy comp plays at full rate.
+          // It goes on its own 2D layer because the content canvas is WebGL and
+          // a canvas only ever has one context.
+          if (cacheCanvas.width !== hit.width || cacheCanvas.height !== hit.height) {
+            cacheCanvas.width = hit.width;
+            cacheCanvas.height = hit.height;
+          }
+          const ctx = cacheCanvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, cacheCanvas.width, cacheCanvas.height);
+            ctx.drawImage(hit, 0, 0);
+            cacheCanvas.classList.add(cacheVisibleClass);
+            renderCache.mark(timeRef.current);
+            paintChrome();
+            return;
+          }
+        }
+      }
+      // Anything that renders for real must reveal the live canvas again.
+      cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
 
-
-      b.renderFrame(
-        buildSnapshot(
+      b.renderFrame({
+        ...buildSnapshot(
           defaultSceneGraph,
           defaultAnimation,
           timeRef.current,
@@ -275,7 +350,17 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             draft3d: draft3dRef.current,
           },
         ),
-      );
+        // The only producer of `snapshot.roi`. Read live from the store so the
+        // region takes effect on the very next frame after the menu toggles it.
+        roi: useGuidesStore.getState().roi ?? undefined,
+        // Ortho / custom views must not be cropped to the comp rect.
+        viewIsActiveCamera: camera3dModeRef.current === 'active',
+      });
+
+      // Offer the freshly rendered frame to the RAM preview. Copying FROM a
+      // WebGL canvas into a 2D one is allowed (the reverse is not), and it must
+      // happen in this same task, before the drawing buffer is composited away.
+      if (playing) viewportFrameCache.put(frame, content);
 
       renderCache.mark(timeRef.current);
       paintChrome();
@@ -377,6 +462,20 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       animRev++; // invalidates the frame cache key
       controller.requestRender();
     });
+
+    // Leaving playback must reveal the live canvas even if no further render is
+    // requested, or the last blitted frame would sit frozen over the viewport.
+    let wasPlaying = false;
+    const playSub = useWorkspaceStore.subscribe((s) => {
+      const t = s.activeTabId ? s.tabs[s.activeTabId] : null;
+      const playing = t?.playing === true;
+      if (playing === wasPlaying) return;
+      wasPlaying = playing;
+      if (!playing) {
+        cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
+        controller.requestRender();
+      }
+    });
     // Reflect the engine cursor on the overlay (rich resize/rotate cursors).
     const cursorSub = controller.ws.cursor.events.on('changed', ({ css }) => {
       overlay.style.cursor = css;
@@ -391,6 +490,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       ro.disconnect();
       qualitySub();
       animSub.dispose();
+      playSub();
+      // Don't leave a mount's worth of frames pinned in RAM.
+      viewportFrameCache.clear();
       cursorSub.dispose();
       controller.onRender(() => {});
       backend.dispose();
@@ -430,19 +532,28 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       controller.requestRender();
       return;
     }
-    let cancelled = false;
-    const handle = window.setTimeout(() => {
-      if (cancelled) return;
+    // LEADING rAF throttle, not a trailing timeout.
+    //
+    // The old code set a 50ms trailing timer and cancelled it in the effect's
+    // cleanup — but the effect re-runs on every `sceneRev` bump, so a drag that
+    // emits ticks faster than 50ms cancelled its own pending render every time
+    // and NOTHING rendered until the pointer stopped. That froze the viewport
+    // while scrubbing any numeric inspector field (ValueField / AngleDial both
+    // set isDragging) and made Alt+drag orbit on a real Camera layer dead
+    // mid-gesture, since camera nav signals only through bumpScene().
+    // Rendering on the leading edge, coalesced to one frame, keeps the preview
+    // live at exactly the cadence the display can show.
+    let raf: number | null = requestAnimationFrame(() => {
+      raf = null;
       controller.requestRender();
-    }, 50);
+    });
     return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
+      if (raf !== null) cancelAnimationFrame(raf);
     };
   }, [sceneRev, isDragging]);
   useEffect(() => {
     getWorkspaceController().requestRender();
-  }, [time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, customViews, draft3d, channel, draft, mbEnabled, mbShutter, mbSamples, compKey]);
+  }, [time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, customViews, draft3d, channel, draft, roi, mbEnabled, mbShutter, mbSamples, compKey]);
 
   // ── Auto-fit on comp-size change ───────────────────────────────────
   // Switching resolution (e.g. a 9:16 reel ↔ 16:9) re-frames the comp to fill
@@ -480,6 +591,24 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       (s) => s.snap,
       (snap) => controller.ws.setSnap({ enabled: snap }),
     );
+  }, []);
+
+  // Face-select chrome lives on the overlay, which only repaints when something
+  // asks it to — without this the highlight would not appear until the next
+  // unrelated interaction.
+  useEffect(() => {
+    const controller = getWorkspaceController();
+    const unFace = useFaceSelectionStore.subscribe(() => controller.requestRender());
+    // A face belongs to its layer: selecting a different layer must drop it,
+    // or the inspector would keep pointing at a side of something else.
+    const unSel = useSelectionStore.subscribe((s) => {
+      const fs = useFaceSelectionStore.getState();
+      if (fs.nodeId && !s.ids.includes(fs.nodeId)) fs.clear();
+    });
+    return () => {
+      unFace();
+      unSel();
+    };
   }, []);
 
   // ── Pointer + wheel input on the overlay canvas ────────────────────
@@ -631,6 +760,60 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           return;
         }
       }
+      // Region of Interest: grabbing a grip resizes the region. Only the EDGES
+      // are interactive (roiHandleAt ignores the interior), so clicking inside
+      // the region still selects the layer under it, as in AE.
+      {
+        const roi = useGuidesStore.getState().roi;
+        if (roi) {
+          const cp = controller.ws.screenToWorld(local(e));
+          const tol = 8 / (controller.getView().scale || 1);
+          const handle = roiHandleAt(roi, cp, tol);
+          if (handle) {
+            e.preventDefault();
+            roiDragRef.current = { handle, pointerId: e.pointerId };
+            try {
+              overlay.setPointerCapture(e.pointerId);
+            } catch {
+              /* best-effort */
+            }
+            useUIStore.getState().setDragging(true);
+            overlay.style.cursor = roiHandleCursor(handle);
+            return;
+          }
+        }
+      }
+      // Face-select mode: a click picks the SIDE of an extruded object under the
+      // pointer instead of starting a layer drag, so the Face Materials editor
+      // can target it. Off by default — ordinary clicks must keep selecting and
+      // moving layers.
+      if (useFaceSelectionStore.getState().enabled) {
+        const comp = compSize();
+        const at = controller.ws.screenToWorld(local(e));
+        const tryNode = (id: string | undefined): boolean => {
+          const n = id ? defaultSceneGraph.getNode(id) : null;
+          if (!n) return false;
+          const face = pickFace(facesOfNode(n, playheadTime(), comp.w, comp.h), at);
+          if (!face) return false;
+          e.preventDefault();
+          // Select the layer too: the inspector edits face materials on the
+          // selected layer, so a face with no layer selected has nothing to
+          // write to.
+          useSelectionStore.getState().set([n.id]);
+          useFaceSelectionStore.getState().select(n.id, face.kind, face.suffix);
+          controller.requestRender();
+          return true;
+        };
+        // The layer being styled wins over whatever the plain hit-test finds:
+        // a flat layer drawn in front of it would otherwise swallow every click,
+        // and it has no faces to offer in exchange.
+        if (tryNode(useSelectionStore.getState().ids[0])) return;
+        if (tryNode(controller.ws.hitTestScreen(local(e))?.id)) return;
+        // Clicking empty canvas in face mode drops the face, keeping the layer.
+        useFaceSelectionStore.getState().clear();
+        controller.requestRender();
+        return;
+      }
       // Brush tool over a selected paintable layer = paint a stroke onto that
       // layer (AE Paint), not draw a freehand shape via the engine. Gated on a
       // single paintable selection so the freehand brush still works with none
@@ -701,6 +884,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       } catch {
         /* synthetic or already-released pointer — capture is best-effort */
       }
+      const activeTool = useUIStore.getState().activeTool;
+      const isCreationTool = ['shape', 'ellipse', 'polygon', 'star', 'line', 'mask-rect', 'mask-ellipse'].includes(activeTool);
+      if (isCreationTool) {
+        const p = local(e);
+        creationDragRef.current = { start: p, current: p, tool: activeTool };
+      }
       useUIStore.getState().setDragging(true);
       controller.ws.setFocused(true);
       controller.ws.feedPointerDown(toPointer(e));
@@ -710,6 +899,21 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (camNav && camNav.pointerId === e.pointerId) {
         moveCameraNav(e);
         return;
+      }
+      // Region-of-Interest resize in progress.
+      {
+        const rd = roiDragRef.current;
+        if (rd && rd.pointerId === e.pointerId) {
+          const roi = useGuidesStore.getState().roi;
+          if (roi) {
+            const cp = controller.ws.screenToWorld(local(e));
+            const comp = useCompositionStore.getState();
+            useGuidesStore.getState().setRoi(
+              clampRoi(resizeRoi(roi, rd.handle, cp), comp.width, comp.height),
+            );
+          }
+          return;
+        }
       }
       // Info readout (AE Info panel): comp-space position + sampled pixel under
       // the cursor. Runs for every move regardless of the active tool/drag.
@@ -797,13 +1001,26 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         }
         return;
       }
+      if (creationDragRef.current) {
+        creationDragRef.current.current = local(e);
+      }
       controller.ws.feedPointerMove(toPointer(e));
+      if (e.buttons > 0) {
+        controller.requestRender();
+      }
     };
     const onUp = (e: PointerEvent): void => {
       try {
         if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
       } catch {
         /* ignore */
+      }
+      if (roiDragRef.current && roiDragRef.current.pointerId === e.pointerId) {
+        roiDragRef.current = null;
+        useUIStore.getState().setDragging(false);
+        overlay.style.cursor = 'default';
+        controller.requestRender();
+        return;
       }
       // Finish a viewport-camera navigation drag (props already written live).
       if (camNav && camNav.pointerId === e.pointerId) {
@@ -860,6 +1077,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         mpDragRef.current = null;
         useUIStore.getState().setDragging(false);
         return;
+      }
+      if (creationDragRef.current) {
+        creationDragRef.current = null;
+        controller.requestRender();
       }
       useUIStore.getState().setDragging(false);
       controller.ws.feedPointerUp(toPointer(e));
@@ -970,6 +1191,19 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
  * (DemoPanels.openNodeMenu), minus Rename: the tree's inline rename is local
  * ScenePanel state and window.prompt is unavailable in Electron.
  */
+/** The playhead, in raw comp time. */
+function playheadTime(): number {
+  const s = useProjectStore.getState();
+  return s.tabs[s.activeTabId ?? '']?.time ?? 0;
+}
+
+/** The active composition's pixel size — the space projections resolve in. */
+function compSize(): { w: number; h: number } {
+  const s = useProjectStore.getState();
+  const comp = s.comps[s.tabs[s.activeTabId ?? '']?.compositionId ?? 'comp_root'];
+  return { w: comp?.width ?? 1920, h: comp?.height ?? 1080 };
+}
+
 /**
  * The value a property has right now (sampled keyframes → component prop →
  * type default) — what an added keyframe must capture so nothing jumps.
@@ -1133,6 +1367,7 @@ function paintOverlay(
   controller?: WorkspaceController,
   paintStroke: Array<{ x: number; y: number }> | null = null,
   time = 0,
+  creationDrag: { start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null = null,
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -1212,10 +1447,7 @@ function paintOverlay(
 
   // Selection chrome follows the theme's selection token (white in the
   // monochrome dark theme, the accent in light) — not a hardcoded blue.
-  const root = getComputedStyle(document.documentElement);
-  const ACCENT = root.getPropertyValue('--color-selection').trim() || '#f2f2f3';
-  const ACCENT_SOFT = root.getPropertyValue('--color-primary-subtle').trim() || 'rgba(255,255,255,0.14)';
-  const HOVER = root.getPropertyValue('--color-border-strong').trim() || 'rgba(255,255,255,0.35)';
+  const { ACCENT, ACCENT_SOFT, HOVER } = themeChrome();
   const SNAP = '#ff3ba7';
 
   // Hover outline (only when it isn't the active selection).
@@ -1225,15 +1457,70 @@ function paintOverlay(
     strokeRect(ctx, overlay.hoveredBounds);
   }
 
-  // Marquee.
-  if (overlay.marquee) {
+  const activeTool = creationDrag ? creationDrag.tool : useUIStore.getState().activeTool;
+  const isFreehandTool = activeTool === 'pencil' || activeTool === 'brush';
+
+  const cDragRect = creationDrag ? {
+    x: Math.min(creationDrag.start.x, creationDrag.current.x),
+    y: Math.min(creationDrag.start.y, creationDrag.current.y),
+    width: Math.abs(creationDrag.current.x - creationDrag.start.x),
+    height: Math.abs(creationDrag.current.y - creationDrag.start.y),
+  } : null;
+
+  const m = (cDragRect && (cDragRect.width > 2 || cDragRect.height > 2)) ? cDragRect : overlay.marquee;
+
+  // Live Marquee & Creation Drag Preview (Rectangle, Ellipse, Polygon, Star, Masks ONLY - NOT Pencil/Brush).
+  if (m && !isFreehandTool) {
+    const isEllipse = activeTool === 'ellipse' || activeTool === 'mask-ellipse';
+    const rx = Math.abs(m.width) / 2;
+    const ry = Math.abs(m.height) / 2;
+    const cx = m.x + m.width / 2;
+    const cy = m.y + m.height / 2;
+
+    ctx.save();
     ctx.fillStyle = ACCENT_SOFT;
     ctx.strokeStyle = ACCENT;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 3]);
-    ctx.fillRect(overlay.marquee.x, overlay.marquee.y, overlay.marquee.width, overlay.marquee.height);
-    strokeRect(ctx, overlay.marquee);
+
+    if (isEllipse) {
+      // Live blueprint Ellipse preview fill + dashed outline
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Outer blueprint bounding box
+      strokeRect(ctx, m);
+    } else {
+      // Live blueprint Rectangle / Polygon / Star creation preview
+      ctx.fillRect(m.x, m.y, m.width, m.height);
+      strokeRect(ctx, m);
+    }
+
     ctx.setLineDash([]);
+
+    // Draw blueprint corner & center dots while dragging to create
+    if (activeTool !== 'select' && activeTool !== 'direct-select') {
+      const dots = [
+        { x: m.x, y: m.y },
+        { x: m.x + m.width, y: m.y },
+        { x: m.x, y: m.y + m.height },
+        { x: m.x + m.width, y: m.y + m.height },
+        { x: cx, y: cy },
+      ];
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = ACCENT;
+      ctx.lineWidth = 1.5;
+      for (const d of dots) {
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
   }
 
   // Snap lines.
@@ -1253,15 +1540,32 @@ function paintOverlay(
     }
   }
 
-  // Selection bounding box (hidden while actively painting a stroke).
-  if (!paintStroke && overlay.selectionBounds) {
+  // A 3D layer is manipulated by its 3D gizmo (axis arrows + rotation rings),
+  // so the 2D chrome steps back to a thin outline: drawing an axis-aligned box
+  // with eight scale handles and a rotate handle ON TOP of the gizmo is both
+  // unreadable and misleading, because those handles drive AABB-space maths that
+  // does not describe a projected 3D layer. AE behaves the same way — a 3D layer
+  // shows its bounding box and the axis arrows, not the 2D scale handles.
+  const sel3D = (() => {
+    const ids = useSelectionStore.getState().ids;
+    if (ids.length !== 1) return false;
+    const n = defaultSceneGraph.getNode(ids[0]!);
+    return !!n && is3DEnabled(n);
+  })();
+
+  const isActivelyDrawing = isFreehandTool || !!paintStroke;
+
+  // Selection bounding box (hidden while actively drawing or painting a stroke).
+  if (!isActivelyDrawing && overlay.selectionBounds) {
     ctx.strokeStyle = ACCENT;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = sel3D ? 1 : 1.5;
+    if (sel3D) ctx.setLineDash([4, 3]);
     strokeRect(ctx, overlay.selectionBounds);
+    if (sel3D) ctx.setLineDash([]);
   }
 
-  // Handles (hidden while actively painting a stroke).
-  if (!paintStroke) {
+  // Handles (hidden while actively drawing or painting a stroke, and in 3D).
+  if (!isActivelyDrawing && !sel3D) {
     for (const h of overlay.handles) {
       if (h.kind === 'rotate') {
         ctx.beginPath();
@@ -1299,38 +1603,40 @@ function paintOverlay(
 
   // Draw tangent arm lines (connect vertex to its tangent handles)
   // We pair them by looking for handles with same node+index prefix
-  const vertMap = new Map<string, { x: number; y: number }>();
-  for (const h of overlay.handles) {
-    if (h.kind === 'point') {
-      // e.g. "vert_nodeId_i"
-      const key = h.id.replace(/^vert_/, '');
-      vertMap.set(key, h.position);
+  if (!isFreehandTool) {
+    const vertMap = new Map<string, { x: number; y: number }>();
+    for (const h of overlay.handles) {
+      if (h.kind === 'point') {
+        const key = h.id.replace(/^vert_/, '');
+        vertMap.set(key, h.position);
+      }
     }
-  }
-  for (const h of overlay.handles) {
-    if (h.kind === 'tangent-in' || h.kind === 'tangent-out') {
-      // e.g. "tin_nodeId_i" or "tout_nodeId_i"
-      const key = h.id.replace(/^t(?:in|out)_/, '');
-      const vert = vertMap.get(key);
-      if (vert) {
-        ctx.beginPath();
-        ctx.moveTo(vert.x, vert.y);
-        ctx.lineTo(h.position.x, h.position.y);
-        ctx.strokeStyle = 'rgba(90,140,255,0.7)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
+    for (const h of overlay.handles) {
+      if (h.kind === 'tangent-in' || h.kind === 'tangent-out') {
+        const key = h.id.replace(/^t(?:in|out)_/, '');
+        const vert = vertMap.get(key);
+        if (vert) {
+          ctx.beginPath();
+          ctx.moveTo(vert.x, vert.y);
+          ctx.lineTo(h.position.x, h.position.y);
+          ctx.strokeStyle = 'rgba(90,140,255,0.7)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
     }
   }
 
-  // Pending Path (Pen Tool) — drawn as live bezier preview
+  // Pending Path (Pen / Pencil Tool) — drawn as live bezier preview
   if (overlay.pendingPath && overlay.pendingPath.length > 0) {
     const pts = overlay.pendingPath as Array<{x:number;y:number;inX:number;inY:number;outX:number;outY:number}>;
+    const isPencil = activeTool === 'pencil';
 
     // Draw the committed bezier curve segments
     if (pts.length >= 2) {
+      ctx.save();
       ctx.beginPath();
       ctx.moveTo(pts[0]!.x, pts[0]!.y);
       for (let i = 0; i < pts.length - 1; i++) {
@@ -1338,55 +1644,66 @@ function paintOverlay(
         const next = pts[i + 1]!;
         ctx.bezierCurveTo(curr.outX, curr.outY, next.inX, next.inY, next.x, next.y);
       }
-      ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 1.5;
+      if (isPencil) {
+        ctx.strokeStyle = drawToolOptions.pencilColor || ACCENT;
+        const zoom = controller?.getView().scale ?? 1;
+        ctx.lineWidth = Math.max(1, drawToolOptions.pencilWidth * zoom);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+      } else {
+        ctx.strokeStyle = ACCENT;
+        ctx.lineWidth = 1.5;
+      }
       ctx.stroke();
+      ctx.restore();
     }
 
-    // Draw tangent arms + handles for each committed point
-    for (const pt of pts) {
-      const hasTangent = pt.outX !== pt.x || pt.outY !== pt.y;
-      if (hasTangent) {
-        // Out-handle arm
-        ctx.beginPath();
-        ctx.moveTo(pt.x, pt.y);
-        ctx.lineTo(pt.outX, pt.outY);
-        ctx.strokeStyle = 'rgba(90,140,255,0.7)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // In-handle arm
-        ctx.beginPath();
-        ctx.moveTo(pt.x, pt.y);
-        ctx.lineTo(pt.inX, pt.inY);
-        ctx.strokeStyle = 'rgba(90,140,255,0.7)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // Tangent handle dots
-        ctx.beginPath();
-        ctx.arc(pt.outX, pt.outY, 3.5, 0, Math.PI * 2);
+    // Tangent arms and vertex anchor dots are ONLY drawn for Pen / Vector editing, NEVER for freehand Pencil / Brush
+    if (!isPencil && !isFreehandTool) {
+      for (const pt of pts) {
+        const hasTangent = pt.outX !== pt.x || pt.outY !== pt.y;
+        if (hasTangent) {
+          // Out-handle arm
+          ctx.beginPath();
+          ctx.moveTo(pt.x, pt.y);
+          ctx.lineTo(pt.outX, pt.outY);
+          ctx.strokeStyle = 'rgba(90,140,255,0.7)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // In-handle arm
+          ctx.beginPath();
+          ctx.moveTo(pt.x, pt.y);
+          ctx.lineTo(pt.inX, pt.inY);
+          ctx.strokeStyle = 'rgba(90,140,255,0.7)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // Tangent handle dots
+          ctx.beginPath();
+          ctx.arc(pt.outX, pt.outY, 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff';
+          ctx.fill();
+          ctx.strokeStyle = ACCENT;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(pt.inX, pt.inY, 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff';
+          ctx.fill();
+          ctx.strokeStyle = ACCENT;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+        // Anchor square
         ctx.fillStyle = '#fff';
-        ctx.fill();
         ctx.strokeStyle = ACCENT;
         ctx.lineWidth = 1.5;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(pt.inX, pt.inY, 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-        ctx.strokeStyle = ACCENT;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+        ctx.fillRect(pt.x - 3, pt.y - 3, 6, 6);
+        ctx.strokeRect(pt.x - 3, pt.y - 3, 6, 6);
       }
-      // Anchor square
-      ctx.fillStyle = '#fff';
-      ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 1.5;
-      ctx.fillRect(pt.x - 3, pt.y - 3, 6, 6);
-      ctx.strokeRect(pt.x - 3, pt.y - 3, 6, 6);
     }
   }
 
@@ -1480,19 +1797,166 @@ function hitMotionPathKeyframe(
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasPositionAnimation(nodeId)) return null;
   const R = 8; // grab radius, screen px
-  const near = (p: { x: number; y: number }): boolean => {
-    const s = controller.ws.worldToScreen(p);
+  // Must use the SAME projection the painter does, or a 3D layer's dots are
+  // drawn in one place and grabbable in another.
+  const comp = compSize();
+  const is3D = is3DEnabled(node);
+  const project = is3D ? currentViewProjector(comp.w, comp.h, playheadTime()) : null;
+  const baseZ = is3D ? readNode3D(node).z : 0;
+  const near = (p: { x: number; y: number }, t?: number): boolean => {
+    let world = p;
+    if (project) {
+      const z = (t !== undefined ? defaultAnimation.sample(nodeId, 'z', t) : undefined) ?? baseZ;
+      const q = project({ x: p.x, y: p.y, z });
+      world = { x: q.x, y: q.y };
+    }
+    const s = controller.ws.worldToScreen(world);
     return Math.hypot(s.x - screen.x, s.y - screen.y) <= R;
   };
   const tangents = motionPathTangents(node);
   for (const k of tangents) {
-    if (k.out && near(k.out)) return { nodeId, t: k.t, part: 'out' };
-    if (k.in && near(k.in)) return { nodeId, t: k.t, part: 'in' };
+    if (k.out && near(k.out, k.t)) return { nodeId, t: k.t, part: 'out' };
+    if (k.in && near(k.in, k.t)) return { nodeId, t: k.t, part: 'in' };
   }
   for (const k of tangents) {
-    if (near(k)) return { nodeId, t: k.t, part: 'point' };
+    if (near(k, k.t)) return { nodeId, t: k.t, part: 'point' };
   }
   return null;
+}
+
+/**
+ * Region of Interest — border, dimmed surround and the eight resize grips.
+ *
+ * Without this the ROI was invisible: the menu set a region and the renderer
+ * clipped to it, but nothing drew it, so there was no way to see what had been
+ * restricted or to tell a working ROI from a broken preview. `roiGeometry` (the
+ * pure hit-test/resize maths this pairs with) had no callers at all.
+ */
+/**
+ * Theme colours for the selection chrome, read ONCE per theme.
+ *
+ * `getComputedStyle` + `getPropertyValue` forces a style recalculation, and this
+ * ran inside the overlay paint — i.e. inside the rAF callback, on every frame of
+ * playback and every drag tick — to fetch three tokens that only change when the
+ * theme does. The theme is stamped on the root element, so that attribute is the
+ * cache key.
+ */
+let chromeCache: { key: string; ACCENT: string; ACCENT_SOFT: string; HOVER: string } | null = null;
+
+function themeChrome(): { ACCENT: string; ACCENT_SOFT: string; HOVER: string } {
+  const el = document.documentElement;
+  const key = `${el.getAttribute('data-theme') ?? ''}|${el.className}`;
+  if (chromeCache && chromeCache.key === key) return chromeCache;
+  const root = getComputedStyle(el);
+  chromeCache = {
+    key,
+    ACCENT: root.getPropertyValue('--color-selection').trim() || '#f2f2f3',
+    ACCENT_SOFT: root.getPropertyValue('--color-primary-subtle').trim() || 'rgba(255,255,255,0.14)',
+    HOVER: root.getPropertyValue('--color-border-strong').trim() || 'rgba(255,255,255,0.35)',
+  };
+  return chromeCache;
+}
+
+/**
+ * Face-select chrome — the picked face filled and outlined, plus every other
+ * face of the object faintly outlined so it's obvious what else can be clicked.
+ *
+ * Drawn from the SAME projected quads the picker hit-tests, so the highlight can
+ * never disagree with what a click would select.
+ */
+function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceController, dpr: number): void {
+  const fs = useFaceSelectionStore.getState();
+  if (!fs.enabled) return;
+  const nodeId = fs.nodeId ?? useSelectionStore.getState().ids[0];
+  if (!nodeId) return;
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const { w: cw, h: ch } = compSize();
+  const faces = facesOfNode(node, playheadTime(), cw, ch);
+  if (faces.length === 0) return;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const trace = (quad: ReadonlyArray<{ x: number; y: number }>): void => {
+    ctx.beginPath();
+    quad.forEach((p, i) => {
+      const s = controller.ws.worldToScreen(p);
+      if (i === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    ctx.closePath();
+  };
+
+  // Far faces first so the near ones outline on top.
+  // Edge-on faces are skipped for the same reason the picker skips them: an
+  // invisible sliver drawn as a line reads as a stray scratch on the object.
+  const sorted = faces.filter((f) => f.area >= 4).sort((a, b) => b.depth - a.depth);
+  ctx.lineWidth = 1;
+  for (const f of sorted) {
+    const active = fs.nodeId === nodeId && f.suffix === fs.suffix;
+    trace(f.quad);
+    if (active) {
+      ctx.fillStyle = 'rgba(120,170,255,0.28)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(150,195,255,1)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    } else {
+      ctx.strokeStyle = 'rgba(150,195,255,0.28)';
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function paintRoi(canvas: HTMLCanvasElement, controller: WorkspaceController, dpr: number): void {
+  const roi = useGuidesStore.getState().roi;
+  if (!roi) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const tl = controller.ws.worldToScreen({ x: roi.x, y: roi.y });
+  const br = controller.ws.worldToScreen({ x: roi.x + roi.width, y: roi.y + roi.height });
+  const x = tl.x;
+  const y = tl.y;
+  const w = br.x - tl.x;
+  const h = br.y - tl.y;
+
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Dim everything outside the region — the part that will not be rendered.
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath();
+  ctx.rect(0, 0, canvas.width / dpr, canvas.height / dpr);
+  ctx.rect(x, y, w, h);
+  ctx.fill('evenodd');
+
+  ctx.strokeStyle = 'rgba(120,170,255,0.95)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 4]);
+  ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+  ctx.setLineDash([]);
+
+  // Eight grips, matching the corners/edges roiHandleAt tests for.
+  const grips: Array<[number, number]> = [
+    [x, y], [x + w / 2, y], [x + w, y],
+    [x + w, y + h / 2], [x + w, y + h],
+    [x + w / 2, y + h], [x, y + h], [x, y + h / 2],
+  ];
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = 'rgba(120,170,255,1)';
+  for (const [gx, gy] of grips) {
+    ctx.beginPath();
+    ctx.rect(gx - 3, gy - 3, 6, 6);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /**
@@ -1508,6 +1972,13 @@ function paintMotionPath(
   time: number,
   dpr: number,
 ): void {
+  // Honour the visibility toggle. `motionPathVisible` had NO reader anywhere: this
+  // function ran unconditionally from paintChrome, so the button in the viewport
+  // header, the "Motion Paths" menu entry and the Ctrl+Alt+M command all flipped a
+  // flag that changed nothing — the path was always drawn.
+  const guides = useGuidesStore.getState();
+  if (!guides.motionPathVisible) return;
+
   const ids = useSelectionStore.getState().ids;
   if (ids.length !== 1) return;
   const nodeId = ids[0]!;
@@ -1519,8 +1990,26 @@ function paintMotionPath(
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw ON TOP of the overlay (no clear)
-  const toS = (p: { x: number; y: number }): { x: number; y: number } =>
-    controller.ws.worldToScreen({ x: p.x, y: p.y });
+
+  // For a 3D layer the trajectory must go through the SAME camera the renderer
+  // uses. This used to map raw x/y with the 2D transform and drop z entirely, so
+  // on any 3D layer the path and its keyframe dots were drawn nowhere near the
+  // object they belong to — you could not tell which layer a dot was for.
+  //
+  // The projector is built at the PLAYHEAD, not per sample: the path shows where
+  // the trajectory lies in the view you are looking at now, which is what AE
+  // draws. `z` is still sampled per point, so a layer animating in depth curves
+  // correctly.
+  const comp = compSize();
+  const is3D = is3DEnabled(node);
+  const project = is3D ? currentViewProjector(comp.w, comp.h, time) : null;
+  const baseZ = is3D ? readNode3D(node).z : 0;
+  const toS = (p: { x: number; y: number; t?: number }): { x: number; y: number } => {
+    if (!project) return controller.ws.worldToScreen({ x: p.x, y: p.y });
+    const z = (p.t !== undefined ? defaultAnimation.sample(nodeId, 'z', p.t) : undefined) ?? baseZ;
+    const q = project({ x: p.x, y: p.y, z });
+    return controller.ws.worldToScreen({ x: q.x, y: q.y });
+  };
 
   // Trajectory curve.
   ctx.beginPath();
@@ -1541,7 +2030,7 @@ function paintMotionPath(
     const p = toS(k);
     for (const h of [k.out, k.in]) {
       if (!h) continue;
-      const s = toS(h);
+      const s = toS({ ...h, t: k.t });
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
       ctx.lineTo(s.x, s.y);
@@ -1553,20 +2042,28 @@ function paintMotionPath(
     }
   }
 
-  // Keyframe dots.
-  for (const k of motionPathKeyframes(node)) {
-    const s = toS(k);
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(120,170,255,1)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+  // Keyframe dots, at the size the user chose. `motionPathDots` also had no
+  // reader: the radius was hardcoded to 3.5 and 'off' still drew them, so all
+  // four menu entries were inert.
+  const dotRadius =
+    guides.motionPathDots === 'small' ? 2.5
+    : guides.motionPathDots === 'large' ? 5.5
+    : 3.5; // 'medium'
+  if (guides.motionPathDots !== 'off') {
+    for (const k of motionPathKeyframes(node)) {
+      const s = toS(k);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, dotRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,170,255,1)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
 
   // Current-position marker at the playhead.
-  const cur = toS(positionSamplerFor(node)(time));
+  const cur = toS({ ...positionSamplerFor(node)(time), t: time });
   ctx.beginPath();
   ctx.arc(cur.x, cur.y, 5, 0, Math.PI * 2);
   ctx.strokeStyle = 'rgba(255,214,90,1)';

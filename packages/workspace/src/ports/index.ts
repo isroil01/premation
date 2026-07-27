@@ -42,6 +42,16 @@ export interface WorkspaceNode {
   readonly locked: boolean;
   /** Higher renders on top; used to resolve overlapping hits. */
   readonly zIndex: number;
+  /**
+   * True for a 3D layer, whose transform the 3D gizmo owns.
+   *
+   * The 2D resize/rotate handles are suppressed for these: they operate on the
+   * axis-aligned world bounds, which for a projected 3D layer describes neither
+   * its size nor its orientation, so dragging one moved the layer somewhere the
+   * user did not ask for. The gizmo's axis arrows and rotation rings are the
+   * correct control surface.
+   */
+  readonly is3D?: boolean;
   /** Optional precise hit test in the node's *local* space (path/shape/mask). */
   readonly hitTestLocal?: (localPoint: Vec2) => boolean;
   /** Bezier path points in LOCAL space (only for shapes with custom paths). */

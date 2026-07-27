@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * EffectStack — the applied-effects list for a layer (AE Effect Controls): each
@@ -18,7 +19,6 @@ import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
 import { ColorPicker } from '@components/ColorPicker';
 import { CurveEditor } from './CurveEditor';
-import { EmptyState } from '@components/EmptyState';
 
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -239,45 +239,109 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   const effects = getNodeEffects(nodeId);
   const defByType = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
 
+  const [userToggledIds, setUserToggledIds] = useState<Map<string, boolean>>(new Map());
+
+  const toggleEffectCard = (id: string, currentCollapsed: boolean) => {
+    setUserToggledIds((prev) => {
+      const next = new Map(prev);
+      next.set(id, !currentCollapsed);
+      return next;
+    });
+  };
+
   if (effects.length === 0) {
-    return <EmptyState icon="sparkles" message="No effects — add one to grade, blur, or shadow this layer." />;
+    return (
+      <div className={panel.hint}>
+        No active effects on this layer. Choose an effect below to add one.
+      </div>
+    );
   }
 
   return (
-    <div className={panel.list}>
+    <div className={panel.stackList}>
       {effects.map((e, i) => {
         const def = defByType.get(e.type);
         if (!def) return null;
         const off = e.enabled === false;
+        const defaultCollapsed = i > 0;
+        const isCollapsed = userToggledIds.has(e.id) ? userToggledIds.get(e.id)! : defaultCollapsed;
+
         return (
-          <div key={e.id} className={panel.item}>
-            <div className={panel.itemHead}>
+          <div key={e.id} className={panel.effectCardItem}>
+            {/* Accordion Header: Disclosure Chevron + Checkbox + Effect Label + Actions */}
+            <div className={panel.effectCardHead}>
+              <button
+                type="button"
+                className={panel.disclosureBtn}
+                onClick={() => toggleEffectCard(e.id, isCollapsed)}
+                title={isCollapsed ? 'Expand effect parameters' : 'Collapse effect parameters'}
+              >
+                <Icon name={isCollapsed ? 'chevron-right' : 'chevron-down'} size={12} />
+              </button>
+
               <Checkbox
                 checked={!off}
                 onChange={() => toggleEffect(nodeId, e.id)}
                 title={off ? 'Enable effect' : 'Disable effect'}
-                style={{ width: 14, height: 14, marginRight: 8 }}
+                style={{ width: 15, height: 15, flexShrink: 0 }}
               />
-              <span className={off ? panel.itemLabelOff : panel.itemLabel} style={{ flex: 1 }}>{def.label}</span>
+
+              <span
+                className={off ? panel.itemLabelOff : panel.itemLabel}
+                onClick={() => toggleEffectCard(e.id, isCollapsed)}
+                style={{
+                  flex: 1,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: off ? 'var(--color-text-muted)' : 'var(--color-text-primary)',
+                  letterSpacing: '0.01em',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {def.label}
+              </span>
+
               <div className={panel.itemActions}>
-                <button type="button" className={panel.remove} aria-label={`Move ${def.label} up`}
-                  disabled={i === 0} onClick={() => moveEffect(nodeId, e.id, -1)}>
+                <button
+                  type="button"
+                  className={panel.remove}
+                  aria-label={`Move ${def.label} up`}
+                  disabled={i === 0}
+                  onClick={() => moveEffect(nodeId, e.id, -1)}
+                >
                   <Icon name="arrow-up" size={12} />
                 </button>
-                <button type="button" className={panel.remove} aria-label={`Move ${def.label} down`}
-                  disabled={i === effects.length - 1} onClick={() => moveEffect(nodeId, e.id, 1)}>
+                <button
+                  type="button"
+                  className={panel.remove}
+                  aria-label={`Move ${def.label} down`}
+                  disabled={i === effects.length - 1}
+                  onClick={() => moveEffect(nodeId, e.id, 1)}
+                >
                   <Icon name="arrow-down" size={12} />
                 </button>
-                <button type="button" className={panel.remove} aria-label={`Remove ${def.label}`}
-                  onClick={() => removeEffect(nodeId, e.id)}>
+                <button
+                  type="button"
+                  className={panel.remove}
+                  aria-label={`Remove ${def.label}`}
+                  onClick={() => removeEffect(nodeId, e.id)}
+                >
                   <Icon name="close" size={12} />
                 </button>
               </div>
             </div>
-            {!off &&
-              def.params.map((p) => (
-                <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
-              ))}
+
+            {/* Accordion Body: Effect Parameters */}
+            {!isCollapsed && !off && (
+              <div className={panel.effectParamsBody}>
+                {def.params.map((p) => (
+                  <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

@@ -58,6 +58,7 @@ import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
+import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -761,6 +762,28 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
+    /**
+     * Every subscription this boot makes, so the cleanup can actually release
+     * them.
+     *
+     * The EventBus and the ThemeManager are process-wide singletons that outlive
+     * this component, but `Providers` is mounted PER ROUTE (EditorPage and
+     * PopoutRoute) and React StrictMode double-invokes effects. The disposers
+     * returned by `getEventBus().on(...)` and `theme.subscribe(...)` were all
+     * discarded, so every Dashboard → Editor navigation stacked another full set
+     * of eight bus listeners on top of the previous ones.
+     *
+     * The cost compounds: on the Nth entry, one AnimationChanged fires bumpScene()
+     * N times, and bumpScene itself emits SceneGraphChanged — which then fires
+     * scheduleRecord and markDirty N times each, plus N full syncFromScene walks.
+     * That is O(N²) work per keyframe edit, which reads as "the editor gets slower
+     * the longer I use it".
+     */
+    let stopSync: (() => void) | null = null;
+    const subs: Array<() => void> = [];
+    const track = (d: { dispose(): void } | (() => void)): void => {
+      subs.push(typeof d === 'function' ? d : () => d.dispose());
+    };
     (async () => {
       await applyPreferencesToDocument();
 
@@ -831,7 +854,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // Theme: ThemeManager is the single authority. Mirror the resolved theme
         // into the preference store so existing UI reading it stays correct.
         const theme = getThemeManager();
-        theme.subscribe((t) => usePreferenceStore.getState().set('theme', asThemeId(t)));
+        track(theme.subscribe((t) => usePreferenceStore.getState().set('theme', asThemeId(t))));
         theme.apply();
 
         // Composition settings + pasteboard colour: load persisted values now
@@ -844,8 +867,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // settings). This was `sceneProjectIO` — scene-only — so every local
         // save silently dropped the entire animation.
         project.setDocumentIO(projectDocumentIO);
-        getEventBus().on('ProjectLoaded', () => bumpScene());
-        getEventBus().on('ProjectUnloaded', () => bumpScene());
+        track(getEventBus().on('ProjectLoaded', () => bumpScene()));
+        track(getEventBus().on('ProjectUnloaded', () => bumpScene()));
         // Bind the (framework-independent) animation engine's change sink onto
         // the app EventBus so its mutations surface as 'AnimationChanged'. Must
         // run before any engine emit (seeding below) reaches its listeners.
@@ -901,7 +924,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           };
         });
         // Keyframe edits refresh the timeline tracks + inspector + viewport.
-        getEventBus().on('AnimationChanged', () => { bumpScene(); });
+        track(getEventBus().on('AnimationChanged', () => { bumpScene(); }));
 
         // Native (Electron) menu items dispatch through the same CommandSystem.
         window.motionEditor?.onMenuCommand?.((id) => {
@@ -1068,8 +1091,14 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Default property editors + starter scene content.
         try { registerDefaultEditors(); } catch { /* ignore */ }
-        try { seedDefaultScene(); } catch { /* ignore */ }
-        try { seedDemoAnimation(); } catch { /* ignore */ }
+        // A pop-out window must NOT seed its own scene. It renders a detached
+        // view of the composition you already have open, and windowSync fills it
+        // in from the editor shell. Seeding here is what made a popped-out Scene
+        // panel list a completely different (demo) composition.
+        if (!isPopoutWindow()) {
+          try { seedDefaultScene(); } catch { /* ignore */ }
+          try { seedDemoAnimation(); } catch { /* ignore */ }
+        }
         try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
 
         // History: initial "Open" state, then a debounced snapshot after edits.
@@ -1079,10 +1108,19 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // The debounce lives in the store so undo/redo can flush it — a
           // pending snapshot that only exists in a local closure is why Ctrl+Z
           // inside the window used to eat two actions.
-          const scheduleRecord = (): void => useHistoryStore.getState().schedule();
-          getEventBus().on('AnimationChanged', scheduleRecord);
-          getEventBus().on('NodeUpdated', scheduleRecord);
-          getEventBus().on('SceneGraphChanged', scheduleRecord);
+          // The KEY tells history what is being edited, so a burst on one
+          // target coalesces into a single undo step while a move to a
+          // different layer/property commits the previous one first. A bare
+          // `schedule()` merged anything that happened to land inside the same
+          // 700 ms — two unrelated edits, one Ctrl+Z, both gone.
+          const h = (): ReturnType<typeof useHistoryStore.getState> => useHistoryStore.getState();
+          track(getEventBus().on('AnimationChanged', () => h().schedule('anim')));
+          track(getEventBus().on('NodeUpdated', (e) => {
+            const p = e as { nodeId?: string; propName?: string } | undefined;
+            h().schedule(p?.nodeId ? `node:${p.nodeId}:${p.propName ?? ''}` : 'node');
+          }));
+          // Structural edits (add/delete/reparent) are their own action.
+          track(getEventBus().on('SceneGraphChanged', () => h().schedule('scene')));
         } catch { /* ignore */ }
 
         // Dirty tracking + autosave (crash recovery). Edits mark the active
@@ -1093,9 +1131,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             const s = useProjectStore.getState();
             if (s.activeTabId && !s.tabs[s.activeTabId]?.dirty) s.actions.markDirty(s.activeTabId, true);
           };
-          getEventBus().on('AnimationChanged', markDirty);
-          getEventBus().on('NodeUpdated', markDirty);
-          getEventBus().on('SceneGraphChanged', markDirty);
+          track(getEventBus().on('AnimationChanged', markDirty));
+          track(getEventBus().on('NodeUpdated', markDirty));
+          track(getEventBus().on('SceneGraphChanged', markDirty));
           getAutosaveController().start({
             intervalMs: 60_000,
             now: () => Date.now(),
@@ -1134,7 +1172,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
                     size="sm"
                     onClick={() => {
                       const t = restoreRecovery(rec);
-                      useProjectStore.getState().actions.setTime(t, Math.round(t * 60));
+                      // Was `Math.round(t * 60)` — a hardcoded 60 fps that put
+                      // the frame number on a different clock from the comp for
+                      // every project not shot at 60.
+                      getTimelineController().seekSeconds(t);
                       bumpScene();
                       useHistoryStore.getState().record('Recovered', true);
                       const s = useProjectStore.getState();
@@ -1154,9 +1195,26 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         bootTask.end();
       }
 
+      // Live cross-window sync: a detached panel mirrors this window's document,
+      // selection and playhead, and its own edits come back the other way.
+      //
+      // MUST be started here, INSIDE the boot IIFE, not beside it: `Application
+      // .boot()` calls `setEventBus(new EventBus())`, so anything that subscribes
+      // before boot resolves is attached to a bus that is then thrown away. That
+      // is why the scene-change subscription silently never fired while the
+      // selection one (a plain zustand store, never replaced) worked fine.
+      if (!cancelled) stopSync = startWindowSync();
+
       if (!cancelled) setReady(true);
     })();
-    return () => { cancelled = true; };
+
+    return () => {
+      cancelled = true;
+      stopSync?.();
+      stopSync = null;
+      for (const dispose of subs) dispose();
+      subs.length = 0;
+    };
   }, []);
 
   if (!ready) {
