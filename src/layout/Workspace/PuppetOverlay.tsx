@@ -8,7 +8,12 @@ import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { readGeometry, worldMatrix } from '@core/workspace/geometry';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, PuppetPin } from '@core/rig/puppet';
+import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { useAssetStore } from '@stores/assetStore';
 import { addPuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
+import { nextRigId, usedRigIds } from '@core/rig/rigIds';
+import { SketchRecorder, DEFAULT_SKETCH_TOLERANCE } from '@core/rig/puppetSketch';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '@core/rig/skeleton';
 import {
@@ -23,7 +28,7 @@ import {
 import type { Mat2D } from '@core/rig/mat2d';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
-import { upsertDataKeyframe } from '@motion/animation';
+import { upsertDataKeyframe, dataPathTangents, setDataSpatialTangent } from '@motion/animation';
 import { bumpScene } from '@stores/sceneStore';
 
 // Invert 2D affine matrix mapping
@@ -40,6 +45,25 @@ function worldToLocal(m: any, w: { x: number; y: number }): { x: number; y: numb
     x: invA * w.x + invC * w.y + invE,
     y: invB * w.x + invD * w.y + invF,
   };
+}
+
+/** Radius (screen px) of the advanced-pin gizmo ring. */
+const GIZMO_R = 26;
+
+
+/**
+ * Pointer capture is a nicety, not a precondition: it keeps a drag alive when
+ * the pointer leaves the SVG. `setPointerCapture` throws NotFoundError if the
+ * id is not an active pointer, and an uncaught throw here aborts the rest of
+ * the pointerdown handler — losing the selection and the drag it was setting
+ * up. The release path was already guarded; this is the missing other half.
+ */
+function capturePointer(svg: SVGSVGElement, pointerId: number): void {
+  try {
+    svg.setPointerCapture(pointerId);
+  } catch {
+    /* capture unavailable — the drag still works, it just won't track outside */
+  }
 }
 
 function getHeatmapColor(weight: number): string {
@@ -62,10 +86,23 @@ export function PuppetOverlay(): JSX.Element | null {
     pinId: string;
     startScreen: { x: number; y: number };
     animTx: any;
-    /** Alt-drag rotates the pin's influence instead of translating it. */
-    mode: 'move' | 'rotate';
+    /** Alt-drag rotates; the gizmo's square handle scales; Ctrl records. */
+    mode: 'move' | 'rotate' | 'scale' | 'sketch';
     startAngleDeg: number;
     startRotationDeg: number;
+    startDist?: number;
+    startScale?: number;
+  } | null>(null);
+  /** Live Puppet Sketch recorder (3A) — accumulates while Ctrl-dragging. */
+  const sketchRef = useRef<SketchRecorder | null>(null);
+  const [sketchTolerance, setSketchTolerance] = useState(DEFAULT_SKETCH_TOLERANCE);
+  const [isRecording, setIsRecording] = useState(false);
+  /** Spatial tangent handle being dragged (the pin motion path). */
+  const tangentDragRef = useRef<{
+    pinId: string;
+    kfT: number;
+    which: 'in' | 'out';
+    animTx: any;
   } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
@@ -76,11 +113,13 @@ export function PuppetOverlay(): JSX.Element | null {
   const suppressClickAddRef = useRef(false);
 
 
-  // Force re-render on render ticks / camera movements
+  // Force re-render on render ticks / camera movements. `onRender` returns a
+  // disposer now (it used to be a single-slot setter, so this subscription was
+  // being clobbered by the viewport's and the handles froze during a pan).
   const [, setTick] = useState(0);
   useEffect(() => {
     const controller = getWorkspaceController();
-    controller.onRender(() => {
+    return controller.onRender(() => {
       setTick((t) => t + 1);
     });
   }, []);
@@ -132,6 +171,9 @@ export function PuppetOverlay(): JSX.Element | null {
     return worldToLocal(m, world);
   };
 
+  // Canonical keyframe axis — the same forward map buildSnapshot samples.
+  const layerT = compToKeyframeTime(node.id, time);
+
   // Build the rest mesh and deformed mesh for wireframe rendering. The static
   // path outline (Geometry component) mirrors buildSnapshot's silhouette so the
   // wireframe matches the rendered mesh for shape layers.
@@ -140,17 +182,29 @@ export function PuppetOverlay(): JSX.Element | null {
     geometryComponent?.props.points as Array<{ x: number; y: number }> | undefined,
     geometryComponent?.props.open === true,
   );
+  // Image layers cull the mesh against the bitmap's alpha, exactly as
+  // buildSnapshot does. Omitting this drew an untrimmed bbox grid over an
+  // alpha-culled render — a different vertex count, different weights, and a
+  // weight heatmap that described a mesh nobody was drawing. Both sides resolve
+  // the source and the mask through rigMeshInputs so they cannot drift again.
+  const media = readNodeMediaRef(node);
+  const coverage = rigCoverageMask(
+    rigLayerKind(readNodeKind(node)),
+    resolveRigImageSrc(node, readNodeKind(node), media, layerT, (id) =>
+      useAssetStore.getState().assets.find((asset) => asset.id === id),
+    ),
+    media.assetId,
+    silhouette,
+  );
   const restMesh = getCachedRestMesh(
     node.id,
     geom.width,
     geom.height,
     pad,
     puppetRig ?? { pins: [] },
-    silhouette
+    silhouette,
+    coverage,
   );
-
-  // Canonical keyframe axis — the same forward map buildSnapshot samples.
-  const layerT = compToKeyframeTime(node.id, time);
 
   const animatedPins = pins.map((pin) => {
     const livePos = defaultAnimation.sampleData(node.id, `puppet.${pin.id}.position`, layerT);
@@ -163,16 +217,23 @@ export function PuppetOverlay(): JSX.Element | null {
     }
     const liveRot = defaultAnimation.sample(node.id, `puppet.${pin.id}.rotation`, layerT);
     const liveStiff = defaultAnimation.sample(node.id, `puppet.${pin.id}.stiffness`, layerT);
+    const liveScale = defaultAnimation.sample(node.id, `puppet.${pin.id}.scale`, layerT);
+    const liveOverlap = defaultAnimation.sample(node.id, `puppet.${pin.id}.overlap`, layerT);
     return {
       id: pin.id,
       x: px,
       y: py,
       rotation: typeof liveRot === 'number' ? liveRot : pin.rotation,
       stiffness: typeof liveStiff === 'number' ? liveStiff : pin.stiffness,
+      scale: typeof liveScale === 'number' ? liveScale : pin.scale,
+      overlap: typeof liveOverlap === 'number' ? liveOverlap : pin.overlap,
+      overlapExtent: pin.overlapExtent,
     };
   });
 
-  let deformedVertices = deform(animatedPins, restMesh, puppetRig?.solver ?? 'arap');
+  let deformedVertices = deform(
+    animatedPins, restMesh, puppetRig?.solver ?? 'arap', puppetRig?.maxRotationDeg,
+  );
 
   // Skeleton composition preview — mirror buildSnapshot exactly: when the layer
   // also carries a skeleton, the puppet solve stays in REST space and the
@@ -215,7 +276,43 @@ export function PuppetOverlay(): JSX.Element | null {
   const toRestSpace = (p: { x: number; y: number }): { x: number; y: number } =>
     skelBinding && skelPoseWorld ? unskinPoint(p, skelBinding, skelPoseWorld) : p;
 
+  /** Rest-space point → screen, through the skeleton pose like the pin dots. */
+  const restToScreen = (p: { x: number; y: number }) => {
+    const posed = skelBinding && skelPoseWorld
+      ? skinPointAt(p, p, skelBinding, skelPoseWorld)
+      : p;
+    return localToScreen(posed.x, posed.y);
+  };
 
+  // ── Pin motion path (spatial tangents) ──────────────────────────────
+  // The trajectory the SELECTED pin travels, drawn from the same data track the
+  // renderer samples. Straight lines read as robotic; the tangent handles are
+  // how you arc a limb. Only the selected pin's path is drawn — every pin at
+  // once is unreadable on a dense rig.
+  const pathTrack = selectedPinId
+    ? defaultAnimation.getDataTrack(node.id, `puppet.${selectedPinId}.position`)
+    : null;
+  const pathHandles = pathTrack && pathTrack.keyframes.length > 1
+    ? dataPathTangents(pathTrack, 0)
+    : [];
+  /** Sampled polyline of the pin's trajectory, in screen space. */
+  const motionPathD = (() => {
+    if (!pathTrack || pathHandles.length < 2) return '';
+    const SEGMENTS = 24; // per keyframe span — smooth without flooding the DOM
+    const first = pathTrack.keyframes[0]!.t;
+    const last = pathTrack.keyframes[pathTrack.keyframes.length - 1]!.t;
+    const pts: string[] = [];
+    const steps = SEGMENTS * (pathTrack.keyframes.length - 1);
+    for (let i = 0; i <= steps; i++) {
+      const tt = first + ((last - first) * i) / steps;
+      const v = defaultAnimation.sampleData(node.id, `puppet.${selectedPinId}.position`, tt);
+      if (!Array.isArray(v) || !v[0]) continue;
+      const p = v[0] as { x: number; y: number };
+      const s = restToScreen(p);
+      pts.push(`${i === 0 ? 'M' : 'L'}${s.x.toFixed(1)},${s.y.toFixed(1)}`);
+    }
+    return pts.join(' ');
+  })();
 
   // Render triangulation polygons
   const polygons: JSX.Element[] = [];
@@ -261,27 +358,93 @@ export function PuppetOverlay(): JSX.Element | null {
     const rect = svg.getBoundingClientRect();
     const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
 
-    // Alt-drag = rotate sub-mode (AE-style: rotate the deformation around the
-    // pin). Plain drag = move.
-    const mode: 'move' | 'rotate' = e.altKey ? 'rotate' : 'move';
+    // Ctrl/Cmd = Puppet Sketch (record in real time during playback).
+    // Alt = rotate the deformation around the pin. Plain drag = move.
+    const mode: 'move' | 'rotate' | 'sketch' =
+      e.ctrlKey || e.metaKey ? 'sketch' : e.altKey ? 'rotate' : 'move';
+    const animPin = animatedPins.find((p) => p.id === pinId);
     let startAngleDeg = 0;
     let startRotationDeg = 0;
     if (mode === 'rotate') {
-      const animPin = animatedPins.find((p) => p.id === pinId);
       const local = toRestSpace(screenToLocal(startScreen.x, startScreen.y));
       const cx = animPin?.x ?? 0;
       const cy = animPin?.y ?? 0;
       startAngleDeg = (Math.atan2(local.y - cy, local.x - cx) * 180) / Math.PI;
       startRotationDeg = animPin?.rotation ?? 0;
     }
+    if (mode === 'sketch') {
+      sketchRef.current = new SketchRecorder();
+      setIsRecording(true);
+    }
 
     // Begin drag undo-redo transaction
     const animTx = beginAnimEdit();
     dragInfoRef.current = { pinId, startScreen, animTx, mode, startAngleDeg, startRotationDeg };
-    svg.setPointerCapture(e.pointerId);
+    capturePointer(svg, e.pointerId);
+  };
+
+  /** Grab the gizmo's square handle — uniform scale around the pin (3B). */
+  const onPointerDownScale = (e: React.PointerEvent, pinId: string) => {
+    e.stopPropagation();
+    suppressClickAddRef.current = true;
+    setSelectedPinId(pinId);
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const animPin = animatedPins.find((p) => p.id === pinId);
+    const local = toRestSpace(screenToLocal(startScreen.x, startScreen.y));
+    dragInfoRef.current = {
+      pinId,
+      startScreen,
+      animTx: beginAnimEdit(),
+      mode: 'scale',
+      startAngleDeg: 0,
+      startRotationDeg: 0,
+      startDist: Math.max(1e-3, Math.hypot(local.x - (animPin?.x ?? 0), local.y - (animPin?.y ?? 0))),
+      startScale: animPin?.scale ?? 1,
+    };
+    capturePointer(svg, e.pointerId);
+  };
+
+  /** Grab a spatial tangent handle on the selected pin's motion path. */
+  const onPointerDownTangent = (
+    e: React.PointerEvent,
+    pinId: string,
+    kfT: number,
+    which: 'in' | 'out',
+  ) => {
+    e.stopPropagation();
+    suppressClickAddRef.current = true;
+    const svg = svgRef.current;
+    if (!svg) return;
+    tangentDragRef.current = { pinId, kfT, which, animTx: beginAnimEdit() };
+    capturePointer(svg, e.pointerId);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    // Tangent handles take precedence — they sit on top of the mesh.
+    const tan = tangentDragRef.current;
+    if (tan) {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const handle = toRestSpace(
+        screenToLocal(e.clientX - rect.left, e.clientY - rect.top),
+      );
+      const prop = `puppet.${tan.pinId}.position`;
+      const track = defaultAnimation.getDataTrack(node.id, prop);
+      if (!track) return;
+      // Plain drag mirrors the opposite handle (a smooth point, the AE default);
+      // Alt breaks the point so the two sides move independently.
+      const keyframes = setDataSpatialTangent(
+        track.keyframes, tan.kfT, 0, tan.which, handle, !e.altKey,
+      );
+      defaultAnimation.setDataTrack(node.id, prop, { ...track, keyframes });
+      controller.requestRender();
+      return;
+    }
+
     const drag = dragInfoRef.current;
     if (!drag) return;
     const svg = svgRef.current;
@@ -301,8 +464,31 @@ export function PuppetOverlay(): JSX.Element | null {
       const cx = animPin?.x ?? 0;
       const cy = animPin?.y ?? 0;
       const angleDeg = (Math.atan2(localCoords.y - cy, localCoords.x - cx) * 180) / Math.PI;
-      const rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
+      let rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
+      // Shift constrains rotation to 15° increments, matching AE's gizmo.
+      if (e.shiftKey) rotation = Math.round(rotation / 15) * 15;
       defaultAnimation.setKeyframe(node.id, `puppet.${drag.pinId}.rotation`, layerT, rotation);
+      controller.requestRender();
+      return;
+    }
+
+    if (drag.mode === 'scale') {
+      const animPin = animatedPins.find((p) => p.id === drag.pinId);
+      const d = Math.hypot(localCoords.x - (animPin?.x ?? 0), localCoords.y - (animPin?.y ?? 0));
+      let scale = (drag.startScale ?? 1) * (d / (drag.startDist ?? 1));
+      // Shift constrains scale to 5% steps, matching AE's gizmo.
+      if (e.shiftKey) scale = Math.round(scale * 20) / 20;
+      defaultAnimation.setKeyframe(
+        node.id, `puppet.${drag.pinId}.scale`, layerT, Math.max(0.01, scale),
+      );
+      controller.requestRender();
+      return;
+    }
+
+    if (drag.mode === 'sketch') {
+      // Record against the LIVE playhead so the captured path is spread across
+      // real time rather than collapsing onto one frame.
+      sketchRef.current?.add(localCoords.x, localCoords.y, compToKeyframeTime(node.id, time));
       controller.requestRender();
       return;
     }
@@ -325,6 +511,18 @@ export function PuppetOverlay(): JSX.Element | null {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    const tan = tangentDragRef.current;
+    if (tan) {
+      tangentDragRef.current = null;
+      const svg = svgRef.current;
+      if (svg) {
+        try { svg.releasePointerCapture(e.pointerId); } catch {}
+      }
+      recordAnimEdit(tan.animTx.commit(`Curve Puppet Pin Path ${tan.pinId}`));
+      bumpScene();
+      return;
+    }
+
     const drag = dragInfoRef.current;
     if (!drag) return;
     dragInfoRef.current = null;
@@ -335,12 +533,34 @@ export function PuppetOverlay(): JSX.Element | null {
       } catch {}
     }
 
+    // Puppet Sketch: reduce the raw stream to a few eased keyframes and write
+    // them as the pin's position track. One recording = one undo step.
+    if (drag.mode === 'sketch') {
+      const kfs = sketchRef.current?.finish({ tolerance: sketchTolerance }) ?? [];
+      sketchRef.current = null;
+      setIsRecording(false);
+      if (kfs.length > 0) {
+        const prop = `puppet.${drag.pinId}.position`;
+        const existing = defaultAnimation.getDataTrack(node.id, prop);
+        defaultAnimation.setDataTrack(node.id, prop, {
+          nodeId: node.id,
+          prop,
+          kind: 'points',
+          ...(existing ?? {}),
+          keyframes: kfs.map((k) => ({ t: k.t, value: k.value, easing: k.easing })),
+        } as never);
+      }
+      recordAnimEdit(drag.animTx.commit(`Sketch Puppet Pin ${drag.pinId}`));
+      bumpScene();
+      return;
+    }
+
     // Commit transaction to history
-    recordAnimEdit(
-      drag.animTx.commit(
-        drag.mode === 'rotate' ? `Rotate Puppet Pin ${drag.pinId}` : `Move Puppet Pin ${drag.pinId}`,
-      ),
-    );
+    const label =
+      drag.mode === 'rotate' ? `Rotate Puppet Pin ${drag.pinId}`
+        : drag.mode === 'scale' ? `Scale Puppet Pin ${drag.pinId}`
+        : `Move Puppet Pin ${drag.pinId}`;
+    recordAnimEdit(drag.animTx.commit(label));
     bumpScene();
   };
 
@@ -362,7 +582,13 @@ export function PuppetOverlay(): JSX.Element | null {
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
 
-    const localCoords = screenToLocal(sx, sy);
+    // Pin positions are stored in REST space (the puppet solve runs in rest
+    // space before the skeleton skins on top) — exactly like the drag path in
+    // onPointerMove. Using the raw posed-space coordinate here stored a posed
+    // point as a rest point, so on a layer with both a skeleton and pins a new
+    // pin landed somewhere other than where you clicked. Identity when the
+    // layer has no skeleton.
+    const localCoords = toRestSpace(screenToLocal(sx, sy));
 
     // Click outside layers should not add pins, let's check local bounds
     const halfW = geom.width / 2;
@@ -379,7 +605,10 @@ export function PuppetOverlay(): JSX.Element | null {
     }
 
     // Add a new pin — one undoable command (PuppetEditCommand).
-    const pinId = `pin_${Date.now()}`;
+    // Id is the lowest free ordinal for this rig, NOT a timestamp: two pins
+    // placed in the same millisecond used to collide and share one set of
+    // animation tracks.
+    const pinId = nextRigId('pin_', usedRigIds(pins));
     const newPin: PuppetPin = {
       id: pinId,
       name: `Pin ${pins.length + 1}`,
@@ -414,6 +643,67 @@ export function PuppetOverlay(): JSX.Element | null {
       onClick={onClickOverlay}
     >
       {polygons}
+
+      {/* ── Selected pin's motion path + spatial tangent handles ──────────
+          Drag a handle to arc the pin's trajectory; Alt-drag breaks the point
+          so the two sides move independently. */}
+      {motionPathD && (
+        <path
+          d={motionPathD}
+          fill="none"
+          stroke="#ffc107"
+          strokeWidth={1.5}
+          strokeDasharray="4 3"
+          pointerEvents="none"
+          opacity={0.9}
+        />
+      )}
+      {pathHandles.map((h) => {
+        const anchor = restToScreen({ x: h.x, y: h.y });
+        return (
+          <g key={`tan-${selectedPinId}-${h.t}`}>
+            {/* Keyframe marker on the path */}
+            <rect
+              x={anchor.x - 3}
+              y={anchor.y - 3}
+              width={6}
+              height={6}
+              transform={`rotate(45 ${anchor.x} ${anchor.y})`}
+              fill="#ffc107"
+              stroke="#ffffff"
+              strokeWidth={1}
+              pointerEvents="none"
+            />
+            {(['out', 'in'] as const).map((which) => {
+              const hp = which === 'out' ? h.out : h.in;
+              if (!hp) return null;
+              const s = restToScreen(hp);
+              return (
+                <g
+                  key={which}
+                  style={{ cursor: 'grab' }}
+                  onPointerDown={(e) => onPointerDownTangent(e, selectedPinId!, h.t, which)}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <line
+                    x1={anchor.x}
+                    y1={anchor.y}
+                    x2={s.x}
+                    y2={s.y}
+                    stroke="#ffc107"
+                    strokeWidth={1}
+                    opacity={0.7}
+                    pointerEvents="none"
+                  />
+                  {/* Fat invisible hit area so the small dot is grabbable */}
+                  <circle cx={s.x} cy={s.y} r={10} fill="transparent" />
+                  <circle cx={s.x} cy={s.y} r={3.5} fill="#ffffff" stroke="#ffc107" strokeWidth={1.5} />
+                </g>
+              );
+            })}
+          </g>
+        );
+      })}
 
       {/* Render pin dots */}
       {pins.map((pin) => {
@@ -473,9 +763,79 @@ export function PuppetOverlay(): JSX.Element | null {
               stroke="#ffffff"
               strokeWidth={1.5}
             />
+
+            {/* ── Advanced-pin gizmo (3B) ────────────────────────────────
+                AE's shape: an outer circle you drag to rotate, plus one square
+                handle you drag to scale. Shift constrains rotation to 15° and
+                scale to 5%. Shown on the selected pin only. */}
+            {isSelected && (
+              <g>
+                <circle
+                  cx={screen.x} cy={screen.y} r={GIZMO_R}
+                  fill="none" stroke="#ffc107" strokeWidth={1} opacity={0.55}
+                  style={{ cursor: 'grab' }}
+                  onPointerDown={(e) => {
+                    // Dragging the ring rotates — reuse the rotate sub-mode.
+                    const synthetic = { ...e, altKey: true } as React.PointerEvent;
+                    onPointerDownPin(synthetic, pin.id);
+                  }}
+                />
+                <rect
+                  x={screen.x + GIZMO_R - 4} y={screen.y - 4} width={8} height={8}
+                  fill="#ffffff" stroke="#ffc107" strokeWidth={1.5}
+                  style={{ cursor: 'nwse-resize' }}
+                  onPointerDown={(e) => onPointerDownScale(e, pin.id)}
+                />
+                {(animPin.scale ?? 1) !== 1 && (
+                  <text
+                    x={screen.x + GIZMO_R + 8} y={screen.y + 4}
+                    fontSize={10} fill="#ffc107" style={{ userSelect: 'none' }}
+                    pointerEvents="none"
+                  >
+                    {(animPin.scale ?? 1).toFixed(2)}x
+                  </text>
+                )}
+              </g>
+            )}
           </g>
         );
       })}
+
+      {/* ── Puppet Sketch (3A) ───────────────────────────────────────────
+          Ctrl/Cmd-drag a pin to record its motion live; on release the stream
+          is reduced to a few eased keyframes. Tolerance controls how hard that
+          reduction bites — the difference between usable and a keyframe swamp. */}
+      {isRecording ? (
+        <g pointerEvents="none">
+          <circle cx={20} cy={20} r={6} fill="#ff3b30" />
+          <text x={34} y={24} fontSize={12} fill="#ff3b30" style={{ userSelect: 'none' }}>
+            Recording — release to reduce to keyframes
+          </text>
+        </g>
+      ) : (
+        pins.length > 0 && (
+          <g transform="translate(12, 12)" onPointerDown={(e) => e.stopPropagation()}>
+            <text x={0} y={12} fontSize={10} fill="rgba(255,255,255,0.7)" style={{ userSelect: 'none' }}>
+              Ctrl-drag a pin to sketch · tolerance {sketchTolerance}px
+            </text>
+            {([-1, 1] as const).map((dir, i) => (
+              <g
+                key={dir}
+                style={{ cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSketchTolerance((t) => Math.max(0.5, Math.min(40, +(t + dir * 0.5).toFixed(1))));
+                }}
+              >
+                <rect x={i * 24} y={20} width={20} height={18} rx={4} fill="rgba(0,0,0,0.45)" stroke="rgba(255,255,255,0.25)" />
+                <text x={i * 24 + 10} y={33} textAnchor="middle" fontSize={12} fill="#fff" style={{ userSelect: 'none' }}>
+                  {dir < 0 ? '−' : '+'}
+                </text>
+              </g>
+            ))}
+          </g>
+        )
+      )}
     </svg>
   );
 }

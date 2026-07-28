@@ -176,8 +176,12 @@ export function layoutText(
     }
     const style = resolveGlyphStyle(base, opts.runs, i);
     const transform = opts.transforms?.[i];
+    // Character Offset can substitute a wider glyph ('l' → 'W'); measuring the
+    // original would leave the line short by the difference and the rest of it
+    // creeping left as the offset animates.
+    const drawn = transform?.displayChar ?? char;
     const advance =
-      measure(char, style) + (style.letterSpacing ?? 0) + (transform?.tracking ?? 0);
+      measure(drawn, style) + (style.letterSpacing ?? 0) + (transform?.tracking ?? 0);
     lines[lines.length - 1]!.push({ char, index: i, advance, style, transform });
     // A run may raise the font size; the tallest glyph sets the leading, so a
     // mixed-size line does not overlap its neighbour.

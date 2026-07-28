@@ -26,6 +26,7 @@
  */
 
 import type { TrackId, KeyId, NodeId } from '@app-types/common';
+import type { EasingKind } from '@motion/animation';
 import type { ReactNode } from 'react';
 
 export interface TimelineKeyframeRef {
@@ -34,6 +35,20 @@ export interface TimelineKeyframeRef {
   time: number;
   roving?: boolean;
   isHold?: boolean;
+  /**
+   * Easing of the segment ARRIVING at this keyframe — i.e. the previous
+   * keyframe's `easing`. Undefined on the first keyframe of a track.
+   *
+   * Carried separately from `easeOut` because the two sides are independent:
+   * this is what lets the diamond be drawn as two halves and show "eased in,
+   * hold out" as the distinct thing it is.
+   */
+  easeIn?: EasingKind;
+  /** Easing of the segment LEAVING this keyframe (its own `easing`). */
+  easeOut?: EasingKind;
+  /** True for the first / last keyframe of its track (no segment on that side). */
+  isFirst?: boolean;
+  isLast?: boolean;
 }
 
 /**

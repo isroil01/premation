@@ -666,14 +666,120 @@ function transformPoints(points: BezierPoint[], m: Mat): BezierPoint[] {
 const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'tspan']);
 const SKIP_TAGS = new Set(['defs', 'clippath', 'mask', 'symbol', 'lineargradient', 'radialgradient', 'filter', 'metadata', 'title', 'desc', 'style', 'marker', 'pattern']);
 
+/** How deep `<use>` may chain before we call it a reference cycle. */
+const MAX_USE_DEPTH = 12;
+
+/**
+ * The element a `<use>` points at, or null.
+ *
+ * `href` is the SVG 2 spelling and `xlink:href` the SVG 1.1 one — exporters
+ * still emit both, and `getAttribute('xlink:href')` works without namespace
+ * awareness because the attribute's qualified name is literally that string.
+ */
+function useTarget(el: Element): Element | null {
+  const raw = el.getAttribute('href')
+    ?? el.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+    ?? el.getAttribute('xlink:href');
+  if (!raw) return null;
+  const id = raw.trim().startsWith('#') ? raw.trim().slice(1) : null;
+  if (!id) return null; // external file reference — not resolvable from the markup
+  const doc = el.ownerDocument;
+  // Not `getElementById`: ids inside <defs> resolve fine, but a document parsed
+  // as image/svg+xml has no DTD, so nothing is registered as an ID type in some
+  // engines. A scoped attribute query is exact and always works.
+  const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(id)
+    : id.replace(/["\\]/g, '\\$&');
+  try {
+    return doc.querySelector(`[id="${escaped}"]`);
+  } catch {
+    return null; // unquotable id — treat as unresolvable rather than throwing mid-parse
+  }
+}
+
+/**
+ * The viewport transform a nested `<svg>` (or a `<symbol>` reached through
+ * `<use>`) establishes: translate to its x/y, then map its viewBox into its
+ * width/height box the same way the root does.
+ *
+ * Without this, a nested `<svg>` was traversed as if it were a plain `<g>` — its
+ * children landed in the OUTER coordinate system at their raw viewBox numbers,
+ * which is exactly the "parts scattered to the wrong places" failure on files
+ * that compose several icons into one artboard.
+ */
+function nestedViewportMatrix(el: Element, fallbackW?: number, fallbackH?: number): Mat {
+  const x = Number.parseFloat(el.getAttribute('x') ?? '0') || 0;
+  const y = Number.parseFloat(el.getAttribute('y') ?? '0') || 0;
+  const w = absoluteLength(el.getAttribute('width')) ?? fallbackW;
+  const h = absoluteLength(el.getAttribute('height')) ?? fallbackH;
+  const translate: Mat = [1, 0, 0, 1, x, y];
+  const vb = parseViewBox(el.getAttribute('viewBox'));
+  if (!vb || w === undefined || h === undefined || w <= 0 || h <= 0) return translate;
+  const [minX, minY, vbW, vbH] = vb;
+  if (vbW <= 0 || vbH <= 0) return translate;
+  const s = Math.min(w / vbW, h / vbH); // preserveAspectRatio xMidYMid meet
+  const tx = -minX * s + (w - vbW * s) / 2;
+  const ty = -minY * s + (h - vbH * s) / 2;
+  return matMul(translate, [s, 0, 0, s, tx, ty]);
+}
+
 /** Recursively collect shapes with accumulated transform + inherited style. */
-function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[], ancestors: Element[] = []): void {
+function traverse(
+  el: Element,
+  matrix: Mat,
+  style: StyleCtx,
+  out: RawShape[],
+  ancestors: Element[] = [],
+  useDepth = 0,
+): void {
   const tag = el.tagName.toLowerCase().replace(/^svg:/, '');
   if (SKIP_TAGS.has(tag)) return;
 
   const localMatrix = matMul(matrix, parseTransform(el.getAttribute('transform')));
   const localStyle = resolveStyle(el, style);
   const chain = [el, ...ancestors];
+
+  // <use>: instantiate the referenced element here. Icon sets, sprite sheets and
+  // most "one artboard, many copies" exports are built entirely out of these, so
+  // dropping them silently meant whole parts of the file simply never appeared.
+  if (tag === 'use') {
+    if (useDepth >= MAX_USE_DEPTH) return;
+    const target = useTarget(el);
+    if (!target) return;
+    // A <use> may not reference itself or an ancestor — that is an infinite
+    // expansion, and a hostile or merely broken file should not hang the import.
+    if (chain.includes(target)) return;
+    const ux = Number.parseFloat(el.getAttribute('x') ?? '0') || 0;
+    const uy = Number.parseFloat(el.getAttribute('y') ?? '0') || 0;
+    const placed = ux !== 0 || uy !== 0 ? matMul(localMatrix, [1, 0, 0, 1, ux, uy]) : localMatrix;
+    const targetTag = target.tagName.toLowerCase().replace(/^svg:/, '');
+    if (targetTag === 'symbol' || targetTag === 'svg') {
+      // <symbol>/<svg> targets take their viewport from the <use>'s own
+      // width/height when they don't declare one (SVG 1.1 §5.6).
+      const vp = nestedViewportMatrix(
+        target,
+        absoluteLength(el.getAttribute('width')),
+        absoluteLength(el.getAttribute('height')),
+      );
+      const inner = matMul(placed, vp);
+      for (let i = 0; i < target.children.length; i++) {
+        traverse(target.children[i]!, inner, localStyle, out, chain, useDepth + 1);
+      }
+    } else {
+      traverse(target, placed, localStyle, out, chain, useDepth + 1);
+    }
+    return;
+  }
+
+  // A nested <svg> establishes a new viewport; the ROOT one is handled by
+  // `rootMatrixFromSvg` before traversal, so only descendants apply it here.
+  if (tag === 'svg' && ancestors.length > 0) {
+    const inner = matMul(localMatrix, nestedViewportMatrix(el));
+    for (let i = 0; i < el.children.length; i++) {
+      traverse(el.children[i]!, inner, localStyle, out, chain, useDepth);
+    }
+    return;
+  }
 
   if (SHAPE_TAGS.has(tag)) {
     const geom = elementGeometry(el);
@@ -694,25 +800,46 @@ function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[], an
 
   // Containers (svg, g, a, switch, ...) — recurse into children.
   for (let i = 0; i < el.children.length; i++) {
-    traverse(el.children[i]!, localMatrix, localStyle, out, chain);
+    traverse(el.children[i]!, localMatrix, localStyle, out, chain, useDepth);
   }
+}
+
+/**
+ * An SVG length attribute in user units, or undefined when it isn't one.
+ *
+ * `width="100%"` used to parse as `100`, which invented a 100×100 pixel box for
+ * a file that declares none — the whole artwork then imported at an arbitrary
+ * fraction of its viewBox scale. A percentage (or any relative unit) resolves
+ * against a containing block the importer does not have, so the honest answer is
+ * "no pixel box", which falls back to the viewBox's own units.
+ */
+function absoluteLength(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const s = raw.trim();
+  const m = /^(-?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(px|pt|pc|mm|cm|in|q)?$/i.exec(s);
+  if (!m) return undefined; // %, em, rem, vw, … — not resolvable here
+  const n = Number.parseFloat(m[1]!);
+  if (!Number.isFinite(n)) return undefined;
+  // CSS absolute units, all defined against 96dpi.
+  const perUnit: Record<string, number> = { px: 1, pt: 96 / 72, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96, q: 96 / 101.6 };
+  return n * (perUnit[(m[2] ?? 'px').toLowerCase()] ?? 1);
+}
+
+/** `viewBox` as [minX, minY, width, height], or null. */
+function parseViewBox(raw: string | null): [number, number, number, number] | null {
+  if (!raw) return null;
+  const parts = (raw.match(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) || []).map(Number);
+  return parts.length === 4 ? (parts as [number, number, number, number]) : null;
 }
 
 /** Build the root matrix that maps viewBox units into the SVG's pixel box. */
 function rootMatrixFromSvg(svg: Element): Mat {
   const vbAttr = svg.getAttribute('viewBox');
-  const wAttr = svg.getAttribute('width');
-  const hAttr = svg.getAttribute('height');
-  const parseLen = (s: string | null): number => {
-    if (!s) return NaN;
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : NaN;
-  };
-  const width = parseLen(wAttr);
-  const height = parseLen(hAttr);
+  const width = absoluteLength(svg.getAttribute('width')) ?? NaN;
+  const height = absoluteLength(svg.getAttribute('height')) ?? NaN;
 
   if (vbAttr) {
-    const parts = (vbAttr.match(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) || []).map(Number);
+    const parts = parseViewBox(vbAttr) ?? [];
     if (parts.length === 4) {
       const [minX, minY, vbW, vbH] = parts as [number, number, number, number];
       if (vbW > 0 && vbH > 0 && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
@@ -871,7 +998,11 @@ export const MAX_VECTOR_SHAPES = 300;
  * insert path documented this routing all along — it just never had a predicate
  * that implemented it.
  */
-const UNSUPPORTED_TAGS = /<(image|use|foreignobject|filter|mask|clippath|pattern|marker|symbol)[\s>]/;
+// `use`/`symbol` are NOT listed: `traverse` instantiates them for real now
+// (geometry, nested viewport and all), so a sprite-sheet icon is reproduced
+// rather than approximated, and calling it "unsupported" would push perfectly
+// convertible files down the raster path.
+const UNSUPPORTED_TAGS = /<(image|foreignobject|filter|mask|clippath|pattern|marker)[\s>]/;
 const UNSUPPORTED_ATTRS = /\b(filter|mask|clip-path)\s*=\s*["']?[^"'\s>]*url\(/;
 
 /**

@@ -9,8 +9,11 @@ import {
   effectParam,
   EFFECT_DEFS,
   type Effect,
+  moveEffectTo,
 } from './effects';
 import { isLutEffect } from './colorLut';
+import { isCanvas2dOnlyEffect } from './canvas2dEffects';
+import { isTemporalEffect } from './effects';
 
 /**
  * Deliberately the LEGACY shape (a single `amount`, no `params`) — every
@@ -205,21 +208,22 @@ describe('EFFECT_DEFS', () => {
   const PROCEDURAL_EFFECTS = new Set<string>(['gradient-ramp', 'fractal-noise']);
   // Canvas2D-only generators / pixel passes with no GPU shader form
   // (canvas2dEffects.ts): Fill, 4-Color Gradient, Stroke, Beam, Sharpen, Noise.
-  const CANVAS2D_ONLY_EFFECTS = new Set<string>([
-    'fill', 'four-color-gradient', 'stroke', 'beam', 'sharpen', 'noise', 'keylight',
-    'wave-warp', 'turbulent-displace',
-  ]);
-  // Temporal effects resolved in buildSnapshot (not a per-layer pass) — they
-  // emit ordinary render layers, so they render on both backends. css is empty.
-  const TEMPORAL_EFFECTS = new Set<string>(['echo']);
+  // Read the REAL predicate rather than a copy of the list. This used to be a
+  // duplicated Set here, which meant adding a Canvas2D-only effect failed this
+  // invariant for the wrong reason — the effect was registered correctly and
+  // the test's private list was simply stale.
+  // Temporal effects (Echo, Posterize Time) are resolved in buildSnapshot's
+  // time plumbing, not as a per-layer pass. Read the REAL predicate — this was
+  // a second private list beside the Canvas2D one, and it went stale for the
+  // same reason.
 
   const isNonCss = (type: string, gpuOnly?: boolean): boolean =>
     gpuOnly === true ||
     isLutEffect(type as never) ||
     MATRIX_PIXEL_EFFECTS.has(type) ||
     PROCEDURAL_EFFECTS.has(type) ||
-    CANVAS2D_ONLY_EFFECTS.has(type) ||
-    TEMPORAL_EFFECTS.has(type);
+    isCanvas2dOnlyEffect(type) ||
+    isTemporalEffect(type);
 
   test('every CSS-form effect compiles to a non-empty filter at its defaults', () => {
     // Six categories now: CSS-form (non-empty css), GPU-only shader effects,
@@ -237,6 +241,54 @@ describe('EFFECT_DEFS', () => {
     for (const d of EFFECT_DEFS) {
       const noCss = d.css(defaultParams(d)) === '';
       expect(noCss).toBe(isNonCss(d.type, d.gpuOnly));
+    }
+  });
+});
+
+describe('moveEffectTo — drag reorder', () => {
+  const stack = () =>
+    ['a', 'b', 'c', 'd'].map((id) => ({ id, type: 'blur' as const, params: {} }));
+  const ids = (l: ReadonlyArray<{ id: string }>) => l.map((e) => e.id);
+
+  it('moves an effect down to a later gap', () => {
+    // 'a' dropped into the gap before 'd' (index 3) → a sits after c.
+    expect(ids(moveEffectTo(stack(), 'a', 3))).toEqual(['b', 'c', 'a', 'd']);
+  });
+
+  it('moves an effect up to an earlier gap', () => {
+    expect(ids(moveEffectTo(stack(), 'd', 1))).toEqual(['a', 'd', 'b', 'c']);
+  });
+
+  it('drops at the very end', () => {
+    expect(ids(moveEffectTo(stack(), 'a', 4))).toEqual(['b', 'c', 'd', 'a']);
+  });
+
+  it('drops at the very start', () => {
+    expect(ids(moveEffectTo(stack(), 'd', 0))).toEqual(['d', 'a', 'b', 'c']);
+  });
+
+  it('treats both no-op gaps around an item as no-ops', () => {
+    // Dropping 'b' immediately before or immediately after itself must not
+    // shuffle anything — the off-by-one that makes a drag feel jittery.
+    expect(ids(moveEffectTo(stack(), 'b', 1))).toEqual(['a', 'b', 'c', 'd']);
+    expect(ids(moveEffectTo(stack(), 'b', 2))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('clamps out-of-range targets instead of dropping the effect', () => {
+    expect(ids(moveEffectTo(stack(), 'a', 99))).toEqual(['b', 'c', 'd', 'a']);
+    expect(ids(moveEffectTo(stack(), 'a', -5))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('leaves an unknown id alone', () => {
+    expect(ids(moveEffectTo(stack(), 'zzz', 0))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('never loses or duplicates an effect', () => {
+    for (const id of ['a', 'b', 'c', 'd']) {
+      for (let to = 0; to <= 4; to++) {
+        const out = ids(moveEffectTo(stack(), id, to));
+        expect([...out].sort()).toEqual(['a', 'b', 'c', 'd']);
+      }
     }
   });
 });

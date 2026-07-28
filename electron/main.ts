@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
+import { registerCredentialIpc } from './credentialStore';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -371,13 +372,28 @@ function buildApplicationMenu(win: BrowserWindow): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+/**
+ * Window/taskbar icon (the Premation mark). Packaged Windows and macOS builds
+ * take their icon from electron-builder's `icon:` instead, so this is a
+ * best-effort lookup for dev and Linux — undefined when the file isn't there.
+ */
+function resolveAppIcon(): string | undefined {
+  const candidates = [
+    path.join(__dirname, '..', 'build', 'icon.png'),
+    path.join(process.resourcesPath ?? '', 'build', 'icon.png'),
+  ];
+  return candidates.find((p) => p && existsSync(p));
+}
+
 function createMainWindow(): BrowserWindow {
+  const appIcon = resolveAppIcon();
   const win = new BrowserWindow({
     width: 1600,
     height: 1000,
     minWidth: 1024,
     minHeight: 700,
     title: 'Motion Editor',
+    ...(appIcon ? { icon: appIcon } : {}),
     backgroundColor: '#0a0a0b',
     show: false,
     autoHideMenuBar: true,
@@ -490,6 +506,10 @@ app.whenReady().then(() => {
   registerIndexIpc(ipcMain, app);
   registerRenderIpc();
   registerPopoutIpc();
+  // The session's refresh token, encrypted with the OS keystore and held in
+  // this process — never in renderer localStorage, where DevTools can read and
+  // edit it. See credentialStore.ts.
+  registerCredentialIpc();
   // NOTE: no AI IPC any more. AI runs through the backend gateway
   // (POST /ai/stream) with the user's keys stored server-side — this process
   // holds no AI privileges at all.

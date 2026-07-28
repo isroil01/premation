@@ -113,7 +113,9 @@ export function deletePuppetPin(nodeId: ID, pinId: string): void {
 /** Update rig-level mesh settings (density / expansion / solver). One undo step. */
 export function updatePuppetSettings(
   nodeId: ID,
-  patch: Partial<Pick<PuppetRig, 'meshDensity' | 'meshExpansion' | 'solver'>>,
+  patch: Partial<
+    Pick<PuppetRig, 'meshDensity' | 'meshExpansion' | 'solver' | 'maxRotationDeg' | 'meshMode'>
+  >,
 ): void {
   const rig = currentRig(nodeId);
   const after: PuppetRig = { pins: [], ...(rig ?? {}), ...patch };
@@ -124,7 +126,9 @@ export function updatePuppetSettings(
 export function updatePuppetPin(
   nodeId: ID,
   pinId: string,
-  patch: Partial<Pick<PuppetPin, 'rotation' | 'stiffness' | 'name'>>,
+  patch: Partial<
+    Pick<PuppetPin, 'rotation' | 'stiffness' | 'name' | 'scale' | 'overlap' | 'overlapExtent'>
+  >,
 ): void {
   const rig = currentRig(nodeId);
   if (!rig) return;

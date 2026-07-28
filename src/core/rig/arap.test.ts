@@ -15,7 +15,12 @@ import {
   type DeformPin,
   type PuppetRig,
 } from './puppet';
-import { deformArap } from './arap';
+import {
+  deformArap,
+  maxExactMeshDensity,
+  ARAP_DENSE_MAX,
+  ARAP_STIFF_DENSE_MAX,
+} from './arap';
 
 /**
  * Mean |deformed edge length − rest edge length| over the unique mesh edges whose
@@ -330,5 +335,46 @@ describe('ARAP robustness / fallback', () => {
     const lbs = deformLbs([{ id: 'p', x: 5, y: 5 }], mesh);
     const arap = deformArap([{ id: 'p', x: 5, y: 5 }], mesh, lbs);
     expect(arap).toBe(lbs); // same reference (verbatim fallback)
+  });
+});
+
+/**
+ * §12.11 — the exact/approximate boundary is now disclosed in the inspector, so
+ * the threshold it reports has to be right.
+ */
+describe('ARAP solver-quality threshold disclosure', () => {
+  it('reports the density where the exact dense solve stops fitting', () => {
+    expect(maxExactMeshDensity(false)).toBe(33); // (33+1)^2 = 1156 <= 1200
+    expect(maxExactMeshDensity(true)).toBe(21);  // (21+1)^2 = 484  <= 512
+  });
+
+  it('the reported density really does fit the cap, and the next one does not', () => {
+    for (const stiff of [false, true]) {
+      const cap = stiff ? ARAP_STIFF_DENSE_MAX : ARAP_DENSE_MAX;
+      const d = maxExactMeshDensity(stiff);
+      expect((d + 1) ** 2).toBeLessThanOrEqual(cap);
+      expect((d + 2) ** 2).toBeGreaterThan(cap);
+    }
+  });
+
+  it('stiffness lowers the threshold (the animated-refactor guard)', () => {
+    expect(maxExactMeshDensity(true)).toBeLessThan(maxExactMeshDensity(false));
+  });
+
+  it('a mesh at the reported threshold still solves finitely', () => {
+    // Guards against the bound drifting away from what the solver accepts.
+    const d = maxExactMeshDensity(false);
+    const rig: PuppetRig = {
+      meshExpansion: 0,
+      meshDensity: d,
+      pins: [
+        { id: 'a', name: 'a', x: -30, y: 0 },
+        { id: 'b', name: 'b', x: 30, y: 0 },
+      ],
+    };
+    const mesh = buildRestMesh(120, 120, 0, rig);
+    const out = deform([{ id: 'a', x: -30, y: 0 }, { id: 'b', x: 40, y: 15 }], mesh, 'arap');
+    expect(out.length).toBe(mesh.vertices.length);
+    for (let i = 0; i < out.length; i++) expect(Number.isFinite(out[i])).toBe(true);
   });
 });

@@ -32,7 +32,21 @@ function applyGradientRamp(oc: CanvasRenderingContext2D, w: number, h: number, e
   const blend = effectNumber(e, 'blend');
   const colorA = typeof params.colorA === 'string' ? params.colorA : '#ff0000';
   const colorB = typeof params.colorB === 'string' ? params.colorB : '#0000ff';
-  const grad = oc.createLinearGradient(0, 0, 0, h);
+  // Angle in degrees, 0 = left→right, 90 = top→bottom (the previous fixed
+  // behaviour, so an existing ramp with no angle renders identically).
+  const angle = typeof params.angle === 'number' ? params.angle : 90;
+  const rad = (angle * Math.PI) / 180;
+  // Project the box onto the axis so the ramp spans it fully at any angle,
+  // rather than being clipped at the corners.
+  const cx = w / 2;
+  const cy = h / 2;
+  const half = (Math.abs(w * Math.cos(rad)) + Math.abs(h * Math.sin(rad))) / 2;
+  const grad = oc.createLinearGradient(
+    cx - Math.cos(rad) * half,
+    cy - Math.sin(rad) * half,
+    cx + Math.cos(rad) * half,
+    cy + Math.sin(rad) * half,
+  );
   grad.addColorStop(0, colorA);
   grad.addColorStop(1, colorB);
   oc.save();

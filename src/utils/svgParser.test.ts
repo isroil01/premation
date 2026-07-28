@@ -243,6 +243,78 @@ describe('robustness', () => {
   });
 });
 
+/**
+ * `<use>`, nested `<svg>` and unresolvable length units.
+ *
+ * All three used to put geometry in the WRONG PLACE (or nowhere at all), which
+ * is the "the parts scatter across the canvas" import report: a `<use>` produced
+ * no shape, and a nested `<svg>`'s children landed at their raw inner-viewBox
+ * numbers in the outer coordinate system.
+ */
+describe('references and nested viewports', () => {
+  it('instantiates <use> at its x/y offset', () => {
+    const shapes = parseSvgToShapes(
+      svg('<defs><rect id="sq" x="0" y="0" width="10" height="10"/></defs><use href="#sq" x="20" y="20"/><use href="#sq" x="60" y="60"/>'),
+    );
+    expect(shapes).toHaveLength(2);
+    expect(shapes.map((s) => [s.centerX, s.centerY])).toEqual([[25, 25], [65, 65]]);
+  });
+
+  it('resolves the SVG 1.1 xlink:href spelling too', () => {
+    const shapes = parseSvgToShapes(
+      svg(
+        '<defs><circle id="c" cx="0" cy="0" r="5"/></defs><use xlink:href="#c" x="50" y="50"/>',
+        'xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100"',
+      ),
+    );
+    expect(shapes).toHaveLength(1);
+    expect([shapes[0]!.centerX, shapes[0]!.centerY]).toEqual([50, 50]);
+  });
+
+  it('a <use> of a <symbol> applies the symbol viewport', () => {
+    // 10-unit symbol drawn into a 50×50 box at (50, 50) → 5× scale.
+    const shapes = parseSvgToShapes(
+      svg('<defs><symbol id="s" viewBox="0 0 10 10"><rect width="10" height="10"/></symbol></defs><use href="#s" x="50" y="50" width="50" height="50"/>'),
+    );
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]!.width).toBeCloseTo(50, 3);
+    expect(shapes[0]!.centerX).toBeCloseTo(75, 3);
+  });
+
+  it('a <use> cycle terminates instead of hanging the import', () => {
+    // Self-reference: expanding it forever is the failure being prevented.
+    expect(() =>
+      parseSvgToShapes(svg('<g id="loop"><use href="#loop"/><rect id="r" width="10" height="10"/></g>')),
+    ).not.toThrow();
+  });
+
+  it('a nested <svg> establishes its own viewport', () => {
+    const shapes = parseSvgToShapes(
+      svg('<svg x="50" y="50" width="50" height="50" viewBox="0 0 10 10"><rect id="r" width="10" height="10"/></svg>'),
+    );
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0]!.width).toBeCloseTo(50, 3);
+    expect([shapes[0]!.centerX, shapes[0]!.centerY]).toEqual([75, 75]);
+  });
+
+  it('ignores a percentage width/height instead of reading it as pixels', () => {
+    // `width="100%"` parsed as 100 invented a 100×100 pixel box for a 200-unit
+    // viewBox, importing the whole artwork at half scale.
+    const shapes = parseSvgToShapes(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%"><rect id="r" width="200" height="200"/></svg>',
+    );
+    expect(shapes[0]!.width).toBeCloseTo(200, 3);
+  });
+
+  it('resolves absolute CSS units on the root box', () => {
+    // 1in = 96px against a 96-unit viewBox → 1:1.
+    const shapes = parseSvgToShapes(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="1in" height="1in"><rect id="r" width="96" height="96"/></svg>',
+    );
+    expect(shapes[0]!.width).toBeCloseTo(96, 3);
+  });
+});
+
 describe('determinism', () => {
   it('same SVG → byte-identical output across runs', () => {
     const src = svg(

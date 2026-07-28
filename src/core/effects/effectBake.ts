@@ -20,7 +20,7 @@ import type { Effect } from './effects';
 import { effectCss } from './effects';
 import { isLutEffect, buildChannelLut, applyChannelLut } from './colorLut';
 import { isCanvas2dProcedural, applyProceduralEffect } from './proceduralCanvas2d';
-import { isCanvas2dOnlyEffect, applyCanvas2dEffect } from './canvas2dEffects';
+import { isCanvas2dOnlyEffect, applyCanvas2dEffect, withStyleSilhouette } from './canvas2dEffects';
 import { isColorEffect, effectColorMatrix, applyColorMatrixImage } from './effectColorMatrix';
 
 /** True when an effect has NO GPU shader form and must be CPU-baked into the
@@ -39,6 +39,20 @@ export function effectsNeedCpuBake(effects: ReadonlyArray<Effect> | undefined): 
 }
 
 /**
+ * Fill opacity is implemented in the CPU bake chain (see `applyEffectChain`),
+ * so a layer using it renders through that path regardless of which effects it
+ * carries. One implementation, identical on both backends — the alternative
+ * was duplicating the subtract in the GPU composition pass and keeping the two
+ * in step forever.
+ */
+export function layerNeedsCpuBake(
+  effects: ReadonlyArray<Effect> | undefined,
+  fillOpacity: number | undefined,
+): boolean {
+  return effectsNeedCpuBake(effects) || (fillOpacity !== undefined && fillOpacity < 1);
+}
+
+/**
  * Apply the effect chain to `oc` (a w×h content canvas, transform reset to
  * identity by the caller). `scratch` supplies a same-size working canvas for
  * the CSS-filter flush step (the caller owns pooling). Mutates `oc` in place.
@@ -47,11 +61,70 @@ export function applyEffectChain(
   oc: CanvasRenderingContext2D,
   w: number,
   h: number,
-  effects: ReadonlyArray<Effect>,
+  // Undefined is a legitimate input, not a caller error: `layerNeedsCpuBake`
+  // sends a layer down this path for fill opacity ALONE, and such a layer has no
+  // effect stack at all. Callers used to assert it non-null and the chain died
+  // on `for (const e of undefined)`, which surfaced as the layer's texture feed
+  // failing and the layer rendering unfaded.
+  effects: ReadonlyArray<Effect> | undefined,
   scratch: (w: number, h: number) => HTMLCanvasElement,
+  fillOpacity = 1,
 ): void {
   const off = oc.canvas;
   let pending: string[] = [];
+
+  // FILL OPACITY — "fade the fill, keep the styles" (Photoshop's model).
+  //
+  // Opacity fades a layer AND its styles; fill opacity fades only the layer's
+  // own pixels, so fill 0 on text with a drop shadow leaves the shadow floating
+  // on its own, and an inner shadow stays at full strength on nothing.
+  //
+  // The previous implementation ran the whole chain at full alpha and then
+  // subtracted the contents back out in proportion. That is right for styles
+  // that sit OUTSIDE the silhouette — drop shadow, outer glow, stroke — and
+  // wrong for every interior one, because inner shadow, inner glow, satin and
+  // bevel live inside the contents' alpha and so came out of the subtraction
+  // faded along with them. Photoshop holds them at full strength.
+  //
+  // What separates the two cases is that a style generator needs the layer's
+  // SILHOUETTE, which is not the same thing as the pixels it composites onto.
+  // So: snapshot the silhouette, fade the contents immediately, then run the
+  // chain with that snapshot installed as the generators' alpha source. Every
+  // style — interior and exterior alike — is shaped by the full-alpha silhouette
+  // and lands at full strength, over faded contents.
+  const fading = fillOpacity < 1;
+  let silhouette: HTMLCanvasElement | null = null;
+  if (fading) {
+    silhouette = scratch(w, h);
+    const cc = silhouette.getContext('2d');
+    if (cc) {
+      cc.setTransform(1, 0, 0, 1, 0, 0);
+      cc.globalCompositeOperation = 'source-over';
+      cc.globalAlpha = 1;
+      cc.filter = 'none';
+      cc.clearRect(0, 0, w, h);
+      cc.drawImage(off, 0, 0);
+
+      // Fade the layer's own pixels NOW, before any style is generated.
+      //
+      // `destination-in` against a UNIFORM alpha, not `destination-out` against
+      // the silhouette. The scaling wanted is Ao = Ad × fillOpacity, and
+      // destination-in with a flat source of that alpha gives exactly that.
+      // Subtracting the silhouette instead gives Ao = Ad × (1 − As), which is
+      // only equivalent where the layer is fully opaque: on an antialiased edge
+      // with Ad = As = 0.5, fill 0 left 25% of the fill behind rather than
+      // erasing it, so a "fully transparent" fill kept a visible rim.
+      oc.save();
+      oc.setTransform(1, 0, 0, 1, 0, 0);
+      oc.globalCompositeOperation = 'destination-in';
+      oc.globalAlpha = Math.max(0, Math.min(1, fillOpacity));
+      oc.fillStyle = '#000'; // colour is irrelevant under destination-in; only alpha applies
+      oc.fillRect(0, 0, w, h);
+      oc.restore();
+    } else {
+      silhouette = null;
+    }
+  }
 
   const flushCss = (): void => {
     if (pending.length === 0) return;
@@ -73,7 +146,8 @@ export function applyEffectChain(
     pending = [];
   };
 
-  for (const e of effects) {
+  const runChain = (): void => {
+  for (const e of effects ?? []) {
     if (e.enabled === false) continue;
     if (isLutEffect(e.type)) {
       flushCss();
@@ -106,4 +180,12 @@ export function applyEffectChain(
     }
   }
   flushCss();
+  };
+
+  // The silhouette is installed for the whole chain, not per effect: a stack can
+  // interleave generators with pixel passes, and every generator in it must shape
+  // itself from the same full-alpha silhouette. Pixel passes ignore it by
+  // construction — see `withStyleSilhouette`.
+  if (silhouette) withStyleSilhouette(silhouette, runChain);
+  else runChain();
 }

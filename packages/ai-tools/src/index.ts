@@ -29,6 +29,7 @@ export type {
   AiRequest,
 } from './types';
 
+export { mutates } from './types';
 export { ToolRegistry } from './registry';
 export {
   ADAPTERS,

@@ -7,6 +7,7 @@
 import { ToolRegistry } from './registry';
 import { toOpenAiTools, toAnthropicTools, toGeminiDeclarations, toMcpToolList, stripUnsupported } from './emit';
 import { ALL_TOOL_DEFS, setKeyframesDef } from './tools';
+import { mutates } from './types';
 import type { AiTool, ToolContext, ToolResult } from './types';
 
 const ctx = {} as ToolContext;
@@ -156,10 +157,20 @@ describe('emitters', () => {
 
 describe('the tool surface itself', () => {
   // Models degrade past ~30 tools, so this count is a budget, not trivia.
-  it('exposes 45 tools: 7 read, 38 write', () => {
+  it('exposes 45 tools: 7 read, 25 write, 13 compose', () => {
     expect(ALL_TOOL_DEFS).toHaveLength(45);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(7);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(38);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(25);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'compose')).toHaveLength(13);
+  });
+
+  it('counts every mutating tool as mutating, whatever its kind', () => {
+    // The reason `mutates()` exists. Anything that reaches for the literal
+    // 'write' silently drops the compose tools — and it was a literal 'write'
+    // test that decided which calls appear in the user's pending-changes list.
+    const mutating = ALL_TOOL_DEFS.filter((t) => mutates(t.kind));
+    expect(mutating).toHaveLength(38);
+    expect(mutating.map((t) => t.name)).toContain('add_title');
   });
 
   it('has unique names', () => {

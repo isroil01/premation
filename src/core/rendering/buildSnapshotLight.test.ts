@@ -28,6 +28,15 @@ describe('lights', () => {
       angle: 0,
       cone: 45,
       shadows: false,
+      // AE parity additions. All default to a no-op: `falloff: 'none'` keeps
+      // the legacy radius ramp, and a null POI keeps the legacy 2D aim, so a
+      // light that sets none of them renders exactly as it always did.
+      coneFeather: 50,
+      falloff: 'none',
+      falloffDistance: 500,
+      shadowDarkness: 100,
+      shadowDiffusion: 0,
+      poi: null,
     });
   });
 

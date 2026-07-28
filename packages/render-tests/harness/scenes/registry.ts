@@ -12,12 +12,16 @@ import { strokeScenes } from './strokes';
 import { blendModeScenes } from './blendModes';
 import { effectScenes } from './effects';
 import { compositedScenes } from './composited';
+import { interiorStyleScenes } from './interiorStyles';
 import { textScenes } from './text';
 import { threeDScenes } from './threeD';
 import { motionScenes } from './motion';
 import { precompScenes } from './precomp';
 import { generativeScenes } from './generative';
 import { hiresScenes } from './hires';
+import { svgScenes } from './svg';
+import { glassScenes } from './glass';
+import { rigScenes } from './rig';
 
 export const SCENES: Scene[] = [
   // Anchors + fill probes.
@@ -30,10 +34,14 @@ export const SCENES: Scene[] = [
   ...blendModeScenes,
   ...effectScenes,
   ...compositedScenes,
+  ...interiorStyleScenes,
   ...textScenes,
   ...threeDScenes,
   ...motionScenes,
   ...precompScenes,
+  ...rigScenes,
   ...generativeScenes,
   ...hiresScenes,
+  ...svgScenes,
+  ...glassScenes,
 ];

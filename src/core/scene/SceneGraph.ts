@@ -35,6 +35,9 @@ const KIND_TO_ENGINE_TYPE: Record<string, string> = {
   text: 'text',
   image: 'image',
   video: 'video',
+  // An SVG layer is a stored vector document rasterized to a texture — from the
+  // engine's point of view that is an image.
+  svg: 'image',
   camera: 'group',
   light: 'group',
   adjustment: 'rectangle',
@@ -353,6 +356,13 @@ export class SceneGraph {
     for (const e of this.scene.root.children) cb(this.viewOf(e));
   }
 
+  // `computeWorldTransforms` used to live here. It was dead — nothing imported
+  // it (the live one of that name is the rig's, in core/rig/skeleton.ts) — and
+  // it was a trap: it summed `node.transform`, whose `scale` getter returns a
+  // hardcoded {1,1}, so any caller would have silently ignored every layer's
+  // scale. The real world-matrix path is `worldTransform.ts:worldMatrixOf`,
+  // which reads scaleX/scaleY off the components.
+
   /** Write a prop into the app component identified by `componentId`. */
   writeProp(nodeId: ID, componentId: ID, propName: string, value: unknown): boolean {
     const e = this.engine(nodeId);
@@ -365,6 +375,31 @@ export class SceneGraph {
       }
     }
     return false;
+  }
+
+  /**
+   * Attach a whole app component to an existing node.
+   *
+   * `getNode(id).components` is a live VIEW rebuilt from the engine on every
+   * read, so `node.components.push(...)` mutates a throwaway array and is
+   * silently lost. Anything that needs to add a component after a node is in
+   * the graph has to come through here.
+   *
+   * Replaces an existing component of the same type, matching `wrap`'s
+   * one-component-per-type contract.
+   */
+  addComponent(nodeId: ID, component: Component): boolean {
+    const e = this.engine(nodeId);
+    if (!e) return false;
+    if (e.getComponent(component.type)) e.removeComponent(component.type);
+    e.addComponent(
+      new DataComponent(component.type, {
+        ...((component.props ?? {}) as Record<string, unknown>),
+        [CID]: component.id,
+      }),
+    );
+    e.touch(`component:${component.type}`);
+    return true;
   }
 
   /** Store the effect stack (fx) on the node's `fx` component (created on demand). */
@@ -521,33 +556,6 @@ export class SceneGraph {
 
   clear(): void {
     this.scene = new Scene();
-  }
-
-  // Compute world transforms (naive additive; retained for API parity).
-  computeWorldTransforms(rootId?: ID): Map<ID, Transform> {
-    const out = new Map<ID, Transform>();
-    const compute = (node: SceneNode, parentTransform?: Transform) => {
-      const world: Transform = {
-        position: {
-          x: (parentTransform?.position.x ?? 0) + node.transform.position.x,
-          y: (parentTransform?.position.y ?? 0) + node.transform.position.y,
-        },
-        rotation: (parentTransform?.rotation ?? 0) + node.transform.rotation,
-        scale: {
-          x: (parentTransform?.scale.x ?? 1) * node.transform.scale.x,
-          y: (parentTransform?.scale.y ?? 1) * node.transform.scale.y,
-        },
-      };
-      out.set(node.id, world);
-      for (const child of this.getChildren(node.id)) compute(child, world);
-    };
-    if (rootId) {
-      const r = this.getNode(rootId);
-      if (r) compute(r, undefined);
-    } else {
-      for (const r of this.getRoots()) compute(r, undefined);
-    }
-    return out;
   }
 }
 

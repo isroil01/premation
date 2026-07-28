@@ -29,6 +29,9 @@ import {
 } from 'react';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
+import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
+import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
+import { snapKeyframeGroup, type SnapTarget } from './keyframeSnap';
 import { ValueField } from '@components/ValueField';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
@@ -771,6 +774,9 @@ function Timeline({
     setKfPreview(new Map());
   }, [selectedKfIds, kfTimeById]);
 
+  /** What the in-flight drag is snapped to — drives the indicator line. */
+  const [kfSnap, setKfSnap] = useState<SnapTarget | null>(null);
+
   useEffect(() => {
     const onMove = (e: PointerEvent): void => {
       const d = activeKf.current;
@@ -779,14 +785,28 @@ function Timeline({
       if (!d.moved && Math.abs(dx) < 3) return;
       d.moved = true;
       const dtSec = dx / pps;
-      // Keyframes land on whole frames (hold Alt for free positioning) —
-      // without this, drags committed arbitrary sub-frame float times.
       const frameDur = 1 / (model.frameRate || 30);
-      const snap = (v: number): number =>
-        e.altKey ? v : Math.round(v / frameDur) * frameDur;
+
+      // Snap to the playhead, then to other keyframes, then to the frame grid.
+      // Alt frees the drag entirely. The dragged keys are excluded from the
+      // target list — a keyframe must not snap to itself.
+      const dragging = new Set(d.ids);
+      const others: number[] = [];
+      for (const [id, t] of kfTimeById) if (!dragging.has(id)) others.push(t);
+
+      const moved = [...d.times.values()].map((t) => t + dtSec);
+      const { delta, target } = snapKeyframeGroup(moved, {
+        pixelsPerSecond: pps,
+        frameDuration: frameDur,
+        playheadTime: model.currentTime,
+        keyframeTimes: others,
+        disabled: e.altKey,
+      });
+      setKfSnap(target);
+
       const newPreview = new Map<string, number>();
       for (const [id, origTime] of d.times) {
-        newPreview.set(id, Math.max(0, snap(origTime + dtSec)));
+        newPreview.set(id, Math.max(0, origTime + dtSec + delta));
       }
       setKfPreview(newPreview);
     };
@@ -794,6 +814,7 @@ function Timeline({
       const d = activeKf.current;
       if (!d) return;
       activeKf.current = null;
+      setKfSnap(null);
       if (d.moved) {
         // Commit moves for all dragged keyframes
         for (const [id, origTime] of d.times) {
@@ -1220,6 +1241,21 @@ function Timeline({
             style={{ position: 'absolute', top: rulerHeight, left: 0, right: 0, height: effectiveLanesHeight }}
             onPointerDown={onLanesPointerDown}
           >
+            {/* Snap indicator — a vertical line at whatever the in-flight drag
+                latched onto. Without it, snapping is a mystery force: the
+                keyframe stops where you did not put it and nothing says why. */}
+            {kfSnap && (
+              <div
+                className={cn(
+                  styles.kfSnapLine,
+                  kfSnap.kind === 'playhead' && styles.kfSnapPlayhead,
+                  kfSnap.kind === 'keyframe' && styles.kfSnapKeyframe,
+                )}
+                style={{ transform: `translateX(${8 + kfSnap.time * pps}px)` }}
+                aria-hidden
+              />
+            )}
+
             {/* Row backgrounds */}
             {visibleRows.map((row, i) => {
               const realIndex = startRow + i;
@@ -1950,25 +1986,11 @@ export function PropertyHeader({
    * animation ON but never OFF: removing a property's animation meant crossing
    * to the inspector to find the same control.
    */
+  // The SHARED stopwatch — the same component the inspector and the effect
+  // stack render, so the control that turns animation on cannot look like a
+  // checkbox in one panel and a stopwatch in another.
   const stopwatch = onStopwatch ? (
-    <button
-      type="button"
-      className={styles.propStopwatch}
-      data-on={animated || undefined}
-      aria-pressed={animated}
-      aria-label={`${animated ? 'Disable' : 'Enable'} ${label} animation`}
-      title={
-        animated
-          ? `Disable ${label} animation (removes its keyframes)`
-          : `Enable ${label} animation (create first keyframe at playhead)`
-      }
-      onClick={(e) => {
-        e.stopPropagation();
-        onStopwatch();
-      }}
-    >
-      <Icon name="stopwatch" size={11} />
-    </button>
+    <StopwatchButton animated={animated} label={label} onToggle={onStopwatch} />
   ) : null;
 
   if (!animated) {
@@ -1988,37 +2010,15 @@ export function PropertyHeader({
       <span className={styles.propName} title={label}>{label}</span>
       {fields}
       <div className={styles.propNav}>
-        <button
-          type="button"
-          className={styles.propNavBtn}
-          disabled={!prev}
-          aria-label={`Previous ${label} keyframe`}
-          title="Previous keyframe"
-          onClick={(e) => { e.stopPropagation(); if (prev) onSeek?.(prev.time); }}
-        >
-          <Icon name="chevron-left" size={11} />
-        </button>
-        <button
-          type="button"
-          className={styles.propNavBtn}
-          data-on={at ? true : undefined}
-          aria-pressed={!!at}
-          aria-label={at ? `Remove ${label} keyframe at playhead` : `Add ${label} keyframe at playhead`}
-          title={at ? 'Remove keyframe at playhead' : 'Add keyframe at playhead'}
-          onClick={(e) => { e.stopPropagation(); onToggleKeyframe?.(); }}
-        >
-          <Icon name="keyframe" size={11} />
-        </button>
-        <button
-          type="button"
-          className={styles.propNavBtn}
-          disabled={!next}
-          aria-label={`Next ${label} keyframe`}
-          title="Next keyframe"
-          onClick={(e) => { e.stopPropagation(); if (next) onSeek?.(next.time); }}
-        >
-          <Icon name="chevron-right" size={11} />
-        </button>
+        <KeyframeNavigator
+          label={label}
+          hasPrev={!!prev}
+          hasNext={!!next}
+          atKeyframe={!!at}
+          onPrev={() => prev && onSeek?.(prev.time)}
+          onNext={() => next && onSeek?.(next.time)}
+          onToggleKeyframe={() => onToggleKeyframe?.()}
+        />
       </div>
     </div>
   );
@@ -2173,6 +2173,11 @@ function Keyframes({
         const dragging = kfPreview.has(kf.id);
         const selected = selectedKfIds.has(kf.id);
         const time = dragging ? kfPreview.get(kf.id)! : kf.time;
+        // Roving keeps its own full-circle glyph: it is a statement about TIME
+        // (this key is auto-positioned for constant speed), not about the
+        // interpolation curve, so it must stay distinguishable from auto-bezier.
+        const shapes = keyframeShapes(kf.easeIn, kf.easeOut, { isFirst: kf.isFirst, isLast: kf.isLast });
+        const paths = keyframePaths(shapes.left, shapes.right);
         return (
           <div
             key={kf.id}
@@ -2181,7 +2186,6 @@ function Keyframes({
               dragging && styles.keyframeDragging,
               selected && styles.keyframeSelected,
               kf.roving && styles.keyframeRoving,
-              kf.isHold && styles.keyframeHold
             )}
             style={{ left: `${8 + time * pps}px` }}
             onPointerDown={(e) => onKeyframeDown(kf, e)}
@@ -2189,8 +2193,15 @@ function Keyframes({
               e.preventDefault();
               onKeyframeContextMenu?.(kf.id, e.clientX, e.clientY);
             }}
-            title={`${time.toFixed(2)}s — drag to move, Shift+click to multi-select, right-click to delete`}
-          />
+            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options`}
+          >
+            {!kf.roving && (
+              <svg className={styles.keyframeGlyph} viewBox="0 0 12 12" aria-hidden focusable="false">
+                <path d={paths.left} />
+                <path d={paths.right} />
+              </svg>
+            )}
+          </div>
         );
       })}
     </>

@@ -102,16 +102,39 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             <div className={styles.cardHeader}>
               <div className={styles.cardTitle}>
                 <Icon name="bone" size={13} style={{ opacity: 0.7 }} />
-                <span>{bone.id}</span>
+                {/* Editable label. The card used to print the raw generated id
+                    (`bone_x8f2a1`), which is unreadable on a real character. */}
+                <input
+                  value={bone.name ?? ''}
+                  placeholder={bone.id}
+                  aria-label={`${bone.name || bone.id} name`}
+                  onChange={(e) =>
+                    updateBone(nodeId, bone.id, { name: e.target.value || undefined })
+                  }
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontSize: 11,
+                    padding: '2px 4px',
+                    borderRadius: 3,
+                    background: 'transparent',
+                    color: 'var(--color-text-primary, #fff)',
+                    border: '1px solid transparent',
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.border = '1px solid var(--color-border, #333)')}
+                  onBlur={(e) => (e.currentTarget.style.border = '1px solid transparent')}
+                />
                 <span className={styles.subText}>
-                  {bone.parentId ? `← ${bone.parentId}` : '(Root)'}
+                  {bone.parentId
+                    ? `← ${bones.find((b) => b.id === bone.parentId)?.name ?? bone.parentId}`
+                    : '(Root)'}
                 </span>
               </div>
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => deleteBone(nodeId, bone.id)}
-                aria-label={`Delete bone ${bone.id}`}
+                aria-label={`Delete bone ${bone.name || bone.id}`}
                 title="Delete bone"
               >
                 <Icon name="trash" size={12} />
@@ -125,7 +148,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 min={1}
                 unit="px"
                 onChange={(v) => updateBone(nodeId, bone.id, { length: Math.max(1, v) })}
-                aria-label={`${bone.id} length`}
+                aria-label={`${bone.name || bone.id} length`}
               />
             </div>
 
@@ -139,8 +162,24 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 value={(bone.rotation * 180) / Math.PI}
                 unit="°"
                 onChange={(v) => updateBone(nodeId, bone.id, { rotation: (v * Math.PI) / 180 })}
-                aria-label={`${bone.id} rotation`}
+                aria-label={`${bone.name || bone.id} rotation`}
               />
+            </div>
+
+            <div className={styles.paramRow}>
+              <span className={styles.paramLabel}>Scale X / Y</span>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <ValueField
+                  value={bone.scaleX ?? 1}
+                  onChange={(v) => updateBone(nodeId, bone.id, { scaleX: v })}
+                  aria-label={`${bone.name || bone.id} scale x`}
+                />
+                <ValueField
+                  value={bone.scaleY ?? 1}
+                  onChange={(v) => updateBone(nodeId, bone.id, { scaleY: v })}
+                  aria-label={`${bone.name || bone.id} scale y`}
+                />
+              </div>
             </div>
 
             <div className={styles.paramRow} style={{ marginTop: 2 }}>
@@ -154,6 +193,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     x: bone.length,
                     y: 0,
                     enabled: !hasIK,
+                    ...(ik?.pole ? { pole: ik.pole } : {}),
+                    ...(ik?.chainLength ? { chainLength: ik.chainLength } : {}),
                   })
                 }
               >
@@ -161,6 +202,35 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 {hasIK ? 'IK Active' : 'Enable IK Target'}
               </Button>
             </div>
+
+            {hasIK && (
+              <div className={styles.paramRow}>
+                <span
+                  className={styles.paramLabel}
+                  title="The side the joint bends toward. Without a pole the solver only preserves the current side and can never flip it."
+                >
+                  Pole Vector
+                </span>
+                <Button
+                  size="sm"
+                  variant={ik?.pole ? 'primary' : 'secondary'}
+                  onClick={() =>
+                    setIKTarget(nodeId, {
+                      boneId: bone.id,
+                      x: ik!.x,
+                      y: ik!.y,
+                      enabled: true,
+                      chainLength: ik!.chainLength,
+                      // Seed the pole perpendicular to the bone so it starts on
+                      // one clear side; drag the handle on canvas to choose.
+                      ...(ik?.pole ? {} : { pole: { x: 0, y: -bone.length } }),
+                    })
+                  }
+                >
+                  {ik?.pole ? 'Pole Set' : 'Add Pole'}
+                </Button>
+              </div>
+            )}
           </div>
         );
       })}

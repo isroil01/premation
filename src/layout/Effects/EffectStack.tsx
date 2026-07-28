@@ -15,8 +15,10 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
  */
 
 import { Icon } from '@components/Icon';
+import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
+import { PropertyRow } from '@components/PropertyRow';
 import { ColorPicker } from '@components/ColorPicker';
 import { CurveEditor } from './CurveEditor';
 
@@ -33,6 +35,7 @@ import {
   removeEffect,
   toggleEffect,
   moveEffect,
+  dragEffectTo,
   effectPropPath,
   effectParam,
   type Effect,
@@ -40,6 +43,9 @@ import {
   type EffectParamDef,
   type CurvePoints,
 } from '@core/effects/effects';
+import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
+import { buildPropertyMenu } from '@core/inspector/propertyMenu';
+import { openContextMenu } from '@stores/contextMenuStore';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
@@ -99,14 +105,7 @@ function EffectParamRow({
       }
     };
     return (
-      <div className={row.paramRow}>
-        <Checkbox
-          checked={animated}
-          onChange={toggleColorAnim}
-          title="Toggle Keyframes"
-          style={{ width: 13, height: 13 }}
-        />
-        <span className={row.paramLabel}>{param.label}</span>
+      <PropertyRow label={param.label} animated={animated} onStopwatch={toggleColorAnim} compact>
         <ColorPicker
           value={displayed}
           onChange={(hex) => {
@@ -116,7 +115,7 @@ function EffectParamRow({
           aria-label={label}
           compact
         />
-      </div>
+      </PropertyRow>
     );
   }
 
@@ -210,27 +209,47 @@ function EffectParamRow({
     else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, stored));
   };
 
+  // Range, step, precision and unit all resolve through the property registry,
+  // which reads them off this effect's own definition — so the timeline row and
+  // this row describe the same parameter identically.
+  const meta = resolvePropertyMeta(path, nodeId);
   return (
-    <div className={row.paramRow}>
-      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-        <Checkbox
-          checked={animated}
-          onChange={toggle}
-          title="Toggle Animation"
-          style={{ width: 14, height: 14 }}
-        />
-      </div>
-      <span className={row.paramLabel}>{param.label}</span>
+    <PropertyRow
+      label={param.label}
+      animated={animated}
+      onStopwatch={toggle}
+      onReset={
+        typeof meta.defaultValue === 'number' && meta.resettable
+          ? () => updateEffectParam(nodeId, effect.id, param.key, meta.defaultValue as number)
+          : undefined
+      }
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openContextMenu(
+          e.clientX,
+          e.clientY,
+          buildPropertyMenu({
+            nodeId,
+            prop: path,
+            layerT,
+            value: display,
+            setValue: (v) => updateEffectParam(nodeId, effect.id, param.key, v),
+          }),
+        );
+      }}
+      compact
+    >
       <ValueField
         value={display}
-        min={param.min}
-        max={param.max}
-        unit={param.unit}
-        precision={param.precision ?? 0}
+        min={meta.min}
+        max={meta.max}
+        unit={meta.unit}
+        step={meta.step}
+        precision={meta.precision}
         onChange={onChange}
         aria-label={label}
       />
-    </div>
+    </PropertyRow>
   );
 }
 
@@ -240,6 +259,9 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   const defByType = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
 
   const [userToggledIds, setUserToggledIds] = useState<Map<string, boolean>>(new Map());
+  /** Effect being dragged, and the gap index the drop indicator sits in. */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
 
   const toggleEffectCard = (id: string, currentCollapsed: boolean) => {
     setUserToggledIds((prev) => {
@@ -266,10 +288,50 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
         const defaultCollapsed = i > 0;
         const isCollapsed = userToggledIds.has(e.id) ? userToggledIds.get(e.id)! : defaultCollapsed;
 
+        // Drop BEFORE this card when the pointer is in its top half, after it
+        // when in the bottom half — the gap the indicator is drawn in is the
+        // index the effect lands at, so what you see is what you get.
+        const onDragOver = (ev: React.DragEvent): void => {
+          if (!dragId) return;
+          ev.preventDefault();
+          const r = ev.currentTarget.getBoundingClientRect();
+          setDropIndex(ev.clientY < r.top + r.height / 2 ? i : i + 1);
+        };
+
         return (
-          <div key={e.id} className={panel.effectCardItem}>
+          <div
+            key={e.id}
+            className={cn(
+              panel.effectCardItem,
+              dragId === e.id && panel.effectCardDragging,
+              dropIndex === i && panel.effectDropBefore,
+              dropIndex === effects.length && i === effects.length - 1 && panel.effectDropAfter,
+            )}
+            onDragOver={onDragOver}
+            onDrop={(ev) => {
+              ev.preventDefault();
+              if (dragId && dropIndex !== null) dragEffectTo(nodeId, dragId, dropIndex);
+              setDragId(null);
+              setDropIndex(null);
+            }}
+          >
             {/* Accordion Header: Disclosure Chevron + Checkbox + Effect Label + Actions */}
-            <div className={panel.effectCardHead}>
+            <div
+              className={panel.effectCardHead}
+              // The HEADER is the drag handle, not the whole card — dragging
+              // from the body would fight every scrubby slider inside it.
+              draggable
+              onDragStart={(ev) => {
+                setDragId(e.id);
+                ev.dataTransfer.effectAllowed = 'move';
+                // Firefox refuses to start a drag without payload.
+                ev.dataTransfer.setData('text/plain', e.id);
+              }}
+              onDragEnd={() => { setDragId(null); setDropIndex(null); }}
+            >
+              <span className={panel.dragGrip} aria-hidden title="Drag to reorder">
+                <Icon name="grip-vertical" size={12} />
+              </span>
               <button
                 type="button"
                 className={panel.disclosureBtn}

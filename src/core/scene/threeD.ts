@@ -75,13 +75,20 @@ function transformComponent(node: SceneNode): { id: string; props: Record<string
 }
 
 /**
- * The layer kinds the renderer can actually project in 3D. Everything else is
- * either structural (group/null/comp — never draws), a scene device (camera/
- * light — they DRIVE 3D rather than being 3D), non-visual (audio), or a layer
- * type buildSnapshot draws outside the 3D projection path (particle,
- * adjustment). Solids are kind 'shape' and eligible — see canBe3D.
+ * The layer kinds that can participate in 3D space.
+ *
+ * The four content kinds project pixels. `null` draws nothing at all and is
+ * here anyway, because a 3D null is the standard way to rig a 3D scene: it is
+ * a parent whose Z position and X/Y rotation drive its children. Excluding it
+ * meant the one layer type people reach for first to build a 3D rig was the one
+ * type that could not be made 3D — and a 2D parent cannot pass depth down.
+ *
+ * Everything else is either structural (group/comp — never draws and cannot
+ * parent in 3D), a scene device (camera/light — they DRIVE 3D rather than
+ * being 3D), non-visual (audio), or drawn outside the 3D projection path
+ * (particle, adjustment). Solids are kind 'shape' and eligible — see canBe3D.
  */
-const THREE_D_CAPABLE_KINDS = new Set(['shape', 'text', 'image', 'video']);
+const THREE_D_CAPABLE_KINDS = new Set(['shape', 'text', 'image', 'video', 'null']);
 
 /**
  * True when this node can meaningfully take the 3D switch: content kind and

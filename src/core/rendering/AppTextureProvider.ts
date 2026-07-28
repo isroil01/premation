@@ -75,11 +75,18 @@ async function imageToBitmap(img: HTMLImageElement, w: number, h: number): Promi
  * letterbox a viewBox-only file into its bogus 300×150 default, then draw it to
  * a canvas. This also sidesteps Chromium's flaky `createImageBitmap(svgBlob)`.
  */
-function decodeSvgDataUrl(src: string): string {
+export function decodeSvgDataUrl(src: string): string {
   const comma = src.indexOf(',');
   const meta = src.slice(0, comma);
   const body = src.slice(comma + 1);
-  return /;base64/i.test(meta) ? atob(body) : decodeURIComponent(body);
+  if (!/;base64/i.test(meta)) return decodeURIComponent(body);
+  // `atob` yields one char per BYTE, not per character — feeding that straight
+  // to the parser renders every non-ASCII glyph as mojibake (`안녕` → `ìêµ`).
+  // SVG data URLs are UTF-8, so the bytes have to be decoded as UTF-8.
+  const binary = atob(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
 }
 
 async function rasterizeSvg(src: string, fillColor?: string): Promise<ImageBitmap> {
@@ -211,6 +218,8 @@ interface ImageEntry {
  *  Canvas2DBackend's text exactly (was: hardcoded 600 Inter, centred). */
 export interface TextSpec {
   text: string;
+  /** 0..1; fades the glyphs but not the layer styles. See applyEffectChain. */
+  fillOpacity?: number;
   fontSize: number;
   color: string;
   width: number;
@@ -227,9 +236,31 @@ export interface TextSpec {
   lineHeight?: number;
   /** Extra px between paragraphs (every newline starts one). */
   paragraphSpacing?: number;
+  /** Paint the per-glyph stroke over the fill rather than under it. */
+  strokeOverFill?: boolean;
   /** Per-character style overrides. Free on the GPU path: the runs are baked
    *  into the texture, so the shader never learns text had more than one font. */
   runs?: ReadonlyArray<RichRun>;
+  /**
+   * Per-glyph transforms from the layer's text animators.
+   *
+   * Was computed by buildSnapshot and then DROPPED here: `setText` never passed
+   * it on, so `drawText` never saw it and every 2D text animator rendered
+   * exactly nothing. (Per-character-3D text escaped, because buildSnapshot
+   * splits those into one layer per glyph before this point.) Presence forces
+   * the glyph-by-glyph draw.
+   */
+  glyphs?: ReadonlyArray<import('@core/text/textAnimators').GlyphTransform>;
+  /** Text riding a mask path, already flattened to a polyline in layer-local
+   *  space by buildSnapshot. Dropped at the same seam as `glyphs`, for the same
+   *  reason. */
+  textPath?: {
+    points: ReadonlyArray<{ x: number; y: number }>;
+    closed: boolean;
+    firstMargin: number;
+    reversed: boolean;
+    perpendicular: boolean;
+  };
   /** A Canvas2D-only effect stack (Fill/Stroke/Sharpen/Noise/…) baked into the
    *  text texture — those effects have no GPU shader form. Undefined when the
    *  layer has none (the common case). */
@@ -423,7 +454,15 @@ export class AppTextureProvider implements TextureProvider {
     if (existing && existing.src === fullKey) return; // already loading or loaded
     const entry: ImageEntry = { kind: 'image', src: fullKey, texture: null, bitmap: null, width: 1, height: 1, ready: false };
     this.entries.set(key, entry);
-    void this.decode(key, src, fillColor, entry);
+    const decoding = this.decode(key, src, fillColor, entry);
+    // Under exact media timing (offline render / the golden-frame harness) the
+    // caller renders, awaits the waits, then re-renders. Video registered here
+    // but image decode did NOT, so a freshly-created backend — which is what
+    // export builds — could capture the 1×1 white placeholder instead of the
+    // picture. In the viewport that self-corrects via onChange a frame later;
+    // in a one-shot render there is no later.
+    if (this.exactMediaTiming) this.mediaWaits.push(decoding);
+    void decoding;
   }
 
   /**
@@ -432,6 +471,8 @@ export class AppTextureProvider implements TextureProvider {
   setText(key: string, spec: TextSpec): void {
     const layerScale = Math.max(1, Math.abs(spec.scaleX || 1), Math.abs(spec.scaleY || 1));
     const effectiveScale = this.rasterScale * layerScale;
+    // Fill opacity changes the baked pixels, so it belongs in the cache key.
+    const fillSig = spec.fillOpacity !== undefined && spec.fillOpacity < 1 ? `|fo${spec.fillOpacity}` : '';
     const fxSig = effectsNeedCpuBake(spec.effects)
       ? `|fx:${JSON.stringify(spec.effects)}|mask:${spec.mask ? JSON.stringify(spec.mask.paths) : 0}`
       : '';
@@ -439,7 +480,13 @@ export class AppTextureProvider implements TextureProvider {
       `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}` +
       `|${spec.fontFamily ?? ''}|${spec.fontWeight ?? ''}|${spec.fontStyle ?? ''}` +
       `|${spec.align ?? ''}|${spec.letterSpacing ?? 0}|${spec.lineHeight ?? ''}` +
-      `|${spec.paragraphSpacing ?? 0}|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}` +
+      `|${spec.paragraphSpacing ?? 0}|${spec.strokeOverFill ? 'sof' : ''}` +
+      `|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}${fillSig}` +
+      // Animator output and path placement change the baked pixels, so they
+      // belong in the cache key — otherwise frame 1 of a sweep is reused for
+      // every frame of it.
+      `${spec.glyphs && spec.glyphs.length ? `|g${JSON.stringify(spec.glyphs)}` : ''}` +
+      `${spec.textPath ? `|tp${JSON.stringify(spec.textPath)}` : ''}` +
       `|t${resolutionTier(effectiveScale)}`;
 
     // Non-zero only when a CPU-baked chain would bleed outside the text box
@@ -556,10 +603,11 @@ export class AppTextureProvider implements TextureProvider {
     const ptsSig = layer.pathPoints ? layer.pathPoints.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') : '';
     const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
     const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';
+    const fillSig = layer.fillOpacity !== undefined && layer.fillOpacity < 1 ? `|fo${layer.fillOpacity}` : '';
     const fxSig = effectsNeedCpuBake(layer.effects)
       ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
       : '';
-    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}|t${resolutionTier(effectiveScale)}`;
+    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${resolutionTier(effectiveScale)}`;
 
     const pad = rasterPadding(layer);
     const result = this.rasterizer.rasterize({

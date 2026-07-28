@@ -21,7 +21,18 @@ import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
 import { timeReverseKeyframes, easyEaseAll, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
-import { addSliderControl } from '@core/animation/expressionControls';
+import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
+
+/** The control kinds offered in the rig menu, in the order AE lists them. */
+const CONTROL_KINDS: ReadonlyArray<{ kind: ControlKind; label: string }> = [
+  { kind: 'slider', label: 'Slider Control' },
+  { kind: 'angle', label: 'Angle Control' },
+  { kind: 'point', label: 'Point Control' },
+  { kind: 'color', label: 'Color Control' },
+  { kind: 'checkbox', label: 'Checkbox Control' },
+  { kind: 'dropdown', label: 'Dropdown Control' },
+  { kind: 'layer', label: 'Layer Control' },
+];
 import { hasTextComponent } from '@core/text/textAnimators';
 import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
@@ -115,7 +126,29 @@ function buildAnimateItems(
     { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers (bars, end-to-end)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (getTimelineController().sequenceLayerBars(selectedIds, 0)) notify('Layers sequenced end-to-end'); else notify('Select 2+ layers with timeline bars', 'warning'); } },
     { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (sequenceLayers(selectedIds, 0.3)) notify('Animations staggered'); else notify('Select 2+ animated layers first', 'warning'); } },
     { type: 'separator' },
-    { type: 'item', id: 'anim-slider', label: 'Add Slider Control (rig)', icon: 'settings', onSelect: () => { const name = addSliderControl(id); if (name) notify(`Added “${name}” — reference it anywhere with ctrl('${name}')`); } },
+    {
+      type: 'item',
+      id: 'anim-control',
+      label: 'Add Expression Control (rig)',
+      icon: 'settings',
+      // A submenu rather than seven flat entries: every kind resolves through
+      // the same `ctrl(name)` accessor, so they belong together as one action
+      // with a type, not as seven unrelated commands.
+      submenu: CONTROL_KINDS.map((k) => ({
+        type: 'item' as const,
+        id: `anim-control-${k.kind}`,
+        label: k.label,
+        onSelect: () => {
+          const name = addControl(id, k.kind);
+          if (!name) return;
+          // Multi-component kinds expose several names, so tell the user what
+          // to actually type — `ctrl('Point 1')` alone would resolve to 0.
+          const parts = CONTROL_COMPONENTS[k.kind];
+          const refs = parts.map((suffix) => `ctrl('${name}${suffix}')`).join(' / ');
+          notify(`Added “${name}” — reference it with ${refs}`);
+        },
+      })),
+    },
   ];
 }
 

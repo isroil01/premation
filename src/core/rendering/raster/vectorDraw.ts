@@ -103,11 +103,83 @@ function bakedEffectSpread(layer: RenderLayer): number {
  * feathered-mask scenes already match without a larger box, and growing it would
  * perturb them.
  */
+/**
+ * How far a text layer's GLYPHS escape its own box.
+ *
+ * Text is rasterized into a texture the size of the layer box, so anything
+ * drawn outside that box is sliced off at the texture edge. That was harmless
+ * while text just sat in its box — but a text animator's whole job is to move
+ * glyphs off their baseline, and a preset that lifts a character 40px or scales
+ * it to 220% then had the character guillotined by an invisible border.
+ *
+ * So the box grows to fit whatever the animators are doing this frame. It is
+ * per-frame and part of the raster cache key, which is correct: an animation
+ * that starts subtle and ends extreme should not pay for its worst frame all
+ * the way through.
+ */
+function glyphSpread(layer: RenderLayer): number {
+  const glyphs = layer.glyphs;
+  if (!glyphs || glyphs.length === 0) return 0;
+  // The glyph's own extent, used to turn a SCALE multiplier into pixels. Height
+  // is the honest measure for a font: a glyph is roughly em-tall.
+  const em = layer.fontSize ?? 48;
+  let spread = 0;
+  for (const g of glyphs) {
+    // Position offsets translate the glyph bodily out of the box.
+    let d = Math.max(Math.abs(g.dx), Math.abs(g.dy) + Math.abs(g.lineSpacing));
+    // Scale grows it about its own origin, so half the growth escapes each side.
+    const grow = Math.max(g.scale, g.scaleY) - 1;
+    if (grow > 0) d += (grow * em) / 2;
+    // Blur bleeds symmetrically; a stroke sits half outside the outline.
+    d += g.blur * 2 + g.strokeWidth / 2;
+    // Shear pushes the top and bottom of the glyph sideways.
+    if (g.skew) d += Math.abs(Math.tan((g.skew * Math.PI) / 180)) * em * 0.5;
+    if (d > spread) spread = d;
+  }
+  return spread;
+}
+
+/**
+ * How far text riding a path escapes its box.
+ *
+ * The path is a mask in layer-local space and is routinely much larger than the
+ * text box — an ellipse the text orbits, say. Without this the orbit is cropped
+ * to the box and only the part of the ring crossing it survives.
+ */
+function textPathSpread(layer: RenderLayer): number {
+  const tp = layer.textPath;
+  if (!tp || tp.points.length === 0) return 0;
+  const halfW = layer.width / 2;
+  const halfH = layer.height / 2;
+  let spread = 0;
+  for (const p of tp.points) {
+    spread = Math.max(spread, Math.abs(p.x) - halfW, Math.abs(p.y) - halfH);
+  }
+  // Plus room for the glyphs themselves, which straddle the path.
+  return spread > 0 ? spread + (layer.fontSize ?? 48) : 0;
+}
+
+/**
+ * Ceiling on raster growth, in px per side.
+ *
+ * Padding is quadratic in texture memory: a 400×100 text layer padded by 512
+ * becomes 1424×1124, which is 6.4 MB per resolution tier. A preset with an
+ * absurd offset should be clipped rather than allowed to allocate without
+ * bound — and at that point the layer's own box is the wrong size anyway.
+ */
+const MAX_GLYPH_PAD = 512;
+
 export function rasterPadding(layer: RenderLayer): number {
   // Baked effect bleed applies to every rasterized kind (shape AND text) —
   // it is a property of the effect chain, not of the geometry.
   let pad = bakedEffectSpread(layer);
-  if (layer.kind !== 'shape') return pad > 0 ? Math.ceil(pad + 1) : 0;
+  if (layer.kind !== 'shape') {
+    // Text escapes its box through its animators and through a text path;
+    // both are resolved per-frame in buildSnapshot, so both are known here.
+    const escape = Math.min(MAX_GLYPH_PAD, Math.max(glyphSpread(layer), textPathSpread(layer)));
+    if (escape > pad) pad = escape;
+    return pad > 0 ? Math.ceil(pad + 1) : 0;
+  }
   const strokes = layer.strokes && layer.strokes.length > 0 ? layer.strokes : layer.stroke ? [layer.stroke] : [];
   for (const s of strokes) {
     if (!s || s.width <= 0) continue;

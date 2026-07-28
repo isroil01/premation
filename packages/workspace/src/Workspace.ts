@@ -18,6 +18,7 @@
 import type { Vec2 } from './math/Vec2';
 import type { Rect } from './math/Rect';
 import * as R from './math/Rect';
+import type { Corners } from './math/OrientedBox';
 
 import { TypedEmitter } from './events/Emitter';
 import type { WorkspaceEventMap } from './events/WorkspaceEvents';
@@ -70,6 +71,15 @@ export interface WorkspaceOptions {
 const NOOP_RENDERER: RendererPort = { markDirty: () => {} };
 const NOOP_COMMANDS: CommandPort = { execute: () => {} };
 
+/**
+ * Click slack, in SCREEN pixels, for a layer whose projection has collapsed to a
+ * line — a flat 3D layer seen edge-on from Left / Right / Top / Bottom.
+ *
+ * Small on purpose: it is the grab radius around a hairline, not a general
+ * fuzziness budget. Nothing with projected area uses it.
+ */
+const EDGE_HIT_TOLERANCE_PX = 4;
+
 export class Workspace implements InputSink {
   readonly events = new TypedEmitter<WorkspaceEventMap>();
 
@@ -113,7 +123,12 @@ export class Workspace implements InputSink {
     this.guides = new Guides();
     this.snap = new SnapEngine();
     if (opts.snap) this.snap.setSettings(opts.snap);
-    this.hitTester = new HitTester(this.scene);
+    // Read through a closure, not a captured number: the tolerance has to track
+    // the LIVE zoom, or an edge-on layer stops being clickable the moment you
+    // zoom out from wherever the workspace happened to be constructed.
+    this.hitTester = new HitTester(this.scene, undefined, () =>
+      this.camera.screenDistanceToWorld(EDGE_HIT_TOLERANCE_PX),
+    );
     this.selectionController = new SelectionController(this.scene, this.selectionPort, this.hitTester);
     this.cursor = new CursorManager();
     this.input = new InputSystem();
@@ -493,13 +508,24 @@ export class Workspace implements InputSink {
         return self.buildSnapTargets(region, excludeIds);
       },
       snapRect(rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect> {
-        const { targets, thresholdWorld } = self.buildSnapTargets(
-          R.inflate(rect, self.camera.screenDistanceToWorld(self.snap.getSettings().thresholdPx) + 4),
-          excludeIds,
-        );
-        return self.snap.snapRect(rect, targets, thresholdWorld);
+        return self.snapRect(rect, excludeIds);
       },
     };
+  }
+
+  /**
+   * Snap a world rect against the live grid / guide / object targets.
+   *
+   * Public because it is the only way to ask "what would snapping do here?"
+   * without driving a full pointer gesture — the tool context just forwards to
+   * it, so tools and callers can never disagree about the answer.
+   */
+  snapRect(rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect> {
+    const { targets, thresholdWorld } = this.buildSnapTargets(
+      R.inflate(rect, this.camera.screenDistanceToWorld(this.snap.getSettings().thresholdPx) + 4),
+      excludeIds,
+    );
+    return this.snap.snapRect(rect, targets, thresholdWorld);
   }
 
   /** Assemble grid + guide + object snap targets for a world region. */
@@ -510,9 +536,12 @@ export class Workspace implements InputSink {
     const settings = this.snap.getSettings();
     const targets: SnapTarget[] = [];
     if (settings.enabled) {
-      if (settings.toGrid && this.grid.getState().visible) {
-        const spacing = this.grid.adaptiveSpacing(this.camera.zoom);
-        targets.push(...SnapEngine.gridTargets(region, spacing));
+      // NOT gated on `grid.visible`. After Effects keeps Show Grid and Snap to
+      // Grid as independent commands and snaps to a hidden grid; `toGrid` IS
+      // the Snap to Grid switch. Gating on visibility instead makes the two
+      // impossible to separate, which is a different product.
+      if (settings.toGrid) {
+        targets.push(...SnapEngine.gridTargets(region, this.grid.snapSpacing(this.camera.zoom)));
       }
       if (settings.toGuides) {
         for (const x of this.guides.verticalPositions()) targets.push({ axis: 'x', position: x, source: 'guide' });
@@ -569,13 +598,19 @@ export class Workspace implements InputSink {
   private buildOverlay(): WorkspaceOverlay {
     const selBounds = this.selectionController.selectionBounds();
     const selectionBounds = selBounds ? this.worldRectToScreen(selBounds) : null;
+    // The drawn outline: one oriented box per layer. Corners are projected
+    // INDIVIDUALLY — mapping the AABB and rotating it afterwards would be the
+    // same lie in a different place.
+    const selectionBoxes = this.selectionController
+      .selectionBoxes()
+      .map((c) => this.cornersToScreen(c));
 
     const activeTool = this.tools.activeTool;
     const ctx = this.makeToolContext();
     const handles: OverlayHandle[] = activeTool?.getHandles
       ? activeTool.getHandles(ctx).map((h) => ({ id: h.id, position: this.worldToScreen(h.position), kind: h.kind }))
       : this.selectionController
-          .handles(this.camera.screenDistanceToWorld(24))
+          .handles()
           .map((h) => ({ id: h.id, position: this.worldToScreen(h.position), kind: h.kind }));
 
     const marqueeWorld = this.selectionController.marqueeRect;
@@ -592,6 +627,9 @@ export class Workspace implements InputSink {
 
     const hoveredNode = this.hovered ? this.scene.getNode(this.hovered) : undefined;
     const hoveredBounds = hoveredNode ? this.worldRectToScreen(hoveredNode.worldBounds) : null;
+    const hoveredCorners = hoveredNode
+      ? this.cornersToScreen(hoveredNode.worldCorners ?? (R.corners(hoveredNode.worldBounds) as Corners))
+      : null;
 
     const pendingPathWorld = activeTool?.pendingPoints as import('./math/BezierPoint').BezierPoint[] | undefined;
     const pendingPath = pendingPathWorld
@@ -603,7 +641,17 @@ export class Workspace implements InputSink {
         })
       : undefined;
 
-    return { selectionBounds, handles, marquee, snapLines, guides, hoveredBounds, pendingPath };
+    return { selectionBounds, selectionBoxes, handles, marquee, snapLines, guides, hoveredBounds, hoveredCorners, pendingPath };
+  }
+
+  /** Project an oriented box's four corners into screen space, one by one. */
+  private cornersToScreen(c: Corners): Corners {
+    return [
+      this.worldToScreen(c[0]),
+      this.worldToScreen(c[1]),
+      this.worldToScreen(c[2]),
+      this.worldToScreen(c[3]),
+    ];
   }
 
   private worldRectToScreen(worldRect: Rect): Rect {

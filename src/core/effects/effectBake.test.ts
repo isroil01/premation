@@ -1,11 +1,11 @@
 /**
- * Effect-chain baking — the shared implementation both render paths use. These
- * tests exercise the pure predicates and the chain against a real 2D canvas
- * (jsdom provides one), asserting a Canvas2D-only pixel pass mutates pixels in
- * stack order.
+ * Effect-chain baking — the shared implementation both render paths use. The
+ * pure predicates run everywhere; the chain needs a real 2D canvas, which jsdom
+ * does NOT provide, so those are skipped here and carried by the golden-frame
+ * suite in packages/render-tests.
  */
 
-import { isGpuUnbakeableEffect, effectsNeedCpuBake, applyEffectChain } from './effectBake';
+import { isGpuUnbakeableEffect, effectsNeedCpuBake, applyEffectChain, layerNeedsCpuBake } from './effectBake';
 import type { Effect } from './effects';
 
 describe('bake predicates', () => {
@@ -19,6 +19,24 @@ describe('bake predicates', () => {
     }
   });
 
+  // Regression: layerNeedsCpuBake sends a layer down the bake path for fill
+  // opacity alone, and such a layer has no effect stack. Both rasterizer call
+  // sites asserted `effects!` non-null, so the chain hit
+  // `for (const e of undefined)`; the texture feed caught the TypeError and the
+  // layer silently rendered UNFADED. Caught by the golden-frame scenes
+  // (fill-opacity-half / -zero), which rendered the subject at full strength.
+  it('applyEffectChain tolerates an absent effect stack — the fill-opacity-only layer', () => {
+    const mk = (w: number, h: number): HTMLCanvasElement => {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      return c;
+    };
+    const ctx = mk(8, 8).getContext('2d');
+    if (!ctx) return; // no rasterizer at all — nothing to assert against
+    expect(() => applyEffectChain(ctx, 8, 8, undefined, mk, 0.5)).not.toThrow();
+    expect(layerNeedsCpuBake(undefined, 0.5)).toBe(true);
+  });
+
   it('effectsNeedCpuBake ignores disabled effects and empty stacks', () => {
     expect(effectsNeedCpuBake(undefined)).toBe(false);
     expect(effectsNeedCpuBake([])).toBe(false);
@@ -28,17 +46,27 @@ describe('bake predicates', () => {
   });
 });
 
-describe('applyEffectChain', () => {
+// Guarded as a SKIP, not an early return — an early return reports a green test
+// that asserted nothing, which is indistinguishable from coverage in the run
+// summary. The chain composites through source-atop over a blurred silhouette,
+// so it needs a backend faithful on both; see canvasFidelity for the
+// measurements. Real-Chromium coverage: packages/render-tests.
+import { canAssertLayerStylePixels } from './__testHelpers__/canvasFidelity';
+
+(canAssertLayerStylePixels ? describe : describe.skip)('applyEffectChain', () => {
   const mkCanvas = (w: number, h: number): HTMLCanvasElement => {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     return c;
   };
+  const ctx2d = (c: HTMLCanvasElement): CanvasRenderingContext2D => {
+    const ctx = c.getContext('2d');
+    if (!ctx) throw new Error('expected a 2d context — the hasCanvas guard should have skipped this');
+    return ctx;
+  };
 
   it('Fill recolors opaque content to the fill colour (source-atop)', () => {
-    const c = mkCanvas(10, 10);
-    const ctx = c.getContext('2d');
-    if (!ctx) return; // jsdom without canvas backend — skip
+    const ctx = ctx2d(mkCanvas(10, 10));
     // Opaque white square fills the whole buffer.
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, 10, 10);
@@ -54,9 +82,7 @@ describe('applyEffectChain', () => {
   });
 
   it('a transparent pixel stays transparent through Fill (respects alpha)', () => {
-    const c = mkCanvas(10, 10);
-    const ctx = c.getContext('2d');
-    if (!ctx) return;
+    const ctx = ctx2d(mkCanvas(10, 10));
     // Leave the buffer fully transparent, fill only a corner.
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, 4, 4);

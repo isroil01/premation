@@ -1,301 +1,245 @@
-import { useState, useMemo } from 'react';
+/**
+ * Effects & Presets — the library panel.
+ *
+ * The requirements this is built to, in rough priority:
+ *
+ *  1. **Search that filters as you type.** Nobody browses seventeen folders;
+ *     experienced users type. The tree exists for discovery, the field for use.
+ *  2. **Drag onto a layer, or click with a layer selected.** Both, because both
+ *     work in AE and users arrive expecting whichever one they learned.
+ *  3. **Animated previews, always looping.** AE has none at all, and gating
+ *     them behind a hover means discovering presets one at a time — barely
+ *     better than "apply it and undo". One shared clock drives every card on
+ *     screen; see PresetPreview.tsx and previewTicker.ts.
+ *  4. **Save current settings as a preset**, into a user folder in the same tree.
+ *  5. Presets apply at the PLAYHEAD, not at time zero.
+ */
+
+import { useMemo, useState } from 'react';
 import { Panel } from '@components/Panel';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { Input } from '@components/Input';
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { listPresets, applyPresetByName, deletePreset } from '@core/animation/animationPresets';
+import {
+  listPresets,
+  applyPreset,
+  deletePreset,
+  presetFolder,
+  saveCurrentAsPreset,
+  USER_PRESET_FOLDER,
+  type AnimationPreset,
+} from '@core/animation/animationPresets';
+import { hasTextComponent } from '@core/text/textAnimators';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { getEventBus } from '@core/events/EventBus';
+import { PresetPreview } from './PresetPreview';
 import styles from './MotionPresetsPanel.module.css';
 
-const PRESET_DESCRIPTIONS: Record<string, string> = {
-  'Fade In': 'Gradually fade opacity from 0% to 100%.',
-  'Fade Out': 'Gradually fade opacity from 100% to 0%.',
-  'Pop In': 'Scale up with a bouncing animation.',
-  'Spin': 'Rotate 360 degrees around the anchor point.',
-  'Pulse': 'Gently grow and shrink in scale.',
-  'Bounce In': 'Elastic scaling entry from zero.',
-  'Slide In Left': 'Slide into view from the left side.',
-  'Slide In Right': 'Slide into view from the right side.',
-  'Rise Up': 'Slide up into view from below.',
-  'Drop In': 'Drop down from above with a rebound bounce.',
-  'Shake': 'Rapid rotation oscillations for emphasis.',
-  'Flip In 3D': 'Smooth entry flip around the 3D Y-axis.',
-  'Card Flip 3D': 'Rotate 180 degrees around the Y-axis.',
-  'Swing In 3D': 'Pendulum-like swing from the top axis.',
-  'Depth Push In': 'Push forward from deep Z space.',
-  'Orbit Tilt 3D': 'Orbit around multiple axes simultaneously.',
-  'Spiral Entrance': 'Spin and scale up from center with overshoot.',
-  'Skid Slide In': 'Slide in fast, skid overshoot, and slide back.',
-  'Zoom Out Exit': 'Slight scale pop and zoom out to 0% scale.',
-  'Rotate Out Exit': 'Spin rotation while scaling down to 0%.',
-  'Heartbeat': 'Scale up and down in a rhythmic double-pulse.',
-  'Elastic Float': 'Continuous smooth vertical floating movement.',
-  'Jelly Wobble': 'Continuous scale stretch, squash, and tilt wobble.',
-  'Glitch Jitter': 'High-frequency micro-movements on position and scale.',
-  'Wiggle Drift': 'Apply position expression for continuous organic noise drift.',
-  'Wind Sway': 'Apply rotation expression for continuous pendulum-like sway.',
-  '3D Twirl In': 'Spin X and Y axes while scaling up into view.',
-  '3D Cube Roll': '3D roll rotation towards camera from Z space.',
-  'Cinematic Pan 3D': 'Gentle 3D parallax rotation and depth panning.',
-  'Typewriter': 'Reveal characters one-by-one from left to right.',
-  'Bounce In Words': 'Bounce text words in one-by-one from top.',
-  'Spin & Fade Characters': 'Spin text characters in one-by-one.',
-  'Tracking Reveal': 'Expand character tracking space while fading in.',
-};
-
 type SortOrder = 'default' | 'alphabetical-asc' | 'alphabetical-desc';
+
+/** Folders that open on first paint — the ones a user most often wants. */
+const OPEN_BY_DEFAULT = new Set(['Entrances', 'Text/Animate In', USER_PRESET_FOLDER]);
 
 export function MotionPresetsPanel(): JSX.Element {
   const selectedIds = useSelectionStore((s) => s.ids);
   const notify = useUIStore((s) => s.notify);
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
   const playhead = useWorkspaceStore((s) => (activeTabId ? s.tabs[activeTabId]?.time : 0) ?? 0);
-  
-  // Re-render when the scene is modified (e.g. user saves or deletes a preset)
+
+  // Re-render when the scene is modified (e.g. the user saves or deletes one).
   const sceneRev = useSceneRevision((s) => s.rev);
 
   const [search, setSearch] = useState('');
   const [sortOrder, setSortOrder] = useState<SortOrder>('default');
+  const [saving, setSaving] = useState(false);
+  const [saveName, setSaveName] = useState('');
 
-  const presets = useMemo(() => {
-    return listPresets();
-    // sceneRev is the refresh signal: save/delete bumps the scene revision.
-  }, [sceneRev]);
+  const presets = useMemo(() => listPresets(), [sceneRev]);
 
-  // Filtered and sorted presets
+  /** Does the selected layer support text animators? Used to say so rather
+   *  than let a text preset apply to a rectangle and silently do nothing. */
+  const selectionIsText = useMemo(() => {
+    const id = selectedIds[0];
+    if (!id) return false;
+    const node = defaultSceneGraph.getNode(id);
+    return !!node && hasTextComponent(node);
+  }, [selectedIds, sceneRev]);
+
   const processedPresets = useMemo(() => {
     let result = [...presets];
-
-    // Search filter
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    const q = search.trim().toLowerCase();
+    if (q) {
       result = result.filter(
         (p) =>
           p.name.toLowerCase().includes(q) ||
-          (PRESET_DESCRIPTIONS[p.name] || '').toLowerCase().includes(q) ||
-          (p.category || '').toLowerCase().includes(q)
+          (p.description ?? '').toLowerCase().includes(q) ||
+          presetFolder(p).toLowerCase().includes(q),
       );
     }
-
-    // Sort order
-    if (sortOrder === 'alphabetical-asc') {
-      result.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sortOrder === 'alphabetical-desc') {
-      result.sort((a, b) => b.name.localeCompare(a.name));
-    }
-
+    if (sortOrder === 'alphabetical-asc') result.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sortOrder === 'alphabetical-desc') result.sort((a, b) => b.name.localeCompare(a.name));
     return result;
   }, [presets, search, sortOrder]);
 
-  // Group by category
-  const categories = useMemo(() => {
-    const groups: Record<string, typeof processedPresets> = {
-      'Entrances': [],
-      'Exits': [],
-      '3D Motions': [],
-      'Text Animators (AE-Style)': [],
-      'Emphases & Loops': [],
-      'Saved Presets': [],
-    };
-
-    processedPresets.forEach((p) => {
-      const cat = p.builtin ? p.category || 'Emphases & Loops' : 'Saved Presets';
-      if (!groups[cat]) {
-        groups[cat] = [];
-      }
-      groups[cat]!.push(p);
+  /** Group by folder path, ordered so built-ins keep their authored order and
+   *  the user's own presets sit at the bottom where they can be found. */
+  const folders = useMemo(() => {
+    const groups = new Map<string, AnimationPreset[]>();
+    for (const p of processedPresets) {
+      const key = presetFolder(p);
+      const list = groups.get(key);
+      if (list) list.push(p);
+      else groups.set(key, [p]);
+    }
+    return [...groups.entries()].sort(([a], [b]) => {
+      const userA = a === USER_PRESET_FOLDER ? 1 : 0;
+      const userB = b === USER_PRESET_FOLDER ? 1 : 0;
+      return userA - userB || a.localeCompare(b);
     });
-
-    return groups;
   }, [processedPresets]);
 
-  const handleApplyPreset = (presetName: string) => {
-    if (selectedIds[0]) {
-      const ok = applyPresetByName(selectedIds[0], presetName, playhead);
-      if (ok) {
-        notify({ level: 'success', message: `Applied "${presetName}"`, durationMs: 2000 });
-      } else {
-        notify({ level: 'warning', message: `Failed to apply "${presetName}"`, durationMs: 2000 });
-      }
-    } else {
+  const apply = (preset: AnimationPreset): void => {
+    const id = selectedIds[0];
+    if (!id) {
       notify({ level: 'warning', message: 'Select a layer first', durationMs: 2000 });
+      return;
     }
+    if (preset.requires === 'text' && !selectionIsText) {
+      // Explicit rather than a silent no-op: this preset animates characters,
+      // and the selected layer has none.
+      notify({
+        level: 'warning',
+        message: `"${preset.name}" animates characters — select a text layer`,
+        durationMs: 2600,
+      });
+      return;
+    }
+    const ok = applyPreset(preset, id, playhead);
+    notify(
+      ok
+        ? { level: 'success', message: `Applied "${preset.name}"`, durationMs: 2000 }
+        : { level: 'warning', message: `Failed to apply "${preset.name}"`, durationMs: 2000 },
+    );
+    bumpScene();
   };
 
-  const getEnvironment = (classKey: string) => {
-    if (classKey.includes('fade')) {
-      return (
-        <div className={styles.envFade}>
-          <div className={styles.envGrid} />
-        </div>
-      );
+  /**
+   * Commit the pending save. Inline rather than `window.prompt`: a modal prompt
+   * blocks the whole app, cannot be styled, and cannot show which layer is
+   * being captured — and this is the ONE home for saving a preset now that the
+   * redundant PresetsBar is gone.
+   */
+  const commitSave = (): void => {
+    const id = selectedIds[0];
+    const name = saveName.trim();
+    if (!id || !name) return;
+    const ok = saveCurrentAsPreset(id, name);
+    notify(
+      ok
+        ? { level: 'success', message: `Saved "${name}" to ${USER_PRESET_FOLDER}`, durationMs: 2200 }
+        : { level: 'warning', message: 'Nothing to save — animate the layer first', durationMs: 2400 },
+    );
+    if (ok) {
+      setSaveName('');
+      setSaving(false);
     }
-    if (classKey.includes('spin') || classKey.includes('orbit') || classKey.includes('spiral') || classKey.includes('rotate') || classKey.includes('sway')) {
-      return (
-        <div className={styles.envSpin}>
-          <div className={styles.envOrbitRing} />
-        </div>
-      );
+    bumpScene();
+  };
+
+  const beginSave = (): void => {
+    if (!selectedIds[0]) {
+      notify({ level: 'warning', message: 'Select an animated layer first', durationMs: 2000 });
+      return;
     }
-    if (classKey.includes('pulse') || classKey.includes('heartbeat')) {
-      return (
-        <div className={styles.envPulse}>
-          <div className={styles.envPulseRing1} />
-          <div className={styles.envPulseRing2} />
-        </div>
-      );
-    }
-    if (classKey.includes('pop') || classKey.includes('bounce') || classKey.includes('zoom')) {
-      return (
-        <div className={styles.envPop}>
-          <div className={styles.envSparkle} style={{ top: 6, left: 6 }} />
-          <div className={styles.envSparkle} style={{ bottom: 6, right: 6 }} />
-        </div>
-      );
-    }
-    if (classKey.includes('slide') || classKey.includes('skid') || classKey.includes('typewriter') || classKey.includes('reveal') || classKey.includes('characters') || classKey.includes('words')) {
-      return (
-        <div className={styles.envSlide}>
-          <div className={styles.envTrackLine} />
-        </div>
-      );
-    }
-    if (classKey.includes('rise') || classKey.includes('drop') || classKey.includes('float')) {
-      return (
-        <div className={styles.envVertical}>
-          <div className={styles.envTrackLineVertical} />
-          <div className={styles.envGroundLine} />
-        </div>
-      );
-    }
-    if (classKey.includes('shake') || classKey.includes('glitch') || classKey.includes('jitter') || classKey.includes('jelly') || classKey.includes('wobble')) {
-      return (
-        <div className={styles.envShake}>
-          <div className={styles.envBoundLeft} />
-          <div className={styles.envBoundRight} />
-        </div>
-      );
-    }
-    if (classKey.includes('3d') || classKey.includes('cube') || classKey.includes('pan') || classKey.includes('swing') || classKey.includes('depth') || classKey.includes('flip')) {
-      return (
-        <div className={styles.envThreeD}>
-          <div className={styles.envGrid3D} />
-        </div>
-      );
-    }
-    return <div className={styles.envDefault} />;
+    setSaving(true);
   };
 
   const sortItems: DropdownItem[] = [
     { type: 'label', label: 'Sort Presets By' },
     {
-      type: 'checkbox',
-      id: 'default',
-      label: 'Default Order',
-      checked: sortOrder === 'default',
-      onChange: () => setSortOrder('default'),
+      type: 'checkbox', id: 'default', label: 'Default Order',
+      checked: sortOrder === 'default', onChange: () => setSortOrder('default'),
     },
     {
-      type: 'checkbox',
-      id: 'asc',
-      label: 'Alphabetical (A-Z)',
-      checked: sortOrder === 'alphabetical-asc',
-      onChange: () => setSortOrder('alphabetical-asc'),
+      type: 'checkbox', id: 'asc', label: 'Alphabetical (A-Z)',
+      checked: sortOrder === 'alphabetical-asc', onChange: () => setSortOrder('alphabetical-asc'),
     },
     {
-      type: 'checkbox',
-      id: 'desc',
-      label: 'Alphabetical (Z-A)',
-      checked: sortOrder === 'alphabetical-desc',
-      onChange: () => setSortOrder('alphabetical-desc'),
+      type: 'checkbox', id: 'desc', label: 'Alphabetical (Z-A)',
+      checked: sortOrder === 'alphabetical-desc', onChange: () => setSortOrder('alphabetical-desc'),
     },
   ];
 
-  const accordionItems = useMemo((): AccordionItem[] => {
-    return Object.entries(categories)
-      .filter(([_, items]) => items.length > 0)
-      .map(([cat, items]) => {
-        return {
-          id: cat,
-          title: cat,
-          badge: <span className={styles.catBadge}>{items.length}</span>,
-          defaultOpen: cat === 'Entrances' || cat === 'Saved Presets',
-          content: (
-            <div className={styles.presetGrid}>
-              {items.map((preset) => {
-                const classKey = preset.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-                
-                // Determine visual preview element: dot, animating text spans, or 3D cards
-                let previewElement = <div className={`${styles.presetDot} ${styles[classKey] || ''}`} />;
-                if (cat === 'Text Animators (AE-Style)' || preset.name === 'Typewriter' || preset.name === 'Bounce In Words' || preset.name === 'Spin & Fade Characters' || preset.name === 'Tracking Reveal') {
-                  const characters = ['A', 'e', 'f', 'x'];
-                  previewElement = (
-                    <div className={`${styles.textPreviewWrapper} ${styles[classKey] || ''}`}>
-                      {characters.map((char, index) => (
-                        <span key={index} style={{ animationDelay: `${index * 120}ms` }}>{char}</span>
-                      ))}
+  const accordionItems = useMemo(
+    (): AccordionItem[] =>
+      folders.map(([folder, items]) => ({
+        id: folder,
+        title: folder,
+        badge: <span className={styles.catBadge}>{items.length}</span>,
+        // Searching means the user is hunting, not browsing — open everything.
+        defaultOpen: !!search.trim() || OPEN_BY_DEFAULT.has(folder),
+        content: (
+          <div className={styles.presetGrid}>
+            {items.map((preset) => {
+              const unavailable = preset.requires === 'text' && !!selectedIds[0] && !selectionIsText;
+              return (
+                <div key={preset.name} className={styles.presetCardWrapper}>
+                  <button
+                    type="button"
+                    className={styles.presetCard}
+                    title={
+                      unavailable
+                        ? `${preset.name} — needs a text layer`
+                        : `${preset.description ?? preset.name}\nClick to apply, or drag onto a layer.`
+                    }
+                    draggable
+                    onDragStart={(e) => setCanvasDrag(e, { kind: 'motionPreset', name: preset.name })}
+                    onClick={() => apply(preset)}
+                    // Double-click applies too: AE users reach for it, and a
+                    // second apply is undoable, so the duplicate is harmless.
+                    onDoubleClick={() => apply(preset)}
+                    style={unavailable ? { opacity: 0.45 } : undefined}
+                  >
+                    <div className={styles.presetPreview}>
+                      <PresetPreview preset={preset} />
                     </div>
-                  );
-                } else if (cat === '3D Motions' || classKey.includes('3d') || classKey.includes('depth') || classKey.includes('cube') || classKey.includes('flip')) {
-                  previewElement = (
-                    <div className={`${styles.threeDPreviewWrapper} ${styles[classKey] || ''}`}>
-                      <div className={styles.threeDPlaneFace}>3D</div>
+                    <div className={styles.presetInfo}>
+                      <span className={styles.presetName}>{preset.name}</span>
+                      <span className={styles.presetDesc}>
+                        {preset.description ?? 'Custom user motion preset.'}
+                      </span>
                     </div>
-                  );
-                }
-
-                return (
-                  <div key={preset.name} className={styles.presetCardWrapper}>
+                  </button>
+                  {!preset.builtin ? (
                     <button
                       type="button"
-                      className={styles.presetCard}
-                      title={`Apply: ${preset.name} — or drag onto a layer`}
-                      draggable
-                      onDragStart={(e) => setCanvasDrag(e, { kind: 'motionPreset', name: preset.name })}
-                      onClick={() => handleApplyPreset(preset.name)}
+                      className={styles.deleteBtn}
+                      title="Delete custom preset"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deletePreset(preset.name);
+                        notify({ level: 'success', message: `Deleted preset "${preset.name}"`, durationMs: 2000 });
+                        // The panel refreshes off the scene revision.
+                        bumpScene();
+                      }}
                     >
-                      <div className={styles.presetPreview}>
-                        {getEnvironment(classKey)}
-                        {previewElement}
-                      </div>
-                      <div className={styles.presetInfo}>
-                        <span className={styles.presetName}>{preset.name}</span>
-                        <span className={styles.presetDesc}>
-                          {PRESET_DESCRIPTIONS[preset.name] || 'Custom user motion preset.'}
-                        </span>
-                      </div>
+                      <Icon name="trash" size={12} />
                     </button>
-                    {!preset.builtin ? (
-                      <button
-                        type="button"
-                        className={styles.deleteBtn}
-                        title="Delete custom preset"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deletePreset(preset.name);
-                          notify({ level: 'success', message: `Deleted preset "${preset.name}"`, durationMs: 2000 });
-                          // 'SceneChanged' is not an EventBus event — the panel
-                          // refreshes off the scene revision.
-                          bumpScene();
-                        }}
-                      >
-                        <Icon name="trash" size={12} />
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ),
-        };
-      });
-  }, [categories, selectedIds, playhead]);
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ),
+      })),
+    [folders, selectedIds, selectionIsText, playhead, search],
+  );
 
   return (
     <Panel
@@ -317,6 +261,15 @@ export function MotionPresetsPanel(): JSX.Element {
             onClear={() => setSearch('')}
             onChange={(e) => setSearch(e.currentTarget.value)}
           />
+          <button
+            type="button"
+            className={styles.sortBtn}
+            title="Save the selected layer's animation as a preset"
+            aria-label="Save as preset"
+            onClick={beginSave}
+          >
+            <Icon name="plus" size={12} />
+          </button>
           <Dropdown
             placement="bottom-end"
             trigger={
@@ -327,6 +280,41 @@ export function MotionPresetsPanel(): JSX.Element {
             items={sortItems}
           />
         </div>
+        {saving && (
+          <div className={styles.searchRow} style={{ marginTop: 6 }}>
+            <Input
+              value={saveName}
+              placeholder="Preset name…"
+              size="sm"
+              fullWidth
+              autoFocus
+              onChange={(e) => setSaveName(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitSave();
+                if (e.key === 'Escape') { setSaving(false); setSaveName(''); }
+              }}
+            />
+            <button
+              type="button"
+              className={styles.sortBtn}
+              title="Save"
+              aria-label="Confirm save preset"
+              disabled={!saveName.trim()}
+              onClick={commitSave}
+            >
+              <Icon name="check" size={12} />
+            </button>
+            <button
+              type="button"
+              className={styles.sortBtn}
+              title="Cancel"
+              aria-label="Cancel save preset"
+              onClick={() => { setSaving(false); setSaveName(''); }}
+            >
+              <Icon name="close" size={12} />
+            </button>
+          </div>
+        )}
       </div>
       <div className={styles.libBody}>
         {accordionItems.length > 0 ? (

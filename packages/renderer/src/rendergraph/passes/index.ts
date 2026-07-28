@@ -3,7 +3,7 @@
 import { RenderGraph } from '../RenderGraph';
 import { ClearPass } from './ClearPass';
 import { BackgroundPass } from './BackgroundPass';
-import { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET, PRECOMP_TARGETS } from './CompositionPass';
+import { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS } from './CompositionPass';
 import { SelectionPass } from './SelectionPass';
 import { OverlayPass } from './OverlayPass';
 import { MaskPass, MASK_TARGET } from './MaskPass';
@@ -11,7 +11,7 @@ import { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
 
 export { ClearPass } from './ClearPass';
 export { BackgroundPass } from './BackgroundPass';
-export { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
+export { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
 export { SelectionPass } from './SelectionPass';
 export { OverlayPass } from './OverlayPass';
 export { MaskPass, MASK_TARGET } from './MaskPass';
@@ -86,6 +86,18 @@ export function buildDefaultGraph(): RenderGraph {
     height: vp.pixelSize.height,
     format: 'rgba8unorm',
   }));
+  // Half-resolution backdrop-blur chain. A large-radius blur has no
+  // high-frequency content left to lose, so blurring at half size costs a
+  // quarter as much for an output nobody can distinguish. See CompositionPass.
+  for (const name of [BACKDROP_HALF1, BACKDROP_HALF2]) {
+    graph.declareTarget(name, (vp) => ({
+      label: name,
+      width: Math.max(1, Math.floor(vp.pixelSize.width / BACKDROP_DOWNSCALE)),
+      height: Math.max(1, Math.floor(vp.pixelSize.height / BACKDROP_DOWNSCALE)),
+      format: 'rgba8unorm',
+    }));
+  }
+
   // One isolated-precomp target per nesting depth (see CompositionPass).
   // Depth-capable so a 3D group INSIDE an isolated precomp depth-tests too.
   for (const name of PRECOMP_TARGETS) {

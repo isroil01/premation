@@ -60,6 +60,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
   const [letterSpacing, setLetterSpacing] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'letterSpacing');
   const [lineHeight, setLineHeight] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lineHeight');
   const [paragraphSpacing, setParagraphSpacing] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'paragraphSpacing');
+  const [strokeOverFill, setStrokeOverFill] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'strokeOverFill');
 
   // Real per-family weights from the installed-font catalog (async, cached).
   const [, fontsReady] = useReducer((n: number) => n + 1, 0);
@@ -402,6 +403,24 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
             run key, so it stays layer-wide even with a selection. */}
         {renderTextPropInner('Leading', 'lineHeight', lineHeightVal, setLineHeight, 'em', 1.2)}
         {renderTextPropInner('Paragraph', 'paragraphSpacing', paragraphSpacingVal, setParagraphSpacing, 'px', 0)}
+
+        {/* AE's Fill & Stroke order. Only meaningful once something gives the
+            glyphs a stroke — today that is a text animator's Stroke Width — so
+            it sits with the other layer-wide text properties rather than in the
+            animator, which is per-character. Under is the default: a stroke
+            centres on the outline, so over-the-fill eats half its width out of
+            the letterforms. */}
+        <div className={styles.popoverRow}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+            <Checkbox
+              checked={strokeOverFill === true}
+              onChange={() => setStrokeOverFill(strokeOverFill !== true)}
+              title="Paint the glyph stroke over the fill instead of under it"
+              style={{ width: 13, height: 13 }}
+            />
+            <span className={styles.popoverLabel}>Stroke Over Fill</span>
+          </div>
+        </div>
 
         {/* NOT the same control as Appearance's fill, though it writes the same
             prop when nothing is selected: with a character range selected this

@@ -27,6 +27,10 @@ describe('compositionStore', () => {
       background: '#101014',
       transparent: false,
       startFrame: 0,
+      // The composition's global light — the direction layer styles bound to
+      // it use, so every shadow in the comp can be re-lit from one control.
+      globalLightAngle: 90,
+      globalLightAltitude: 45,
     });
   });
 
@@ -61,5 +65,29 @@ describe('compositionStore', () => {
     const comp = useCompositionStore.getState().comp();
     expect(comp.background).toBe('#123456');
     expect(comp.transparent).toBe(true);
+  });
+});
+
+describe('global light', () => {
+  test('is included in key(), so moving the light triggers a repaint', () => {
+    // Without this the snapshot changes and nothing redraws — the shadow moves
+    // only once something else happens to invalidate the frame.
+    const before = useCompositionStore.getState().key();
+    useCompositionStore.getState().update({ globalLightAngle: 200 });
+    expect(useCompositionStore.getState().key()).not.toBe(before);
+  });
+
+  test('angle is NOT wrapped — a sweep may cross 0 and keep going', () => {
+    useCompositionStore.getState().update({ globalLightAngle: 725 });
+    expect(useCompositionStore.getState().globalLightAngle).toBe(725);
+    useCompositionStore.getState().update({ globalLightAngle: -90 });
+    expect(useCompositionStore.getState().globalLightAngle).toBe(-90);
+  });
+
+  test('altitude is clamped to 0..90', () => {
+    useCompositionStore.getState().update({ globalLightAltitude: 200 });
+    expect(useCompositionStore.getState().globalLightAltitude).toBe(90);
+    useCompositionStore.getState().update({ globalLightAltitude: -10 });
+    expect(useCompositionStore.getState().globalLightAltitude).toBe(0);
   });
 });

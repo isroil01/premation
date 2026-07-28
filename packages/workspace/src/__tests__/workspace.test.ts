@@ -195,10 +195,13 @@ describe('Workspace overlay', () => {
     selection.set(['a']);
     const overlay = ws.overlay();
     expect(overlay.selectionBounds).toEqual(R.fromPoints(toScreen(0, 0), toScreen(100, 100)));
-    // 8 resize + rotate + the always-visible anchor marker (AE shows the
-    // pivot on any selected layer, not only under the Pan-Behind tool).
-    expect(overlay.handles).toHaveLength(10);
+    // 8 resize grips + the always-visible anchor marker (AE shows the pivot on
+    // any selected layer, not only under the Pan-Behind tool). No rotate grip.
+    expect(overlay.handles).toHaveLength(9);
     expect(overlay.handles.some((h) => h.kind === 'anchor')).toBe(true);
+    expect(overlay.handles.some((h) => h.kind === 'rotate')).toBe(false);
+    // And one oriented box per selected layer, beside the union AABB.
+    expect(overlay.selectionBoxes).toHaveLength(1);
   });
 
   it('multi-selection draws no transform handles (they would be dead grips)', () => {

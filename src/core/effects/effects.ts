@@ -39,7 +39,15 @@ export type EffectType =
   | 'keylight'
   | 'wave-warp'
   | 'turbulent-displace'
-  | 'echo';
+  | 'echo'
+  | 'inner-shadow'
+  | 'inner-glow'
+  | 'satin'
+  | 'bevel'
+  | 'directional-blur'
+  | 'linear-wipe'
+  | 'transform'
+  | 'posterize-time';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -150,6 +158,22 @@ export function primaryParamKey(type: EffectType): string | undefined {
   return DEF.get(type)?.params.find((p) => p.type === 'number')?.key;
 }
 
+/**
+ * TEMPORAL effects: resolved in `buildSnapshot`'s time plumbing rather than as
+ * a per-layer pixel pass.
+ *
+ * They change WHEN a layer is sampled, not what its pixels look like, so they
+ * have no CSS form and no shader — and, unlike the Canvas2D-only family, must
+ * NOT be routed through the pixel chain, where they would do nothing at all.
+ * Echo emits ghost copies at past/future times; Posterize Time quantizes the
+ * layer's clock.
+ */
+const TEMPORAL = new Set<string>(['echo', 'posterize-time']);
+
+export function isTemporalEffect(type: string): boolean {
+  return TEMPORAL.has(type);
+}
+
 /** An effect's params filled in from its definition's defaults. */
 export function defaultParams(def: EffectDef): EffectParams {
   const out: Record<string, EffectParamValue> = {};
@@ -238,6 +262,95 @@ export const EFFECT_DEFS: EffectDef[] = [
   // Hue/Saturation — AE's master H/S/L. On Canvas2D it composes CSS filters; on
   // the GPU path it composes the same transforms in effectColorMatrix, so both
   // backends match. Saturation/Lightness are −100..+100 (0 = no change).
+  {
+    type: 'inner-shadow',
+    label: 'Inner Shadow',
+    params: [
+      { key: 'distance', label: 'Distance', type: 'number', unit: 'px', min: 0, max: 200, default: 6 },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', default: 135 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 100, default: 8 },
+      { key: 'color', label: 'Color', type: 'color', default: '#000000' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 55 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'inner-glow',
+    label: 'Inner Glow',
+    params: [
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 0, max: 200, default: 14 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffd070' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 80 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'satin',
+    label: 'Satin',
+    params: [
+      { key: 'distance', label: 'Distance', type: 'number', unit: 'px', min: 0, max: 200, default: 14 },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', default: 135 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 0, max: 200, default: 16 },
+      { key: 'color', label: 'Color', type: 'color', default: '#000000' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 45 },
+      { key: 'invert', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'bevel',
+    label: 'Bevel & Emboss',
+    params: [
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 1, max: 100, default: 10 },
+      { key: 'depth', label: 'Depth', type: 'number', unit: '%', min: 0, max: 500, default: 100 },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', default: 135 },
+      { key: 'altitude', label: 'Altitude', type: 'number', unit: '°', min: 0, max: 90, default: 45 },
+      { key: 'highlightColor', label: 'Highlight', type: 'color', default: '#ffffff' },
+      { key: 'highlightOpacity', label: 'Highlight Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 75 },
+      { key: 'shadowColor', label: 'Shadow', type: 'color', default: '#000000' },
+      { key: 'shadowOpacity', label: 'Shadow Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 75 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'directional-blur',
+    label: 'Directional Blur',
+    params: [
+      { key: 'direction', label: 'Direction', type: 'number', unit: '°', default: 0 },
+      { key: 'length', label: 'Length', type: 'number', unit: 'px', min: 0, max: 200, default: 20 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'linear-wipe',
+    label: 'Linear Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'wipeAngle', label: 'Wipe Angle', type: 'number', unit: '°', default: 90 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 200, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'transform',
+    label: 'Transform',
+    params: [
+      { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', default: 0 },
+      { key: 'positionY', label: 'Position Y', type: 'number', unit: 'px', default: 0 },
+      { key: 'scale', label: 'Scale', type: 'number', unit: '%', min: 0, max: 1000, default: 100 },
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', default: 0 },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'posterize-time',
+    label: 'Posterize Time',
+    params: [
+      { key: 'frameRate', label: 'Frame Rate', type: 'number', unit: 'fps', min: 1, max: 120, default: 12 },
+    ],
+    css: () => '',
+  },
   {
     type: 'hue-saturation',
     label: 'Hue/Saturation',
@@ -342,6 +455,7 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'blend', label: 'Blend', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
       { key: 'colorA', label: 'Start', type: 'color', default: '#ff0000' },
       { key: 'colorB', label: 'End', type: 'color', default: '#0000ff' },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', default: 90 },
     ],
     css: () => '',
   },
@@ -689,7 +803,8 @@ export function getNodeEffects(nodeId: string): Effect[] {
 
 let seq = 0;
 
-function writeNodeEffects(nodeId: string, effects: Effect[]): void {
+/** Replace a layer's effect stack (bumps the scene + notifies). */
+export function writeNodeEffects(nodeId: string, effects: Effect[]): void {
   // The `fx` component is a computed view over the engine node; store the stack
   // on the engine (surfaced back as `readNodeEffects`' fx component).
   defaultSceneGraph.setEffects(nodeId, effects);
@@ -754,4 +869,29 @@ export function reorderEffects(effects: ReadonlyArray<Effect>, effectId: string,
   if (i < 0 || j < 0 || j >= list.length) return list;
   [list[i], list[j]] = [list[j]!, list[i]!];
   return list;
+}
+
+/**
+ * Pure: move `effectId` to index `to` (a drag-and-drop reorder, as opposed to
+ * `reorderEffects`' single-step nudge).
+ *
+ * `to` is the index in the ORIGINAL list that the effect should end up before —
+ * the convention a drop indicator drawn between rows implies. Removing the
+ * dragged item first would shift every later index by one, so the removal is
+ * compensated rather than the caller having to think about it.
+ */
+export function moveEffectTo(effects: ReadonlyArray<Effect>, effectId: string, to: number): Effect[] {
+  const list = [...effects];
+  const from = list.findIndex((e) => e.id === effectId);
+  if (from < 0) return list;
+  const clamped = Math.max(0, Math.min(to, list.length));
+  if (clamped === from || clamped === from + 1) return list; // no-op drops
+  const [moved] = list.splice(from, 1);
+  list.splice(clamped > from ? clamped - 1 : clamped, 0, moved!);
+  return list;
+}
+
+/** Move an effect to an absolute index on a node's stack (drag reorder). */
+export function dragEffectTo(nodeId: string, effectId: string, to: number): void {
+  writeNodeEffects(nodeId, moveEffectTo(getNodeEffects(nodeId), effectId, to));
 }

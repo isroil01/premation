@@ -16,6 +16,17 @@ export interface GridState {
   visible: boolean;
   /** Base world-space cell size at zoom 1. */
   baseSize: number;
+  /**
+   * Fixed world-space spacing for SNAPPING, overriding the adaptive stepper.
+   *
+   * The adaptive spacing exists so a *drawn* reference grid stays legible at any
+   * zoom. Snapping needs the opposite: it must land on the lines the user can
+   * actually see, and a host that draws a fixed grid (as After Effects does —
+   * "Gridline every N pixels") would otherwise snap to a spacing that changes
+   * as you zoom and matches no line on screen. Null keeps the adaptive
+   * behaviour for hosts that draw an adaptive grid.
+   */
+  snapSpacing: number | null;
   /** Major line every N minor cells. */
   majorEvery: number;
   /** Opacity multiplier for the whole grid [0..1]. */
@@ -44,6 +55,7 @@ export interface GridLines {
 const DEFAULT_STATE: GridState = {
   visible: true,
   baseSize: 10,
+  snapSpacing: null,
   majorEvery: 5,
   opacity: 1,
   targetScreenSpacing: 24,
@@ -66,6 +78,16 @@ export class Grid {
 
   setVisible(visible: boolean): void {
     this.state.visible = visible;
+  }
+
+  /**
+   * Spacing snapping should use: the host's fixed spacing when it declares one,
+   * otherwise the adaptive step. Kept separate from {@link adaptiveSpacing} so
+   * the drawn grid and the snap grid can never be confused for each other.
+   */
+  snapSpacing(zoom: number): number {
+    const fixed = this.state.snapSpacing;
+    return fixed !== null && fixed > 0 ? fixed : this.adaptiveSpacing(zoom);
   }
 
   setBaseSize(size: number): void {

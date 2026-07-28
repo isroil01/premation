@@ -154,6 +154,8 @@ Animate after rigging:
   puppet.<pinId>.position  — via set_puppet_pin_keyframes (see below); moves the pin over time
   puppet.<pinId>.rotation  — via set_keyframes; degrees, rotates the deformation rigidly around the pin
   puppet.<pinId>.stiffness — via set_keyframes; >= 0, sharpens that pin's influence falloff
+  puppet.<pinId>.scale     — via set_keyframes; 1 = unchanged, uniform scale around the pin
+  puppet.<pinId>.overlap   — via set_keyframes; -100..100, depth order where the mesh folds over itself
 (Do NOT set_keyframes puppet.<pinId>.position — it is a points data track; use set_puppet_pin_keyframes.)
 
 ### set_puppet_pin_keyframes
@@ -163,7 +165,8 @@ Call create_puppet_rig first; use the returned pin ids.
 
 ### create_skeleton_rig
 Rig a character or multi-part vector layer with a skeletal hierarchy of bones (After Effects / Spine style).
-Args: { layerId, bones: [{ id, parentId?, length, x?, y?, rotation? }] }
+Args: { layerId, bones: [{ id, parentId?, name?, length, x?, y?, rotation? }] }
+Bone pose tracks: bone.<id>.rotation|x|y|scaleX|scaleY. IK: ikTarget.<id>.x|y, and ikPole.<id>.x|y for the bend side.
 
 ### pose_skeleton
 Pose and animate character bones over time for kicks, walks, arm swings, and body rotations.

@@ -4,16 +4,64 @@ import { depthEligible3D, type Renderable, type RenderableEffect, type Renderabl
 import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, emitSolid, emitTextured, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGradientRamp, packFractalNoise, packDisplacementMap, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
+import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import { EffectPass } from './EffectPass';
 
+/**
+ * ── PER-LAYER ORDER OF OPERATIONS ────────────────────────────────────
+ *
+ * Written down here because it was never stated anywhere and is not what most
+ * people assume. For ONE layer, in this order:
+ *
+ *   1. content          — the layer's own pixels (solid SDF, or its texture)
+ *   2. mask             — baked into the texture (CPU) or applied as a mask
+ *                         sample during the content draw
+ *   3. TRANSFORM        — `renderableCmds` draws through `r.modelMatrix`, so
+ *                         the layer lands in SCREEN space here
+ *   4. motion blur      — sub-frame samples accumulate additively, each with
+ *                         its own transform
+ *   5. effects          — `applyLayerEffects` → `runEffectsChain`, operating on
+ *                         the SCREEN-SPACE texture from step 3
+ *   6. layer styles     — appended to the same effects list by buildSnapshot,
+ *                         so they run at the end of step 5
+ *   7. matte / blend    — composited against the layers beneath
+ *
+ * The consequence worth knowing: EFFECTS RUN AFTER TRANSFORM, not before. A
+ * blur radius, a glow size and a drop-shadow distance are all in SCREEN pixels
+ * (`RenderableEffect.radiusPx`), so they do NOT scale or rotate with the layer.
+ * Scaling a layer to 200% does not double its shadow's blur.
+ *
+ * The one exception is the CPU-bake path: effects with no GPU shader form
+ * (`isCanvas2dOnlyEffect` — Fill, Stroke, Beam, Sharpen, Noise, Keylight, the
+ * warps) are baked into the layer's texture in LOCAL space, i.e. before
+ * transform, and therefore DO scale with it. That inconsistency is real and
+ * predates this comment; it is documented rather than fixed here because
+ * changing it would alter existing renders.
+ */
 export const LAYER_TARGET = 'layer-target';
 export const BLUR_TARGET1 = 'blur-target1';
 export const BLUR_TARGET2 = 'blur-target2';
 export const MATTE_TARGET = 'matte-target';
+/**
+ * Half-resolution ping-pong targets for the backdrop blur behind frosted glass.
+ *
+ * The blur is a fixed 61-tap kernel whose spacing widens with the radius, so
+ * its cost is per-PIXEL, not per-radius: blurring at half resolution is four
+ * times cheaper for exactly the same visual radius. Nobody can tell — the
+ * output of a large-radius blur has no high-frequency content left to lose,
+ * which is precisely why every real-time implementation downsamples first.
+ *
+ * The copy-down and the blurs happen here; the upsample is free, because the
+ * composite samples this texture through a linear sampler at full size.
+ */
+export const BACKDROP_HALF1 = 'backdrop-half1';
+export const BACKDROP_HALF2 = 'backdrop-half2';
+
+/** Downsample factor for the backdrop blur chain. */
+export const BACKDROP_DOWNSCALE = 2;
 
 /** Offscreen targets for isolated precomps, one per nesting depth. A precomp's
  *  subtree renders into its depth's target and is composited (as one unit)
@@ -544,6 +592,7 @@ export class CompositionPass extends RenderPass {
         eye: camera3d.eye ?? [0, 0, -1e6],
         specular: camera3d.eye ? s.specular : 0,
         shininess: s.shininess,
+        ...(s.metal ? { metal: s.metal } : {}),
         lights,
       };
     };
@@ -773,7 +822,7 @@ export class CompositionPass extends RenderPass {
 
     if (!Rect.intersects(visible, r.bounds) || r.opacity <= 0) return;
 
-    if (r.backdropBlur && r.backdropBlur > 0) {
+    if ((r.backdropBlur && r.backdropBlur > 0) || r.glass) {
       // Frosted glass: blur what is BEHIND the layer and show it through the
       // layer's own alpha. Same preconditions and ordering hazards as the
       // advanced-blend branch below — needs a samplable out target, and the
@@ -790,36 +839,89 @@ export class CompositionPass extends RenderPass {
         //    its COLOUR is the tint drawn over the blur.
         const layerTex = this.layerIntoTarget(ctx, r, r.opacity, MATTE_TARGET, byId);
         // 2. Copy the backdrop out — a target cannot be sampled while written.
+        //    Radius 0 skips the blur chain entirely and keeps the copy at full
+        //    resolution; that is a legitimate Glass setting, not a degenerate
+        //    one, because clear glass refracts without frosting and must not
+        //    lose sharpness to a downsample it never asked for.
+        //
+        // ── Why there is no blurred-backdrop CACHE here ──────────────────
+        //
+        // The obvious optimisation is "cache the blurred backdrop, invalidate
+        // when a layer beneath changes or the playhead moves". That rule
+        // describes exactly the frames this renderer never draws.
+        //
+        // The viewport is invalidation-driven, not a loop: WorkspaceController
+        // .scheduleRender() queues ONE coalesced rAF and only when markDirty
+        // fires, so with nothing changing and the playhead parked, zero frames
+        // are rendered and there is nothing for a cache to serve. While
+        // PLAYING, usePlaybackClock advances the playhead every frame — which
+        // is the other half of the invalidation rule. So the cache would be
+        // consulted only on frames it had already declared stale.
+        //
+        // A cache that DID pay would need a stricter rule than the playhead:
+        // "reuse unless something beneath this layer actually moved", which
+        // covers a glass panel animating over a static background during
+        // playback. That needs per-glass-layer dedicated targets (these two are
+        // shared ping-pong buffers, reused by the next glass layer in the same
+        // frame) plus a change hash over every preceding renderable — and it
+        // buys a new failure mode, a stale backdrop, which is invisible in a
+        // still and obvious in motion.
+        //
+        // The unconditional win was the downsample below. The next one, if this
+        // ever shows up in a profile, is scissoring the chain to the layer's
+        // bounds: a glass card covering a tenth of the frame currently pays the
+        // full-viewport blur cost.
+        const blurRadius = r.backdropBlur ?? 0;
+        const half = blurRadius > 0;
+        const bw = half
+          ? Math.max(1, Math.floor(viewport.pixelSize.width / BACKDROP_DOWNSCALE))
+          : viewport.pixelSize.width;
+        const bh = half
+          ? Math.max(1, Math.floor(viewport.pixelSize.height / BACKDROP_DOWNSCALE))
+          : viewport.pixelSize.height;
+        const t1 = half ? BACKDROP_HALF1 : BLUR_TARGET1;
+        const t2 = half ? BACKDROP_HALF2 : BLUR_TARGET2;
+
         const copyCmds = new CommandBuffer();
         emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full);
-        const encCopy = beginViewportPass(ctx, 'backdrop-copy', writeAttachment(ctx, BLUR_TARGET1, Color.transparent()));
+        // The copy IS the downsample: the same full-screen quad drawn into a
+        // half-size target, filtered down by the sampler on the way in.
+        const encCopy = half
+          ? beginSizedPass(ctx, 'backdrop-copy', writeAttachment(ctx, t1, Color.transparent()), bw, bh)
+          : beginViewportPass(ctx, 'backdrop-copy', writeAttachment(ctx, t1, Color.transparent()));
         services.quad.execute(encCopy, copyCmds);
         encCopy.end();
-        const copyTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET1)!);
-        // 3. Separable blur: BLUR_TARGET1 → BLUR_TARGET2 (H) → BLUR_TARGET1 (V).
+        const copyTex = ctx.services.backend.renderTargetTexture(ctx.target(t1)!);
+
+        // 3. Separable blur, ping-ponging t1 → t2 (H) → t1 (V).
+        //    Both the texel step and the radius are in TARGET pixels, so at half
+        //    resolution the step doubles and the radius halves — the visual
+        //    sigma in composition pixels is unchanged, at a quarter of the
+        //    fragment cost.
+        const scale = half ? BACKDROP_DOWNSCALE : 1;
         let blurredTex = copyTex;
-        if (copyTex) {
+        if (copyTex && blurRadius > 0) {
           const hCmds = new CommandBuffer();
           hCmds.add({
             batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
-            uniforms: packBlur(fullMvp, full, 1 / viewport.pixelSize.width, 0, r.backdropBlur),
+            uniforms: packBlur(fullMvp, full, 1 / bw, 0, blurRadius / scale),
             texture: copyTex, sampler: clampSampler(),
           });
-          const encH = beginViewportPass(ctx, 'backdrop-blurH', writeAttachment(ctx, BLUR_TARGET2, Color.transparent()));
+          const encH = beginSizedPass(ctx, 'backdrop-blurH', writeAttachment(ctx, t2, Color.transparent()), bw, bh);
           services.quad.execute(encH, hCmds);
           encH.end();
-          const hTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET2)!);
+          const hTex = ctx.services.backend.renderTargetTexture(ctx.target(t2)!);
           if (hTex) {
             const vCmds = new CommandBuffer();
             vCmds.add({
               batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
-              uniforms: packBlur(fullMvp, full, 0, 1 / viewport.pixelSize.height, r.backdropBlur),
+              uniforms: packBlur(fullMvp, full, 0, 1 / bh, blurRadius / scale),
               texture: hTex, sampler: clampSampler(),
             });
-            const encV = beginViewportPass(ctx, 'backdrop-blurV', writeAttachment(ctx, BLUR_TARGET1, Color.transparent()));
+            const encV = beginSizedPass(ctx, 'backdrop-blurV', writeAttachment(ctx, t1, Color.transparent()), bw, bh);
             services.quad.execute(encV, vCmds);
             encV.end();
-            blurredTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET1)!);
+            blurredTex = ctx.services.backend.renderTargetTexture(ctx.target(t1)!);
           }
         }
         // 4. Composite over the scene: blurred backdrop clipped to the layer's
@@ -827,8 +929,41 @@ export class CompositionPass extends RenderPass {
         //    textures sampled with the SAME targetUv, so there is no new
         //    coordinate or per-backend V-flip maths to get wrong.
         if (blurredTex && layerTex) {
-          emitMaskedTextured(mainCmds, fullMvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), layerTex, full);
-          emitTextured(mainCmds, fullMvp, Color.white(), 1, r.blend, layerTex, clampSampler(), full);
+          if (r.glass) {
+            // The Glass style replaces the plain masked composite: refraction,
+            // chromatic aberration, tint, rim, specular and grain in ONE pass
+            // over the blurred backdrop (shaders/glass.ts explains why this is
+            // a shader rather than the effect pile AE forces on people).
+            //
+            // It also replaces the layer's own COLOUR draw below, which is why
+            // that is skipped for glass. A shape layer's default fill is opaque,
+            // so drawing it over the composite painted a plain card on top of
+            // the glass and hid it completely — the feature looked like it did
+            // nothing at all. Glass is a MATERIAL: what you see through it is
+            // the backdrop, and what tints it is `tintColor`/`tintOpacity`,
+            // not the layer's fill.
+            mainCmds.add({
+              batchKey: 'glass|normal',
+              material: GLASS_MATERIAL,
+              blend: 'normal',
+              uniforms: packGlass(
+                fullMvp,
+                full,
+                r.glass,
+                1 / viewport.pixelSize.width,
+                1 / viewport.pixelSize.height,
+              ),
+              texture: blurredTex,
+              sampler: clampSampler(),
+              maskTexture: layerTex,
+            });
+          } else {
+            emitMaskedTextured(mainCmds, fullMvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), layerTex, full);
+            // Plain backdrop blur keeps the layer's own colour on top — that is
+            // how a translucent frosted panel gets its fill. Glass supplies its
+            // own tint, so it skips this (see above).
+            emitTextured(mainCmds, fullMvp, Color.white(), 1, r.blend, layerTex, clampSampler(), full);
+          }
         }
         return;
       }

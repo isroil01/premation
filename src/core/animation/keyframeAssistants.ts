@@ -15,14 +15,15 @@
  */
 
 import { defaultAnimation, EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER, type AnimationEngine } from '@motion/animation';
-import { parseKeyframeId, expandKeyframeProp } from '@motion/animation';
+import { parseKeyframeId, expandKeyframeProp, setDataKeyframeEasing } from '@motion/animation';
+import type { BezierHandles, EasingKind, PropPath } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import type { PresetTrack } from '@core/animation/animationPresets';
 import {
-  readAnimatorData,
   addTextAnimator,
   updateAnimator,
-  animatorPropPath,
+  updateSelector,
+  selectorPropPath,
   hasTextComponent,
 } from '@core/text/textAnimators';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -148,10 +149,13 @@ export function applyTypewriter(
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasTextComponent(node)) return false;
   // Reuse the layer's existing animators; append a dedicated one for the rig.
-  addTextAnimator(nodeId);
-  const index = readAnimatorData(defaultSceneGraph.getNode(nodeId)!).length - 1;
-  updateAnimator(nodeId, index, { basedOn: 'characters', shape: 'square', opacity: 0, start: 0, end: 100 });
-  const path = animatorPropPath(index, 'start');
+  const index = addTextAnimator(nodeId);
+  updateAnimator(nodeId, index, { opacity: 0 });
+  // Hard square edges: a typewriter pops characters on, it does not fade them.
+  updateSelector(nodeId, index, 0, {
+    basedOn: 'characters', shape: 'square', smoothness: 0, start: 0, end: 100,
+  });
+  const path = selectorPropPath(index, 0, 'start');
   runAnimEdit('Typewriter', () => {
     engine.setKeyframe(nodeId, path, atTime, 0, 'linear');
     engine.setKeyframe(nodeId, path, atTime + durationSec, 100, 'linear');
@@ -167,18 +171,12 @@ export function applyBounceInWords(
 ): boolean {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasTextComponent(node)) return false;
-  addTextAnimator(nodeId);
-  const index = readAnimatorData(defaultSceneGraph.getNode(nodeId)!).length - 1;
-  updateAnimator(nodeId, index, {
-    basedOn: 'words',
-    shape: 'rampDown',
-    y: -80,
-    opacity: 0,
-    scale: 50,
-    start: 0,
-    end: 100,
+  const index = addTextAnimator(nodeId);
+  updateAnimator(nodeId, index, { y: -80, opacity: 0, scale: 50, scaleY: 50 });
+  updateSelector(nodeId, index, 0, {
+    basedOn: 'words', shape: 'rampDown', start: 0, end: 100,
   });
-  const path = animatorPropPath(index, 'offset');
+  const path = selectorPropPath(index, 0, 'offset');
   runAnimEdit('Bounce In Words', () => {
     engine.setKeyframe(nodeId, path, atTime, -100, 'bezier');
     engine.setBezier(nodeId, path, atTime, [0.175, 0.885, 0.32, 1.275]);
@@ -195,18 +193,12 @@ export function applySpinFadeCharacters(
 ): boolean {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasTextComponent(node)) return false;
-  addTextAnimator(nodeId);
-  const index = readAnimatorData(defaultSceneGraph.getNode(nodeId)!).length - 1;
-  updateAnimator(nodeId, index, {
-    basedOn: 'characters',
-    shape: 'rampDown',
-    rotation: 90,
-    opacity: 0,
-    scale: 150,
-    start: 0,
-    end: 100,
+  const index = addTextAnimator(nodeId);
+  updateAnimator(nodeId, index, { rotation: 90, opacity: 0, scale: 150, scaleY: 150 });
+  updateSelector(nodeId, index, 0, {
+    basedOn: 'characters', shape: 'rampDown', start: 0, end: 100,
   });
-  const path = animatorPropPath(index, 'offset');
+  const path = selectorPropPath(index, 0, 'offset');
   runAnimEdit('Spin & Fade Characters', () => {
     engine.setKeyframe(nodeId, path, atTime, -100, 'bezier');
     engine.setBezier(nodeId, path, atTime, [0.16, 1, 0.3, 1]);
@@ -223,17 +215,12 @@ export function applyTrackingReveal(
 ): boolean {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || !hasTextComponent(node)) return false;
-  addTextAnimator(nodeId);
-  const index = readAnimatorData(defaultSceneGraph.getNode(nodeId)!).length - 1;
-  updateAnimator(nodeId, index, {
-    basedOn: 'characters',
-    shape: 'square',
-    tracking: 40,
-    opacity: 0,
-    start: 0,
-    end: 100,
+  const index = addTextAnimator(nodeId);
+  updateAnimator(nodeId, index, { tracking: 40, opacity: 0 });
+  updateSelector(nodeId, index, 0, {
+    basedOn: 'characters', shape: 'square', start: 0, end: 100,
   });
-  const path = animatorPropPath(index, 'start');
+  const path = selectorPropPath(index, 0, 'start');
   runAnimEdit('Tracking Reveal', () => {
     engine.setKeyframe(nodeId, path, atTime, 0, 'bezier');
     engine.setBezier(nodeId, path, atTime, [0.4, 0, 0.2, 1]);
@@ -255,6 +242,43 @@ export function applyTrackingReveal(
  */
 export type EasingPreset = 'Linear' | 'Ease' | 'EaseIn' | 'EaseOut' | 'Hold';
 
+/** The (easing, bezier) a preset resolves to — shared by scalar and data paths. */
+function presetCurve(preset: EasingPreset): { easing: EasingKind; bezier?: BezierHandles } {
+  switch (preset) {
+    case 'Linear': return { easing: 'linear' };
+    case 'Ease': return { easing: 'bezier', bezier: EASY_EASE_BEZIER };
+    case 'EaseIn': return { easing: 'bezier', bezier: EASY_EASE_IN_BEZIER };
+    case 'EaseOut': return { easing: 'bezier', bezier: EASY_EASE_OUT_BEZIER };
+    case 'Hold': return { easing: 'hold' };
+  }
+}
+
+/**
+ * Ease a DATA-track keyframe (points / gradient stops / number / text) at `t`.
+ * Returns false when this node+prop is not a data track, so the caller can fall
+ * through to the scalar path.
+ *
+ * Data tracks were unreachable from Easy Ease / F9: this function only ever
+ * walked `getTrackKeyframes`, which is the scalar store. The SAMPLER has
+ * honoured `easing`/`bezier` on a DataKeyframe all along — nothing could author
+ * them. That is why puppet pin motion (a `points` data track) read as linear.
+ */
+function easeDataKeyframe(
+  engine: AnimationEngine,
+  nodeId: string,
+  prop: string,
+  t: number,
+  preset: EasingPreset,
+): boolean {
+  const track = engine.getDataTrack(nodeId, prop as PropPath);
+  if (!track) return false;
+  const { easing, bezier } = presetCurve(preset);
+  const keyframes = setDataKeyframeEasing(track.keyframes, t, easing, bezier);
+  if (keyframes === track.keyframes) return false; // no keyframe at that time
+  engine.setDataTrack(nodeId, prop as PropPath, { ...track, keyframes });
+  return true;
+}
+
 export function applyEasingToKeyframes(
   kfIds: ReadonlyArray<string>,
   preset: EasingPreset,
@@ -268,30 +292,18 @@ export function applyEasingToKeyframes(
       const { nodeId, t } = ref;
       // A selected Position keyframe is the merged x/y/z row — ease all three.
       for (const prop of expandKeyframeProp(ref.prop)) {
-      const kfs = engine.getTrackKeyframes(nodeId, prop);
-      const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-      if (!kf) continue;
-      const value = kf.value;
-      switch (preset) {
-        case 'Linear':
-          engine.setKeyframe(nodeId, prop, t, value, 'linear');
-          break;
-        case 'Ease':
-          engine.setKeyframe(nodeId, prop, t, value, 'bezier');
-          engine.setBezier(nodeId, prop, t, EASY_EASE_BEZIER);
-          break;
-        case 'EaseIn':
-          engine.setKeyframe(nodeId, prop, t, value, 'bezier');
-          engine.setBezier(nodeId, prop, t, EASY_EASE_IN_BEZIER);
-          break;
-        case 'EaseOut':
-          engine.setKeyframe(nodeId, prop, t, value, 'bezier');
-          engine.setBezier(nodeId, prop, t, EASY_EASE_OUT_BEZIER);
-          break;
-        case 'Hold':
-          engine.setKeyframe(nodeId, prop, t, value, 'step');
-          break;
-      }
+        // Data tracks first: a data prop has no scalar keyframes, so the scalar
+        // lookup below would silently `continue` and F9 would do nothing.
+        if (easeDataKeyframe(engine, nodeId, prop, t, preset)) continue;
+
+        const kfs = engine.getTrackKeyframes(nodeId, prop);
+        const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
+        if (!kf) continue;
+        const value = kf.value;
+        const { easing, bezier } = presetCurve(preset);
+        // Scalar tracks spell hold as 'step'; the data sampler accepts either.
+        engine.setKeyframe(nodeId, prop, t, value, easing === 'hold' ? 'step' : easing);
+        if (bezier) engine.setBezier(nodeId, prop, t, bezier);
       }
     }
   });

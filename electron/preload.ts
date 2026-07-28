@@ -77,6 +77,22 @@ const bridge = {
     version: () => ipcRenderer.invoke('app:version'),
   },
 
+  /**
+   * The signed-in session, kept in the main process and encrypted with the OS
+   * keystore (see electron/credentialStore.ts).
+   *
+   * Only the long-lived refresh token goes through here. The access token
+   * stays in renderer memory and is never written anywhere — it lives an hour,
+   * so persisting it would add risk and save nothing.
+   */
+  credentials: {
+    get: () => ipcRenderer.invoke('credentials:get'),
+    set: (credentials: unknown) => ipcRenderer.invoke('credentials:set', credentials),
+    clear: () => ipcRenderer.invoke('credentials:clear'),
+    /** False when the OS has no keystore — the app then never persists a session. */
+    available: () => ipcRenderer.invoke('credentials:available'),
+  },
+
   onMenuCommand: (handler: (commandId: string) => void) => {
     const listener = (_event: unknown, commandId: string): void => handler(commandId);
     ipcRenderer.on('menu:command', listener);

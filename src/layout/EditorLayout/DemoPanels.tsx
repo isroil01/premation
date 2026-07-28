@@ -12,7 +12,6 @@ import { Panel } from '@components/Panel';
 import { Button } from '@components/Button';
 import { HistoryPanel } from '@layout/History/HistoryPanel';
 import { ProjectPanel } from '@layout/Project/ProjectPanel';
-import { CommentsPanel } from '@layout/Comments/CommentsPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
@@ -32,6 +31,9 @@ import { AlignSection } from '@layout/Inspector/AlignSection';
 import { TextSection } from '@layout/Inspector/TextSection';
 import { StylePresetsSection } from '@layout/Inspector/StylePresetsSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
+import { SvgSection, RevertSvgRow } from '@layout/Inspector/SvgSection';
+import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
+import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { ThreeDControl } from '@layout/Inspector/ThreeDControl';
 import { AiChatPanel } from '@layout/AiChat/AiChatPanel';
 import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
@@ -98,6 +100,7 @@ const KIND_ICON: Record<SceneKind, IconName> = {
   text: 'type',
   image: 'image',
   video: 'video',
+  svg: 'shape',
   audio: 'audio',
   camera: 'camera',
   light: 'light',
@@ -293,6 +296,7 @@ export function ScenePanel(): JSX.Element {
       ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
       { id: 'precompose', label: 'Pre-compose…', onSelect: () => precomposeSelected() },
       { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
+      ...svgContextMenuItems(id),
       ...(useSelectionStore.getState().ids.length >= 2
         ? [
             { id: 'sep_merge', separator: true },
@@ -1222,6 +1226,14 @@ function MiscPanelContent({ nodeId, query = '' }: { nodeId: string | null; query
       defaultOpen: true,
       content: <ParticleSection nodeId={nodeId} />,
     });
+  } else if (kind === 'svg') {
+    items.push({
+      id: 'svg',
+      title: 'SVG Layer',
+      icon: 'shape',
+      defaultOpen: true,
+      content: <SvgSection nodeId={nodeId} />,
+    });
   } else if (kind === 'image' || kind === 'video') {
     items.push({
       id: 'media',
@@ -1240,6 +1252,9 @@ function MiscPanelContent({ nodeId, query = '' }: { nodeId: string | null; query
       content: (
         <>
           <PrecompControl nodeId={nodeId} />
+          {canRevertToSvg(nodeId) && (
+            <RevertSvgRow onRevert={() => revertSvgGroupToLayer(nodeId)} />
+          )}
           <div style={{ margin: '12px 0 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
               Children Count: {childrenCount}
@@ -2001,7 +2016,6 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     misc: () => <MiscPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
-    comments: () => <CommentsPanel />,
     // ── Asset Library (one tab, sections inside) ─────────────────────────
     library: () => <LibraryPanel />,
   };

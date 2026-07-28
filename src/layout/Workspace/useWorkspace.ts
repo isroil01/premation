@@ -51,6 +51,7 @@ import {
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { bumpScene } from '@stores/sceneStore';
 import { readNodeKind, flattenScene } from '@core/scene/sceneDerive';
 import { addPaintStroke } from '@core/paint/paintStrokes';
@@ -190,18 +191,47 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
   const rulers = useGuidesStore((s) => s.rulers);
   const grid = useGuidesStore((s) => s.grid);
-  const gridDivisions = useGuidesStore((s) => s.gridDivisions);
+  const gridSpacing = useGuidesStore((s) => s.gridSpacing);
+  const gridSubdivisions = useGuidesStore((s) => s.gridSubdivisions);
+  const gridStyle = useGuidesStore((s) => s.gridStyle);
+  const gridColor = useGuidesStore((s) => s.gridColor);
+  const proportionalGrid = useGuidesStore((s) => s.proportionalGrid);
+  const proportionalColumns = useGuidesStore((s) => s.proportionalColumns);
+  const proportionalRows = useGuidesStore((s) => s.proportionalRows);
   const safeArea = useGuidesStore((s) => s.safeArea);
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
   // Custom-view params: nav writes replace the record, so this subscription
   // re-fires the render effect while orbiting a custom view.
   const customViews = useGuidesStore((s) => s.customViews);
-  const overlaysRef = useRef({ rulers, grid, gridDivisions, safeArea });
-  overlaysRef.current = { rulers, grid, gridDivisions, safeArea };
+  const gridOverlays = {
+    rulers, grid, gridSpacing, gridSubdivisions, gridStyle, gridColor,
+    proportionalGrid, proportionalColumns, proportionalRows, safeArea,
+  };
+  const overlaysRef = useRef(gridOverlays);
+  overlaysRef.current = gridOverlays;
   // Via ref so the mount-scoped render closure always reads the CURRENT view
   // mode — the raw closure froze it at mount and deadened the 3D/2D toggle.
   const camera3dModeRef = useRef(camera3dMode);
   camera3dModeRef.current = camera3dMode;
+
+  // Per-view framing: stash the outgoing view's pan/zoom and restore the
+  // incoming one. Without this every view shared a single viewport transform,
+  // so framing up a Top view also re-framed Active Camera — you could not
+  // inspect the scene from the side without disturbing the shot.
+  const framingViewRef = useRef(camera3dMode);
+  useEffect(() => {
+    const prev = framingViewRef.current;
+    if (prev === camera3dMode) return;
+    framingViewRef.current = camera3dMode;
+    const controller = getWorkspaceController();
+    const g = useGuidesStore.getState();
+    g.saveViewFraming(prev, controller.framing());
+    const saved = g.viewFraming[camera3dMode];
+    // No stashed framing yet ⇒ frame the comp, which is the sane first look at
+    // a view you have never opened.
+    if (saved) controller.restoreFraming(saved);
+    else controller.fitComposition();
+  }, [camera3dMode]);
   // Draft 3D (fast preview: no DOF, no lighting) — same ref pattern, same
   // reason. Flows into buildSnapshot as a comp INPUT, never into the pipeline.
   // In the render deps so toggling the Region of Interest repaints immediately.
@@ -295,7 +325,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             camera3dModeRef.current, draft3dRef.current ? 1 : 0,
             useRenderQualityStore.getState().resolution,
             view.scale, view.offsetX, view.offsetY,
-            ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridDivisions, ov.safeArea ? 1 : 0,
+            ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridSpacing, ov.gridSubdivisions, ov.gridStyle, ov.gridColor, ov.proportionalGrid ? 1 : 0, ov.proportionalColumns, ov.proportionalRows, ov.safeArea ? 1 : 0,
             mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
             roiK ? `${roiK.x},${roiK.y},${roiK.width},${roiK.height}` : '-',
           ].join(':'),
@@ -365,7 +395,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       renderCache.mark(timeRef.current);
       paintChrome();
     };
-    controller.onRender(render);
+    const disposeRender = controller.onRender(render);
 
     // One-shot guard: frame the comp the first time the stage settles this
     // mount. The WorkspaceController is a singleton, so its camera/auto-fit
@@ -494,7 +524,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Don't leave a mount's worth of frames pinned in RAM.
       viewportFrameCache.clear();
       cursorSub.dispose();
-      controller.onRender(() => {});
+      // Drop only OUR subscription. This used to install a no-op callback,
+      // which — under the old single-slot onRender — silently unsubscribed
+      // every other listener (both canvas overlays) as a side effect.
+      disposeRender();
       backend.dispose();
       backendRef.current = null;
     };
@@ -553,7 +586,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   }, [sceneRev, isDragging]);
   useEffect(() => {
     getWorkspaceController().requestRender();
-  }, [time, focusKey, rulers, grid, gridDivisions, safeArea, camera3dMode, customViews, draft3d, channel, draft, roi, mbEnabled, mbShutter, mbSamples, compKey]);
+  }, [time, focusKey, rulers, grid, gridSpacing, gridSubdivisions, gridStyle, gridColor, proportionalGrid, proportionalColumns, proportionalRows, safeArea, camera3dMode, customViews, draft3d, channel, draft, roi, mbEnabled, mbShutter, mbSamples, compKey]);
 
   // ── Auto-fit on comp-size change ───────────────────────────────────
   // Switching resolution (e.g. a 9:16 reel ↔ 16:9) re-frames the comp to fill
@@ -591,6 +624,38 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       (s) => s.snap,
       (snap) => controller.ws.setSnap({ enabled: snap }),
     );
+  }, []);
+
+  // ── Snap to Grid + grid spacing → engine ───────────────────────────
+  //
+  // Two things the engine could not know on its own:
+  //
+  //  1. `toGrid` is AE's Snap to Grid command, which is INDEPENDENT of Show
+  //     Grid — AE snaps to a hidden grid, so this must not read `s.grid`.
+  //  2. `snapSpacing` pins snapping to the spacing actually drawn. Without it
+  //     the engine falls back to its adaptive stepper and snaps to positions
+  //     that land on no visible line, and change as you zoom.
+  //
+  // Snapping to SUBDIVISION lines, not just gridlines, because those are drawn
+  // and AE snaps to them too.
+  useEffect(() => {
+    const controller = getWorkspaceController();
+    const apply = (s: ReturnType<typeof useGuidesStore.getState>): void => {
+      const subs = Math.max(1, s.gridSubdivisions);
+      controller.ws.setSnap({ toGrid: s.snapToGrid });
+      controller.ws.setGrid({ visible: s.grid, snapSpacing: s.gridSpacing / subs });
+    };
+    apply(useGuidesStore.getState());
+    let last = useGuidesStore.getState();
+    // Plain subscribe + manual compare: `guidesStore` has no
+    // `subscribeWithSelector` middleware (uiStore above does), so the two-arg
+    // selector form would hand the whole STATE to the listener as the value.
+    return useGuidesStore.subscribe((s) => {
+      if (s.snapToGrid === last.snapToGrid && s.grid === last.grid
+        && s.gridSpacing === last.gridSpacing && s.gridSubdivisions === last.gridSubdivisions) return;
+      last = s;
+      apply(s);
+    });
   }, []);
 
   // Face-select chrome lives on the overlay, which only repaints when something
@@ -730,6 +795,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     );
 
     const onDown = (e: PointerEvent): void => {
+      // Any press in the main viewport takes the active viewer back from a
+      // secondary pane, so the focus ring always names the viewport that will
+      // receive the next keyboard action.
+      if (useGuidesStore.getState().activeViewPane !== null) {
+        useGuidesStore.getState().setActiveViewPane(null);
+      }
       // Alt+middle-drag = camera Track XY — claim before the left-button guard.
       if (e.button === 1 && e.altKey && startCameraNav(e, 'pan')) return;
       if (e.button !== 0) return; // left-button interactions only
@@ -1323,6 +1394,7 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
     ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
     { id: 'precompose', label: 'Pre-compose…', onSelect: () => precomposeSelected() },
     { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
+    ...svgContextMenuItems(id),
     ...(useSelectionStore.getState().ids.length >= 2
       ? [
           { id: 'sep_merge', separator: true },
@@ -1450,11 +1522,17 @@ function paintOverlay(
   const { ACCENT, ACCENT_SOFT, HOVER } = themeChrome();
   const SNAP = '#ff3ba7';
 
-  // Hover outline (only when it isn't the active selection).
-  if (overlay.hoveredBounds) {
+  // Hover affordance: CORNER MARKS, not a full outline.
+  //
+  // A full box on hover competes with the selection box for the same visual
+  // language, and over stacked layers it turns every mouse move into a flicker
+  // of near-identical rectangles. Corner marks say "this is what you would get"
+  // without claiming to be a selection, which is what makes overlapping layers
+  // navigable without clicking through them.
+  if (overlay.hoveredCorners) {
     ctx.strokeStyle = HOVER;
     ctx.lineWidth = 1;
-    strokeRect(ctx, overlay.hoveredBounds);
+    strokeCornerMarks(ctx, overlay.hoveredCorners);
   }
 
   const activeTool = creationDrag ? creationDrag.tool : useUIStore.getState().activeTool;
@@ -1555,25 +1633,43 @@ function paintOverlay(
 
   const isActivelyDrawing = isFreehandTool || !!paintStroke;
 
-  // Selection bounding box (hidden while actively drawing or painting a stroke).
-  if (!isActivelyDrawing && overlay.selectionBounds) {
+  // Selection outline (hidden while actively drawing or painting a stroke).
+  //
+  // ONE BOX PER SELECTED LAYER, each rotated with its own layer. The old single
+  // union rectangle belonged to no layer in particular: with three layers
+  // selected it enclosed whatever happened to lie between them, and on any
+  // rotation that was not a multiple of 90° it was visibly larger than the
+  // artwork with dead padding at every corner.
+  if (!isActivelyDrawing && overlay.selectionBoxes.length > 0) {
     ctx.strokeStyle = ACCENT;
-    ctx.lineWidth = sel3D ? 1 : 1.5;
+    // Hairline. A 2px selection stroke is the single loudest tell of an
+    // unpolished editor — it reads as chrome competing with the artwork
+    // rather than a thin annotation over it.
+    ctx.lineWidth = 1;
     if (sel3D) ctx.setLineDash([4, 3]);
-    strokeRect(ctx, overlay.selectionBounds);
+    for (const box of overlay.selectionBoxes) strokeCorners(ctx, box);
     if (sel3D) ctx.setLineDash([]);
   }
 
   // Handles (hidden while actively drawing or painting a stroke, and in 3D).
   if (!isActivelyDrawing && !sel3D) {
     for (const h of overlay.handles) {
-      if (h.kind === 'rotate') {
+      if (h.kind === 'anchor') {
+        // The pivot, as a crosshair/target — deliberately unlike every square
+        // resize grip, because it does something completely different and may
+        // sit outside the box entirely. Previously it fell through to the
+        // default branch and drew as a plain square, indistinguishable from a
+        // handle that scales the layer.
+        drawAnchorWidget(ctx, h.position.x, h.position.y, ACCENT);
+      } else if (h.kind === 'rotate') {
+        // No rotate handle is produced any more (rotation is a tool mode), but
+        // a stale overlay from another tool could still carry one.
         ctx.beginPath();
         ctx.arc(h.position.x, h.position.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = '#fff';
         ctx.fill();
         ctx.strokeStyle = ACCENT;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1;
         ctx.stroke();
       } else if (h.kind === 'point') {
         // Vertex anchor: filled square
@@ -1592,9 +1688,12 @@ function paintOverlay(
         ctx.lineWidth = 1.5;
         ctx.stroke();
       } else {
+        // 8px filled square with a 1px contrasting outline: squares read as
+        // precise where circles read as a design tool, and the fill/outline
+        // contrast is what keeps them visible over both light and dark artwork.
         ctx.fillStyle = '#fff';
         ctx.strokeStyle = ACCENT;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1;
         ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
         ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
       }
@@ -2069,6 +2168,91 @@ function paintMotionPath(
   ctx.strokeStyle = 'rgba(255,214,90,1)';
   ctx.lineWidth = 2;
   ctx.stroke();
+}
+
+/**
+ * Stroke an oriented box as a closed polygon.
+ *
+ * The half-pixel offset is the same crispness trick `strokeRect` uses — a 1px
+ * stroke centred on an integer coordinate straddles two device pixels and
+ * renders as a 2px blur. It only helps on axis-aligned edges; a rotated box is
+ * antialiased regardless, and the offset costs nothing there.
+ */
+function strokeCorners(
+  ctx: CanvasRenderingContext2D,
+  c: readonly [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number }],
+): void {
+  ctx.beginPath();
+  ctx.moveTo(c[0].x + 0.5, c[0].y + 0.5);
+  for (let i = 1; i < 4; i++) ctx.lineTo(c[i]!.x + 0.5, c[i]!.y + 0.5);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+/**
+ * Corner marks: a short L at each corner of an oriented box, drawn along the
+ * box's own edges so they rotate with it. Length is capped at a third of the
+ * shorter edge so a small layer gets proportionate marks rather than four Ls
+ * that meet in the middle.
+ */
+function strokeCornerMarks(
+  ctx: CanvasRenderingContext2D,
+  c: readonly [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number }],
+  length = 8,
+): void {
+  const edge = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { ux: dx / len, uy: dy / len, len };
+  };
+  ctx.beginPath();
+  for (let i = 0; i < 4; i++) {
+    const cur = c[i]!;
+    const next = c[(i + 1) % 4]!;
+    const prev = c[(i + 3) % 4]!;
+    const fwd = edge(cur, next);
+    const back = edge(cur, prev);
+    const n = Math.min(length, fwd.len / 3);
+    const b = Math.min(length, back.len / 3);
+    ctx.moveTo(cur.x + fwd.ux * n + 0.5, cur.y + fwd.uy * n + 0.5);
+    ctx.lineTo(cur.x + 0.5, cur.y + 0.5);
+    ctx.lineTo(cur.x + back.ux * b + 0.5, cur.y + back.uy * b + 0.5);
+  }
+  ctx.stroke();
+}
+
+/**
+ * The anchor point: a small hollow circle with four radiating ticks — a target
+ * glyph. Visually distinct from every square resize grip at a glance, which
+ * matters because it is the only handle that changes what rotation and scale
+ * pivot around rather than changing the layer's size.
+ */
+function drawAnchorWidget(ctx: CanvasRenderingContext2D, x: number, y: number, accent: string): void {
+  const r = 4;
+  const tick = 4;
+  ctx.save();
+  // A dark halo first, so the widget survives being dropped on white artwork.
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.moveTo(x - r - tick, y); ctx.lineTo(x - r, y);
+  ctx.moveTo(x + r, y);        ctx.lineTo(x + r + tick, y);
+  ctx.moveTo(x, y - r - tick); ctx.lineTo(x, y - r);
+  ctx.moveTo(x, y + r);        ctx.lineTo(x, y + r + tick);
+  ctx.stroke();
+
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.moveTo(x - r - tick, y); ctx.lineTo(x - r, y);
+  ctx.moveTo(x + r, y);        ctx.lineTo(x + r + tick, y);
+  ctx.moveTo(x, y - r - tick); ctx.lineTo(x, y - r);
+  ctx.moveTo(x, y + r);        ctx.lineTo(x, y + r + tick);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function strokeRect(ctx: CanvasRenderingContext2D, r: { x: number; y: number; width: number; height: number }): void {

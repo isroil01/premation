@@ -14,6 +14,7 @@ import { captureAnimEdit, type AnimEditCommand } from '@core/animation/animation
 import { bumpScene } from '@stores/sceneStore';
 import type { ID, SceneNode } from '@core/types';
 import type { Bone, Skeleton } from './skeleton';
+import type { WeightPaintMap } from './weightPaint';
 
 export const SKELETON_EDIT_COMMAND = asCommandId('skeleton.edit');
 
@@ -27,6 +28,13 @@ export interface IKTarget {
   enabled?: boolean;
   /** Bones in the solved chain (target bone + ancestors). Default 2, max 8. */
   chainLength?: number;
+  /**
+   * Pole vector (layer-local) for a two-bone chain: the side the joint bends
+   * toward. Bend-side preservation is a good default, but it can only ever KEEP
+   * the current side — a pole lets you choose and keyframe it (DUIK/Rive
+   * behaviour). Absent keeps the preserve-current-side default.
+   */
+  pole?: { x: number; y: number };
 }
 
 export interface SkeletonRig extends Skeleton {
@@ -36,6 +44,8 @@ export interface SkeletonRig extends Skeleton {
    *  layer, the shared mesh comes from the puppet settings instead. */
   meshDensity?: number;
   meshExpansion?: number;
+  /** Per-vertex bone-weight overrides painted on top of the auto binding. */
+  weightPaint?: WeightPaintMap;
 }
 
 /** Read a node's skeleton rig from its fx component. */
@@ -129,6 +139,10 @@ export function deleteBone(nodeId: ID, boneId: string): void {
     defaultAnimation.removeTrack(nodeId, `bone.${boneId}.y`);
     defaultAnimation.removeTrack(nodeId, `ikTarget.${boneId}.x`);
     defaultAnimation.removeTrack(nodeId, `ikTarget.${boneId}.y`);
+    defaultAnimation.removeTrack(nodeId, `bone.${boneId}.scaleX`);
+    defaultAnimation.removeTrack(nodeId, `bone.${boneId}.scaleY`);
+    defaultAnimation.removeTrack(nodeId, `ikPole.${boneId}.x`);
+    defaultAnimation.removeTrack(nodeId, `ikPole.${boneId}.y`);
   });
   applyAndRecord(nodeId, after, `Delete Bone ${boneId}`, trackEdit);
 }
@@ -165,4 +179,16 @@ export function updateSkeletonSettings(
   const skel = currentSkeleton(nodeId);
   const after: SkeletonRig = { bones: [], ikTargets: [], ...skel, ...patch };
   applyAndRecord(nodeId, after, 'Edit Skeleton Mesh');
+}
+
+/**
+ * Replace the layer's painted weight map. One undo step per stroke — the
+ * overlay paints into a scratch map during a drag and commits once on release,
+ * so a stroke is a single history entry rather than one per pointermove.
+ */
+export function setWeightPaint(nodeId: ID, weightPaint: WeightPaintMap | undefined): void {
+  const skel = currentSkeleton(nodeId);
+  if (!skel) return;
+  const after: SkeletonRig = { ...skel, weightPaint };
+  applyAndRecord(nodeId, after, 'Paint Bone Weights');
 }

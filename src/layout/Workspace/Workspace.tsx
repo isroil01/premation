@@ -334,8 +334,16 @@ export function WorkspaceViewport({
           <TextEditOverlay />
           <PuppetOverlay />
           <BoneOverlay />
-          {gizmo3dProps.is3D && gizmo3dProps.singleId && (
-            <Gizmo3dOverlay {...gizmo3dProps} nodeId={gizmo3dProps.singleId} />
+          {/* Mounts for the whole 3D SCENE, not for the selection: the ground
+              plane and comp frame are how you orient yourself in a side view,
+              so gating them on "a 3D layer is selected" hid them in exactly
+              the case they exist for. The gizmo inside still needs a target. */}
+          {(gizmo3dProps.scene3d || (gizmo3dProps.is3D && gizmo3dProps.singleId)) && (
+            <Gizmo3dOverlay
+              {...gizmo3dProps}
+              nodeId={gizmo3dProps.singleId ?? null}
+              showGizmo={gizmo3dProps.is3D && !!gizmo3dProps.singleId}
+            />
           )}
           {/* Persistent view-orientation axis widget (whenever the comp is 3D). */}
           <AxisWidgetOverlay />

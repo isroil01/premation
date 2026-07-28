@@ -114,13 +114,21 @@ async function renderBackendsIsolated(backends) {
 async function loadManifest() {
   const raw = await fs.readFile(MANIFEST_OUT, 'utf8');
   let scenes = JSON.parse(raw);
-  if (sceneOnly) scenes = scenes.filter((s) => s.id === sceneOnly);
+  if (sceneOnly) {
+    // A scene's fidelity twin comes with it — filtering it out would report the
+    // oracle as "missing" rather than running the gate the flag exists to run.
+    const picked = scenes.filter((s) => s.id === sceneOnly);
+    const twins = new Set(picked.map((s) => s.fidelityTwin).filter(Boolean));
+    scenes = scenes.filter((s) => s.id === sceneOnly || twins.has(s.id));
+  }
   return scenes;
 }
 
 async function bless(scenes) {
+  // Oracle-only scenes are never blessed — they ARE the oracle.
+  const blessable = scenes.filter((s) => !s.fidelityOnly);
   const targets =
-    updateTargets.length > 0 ? scenes.filter((s) => updateTargets.includes(s.id)) : scenes;
+    updateTargets.length > 0 ? blessable.filter((s) => updateTargets.includes(s.id)) : blessable;
   for (const s of targets) {
     const oracleBackend = GATE_BACKEND;
     for (const frame of s.frames) {
@@ -158,6 +166,7 @@ async function reportSecondaryBackend(scenes, backend) {
   let missing = 0;
   const worst = [];
   for (const s of scenes) {
+    if (s.fidelityOnly) continue; // no reference by design
     for (const frame of s.frames) {
       const actual = await readPngSafe(path.join(ACTUAL, backend, s.id, `${frame}.png`));
       const reference = await readPngSafe(path.join(REFERENCES, s.id, `${frame}.png`));
@@ -182,6 +191,77 @@ async function reportSecondaryBackend(scenes, backend) {
   if (worst.length > 5) process.stdout.write(dim(`  · …and ${worst.length - 5} more\n`));
 }
 
+/**
+ * Fidelity gate: a scene against its `fidelityTwin`, not against a blessed PNG.
+ *
+ * References are blessed from our own output, so they can only ever prove "the
+ * pixels did not change since someone approved them". A twin renders the same
+ * content by an INDEPENDENT route — for SVG layers, the untouched source file
+ * beside the sanitized, id-scoped copy we store — so the diff proves the
+ * pipeline itself is lossless, on the first run, with nothing to eyeball.
+ *
+ * Gated at 1% by default (§10). A per-scene `fidelityTolerance` is an explicit
+ * statement that we change that file's pixels on purpose, so its
+ * `fidelityException` is printed every run rather than buried in a config.
+ */
+async function gateFidelityTwins(scenes) {
+  const byId = new Map(scenes.map((s) => [s.id, s]));
+  const pairs = scenes.filter((s) => s.fidelityTwin);
+  if (pairs.length === 0) return { fidelityFail: 0, fidelityChecked: 0 };
+
+  let fidelityFail = 0;
+  let fidelityChecked = 0;
+  const failures = [];
+  const exceptions = [];
+
+  for (const s of pairs) {
+    const twin = byId.get(s.fidelityTwin);
+    if (!twin) {
+      failures.push({ id: s.id, ratio: 1, reason: `twin "${s.fidelityTwin}" not in manifest` });
+      fidelityFail++;
+      continue;
+    }
+    for (const frame of s.frames) {
+      const actual = await readPngSafe(path.join(ACTUAL, GATE_BACKEND, s.id, `${frame}.png`));
+      const oracle = await readPngSafe(path.join(ACTUAL, GATE_BACKEND, twin.id, `${frame}.png`));
+      if (!actual || !oracle) {
+        failures.push({ id: `${s.id}#${frame}`, ratio: 1, reason: 'frame not rendered' });
+        fidelityFail++;
+        continue;
+      }
+      fidelityChecked++;
+      // A twin comparison passes trivially if BOTH sides drew nothing — a
+      // corpus file that silently fails to render would look like perfect
+      // fidelity. Require the oracle to actually contain content.
+      if (isUniform(oracle)) {
+        fidelityFail++;
+        failures.push({ id: `${s.id}#${frame}`, ratio: 0, reason: 'oracle frame is blank — the corpus file rendered nothing' });
+        continue;
+      }
+      const tolerance = s.fidelityTolerance ?? 0.01;
+      const { pass, ratio } = compareFrames(actual, oracle, { tolerance });
+      if (!pass) {
+        fidelityFail++;
+        failures.push({ id: `${s.id}#${frame}`, ratio, reason: `differs from untouched source` });
+      } else if (s.fidelityException) {
+        exceptions.push({ id: s.id, tolerance, why: s.fidelityException });
+      }
+    }
+  }
+
+  process.stdout.write('\n' + dim(`  fidelity gate (stored document vs untouched source):\n`));
+  process.stdout.write(
+    (fidelityFail === 0 ? green : red)(`  · ${fidelityChecked - failures.length}/${fidelityChecked} scene(s) render identically to their source\n`),
+  );
+  for (const f of failures) {
+    process.stdout.write(red(`  · ${f.id} ${pct(f.ratio)} — ${f.reason}\n`));
+  }
+  for (const e of exceptions) {
+    process.stdout.write(dim(`  · ${e.id} passes at a raised ${pct(e.tolerance)}: ${e.why}\n`));
+  }
+  return { fidelityFail, fidelityChecked };
+}
+
 async function compareAll(scenes) {
   let parityFail = 0;
   let parityKnownGap = 0;
@@ -189,6 +269,9 @@ async function compareAll(scenes) {
   const rows = [];
 
   for (const s of scenes) {
+    // Oracle-only scenes exist to be some other scene's twin; they have no
+    // reference of their own by design.
+    if (s.fidelityOnly) continue;
     const isExpectPass = s.oracle === 'gpu' || (s.gpuParity ?? 'expect-pass') === 'expect-pass';
     for (const frame of s.frames) {
       const ref = path.join(REFERENCES, s.id, `${frame}.png`);
@@ -234,6 +317,16 @@ async function compareAll(scenes) {
 
   printReport(rows);
   return { parityFail, parityKnownGap, parityResolved };
+}
+
+/** True when every pixel in an RGBA frame is identical (blank / flat fill). */
+function isUniform({ data }) {
+  for (let i = 4; i < data.length; i += 4) {
+    if (data[i] !== data[0] || data[i + 1] !== data[1] || data[i + 2] !== data[2] || data[i + 3] !== data[3]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function readPngSafe(file) {
@@ -297,6 +390,7 @@ async function main() {
   }
 
   const { parityFail, parityKnownGap, parityResolved } = await compareAll(scenes);
+  const { fidelityFail } = await gateFidelityTwins(scenes);
 
   process.stdout.write('\n');
   process.stdout.write(dim('  GPU-parity dashboard (unified engine comparison against committed reference):\n'));
@@ -316,12 +410,12 @@ async function main() {
     if (backend !== GATE_BACKEND) await reportSecondaryBackend(scenes, backend);
   }
 
-  if (parityFail === 0) {
+  if (parityFail === 0 && fidelityFail === 0) {
     process.stdout.write(green(`\n✓ gate green — unified engine output matches golden expectations.\n`));
     process.exit(0);
   }
   process.stdout.write(
-    red(`\n✗ gate failed — visual regression failures: ${parityFail}.\n`) +
+    red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}.\n`) +
       dim(`  artifacts: ${path.join(ARTIFACTS, 'diff')}\n`),
   );
   process.exit(1);

@@ -28,6 +28,7 @@ import {
   type UpdateMaskPathPayload,
   Mat,
   Rect,
+  OBox,
 } from '@motion/workspace';
 import { readNodeAnchor, moveAnchorCompensated } from '@core/scene/anchor';
 import { SIZE } from '@core/rendering/buildSnapshot';
@@ -40,6 +41,7 @@ import { SCENE_KIND_PROP, type SceneKind } from '@core/scene/seedDefaultScene';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import type { SceneNode, ID } from '@core/types';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { readGeometry, localBounds, makeHitTestLocal, isDrawableKind as drawable } from './geometry';
@@ -50,9 +52,10 @@ import { runAnimEdit } from '@core/animation/animationCommands';
 import { useProjectStore } from '@stores/projectStore';
 import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
 import { is3DEnabled, readNode3D } from '@core/scene/threeD';
-import { Matrix4Math } from '@motion/scene';
-import { currentViewProjector } from '@core/workspace/viewProjection';
-import { composeNodeWorld3d } from '@core/scene/nodeMatrix';
+import { Matrix4Math, Project3D } from '@motion/scene';
+import { currentViewProjector, currentViewCamera } from '@core/workspace/viewProjection';
+import { isCustomViewId } from '@core/workspace/customViews';
+import { composeNodeWorld3d, parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
 import { addMaskPath, rectangleMask, ellipseMask, readNodeMask, setMaskPoints, MaskPath, MaskPoint } from '@core/effects/mask';
 
 /** Convex hull (monotone chain) of 2D points, counter-clockwise. */
@@ -101,6 +104,9 @@ function toWorkspaceNode(
   node: SceneNode,
   zIndex: number,
   wmCache: Map<string, import('@motion/scene').Matrix2D> = new Map(),
+  /** Project through THIS view rather than the main viewport's — see
+   *  {@link createSceneGraphPort}. */
+  view?: Camera3dMode,
 ): WorkspaceNode | null {
   // Retrieve current active tab settings and active playhead time
   const activeTabId = useProjectStore.getState().activeTabId;
@@ -137,7 +143,7 @@ function toWorkspaceNode(
   // active camera each resolve differently. That branch now lives in
   // `currentViewProjector` so face picking shares this exact chain instead of
   // carrying a third copy that can drift.
-  const project = currentViewProjector(width, height, rawTime);
+  const project = currentViewProjector(width, height, rawTime, view);
 
   // Calculate the world matrix based on whether 3D is active
   const is3D = is3DEnabled(node);
@@ -161,7 +167,24 @@ function toWorkspaceNode(
     // composes `rotation: {rX+oriX, rY+oriY, rZ+oriZ}` about `anchorZ`, and
     // omitting them here is the same class of drift.
     const base3D = readNode3D(node);
-    const M = composeNodeWorld3d({
+    // 3D parenting: when an ancestor is 3D the chain is composed as 4×4s and
+    // this layer's own transform is LOCAL. `x`/`y` above are already the local
+    // props, and the 2D `worldMatrixOf` branch below is what used to apply the
+    // parent — so the two must not both run. Mirrors buildSnapshot exactly.
+    const parent3d = parentWorld3d(node.id, {
+      parentOf: (nid) => defaultSceneGraph.getNode(nid)?.parent ?? null,
+      local3DOf: (nid) => {
+        const n = defaultSceneGraph.getNode(nid);
+        return n ? resolveNode3DTransform(n, rawTime) : null;
+      },
+      is3DOf: (nid) => {
+        const n = defaultSceneGraph.getNode(nid);
+        return !!n && is3DEnabled(n);
+      },
+      world2DOf: (nid) =>
+        worldMatrixOf(nid, getLocalTransformForPorts, getParentIdForPorts, wmCache),
+    });
+    const local = composeNodeWorld3d({
       x, y,
       z: av.get('z') ?? base3D.z,
       rotationX: av.get('rotationX') ?? base3D.rotationX,
@@ -175,6 +198,7 @@ function toWorkspaceNode(
       anchorX, anchorY,
       anchorZ: av.get('anchorZ') ?? base3D.anchorZ,
     });
+    const M = parent3d ? Matrix4Math.multiply(parent3d, local) : local;
     M3D = M;
 
     const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
@@ -201,6 +225,10 @@ function toWorkspaceNode(
 
   const localBoundsVal = localBounds(g);
   let worldBoundsVal = Rect.transform(localBoundsVal, worldMatrixVal);
+  // The ORIENTED box — the same four corners `Rect.transform` maps, kept as
+  // corners instead of collapsed into their bounding rectangle. This is what
+  // the selection outline draws and what marquee selection tests against.
+  let worldCornersVal = OBox.transformCorners(localBoundsVal, worldMatrixVal);
   let hitTestLocalVal = makeHitTestLocal(g);
 
   // ── Extruded 3D bodies: hit-test the whole SILHOUETTE, not the front face ──
@@ -242,6 +270,11 @@ function toWorkspaceNode(
           if (p.y > maxY) maxY = p.y;
         }
         worldBoundsVal = Rect.rect(minX, minY, maxX - minX, maxY - minY);
+        // A projected 3D body is not a rectangle at all, so there is no honest
+        // oriented box for it — its silhouette is an n-gon. The AABB's corners
+        // are the truthful answer here, and the 3D gizmo (not this box) is the
+        // control surface for those layers anyway.
+        worldCornersVal = Rect.corners(worldBoundsVal) as typeof worldCornersVal;
         const m = worldMatrixVal;
         // `hitTestLocal` is handed inverse(worldMatrix)·worldPoint, so re-applying
         // worldMatrix recovers the screen point the hull is expressed in.
@@ -267,6 +300,7 @@ function toWorkspaceNode(
     id: node.id as string,
     parentId: (node.parent as string | null) ?? null,
     worldBounds: worldBoundsVal,
+    worldCorners: worldCornersVal,
     worldMatrix: worldMatrixVal,
     localBounds: localBoundsVal,
     visible: visibleVal,
@@ -306,15 +340,28 @@ function canvasNodes(): SceneNode[] {
   return flattenComposition(defaultSceneGraph, activeCompRootId()).filter(isCanvasNode);
 }
 
-export function createSceneGraphPort(): SceneGraphPort {
+/**
+ * @param viewOf Which view this port's nodes are projected through. Omit for the
+ *   main viewport, which follows `guidesStore.camera3dMode`. A SECONDARY pane
+ *   passes its own view so its hit-testing and selection chrome describe the
+ *   pixels IT shows — without this every pane would hit-test against the main
+ *   viewport's projection, and clicking a layer in a Top pane would select
+ *   whatever happened to sit at that point in the Active Camera view.
+ *
+ *   A getter rather than a value so a pane can change its view without
+ *   rebuilding its port (and its Workspace) from scratch.
+ */
+export function createSceneGraphPort(viewOf?: () => Camera3dMode): SceneGraphPort {
+  const view = (): Camera3dMode | undefined => viewOf?.();
   return {
     getNodes(): Iterable<WorkspaceNode> {
       const out: WorkspaceNode[] = [];
       const flat = canvasNodes();
       // One ancestor-matrix cache for the whole pass — see toWorkspaceNode.
       const wmCache = new Map<string, import('@motion/scene').Matrix2D>();
+      const v = view();
       flat.forEach((node, i) => {
-        const wn = toWorkspaceNode(node, i, wmCache);
+        const wn = toWorkspaceNode(node, i, wmCache, v);
         if (wn) out.push(wn);
       });
       return out;
@@ -325,7 +372,7 @@ export function createSceneGraphPort(): SceneGraphPort {
       // z-index from document order (cheap; the flattened list is small).
       const flat = canvasNodes();
       const idx = flat.findIndex((n) => (n.id as string) === id);
-      return toWorkspaceNode(node, idx < 0 ? 0 : idx) ?? undefined;
+      return toWorkspaceNode(node, idx < 0 ? 0 : idx, undefined, view()) ?? undefined;
     },
     selectionGroup(id: NodeId): readonly NodeId[] | null {
       const rootId = activeCompRootId() as string;
@@ -360,9 +407,31 @@ export function createSceneGraphPort(): SceneGraphPort {
           listener();
         }
       });
+      // The VIEW is an input to every node this port emits.
+      //
+      // `worldMatrix` / `worldBounds` / `worldCorners` are all projected through
+      // `currentViewProjector`, so switching Front → Top moves every 3D layer
+      // even though the scene itself did not change. Without this subscription
+      // nothing invalidated, and the hit-test spatial index kept describing the
+      // PREVIOUS view: layers were then unselectable wherever they had moved to,
+      // and clicking their old positions selected them. Custom-view orbit params
+      // feed the same projector, so they count too.
+      // Seeded from the CURRENT state, not left undefined: the guides store also
+      // carries grid/ROI/draft flags, and an unseeded comparison treats the first
+      // write of any of them as a view change — one spurious full re-enumeration
+      // of the scene per subscription.
+      let lastView: unknown = useGuidesStore.getState().camera3dMode;
+      let lastCustom: unknown = useGuidesStore.getState().customViews;
+      const unsubView = useGuidesStore.subscribe((s) => {
+        if (s.camera3dMode === lastView && s.customViews === lastCustom) return;
+        lastView = s.camera3dMode;
+        lastCustom = s.customViews;
+        listener();
+      });
       return () => {
         unsubScene();
         unsubTime();
+        unsubView();
       };
     },
   };
@@ -649,9 +718,73 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): v
   if (changed) bumpScene();
 }
 
-function moveNodes(payload: MoveNodesPayload): void {
+/**
+ * A drag in an ORTHOGRAPHIC view moves the layer along that view's axes.
+ *
+ * The delta arrives in projected 2D. In Front view that happens to equal world
+ * x/y, which is why writing it straight into x/y looked right for years — but in
+ * Top view the vertical axis is DEPTH, and in Left/Right the horizontal one is.
+ * Writing x/y there moves the layer along the axis the view projects away: it
+ * sits still on screen while its real position drifts, and the axis you actually
+ * dragged never changes. Measured before this fix: dragging down 223 units in
+ * Top view wrote y 540 → 762.8 and left z at 0.
+ *
+ * Returns null for the active camera and custom views — those are perspective
+ * and go through {@link perspectiveDelta3D}, which additionally needs the
+ * layer's depth.
+ */
+function orthoDelta3D(
+  delta: { x: number; y: number },
+  view: Camera3dMode,
+): { x: number; y: number; z: number } | null {
+  if (view === 'active' || isCustomViewId(view)) return null;
+  const { right, down } = Project3D.orthoDragBasis(view as Project3D.OrthoView);
+  return {
+    x: right.x * delta.x + down.x * delta.y,
+    y: right.y * delta.x + down.y * delta.y,
+    z: right.z * delta.x + down.z * delta.y,
+  };
+}
+
+/**
+ * The same conversion for a PERSPECTIVE view (Active Camera, Custom View 1–3).
+ *
+ * Two differences from the orthographic case. The basis comes from the camera's
+ * orientation rather than a fixed table — so once the camera is orbited, screen-
+ * right is no longer world +X. And the magnitude is depth-dependent: dividing by
+ * the layer's own projected `scale` inverts the pinhole divide exactly, which is
+ * what keeps the layer under the pointer instead of lagging when it is far away
+ * and overshooting when it is close.
+ *
+ * Degenerates to the old behaviour precisely where the old behaviour was right:
+ * an un-orbited camera gives right = (1,0,0) / down = (0,1,0), and a layer on
+ * the comp plane projects at scale 1, so the delta passes through untouched.
+ *
+ * `at` is the layer's current world position, used only to sample the depth.
+ */
+function perspectiveDelta3D(
+  delta: { x: number; y: number },
+  camera: Project3D.Camera3D,
+  at: { x: number; y: number; z: number },
+): { x: number; y: number; z: number } {
+  const { right, down } = Project3D.cameraDragBasis(camera);
+  // scale = focal / depth, so 1/scale converts a projected delta back to world.
+  const s = Project3D.projectPoint(at, camera).scale;
+  const k = Math.abs(s) > 1e-9 ? 1 / s : 1;
+  const dx = delta.x * k;
+  const dy = delta.y * k;
+  return {
+    x: right.x * dx + down.x * dy,
+    y: right.y * dx + down.y * dy,
+    z: right.z * dx + down.z * dy,
+  };
+}
+
+function moveNodes(payload: MoveNodesPayload, viewOf?: () => Camera3dMode): void {
   const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
   const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  const view = viewOf?.() ?? useGuidesStore.getState().camera3dMode;
+  const orthoSpatial = orthoDelta3D(payload.delta, view);
   const toKey: SceneNode[] = [];
   const toWrite: SceneNode[] = [];
   for (const id of payload.ids) {
@@ -661,6 +794,41 @@ function moveNodes(payload: MoveNodesPayload): void {
     else toWrite.push(node);
   }
 
+  const comp = useProjectStore.getState().comps[
+    useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.compositionId ?? 'comp_root'
+  ];
+  const compW = comp?.width ?? 1920;
+  const compH = comp?.height ?? 1080;
+  // Resolved once: every node in one drag shares the view, and resolving the
+  // camera walks the scene.
+  const viewCamera = orthoSpatial ? null : currentViewCamera(compW, compH, rawTime, view);
+
+  /**
+   * This drag as a WORLD translation for `node`, or null when the node is 2D
+   * (which keeps the plain projected delta — a 2D layer has no depth to move in
+   * and its position is camera-independent by definition).
+   */
+  const spatialFor = (node: SceneNode): { x: number; y: number; z: number } | null => {
+    if (!is3DEnabled(node)) return null;
+    if (orthoSpatial) return orthoSpatial;
+    if (!viewCamera) return null;
+    const g = readGeometry(node);
+    const n3 = readNode3D(node);
+    return perspectiveDelta3D(payload.delta, viewCamera, { x: g?.x ?? 0, y: g?.y ?? 0, z: n3.z ?? 0 });
+  };
+
+  /** Depth component of this drag for a 3D layer, or null when it has none. */
+  const depthDeltaFor = (node: SceneNode): number | null => {
+    const s = spatialFor(node);
+    if (!s) return null;
+    return Math.abs(s.z) > 1e-9 ? s.z : null;
+  };
+  /** The in-plane (x/y) part, which is what the existing writes consume. */
+  const planarDelta = (node: SceneNode): { x: number; y: number } => {
+    const s = spatialFor(node);
+    return s ? { x: s.x, y: s.y } : payload.delta;
+  };
+
   let changed = false;
   if (toKey.length > 0) {
     runAnimEdit(
@@ -669,13 +837,14 @@ function moveNodes(payload: MoveNodesPayload): void {
         for (const node of toKey) {
           const g = readGeometry(node);
           if (!g) continue;
-          let delta = payload.delta;
+          let delta = planarDelta(node);
+          const dz = depthDeltaFor(node);
           if (node.parent) {
             const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts);
             const inv = Matrix.invert(pw);
             delta = {
-              x: inv.a * payload.delta.x + inv.c * payload.delta.y,
-              y: inv.b * payload.delta.x + inv.d * payload.delta.y,
+              x: inv.a * delta.x + inv.c * delta.y,
+              y: inv.b * delta.x + inv.d * delta.y,
             };
           }
           const lt = getRemappedTime(node.id, rawTime);
@@ -687,6 +856,14 @@ function moveNodes(payload: MoveNodesPayload): void {
           const cy = cidOf(node, 'y');
           defaultSceneGraph.writeProp(node.id, cx, 'x', curX + delta.x);
           defaultSceneGraph.writeProp(node.id, cy, 'y', curY + delta.y);
+          // Depth is NOT run through the parent inverse above: that is a 2×3
+          // affine with no z, so it cannot express the depth axis. A 3D parent
+          // chain's own depth handling lives in nodeMatrix.parentWorld3d.
+          if (dz !== null) {
+            const curZ = defaultAnimation.sample(node.id, 'z', lt) ?? (readNode3D(node).z ?? 0);
+            defaultAnimation.setKeyframe(node.id, 'z', lt, curZ + dz);
+            defaultSceneGraph.writeProp(node.id, cidOf(node, 'z'), 'z', curZ + dz);
+          }
           changed = true;
         }
       },
@@ -697,19 +874,24 @@ function moveNodes(payload: MoveNodesPayload): void {
   for (const node of toWrite) {
     const g = readGeometry(node);
     if (!g) continue;
-    let delta = payload.delta;
+    let delta = planarDelta(node);
+    const dz = depthDeltaFor(node);
     if (node.parent) {
       const pw = worldMatrixOf(node.parent as string, getLocalTransformForPorts, getParentIdForPorts);
       const inv = Matrix.invert(pw);
       delta = {
-        x: inv.a * payload.delta.x + inv.c * payload.delta.y,
-        y: inv.b * payload.delta.x + inv.d * payload.delta.y,
+        x: inv.a * delta.x + inv.c * delta.y,
+        y: inv.b * delta.x + inv.d * delta.y,
       };
     }
     const cidX = cidOf(node, 'x');
     const cidY = cidOf(node, 'y');
     defaultSceneGraph.writeProp(node.id, cidX, 'x', g.x + delta.x);
     defaultSceneGraph.writeProp(node.id, cidY, 'y', g.y + delta.y);
+    if (dz !== null) {
+      const curZ = readNode3D(node).z ?? 0;
+      defaultSceneGraph.writeProp(node.id, cidOf(node, 'z'), 'z', curZ + dz);
+    }
     changed = true;
   }
   if (changed) bumpScene();
@@ -823,8 +1005,11 @@ function resizeNode(payload: ResizeNodePayload): void {
   const kind = kindOf(node);
   if (!drawable(kind)) return;
   
-  let baseW = (SIZE as Record<string, { w: number; h: number }>)[kind]?.w ?? 100;
-  let baseH = (SIZE as Record<string, { w: number; h: number }>)[kind]?.h ?? 100;
+  // An SVG layer has no `SIZE` key — it rasterizes down the image path — so it
+  // must borrow the image base rather than fall through to the 100×100 default.
+  const sizeKey = kind === 'svg' ? 'image' : kind;
+  let baseW = (SIZE as Record<string, { w: number; h: number }>)[sizeKey]?.w ?? 100;
+  let baseH = (SIZE as Record<string, { w: number; h: number }>)[sizeKey]?.h ?? 100;
   const transComp = node.components.find((c) => c.type === 'Transform');
   if (transComp && transComp.props) {
     if (typeof transComp.props.width === 'number') baseW = transComp.props.width;
@@ -966,12 +1151,19 @@ function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
   bumpScene();
 }
 
-export function createCommandPort(): CommandPort {
+/**
+ * @param viewOf Which view the gestures driving this port come from. Omit for
+ *   the main viewport (follows the store). A secondary pane passes its own, so a
+ *   drag in a Top pane resolves against Top's axes even while the main viewport
+ *   shows Front — without it every pane's drag would be interpreted through the
+ *   main viewport's view and move the layer along the wrong axis.
+ */
+export function createCommandPort(viewOf?: () => Camera3dMode): CommandPort {
   return {
     execute(command: WorkspaceCommand): void {
       switch (command.type) {
         case WorkspaceCommandType.MoveNodes:
-          moveNodes(command.payload as MoveNodesPayload);
+          moveNodes(command.payload as MoveNodesPayload, viewOf);
           break;
         case WorkspaceCommandType.CreateNode:
           createNode(command.payload as CreateNodePayload);

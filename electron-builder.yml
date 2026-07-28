@@ -8,6 +8,10 @@ directories:
   output: release
   buildResources: build
 
+# App/installer icon — build/icon.png (512×512 Premation mark). electron-builder
+# derives the .ico / .icns / Linux icon set from it.
+icon: build/icon.png
+
 # The renderer bundle + compiled main/preload + manifest are all that ship.
 files:
   - dist/**

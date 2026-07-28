@@ -151,6 +151,26 @@ export function beginViewportPass(
   return enc;
 }
 
+/**
+ * Begin a pass writing into a target that is NOT viewport-sized.
+ *
+ * `beginViewportPass` always sets the full viewport, which silently renders
+ * only the top-left corner of a smaller target — the quad is drawn at full
+ * scale into a box that cannot hold it. Anything rendering at a reduced
+ * resolution (the half-res backdrop blur) has to state its own size.
+ */
+export function beginSizedPass(
+  ctx: RenderPassContext,
+  label: string,
+  attachment: ColorAttachment,
+  width: number,
+  height: number,
+): RenderPassEncoder {
+  const enc = ctx.services.backend.beginRenderPass({ label, color: attachment });
+  enc.setViewport(0, 0, Math.max(1, width), Math.max(1, height));
+  return enc;
+}
+
 /** Queue a solid-colored quad, optionally SDF-masked to a rounded-rect/ellipse.
  *  Consecutive solids of one blend batch together. */
 export function emitSolid(

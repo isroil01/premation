@@ -79,6 +79,7 @@ export {
   type Renderable,
   type RenderableKind,
   type RenderableSdf,
+  type RenderableGlass,
   type RenderableColorMatrix,
   type RenderableEffect,
   type CompositionInfo,

@@ -127,6 +127,12 @@ export interface Shade3D {
   specular: number;
   /** Blinn-Phong exponent. */
   shininess: number;
+  /**
+   * Metal, 0..1 (AE's Material Options). Blends the specular highlight toward
+   * the layer's OWN colour: 0 leaves the highlight the light's colour (plastic),
+   * 1 tints it fully by the surface (metal).
+   */
+  metal?: number;
   lights: ReadonlyArray<Shade3DLight>;
 }
 
@@ -147,7 +153,8 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
   out[o + 0] = lights.length;
   out[o + 1] = shade.specular;
   out[o + 2] = shade.shininess;
-  out[o + 3] = 0;
+  // shadeParams.w — spare padding until now, so Metal costs no layout change.
+  out[o + 3] = shade.metal ?? 0;
   o += 4;
   for (const l of lights) {
     out[o + 0] = l.x;
@@ -277,6 +284,57 @@ export function packBlur(
   out[o + 1] = dirY;
   out[o + 2] = radiusPx;
   out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * Glass composite uniform: mat3 mvp + vec4 uvRect + five vec4 parameter blocks.
+ *
+ * Packed as opaque vec4s rather than named scalars because std140 pads every
+ * scalar to 16 bytes anyway — five vec4s is the same memory as five floats and
+ * carries twenty values. The shader unpacks them; the field order is documented
+ * on both sides and must be changed in both.
+ */
+export function packGlass(
+  mvp: Mat3,
+  uvRect: Rect,
+  g: {
+    refraction: number;
+    edgeWidth: number;
+    aberration: number;
+    saturation: number;
+    tint: Color;
+    tintOpacity: number;
+    rim: Color;
+    rimOpacity: number;
+    rimWidth: number;
+    rimAngle: number;
+    specularAngle: number;
+    specularIntensity: number;
+    specularFalloff: number;
+    grain: number;
+  },
+  texelX: number,
+  texelY: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 * 5);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  // p0: refractPx, edgePx, aberrationPx, saturation
+  out[o + 0] = g.refraction; out[o + 1] = g.edgeWidth;
+  out[o + 2] = g.aberration; out[o + 3] = g.saturation; o += 4;
+  // p1: tint rgb, tint opacity
+  out[o + 0] = g.tint.r; out[o + 1] = g.tint.g;
+  out[o + 2] = g.tint.b; out[o + 3] = g.tint.a * g.tintOpacity; o += 4;
+  // p2: rim rgb, rim opacity
+  out[o + 0] = g.rim.r; out[o + 1] = g.rim.g;
+  out[o + 2] = g.rim.b; out[o + 3] = g.rim.a * g.rimOpacity; o += 4;
+  // p3: rimPx, rimAngle, specIntensity, specFalloff
+  out[o + 0] = g.rimWidth; out[o + 1] = g.rimAngle;
+  out[o + 2] = g.specularIntensity; out[o + 3] = g.specularFalloff; o += 4;
+  // p4: specAngle, grain, texel
+  out[o + 0] = g.specularAngle; out[o + 1] = g.grain;
+  out[o + 2] = texelX; out[o + 3] = texelY;
   return out;
 }
 

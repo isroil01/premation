@@ -1,5 +1,5 @@
 import { layoutPerChar3D, MAX_PER_CHAR_GLYPHS, FALLBACK_ADVANCE_RATIO } from './perChar3D';
-import type { GlyphTransform } from './textAnimators';
+import { identityGlyphTransform, type GlyphTransform } from './textAnimators';
 
 /** Deterministic metrics so placement assertions don't depend on a font. */
 const measure = (char: string, style: { fontSize?: number }) =>
@@ -54,8 +54,8 @@ describe('layoutPerChar3D', () => {
 
   it('carries the animator 3D channels through to each glyph', () => {
     const t: GlyphTransform[] = [
-      { char: 'A', dx: 0, dy: 0, dz: 120, rotationY: 45, scale: 1, rotation: 0, opacity: 1, tracking: 0, skew: 0 },
-      { char: 'B', dx: 0, dy: 0, dz: -60, rotationX: 30, scale: 2, rotation: 15, opacity: 0.5, tracking: 0, skew: 0 },
+      identityGlyphTransform('A', { dz: 120, rotationY: 45 }),
+      identityGlyphTransform('B', { dz: -60, rotationX: 30, scale: 2, rotation: 15, opacity: 0.5 }),
     ];
     const g = place('AB', t);
     expect(g[0]!.offsetZ).toBe(120);

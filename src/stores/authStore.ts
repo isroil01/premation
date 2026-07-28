@@ -7,7 +7,14 @@
  */
 
 import { create } from 'zustand';
-import { api, getToken, setToken } from '@core/api/client';
+import { api, clearCache, type UserRole } from '@core/api/client';
+import {
+  clearSession,
+  hasSession,
+  loadSession,
+  refreshSession,
+  setSession,
+} from '@core/api/session';
 import { useAssetStore } from './assetStore';
 import { useAiProviderStore } from './aiProviderStore';
 
@@ -15,6 +22,14 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string | null;
+  /**
+   * Platform privilege, as reported by the backend.
+   *
+   * Informational only here — the desktop app has no admin surface to gate. The
+   * operator console lives in the motion-landing web app, and the server
+   * re-checks the role against the database on every /api/admin call regardless.
+   */
+  role: UserRole;
 }
 
 interface AuthState {
@@ -47,8 +62,12 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
   login: async (email, password) => {
     set({ status: 'loading', error: null });
     try {
+      // Whatever the previous session cached belongs to the previous session.
+      clearCache();
       const res = await api.login(email, password);
-      setToken(res.token);
+      // Stores the refresh token in the OS keystore on desktop; the access
+      // token stays in memory. See core/api/session.
+      await setSession(res);
       set({ user: res.user, status: 'authenticated', error: null });
       await afterAuth();
     } catch (err) {
@@ -60,8 +79,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
   register: async (email, password, name) => {
     set({ status: 'loading', error: null });
     try {
+      clearCache();
       const res = await api.register(email, password, name);
-      setToken(res.token);
+      await setSession(res);
       set({ user: res.user, status: 'authenticated', error: null });
       await afterAuth();
     } catch (err) {
@@ -71,19 +91,38 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
   },
 
   logout: () => {
-    setToken(null);
+    // Tell the server first, so the refresh token is revoked rather than just
+    // forgotten — a token this client discards without saying so stays valid
+    // for 90 days on whatever copied it. Fire-and-forget: being signed out
+    // locally must not depend on the network.
+    void api.logout().catch(() => undefined);
+    void clearSession();
+    // Everything cached was fetched under a session that is now gone — leaving
+    // it would show the previous account's projects to the next person to sign
+    // in on this machine.
+    clearCache();
     set({ user: null, status: 'idle', error: null });
   },
 
   hydrate: async () => {
-    if (!getToken()) return;
+    // Reads the OS keystore on desktop, localStorage in the browser.
+    await loadSession();
+    if (!hasSession()) return;
+
     set({ status: 'loading' });
     try {
+      // A stored session has only a refresh token — the access token was never
+      // persisted — so exchange it before the first real call. `api.me()`
+      // would trigger this anyway via the 401 path; doing it up front means
+      // the boot sequence is one round trip instead of a failure and a retry.
+      await refreshSession();
+
       const user = await api.me();
       set({ user, status: 'authenticated' });
       await afterAuth();
     } catch {
-      setToken(null);
+      await clearSession();
+      clearCache();
       set({ user: null, status: 'idle' });
     }
   },

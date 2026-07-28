@@ -10,7 +10,7 @@
 import type { SceneNode } from '@core/types';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SIZE } from '@core/rendering/buildSnapshot';
-import { measureTextNodeSize, measureTextNodeInkSize } from '@core/text/measureText';
+import { measureTextNodeSize, measureTextNodeSelectionBox } from '@core/text/measureText';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { Mat, Rect, type Vec2, type Mat2D } from '@motion/workspace';
@@ -55,9 +55,21 @@ export interface NodeGeometry {
  * gizmo. Only kinds with no canvas presence stay out (group = children carry
  * the geometry; audio = no visual; adjustment = invisible full-frame overlay
  * that would swallow every click above the layers it grades).
+ *
+ * `svg` belongs here for the same reason `image` does. A statically-imported
+ * SVG stays ONE intact layer that buildSnapshot rasterizes down the image path
+ * (see its `kind === 'svg' ? 'image'` mapping), so it draws on canvas like any
+ * other texture — but it was missing from this list, and this list is the very
+ * first gate in `readGeometry`. A null geometry drops the node out of
+ * `toWorkspaceNode` entirely: no worldBounds for the broad phase, no
+ * hitTestLocal for the click, no corners for the marquee or the outline. The
+ * icon rendered and could be picked in the Scene tree, yet was unclickable and
+ * undraggable on canvas. Animated SVGs never showed the bug because that import
+ * branch converts to real keyframed SHAPE layers, which were always allowed.
  */
 export function isDrawableKind(kind: string): boolean {
   return kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video'
+    || kind === 'svg'
     || kind === 'light' || kind === 'camera'
     || kind === 'particle' || kind === 'comp' || kind === 'null' || kind === 'group';
 }
@@ -170,15 +182,43 @@ export function readGeometry(node: SceneNode, overrideProps?: Record<string, unk
 
   // Text layers size to their MEASURED content (point text, AE-style).
   //
-  // The GLYPH box, not the render box: `measureTextNodeSize` pads for
-  // descenders/antialiasing and uses the typographic line box for height, which
-  // is correct for the raster and far too loose for the selection outline (a
-  // 110×36 "Hello" reported 139×74). The two boxes are concentric, so swapping
-  // in the tight one needs no offset. Falls back to the render box when a
-  // runtime reports no ink metrics.
-  const measured = kind === 'text'
-    ? (measureTextNodeInkSize(node, overrideProps) ?? measureTextNodeSize(node, overrideProps))
-    : null;
+  // The FONT box, not the ink box and not the render box:
+  //   • the render box is the typographic line box plus padding — right for the
+  //     raster, far too loose for an outline;
+  //   • the ink box hugs these exact glyphs, so the outline would resize on
+  //     every keystroke, which reads as broken. AE sizes text bounds from font
+  //     metrics for the same reason: `HELLO` and `Hello` get the same height.
+  //
+  // The font box is NOT concentric with the layer origin — the draw baseline is
+  // `textBaseline: 'middle'`, whose origin sits inside the em box rather than at
+  // the band's centre — so it carries a vertical offset. Assuming concentricity
+  // is exactly what used to leave capitals hanging ~4px above their own box.
+  // PARAGRAPH text (a node carrying `boxWidth`) has a user-defined box: the
+  // selection rectangle IS the authored width, and dragging a handle must
+  // reflow the text inside it rather than scale the type. POINT text keeps
+  // deriving its box from the glyphs.
+  const authoredBoxWidth = kind === 'text'
+    ? (() => {
+        const fromOverride = overrideProps?.boxWidth;
+        if (typeof fromOverride === 'number' && fromOverride > 0) return fromOverride;
+        for (const c of node.components) {
+          const v = (c.props as Record<string, unknown>).boxWidth;
+          if (typeof v === 'number' && v > 0) return v;
+        }
+        return undefined;
+      })()
+    : undefined;
+  const textBox = kind === 'text' ? measureTextNodeSelectionBox(node, overrideProps) : null;
+  const measured = textBox
+    ? { w: authoredBoxWidth ?? textBox.width, h: textBox.height, dy: textBox.offsetY }
+    : kind === 'text'
+      ? (() => {
+          // No metrics from this runtime (jsdom): fall back to the render box,
+          // which is concentric by construction.
+          const r = measureTextNodeSize(node, overrideProps);
+          return r ? { w: r.w, h: r.h, dy: 0 } : null;
+        })()
+      : null;
   const size = measured ? { w: measured.w, h: measured.h }
              : pointsBounds ? pointsBounds
              : radius && radius > 0 ? { w: radius * 2, h: radius * 2 }
@@ -188,6 +228,12 @@ export function readGeometry(node: SceneNode, overrideProps?: Record<string, unk
              : kind === 'null' ? { w: 60, h: 60 }
              : kind === 'group' ? { w: 280, h: 280 }
              : kind === 'comp' ? { w: compositionSize().width, h: compositionSize().height }
+             // `SIZE` is keyed by RENDER kind, and an SVG layer renders as an
+             // image — so it has no key of its own. Import always stamps the
+             // document's intrinsic size on the Transform (placeInComp), so this
+             // is only the floor for a node that somehow lost its dimensions;
+             // inheriting the image default beats an arbitrary 100×100 square.
+             : kind === 'svg' ? SIZE.image
              : (SIZE as any)[kind] ?? { w: 100, h: 100 };
   const name = (node.name ?? '').toLowerCase();
 
@@ -197,7 +243,9 @@ export function readGeometry(node: SceneNode, overrideProps?: Record<string, unk
   let finalW = (kind === 'text' && measured) ? measured.w : (hasAuthoredDim ? width : (pointsBounds ? pointsBounds.w : size.w));
   let finalH = (kind === 'text' && measured) ? measured.h : (hasAuthoredDim ? height : (pointsBounds ? pointsBounds.h : size.h));
   let offsetX = 0;
-  let offsetY = 0;
+  // Text carries the font box's vertical offset from the draw origin; every
+  // other kind is centred on its own position.
+  let offsetY = (kind === 'text' && measured) ? measured.dy : 0;
 
   // A group wraps its content — measure it rather than guessing a square.
   // Authored width/height on a group is a stale artifact of `makeNode` (which

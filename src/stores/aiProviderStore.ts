@@ -22,7 +22,9 @@ import {
 
 /** Suggested models per provider. Users can type any id the provider accepts. */
 export const MODEL_SUGGESTIONS: Record<AiProviderId, readonly string[]> = {
-  anthropic: ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5-20251001'],
+  anthropic: ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5'],
+  // NOTE: unverified against a live OpenAI key — these are carried over, not
+  // confirmed current. Every OpenAI run in the audit used gpt-4o.
   openai: ['gpt-4o', 'gpt-4o-mini', 'o4-mini'],
   // Gemini 3.x only — the 2.x models are retired / unavailable on current keys.
   // gemini-3.5-flash is the current stable; 3.1-pro-preview is the latest Pro.

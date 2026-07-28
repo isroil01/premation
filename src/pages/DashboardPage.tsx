@@ -1,9 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@stores/authStore';
-import { usePreferenceStore } from '@stores/preferenceStore';
 import { useProjectLibrary } from '@stores/projectLibraryStore';
 import { Icon } from '@components/Icon';
+import { Logo } from '@components/Logo';
 import { Checkbox } from '@components/Checkbox';
 import { Modal, customConfirm } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
@@ -176,10 +176,11 @@ export function DashboardPage(): JSX.Element {
   const [setupBg, setSetupBg] = useState('#101014');
   const [setupTransparent, setSetupTransparent] = useState(false);
 
-  // Real, persisted editor preferences — shared with the editor's own
-  // Customize dialog, so the two can never disagree.
-  const prefs = usePreferenceStore();
-  const setPref = usePreferenceStore((s) => s.set);
+  // NOTE: this page deliberately reads no editor preferences any more. It used
+  // to subscribe to the WHOLE preference store — `usePreferenceStore()` with no
+  // selector, which re-renders the entire dashboard on any preference change —
+  // in order to render controls that Customize already owned. Both the
+  // duplication and the subscription are gone.
 
   // Search is server-side (the list is paged, so filtering here would only
   // filter the loaded page). Debounced so typing doesn't fire a query a
@@ -1157,78 +1158,33 @@ export function DashboardPage(): JSX.Element {
               <BillingSection />
             </div>
 
-            {/* Editor preferences */}
+            {/*
+              Editor preferences live in ONE place: the Customize dialog.
+
+              This card used to restate four of them — confirm-on-close,
+              auto-keyframe, reduce-motion and sidebar density — while the same
+              four also sat in Customize → Appearance. Two controls for one
+              value is two chances to disagree about which is authoritative, and
+              the reason to reach for any of them is "I am editing and want this
+              different", which is exactly when the dashboard is not on screen.
+
+              So this is a pointer now, not a second copy.
+            */}
             <div className={styles.settingsCard}>
               <h3 className={styles.settingsLabel}>Editor Preferences</h3>
-
+              <p className={styles.optionDesc} style={{ marginBottom: 'var(--space-4)' }}>
+                Appearance, interface scale, panel layout, editing behaviour and keyboard
+                shortcuts are all set from Customize — available here and from anywhere in
+                the editor.
+              </p>
               <div className={styles.settingsRow}>
-                <label className={styles.settingsOption}>
-                  <input
-                    type="checkbox"
-                    checked={prefs.confirmOnClose}
-                    onChange={(e) => setPref('confirmOnClose', e.target.checked)}
-                    className={styles.checkbox}
-                  />
-                  <div>
-                    <div className={styles.optionTitle}>Confirm before discarding changes</div>
-                    <div className={styles.optionDesc}>Ask for confirmation when a New/Open/Close would throw away unsaved work.</div>
-                  </div>
-                </label>
-              </div>
-
-              <div className={styles.settingsRow}>
-                <label className={styles.settingsOption}>
-                  <input
-                    type="checkbox"
-                    checked={prefs.timelineAutoKeyframe}
-                    onChange={(e) => setPref('timelineAutoKeyframe', e.target.checked)}
-                    className={styles.checkbox}
-                  />
-                  <div>
-                    <div className={styles.optionTitle}>Auto-keyframe</div>
-                    <div className={styles.optionDesc}>Record a keyframe automatically when you change a property with the playhead parked.</div>
-                  </div>
-                </label>
-              </div>
-
-              <div className={styles.settingsRow}>
-                <label className={styles.settingsOption}>
-                  <input
-                    type="checkbox"
-                    checked={prefs.editorReduceMotion}
-                    onChange={(e) => setPref('editorReduceMotion', e.target.checked)}
-                    className={styles.checkbox}
-                  />
-                  <div>
-                    <div className={styles.optionTitle}>Reduce interface motion</div>
-                    <div className={styles.optionDesc}>Disable UI transitions and animations. Applies immediately.</div>
-                  </div>
-                </label>
-              </div>
-
-              <div className={styles.settingsRowSelect}>
-                <label className={styles.selectLabelField}>
-                  <span>Sidebar Items Density</span>
-                  <select
-                    value={String(prefs.sidebarDensity || 'default')}
-                    onChange={(e) => setPref('sidebarDensity', e.target.value as any)}
-                    className={styles.filterDropdown}
-                  >
-                    <option value="compact">Compact</option>
-                    <option value="default">Default</option>
-                    <option value="comfortable">Comfortable</option>
-                  </select>
-                </label>
-              </div>
-
-              <div className={styles.settingsRow} style={{ marginTop: 'var(--space-4)', borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-4)' }}>
                 <Button
                   variant="secondary"
                   onClick={() => openCustomizeDialog()}
                   style={{ width: '100%', justifyContent: 'center' }}
                 >
                   <Icon name="settings" size={16} style={{ marginRight: 8 }} />
-                  Customize Appearance, Shortcuts & Workspaces…
+                  Open Customize…
                 </Button>
               </div>
             </div>
@@ -1415,6 +1371,9 @@ export function DashboardPage(): JSX.Element {
     <div className={styles.root}>
       {/* 1. Left Sidebar Navigation */}
       <aside className={styles.sidebar}>
+        <div className={styles.sidebarBrand}>
+          <Logo variant="lockup" size={26} />
+        </div>
         <nav className={styles.sidebarNav}>
           <button
             type="button"

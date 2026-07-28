@@ -1,0 +1,213 @@
+/**
+ * The wire layer: URL, auth header, error shape, conditional GET.
+ *
+ * Split out of `client.ts` so the cache (`./cache`) can issue conditional
+ * requests without importing the endpoint catalog that is itself built on the
+ * cache — the two would otherwise be a circular import, which in an ES module
+ * graph fails as an undefined function at the least convenient moment.
+ *
+ * `client.ts` re-exports everything public here, so nothing outside this
+ * directory needs to know the split exists.
+ */
+
+import { API_URL } from './env';
+import {
+  accessTokenExpired,
+  clearSession,
+  getAccessToken,
+  hasSession,
+  refreshSession,
+  setSession,
+} from './session';
+
+const BASE_URL: string = API_URL || 'http://localhost:4000/api';
+
+/** Absolute/relative API base — for callers that need a raw fetch (AI stream). */
+export const apiBaseUrl = (): string => BASE_URL;
+
+/**
+ * The current bearer.
+ *
+ * Kept as a function (rather than the old localStorage read) because the
+ * access token now lives in memory and is rotated behind the caller's back —
+ * anything that caches the string will eventually send an expired one.
+ */
+export function getToken(): string | null {
+  return getAccessToken();
+}
+
+/**
+ * Adopt a session.
+ *
+ * Kept for the one caller that legitimately has a bare token and no refresh
+ * token: the test suite. Passing null signs out. Real sign-in flows go through
+ * `setSession` with the full pair, so the refresh token is stored where it
+ * belongs (the OS keystore on desktop) rather than smuggled through here.
+ */
+export function setToken(token: string | null): void {
+  if (!token) {
+    void clearSession();
+    return;
+  }
+  void setSession({ token, refreshToken: '', expiresIn: 3600 });
+}
+
+/** True when the user has a session — gates cloud features. */
+export function isAuthenticated(): boolean {
+  return hasSession();
+}
+
+export interface ApiError extends Error {
+  status: number;
+  body?: unknown;
+  /**
+   * The server's `X-Request-Id` for the failed call.
+   *
+   * The same id appears in the backend log line for this request, so a bug
+   * report that quotes it can be traced to the exact failure instead of a
+   * time range.
+   */
+  requestId?: string;
+}
+
+/**
+ * A page of a list endpoint.
+ *
+ * These used to return bare arrays of everything the account owned. `total` is
+ * the count ignoring paging, so a UI can say "showing 20 of 143" rather than
+ * pretending 20 is all there is.
+ */
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PageQuery {
+  limit?: number;
+  offset?: number;
+}
+
+/** `{limit, offset, q}` → "?limit=20&offset=40&q=promo", omitting what's unset. */
+export function query(params: Record<string, string | number | boolean | undefined>): string {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+    .join('&');
+  return qs ? `?${qs}` : '';
+}
+
+/**
+ * Everything except the bearer.
+ *
+ * The Authorization header is added later, by `withAuth`, at the instant the
+ * request is sent — because a retry after a silent refresh must carry the NEW
+ * token, and a header object built up front would carry the one that just
+ * failed.
+ */
+function headersFor(init?: RequestInit): Record<string, string> {
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string>) };
+  if (init?.body && !(init.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+}
+
+/**
+ * Read a response header defensively.
+ *
+ * Tests (and some fetch polyfills) hand back plain objects with no `headers`,
+ * and a hard `res.headers.get(...)` turns every one of those into a TypeError
+ * inside the client rather than a failed assertion in the test.
+ */
+function header(res: Response, name: string): string | undefined {
+  return res.headers?.get?.(name) ?? undefined;
+}
+
+async function toError(res: Response): Promise<ApiError> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    body = await res.text().catch(() => undefined);
+  }
+  const err = new Error(
+    (body as { message?: string })?.message || `Request failed (${res.status})`,
+  ) as ApiError;
+  err.status = res.status;
+  err.body = body;
+  err.requestId = header(res, 'X-Request-Id');
+  return err;
+}
+
+/**
+ * Send a request, renewing the session first if it is about to expire and
+ * once more if the server says it already has.
+ *
+ * The proactive check costs nothing (it is a clock comparison) and turns the
+ * common case — an app left open past the access token's hour — into a normal
+ * request instead of a 401 and a retry. The reactive retry covers the rest: a
+ * token revoked server-side, a clock further out than the slack window.
+ *
+ * Exactly one retry. A second 401 after a *successful* refresh is not a
+ * session problem, it is a genuine authorization failure, and retrying it
+ * forever is how a client turns one bad request into a request loop.
+ */
+async function send(path: string, init: RequestInit, headers: Record<string, string>) {
+  if (accessTokenExpired() && isAuthenticated()) await refreshSession();
+
+  let res = await fetch(`${BASE_URL}${path}`, { ...init, headers: withAuth(headers) });
+
+  if (res.status === 401 && isAuthenticated()) {
+    if (await refreshSession()) {
+      res = await fetch(`${BASE_URL}${path}`, { ...init, headers: withAuth(headers) });
+    }
+  }
+  return res;
+}
+
+/** Stamp the current bearer on, at the moment of sending, never before. */
+function withAuth(headers: Record<string, string>): Record<string, string> {
+  const token = getToken();
+  return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
+}
+
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init ?? {}, headersFor(init));
+  if (!res.ok) throw await toError(res);
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+export interface ConditionalResult<T> {
+  /** Undefined exactly when `notModified` is true. */
+  data?: T;
+  etag?: string;
+  /** The server confirmed the cached copy is still current. */
+  notModified: boolean;
+}
+
+/**
+ * A GET that can come back as "you already have this".
+ *
+ * Sends `If-None-Match` when we hold an ETag; a 304 means the cached value is
+ * still current, so the caller keeps the object it already had — same
+ * reference, so React skips re-rendering the list entirely — and no body
+ * crosses the network.
+ */
+export async function conditionalGet<T>(path: string, etag?: string): Promise<ConditionalResult<T>> {
+  const headers = headersFor();
+  if (etag) headers['If-None-Match'] = etag;
+
+  const res = await send(path, {}, headers);
+
+  if (res.status === 304) return { notModified: true, etag };
+  if (!res.ok) throw await toError(res);
+
+  return {
+    data: (res.status === 204 ? undefined : await res.json()) as T,
+    etag: header(res, 'ETag'),
+    notModified: false,
+  };
+}

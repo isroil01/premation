@@ -23,6 +23,8 @@ import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/te
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { isRiggableKind } from '@core/scene/rigLogo';
+import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
+import { readNodePuppet } from '@core/rig/puppet';
 import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
 
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
@@ -219,7 +221,7 @@ const listCapabilities: AiTool['handler'] = (input, ctx) => {
         stiffness: 'puppet.<pinId>.stiffness — scalar keyframe track (>= 0); keyframeable via set_keyframes. Sharpens the pin\'s influence falloff.',
       },
       tools: 'create_puppet_rig (rig + pins) → set_puppet_pin_keyframes (animate pin position) + set_keyframes on .rotation/.stiffness.',
-      note: 'Pin ids are returned by create_puppet_rig. Rig mesh settings live on the layer fx.puppet block (meshDensity 2-50, meshExpansion px, solver lbs|arap).',
+      note: 'Pin ids are returned by create_puppet_rig. Rig mesh settings live on the layer fx.puppet block (meshDensity 2-50, meshExpansion px, solver lbs|arap, meshMode grid|silhouette, maxRotationDeg = Mesh Rotation Refinement).',
     };
   }
   if (want('all')) payload.presets = ctx.anim.listPresets();
@@ -761,7 +763,19 @@ const staggerIn: AiTool['handler'] = (input, ctx) => {
 };
 
 const defineStyle: AiTool['handler'] = (input) => {
-  const i = input as CustomStyleInput;
+  // `accent` is accepted at the TOP LEVEL and folded into the palette.
+  //
+  // Both the system prompt ("call define_style FIRST — give it the accent
+  // colour") and this tool's own description ("a single accent colour is
+  // enough") promised an `accent` argument that the schema did not have. With
+  // `additionalProperties: false` that was a hard reject, so the one tool that
+  // makes a run on-brand — the one the prompt pushes the model to call first —
+  // failed exactly when it was used as documented. An explicit top-level
+  // `palette.accent` still wins if both are given.
+  const raw = input as CustomStyleInput & { accent?: string };
+  const i: CustomStyleInput = raw.accent
+    ? { ...raw, palette: { accent: raw.accent, ...(raw.palette ?? {}) } }
+    : raw;
   const style = buildCustomStyle(i);
   setRuntimeStyle(style);
   return ok(
@@ -836,7 +850,10 @@ const addTransition: AiTool['handler'] = (input, ctx) => {
 
 interface CreatePuppetRigInput {
   layerId: string;
-  pins: { name: string; x: number; y: number; rotation?: number; stiffness?: number }[];
+  pins: {
+    name: string; x: number; y: number;
+    rotation?: number; stiffness?: number; scale?: number; overlap?: number;
+  }[];
 }
 
 const createPuppetRig: AiTool['handler'] = (input, ctx) => {
@@ -854,17 +871,29 @@ const createPuppetRig: AiTool['handler'] = (input, ctx) => {
   const puppetNode = defaultSceneGraph.getNode(i.layerId);
   if (puppetNode && !isRiggableKind(readNodeKind(puppetNode))) {
     return fail(
-      `Layer '${i.layerId}' is a ${readNodeKind(puppetNode)} — puppet rigs only apply to shape, image, or text layers. ` +
+      `Layer '${i.layerId}' is a ${readNodeKind(puppetNode)} — puppet rigs only apply to shape or image layers. ` +
         `Rasterize it first (the "Rig Logo for Animation" command flattens a group/precomp to a single riggable image).`,
     );
   }
+  // Ordinal ids, not timestamps: `pin_${Date.now()}_${idx}` collided whenever
+  // two rigs were authored inside the same millisecond, and colliding pins
+  // share one set of animation tracks.
+  const pinIds = nextRigIds(
+    'pin_',
+    usedRigIds(puppetNode ? readNodePuppet(puppetNode)?.pins : undefined),
+    i.pins.length,
+  );
   const pinsList = i.pins.map((p, idx) => ({
-    id: `pin_${Date.now()}_${idx}`,
+    id: pinIds[idx]!,
     name: p.name || `Pin ${idx + 1}`,
     x: p.x,
     y: p.y,
     ...(typeof p.rotation === 'number' ? { rotation: p.rotation } : {}),
     ...(typeof p.stiffness === 'number' ? { stiffness: Math.max(0, p.stiffness) } : {}),
+    ...(typeof p.scale === 'number' ? { scale: Math.max(0.01, p.scale) } : {}),
+    ...(typeof p.overlap === 'number'
+      ? { overlap: Math.max(-100, Math.min(100, p.overlap)) }
+      : {}),
   }));
   ctx.scene.setPuppet(i.layerId, { pins: pinsList });
   const ids = pinsList.map((p) => ({ id: p.id, name: p.name }));
@@ -1012,8 +1041,20 @@ const createSkeletonRigHandler: AiTool['handler'] = (input, ctx) => {
   if (!node) return fail(`Node '${i.layerId}' not found.`);
   if (!isRiggableKind(readNodeKind(node))) {
     return fail(
-      `Layer '${i.layerId}' is a ${readNodeKind(node)} — skeleton rigs only apply to shape, image, or text layers. ` +
+      `Layer '${i.layerId}' is a ${readNodeKind(node)} — skeleton rigs only apply to shape or image layers. ` +
         `Rasterize it first (the "Rig Logo for Animation" command flattens a group/precomp to a single riggable image).`,
+    );
+  }
+  // Bone ids come from the model, so duplicates are possible — and a duplicate
+  // is silent and destructive (both bones share `bone.<id>.rotation`, so posing
+  // one poses the other, and deleting one wipes the other's animation). Reject
+  // rather than write a corrupt rig.
+  const seenBoneIds = new Set<string>();
+  const dupes = i.bones.map((b) => b.id).filter((id) => !seenBoneIds.has(id) ? (seenBoneIds.add(id), false) : true);
+  if (dupes.length > 0) {
+    return fail(
+      `Duplicate bone ids in create_skeleton_rig: ${[...new Set(dupes)].join(', ')}. ` +
+        `Bone ids key their animation tracks (bone.<id>.rotation) and must be unique within a layer.`,
     );
   }
   const bones = i.bones.map((b) => ({
@@ -1219,7 +1260,7 @@ const addPathMorph: AiTool['handler'] = (input, ctx) => {
     {
       name: 'add_logo_reveal',
       description: 'Builds an After Effects-style trim-path stroke outline logo reveal sequence with glowing emblem pop and title entrance.',
-      kind: 'write',
+      kind: 'compose',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1234,7 +1275,7 @@ const addPathMorph: AiTool['handler'] = (input, ctx) => {
     {
       name: 'add_radial_burst',
       description: 'Adds a radial shape repeater burst accent (HUD / particle ring) for high-impact motion graphics.',
-      kind: 'write',
+      kind: 'compose',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1249,7 +1290,7 @@ const addPathMorph: AiTool['handler'] = (input, ctx) => {
     {
       name: 'add_path_morph',
       description: 'Creates a fluid organic morphing shape (pucker/bloat or zigzag distortion).',
-      kind: 'write',
+      kind: 'compose',
       inputSchema: {
         type: 'object',
         properties: {

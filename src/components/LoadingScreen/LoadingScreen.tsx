@@ -1,3 +1,4 @@
+import { Logo } from '@components/Logo';
 import styles from './LoadingScreen.module.css';
 
 export interface LoadingScreenProps {
@@ -15,6 +16,7 @@ export function LoadingScreen({ message = 'Loading editor…', fullScreen = fals
     >
       <div className={styles.ambientGlow} />
       <div className={styles.card}>
+        <Logo variant="lockup" size={30} className={styles.brand} />
         <div className={styles.spinnerWrapper}>
           <div className={styles.spinnerTrack} />
           <div className={styles.spinnerHead} />

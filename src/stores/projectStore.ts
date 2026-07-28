@@ -44,6 +44,43 @@ export interface CompositionSettings {
    * labels frame 0. Default 0.
    */
   startFrame: number;
+  /**
+   * GLOBAL LIGHT — one comp-wide light direction that layer styles can opt into.
+   *
+   * This is what makes a layer STYLE different from the equivalent effect: a
+   * style bound to the global light moves when the light moves, so every shadow
+   * and bevel in the composition agrees and can be re-lit from one control.
+   * An effect's angle is its own and always will be.
+   *
+   * Angle is unbounded like layer rotation (a sweep may cross 0 and keep going);
+   * altitude is 0-90, where 90 is directly overhead.
+   *
+   * OPTIONAL because projects saved before global light existed do not carry
+   * them, and a required field would make every one of those documents fail to
+   * type — and, worse, load as `undefined` and render a shadow at angle NaN.
+   * Read them through `resolveGlobalLight`, never directly.
+   */
+  globalLightAngle?: number;
+  globalLightAltitude?: number;
+}
+
+/** The composition's light direction, with the pre-global-light defaults. */
+export const DEFAULT_GLOBAL_LIGHT = { angle: 90, altitude: 45 } as const;
+
+/**
+ * Resolve a composition's global light, filling in the defaults for documents
+ * saved before it existed. Every consumer goes through here so a shadow can
+ * never be drawn at `undefined` degrees.
+ */
+export function resolveGlobalLight(
+  comp: Pick<CompositionSettings, 'globalLightAngle' | 'globalLightAltitude'> | undefined,
+): { angle: number; altitude: number } {
+  return {
+    angle: Number.isFinite(comp?.globalLightAngle) ? (comp!.globalLightAngle as number) : DEFAULT_GLOBAL_LIGHT.angle,
+    altitude: Number.isFinite(comp?.globalLightAltitude)
+      ? (comp!.globalLightAltitude as number)
+      : DEFAULT_GLOBAL_LIGHT.altitude,
+  };
 }
 
 export interface ProjectStoreShape {

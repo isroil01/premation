@@ -290,25 +290,43 @@
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────── */
+/* The glyph is an SVG of two halves (see keyframeShape.ts), so the element
+   itself is a plain positioned box — no rotation, no border. Rotating a square
+   could only ever express one shape; interpolation needs four per side. */
 .keyframe {
   position: absolute;
   top: 50%;
   left: 0;
-  width: 11px;
-  height: 11px;
-  background: var(--color-timeline-keyframe);
-  border: 1.5px solid var(--color-timeline-keyframe-stroke);
-  border-radius: 2px;
-  transform: translate(-50%, -50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
   pointer-events: auto;
   cursor: grab;
   z-index: 2;
   transition: transform var(--motion-duration-fast) var(--motion-ease-standard),
-              background-color var(--motion-duration-fast) var(--motion-ease-standard),
-              box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+              filter var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+.keyframeGlyph {
+  display: block;
+  width: 12px;
+  height: 12px;
+  overflow: visible;
+}
+
+.keyframeGlyph path {
+  fill: var(--color-timeline-keyframe);
+  stroke: var(--color-timeline-keyframe-stroke);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+/* Roving is a statement about TIME (auto-positioned for constant speed), not
+   about the curve, so it keeps its own full-circle glyph and must stay
+   distinguishable from auto-bezier's half-circles. */
 .keyframeRoving {
+  background: var(--color-timeline-keyframe);
+  border: 1.5px solid var(--color-timeline-keyframe-stroke);
   border-radius: 50%;
   transform: translate(-50%, -50%);
 }
@@ -316,13 +334,6 @@
   transform: translate(-50%, -50%) scale(1.3);
 }
 
-.keyframeHold {
-  transform: translate(-50%, -50%) rotate(0deg); /* Square */
-  border-radius: 0;
-}
-.keyframeHold:hover {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.3);
-}
 
 /* Transparent hit padding — enlarged for comfortable grab & hold. */
 .keyframe::before {
@@ -333,47 +344,44 @@
 }
 
 .keyframe:hover {
-  background: var(--color-primary);
-  border-color: var(--color-timeline-keyframe-stroke-active);
-  transform: translate(-50%, -50%) rotate(45deg) scale(1.3);
+  transform: translate(-50%, -50%) scale(1.3);
   cursor: grab;
-  box-shadow: 0 0 8px color-mix(in srgb, var(--color-primary) 65%, transparent);
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-primary) 65%, transparent));
+}
+
+.keyframe:hover .keyframeGlyph path {
+  fill: var(--color-primary);
+  stroke: var(--color-timeline-keyframe-stroke-active);
 }
 
 .keyframeDragging {
-  background: var(--color-primary);
-  border-color: var(--color-timeline-keyframe-stroke-active);
-  transform: translate(-50%, -50%) rotate(45deg) scale(1.35);
+  transform: translate(-50%, -50%) scale(1.35);
   cursor: grabbing !important;
   z-index: 4;
+}
+
+.keyframeDragging .keyframeGlyph path {
+  fill: var(--color-primary);
+  stroke: var(--color-timeline-keyframe-stroke-active);
 }
 
 .keyframeRoving.keyframeDragging {
   transform: translate(-50%, -50%) scale(1.35);
   cursor: grabbing !important;
 }
-
-.keyframeHold.keyframeDragging {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.35);
-  cursor: grabbing !important;
+.keyframeSelected {
+  transform: translate(-50%, -50%) scale(1.2);
+  cursor: grab;
 }
 
-.keyframeSelected {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  transform: translate(-50%, -50%) rotate(45deg) scale(1.2);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 35%, transparent);
-  cursor: grab;
+.keyframeSelected .keyframeGlyph path {
+  fill: var(--color-primary);
+  stroke: var(--color-primary);
 }
 
 .keyframeRoving.keyframeSelected {
   transform: translate(-50%, -50%) scale(1.2);
 }
-
-.keyframeHold.keyframeSelected {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.2);
-}
-
 /* ── Markers ───────────────────────────────────────────────────── */
 .marker {
   position: absolute;
@@ -1171,4 +1179,28 @@
   background: color-mix(in srgb, var(--color-black, #000) 22%, transparent);
   border-left: 1px solid var(--color-border-strong);
   box-sizing: border-box;
+}
+
+/* ── Keyframe snap indicator ─────────────────────────────────────── */
+/* Only drawn during a drag, and only when the drag actually latched onto
+   something. The frame grid gets no line — it is the fallback quantization,
+   not an alignment the user was aiming for, and a line on every drag would be
+   noise rather than feedback. */
+.kfSnapLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.kfSnapPlayhead {
+  background: var(--color-timeline-playhead, #ff3b30);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-timeline-playhead, #ff3b30) 70%, transparent);
+}
+
+.kfSnapKeyframe {
+  background: var(--color-primary);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-primary) 70%, transparent);
 }

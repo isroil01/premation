@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
-import type { RenderBackend } from '@core/rendering/RenderBackend';
+import type { RenderBackend, RenderView } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
@@ -41,8 +41,20 @@ export function useViewportRenderer(
    * follow the store (Presentation Mode, unchanged behavior).
    */
   viewOverride?: Camera3dMode,
+  /**
+   * Comp → canvas transform to render at. Omitted (the default) keeps the
+   * renderer's centred "contain" fit, which is what a pane with no framing of
+   * its own wants.
+   *
+   * A GETTER, not a value: it is read inside the render closure, so a pane that
+   * pans or zooms between frames does not have to rebuild this hook — and can
+   * never render one frame behind its own camera.
+   */
+  getRenderView?: () => RenderView | undefined,
 ): void {
   const backendRef = useRef<RenderBackend | null>(null);
+  const getRenderViewRef = useRef(getRenderView);
+  getRenderViewRef.current = getRenderView;
   const timeRef = useRef(time);
   timeRef.current = time;
   const focusRef = useRef(focus);
@@ -50,14 +62,23 @@ export function useViewportRenderer(
 
   const rulers = useGuidesStore((s) => s.rulers);
   const grid = useGuidesStore((s) => s.grid);
-  const gridDivisions = useGuidesStore((s) => s.gridDivisions);
+  const gridSpacing = useGuidesStore((s) => s.gridSpacing);
+  const gridSubdivisions = useGuidesStore((s) => s.gridSubdivisions);
+  const gridStyle = useGuidesStore((s) => s.gridStyle);
   const gridColor = useGuidesStore((s) => s.gridColor);
+  const proportionalGrid = useGuidesStore((s) => s.proportionalGrid);
+  const proportionalColumns = useGuidesStore((s) => s.proportionalColumns);
+  const proportionalRows = useGuidesStore((s) => s.proportionalRows);
   const safeArea = useGuidesStore((s) => s.safeArea);
   const camera3dMode = useGuidesStore((s) => viewOverride ?? s.camera3dMode);
   // Custom-view params re-render this surface while a custom view is orbited.
   const customViews = useGuidesStore((s) => s.customViews);
-  const overlaysRef = useRef({ rulers, grid, gridDivisions, gridColor, safeArea });
-  overlaysRef.current = { rulers, grid, gridDivisions, gridColor, safeArea };
+  const gridOverlays = {
+    rulers, grid, gridSpacing, gridSubdivisions, gridStyle, gridColor,
+    proportionalGrid, proportionalColumns, proportionalRows, safeArea,
+  };
+  const overlaysRef = useRef(gridOverlays);
+  overlaysRef.current = gridOverlays;
   // Threaded via ref (like the overlays) so the stable render callback always
   // sees the CURRENT view mode — a raw closure froze it at mount, deadening
   // the Active/Front (3D/2D) toggle.
@@ -117,7 +138,7 @@ export function useViewportRenderer(
       b.renderFrame({
         ...buildSnapshot(
           defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
-          overlaysRef.current, undefined, motionBlurRef.current,
+          overlaysRef.current, getRenderViewRef.current?.(), motionBlurRef.current,
           // rootId scopes the render to THIS composition's subtree. Custom views
           // resolve to a pre-built override camera (scene camera ignored).
           {
@@ -291,7 +312,7 @@ export function useViewportRenderer(
   // toggle never repainted this surface).
   useEffect(() => {
     renderThrottled();
-  }, [sceneRev, time, focusKey, rulers, grid, gridDivisions, gridColor, safeArea, camera3dMode, customViews, draft3d, mbEnabled, mbShutter, mbSamples, compKey, renderThrottled]);
+  }, [sceneRev, time, focusKey, rulers, grid, gridSpacing, gridSubdivisions, gridStyle, proportionalGrid, proportionalColumns, proportionalRows, gridColor, safeArea, camera3dMode, customViews, draft3d, mbEnabled, mbShutter, mbSamples, compKey, renderThrottled]);
 
   // Preview-quality change: re-size the content buffer (dpr/N) and repaint.
   useEffect(() => {

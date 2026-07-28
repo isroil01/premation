@@ -599,16 +599,48 @@ export class AnimationEngine {
 
   private dataTracksMap = new Map<string, Map<PropPath, DataTrack>>();
 
-  /** Add/replace a data keyframe at `t` (deep-copies the value in). */
-  setDataKeyframe(nodeId: string, prop: PropPath, kind: DataKind, t: number, value: DataValue): void {
+  /**
+   * Add/replace a data keyframe at `t` (deep-copies the value in).
+   *
+   * `easing` is optional and, when omitted on an EXISTING keyframe, leaves the
+   * curve alone — mirroring `setKeyframe`, so re-keying a gradient's colour
+   * does not silently flatten the ease it was travelling along.
+   */
+  setDataKeyframe(
+    nodeId: string,
+    prop: PropPath,
+    kind: DataKind,
+    t: number,
+    value: DataValue,
+    easing?: EasingKind,
+  ): void {
     let byProp = this.dataTracksMap.get(nodeId);
     if (!byProp) {
       byProp = new Map();
       this.dataTracksMap.set(nodeId, byProp);
     }
     const track = byProp.get(prop) ?? { nodeId, prop, kind, keyframes: [] as DataKeyframe[] };
-    track.keyframes = upsertDataKeyframe(track.keyframes, { t, value: cloneDataValue(value) });
+    track.keyframes = upsertDataKeyframe(track.keyframes, {
+      t,
+      value: cloneDataValue(value),
+      ...(easing ? { easing } : {}),
+    });
     byProp.set(prop, track);
+    this.notifyChange(nodeId);
+  }
+
+  /**
+   * Set the easing on the data-track segment that starts at `t`.
+   *
+   * The counterpart of `setEasing` for non-scalar tracks — animated gradients,
+   * mask outlines and baked paths. Seeds default handles when switching to a
+   * custom bezier, exactly as the scalar path does.
+   */
+  setDataEasing(nodeId: string, prop: PropPath, t: number, easing: EasingKind, bezier?: BezierHandles): void {
+    const kf = this.dataTracksMap.get(nodeId)?.get(prop)?.keyframes.find((k) => k.t === t);
+    if (!kf) return;
+    kf.easing = easing;
+    if (easing === 'bezier') kf.bezier = bezier ? ([...bezier] as BezierHandles) : (kf.bezier ?? [0.25, 0.1, 0.25, 1]);
     this.notifyChange(nodeId);
   }
 
@@ -659,7 +691,7 @@ export class AnimationEngine {
     if (!track) return null;
     return {
       ...track,
-      keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+      keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
     };
   }
 
@@ -680,7 +712,7 @@ export class AnimationEngine {
       nodeId,
       prop,
       kind: track.kind,
-      keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+      keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
     });
     this.notifyChange(nodeId);
   }
@@ -772,7 +804,7 @@ export class AnimationEngine {
           nodeId,
           prop,
           kind: track.kind,
-          keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+          keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
         };
         hasData = true;
       }
@@ -799,7 +831,7 @@ export class AnimationEngine {
               nodeId,
               prop,
               kind: track.kind,
-              keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+              keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
             });
           }
         }

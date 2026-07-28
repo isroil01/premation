@@ -7,7 +7,9 @@ import type SceneGraph from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
 import { flattenComposition, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeRenderEffects, effectsToFilter, resolveEffectParams, type Effect } from '@core/effects/effects';
-import { readNodeLayerStyles, layerStylesToFilter } from '@core/effects/layerStyles';
+import { readNodeLayerStyles, layerStylesToEffects } from '@core/effects/layerStyles';
+import { resolveGlass } from '@core/effects/glassResolve';
+import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMaskAt } from '@core/effects/mask';
 import { readNodeMatte, getMatteSourceId } from '@core/effects/matte';
@@ -15,12 +17,12 @@ import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readNodeMotionBlur, motionBlurSampleTimes, type MotionBlurConfig } from '@core/effects/motionBlur';
 import { readNodeFill, readNodeFills, type FillPaint } from '@core/paint/fill';
 import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
-import { assetUrl } from '@core/api/client';
 import { useAssetStore } from '@stores/assetStore';
-import { worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
+import { localMatrix, worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
+import { parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
-import { readNodeAutoOrient } from '@core/scene/autoOrient';
+import { isAutoOrientedToCamera, readNodeAutoOrient } from '@core/scene/autoOrient';
 import { autoOrientAngleDeg } from '@core/motion/motionPath';
 import { resolveRepeater, repeaterCopies } from '@core/scene/repeater';
 import { resolveTrim, trimSegments } from '@core/scene/trimPath';
@@ -28,16 +30,16 @@ import { nearestPrecompRoot, precompAncestorChain } from '@core/scene/precomp';
 import { readNodeAnchor } from '@core/scene/anchor';
 import { readNodeLight } from '@core/scene/light';
 import { readNodeParticle, resolveParticleConfig } from '@core/particles/particleSim';
-import { measureTextNodeSize } from '@core/text/measureText';
+import { measureTextNodeSize, readMeasuredTextStyle } from '@core/text/measureText';
 import { readGeometry } from '@core/workspace/geometry';
 import { readEchoConfig } from '@core/effects/echo';
+import { readPosterizeTimeFps } from '@core/effects/posterizeTime';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { readNodeMaterial } from '@core/scene/material';
 import { extrusionFaces, clampBevel, EXTRUSION_WALL_FALLBACK_FILL } from '@core/scene/extrusion';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
-import { readNodeSequence, sequenceSrcAt } from '@core/scene/imageSequence';
 import { resolvePathOp, applyPathOp, shapeOutline } from '@core/scene/pathOps';
 import { corner } from '../../../packages/workspace/src/math/BezierPoint';
 import { resolveAnimators, evaluateTextAnimators } from '@core/text/textAnimators';
@@ -60,12 +62,12 @@ import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
-import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints } from '../rig/puppet';
+import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
 import { applyIk, getSkeletonBinding, skinRigVertices, type IkTargetResolved } from '../rig/rigDeform';
-import { getImageCoverageMask } from './imageAlphaCoverage';
+import { rigCoverageMask, resolveRigImageSrc } from '../rig/rigMeshInputs';
 
 const COMP_WIDTH = 1920;
 const COMP_HEIGHT = 1080;
@@ -77,6 +79,10 @@ export interface SnapshotComp {
   width: number;
   height: number;
   background: string;
+  /** Composition GLOBAL LIGHT — the direction layer styles bound to it use.
+   *  Optional: absent on older documents, resolved to a default at read. */
+  globalLightAngle?: number;
+  globalLightAltitude?: number;
   /** Rich background paint (gradient). When set, the Canvas2D backend paints
    *  this over the flat `background`. Undefined = plain solid `background`. */
   backgroundPaint?: FillPaint;
@@ -126,6 +132,7 @@ function readBase(node: SceneNode): {
   fontFamily?: string; fontWeight?: string; fontStyle?: string;
   letterSpacing?: number; lineHeight?: number; align?: string;
   paragraphSpacing?: number;
+  strokeOverFill?: boolean;
   src?: string; assetId?: string; color?: string;
 } {
   let x: number | undefined;
@@ -145,6 +152,7 @@ function readBase(node: SceneNode): {
   let lineHeight: number | undefined;
   let align: string | undefined;
   let paragraphSpacing: number | undefined;
+  let strokeOverFill: boolean | undefined;
   let src: string | undefined;
   let assetId: string | undefined;
   let color: string | undefined;
@@ -172,6 +180,7 @@ function readBase(node: SceneNode): {
     lineHeight = num(p.lineHeight) ?? lineHeight;
     if (typeof p.align === 'string') align = p.align;
     paragraphSpacing = num(p.paragraphSpacing) ?? paragraphSpacing;
+    if (typeof p.strokeOverFill === 'boolean') strokeOverFill = p.strokeOverFill;
     if (typeof p.src === 'string') src = p.src;
     if (typeof p.assetId === 'string') assetId = p.assetId;
     if (typeof p.color === 'string') color = p.color;
@@ -201,6 +210,7 @@ function readBase(node: SceneNode): {
     lineHeight,
     align,
     paragraphSpacing,
+    strokeOverFill,
     src,
     assetId,
     color,
@@ -215,6 +225,15 @@ export const SIZE: Record<LayerKind, { w: number; h: number }> = {
   image: { w: 280, h: 180 },
   video: { w: 480, h: 270 },
 };
+
+/** First numeric value of `prop` across a node's components, or undefined. */
+function readNumProp(node: SceneNode, prop: string): number | undefined {
+  for (const c of node.components) {
+    const v = (c.props as Record<string, unknown>)[prop];
+    if (typeof v === 'number') return v;
+  }
+  return undefined;
+}
 
 /** Opacity multiplier applied to layers that are ghosted in Focus Mode. */
 const GHOST_OPACITY = 0.12;
@@ -271,6 +290,10 @@ export function buildSnapshot(
   comp: SnapshotComp = DEFAULT_COMP,
 ): RenderSnapshot {
   const layers: RenderLayer[] = [];
+  // One light direction for the whole frame — resolved once so every style in
+  // it agrees, and so a document saved before global light existed still gets a
+  // real angle rather than `undefined`.
+  const globalLight = resolveGlobalLight(comp as { globalLightAngle?: number; globalLightAltitude?: number });
 
   // Solo (AE-style): when any node is soloed, only soloed nodes render.
   // Scoped to the active composition's root — other comps are separate subtrees.
@@ -338,11 +361,22 @@ export function buildSnapshot(
       };
     }
 
+    // Posterize Time — quantize the layer's OWN clock to a lower frame rate, so
+    // its animation steps instead of flowing. Temporal like Echo, so it belongs
+    // here and not in the pixel chain: it changes WHEN the layer is sampled, and
+    // therefore affects its transform, its masks and its effect params together.
+    // Applied before stretch/reverse so the steps land on the posterized grid
+    // rather than being smeared by a subsequent time warp.
+    const posterizeFps = n ? readPosterizeTimeFps(readNodeRenderEffects(n)) : null;
+    const posterized: (tt: number) => number = posterizeFps
+      ? (tt) => Math.floor(baseMap(tt) * posterizeFps) / posterizeFps
+      : baseMap;
+
     // Per-layer time (E6): stretch / reverse / freeze on the node itself.
     const cfg = n ? readNodeLayerTime(n) : undefined;
     const own: (tt: number) => number = cfg
-      ? (tt) => remapTime(baseMap(tt), cfg, anim.timeSpan(id) ?? { start: 0, end: 1 })
-      : (tt) => baseMap(tt);
+      ? (tt) => remapTime(posterized(tt), cfg, anim.timeSpan(id) ?? { start: 0, end: 1 })
+      : (tt) => posterized(tt);
     // Precomp time remap (Prompt 10): a layer inside a precomp whose group has a
     // keyframed `precompTime` is sampled at that remapped internal time. The
     // group's own animation stays on comp time — only its nested content remaps.
@@ -397,15 +431,53 @@ export function buildSnapshot(
     const b = readBase(n);
     const av = valuesOf(id);
     const sc = av.get('scale');
+    // Per-axis scale is checked BEFORE the uniform `scale` shorthand, matching
+    // every other reader of these tracks (`ports.ts:127`, `nodeMatrix.ts:80`,
+    // the motion-blur sampler below). This used to read `scale` alone, so a
+    // keyframed `scaleX`/`scaleY` — which is what the scale gizmo autokeys, what
+    // the SVG importer writes for a CSS `scale()` animation, and what the seeded
+    // showcases use — moved the selection box and left the pixels at 1.
     return {
       x: av.get('x') ?? b.x,
       y: av.get('y') ?? b.y,
       rotation: av.get('rotation') ?? b.rotation,
-      scaleX: sc ?? b.scaleX,
-      scaleY: sc ?? b.scaleY,
+      scaleX: av.get('scaleX') ?? sc ?? b.scaleX,
+      scaleY: av.get('scaleY') ?? sc ?? b.scaleY,
     };
   };
   const parentOf: ParentOf = (id) => nodeById.get(id)?.parent ?? null;
+
+  // 3D parenting: the accumulated 4×4 of a layer's ancestor chain, or null when
+  // no ancestor is 3D (the overwhelmingly common case, which keeps the ordinary
+  // 2D path byte-identical).
+  //
+  // `worldTransformOf` above is a 2×3 affine — x/y/rotation/scaleX/scaleY — so
+  // on its own a child inherits none of its parent's z / rotationX / rotationY.
+  // A 3D null dollying away in Z left its children exactly where they were.
+  const parent3dCache = new Map<string, import('@motion/scene').Matrix4 | null>();
+  const local3DOf = (id: string) => {
+    const n = nodeById.get(id);
+    return n ? resolveNode3DTransform(n, remapOf(id)(t)) : null;
+  };
+  const parent3dOf = (id: string) =>
+    parentWorld3d(
+      id,
+      {
+        parentOf,
+        local3DOf,
+        is3DOf: (nid) => {
+          const n = nodeById.get(nid);
+          return !!n && is3DEnabled(n);
+        },
+        // The ancestor's WORLD 2D affine, recomposed from the same TRS the rest
+        // of the renderer uses, so the flattened branch and the 2D path agree.
+        world2DOf: (nid) => {
+          const w = worldTransformOf(nid, localOf, parentOf, worldCache);
+          return localMatrix({ x: w.x, y: w.y, rotation: w.rotation, scaleX: w.scaleX, scaleY: w.scaleY });
+        },
+      },
+      parent3dCache,
+    );
 
   // Precomp routing (Prompt 10): a layer whose node sits inside a precomp group
   // is collected into that group's texture instead of the top-level comp. The
@@ -420,14 +492,15 @@ export function buildSnapshot(
     // Resolve the container's effect stack once — the CSS string stays for
     // tests/legacy readers, the structured list is what the GPU path renders
     // (without it a precomp's effects were silently dropped on composite).
-    const gFx = resolveEffectParams(readNodeRenderEffects(groupNode), (path) => {
+    const gFxOwn = resolveEffectParams(readNodeRenderEffects(groupNode), (path) => {
       const v = gv?.get(path);
       return typeof v === 'number' ? v : undefined;
     });
-    const filter = [
-      effectsToFilter(gFx),
-      layerStylesToFilter(readNodeLayerStyles(groupNode)),
-    ].filter(Boolean).join(' ') || undefined;
+    // Layer styles append AFTER the container's own effects — After Effects
+    // evaluates layer styles after effects, and they are structured effects
+    // now rather than a CSS string nothing reads.
+    const gFx = [...gFxOwn, ...layerStylesToEffects(readNodeLayerStyles(groupNode), globalLight.angle, globalLight.altitude)];
+    const filter = effectsToFilter(gFxOwn) || undefined;
     return {
       id: groupNode.id,
       kind: 'shape',
@@ -546,6 +619,11 @@ export function buildSnapshot(
         // no shadow, for exactly the layers most likely to be at the front.
         z: av.get('z') ?? readNode3D(n).z,
         intensity: av.get('intensity') ?? lt.intensity,
+        // AE's Shadow Darkness / Shadow Diffusion. Darkness scales the shadow's
+        // opacity; diffusion adds to its blur. Both default to the values that
+        // reproduce the previous hardcoded look (100% / +0px).
+        darkness: (av.get('shadowDarkness') ?? lt.shadowDarkness) / 100,
+        diffusion: av.get('shadowDiffusion') ?? lt.shadowDiffusion,
       };
     }
     return null;
@@ -560,10 +638,29 @@ export function buildSnapshot(
    * place a layer's resolved world z is known.
    */
   const shadowReceivers: Array<{ z: number; depth: number }> = [];
-  /** Casters captured during the walk, projected onto receivers afterwards. */
-  const shadowCasters: Array<{ layer: RenderLayer; z: number }> = [];
+  /** Casters captured during the walk, projected onto receivers afterwards.
+   *  `transmission` is Material Options → Light Transmission as 0..1: how much
+   *  of the caster's own colour bleeds into its shadow (0 = a black silhouette,
+   *  1 = the caster's colour, which is how stained glass and gels read). */
+  const shadowCasters: Array<{ layer: RenderLayer; z: number; transmission: number }> = [];
   /** The projected shadow quads, appended once the walk has placed everything. */
   const shadowLayers: RenderLayer[] = [];
+  /**
+   * A shadow's colour: black lerped toward the caster's own fill by Light
+   * Transmission (0..1). Non-hex or missing fills fall back to black, which is
+   * the pre-transmission behaviour.
+   */
+  const shadowTint = (fill: string | undefined, transmission: number): string => {
+    if (transmission <= 0) return '#000000';
+    const m = /^#?([0-9a-f]{6})$/i.exec(fill ?? '');
+    if (!m) return '#000000';
+    const n = parseInt(m[1]!, 16);
+    const ch = (shift: number): string =>
+      Math.round(((n >> shift) & 0xff) * Math.min(1, transmission))
+        .toString(16)
+        .padStart(2, '0');
+    return `#${ch(16)}${ch(8)}${ch(0)}`;
+  };
   // Scene lights in world space, for per-quad Lambert shading of 3D layers
   // that opt in via Material Options → Accepts Lights. Same pre-pass pattern
   // as shadowLight (parenting of light layers is approximated by their own
@@ -582,6 +679,19 @@ export function buildSnapshot(
       radius: av.get('radius') ?? lt.radius,
       angle: av.get('lightAngle') ?? lt.angle,
       cone: av.get('lightCone') ?? lt.cone,
+      coneFeather: av.get('lightConeFeather') ?? lt.coneFeather,
+      falloffDistance: av.get('falloffDistance') ?? lt.falloffDistance,
+      // A keyframed POI aims the light in 3D over time. Any single component
+      // being animated is enough to make the light a targeted one, so the base
+      // POI (which may be null) has to be filled in rather than spread through.
+      poi: (() => {
+        const px = av.get('poiX') ?? lt.poi?.x;
+        const py = av.get('poiY') ?? lt.poi?.y;
+        const pz = av.get('poiZ') ?? lt.poi?.z;
+        return px === undefined && py === undefined && pz === undefined
+          ? null
+          : { x: px ?? 0, y: py ?? 0, z: pz ?? 0 };
+      })(),
       x: av.get('x') ?? g.x,
       y: av.get('y') ?? g.y,
       // Same trap as shadowLight: `av` holds ANIMATED values only, so this
@@ -605,9 +715,9 @@ export function buildSnapshot(
       dx /= len;
       dy /= len;
     }
-    const strength = Math.max(0, Math.min(1, shadowLight.intensity / 100));
+    const strength = Math.max(0, Math.min(1, (shadowLight.intensity / 100) * shadowLight.darkness));
     const off = 6 + 10 * strength;
-    const s = `drop-shadow(${(dx * off).toFixed(1)}px ${(dy * off).toFixed(1)}px ${(6 + 8 * strength).toFixed(0)}px rgba(0,0,0,${(0.45 * strength).toFixed(2)}))`;
+    const s = `drop-shadow(${(dx * off).toFixed(1)}px ${(dy * off).toFixed(1)}px ${(6 + 8 * strength + shadowLight.diffusion).toFixed(0)}px rgba(0,0,0,${(0.45 * strength).toFixed(2)}))`;
     return f ? `${f} ${s}` : s;
   };
   // GPU twin of withShadow: the same offset/softness/opacity expressed in the
@@ -625,7 +735,7 @@ export function buildSnapshot(
       dx /= len;
       dy /= len;
     }
-    const strength = Math.max(0, Math.min(1, shadowLight.intensity / 100));
+    const strength = Math.max(0, Math.min(1, (shadowLight.intensity / 100) * shadowLight.darkness));
     if (strength <= 0) return null;
     const angle = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
     return {
@@ -634,7 +744,7 @@ export function buildSnapshot(
       params: {
         distance: Number((6 + 10 * strength).toFixed(1)),
         angle: Number(angle.toFixed(1)),
-        softness: Number((6 + 8 * strength).toFixed(0)),
+        softness: Number((6 + 8 * strength + shadowLight.diffusion).toFixed(0)),
         color: '#000000',
         opacity: Number((45 * strength).toFixed(1)),
       },
@@ -683,9 +793,22 @@ export function buildSnapshot(
       const w = worldTransformOf(node.id, localOf, parentOf, worldCache);
       const av = valuesOf(node.id);
       const lt = readNodeLight(node);
+      // PROJECT the glow through the current view. The wash used to be emitted
+      // at the light's raw comp x/y, so it ignored both the light's depth and
+      // the active view entirely: switch to Left view and every layer moved
+      // while the glow stayed nailed to the same screen position, and pushing a
+      // light forward or back in Z changed nothing about where it appeared.
+      //
+      // Ambient lifts the whole frame uniformly and has no position to project,
+      // so it stays centred — projecting it would make a whole-frame wash slide
+      // off the frame.
+      const lz = av.get('z') ?? readNode3D(node).z;
+      const lp = lt.type === 'ambient'
+        ? { x: comp.width / 2, y: comp.height / 2 }
+        : project({ x: w.x, y: w.y, z: lz });
       emitLayer({
         id: node.id, kind: 'shape',
-        x: w.x, y: w.y, rotation: 0, scaleX: 1, scaleY: 1, depth: 0,
+        x: lp.x, y: lp.y, rotation: 0, scaleX: 1, scaleY: 1, depth: 0,
         opacity: 1, width: comp.width, height: comp.height,
         fill: '#000', visible: node.visible !== false,
         light: {
@@ -741,9 +864,14 @@ export function buildSnapshot(
     const world = worldTransformOf(node.id, localOf, parentOf, worldCache);
     const scaleX = world.scaleX;
     const scaleY = world.scaleY;
-    const layerKind = (kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video')
-      ? kind
-      : 'shape';
+    // An SVG layer is a stored vector document, rasterized to a texture — it
+    // composites exactly like an image, so it rides the image path and inherits
+    // transform / opacity / blend / mask / matte / effects / 3D unchanged.
+    const layerKind = kind === 'svg'
+      ? 'image'
+      : (kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video')
+        ? kind
+        : 'shape';
     const size = SIZE[layerKind];
     const name = (node.name ?? '').toLowerCase();
     const ghost = focus?.isGhost(node.id) ?? false;
@@ -752,14 +880,23 @@ export function buildSnapshot(
     // Canvas2D, and the structured list attached to the layer for the GPU path.
     // readNodeRenderEffects (not readNodeEffects) so the layer's `fx` switch
     // actually silences the stack — it had no reader at all before.
-    const resolvedEffects = resolveEffectParams(readNodeRenderEffects(node), (path) => {
+    const ownEffects = resolveEffectParams(readNodeRenderEffects(node), (path) => {
       const v = a?.get(path);
       return typeof v === 'number' ? v : undefined;
     });
-    const filter = [
-      effectsToFilter(resolvedEffects),
-      layerStylesToFilter(readNodeLayerStyles(node)),
-    ].filter(Boolean).join(' ') || undefined;
+    // Layer styles are STRUCTURED effects appended after the layer's own stack.
+    //
+    // They used to be folded into the CSS `filter` string below, which no
+    // backend reads — so Drop Shadow and Outer Glow rendered nothing at all,
+    // and every style preset that specified them (Glass, Neon, Sticker, Long
+    // Shadow, …) shipped its fills without its depth. Appending rather than
+    // prepending matches AE: layer styles evaluate after effects.
+    const resolvedEffects = [...ownEffects, ...layerStylesToEffects(readNodeLayerStyles(node), globalLight.angle, globalLight.altitude)];
+    // The CSS form is retained for export/legacy readers only; `RenderLayer.
+    // filter` is not consulted by any render path. It deliberately describes
+    // the layer's OWN effects, not its styles, so the two cannot double-apply
+    // if a future consumer starts reading it.
+    const filter = effectsToFilter(ownEffects) || undefined;
 
     // A solid layer fills the whole composition (background / matte / adjustment
     // base) — pinned to comp centre at comp size, regardless of its transform.
@@ -837,6 +974,17 @@ export function buildSnapshot(
       const base3 = node.components.find((c) => c.type === 'Transform')?.props.scaleZ;
       return typeof base3 === 'number' ? base3 : 1;
     })();
+    // A 3D ancestor drives this layer through the 4×4 chain, so its own
+    // transform must be LOCAL — `world` has the parent already baked in, and
+    // using it here would apply the parent twice. Null (no 3D ancestor) keeps
+    // the ordinary 2D-composed path exactly as before.
+    const parent3d = is3D ? parent3dOf(node.id) : null;
+    const ownX = parent3d ? (a?.get('x') ?? base.x) : world.x;
+    const ownY = parent3d ? (a?.get('y') ?? base.y) : world.y;
+    const ownRot = parent3d ? (a?.get('rotation') ?? base.rotation) : world.rotation;
+    const ownScaleX = parent3d ? (a?.get('scaleX') ?? a?.get('scale') ?? base.scaleX) : scaleX;
+    const ownScaleY = parent3d ? (a?.get('scaleY') ?? a?.get('scale') ?? base.scaleY) : scaleY;
+
     let px = world.x;
     let py = world.y;
     let sx = scaleX;
@@ -859,7 +1007,7 @@ export function buildSnapshot(
       sX: number, sY: number,
       sZ = 1,
     ): { matrix: readonly [number, number, number, number, number, number]; O: Project3D.Projected; world: import('@motion/scene').Matrix4 } => {
-      const M = Matrix4Math.compose({
+      const L = Matrix4Math.compose({
         position: { x: wx, y: wy, z: wz },
         // AE composes Orientation THEN Rotation about the same anchor; summing
         // the euler angles per axis gives the identical composed facing. Anchor
@@ -875,6 +1023,9 @@ export function buildSnapshot(
         scale: { x: sX, y: sY, z: sZ },
         anchor: { x: 0, y: 0, z: anchorZ },
       });
+      // world = parentChain · local. With no 3D ancestor `parent3d` is null and
+      // this is exactly the matrix that was composed before.
+      const M = parent3d ? Matrix4Math.multiply(parent3d, L) : L;
       const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
       const X = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
       const Y = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
@@ -885,8 +1036,35 @@ export function buildSnapshot(
     let world3d: readonly number[] | undefined;
     // Painter depth (distance from camera); far layers draw first.
     let depth = project({ x: world.x, y: world.y, z: z3 }).depth;
+    // Auto-Orient → Toward Camera (AE's per-layer, opt-in billboard). The
+    // layer's normal is its composed +Z axis, which for rotation order Rz·Ry·Rx
+    // is exactly (sinY·cosX, −sinX, cosY·cosX) — the same expression
+    // `lookAtOrientation` inverts. So aiming the layer at the eye is just that
+    // look orientation, minus whatever Orientation already contributes (the
+    // matrix composes rotation + orientation, so the two must not double up).
+    let faceRotX = rotX;
+    let faceRotY = rotY;
+    if (is3D && camera && isAutoOrientedToCamera(node)) {
+      const look = Project3D.lookAtOrientation({ x: world.x, y: world.y, z: z3 }, camera.position);
+      faceRotX = look.pitch - oriX;
+      faceRotY = look.yaw - oriY;
+    }
     if (is3D) {
-      const { matrix: m, O, world: M } = affineAt(world.x, world.y, z3, rotX, rotY, world.rotation, scaleX, scaleY, scaleZ);
+      const { matrix: m, O, world: M } = affineAt(ownX, ownY, z3, faceRotX, faceRotY, ownRot, ownScaleX, ownScaleY, scaleZ);
+      // Behind the near plane ⇒ the layer is not in front of the camera and must
+      // not be drawn. `projectPoint` CLAMPS rather than rejects (so the divide
+      // stays finite for overlays), which meant a layer the camera had dollied
+      // past resolved to focalLength/1 — a ~1111× scale for a 1920-wide comp,
+      // i.e. one layer smeared opaque across the entire frame. Dropping it here
+      // also drops it from the shadow caster/receiver lists below, which is
+      // correct: an invisible layer casts nothing.
+      //
+      // This tests the layer's ORIGIN, so a large layer straddling the near
+      // plane pops rather than clipping per-fragment. That is the Classic-3D
+      // approximation this compositor makes everywhere (layers are whole quads,
+      // not clipped geometry); true near-plane clipping needs the GPU path to
+      // own it.
+      if (O.clipped) continue;
       matrix = m;
       // The full 4×4 world matrix rides along for the GPU depth-tested path;
       // the projected affine stays as the universal fallback.
@@ -927,7 +1105,12 @@ export function buildSnapshot(
         }
       }
     }
-    let finalFill = base.fill ?? (kind === 'image' || kind === 'video' ? undefined : KIND_FILL[kind]);
+    // Textured kinds have no fallback fill: for an SVG layer `fill` is a RECOLOUR
+    // override the rasterizer paints over every path (see AppTextureProvider's
+    // rasterizeSvg), so defaulting it to the kind's category colour would render
+    // every imported SVG as a flat teal silhouette.
+    let finalFill = base.fill
+      ?? (kind === 'image' || kind === 'video' || kind === 'svg' ? undefined : KIND_FILL[kind]);
     // A solid paint set via the Fill & Stroke panel lives on the fx component
     // and must beat the legacy Style fill string — Canvas2D's fillStyleFor
     // resolves solid paints to this fallback string, so bake it in here.
@@ -983,6 +1166,10 @@ export function buildSnapshot(
       finalColor = Color.toHex({ r, g, b, a: alpha });
     }
 
+    // Resolved once — the object literal below needs it in two places, and
+    // resolving twice per layer per frame is pure waste.
+    const glass = resolveGlass(readNodeLayerStyles(node)?.glass, a, globalLight.angle);
+
     const layer: RenderLayer = {
       id: node.id,
       kind: layerKind,
@@ -1014,6 +1201,17 @@ export function buildSnapshot(
         // Exactly on a frame boundary there is nothing to blend toward.
         return bracket.weight > 1e-3 ? bracket : undefined;
       })(),
+      // Fill opacity — stored 0..100 like `opacity`, emitted 0..1. Absent
+      // stays undefined rather than defaulting to 1, so a layer that never
+      // touched it does not get routed down the CPU-bake path.
+      fillOpacity: (() => {
+        const v = a?.get('fillOpacity') ?? readNumProp(node, 'fillOpacity');
+        return typeof v === 'number' ? Math.max(0, Math.min(1, v / 100)) : undefined;
+      })(),
+      // Skew — animatable like every other transform property, so it reads
+      // from the sampled values first and the static prop second.
+      skew: a?.get('skew') ?? readNumProp(node, 'skew'),
+      skewAxis: a?.get('skewAxis') ?? readNumProp(node, 'skewAxis'),
       x: isSolid && !is3D ? comp.width / 2 : px,
       y: isSolid && !is3D ? comp.height / 2 : py,
       rotation: isSolid && !is3D ? 0 : rot,
@@ -1042,14 +1240,24 @@ export function buildSnapshot(
       cornerRadius: base.cornerRadius,
       // Keyframeable like any numeric prop: an animated track wins over the base,
       // so a panel can frost in over time.
-      backdropBlur: a?.get('backdropBlur') ?? base.backdropBlur,
+      // Glass owns the backdrop blur when it is on — one control, not two that
+      // can disagree. Falls back to the raw prop otherwise.
+      backdropBlur: glass ? glass.blur : a?.get('backdropBlur') ?? base.backdropBlur,
+      glass,
       pathPoints,
       pathOpen: pathOpen || undefined,
       // Source Text keyframes (hold-interpolated data track, like AE) beat the
       // component's static content.
       text: (() => {
         const live = anim.sampleData(node.id, 'text.source', remapOf(node.id)(t));
-        return typeof live === 'string' ? live : base.text;
+        const raw = typeof live === 'string' ? live : base.text;
+        // PARAGRAPH text renders WRAPPED. Wrapping is done by the same function
+        // the measurement uses, so the box the rasterizer allocates and the
+        // lines it draws into it can never disagree about where breaks fall.
+        const boxWidth = readNumProp(node, 'boxWidth');
+        if (!boxWidth || boxWidth <= 0 || typeof raw !== 'string') return raw;
+        const style = readMeasuredTextStyle(node, { content: raw, boxWidth });
+        return style ? style.content : raw;
       })(),
       // Numeric character props are keyframeable — sample the animated value
       // when a track exists, else fall back to the static base prop.
@@ -1061,6 +1269,7 @@ export function buildSnapshot(
       lineHeight: a?.get('lineHeight') ?? base.lineHeight,
       align: base.align,
       paragraphSpacing: a?.get('paragraphSpacing') ?? base.paragraphSpacing,
+      strokeOverFill: base.strokeOverFill,
       // Depth of field applies to 3D layers only. A 2D layer's `depth` is just
       // the focal length, which matches the DOF focus default — so this looked
       // fine until someone set Focus Distance, at which point every 2D title,
@@ -1071,17 +1280,9 @@ export function buildSnapshot(
         : withShadow(withDof(filter, is3D ? depth : undefined), px, py),
       effects: resolvedEffects.length ? resolvedEffects : undefined,
       // Heal absolute backend URLs baked into older documents → same-origin path.
-      src: (() => {
-        // Image sequence: pick the frame for this layer's source time (holds the
-        // last frame past the end). Deterministic — scrubbing is stable.
-        const seq = readNodeSequence(node);
-        if (seq) return assetUrl(sequenceSrcAt(seq, remapOf(node.id)(t)));
-        if (base.assetId) {
-          const asset = assetById().get(base.assetId);
-          if (asset && asset.src) return asset.src;
-        }
-        return assetUrl(base.src);
-      })(),
+      // Resolution order lives in rigMeshInputs so the puppet overlay resolves
+      // the SAME source this layer draws (its coverage mask is keyed off it).
+      src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id)),
       assetId: base.assetId,
     };
 
@@ -1093,12 +1294,21 @@ export function buildSnapshot(
     if (is3D && world3d && sceneLights.length > 0) {
       const mat = readNodeMaterial(node);
       if (mat.acceptsLights) {
-        const lit = shadeLayer(planeNormalOf(world3d), { x: world.x, y: world.y, z: z3 }, sceneLights);
+        const lit = shadeLayer(
+          planeNormalOf(world3d),
+          { x: world.x, y: world.y, z: z3 },
+          sceneLights,
+          { ambient: mat.ambient, diffuse: mat.diffuse },
+        );
         if (lit) layer.lighting = lit;
         // Per-fragment upgrade for the depth-tested GPU path: the adapter swaps
         // the per-quad tint fold for real per-fragment Lambert + Blinn-Phong
-        // there (specular normalised to 0..1 for the shader).
-        layer.shade3d = { specular: mat.specular / 100, shininess: mat.shininess };
+        // there (specular and metal normalised to 0..1 for the shader).
+        layer.shade3d = {
+          specular: mat.specular / 100,
+          shininess: mat.shininess,
+          ...(mat.metal > 0 ? { metal: mat.metal / 100 } : {}),
+        };
       }
     }
 
@@ -1125,9 +1335,7 @@ export function buildSnapshot(
       // an alpha-derived coverage mask instead (once the bitmap has decoded);
       // open strokes and undecoded images keep the bbox grid.
       const silhouette = silhouetteFromPathPoints(pathPoints, pathOpen);
-      const coverage = (!silhouette && layerKind === 'image' && layer.src)
-        ? getImageCoverageMask(base.assetId ?? layer.src, layer.src)
-        : undefined;
+      const coverage = rigCoverageMask(layerKind, layer.src, base.assetId, silhouette);
       // ONE shared rest mesh. Puppet mesh settings win when a puppet rig exists
       // (its pin weights are baked into the mesh); a skeleton-only layer reads
       // density/expansion off its own config.
@@ -1146,6 +1354,7 @@ export function buildSnapshot(
       const rigT = layer.sourceTime ?? t;
 
       let deformedVertices = restMesh.vertices;
+      let overlapDepth: Float32Array | null = null;
 
       if (hasPuppet) {
         const animatedPins = puppetRig!.pins.map((pin) => {
@@ -1162,15 +1371,28 @@ export function buildSnapshot(
           // and .stiffness), falling back to the pin's static values.
           const liveRot = anim.sample(node.id, `puppet.${pin.id}.rotation`, rigT);
           const liveStiff = anim.sample(node.id, `puppet.${pin.id}.stiffness`, rigT);
+          const liveScale = anim.sample(node.id, `puppet.${pin.id}.scale`, rigT);
+          const liveOverlap = anim.sample(node.id, `puppet.${pin.id}.overlap`, rigT);
           return {
             id: pin.id,
             x: px,
             y: py,
             rotation: typeof liveRot === 'number' ? liveRot : pin.rotation,
             stiffness: typeof liveStiff === 'number' ? liveStiff : pin.stiffness,
+            scale: typeof liveScale === 'number' ? liveScale : pin.scale,
+            overlap: typeof liveOverlap === 'number' ? liveOverlap : pin.overlap,
+            overlapExtent: pin.overlapExtent,
           };
         });
-        deformedVertices = deform(animatedPins, restMesh, puppetRig!.solver ?? 'arap');
+        deformedVertices = deform(
+          animatedPins,
+          restMesh,
+          puppetRig!.solver ?? 'arap',
+          puppetRig!.maxRotationDeg,
+        );
+        // Overlap pins drive per-vertex draw depth, not position — null (the
+        // common case) leaves the mesh compositing exactly as before.
+        overlapDepth = overlapDepthField(animatedPins, restMesh);
       }
 
       if (hasSkel) {
@@ -1180,11 +1402,18 @@ export function buildSnapshot(
           const liveRot = anim.sample(node.id, `bone.${b.id}.rotation`, rigT);
           const liveX = anim.sample(node.id, `bone.${b.id}.x`, rigT);
           const liveY = anim.sample(node.id, `bone.${b.id}.y`, rigT);
+          // Bone scale is keyframeable too — `scaleX/scaleY` already fed
+          // `fromTRS`, but nothing ever sampled a track for them, so squash /
+          // stretch on a limb was unreachable.
+          const liveSx = anim.sample(node.id, `bone.${b.id}.scaleX`, rigT);
+          const liveSy = anim.sample(node.id, `bone.${b.id}.scaleY`, rigT);
           return {
             ...b,
             rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
             x: typeof liveX === 'number' ? liveX : b.x,
             y: typeof liveY === 'number' ? liveY : b.y,
+            scaleX: typeof liveSx === 'number' ? liveSx : b.scaleX,
+            scaleY: typeof liveSy === 'number' ? liveSy : b.scaleY,
           };
         });
         // IK: each enabled target overrides its chain's rotations so the end
@@ -1194,11 +1423,19 @@ export function buildSnapshot(
           .map((tg) => {
             const liveX = anim.sample(node.id, `ikTarget.${tg.boneId}.x`, rigT);
             const liveY = anim.sample(node.id, `ikTarget.${tg.boneId}.y`, rigT);
+            const poleX = anim.sample(node.id, `ikPole.${tg.boneId}.x`, rigT);
+            const poleY = anim.sample(node.id, `ikPole.${tg.boneId}.y`, rigT);
+            const pole =
+              typeof poleX === 'number' || typeof poleY === 'number'
+                ? { x: typeof poleX === 'number' ? poleX : (tg.pole?.x ?? 0),
+                    y: typeof poleY === 'number' ? poleY : (tg.pole?.y ?? 0) }
+                : tg.pole;
             return {
               boneId: tg.boneId,
               x: typeof liveX === 'number' ? liveX : tg.x,
               y: typeof liveY === 'number' ? liveY : tg.y,
               chainLength: tg.chainLength,
+              ...(pole ? { pole } : {}),
             };
           });
         const posedBones = applyIk(animatedBones, ikTargets);
@@ -1206,13 +1443,19 @@ export function buildSnapshot(
         // Weights bound once per (mesh × rest skeleton) and cached — not
         // recomputed per frame. Skinning positions come from the (possibly
         // puppet-deformed) vertex buffer; weights always from rest positions.
-        const binding = getSkeletonBinding(restMesh, skelRig!.bones);
+        const binding = getSkeletonBinding(restMesh, skelRig!.bones, skelRig!.weightPaint);
         deformedVertices = skinRigVertices(binding, poseWorld, deformedVertices);
       }
 
+      // Overlap pins resolve as draw ORDER within the layer (painter's
+      // algorithm over the mesh's own triangles) — see sortTrianglesByDepth.
+      // No overlap ⇒ the authored index buffer is passed through untouched.
       layer.deformedMesh = {
         vertices: deformedVertices,
-        triangles: restMesh.triangles,
+        triangles: overlapDepth
+          ? sortTrianglesByDepth(restMesh.triangles, overlapDepth)
+          : restMesh.triangles,
+        ...(overlapDepth ? { depth: overlapDepth } : {}),
       };
     }
 
@@ -1252,15 +1495,20 @@ export function buildSnapshot(
       const matrixAt = is3D
         ? (ti: number): readonly [number, number, number, number, number, number] => {
             const sc = anim.sample(node.id, 'scale', ti);
+            // `own*` is the local transform when a 3D ancestor drives this
+            // layer and the parent-composed world otherwise, so the same
+            // "base + animated delta" expression is right either way: with a
+            // 3D parent it reduces to the pure sampled local value (the chain
+            // is applied by the matrix), without one it stays the world value.
             return affineAt(
-              world.x + ((anim.sample(node.id, 'x', ti) ?? localX) - localX),
-              world.y + ((anim.sample(node.id, 'y', ti) ?? localY) - localY),
+              ownX + ((anim.sample(node.id, 'x', ti) ?? localX) - localX),
+              ownY + ((anim.sample(node.id, 'y', ti) ?? localY) - localY),
               anim.sample(node.id, 'z', ti) ?? z3,
               anim.sample(node.id, 'rotationX', ti) ?? rotX,
               anim.sample(node.id, 'rotationY', ti) ?? rotY,
-              world.rotation + ((anim.sample(node.id, 'rotation', ti) ?? localRot) - localRot),
-              sc ?? anim.sample(node.id, 'scaleX', ti) ?? scaleX,
-              sc ?? anim.sample(node.id, 'scaleY', ti) ?? scaleY,
+              ownRot + ((anim.sample(node.id, 'rotation', ti) ?? localRot) - localRot),
+              sc ?? anim.sample(node.id, 'scaleX', ti) ?? ownScaleX,
+              sc ?? anim.sample(node.id, 'scaleY', ti) ?? ownScaleY,
             ).matrix;
           }
         : undefined;
@@ -1329,13 +1577,19 @@ export function buildSnapshot(
         // screen-space drop-shadow stays for 2D layers, where there is no depth
         // to project through and it is the only thing that reads as a shadow.
         if (is3D && shadowLight) {
-          shadowCasters.push({ layer, z: z3 });
+          shadowCasters.push({ layer, z: z3, transmission: mat.lightTransmission / 100 });
         } else {
           const castFx = shadowEffectOf(px, py);
           if (castFx) gpuFx.push(castFx);
         }
       }
       if (is3D && mat.acceptsShadows) shadowReceivers.push({ z: z3, depth });
+      // AE's `Only` modes — how shadow-catcher setups are built. The layer stays
+      // fully present as a caster and/or receiver (both lists are already
+      // populated above), it just isn't drawn: `Casts Shadows: Only` throws a
+      // shadow from an invisible object, `Accepts Shadows: Only` catches one
+      // onto transparency so it can be comped over live footage.
+      if (mat.shadowOnly) layer.visible = false;
       if (gpuFx.length > 0) layer.effects = [...(layer.effects ?? []), ...gpuFx];
     }
 
@@ -1373,13 +1627,13 @@ export function buildSnapshot(
                 // base layer would leave the ghost's world3d at the live pose,
                 // so the GPU depth path would draw every echo in one place.
                 const g3 = affineAt(
-                  world.x + ((anim.sample(node.id, 'x', ti) ?? eLocalX) - eLocalX),
-                  world.y + ((anim.sample(node.id, 'y', ti) ?? eLocalY) - eLocalY),
+                  ownX + ((anim.sample(node.id, 'x', ti) ?? eLocalX) - eLocalX),
+                  ownY + ((anim.sample(node.id, 'y', ti) ?? eLocalY) - eLocalY),
                   anim.sample(node.id, 'z', ti) ?? z3,
                   anim.sample(node.id, 'rotationX', ti) ?? rotX,
                   anim.sample(node.id, 'rotationY', ti) ?? rotY,
-                  world.rotation + ((anim.sample(node.id, 'rotation', ti) ?? eLocalRot) - eLocalRot),
-                  scaleX, scaleY,
+                  ownRot + ((anim.sample(node.id, 'rotation', ti) ?? eLocalRot) - eLocalRot),
+                  ownScaleX, ownScaleY,
                 );
                 return { matrix: g3.matrix, world3d: g3.world as readonly number[] };
               })()
@@ -1722,7 +1976,7 @@ export function buildSnapshot(
   // the receiver's plane. It grows as the caster nears the light and shrinks as
   // it approaches the receiver — the depth cue the fake never gave.
   if (shadowLight && shadowCasters.length > 0 && shadowReceivers.length > 0) {
-    const strength = Math.max(0, Math.min(1, shadowLight.intensity / 100));
+    const strength = Math.max(0, Math.min(1, (shadowLight.intensity / 100) * shadowLight.darkness));
     if (strength > 0) {
       const L = shadowLight;
       for (const caster of shadowCasters) {
@@ -1742,13 +1996,17 @@ export function buildSnapshot(
 
         const src = caster.layer;
         const gap = receiver.z - caster.z;
-        // Softer and fainter the further the shadow has to travel.
-        const softness = Math.min(60, 4 + gap * 0.05);
+        // Softer and fainter the further the shadow has to travel; Shadow
+        // Diffusion adds a flat amount on top of that distance-driven softness.
+        const softness = Math.min(200, 4 + gap * 0.05 + L.diffusion);
         const opacity = src.opacity * strength * 0.55 * Math.max(0.25, 1 - gap / 4000);
 
         shadowLayers.push({
           ...src,
           id: `${src.id}::shadow`,
+          // The caster may be hidden (`Casts Shadows: Only`) — its SHADOW is
+          // the whole point, so it must not inherit that invisibility.
+          visible: true,
           // Scale about the light, in world space.
           x: L.x + (src.x - L.x) * t,
           y: L.y + (src.y - L.y) * t,
@@ -1760,16 +2018,22 @@ export function buildSnapshot(
           world3d: undefined,
           depth: receiver.depth - 0.5, // just in front of the surface it lands on
           opacity,
-          // Pure silhouette. `fill` blackens solid shapes; the blur softens the
-          // edge. Textured casters keep their alpha shape via the same quad.
-          fill: '#000000',
+          // Silhouette, tinted by Light Transmission. At 0 the shadow is the
+          // usual black; as transmission rises the caster's own colour bleeds
+          // through, which is what makes a coloured or translucent layer throw
+          // a coloured shadow instead of a black hole.
+          fill: shadowTint(src.fill, caster.transmission),
           fillPaint: undefined,
           fillPaints: undefined,
           stroke: undefined,
           lighting: [0, 0, 0],
           shade3d: undefined,
           effects: [{ id: 'shadow-blur', type: 'blur', params: { amount: Number(softness.toFixed(1)) } }],
-          filter: `blur(${softness.toFixed(1)}px) brightness(0)`,
+          // `brightness(0)` would crush a transmitted colour back to black, so
+          // it only applies to an untinted shadow.
+          filter: caster.transmission > 0
+            ? `blur(${softness.toFixed(1)}px)`
+            : `blur(${softness.toFixed(1)}px) brightness(0)`,
           matte: undefined,
           isMatteSource: undefined,
           isAdjustment: undefined,

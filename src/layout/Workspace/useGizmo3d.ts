@@ -16,14 +16,10 @@ import {
   applyGizmo3DTransforms,
   type Gizmo3DNodeUpdate,
 } from '@core/workspace/ports';
-import { readSceneCamera } from '@core/scene/camera3d';
-import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { useSceneRefGeometry } from './useSceneRefGeometry';
 import type { RenderView } from '@core/rendering/RenderBackend';
-import { Project3D, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
+import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, type GizmoHandleType, type RenderedGizmo3D } from '@motion/workspace';
 import type { SceneNode } from '@core/types';
 
@@ -53,8 +49,10 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
   const gizmoState = useGuidesStore((s) => s.gizmo3dState);
   const axisMode = useGuidesStore((s) => s.gizmo3dAxisMode);
-  const groundGridVisible = useGuidesStore((s) => s.groundGridVisible);
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
+  // Camera, ortho axis, ground-plane visibility and the scene wireframes all
+  // come from ONE shared resolver — the inspection panes use it too.
+  const refGeometry = useSceneRefGeometry(camera3dMode);
   const customViews = useGuidesStore((s) => s.customViews);
 
   const compWidth = useCompositionStore((s) => s.width);
@@ -120,34 +118,10 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
   const nodeRotation = firstRot;
   const nodeScale = firstScale;
 
-  // Resolve the scene camera at the CURRENT playhead time — same resolver
-  // chain the renderer (buildSnapshot) and selection chrome (ports.ts) use.
-  let camera: Camera3D;
-  if (isCustomViewId(camera3dMode)) {
-    // Custom views: the gizmo projects through the STORED view camera — the
-    // scene's Camera layer is ignored, matching the renderer.
-    camera = customViewCamera(customViews[camera3dMode], compWidth, compHeight);
-  } else {
-    let cameraNode: SceneNode | undefined;
-    for (const n of flattenScene(defaultSceneGraph)) {
-      if (readNodeKind(n) === 'camera') {
-        cameraNode = n;
-        break;
-      }
-    }
-    if (cameraNode) {
-      const camNode = cameraNode;
-      const camTime = getRemappedTime(camNode.id, time);
-      const camValues = defaultAnimation.evaluateNode(camNode.id, camTime);
-      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, (id, p) =>
-        id === camNode.id ? camValues.get(p) : undefined,
-      );
-    } else {
-      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight);
-    }
-  }
-  const orthoView: OrthoView | null =
-    camera3dMode === 'active' || isCustomViewId(camera3dMode) ? null : (camera3dMode as OrthoView);
+  // Camera / ortho axis / scene gizmos come from the SHARED resolver, which the
+  // read-only inspection panes use too — one resolution path, so the panes and
+  // the interactive viewport cannot disagree about where anything sits.
+  const { camera, orthoView, sceneGizmos, groundGridVisible, scene3d } = refGeometry;
 
   // Comp → canvas view transform (RenderView: canvasPx = compPx·scale + offset,
   // CSS px). Kept in state and re-synced on wheel / pointer input so the SVG
@@ -462,6 +436,8 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
   return {
     is3D,
+    scene3d,
+    sceneGizmos,
     singleId,
     position3D,
     nodeRotation,

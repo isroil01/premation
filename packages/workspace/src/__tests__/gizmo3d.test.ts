@@ -165,6 +165,39 @@ describe('buildGroundGridLines (AE-style floor centred under the comp)', () => {
     }
   });
 
+  // The ground plane is the one piece of reference geometry that has to READ in
+  // an orthographic side view — it is what turns an otherwise empty Left/Front
+  // view into something you can orient in. Edge-on it must collapse to a
+  // HORIZON LINE (a floor seen from floor level), and from Top it must open out
+  // into the full grid. Both are drawn through Project3D.projectOrtho, so this
+  // pins the composition of the two rather than the grid builder alone.
+  describe('projected through the orthographic views', () => {
+    const project = (view: 'front' | 'left' | 'right' | 'top' | 'bottom' | 'back') =>
+      buildGroundGridLines(W, H).flatMap((l) => [
+        Project3D.projectOrtho(l.start, view, W, H),
+        Project3D.projectOrtho(l.end, view, W, H),
+      ]);
+
+    it.each(['front', 'back', 'left', 'right'] as const)(
+      'collapses to a single horizon line in %s view',
+      (view) => {
+        const ys = project(view).map((p) => p.y);
+        expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(0, 6);
+        // …and still spans horizontally, i.e. it is a visible line, not a dot.
+        const xs = project(view).map((p) => p.x);
+        expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(W);
+      },
+    );
+
+    it.each(['top', 'bottom'] as const)('opens into a full 2D grid in %s view', (view) => {
+      const pts = project(view);
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(W);
+      expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(H);
+    });
+  });
+
   it('is centred on the comp: x symmetric about compWidth/2, z symmetric about 0', () => {
     const lines = buildGroundGridLines(W, H, 200, 5);
     const xs = lines.map((l) => l.start.x).concat(lines.map((l) => l.end.x));

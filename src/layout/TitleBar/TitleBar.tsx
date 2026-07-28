@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Icon } from '@components/Icon';
+import { Logo } from '@components/Logo';
 import { AppMenuBar } from '@layout/Menu';
 import { IconButton } from '@components/IconButton';
 import { useLayoutStore } from '@stores/layoutStore';
@@ -43,9 +44,7 @@ export function TitleBar(): JSX.Element | null {
     <div className={styles.titleBar}>
       <div className={styles.dragRegion} />
       <div className={styles.left}>
-        <span className={styles.appIconBadge} title="Motion Editor">
-          <Icon name="shape" size={15} />
-        </span>
+        <Logo variant="mark" size={18} className={styles.appIconBadge} />
         {isEditor && (
           <>
             <span className={styles.menuDivider} aria-hidden />

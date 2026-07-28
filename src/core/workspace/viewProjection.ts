@@ -19,7 +19,7 @@ import { readSceneCamera } from '@core/scene/camera3d';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { defaultAnimation } from '@motion/animation';
 import { Project3D } from '@motion/scene';
-import { useGuidesStore } from '@stores/guidesStore';
+import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
 import type { SceneNode } from '@core/types';
 
@@ -57,10 +57,20 @@ export function resetViewProjectorCache(): void {
  * `time` is raw COMP time — the camera's own remap is applied internally, so a
  * caller passes the playhead, not a layer time.
  */
-export function currentViewProjector(width: number, height: number, time: number): Projector {
-  const key = `${width}|${height}|${time}|${useGuidesStore.getState().camera3dMode}`;
+export function currentViewProjector(
+  width: number,
+  height: number,
+  time: number,
+  view?: Camera3dMode,
+): Projector {
+  // An explicit view is what lets a SECONDARY pane be interactive: its nodes
+  // must project through the view IT shows, not through whatever the main
+  // viewport happens to be set to. Omitted (the main viewport) still means "the
+  // view on screen right now", so every existing caller is unchanged.
+  const mode = view ?? useGuidesStore.getState().camera3dMode;
+  const key = `${width}|${height}|${time}|${mode}`;
   if (memo && memo.key === key) return memo.projector;
-  const projector = buildViewProjector(width, height, time);
+  const projector = buildViewProjector(width, height, time, mode);
   memo = { key, projector };
   if (!memoScheduled) {
     memoScheduled = true;
@@ -73,21 +83,26 @@ export function currentViewProjector(width: number, height: number, time: number
   return projector;
 }
 
-function buildViewProjector(width: number, height: number, time: number): Projector {
-  const cameraMode = useGuidesStore.getState().camera3dMode;
-
-  const orthoView: Project3D.OrthoView | null =
-    cameraMode === 'active' || isCustomViewId(cameraMode)
-      ? null
-      : (cameraMode as Project3D.OrthoView);
-
-  if (orthoView) {
-    return (p) => Project3D.projectOrtho(p, orthoView, width, height);
-  }
+/**
+ * The CAMERA a view projects through, or null for the six orthographic views
+ * (which are parallel projections and have no camera at all).
+ *
+ * Exported because turning a drag back into a world translation needs the same
+ * camera the projection used — its basis for direction, and a layer's projected
+ * `scale` for magnitude. Resolving it a second time somewhere else is how the
+ * chrome and the edit end up disagreeing about where the user pointed.
+ */
+export function currentViewCamera(
+  width: number,
+  height: number,
+  time: number,
+  view?: Camera3dMode,
+): Project3D.Camera3D | null {
+  const cameraMode = view ?? useGuidesStore.getState().camera3dMode;
+  if (cameraMode !== 'active' && !isCustomViewId(cameraMode)) return null;
 
   if (isCustomViewId(cameraMode)) {
-    const camera = customViewCamera(useGuidesStore.getState().customViews[cameraMode], width, height);
-    return (p) => Project3D.projectPoint(p, camera);
+    return customViewCamera(useGuidesStore.getState().customViews[cameraMode], width, height);
   }
 
   let cameraNode: SceneNode | undefined;
@@ -97,19 +112,32 @@ function buildViewProjector(width: number, height: number, time: number): Projec
       break;
     }
   }
+  if (!cameraNode) return Project3D.defaultCamera(width, height);
+  // Sample the camera at the playhead — an animated/orbited camera otherwise
+  // projects through frame 0's view.
+  const camNode = cameraNode;
+  const camTime = getRemappedTime(camNode.id, time);
+  const camValues = defaultAnimation.evaluateNode(camNode.id, camTime);
+  return readSceneCamera(defaultSceneGraph, width, height, (id, p) =>
+    id === camNode.id ? camValues.get(p) : undefined,
+  );
+}
 
-  let camera: Project3D.Camera3D;
-  if (!cameraNode) {
-    camera = Project3D.defaultCamera(width, height);
-  } else {
-    // Sample the camera at the playhead — an animated/orbited camera otherwise
-    // projects through frame 0's view.
-    const camNode = cameraNode;
-    const camTime = getRemappedTime(camNode.id, time);
-    const camValues = defaultAnimation.evaluateNode(camNode.id, camTime);
-    camera = readSceneCamera(defaultSceneGraph, width, height, (id, p) =>
-      id === camNode.id ? camValues.get(p) : undefined,
-    );
+function buildViewProjector(
+  width: number,
+  height: number,
+  time: number,
+  cameraMode: Camera3dMode = useGuidesStore.getState().camera3dMode,
+): Projector {
+  const orthoView: Project3D.OrthoView | null =
+    cameraMode === 'active' || isCustomViewId(cameraMode)
+      ? null
+      : (cameraMode as Project3D.OrthoView);
+
+  if (orthoView) {
+    return (p) => Project3D.projectOrtho(p, orthoView, width, height);
   }
+
+  const camera = currentViewCamera(width, height, time, cameraMode)!;
   return (p) => Project3D.projectPoint(p, camera);
 }

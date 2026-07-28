@@ -14,7 +14,6 @@ import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } fro
 import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
-import { PresetsBar } from './PresetsBar';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { defaultAnimation, sampleTrack, sampleSpeed, makeKeyframeId, EASY_EASE_BEZIER, type EasingKind, type PropertyTrack } from '@motion/animation';
@@ -298,16 +297,17 @@ export function MotionEditorPanel(): JSX.Element {
   if (!prop) {
     return (
       <div className={styles.root}>
-        <PresetsBar />
         <MotionPathBlock nodeId={primary} />
-        <EmptyState icon="keyframe" message="No animation yet — apply a preset above, or add a keyframe." />
+        {/* "above" used to mean the PresetsBar that sat here. That bar was a
+            duplicate of the Presets panel — which also saves, deletes, searches
+            and previews — so it was removed and this points at the real home. */}
+        <EmptyState icon="keyframe" message="No animation yet — apply one from the Presets panel, or add a keyframe." />
       </div>
     );
   }
 
   return (
     <div className={styles.root}>
-      <PresetsBar />
       <MotionPathBlock nodeId={primary} />
       {/* Property picker + graph-mode toggle */}
       <div className={styles.topRow}>

@@ -14,6 +14,14 @@ export const ProjectCommands = {
   Save: 'project.save',
   SaveAs: 'project.saveAs',
   IncrementAndSave: 'project.incrementAndSave',
+  /**
+   * End-to-end encrypted sync of the open `.motion` bundle.
+   *
+   * The whole stack — cipher, chunk diff, three-way reconcile, HTTP transport,
+   * and the `/api/sync` endpoints behind it — shipped without a single way to
+   * invoke it. This is that way.
+   */
+  Sync: 'project.sync',
   Close: 'project.close',
   About: 'help.about',
 } as const;
@@ -42,6 +50,8 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: ProjectCommands.Save, label: 'Save' },
       { commandId: ProjectCommands.SaveAs, label: 'Save As…' },
       { commandId: ProjectCommands.IncrementAndSave, label: 'Increment and Save' },
+      { separator: true },
+      { commandId: ProjectCommands.Sync, label: 'Sync Project…' },
       { separator: true },
       { commandId: 'file.export', label: 'Export…' },
       { separator: true },
@@ -133,7 +143,9 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: BuiltinCommands.ToggleRightInspector, label: 'Toggle Inspector' },
       { commandId: BuiltinCommands.ToggleTimeline, label: 'Toggle Timeline' },
       { separator: true },
-      { commandId: 'view.grid', label: 'Toggle Grid' },
+      { commandId: 'view.grid', label: 'Show Grid' },
+      { commandId: 'view.proportionalGrid', label: 'Show Proportional Grid' },
+      { commandId: 'view.snapToGrid', label: 'Snap to Grid' },
       { commandId: 'view.rulers', label: 'Toggle Rulers' },
       { commandId: 'view.safeAreas', label: 'Toggle Safe Areas' },
       { separator: true },

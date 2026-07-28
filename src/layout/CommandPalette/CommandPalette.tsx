@@ -63,6 +63,7 @@ const KIND_ICON: Record<SceneKind, IconName> = {
   text: 'type',
   image: 'image',
   video: 'video',
+  svg: 'shape',
   audio: 'audio',
   camera: 'camera',
   light: 'light',

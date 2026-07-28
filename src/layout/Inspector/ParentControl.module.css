@@ -37,3 +37,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Dropdown for the tri-state / mode rows (Material Options' shadow switches,
+   Auto-Orient). Mirrors TransformSection's .select so an inspector row reads
+   the same wherever it lives — but sized for a right-aligned control in a
+   label/value row rather than a full-width field. */
+.select {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-field-border, var(--color-border));
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.select:hover { border-color: var(--color-border-strong); }
+.select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+}

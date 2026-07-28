@@ -31,9 +31,31 @@ export interface JsonSchema {
 
 /**
  * Read tools never mutate, so they are exempt from the undo transaction and
- * are safe to call speculatively. Write tools mutate the live document.
+ * are safe to call speculatively. Write and compose tools both mutate the live
+ * document — use `mutates()` rather than testing `kind === 'write'`.
+ *
+ * `compose` exists to make one number computable: the share of a run's
+ * mutations that went through the technique library rather than hand-authoring
+ * primitives. That ratio is the single best proxy for whether output will look
+ * authored — `add_title` applies an entrance archetype with vetted timing,
+ * where `create_layer` + `set_keyframes` asks the model to invent easing and
+ * stagger it has no way to judge.
+ *
+ * All 43 mutating tools used to share `kind: 'write'`, so a compose call and a
+ * raw primitive were indistinguishable and the ratio could not be computed even
+ * in principle.
  */
-export type ToolKind = 'read' | 'write';
+export type ToolKind = 'read' | 'write' | 'compose';
+
+/**
+ * Does this tool change the document?
+ *
+ * Prefer this to `kind === 'write'`, which silently stopped meaning "mutates"
+ * when `compose` was added.
+ */
+export function mutates(kind: ToolKind): boolean {
+  return kind !== 'read';
+}
 
 /** The wire-facing half of a tool: exactly MCP's `tools/list` entry shape. */
 export interface AiToolDef {

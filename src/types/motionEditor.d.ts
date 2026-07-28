@@ -14,9 +14,34 @@ export interface MotionEditorFile {
   contents: string;
 }
 
+/** What the desktop shell persists for a signed-in user. Never the password. */
+export interface StoredCredentials {
+  /** The long-lived, single-use refresh token. Rotated on every exchange. */
+  refreshToken: string;
+  refreshExpiresAt?: string;
+  /** For "continue as …" on the sign-in screen. Not a secret. */
+  email?: string;
+  userId?: string;
+}
+
 export interface MotionEditorApi {
   readonly platform: string;
   readonly version: string;
+  /**
+   * OS-keystore-backed session storage, held in the main process.
+   *
+   * The refresh token is a 90-day credential, so it does not belong in
+   * renderer `localStorage` — a plaintext file the user (and anything running
+   * as them) can read and edit from DevTools. Encrypted here with DPAPI /
+   * Keychain / libsecret via Electron's `safeStorage`.
+   */
+  credentials?: {
+    get?(): Promise<StoredCredentials | null>;
+    set?(credentials: StoredCredentials): Promise<{ persisted: boolean }>;
+    clear?(): Promise<void>;
+    /** False when the OS has no keystore — sessions then last only as long as the app runs. */
+    available?(): Promise<boolean>;
+  };
   project?: {
     /** Native open dialog → the chosen project file (or null if cancelled). */
     open?(): Promise<MotionEditorFile | null>;

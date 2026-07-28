@@ -25,6 +25,9 @@ import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { detectImageSequence } from '@core/scene/imageSequence';
 import { trimPropPath, defaultTrim } from '@core/scene/trimPath';
+import { sanitizeSvg } from '@core/svg/svgSanitize';
+import { scanSvgCapabilities, isAnimatedSvg, svgCapabilityWarnings, type SvgCapabilities } from '@core/svg/svgCapabilities';
+import { makeSvgComponent } from '@core/svg/svgLayer';
 
 
 let seq = 0;
@@ -75,7 +78,7 @@ export function makeNode(kind: SceneKind, name: string): SceneNode {
             },
             { id: `${id}_m`, type: 'group', props: { [SCENE_KIND_PROP]: kind } },
           ]
-        : kind === 'image' || kind === 'video'
+        : kind === 'image' || kind === 'video' || kind === 'svg'
         ? [
             {
               id: `${id}_t`,
@@ -225,6 +228,80 @@ export function setNodeWorldPosition(nodeId: string, x: number, y: number): void
 }
 
 /**
+ * Insert an SVG as ONE layer, storing the original document intact.
+ *
+ * This is the DEFAULT import path (the hybrid architecture): no geometry
+ * parsing, no keyframe generation, no layer explosion — a 300-path
+ * illustration becomes exactly one layer, and what renders is the file itself
+ * rasterized, so gradients, masks, filters, clip paths and patterns are all
+ * reproduced rather than approximated.
+ *
+ * Returns the new node id, or null when the markup can't be read at all.
+ */
+export function insertSvgLayer(
+  svgText: string,
+  name: string,
+  opts?: { x?: number; y?: number; capabilities?: SvgCapabilities; extraWarning?: string },
+): string | null {
+  const rootId = activeCompRootId();
+  const node = makeNode('svg', name);
+
+  // One parse+scan for the whole import: the router already did it to choose
+  // this path, and sanitizing needs the same answer to tell whether it removed
+  // anything. Re-deriving it is a full extra parse of a file that can be
+  // megabytes.
+  const capabilities = opts?.capabilities
+    ?? scanSvgCapabilities(new DOMParser().parseFromString(svgText, 'image/svg+xml'));
+
+  // Scope ids to the NODE id: the ids are baked into the stored markup, so the
+  // scope has to be stable for the layer's lifetime or every render would
+  // invalidate the texture cache.
+  const clean = sanitizeSvg(svgText, node.id.replace(/[^\w-]/g, '_'), capabilities);
+  if (!clean) return null;
+
+  node.components.push(
+    makeSvgComponent(`${node.id}_svg`, {
+      sourceMarkup: svgText,
+      sanitizedMarkup: clean.markup,
+      size: { width: clean.width, height: clean.height, viewBox: clean.viewBox },
+      capabilities,
+      fileName: name,
+    }),
+  );
+
+  placeInComp(node, { customW: clean.width, customH: clean.height });
+  if (opts?.x !== undefined) {
+    const t = node.components.find((c) => c.type === 'Transform');
+    if (t) t.props.x = opts.x;
+    node.transform.position.x = opts.x;
+  }
+  if (opts?.y !== undefined) {
+    const t = node.components.find((c) => c.type === 'Transform');
+    if (t) t.props.y = opts.y;
+    node.transform.position.y = opts.y;
+  }
+
+  defaultSceneGraph.addChild(rootId, node);
+  useSelectionStore.getState().set([node.id]);
+  bumpScene();
+
+  // Sanitizing can REMOVE content, so it is a fidelity change and has to be
+  // disclosed — a silently-stripped <script>-driven animation is otherwise
+  // indistinguishable from a rendering bug. Caller-supplied context joins the
+  // SAME toast: two warning popups for one dropped file is how a user learns to
+  // dismiss them without reading.
+  const warnings = [...(opts?.extraWarning ? [opts.extraWarning] : []), ...svgCapabilityWarnings(capabilities)];
+  if (warnings.length > 0) {
+    useUIStore.getState().notify({
+      level: 'warning',
+      message: `“${name}”: ${warnings.join(' ')}`,
+      durationMs: 7000,
+    });
+  }
+  return node.id;
+}
+
+/**
  * Insert an SVG as ONE editable, movable icon: a group of shape/text layers,
  * scaled to a comfortable size and centered (or dropped at x/y), with the parts
  * positioned RELATIVE to the group so it behaves as a single body. Only the
@@ -270,6 +347,19 @@ export function insertSvgShapeGroup(
   const k = target / Math.max(svgW, svgH);
 
   const group = makeNode('group', name);
+  // The Transform COMPONENT is the authority — `readBase` (buildSnapshot) and
+  // `toWorkspaceNode` (selection) both read `props.x ?? node.transform.position.x`,
+  // so writing only the node field left the group at makeNode's placeholder
+  // (160, 120): on a 1920×1080 comp the icon landed in the top-left corner with
+  // its parts straddling the canvas edge, which reads as "the parts scattered".
+  // Size follows the content so the group's own bounds match what it contains.
+  const gt = group.components.find((c) => c.type === 'Transform');
+  if (gt) {
+    gt.props.x = px;
+    gt.props.y = py;
+    gt.props.width = svgW * k;
+    gt.props.height = svgH * k;
+  }
   group.transform.position.x = px;
   group.transform.position.y = py;
   defaultSceneGraph.addChild(rootId, group);
@@ -1000,12 +1090,6 @@ function isSvgAsset(asset: ImportedAsset): boolean {
   return asset.type === 'image' && /\.svg(\?|#|$)/i.test(asset.name);
 }
 
-/** SMIL or CSS animation baked into the markup — neither survives rasterizing. */
-function hasSvgAnimation(svgText: string): boolean {
-  return /<(animate|animateTransform|animateMotion|set)[\s>]/i.test(svgText)
-    || /@keyframes|animation\s*:/i.test(svgText);
-}
-
 /**
  * Tell the user what came across and what did not.
  *
@@ -1088,71 +1172,76 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
     return;
   }
 
-  // SVG routing (fidelity + editability, picking the right one automatically):
+  // SVG routing (hybrid architecture).
   //
-  //  • SIMPLE SVGs (only flat-filled basic geometry) → editable vector shapes.
-  //    These convert losslessly, so the user gets crisp, fully customizable,
-  //    resolution-independent layers.
-  //  • COMPLEX SVGs (gradients, text, embedded raster, <use>, filters, masks…)
-  //    → faithful IMAGE. `parseSvgToShapes` can't reproduce those — it used to
-  //    silently drop them and turn `url(#gradient)` fills into garbage (the
-  //    "crashed" SVG). The renderer rasterizes the image faithfully instead
-  //    (high-resolution, see AppTextureProvider).
-  // …and here is the code that finally does it. Until now this fell straight
-  // through to `kind = 'image'`, so EVERY svg became a flat bitmap: `makeNode
-  // ('image')` carries a Transform component only — no Style, no Geometry — which
-  // is exactly why an imported SVG could not be recoloured or reshaped. It was
-  // also decoded once and cached forever, so an animated SVG froze on frame 0
-  // even though it animates in the Assets grid (that preview is a real <img>).
+  // The default is DEFERRED PARSING: the file is stored intact as one SVG
+  // layer, rasterized faithfully, and parsed only when the user explicitly
+  // asks for editable shapes. That is what makes import instant, keeps a
+  // 300-path illustration to one layer, and reproduces gradients, masks,
+  // filters, clip paths and patterns instead of approximating them.
+  //
+  // The ONE exception is an ANIMATED file. Our compositor is texture-based
+  // (createRenderBackend: "exactly ONE rendering engine: the GPU-backed
+  // MotionRendererBackend"), so a stored SVG can only be rasterized, and a
+  // rasterized animation is a dead frame 0. The existing translator turns SMIL
+  // and CSS `@keyframes` into real keyframe tracks, which is a WORKING
+  // animation the user can edit — so animated files keep taking that path.
+  // Losing the animation to gain fidelity is not a trade worth making; the
+  // reverse is exactly what the shape path already does well.
   if (isSvgAsset(asset)) {
     const svgText = await readSvgText(asset.src);
     if (svgText) {
-      // SMIL and CSS `@keyframes` are both translated to real keyframes (see
-      // svgAnimation.ts / svgCss.ts), so an animated SVG takes the VECTOR path
-      // — it used to be rasterized, which is what froze it on frame 0.
-      // Unrolled only as far as the composition can play — keyframes past the
-      // end of the comp are cost with no possible benefit.
-      const shapes = parseSvgToShapes(svgText, {
-        maxDurationSeconds: useCompositionStore.getState().durationSeconds,
-      });
-      const convertible = shapes.some((s) => s.animation);
-      // ANIMATION OUTRANKS STATIC FIDELITY. The `isSimpleSvg` gate exists so a
-      // gradient/clip-path/mask file is rasterized rather than degraded — but
-      // rasterizing an animated file does not degrade it, it KILLS it: the
-      // image decodes once and is cached forever, so the layer is a dead frame
-      // 0. A gradient flattened to its first stop is a colour the user can fix
-      // in the inspector; a lost animation is not recoverable at all. So when
-      // the animation converts, the vector path wins and we say what it cost.
-      const simple = isSimpleSvg(svgText);
-      const degraded = convertible && !simple;
-      if ((simple || convertible) && !isOversizedSvg(shapes.length, asset.name)) {
-        const size = Math.max(asset.metadata?.width ?? 0, asset.metadata?.height ?? 0) || 400;
-        const id = insertSvgShapeGroup(svgText, asset.name, { targetSize: size, shapes });
-        if (id) {
-          if (degraded) {
-            useUIStore.getState().notify({
-              level: 'warning',
-              message: `“${asset.name}” imported with its animation as keyframes. Gradients, masks and filters are flattened to solid fills — adjust them in the inspector.`,
-              durationMs: 7000,
-            });
-          } else {
-            reportSvgAnimation(svgText, asset.name);
-          }
-          return; // editable vector shapes — fills/strokes/paths/keyframes live
-        }
-      }
-      // Rasterized: whatever animation it had cannot survive, so say so.
-      if (hasSvgAnimation(svgText)) {
-        useUIStore.getState().notify({
-          level: 'warning',
-          message: `“${asset.name}” animates, but its animation could not be converted (${svgAnimationBlockers(svgText).slice(0, 3).join(', ') || 'unsupported features'}) — it imports static. A Lottie/JSON export keeps the animation.`,
-          durationMs: 7000,
+      const caps = scanSvgCapabilities(new DOMParser().parseFromString(svgText, 'image/svg+xml'));
+
+      if (!isAnimatedSvg(caps)) {
+        // Static: store it intact. No parser, no keyframes, one layer.
+        const id = insertSvgLayer(svgText, asset.name, { capabilities: caps });
+        if (id) return;
+        // Unreadable markup — fall through to the plain image path.
+      } else {
+        // Animated: translate to keyframes, exactly as before.
+        // Unrolled only as far as the composition can play — keyframes past the
+        // end of the comp are cost with no possible benefit.
+        const shapes = parseSvgToShapes(svgText, {
+          maxDurationSeconds: useCompositionStore.getState().durationSeconds,
         });
+        const convertible = shapes.some((s) => s.animation);
+        // ANIMATION OUTRANKS STATIC FIDELITY. A gradient flattened to its first
+        // stop is a colour the user can fix in the inspector; a lost animation
+        // is not recoverable at all. So when the animation converts, the vector
+        // path wins and we say what it cost.
+        const simple = isSimpleSvg(svgText);
+        const degraded = convertible && !simple;
+        if ((simple || convertible) && !isOversizedSvg(shapes.length, asset.name)) {
+          const size = Math.max(asset.metadata?.width ?? 0, asset.metadata?.height ?? 0) || 400;
+          const id = insertSvgShapeGroup(svgText, asset.name, { targetSize: size, shapes });
+          if (id) {
+            if (degraded) {
+              useUIStore.getState().notify({
+                level: 'warning',
+                message: `“${asset.name}” imported with its animation as keyframes. Gradients, masks and filters are flattened to solid fills — adjust them in the inspector.`,
+                durationMs: 7000,
+              });
+            } else {
+              reportSvgAnimation(svgText, asset.name);
+            }
+            return; // editable vector shapes — fills/strokes/paths/keyframes live
+          }
+        }
+        // The animation could not be translated. Storing the file intact is
+        // still the better outcome than a flat bitmap — it keeps full static
+        // fidelity and leaves Convert to Editable Shapes available — but the
+        // animation genuinely will not play, so say so.
+        const id = insertSvgLayer(svgText, asset.name, {
+          capabilities: caps,
+          extraWarning:
+            `its animation could not be converted (${svgAnimationBlockers(svgText).slice(0, 3).join(', ') || 'unsupported features'}), so it imports static. ` +
+            'A Lottie/JSON export keeps the animation.',
+        });
+        if (id) return;
       }
     }
-    // Falls through to the image path: gradients, filters, <use>, embedded
-    // raster and text are reproduced faithfully by rasterizing, which the shape
-    // parser cannot do.
+    // Falls through to the plain image path only when the markup is unreadable.
   }
 
   const kind = asset.type === 'video' ? 'video' : 'image';

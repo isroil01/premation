@@ -77,14 +77,17 @@ const setTime = (t: number): void => {
 const xField = (): HTMLElement => screen.getByRole('spinbutton', { name: 'Position X' });
 const shownX = (): number => Number(xField().getAttribute('aria-valuenow'));
 
-/** The stopwatch in the Position X row — what makes the property animated. */
+/**
+ * The stopwatch in the Position X row — what makes the property animated.
+ *
+ * Found by ACCESSIBLE NAME, not by tag or DOM structure. It used to walk two
+ * parents up and grab an `input[type=checkbox]`, which broke the moment the
+ * row became a shared component with a real stopwatch button — and would have
+ * broken again on any layout change. The name is the contract; the markup is not.
+ */
 function lightXStopwatch(): void {
-  // CSS-module class names are stubbed under jest, so walk by structure:
-  // row > [ stopwatch + label | field ]. The field is itself a div -> up twice.
-  const row = xField().parentElement?.parentElement;
-  const box = row?.querySelector('input[type="checkbox"]');
-  if (!box) throw new Error('no stopwatch in the Position X row');
-  fireEvent.click(box);
+  const sw = screen.getByRole('button', { name: /(Enable|Disable) Position X animation/ });
+  fireEvent.click(sw);
 }
 
 /** Type an exact value into a resting ValueField (Enter opens the input). */

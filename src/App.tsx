@@ -31,6 +31,12 @@ import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import {
+  resolvePropertyMeta,
+  propertyLabel,
+  propertyOrder,
+  groupPlaceholderPath,
+} from '@core/inspector/propertyMeta';
 import { Icon } from '@components/Icon';
 import { EditorLayout } from '@layout/EditorLayout';
 
@@ -89,15 +95,6 @@ import { usePreferenceStore } from '@stores/preferenceStore';
  *
  * `layerT` must be the LAYER's time (`getRemappedTime`), not raw comp time.
  */
-/** Unit suffix shown beside a property's value in the timeline. */
-const UNIT_FOR_PROP: Record<string, string> = {
-  x: 'px', y: 'px', z: 'px', anchorX: 'px', anchorY: 'px',
-  width: 'px', height: 'px',
-  scaleX: 'x', scaleY: 'x', scale: 'x',
-  rotation: '°', rotationX: '°', rotationY: '°',
-  opacity: '%',
-};
-
 function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
   const sampled = defaultAnimation.sample(nodeId, prop, layerT);
   if (sampled !== undefined) return sampled;
@@ -254,23 +251,11 @@ function EditorShellInner(): JSX.Element {
         .tracksFor(node.id)
         .map((track) => ({
           prop: track.prop,
-          label:
-            track.prop === 'x'
-              ? 'Position X'
-              : track.prop === 'y'
-                ? 'Position Y'
-                : track.prop === 'z'
-                  ? 'Position Z'
-                  : track.prop === 'fillAngle'
-                    ? 'Fill Angle'
-                    : track.prop === 'fillCenterX'
-                      ? 'Fill Center X'
-                      : track.prop === 'fillCenterY'
-                        ? 'Fill Center Y'
-                        : track.prop === 'fillRadius'
-                          ? 'Fill Radius'
-                          : track.prop,
-          keyframes: track.keyframes.map((kf) => ({
+          // Label and unit both come from the property registry, resolved with
+          // this node so `effect.<id>.<key>` reads "Glow Radius" and not its
+          // raw path.
+          label: propertyLabel(track.prop, node.id),
+          keyframes: track.keyframes.map((kf, kfIndex, all) => ({
             id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
             // Diamonds draw at the comp time where the renderer actually
@@ -278,12 +263,21 @@ function EditorShellInner(): JSX.Element {
             // trim/sourceIn, the active clip, stretch and precomp remaps.
             time: keyframeToCompTime(node.id, kf.t, track.prop),
             roving: kf.roving,
-            isHold: kf.easing === 'hold',
+            // Both spellings: Easy Ease → Hold writes 'step' on a scalar track,
+            // so checking only 'hold' meant a held keyframe never drew as one.
+            isHold: kf.easing === 'hold' || kf.easing === 'step',
+            // The glyph is drawn as two halves, so it needs BOTH sides. The
+            // engine stores easing on the segment that starts at a keyframe, so
+            // the incoming side is the previous keyframe's.
+            easeIn: all[kfIndex - 1]?.easing,
+            easeOut: kf.easing,
+            isFirst: kfIndex === 0,
+            isLast: kfIndex === all.length - 1,
           })),
           // A real (animated) row edits its own prop — one field, so the value
           // can be changed here rather than only in the inspector.
           valueProps: [track.prop],
-          valueUnit: UNIT_FOR_PROP[track.prop],
+          valueUnit: resolvePropertyMeta(track.prop, node.id).unit || undefined,
           // The row's stopwatch toggles exactly what its fields edit.
           stopwatchProps: [track.prop],
         }));
@@ -292,20 +286,24 @@ function EditorShellInner(): JSX.Element {
       // Diamond-only rows — there is no numeric value to scrub; the stopwatch
       // key is the data prop so the reveal/expand machinery treats them like
       // any other animated row.
-      const DATA_LABELS: Record<string, string> = {
-        'text.source': 'Source Text',
-        'fill.stops': 'Gradient Stops',
-      };
       for (const dt of defaultAnimation.dataTracksFor(node.id)) {
         if (dt.keyframes.length === 0) continue;
         properties.push({
           prop: dt.prop,
-          label: DATA_LABELS[dt.prop] ?? dt.prop,
-          keyframes: dt.keyframes.map((kf) => ({
+          label: propertyLabel(dt.prop, node.id),
+          keyframes: dt.keyframes.map((kf, kfIndex, all) => ({
             id: makeKeyframeId(node.id, dt.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
             time: keyframeToCompTime(node.id, kf.t, dt.prop),
-            isHold: dt.kind === 'text' || undefined,
+            // `text` can never tween, so its rows are always hold. Otherwise
+            // report the keyframe's own curve — data keyframes carry easing
+            // exactly like scalar ones, so the diamond must draw it or Easy
+            // Ease on a puppet pin would apply with no visible feedback.
+            isHold: dt.kind === 'text' || kf.easing === 'hold' || kf.easing === 'step' || undefined,
+            easeIn: all[kfIndex - 1]?.easing,
+            easeOut: kf.easing,
+            isFirst: kfIndex === 0,
+            isLast: kfIndex === all.length - 1,
           })),
           stopwatchProps: [dt.prop],
         });
@@ -335,11 +333,11 @@ function EditorShellInner(): JSX.Element {
           }
           properties.unshift({
             prop: POSITION_PSEUDO_PROP,
-            label: 'Position',
+            label: propertyLabel(POSITION_PSEUDO_PROP),
             keyframes: Array.from(mergedKfs.values()).sort((a, b) => a.time - b.time),
             // The merged Position row edits the two real props behind it.
             valueProps: ['x', 'y'],
-            valueUnit: 'px',
+            valueUnit: resolvePropertyMeta(POSITION_PSEUDO_PROP).unit || undefined,
             stopwatchProps: ['x', 'y'],
           });
         }
@@ -355,43 +353,40 @@ function EditorShellInner(): JSX.Element {
       if (hasTransform && kind !== 'audio') {
         const has = (...props: string[]) => properties.some((p) => props.includes(p.prop));
         const placeholders: TimelinePropertyTrack[] = [];
-        // AE shows units beside timeline values; keep them in one place.
-        const UNIT_OF: Record<string, string> = { anchor: 'px', position: 'px', scale: 'x', rotation: '°', orientation: '°', opacity: '%' };
-        const placeholder = (key: string, label: string, stopwatchProps: string[]) =>
-          placeholders.push({ prop: `__static:${key}`, label, keyframes: [], animated: false, stopwatchProps,
+        // Label, unit and sort position all come from the property registry —
+        // the placeholder only decides WHICH real props it stands for.
+        const placeholder = (key: string, stopwatchProps: string[]) => {
+          const path = groupPlaceholderPath(key);
+          const meta = resolvePropertyMeta(path);
+          placeholders.push({ prop: path, label: meta.label, keyframes: [], animated: false, stopwatchProps,
             // A static row is still editable: AE lets you set a value before
             // keyframing, and the props it would key are the props it edits.
-            valueProps: stopwatchProps, valueUnit: UNIT_OF[key] });
+            valueProps: stopwatchProps, valueUnit: meta.unit || undefined });
+        };
         const is3DNode = is3DEnabled(node);
         if (kind !== 'camera' && !has('anchorX', 'anchorY', 'anchorZ')) {
-          placeholder('anchor', 'Anchor Point', is3DNode ? ['anchorX', 'anchorY', 'anchorZ'] : ['anchorX', 'anchorY']);
+          placeholder('anchor', is3DNode ? ['anchorX', 'anchorY', 'anchorZ'] : ['anchorX', 'anchorY']);
         }
         if (!has(POSITION_PSEUDO_PROP, 'x', 'y', 'z')) {
-          placeholder('position', 'Position', is3DNode || kind === 'camera' ? ['x', 'y', 'z'] : ['x', 'y']);
+          placeholder('position', is3DNode || kind === 'camera' ? ['x', 'y', 'z'] : ['x', 'y']);
         }
         if (kind !== 'camera' && !has('scale', 'scaleX', 'scaleY', 'scaleZ')) {
-          placeholder('scale', 'Scale', is3DNode ? ['scaleX', 'scaleY', 'scaleZ'] : ['scaleX', 'scaleY']);
+          placeholder('scale', is3DNode ? ['scaleX', 'scaleY', 'scaleZ'] : ['scaleX', 'scaleY']);
         }
         if (kind !== 'camera' && !has('rotation', 'rotationX', 'rotationY', 'orientationX', 'orientationY', 'orientationZ')) {
-          placeholder('rotation', 'Rotation', is3DNode ? ['rotation', 'rotationX', 'rotationY'] : ['rotation']);
+          placeholder('rotation', is3DNode ? ['rotation', 'rotationX', 'rotationY'] : ['rotation']);
         }
         if (is3DNode && kind !== 'camera' && !has('orientationX', 'orientationY', 'orientationZ')) {
-          placeholder('orientation', 'Orientation', ['orientationX', 'orientationY', 'orientationZ']);
+          placeholder('orientation', ['orientationX', 'orientationY', 'orientationZ']);
         }
-        if (hasStyle && !has('opacity')) placeholder('opacity', 'Opacity', ['opacity']);
+        if (hasStyle && !has('opacity')) placeholder('opacity', ['opacity']);
         // Stable-sort into AE's canonical Transform order (Anchor → Position →
-        // Scale → Rotation → Orientation → Opacity), leaving non-transform rows after them
-        // in their original relative order.
-        const groupOf = (prop: string): number => {
-          if (prop === 'anchorX' || prop === 'anchorY' || prop === 'anchorZ' || prop === '__static:anchor') return 0;
-          if (prop === POSITION_PSEUDO_PROP || prop === 'x' || prop === 'y' || prop === 'z' || prop === '__static:position') return 1;
-          if (prop.startsWith('scale') || prop === '__static:scale') return 2;
-          if (prop.startsWith('rotation') || prop === '__static:rotation') return 3;
-          if (prop.startsWith('orientation') || prop === '__static:orientation') return 4;
-          if (prop === 'opacity' || prop === '__static:opacity') return 5;
-          return 6;
-        };
-        properties = [...placeholders, ...properties].sort((a, b) => groupOf(a.prop) - groupOf(b.prop));
+        // Scale → Rotation → Orientation → Opacity), leaving non-transform rows
+        // after them in their original relative order. The order lives on each
+        // property's registry entry, so a new property sorts itself.
+        properties = [...placeholders, ...properties].sort(
+          (a, b) => propertyOrder(a.prop, node.id) - propertyOrder(b.prop, node.id),
+        );
       }
 
       // Flat union of all keyframes (collapsed summary row).

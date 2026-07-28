@@ -13,7 +13,7 @@
  */
 
 import { useMemo } from 'react';
-import { useProjectStore, type CompositionSettings } from './projectStore';
+import { useProjectStore, DEFAULT_GLOBAL_LIGHT, type CompositionSettings } from './projectStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
 
 export type { CompositionSettings };
@@ -30,7 +30,11 @@ function paintColor(p: FillPaint): string {
  *  edit (a flat `background` string alone would miss gradient changes). */
 function compKeyFor(c: CompositionSettings): string {
   const paint = c.backgroundPaint ? JSON.stringify(c.backgroundPaint) : '';
-  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}`;
+  // The global light MUST be in this key: it is the only thing that makes a
+  // style-bound shadow move, and a key without it means dragging the light
+  // changes the snapshot but never triggers the repaint that shows it.
+  const light = `${c.globalLightAngle ?? ''}/${c.globalLightAltitude ?? ''}`;
+  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}:${light}`;
 }
 
 export const DEFAULT_COMPOSITION: CompositionSettings = {
@@ -43,6 +47,8 @@ export const DEFAULT_COMPOSITION: CompositionSettings = {
   background: '#101014',
   transparent: false,
   startFrame: 0,
+  globalLightAngle: 90,
+  globalLightAltitude: 45,
 };
 
 interface CompositionStore extends CompositionSettings {
@@ -71,6 +77,17 @@ function sanitize(patch: Partial<CompositionSettings>): Partial<CompositionSetti
       : DEFAULT_COMPOSITION.durationSeconds;
   }
   if (patch.startFrame !== undefined) out.startFrame = clampInt(patch.startFrame, 0, 24 * 3600 * 240, 0);
+  // The light angle is deliberately NOT wrapped to 0-360: it is authored with
+  // the same unbounded dial as layer rotation, and wrapping would break a
+  // sweep that crosses 0.
+  if (patch.globalLightAngle !== undefined) {
+    out.globalLightAngle = Number.isFinite(patch.globalLightAngle)
+      ? patch.globalLightAngle
+      : DEFAULT_GLOBAL_LIGHT.angle;
+  }
+  if (patch.globalLightAltitude !== undefined) {
+    out.globalLightAltitude = clampInt(patch.globalLightAltitude, 0, 90, DEFAULT_GLOBAL_LIGHT.altitude);
+  }
   return out;
 }
 

@@ -12,7 +12,8 @@ import { Switch } from '@components/Switch';
 import { getEventBus } from '@core/events/EventBus';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { isAutoOriented, setAutoOriented } from '@core/scene/autoOrient';
+import { readAutoOrientMode, setAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
+import { canBe3D, is3DEnabled } from '@core/scene/threeD';
 import {
   hasPositionAnimation,
   hasPathTangents,
@@ -35,8 +36,10 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   if (!node || nodeId === 'comp_root') return null;
   if (!node.components.some((c) => c.type === 'Transform')) return null;
 
-  const on = isAutoOriented(node);
+  const autoOrient = readAutoOrientMode(node);
   const animated = hasPositionAnimation(nodeId);
+  // "Towards Camera" only means anything for a layer that lives in 3D space.
+  const canFaceCamera = canBe3D(node) && is3DEnabled(node);
   const transformComp = node.components.find((c) => c.type === 'Transform');
   const separated = transformComp?.props.separateDimensions === true;
 
@@ -45,13 +48,23 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       <div className={styles.row}>
         <span className={styles.label}>
           Auto-Orient
-          {!animated && <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>}
+          {autoOrient === 'path' && !animated && (
+            <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>
+          )}
         </span>
-        <Switch
-          checked={on}
-          onChange={(e) => setAutoOriented(nodeId, e.currentTarget.checked)}
-          aria-label="Auto-orient along motion path"
-        />
+        <select
+          className={styles.select}
+          style={{ width: 128, fontSize: 11 }}
+          value={autoOrient}
+          onChange={(e) => setAutoOrientMode(nodeId, e.currentTarget.value as AutoOrientMode)}
+          aria-label="Auto-orient"
+        >
+          <option value="off">Off</option>
+          <option value="path">Along Path</option>
+          {/* AE's per-layer, opt-in billboard. Hidden for 2D layers because
+              facing a camera is meaningless outside 3D space. */}
+          {canFaceCamera && <option value="camera">Towards Camera</option>}
+        </select>
       </div>
       <div className={styles.row}>
         <span className={styles.label}>

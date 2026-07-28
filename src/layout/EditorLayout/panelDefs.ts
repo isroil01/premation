@@ -68,10 +68,10 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'misc',        title: 'Settings',  icon: 'settings',    region: 'rightInspector', weight: 0,   closable: false },
   { id: 'history',     title: 'History',   icon: 'history',     region: 'rightInspector', weight: 0.8, closable: true, onDemand: true },
   { id: 'renderQueue', title: 'Render',    icon: 'queue',       region: 'rightInspector', weight: 0.7, closable: true, onDemand: true },
-  // Review comments anchored to a layer + time. The panel, its ReviewBar and
-  // commentsStore formed a closed island referenced by nothing — a built feature
-  // with no way in. On-demand so it does not crowd the rail by default.
-  { id: 'comments',    title: 'Comments',  icon: 'marker',      region: 'rightInspector', weight: 0.6, closable: true, onDemand: true },
+  // NOTE: there is deliberately no 'comments' panel. Review comments, the
+  // approval flow and shareable review links were removed outright — not gated,
+  // not hidden behind a plan. Collaboration is not what this app is for, and a
+  // half-present feature is worse than an absent one.
 ];
 
 export function panelDef(id: string): PanelDef | undefined {

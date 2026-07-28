@@ -25,9 +25,10 @@ import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openModal } from '@stores/modalStore';
-import { customConfirm } from '@components/Modal';
+import { customConfirm, customPrompt } from '@components/Modal';
 import { useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
 import { Button } from '@components/Button';
+import { Logo } from '@components/Logo';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
 import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
 import pluginHost from '@core/plugins/PluginHost';
@@ -47,6 +48,8 @@ import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
 import { projectDocumentIO } from '@core/project/projectDocumentIO';
 import { incrementName } from '@core/project/incrementName';
+import { confirmDiscardChanges } from '@core/project/confirmDiscard';
+import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurrentProject';
 import { renderStillFrame } from '@core/export/offlineRenderer';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
@@ -646,6 +649,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'n', meta: true },
       enabled: () => true,
       execute: () => {
+        // Cmd+N is one key away from Cmd+B/Cmd+M. Without this, a slip
+        // replaces the document with no way back.
+        if (!confirmDiscardChanges('Create a new project')) return;
         getProjectManager().newProject('Untitled');
         bumpScene();
         notify('New project created', 'success');
@@ -657,6 +663,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'o', meta: true },
       enabled: () => true,
       execute: async () => {
+        // Asked before the file picker, not after: a user who has decided not
+        // to lose their work should not first have to choose a file.
+        if (!confirmDiscardChanges('Open another project')) return;
         // Local-first: `.motion` is a directory bundle → use the native folder
         // picker. In the browser build `chooseBundleDir` returns null, so this
         // falls through to the normal file open.
@@ -727,10 +736,50 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       },
     },
     {
+      id: asCommandId(ProjectCommands.Sync),
+      label: 'Sync Project…',
+      /**
+       * Only for a local-first `.motion` bundle that is actually open — cloud
+       * projects already live on the server, and there is nothing to reconcile
+       * for an unsaved scratch document.
+       */
+      enabled: () => canSyncCurrentProject(),
+      execute: async () => {
+        const passphrase = await customPrompt(
+          'Sync Project',
+          'Enter this project’s sync passphrase. It never leaves this device — the ' +
+            'server only ever stores ciphertext it cannot read. Use the same passphrase ' +
+            'on every device, or they will not be able to decrypt each other’s changes.',
+          '',
+          { placeholder: 'Sync passphrase', confirmLabel: 'Sync' },
+        );
+        // Cancelled, or an empty passphrase — which would derive a real key from
+        // nothing and silently encrypt the project under it.
+        if (!passphrase) return;
+
+        notify('Syncing…', 'info');
+        try {
+          const outcome = await syncCurrentProject(passphrase);
+          if (outcome.status === 'synced') {
+            notify('Project synced', 'success');
+          } else if (outcome.status === 'conflict') {
+            // Not an error: another device pushed first. The engine keeps both
+            // sides, so say what happened rather than implying data was lost.
+            notify('Another device changed this project — sync again to merge', 'warning');
+          } else {
+            notify('Sync failed — check your connection and passphrase', 'error');
+          }
+        } catch (err) {
+          notify(err instanceof Error ? err.message : 'Sync failed', 'error');
+        }
+      },
+    },
+    {
       id: asCommandId(ProjectCommands.Close),
       label: 'Close Project',
       enabled: () => true,
       execute: () => {
+        if (!confirmDiscardChanges('Close the project')) return;
         getProjectManager().close();
         bumpScene();
         notify('Project closed', 'info');
@@ -746,9 +795,12 @@ function buildProjectCommands(): ReadonlyArray<Command> {
           size: 'sm',
           render: () => (
             <div style={{ color: 'var(--color-text-secondary)', lineHeight: 1.6, fontSize: 'var(--font-size-md)' }}>
-              Professional AI-native motion design application.
-              <br />
-              Version 0.1.0 — frontend foundation.
+              <Logo variant="lockup" size={34} />
+              <div style={{ marginTop: '14px' }}>
+                Professional AI-native motion design application.
+                <br />
+                Version 0.1.0 — frontend foundation.
+              </div>
             </div>
           ),
         });
@@ -933,9 +985,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Plugin host + UI commands (searchable in the Command Palette).
         try {
+          // Also starts every plugin the user has enabled — installs persist
+          // across reloads, so this is what makes them come back.
           pluginHost.configure({
             getSelection: () => useSelectionStore.getState().ids,
-            notify: (m) => notify(m, 'success'),
           });
           const registry = getCommandRegistry();
           registry.register({
@@ -981,8 +1034,27 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true, execute: () => useGuidesStore.getState().toggleSafeArea(),
           });
           registry.register({
-            id: asCommandId('view.grid'), label: 'Toggle Grid', icon: 'grid',
+            id: asCommandId('view.grid'), label: 'Show Grid', icon: 'grid',
+            shortcut: { key: "'", meta: true },
             enabled: () => true, execute: () => useGuidesStore.getState().toggleGrid(),
+          });
+          // AE keeps these three as separate View commands with AE's own chords.
+          // Snap to Grid in particular is NOT tied to Show Grid — see the
+          // guidesStore note.
+          registry.register({
+            id: asCommandId('view.proportionalGrid'), label: 'Show Proportional Grid', icon: 'grid',
+            shortcut: { key: "'", alt: true },
+            enabled: () => true, execute: () => useGuidesStore.getState().toggleProportionalGrid(),
+          });
+          registry.register({
+            id: asCommandId('view.snapToGrid'), label: 'Snap to Grid', icon: 'grid',
+            // AE's chord is Cmd/Ctrl+Shift+'. Registered as `"` because chords
+            // are matched on `KeyboardEvent.key`, which is the SHIFTED character
+            // — holding shift over the apostrophe key reports `"`, so keying it
+            // as `'` would never fire. Layout-dependent, like every punctuation
+            // chord in this system.
+            shortcut: { key: '"', meta: true, shift: true },
+            enabled: () => true, execute: () => useGuidesStore.getState().toggleSnapToGrid(),
           });
           registry.register({
             id: asCommandId('view.rulers'), label: 'Toggle Rulers', icon: 'ruler',

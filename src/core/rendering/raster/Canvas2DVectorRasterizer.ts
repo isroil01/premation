@@ -6,8 +6,11 @@ import {
   rasterCacheKey
 } from '@motion/renderer';
 import { layoutText } from '@core/text/textLayout';
+import { applyTextPath } from '@core/text/textPath';
+import { arcTable } from '@core/scene/trimPath';
+import { mixHex } from '@core/text/textAnimators';
 import { paintMaskMatte } from '@core/effects/mask';
-import { applyEffectChain, effectsNeedCpuBake } from '@core/effects/effectBake';
+import { applyEffectChain, layerNeedsCpuBake } from '@core/effects/effectBake';
 import {
   fillStyleFor,
   shapePath,
@@ -156,7 +159,9 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
   }
 
   private drawText(spec: any, tier: number, pad = 0): HTMLCanvasElement {
-    const bake = effectsNeedCpuBake(spec.effects);
+    // Fill opacity is applied by the bake chain, so a layer using it must
+    // enter that branch even with no CPU-only effect in its stack.
+    const bake = layerNeedsCpuBake(spec.effects, spec.fillOpacity);
     const ss = bake ? tier : tier * 2; // TEXT_SUPERSAMPLE = 2
     // Padded box, so a baked drop shadow / glow / blur has somewhere to fade
     // out instead of being sliced at the texture edge. `pad` is 0 for every
@@ -189,11 +194,11 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
           }
         }
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        applyEffectChain(ctx, w, h, spec.effects!, (sw, sh) => {
+        applyEffectChain(ctx, w, h, spec.effects, (sw, sh) => {
           const s = document.createElement('canvas');
           s.width = sw; s.height = sh;
           return s;
-        });
+        }, spec.fillOpacity ?? 1);
       }
       return canvas;
     };
@@ -208,7 +213,12 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
 
     const text = spec.text || 'Text';
 
-    if (!spec.runs || spec.runs.length === 0) {
+    const hasGlyphWork =
+      (spec.runs && spec.runs.length > 0) ||
+      (spec.glyphs && spec.glyphs.length > 0) ||
+      !!spec.textPath;
+
+    if (!hasGlyphWork) {
       const size = spec.fontSize;
       const align = spec.align ?? 'left';
       const padX = 12;
@@ -252,23 +262,96 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         paragraphSpacing: spec.paragraphSpacing,
       },
       measure,
-      { runs: spec.runs, boxWidth: spec.width },
+      { runs: spec.runs, transforms: spec.glyphs, boxWidth: spec.width },
     );
+
+    const placed = spec.textPath
+      ? applyTextPath(laid, {
+          table: arcTable(spec.textPath.points, spec.textPath.closed),
+          firstMargin: spec.textPath.firstMargin,
+          reversed: spec.textPath.reversed,
+          perpendicular: spec.textPath.perpendicular,
+          align: spec.align,
+        })
+      : laid.glyphs;
 
     ctx.textAlign = 'center';
     const cx = spec.width / 2;
     const cy = spec.height / 2;
-    for (const g of laid.glyphs) {
-      if (g.char.trim() === '') continue;
+    for (const g of placed) {
+      const tr = g.transform;
+      const ch = tr?.displayChar ?? g.char;
+      if (ch.trim() === '') continue;
+
+      // The cheap path stays cheap: a glyph with no animator transform and no
+      // path angle draws exactly as it did before, with no save/restore.
+      const plain = !tr && g.angle === undefined;
+      if (plain) {
+        ctx.font = textCssFont(g.style);
+        ctx.fillStyle = g.style.fill ?? spec.color;
+        ctx.fillText(ch, cx + g.x, cy + g.y);
+        continue;
+      }
+
+      ctx.save();
+      // Order matters and mirrors AE: translate to the glyph's own origin,
+      // then rotate / skew / scale ABOUT it, so a rotating character spins in
+      // place rather than swinging around the layer's anchor.
+      ctx.translate(cx + g.x + (tr?.dx ?? 0), cy + g.y + (tr?.dy ?? 0) + (tr?.lineSpacing ?? 0) * g.line);
+      if (g.angle) ctx.rotate(g.angle);
+      if (tr) {
+        if (tr.rotation) ctx.rotate((tr.rotation * Math.PI) / 180);
+        if (tr.skew) ctx.transform(1, 0, Math.tan((-tr.skew * Math.PI) / 180), 1, 0, 0);
+        if (tr.scale !== 1 || tr.scaleY !== 1) ctx.scale(tr.scale, tr.scaleY);
+        // Opacity multiplies the layer's own — an animator fading a character
+        // to 0 must not brighten a layer that is already half transparent.
+        if (tr.opacity !== 1) ctx.globalAlpha = ctx.globalAlpha * Math.max(0, tr.opacity);
+        if (tr.blur > 0) ctx.filter = `blur(${tr.blur}px)`;
+      }
+
       ctx.font = textCssFont(g.style);
-      ctx.fillStyle = g.style.fill ?? spec.color;
-      ctx.fillText(g.char, cx + g.x, cy + g.y);
+      const baseFill = g.style.fill ?? spec.color;
+      const fill =
+        tr?.color && (tr.colorMix ?? 0) > 0
+          ? mixHex(baseFill, tr.color, tr.colorMix ?? 1)
+          : baseFill;
+
+      // AE's Fill & Stroke order, per layer. UNDER is the default: a stroke
+      // centres on the outline, so painting it over the fill eats half its
+      // width out of the glyph and an animated stroke appears to thin the
+      // letterforms. Over is still worth having — it is how you get a hard
+      // outline that stays crisp against a busy background.
+      const strokeGlyph = (): void => {
+        if (!tr || tr.strokeWidth <= 0) return;
+        ctx.lineWidth = tr.strokeWidth;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = tr.strokeColor ?? fill;
+        ctx.strokeText(ch, 0, 0);
+      };
+      const fillGlyph = (): void => {
+        const fillAlpha = tr ? Math.max(0, tr.fillOpacity) : 1;
+        if (fillAlpha <= 0) return;
+        const prev = ctx.globalAlpha;
+        if (fillAlpha < 1) ctx.globalAlpha = prev * fillAlpha;
+        ctx.fillStyle = fill;
+        ctx.fillText(ch, 0, 0);
+        ctx.globalAlpha = prev;
+      };
+
+      if (spec.strokeOverFill) {
+        fillGlyph();
+        strokeGlyph();
+      } else {
+        strokeGlyph();
+        fillGlyph();
+      }
+      ctx.restore();
     }
     return finishBake();
   }
 
   private drawPath(layer: any, tier: number, pad: number): HTMLCanvasElement {
-    const bake = effectsNeedCpuBake(layer.effects);
+    const bake = layerNeedsCpuBake(layer.effects, layer.fillOpacity);
     const ss = bake ? tier : tier * 2; // TEXT_SUPERSAMPLE = 2
     const bw = layer.width + 2 * pad;
     const bh = layer.height + 2 * pad;
@@ -321,11 +404,11 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         }
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      applyEffectChain(ctx, w, h, layer.effects!, (sw, sh) => {
+      applyEffectChain(ctx, w, h, layer.effects, (sw, sh) => {
         const s = document.createElement('canvas');
         s.width = sw; s.height = sh;
         return s;
-      });
+      }, layer.fillOpacity ?? 1);
     }
 
     return canvas;

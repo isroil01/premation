@@ -1,6 +1,6 @@
 import { layoutText, resolveGlyphStyle } from './textLayout';
 import type { TextStyle } from './textLayout';
-import type { GlyphTransform } from './textAnimators';
+import { identityGlyphTransform, type GlyphTransform } from './textAnimators';
 
 /**
  * A measure that makes arithmetic checkable by hand: every glyph is exactly as
@@ -11,17 +11,8 @@ const measure = (_char: string, style: TextStyle): number => style.fontSize;
 
 const base = { fontSize: 10, fill: '#ffffff' };
 
-const glyph = (over: Partial<GlyphTransform> = {}): GlyphTransform => ({
-  char: 'x',
-  dx: 0,
-  dy: 0,
-  scale: 1,
-  rotation: 0,
-  opacity: 1,
-  tracking: 0,
-  skew: 0,
-  ...over,
-});
+const glyph = (over: Partial<GlyphTransform> = {}): GlyphTransform =>
+  identityGlyphTransform('x', over);
 
 describe('resolveGlyphStyle', () => {
   it('returns the base style untouched when there are no runs', () => {

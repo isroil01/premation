@@ -1,32 +1,53 @@
 /**
- * Selection handles — the 8 resize handles + 1 rotate handle derived from a
- * selection's bounding box. Computed in whatever space the bounds are given
- * (world or screen); the overlay/tool decides. Handle ids follow compass
- * conventions so a resize tool can map a grabbed handle to an anchor edge.
+ * Selection handles — the eight resize grips derived from a selection's bounds.
+ * Computed in whatever space the bounds are given (world or screen); the
+ * overlay/tool decides. Handle ids follow compass conventions so a resize tool
+ * can map a grabbed handle to an axis.
+ *
+ * ── There is deliberately no rotation handle ─────────────────────────
+ * A rotate grip floating off one corner buys one gesture and costs three
+ * things: a dead zone between the corner and the grip where clicks do nothing,
+ * accidental rotation whenever a user reaches slightly wide for a corner, and a
+ * gizmo whose affordances no longer read as "this box has eight symmetric
+ * grips". Rotation is a TOOL MODE here (`RotateTool`, W), which also pivots on
+ * the anchor — the same point keyframed rotation revolves around — so the two
+ * cannot disagree.
+ *
+ * ── Degrading at small sizes ─────────────────────────────────────────
+ * Eight 8px handles on a 30px box is not a gizmo, it is a blob. Below a
+ * threshold the mid-edge handles drop out, and below a smaller one every handle
+ * does and only the outline remains. See `visibleHandleIds`.
  */
 
 import type { Vec2 } from '../math/Vec2';
 import type { Rect } from '../math/Rect';
 
-export type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'rotate';
+export type HandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 
 export interface Handle {
   id: HandleId;
   position: Vec2;
-  kind: 'resize' | 'rotate';
+  kind: 'resize';
 }
 
-export interface HandleOptions {
-  /** Distance from the top-center to the rotate handle, in the bounds' units. */
-  rotateOffset?: number;
-}
+/** The four corners, in TL/TR/BR/BL order. */
+export const CORNER_HANDLES: readonly HandleId[] = ['nw', 'ne', 'se', 'sw'];
+/** The four edge midpoints. */
+export const EDGE_HANDLES: readonly HandleId[] = ['n', 'e', 's', 'w'];
 
-/** Compute handles for a bounds rect. Order: corners, edges, then rotate. */
-export function computeHandles(bounds: Rect, opts: HandleOptions = {}): Handle[] {
+/**
+ * On-screen box size (px, smaller dimension) below which the mid-edge handles
+ * are hidden, and below which every handle is. Chosen so handles never overlap:
+ * with an 8px handle, edges and corners collide under ~40px.
+ */
+export const EDGE_HANDLE_MIN_PX = 40;
+export const ANY_HANDLE_MIN_PX = 20;
+
+/** Compute handles for a bounds rect. Order: corners, then edge midpoints. */
+export function computeHandles(bounds: Rect): Handle[] {
   const { x, y, width, height } = bounds;
   const cx = x + width / 2;
   const cy = y + height / 2;
-  const rotateOffset = opts.rotateOffset ?? 24;
   return [
     { id: 'nw', position: { x, y }, kind: 'resize' },
     { id: 'n', position: { x: cx, y }, kind: 'resize' },
@@ -36,28 +57,58 @@ export function computeHandles(bounds: Rect, opts: HandleOptions = {}): Handle[]
     { id: 's', position: { x: cx, y: y + height }, kind: 'resize' },
     { id: 'sw', position: { x, y: y + height }, kind: 'resize' },
     { id: 'w', position: { x, y: cy }, kind: 'resize' },
-    { id: 'rotate', position: { x: cx, y: y - rotateOffset }, kind: 'rotate' },
   ];
 }
 
-/** The resize cursor type appropriate for each handle. */
-export function handleCursor(id: HandleId): string {
-  switch (id) {
-    case 'n':
-    case 's':
-      return 'resize-n';
-    case 'e':
-    case 'w':
-      return 'resize-e';
-    case 'ne':
-    case 'sw':
-      return 'resize-ne';
-    case 'nw':
-    case 'se':
-      return 'resize-nw';
-    case 'rotate':
-      return 'rotate';
-  }
+/**
+ * Which handles should be shown for a box of `screenWidth` × `screenHeight`
+ * on-screen pixels. Returns null for "none" so a caller can skip the work.
+ */
+export function visibleHandleIds(screenWidth: number, screenHeight: number): readonly HandleId[] {
+  const smaller = Math.min(Math.abs(screenWidth), Math.abs(screenHeight));
+  if (smaller < ANY_HANDLE_MIN_PX) return [];
+  if (smaller < EDGE_HANDLE_MIN_PX) return CORNER_HANDLES;
+  return [...CORNER_HANDLES, ...EDGE_HANDLES];
+}
+
+/** Outward direction of each handle, in radians (0 = +x, π/2 = +y/down). */
+const HANDLE_ANGLE: Record<HandleId, number> = {
+  e: 0,
+  se: Math.PI / 4,
+  s: Math.PI / 2,
+  sw: (3 * Math.PI) / 4,
+  w: Math.PI,
+  nw: (5 * Math.PI) / 4,
+  n: (3 * Math.PI) / 2,
+  ne: (7 * Math.PI) / 4,
+};
+
+/** The eight cursors, indexed by direction octant starting at +x (east). */
+const CURSOR_BY_OCTANT = [
+  'resize-e',
+  'resize-se',
+  'resize-s',
+  'resize-sw',
+  'resize-w',
+  'resize-nw',
+  'resize-n',
+  'resize-ne',
+] as const;
+
+/**
+ * The resize cursor for a handle on a layer rotated by `rotationRad`.
+ *
+ * A corner handle on a 45°-rotated layer must show the diagonal that actually
+ * applies, not the one the unrotated box would have had — otherwise the cursor
+ * promises an axis the drag will not follow. Rounded to the nearest octant,
+ * which is all the eight standard resize cursors can express.
+ */
+export function handleCursor(id: HandleId, rotationRad = 0): string {
+  const angle = HANDLE_ANGLE[id] + rotationRad;
+  const TWO_PI = Math.PI * 2;
+  const norm = ((angle % TWO_PI) + TWO_PI) % TWO_PI;
+  const octant = Math.round(norm / (Math.PI / 4)) % 8;
+  return CURSOR_BY_OCTANT[octant]!;
 }
 
 /** Hit-test handles at a point (same space as the handles), radius in units. */

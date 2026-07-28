@@ -477,7 +477,13 @@ export class MotionRendererBackend implements RenderBackend {
                 letterSpacing: layer.letterSpacing,
                 lineHeight: layer.lineHeight,
                 paragraphSpacing: layer.paragraphSpacing,
+                strokeOverFill: layer.strokeOverFill,
                 runs: layer.runs,
+                // Per-glyph animator output and path placement. buildSnapshot
+                // resolves both; forwarding them is what makes text animators
+                // and text-on-path produce pixels at all.
+                glyphs: layer.glyphs,
+                textPath: layer.textPath,
                 // Canvas2D-only effects (Fill/Stroke/Sharpen/Noise/…) + mask
                 // are baked into the text texture — they have no GPU shader
                 // form. layerToRenderable drops them from the GPU draw so
@@ -598,9 +604,24 @@ export class MotionRendererBackend implements RenderBackend {
     // Overlays: transparent void + only the guides the app has toggled on.
     vp.overlays.background = VOID;
     vp.overlays.checkerboard = false;
-    vp.overlays.grid = snapshot.overlays?.grid ?? false;
-    vp.overlays.safeArea = snapshot.overlays?.safeArea ?? false;
-    vp.overlays.rulers = snapshot.overlays?.rulers ?? false;
+    const ov = snapshot.overlays;
+    vp.overlays.grid = ov?.grid ?? false;
+    // Grid spacing / subdivisions / style / colour used to stop here: the
+    // viewport kept the renderer's built-in defaults, so the Composition
+    // Settings controls for them were inert. They are the app's now.
+    vp.overlays.gridSpacing = ov?.gridSpacing ?? 100;
+    vp.overlays.gridSubdivisions = ov?.gridSubdivisions ?? 1;
+    vp.overlays.gridStyle = ov?.gridStyle ?? 'lines';
+    // `#rrggbbaa` — the alpha IS the control for how faint the lines read.
+    if (ov?.gridColor) vp.overlays.gridColor = Color.fromHex(ov.gridColor);
+    vp.overlays.proportionalGrid = ov?.proportionalGrid ?? false;
+    vp.overlays.proportionalColumns = ov?.proportionalColumns ?? 8;
+    vp.overlays.proportionalRows = ov?.proportionalRows ?? 6;
+    // The proportional grid divides the COMP, so it needs the comp rect in the
+    // same world space the grid lines are emitted in (comp space, origin 0,0).
+    vp.overlays.compRect = { x: 0, y: 0, width: snapshot.width, height: snapshot.height };
+    vp.overlays.safeArea = ov?.safeArea ?? false;
+    vp.overlays.rulers = ov?.rulers ?? false;
 
     this.renderer.render(vp, snapshotToFrameScene(snapshot));
   }

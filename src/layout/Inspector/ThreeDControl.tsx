@@ -18,7 +18,42 @@ import { useUIStore } from '@stores/uiStore';
 import styles from './ParentControl.module.css';
 import { FaceMaterialsSection } from './FaceMaterialsSection';
 
-import { readNodeMaterial, setNodeCastsShadows, setNodeAcceptsLights, setNodeSpecular, setNodeShininess } from '@core/scene/material';
+import {
+  readNodeMaterial,
+  setNodeAcceptsLights,
+  setNodeMaterialPct,
+  setNodeShadowMode,
+  setNodeShininess,
+  setNodeSpecular,
+  MATERIAL_PCT_DEFAULTS,
+} from '@core/scene/material';
+
+/** One 0–100 material response row — the six of them share this shape. */
+function MaterialSlider({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}): JSX.Element {
+  return (
+    <div className={styles.row}>
+      <span className={styles.label} style={{ fontSize: 11 }}>{label}</span>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.currentTarget.value))}
+        aria-label={label}
+        style={{ width: 90 }}
+      />
+    </div>
+  );
+}
 
 export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
@@ -97,17 +132,53 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
             </div>
           )}
           <FaceMaterialsSection nodeId={nodeId} />
+          {/* One slider shape for every 0–100 material response, so the block
+              reads as one control group instead of six near-identical rows. */}
           <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2, marginTop: 4 }}>
             Material Options
           </span>
+          {/* Tri-states, not switches: `Only` is what shadow-catcher setups are
+              built from — a layer that throws or catches a shadow without
+              rendering itself — and a boolean cannot express it. */}
           <div className={styles.row}>
             <span className={styles.label} style={{ fontSize: 11 }}>Casts Shadows</span>
-            <Switch
-              checked={material.castsShadows}
-              onChange={(e) => setNodeCastsShadows(nodeId, e.currentTarget.checked)}
+            <select
+              className={styles.select}
+              style={{ width: 78, fontSize: 11 }}
+              value={material.castsShadowsMode}
+              onChange={(e) => setNodeShadowMode(nodeId, 'castsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
               aria-label="Casts shadows"
-            />
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+              <option value="only">Only</option>
+            </select>
           </div>
+          <div className={styles.row}>
+            <span className={styles.label} style={{ fontSize: 11 }}>Accepts Shadows</span>
+            <select
+              className={styles.select}
+              style={{ width: 78, fontSize: 11 }}
+              value={material.acceptsShadowsMode}
+              onChange={(e) => setNodeShadowMode(nodeId, 'acceptsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
+              aria-label="Accepts shadows"
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+              <option value="only">Only</option>
+            </select>
+          </div>
+          {material.shadowOnly && (
+            <p style={{ margin: '2px 0 4px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+              “Only” hides the layer itself — it stays in the scene purely as a
+              shadow caster or catcher.
+            </p>
+          )}
+          <MaterialSlider
+            label="Light Transmission"
+            value={material.lightTransmission}
+            onChange={(v) => setNodeMaterialPct(nodeId, 'lightTransmission', v, MATERIAL_PCT_DEFAULTS.lightTransmission)}
+          />
           <div className={styles.row}>
             <span className={styles.label} style={{ fontSize: 11 }}>Accepts Lights</span>
             <Switch
@@ -118,19 +189,21 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
           </div>
           {material.acceptsLights && (
             <>
-              <div className={styles.row}>
-                <span className={styles.label} style={{ fontSize: 11 }}>Specular</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={material.specular}
-                  onChange={(e) => setNodeSpecular(nodeId, Number(e.currentTarget.value))}
-                  aria-label="Specular intensity"
-                  style={{ width: 90 }}
-                />
-              </div>
+              <MaterialSlider
+                label="Ambient"
+                value={material.ambient}
+                onChange={(v) => setNodeMaterialPct(nodeId, 'ambient', v, MATERIAL_PCT_DEFAULTS.ambient)}
+              />
+              <MaterialSlider
+                label="Diffuse"
+                value={material.diffuse}
+                onChange={(v) => setNodeMaterialPct(nodeId, 'diffuse', v, MATERIAL_PCT_DEFAULTS.diffuse)}
+              />
+              <MaterialSlider
+                label="Specular"
+                value={material.specular}
+                onChange={(v) => setNodeSpecular(nodeId, v)}
+              />
               <div className={styles.row}>
                 <span className={styles.label} style={{ fontSize: 11 }}>Shininess</span>
                 <input
@@ -144,6 +217,19 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
                   style={{ width: 90 }}
                 />
               </div>
+              <MaterialSlider
+                label="Metal"
+                value={material.metal}
+                onChange={(v) => setNodeMaterialPct(nodeId, 'metal', v, MATERIAL_PCT_DEFAULTS.metal)}
+              />
+              {/* Metal only shows up in the highlight, so it reads as dead
+                  unless Specular is up. Say so rather than letting the slider
+                  look broken. */}
+              {material.specular === 0 && (
+                <p style={{ margin: '0 0 4px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                  Metal tints the specular highlight — raise Specular to see it.
+                </p>
+              )}
             </>
           )}
           {/* The "Pro 3D Material Presets" grid lived here. It was a third

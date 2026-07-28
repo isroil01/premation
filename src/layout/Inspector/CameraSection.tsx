@@ -15,8 +15,12 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { Project3D } from '@motion/scene';
 import { flattenScene } from '@core/scene/sceneDerive';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
+import { ValueField } from '@components/ValueField';
 import styles from './TransformSection.module.css';
 import { KeyframeRow } from './KeyframeRow';
+
+/** AE's default virtual sensor width (35mm full frame). */
+const DEFAULT_FILM_SIZE_MM = 36;
 
 /** Classic lens presets → horizontal field of view (deg). */
 const LENS_PRESETS: Array<{ label: string; fov: number }> = [
@@ -34,8 +38,10 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const node = defaultSceneGraph.getNode(nodeId);
   const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
   const [focalRaw, setFocal] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'focalLength');
+  const [filmSizeRaw, setFilmSize] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'filmSize');
   const [yawRaw, setYaw] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orbitYaw');
   const [pitchRaw, setPitch] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orbitPitch');
+  const [rollRaw, setRoll] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationZ');
   const [dofRaw, setDofStrength] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'dofStrength');
   const [focusRaw, setFocusDistance] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'focusDistance');
   const [apertureRaw, setAperture] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'dofAperture');
@@ -50,7 +56,13 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
   const defaultFocal = Project3D.focalLengthForFov(compWidth, 39.6);
   const focal = typeof focalRaw === 'number' && focalRaw > 0 ? focalRaw : defaultFocal;
-  const fovDeg = (2 * Math.atan(compWidth / 2 / focal) * 180) / Math.PI;
+  const fovDeg = Project3D.fovForFocalLength(compWidth, focal);
+  // AE's Film Size is the virtual sensor width; the millimetre focal length is
+  // derived from it and the angle of view. Changing it re-labels the lens
+  // without touching what the camera actually sees, which is exactly what a
+  // real sensor swap does.
+  const filmSize = typeof filmSizeRaw === 'number' && filmSizeRaw > 0 ? filmSizeRaw : DEFAULT_FILM_SIZE_MM;
+  const focalMm = filmSize / (2 * Math.tan((fovDeg * Math.PI) / 360));
   // Which preset (if any) matches the current field of view.
   const activePreset = LENS_PRESETS.find((p) => Math.abs(p.fov - fovDeg) < 1.5)?.label ?? '';
 
@@ -88,16 +100,51 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             ))}
           </select>
         </div>
-        <KeyframeRow nodeId={nodeId} prop="focalLength" label="Focal length" value={focal} unit="px" min={50} onStatic={(v) => setFocal(v)} />
+        {/* AE calls this Zoom: the distance at which a layer renders 1:1. It
+            and Angle of View are two views of ONE value, so editing either has
+            to move the other — showing the angle as read-only text (which is
+            what this was) makes it look like a separate, broken control. */}
+        <KeyframeRow nodeId={nodeId} prop="focalLength" label="Zoom" value={focal} unit="px" min={50} onStatic={(v) => setFocal(v)} />
         <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Field of view</span>
+          <span className={styles.popoverLabel}>Angle of view</span>
+          <ValueField
+            value={Number(fovDeg.toFixed(2))}
+            min={1}
+            max={179}
+            step={0.5}
+            unit="°"
+            onChange={(v) => setFocal(Math.round(Project3D.focalLengthForFov(compWidth, v)))}
+            aria-label="Angle of view"
+          />
+        </div>
+        <div className={styles.popoverRow}>
+          <span className={styles.popoverLabel}>Film size</span>
+          <ValueField
+            value={filmSize}
+            min={1}
+            step={1}
+            unit="mm"
+            onChange={(v) => setFilmSize(v !== DEFAULT_FILM_SIZE_MM ? v : undefined)}
+            aria-label="Film size"
+          />
+        </div>
+        <div className={styles.popoverRow}>
+          <span className={styles.popoverLabel}>Focal length</span>
           <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-            {fovDeg.toFixed(1)}°
+            {focalMm.toFixed(1)} mm
           </span>
         </div>
+        <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+          Film size is the virtual sensor width. It changes the millimetre
+          reading only — the actual view is set by Zoom / Angle of View.
+        </p>
         <div className={styles.subhead} style={{ marginTop: 8 }}>Orbit</div>
         <KeyframeRow nodeId={nodeId} prop="orbitYaw" label="Yaw" value={typeof yawRaw === 'number' ? yawRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setYaw(v)} />
         <KeyframeRow nodeId={nodeId} prop="orbitPitch" label="Pitch" value={typeof pitchRaw === 'number' ? pitchRaw : 0} unit="°" min={-89} max={89} onStatic={(v) => setPitch(v)} />
+        {/* Roll spins the frame about the view axis (a dutch angle) without
+            re-aiming the camera — the third orientation axis, which the yaw +
+            pitch pair alone could not express. */}
+        <KeyframeRow nodeId={nodeId} prop="orientationZ" label="Roll" value={typeof rollRaw === 'number' ? rollRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setRoll(v)} />
         <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Swings the camera around its point of interest, keeping it framed.
           On canvas: Alt+drag orbits, Shift+Alt+drag (or Alt+middle-drag)

@@ -99,6 +99,22 @@ export const BLEND_COMBINE_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/**
+ * Built-in material: glass composite. Uniform + blurred-backdrop texture +
+ * sampler + the layer texture (binding 3), whose ALPHA is the glass silhouette
+ * and whose gradient drives refraction. See shaders/glass.ts.
+ */
+export const GLASS_MATERIAL: MaterialDescriptor = {
+  shader: 'glass-composite',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
 /** Built-in material: blur pass. Uniform + texture + sampler. */
 export const BLUR_MATERIAL: MaterialDescriptor = {
   shader: 'blur',

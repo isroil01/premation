@@ -24,6 +24,40 @@ export interface RenderableSdf {
   height: number;
 }
 
+/**
+ * Resolved Glass layer style, in device pixels and radians — the renderer does
+ * no unit conversion of its own.
+ *
+ * Every field here is a keyframe track upstream; this is just the sampled
+ * result for one frame.
+ */
+export interface RenderableGlass {
+  /** Edge displacement strength, px. */
+  refraction: number;
+  /** How far in from the border refraction reaches, px. */
+  edgeWidth: number;
+  /** Per-channel offset inside the refraction band, px. THE detail that turns a
+   *  blurred rectangle into glass. */
+  aberration: number;
+  /** Backdrop saturation multiplier — 1 = untouched, >1 = the "vibrancy" look. */
+  saturation: number;
+  /** Tint over the blurred backdrop. */
+  tint: Color;
+  tintOpacity: number;
+  /** The bright border. */
+  rim: Color;
+  rimOpacity: number;
+  rimWidth: number;
+  /** Radians. */
+  rimAngle: number;
+  /** The travelling highlight. */
+  specularAngle: number;
+  specularIntensity: number;
+  specularFalloff: number;
+  /** Noise amount, 0..1. A blurred gradient bands without it. */
+  grain: number;
+}
+
 /** Per-pixel affine colour transform (from colour-grade effects) applied to a
  *  textured sample: `out.rgb = M·rgb + offset`. `m` is a row-major 3×3. */
 export interface RenderableColorMatrix {
@@ -74,6 +108,16 @@ export interface Renderable {
    * requests it.
    */
   backdropBlur?: number;
+  /**
+   * The GLASS layer style: refraction, tint, rim, specular and grain applied to
+   * the blurred backdrop in one pass.
+   *
+   * Rides the same backdrop machinery as `backdropBlur` — which supplies the
+   * frosted base — and replaces the plain masked composite with the glass
+   * shader. Set without `backdropBlur` it still works; the "backdrop" is then
+   * simply unblurred, which is what clear glass looks like.
+   */
+  glass?: RenderableGlass;
   /** Fill/tint color (rect, text). */
   color?: Color;
   /** SDF geometry for solid shapes (rounded-rect / ellipse). */
@@ -126,6 +170,11 @@ export interface Renderable {
   deformedMesh?: {
     vertices: Float32Array;
     triangles: Uint16Array;
+    /**
+     * Optional per-vertex OVERLAP depth (AE's blue Overlap pin). Signed; higher
+     * draws in front. Absent means the mesh composites flat, exactly as before.
+     */
+    depth?: Float32Array;
   };
   /**
    * True 3D placement (AE Classic-3D GPU path). `model` is the 16-number
@@ -154,6 +203,8 @@ export interface Renderable {
       specular: number;
       /** Blinn-Phong exponent. */
       shininess: number;
+      /** Metal 0..1: tints the highlight toward the layer's own colour. */
+      metal?: number;
       /** Per-quad Lambert gain fallback (adapter-computed). */
       quadGain?: readonly [number, number, number];
     };
