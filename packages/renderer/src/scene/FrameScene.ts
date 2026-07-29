@@ -275,28 +275,39 @@ export interface SceneLight3D {
   halfConeRad: number;
 }
 
+/** Where the composition background is painted — see `CompositionInfo.backdrop`. */
+export type BackdropMode = 'frame' | 'viewport';
+
 export interface CompositionInfo {
   id: string;
   size: Size;
   background?: Color;
   /**
-   * Paint the composition's backdrop? Default true.
+   * Where the composition's background colour is painted. Default `'frame'`.
    *
-   * False in the orthographic and custom views. The backdrop is a solid fill of
-   * the comp FRAME drawn through the 2D viewport transform — it is canvas, not
-   * scene geometry, so it cannot be view-transformed and has no meaningful
-   * position once you are looking at the scene from the side. Drawn anyway, it
-   * appeared as a screen-axis-aligned rectangle sitting across the composition
-   * plane while that plane was correctly projected edge-on to a line: two comp
-   * frames, in different places, disagreeing.
+   * `'frame'` fills the comp rect through the 2D viewport transform: the
+   * artboard against the pasteboard, which is what Active Camera wants.
    *
-   * After Effects does the same thing — in a non-camera view the frame is
-   * marked by its outline only, over the uniform viewport background. Making the
-   * fill a view-transformed quad would instead raise a question we do not want
-   * to answer: if the backdrop is geometry, does a 3D layer behind it get
-   * occluded by it?
+   * `'viewport'` fills the whole viewport instead, and is what the six ortho
+   * views and the custom views use. The backdrop is canvas, not scene geometry,
+   * so it cannot be view-transformed; painted as a comp-sized screen-aligned
+   * rect it sat across the composition plane while that plane projected edge-on
+   * to a line — two comp frames, in different places, disagreeing. Painting
+   * NOTHING was the first answer to that and it was worse: a Left view lost the
+   * composition's background colour entirely, so a dark comp and a light one
+   * looked identical and the view read as empty. Filling the viewport keeps the
+   * colour and leaves exactly one frame cue, the projected `comp-frame-3d`
+   * outline drawn by SceneGeometryOverlay.
+   *
+   * Deliberate divergence from After Effects, which renders every view into a
+   * comp-sized frame and crops to it. We render ortho views UNCROPPED (see
+   * `viewIsActiveCamera` in useWorkspace) so you can block out a 3D scene that
+   * extends past the frame — and once the image is bigger than the comp, the
+   * background has to be too.
+   *
+   * Proven by `backgroundPass.test.ts`.
    */
-  backdrop?: boolean;
+  backdrop?: BackdropMode;
 }
 
 export interface FrameScene {

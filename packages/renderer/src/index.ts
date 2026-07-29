@@ -83,6 +83,7 @@ export {
   type RenderableColorMatrix,
   type RenderableEffect,
   type CompositionInfo,
+  type BackdropMode,
   type SceneLight3D,
   emptyScene,
   depthEligible3D,

@@ -15,6 +15,9 @@ import type { MatteProp } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
+import type { BackdropMode } from '@motion/renderer';
+
+export type { BackdropMode };
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
@@ -311,15 +314,12 @@ export interface RenderSnapshot {
    *  preview, alpha:0 in export). `background` is then ignored for compositing. */
   transparent?: boolean;
   /**
-   * Paint the composition backdrop? Default true; false in the orthographic and
-   * custom views, where the frame is marked by its projected outline only.
-   *
-   * The backdrop is a solid fill of the comp frame drawn through the 2D
-   * viewport transform, so it is always screen-axis-aligned — which contradicts
-   * the comp plane the moment you look at the scene from anywhere but the
-   * camera. See CompositionInfo.backdrop for the full reasoning.
+   * Where the composition background is painted. Default `'frame'` (the comp
+   * rect, tracking the 2D pan/zoom camera); `'viewport'` in the orthographic
+   * and custom views, which render uncropped and so need the colour everywhere.
+   * See CompositionInfo.backdrop for the full reasoning.
    */
-  backdrop?: boolean;
+  backdrop?: BackdropMode;
   /**
    * Which channel to display. 'alpha' paints the comp's own alpha as opaque
    * greyscale — the standard way to inspect a matte. Preview-only; export
