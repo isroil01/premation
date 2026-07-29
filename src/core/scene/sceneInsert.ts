@@ -33,7 +33,8 @@ import { makeSvgComponent } from '@core/svg/svgLayer';
 let seq = 0;
 
 export { activeCompRootId } from './activeComp';
-import { activeCompRootId } from './activeComp';
+import { activeCompRootId, activeCompSize } from './activeComp';
+import { computeFit } from '@core/source/fitCommands';
 
 /** Build a fresh scene node of `kind` with sensible default components. */
 export function makeNode(kind: SceneKind, name: string): SceneNode {
@@ -1193,7 +1194,19 @@ async function readSvgText(src: string): Promise<string | null> {
   }
 }
 
-/** Insert an imported media asset (image or video) at native size */
+/**
+ * Insert an imported media asset (image or video), auto-fitted to the frame.
+ *
+ * **Contain, not native.** This placed footage at its stored pixel size, so a
+ * 4K clip dropped into a 1080 composition arrived at 3840×2160 — four times the
+ * frame, centred, with the visible quarter being whatever happened to be in the
+ * middle. The user's first action after every single import was to scale it
+ * down by hand. Native size is still available on demand (Layer ▸ Set to Native
+ * Size); it is just not what an import should guess.
+ *
+ * PAR-corrected via `sourceOf`, so an anamorphic or DV source fits by its
+ * DISPLAY shape rather than its stored one.
+ */
 export async function insertMedia(asset: ImportedAsset): Promise<void> {
   const rootId = activeCompRootId();
   if (asset.type === 'audio') {
@@ -1274,8 +1287,17 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
   }
 
   const kind = asset.type === 'video' ? 'video' : 'image';
-  const width = asset.metadata?.width ?? 400;
-  const height = asset.metadata?.height ?? 400;
+  const storedW = asset.metadata?.width ?? 400;
+  const storedH = asset.metadata?.height ?? 400;
+  // PAR is a property of the FILE, so it applies before any fitting: an
+  // anamorphic source is 1024 wide on screen even though it stores 720.
+  const par = asset.interpret?.par ?? 1;
+  const frame = activeCompSize();
+  const { width, height } = computeFit(
+    { width: Math.round(storedW * par), height: storedH },
+    frame,
+    'contain',
+  );
 
   const node = makeNode(kind, asset.name);
   const transform = node.components.find(c => c.type === 'Transform');

@@ -134,7 +134,18 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
   // Decode anything not already in the AudioEngine's cache.
   await Promise.all(layers.map((l) => audioEngine.load(l.assetId, l.src)));
 
-  const scheduled = layers
+  // `outSec: 0` is the "play to the end of the file" sentinel the live engine
+  // already honours (`l.outSec > 0 ? l.outSec : buffer.duration`). It reaches
+  // here for any voice with no timeline bar and no known duration — including
+  // every video layer imported before its metadata resolved. Resolving it
+  // against the decoded buffer has to happen AFTER the decode above and BEFORE
+  // `audibleWindow`, which would otherwise compute a zero-length clip and drop
+  // the layer from the export while preview played it fine.
+  const resolved = layers.map((l) =>
+    l.outSec > 0 ? l : { ...l, outSec: audioEngine.decodedBuffer(l.assetId)?.duration ?? 0 },
+  );
+
+  const scheduled = resolved
     .map((l) => ({ l, win: audibleWindow(l, startSec, endSec) }))
     .filter((x): x is { l: AudioLayerState; win: NonNullable<ReturnType<typeof audibleWindow>> } => x.win !== null);
   if (scheduled.length === 0) return null;

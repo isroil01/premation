@@ -49,6 +49,7 @@ import type { ParagraphStyle } from '@core/text/textLayout';
 import { readRuns, normalizeRuns } from '@core/text/richText';
 import { resolveTextPath, resolveTextPathMask, flattenMaskPath } from '@core/text/textPath';
 import { bracketFrames } from './videoFrameCache';
+import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import type { PropPath } from '@motion/animation';
@@ -425,6 +426,23 @@ export function buildSnapshot(
         }
         return tt;
       };
+    }
+
+    // Loop the SOURCE (Interpret Footage ▸ Loop). Wrapping source time is the
+    // whole implementation: a bar dragged longer than the file then keeps
+    // reading real frames instead of holding the last one. Applied to the clip
+    // map's output — the bar decides which part of the source timeline we are
+    // on, looping decides what that means once it runs past the end.
+    //
+    // This is where the old Media panel's `loop` prop should always have lived.
+    // As a boolean on the layer it had no defined interaction with clip trim at
+    // all, which is part of why nothing ever read it.
+    if (n) {
+      const source = footageSourceOf(n);
+      if (source && source.loopCount !== 1 && source.durationSec) {
+        const inner = baseMap;
+        baseMap = (tt: number) => applyLoop(inner(tt), source.durationSec, source.loopCount);
+      }
     }
 
     // Posterize Time — quantize the layer's OWN clock to a lower frame rate, so
@@ -1468,7 +1486,17 @@ export function buildSnapshot(
           const remapped = anim.sample(node.id, 'timeRemap', t) ?? anim.sample(node.id, 'precompTime', t);
           return remapOf(node.id)(remapped !== undefined ? remapped : t);
         })();
-        const bracket = bracketFrames(st, fps);
+        // Bracket on the SOURCE's rate when we know it. This was the documented
+        // KNOWN LIMIT in videoFrameCache: nothing in the browser reports a
+        // `<video>`'s frame rate, so the bracket fell back to the composition's
+        // and a 24fps source in a 30fps comp had both bracket times resolve to
+        // the same decoded frame — the blend silently collapsed to nearest-frame
+        // for exactly the mismatched-rate case frame blending exists to fix.
+        // The desktop ffmpeg probe (and Interpret Footage ▸ Conform) now supply
+        // the real rate; `fps` remains the fallback when neither has run, which
+        // is the behaviour every existing project already has.
+        const sourceFps = footageSourceOf(node)?.fps ?? fps;
+        const bracket = bracketFrames(st, sourceFps);
         // Exactly on a frame boundary there is nothing to blend toward.
         return bracket.weight > 1e-3 ? bracket : undefined;
       })(),

@@ -85,6 +85,13 @@ class AudioEngine {
   private ctx: AudioContext | null = null;
   private readonly assets = new Map<string, LoadedAsset>();
   private readonly loading = new Map<string, Promise<LoadedAsset | null>>();
+  /**
+   * Assets whose decode failed — a video with no audio track, or a codec the
+   * platform can't decode. Remembered because `sync` runs on every playhead
+   * change and asks for every referenced asset: without this, a silent video
+   * re-fetched and re-decoded its entire file dozens of times a second.
+   */
+  private readonly undecodable = new Set<string>();
   private readonly voices = new Map<string, ActiveVoice>();
   /** The layer set from the most recent {@link sync} — what `currentLevel`
    *  samples, so it reflects the scene rather than the decode cache. */
@@ -163,12 +170,29 @@ class AudioEngine {
   }
 
   /**
+   * Decode outcome for an asset, for UI that needs to distinguish "still
+   * working" from "there is genuinely no sound here" — a video layer has to be
+   * able to say *why* it is silent.
+   */
+  decodeState(assetId: string): 'decoded' | 'silent' | 'pending' {
+    if (this.assets.has(assetId)) return 'decoded';
+    if (this.undecodable.has(assetId)) return 'silent';
+    return 'pending';
+  }
+
+  /** Forget a failed decode so a replaced/re-encoded source is retried. */
+  retry(assetId: string): void {
+    this.undecodable.delete(assetId);
+  }
+
+  /**
    * Decode an asset into a buffer + waveform (idempotent, cached). Returns null
    * when Web Audio is unavailable or decoding fails.
    */
   async load(assetId: string, src: string): Promise<LoadedAsset | null> {
     const cached = this.assets.get(assetId);
     if (cached) return cached;
+    if (this.undecodable.has(assetId)) return null;
     const inflight = this.loading.get(assetId);
     if (inflight) return inflight;
 
@@ -191,6 +215,11 @@ class AudioEngine {
         this.emit();
         return loaded;
       } catch {
+        // Most common cause by far is a legitimate one: a video file with no
+        // audio track. Remember it so the per-frame `sync` stops asking, and
+        // emit so any inspector showing "checking…" can settle on "no audio".
+        this.undecodable.add(assetId);
+        this.emit();
         return null;
       } finally {
         this.loading.delete(assetId);
@@ -248,7 +277,9 @@ class AudioEngine {
     const ctx = this.context();
     if (!ctx) return;
 
-    // Ensure every referenced asset is (being) decoded.
+    // Ensure every referenced asset is (being) decoded. `load` short-circuits
+    // on both the decoded and the known-undecodable cases, so this stays a map
+    // lookup per layer per frame rather than a re-fetch.
     for (const l of layers) if (!this.assets.has(l.assetId)) void this.load(l.assetId, l.src);
 
     if (!playing) {

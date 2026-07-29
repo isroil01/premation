@@ -11,6 +11,7 @@ describe('AudioEngine', () => {
     (audioEngine as any).ctx = null;
     (audioEngine as any).assets.clear();
     (audioEngine as any).loading.clear();
+    (audioEngine as any).undecodable.clear();
     (audioEngine as any).voices.clear();
     (audioEngine as any).timeSec = 0;
 

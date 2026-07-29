@@ -29,12 +29,13 @@ import {
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useAssetStore } from '@stores/assetStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { isPrecomp } from '@core/scene/precomp';
 import { instanceSourceOf } from '@core/scene/compInstance';
+import { sourceOf } from '@core/source/sourceInfo';
+import { compSourceOf } from '@core/composition/compSizes';
 import type { SceneNode } from '@core/types';
 import { defaultAnimation } from '@motion/animation';
 
@@ -45,27 +46,37 @@ import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import type { Command as TimelineCommand } from '@motion/timeline';
 
 /**
- * The real footage length of a media node in FRAMES, or null when unbounded
- * (shapes/text/images/groups — anything generative). Video reads its asset's
- * probed metadata; audio reads the duration stamped on its Audio component.
- * Media whose duration isn't known yet stays unbounded (graceful).
+ * The intrinsic length of a SOURCE layer in FRAMES, or null when unbounded
+ * (shapes/text/groups — anything generative). A clip bar cannot be dragged past
+ * this, which is what stops you trimming to footage that does not exist.
+ *
+ * Asks `sourceOf` rather than branching on kind, so a **composition placed as a
+ * layer is bounded by its own duration** like any other source. It used to
+ * check `kind === 'video'` and return null for everything else, so a comp
+ * instance was treated as unbounded: you could stretch its bar arbitrarily past
+ * the end of the composition it referenced and the extra frames rendered
+ * nothing. A comp has intrinsic time exactly as footage does.
+ *
+ * Audio still reads the duration stamped on its own component — an audio layer
+ * has no `SourceInfo` because it is not a picture source.
  */
 export function mediaSourceFrames(node: SceneNode, fps: number): number | null {
   const kind = readNodeKind(node);
-  if (kind === 'video') {
-    const t = node.components.find((c) => c.type === 'Transform');
-    const assetId = t?.props.assetId;
-    if (typeof assetId !== 'string') return null;
-    const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
-    const sec = asset?.metadata?.duration;
-    return typeof sec === 'number' && sec > 0 ? Math.max(1, Math.round(sec * fps)) : null;
-  }
   if (kind === 'audio') {
     const a = node.components.find((c) => c.type === 'Audio');
     const sec = a?.props.__duration;
     return typeof sec === 'number' && sec > 0 ? Math.max(1, Math.round(sec * fps)) : null;
   }
-  return null;
+  // Stills are unbounded on purpose: a photo can hold for any length.
+  if (kind === 'image' || kind === 'svg') return null;
+
+  const source = sourceOf(node, compSourceOf);
+  const sec = source?.durationSec;
+  if (!source || typeof sec !== 'number' || sec <= 0) return null;
+  // A looping source is as long as its loops. `loopCount: 0` (forever) is
+  // unbounded by definition.
+  if (source.loopCount === 0) return null;
+  return Math.max(1, Math.round(sec * source.loopCount * fps));
 }
 
 export interface TimelineMarkerView {

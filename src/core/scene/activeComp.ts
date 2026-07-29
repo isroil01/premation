@@ -23,3 +23,15 @@ export function activeCompRootId(): string {
   if (compId && defaultSceneGraph.getNode(compId)) return compId;
   return defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
 }
+
+/**
+ * Pixel size of the composition being edited — the FRAME a fit command or an
+ * import fits into. Falls back to 1920×1080 only when the tab points at a comp
+ * with no record, which healthy documents never do.
+ */
+export function activeCompSize(): { width: number; height: number } {
+  const proj = useProjectStore.getState();
+  const compId = proj.tabs[proj.activeTabId ?? '']?.compositionId ?? '';
+  const c = proj.comps[compId];
+  return c ? { width: c.width, height: c.height } : { width: 1920, height: 1080 };
+}

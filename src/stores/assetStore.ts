@@ -5,6 +5,8 @@ import { api, isAuthenticated } from '@core/api/client';
 import { AssetDatabase } from '@core/services/AssetDatabase';
 import { isLocalFirst } from '@core/config/flags';
 import { importLocalAsset } from '@core/assets/local/importLocalAsset';
+import type { FootageInterpretation } from '@core/source/sourceInfo';
+import { bumpScene } from '@stores/sceneStore';
 
 export interface ImportedAsset {
   id: string;
@@ -24,7 +26,20 @@ export interface ImportedAsset {
     width?: number;
     height?: number;
     duration?: number;
+    /**
+     * Real source frame rate. Only the desktop ffmpeg probe can fill this in —
+     * nothing in the browser reports a `<video>`'s rate — so it stays undefined
+     * on web imports and every reader must handle that rather than substituting
+     * the composition's rate.
+     */
+    fps?: number;
   };
+  /**
+   * Per-FILE reinterpretation (frame rate conform, pixel aspect, alpha, loop).
+   * Lives on the asset rather than the layer so changing it updates every layer
+   * using this footage at once. See `@core/source/sourceInfo`.
+   */
+  interpret?: FootageInterpretation;
 }
 
 /** Longest edge (px) of a generated panel thumbnail — comfortably sharp for the
@@ -128,6 +143,14 @@ interface AssetStoreActions {
   removeFolder: (id: string) => void;
   /** Move an asset into a folder (null = root). */
   moveAssetToFolder: (assetId: string, folderId: string | null) => void;
+  /**
+   * Reinterpret a FILE — frame-rate conform, pixel aspect, alpha, loop count.
+   * Patch-merged, and it applies to every layer using this asset at once, which
+   * is the whole point: a mis-tagged import can be corrected after it has been
+   * cut with. Pass a field as `undefined` to clear it back to the file's own
+   * value.
+   */
+  setInterpretation: (assetId: string, patch: FootageInterpretation) => void;
   /** Replace the local list with the signed-in user's cloud assets. */
   loadFromCloud: () => Promise<void>;
   /** Initialize local assets hydrated from IndexedDB. */
@@ -141,6 +164,11 @@ interface AssetStoreActions {
 // folderId, so we re-apply the saved assignment map after every load.
 const FOLDERS_KEY = 'motion-editor.assetFolders.v1';
 const ASSIGN_KEY = 'motion-editor.assetFolderAssignments.v1';
+// Interpretation rides the same client-side persistence as folder assignments,
+// and for the same reason: it is a statement the editor makes ABOUT a file, and
+// neither the cloud schema nor the IndexedDB record carries it. Losing it on
+// reload would silently un-conform footage that had already been cut with.
+const INTERPRET_KEY = 'motion-editor.assetInterpretations.v1';
 
 function loadFolders(): AssetFolder[] {
   try {
@@ -178,13 +206,39 @@ function saveAssignments(assets: ImportedAsset[]): void {
   }
 }
 
-/** Overlay the saved folder assignments onto a freshly loaded asset list. */
+function loadInterpretations(): Record<string, FootageInterpretation> {
+  try {
+    const raw = localStorage.getItem(INTERPRET_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, FootageInterpretation>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveInterpretations(assets: ImportedAsset[]): void {
+  try {
+    const map: Record<string, FootageInterpretation> = {};
+    for (const a of assets) if (a.interpret && Object.keys(a.interpret).length > 0) map[a.id] = a.interpret;
+    localStorage.setItem(INTERPRET_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Overlay the saved folder assignments and interpretations onto a freshly
+ *  loaded asset list. */
 function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): ImportedAsset[] {
   const map = loadAssignments();
+  const interp = loadInterpretations();
   const validFolder = new Set(folders.map((f) => f.id));
   return assets.map((a) => {
     const fid = map[a.id];
-    return { ...a, folderId: fid && validFolder.has(fid) ? fid : a.folderId ?? null };
+    const i = interp[a.id];
+    return {
+      ...a,
+      folderId: fid && validFolder.has(fid) ? fid : a.folderId ?? null,
+      ...(i ? { interpret: i } : {}),
+    };
   });
 }
 
@@ -467,12 +521,58 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       saveAssignments(get().assets);
     },
 
+    setInterpretation: (assetId, patch) => {
+      set((s) => {
+        const a = s.assets.find((x) => x.id === assetId);
+        if (!a) return;
+        const next: FootageInterpretation = { ...(a.interpret ?? {}) };
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === undefined) delete (next as Record<string, unknown>)[k];
+          else (next as Record<string, unknown>)[k] = v;
+        }
+        a.interpret = next;
+      });
+      saveInterpretations(get().assets);
+      // Every layer using this file just changed size/rate/alpha, so the
+      // renderer's per-frame caches and the timeline's duration bounds are both
+      // stale. Bumping the scene is what makes the change visible everywhere at
+      // once rather than on the next unrelated edit.
+      bumpScene();
+    },
+
+    /**
+     * The whole cloud library, one page at a time.
+     *
+     * This asked for `{limit: 100}` once and treated the answer as everything,
+     * so account number 101 onwards simply did not exist in the editor — no
+     * error, no truncation notice, just missing footage in the Assets panel.
+     * The store is the editor's asset index (documents reference assets by id),
+     * so it does need all of them; what it must not do is pretend one page is
+     * all of them.
+     */
     loadFromCloud: async () => {
       if (!isAuthenticated()) return;
+      const PAGE = 100;
+      /** Backstop against a runaway loop, not a real ceiling on a library. */
+      const MAX_PAGES = 50;
       try {
-        const cloud = (await api.listAssets(undefined, { limit: 100 })).items;
+        const all: ImportedAsset[] = [];
+        let offset = 0;
+        let total = 0;
+        for (let i = 0; i < MAX_PAGES; i++) {
+          const page = await api.listAssets(undefined, { limit: PAGE, offset });
+          all.push(...page.items);
+          total = page.total;
+          offset += page.items.length;
+          if (page.items.length === 0 || all.length >= total) break;
+        }
+        if (all.length < total) {
+          console.warn(
+            `[assets] loaded ${all.length} of ${total} cloud assets (page cap reached)`,
+          );
+        }
         set((s) => {
-          s.assets = applyAssignments(cloud, s.folders);
+          s.assets = applyAssignments(all, s.folders);
         });
       } catch {
         /* offline — keep local list */

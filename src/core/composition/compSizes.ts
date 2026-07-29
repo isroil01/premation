@@ -15,9 +15,24 @@
  */
 
 import { useProjectStore } from '@stores/projectStore';
+import type { CompSourceLookup } from '@core/source/sourceInfo';
 
 export function compSizeOf(compRootId: string): { width: number; height: number } | undefined {
   const c = useProjectStore.getState().comps[compRootId];
   return c ? { width: c.width, height: c.height } : undefined;
 }
 
+/**
+ * The same lookup, widened to everything that makes a composition a SOURCE —
+ * its rate and duration as well as its size. `compSizeOf` is now the size-only
+ * projection of this, kept because the renderer's injection point only ever
+ * needed the size.
+ *
+ * This is what lets a comp instance answer "how long are you?" — the fact whose
+ * absence made compositions unbounded on the timeline while footage was
+ * correctly bounded by its own length.
+ */
+export const compSourceOf: CompSourceLookup = (compRootId) => {
+  const c = useProjectStore.getState().comps[compRootId];
+  return c ? { width: c.width, height: c.height, fps: c.fps, durationSeconds: c.durationSeconds } : undefined;
+};
