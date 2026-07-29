@@ -2039,6 +2039,14 @@ export function buildSnapshot(
             });
             const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, sliceMat);
             const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+            // Behind the near plane ⇒ drop this slice, exactly as the layer
+            // origin is dropped above. `projectPoint` CLAMPS rather than
+            // rejects, so an unguarded slice resolves to focalLength/1 — a
+            // ~2666× scale on a 1920-wide comp, i.e. one slice smeared opaque
+            // across and far beyond the frame. The layer ORIGIN can sit safely
+            // in front while the extruded body sweeps through the near plane,
+            // so the origin's guard does not cover this.
+            if (O.clipped) continue;
             const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
             const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
             const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
@@ -2107,6 +2115,10 @@ export function buildSnapshot(
               f.m,
             );
             const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+            // Same near-plane rule as the slices and the layer origin: a face
+            // whose own origin is behind the camera must not be drawn, or the
+            // clamped divide flings it across the frame at focal-length scale.
+            if (O.clipped) continue;
             const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
             const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
             const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
@@ -2231,6 +2243,13 @@ export function buildSnapshot(
           });
           const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, gm);
           const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+          // A per-character glyph is its OWN plane in depth: tumbling the text
+          // block, or animating glyph z, sends individual glyphs behind the
+          // camera while the text layer's origin stays comfortably in front.
+          // Unguarded, such a glyph came back at focal-length scale (2666× on a
+          // 1920 comp) and painted over the whole composition — the "3D text
+          // renders wrong while 2D text is fine" symptom.
+          if (O.clipped) continue;
           const GX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
           const GY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
           const gfm = [GX.x - O.x, GX.y - O.y, GY.x - O.x, GY.y - O.y, O.x, O.y] as const;
