@@ -14,7 +14,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
 import { activeCameraNode, readSceneCamera } from '@core/scene/camera3d';
 import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
@@ -42,8 +42,10 @@ export const AxisWidgetOverlay: React.FC = () => {
   const time = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
 
   // Visible only when the comp actually has 3D content.
+  // Comp-scoped: another composition's 3D layers must not make THIS comp's
+  // viewport claim it is 3D.
   let has3D = false;
-  for (const n of flattenScene(defaultSceneGraph)) {
+  for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
     const k = readNodeKind(n);
     if (k === 'camera') continue;
     if (k !== 'light' && is3DEnabled(n)) has3D = true;

@@ -184,8 +184,9 @@ export function readSceneCamera(
   sample?: CameraSample,
   rootId?: string,
   worldOf?: CameraWorldOf,
+  filter?: ActiveCameraFilter,
 ): Camera3D {
-  const node = activeCameraNode(graph, rootId);
+  const node = activeCameraNode(graph, rootId, filter);
   return node
     ? cameraFromNode(node, width, height, sample, worldOf)
     : Project3D.defaultCamera(width, height);
@@ -198,13 +199,48 @@ export function readSceneCamera(
  * independently, so any change to the selection rule could leave depth of field
  * being read off a different camera than the one doing the projecting.
  */
-export function activeCameraNode(graph: SceneGraph, rootId?: string): SceneNode | null {
+/**
+ * Extra conditions a camera must meet to be the active one.
+ *
+ * `isLiveAt` is the layer's in/out gate — the same clip-bar test the renderer
+ * applies to ordinary layers. It is injected rather than read here because the
+ * renderer already holds a resolved timeline controller for the frame, and the
+ * viewport chrome samples at the playhead; both must reach the same verdict.
+ */
+export interface ActiveCameraFilter {
+  /** False ⇒ this camera's layer is not live at the current time. */
+  isLiveAt?: (nodeId: string) => boolean;
+}
+
+/**
+ * THE camera-selection rule. Every consumer goes through this — renderer,
+ * viewport chrome, gizmos and the C tool alike.
+ *
+ * After Effects: the TOPMOST enabled camera whose layer is live at the current
+ * time wins. All three parts matter, and only the first was implemented:
+ *
+ *   • **Topmost, not first.** Creation order is paint order and paint order is
+ *     back-to-front, so "first found" is the BOTTOM-most camera. `findCameraNav`
+ *     took the first while the renderer took the last, so with two cameras the C
+ *     tool drove one camera while the user looked through another.
+ *   • **Enabled.** A hidden camera is not a camera you are looking through.
+ *   • **Live now.** A camera trimmed to the second half of the comp must not
+ *     steer the first half.
+ */
+export function activeCameraNode(
+  graph: SceneGraph,
+  rootId?: string,
+  filter?: ActiveCameraFilter,
+): SceneNode | null {
   const nodes = rootId ? flattenComposition(graph, rootId) : flattenScene(graph);
   // Last, not first. Reverse rather than sort: paint order is the list order and
   // the topmost layer is the final one.
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]!;
-    if (readNodeKind(node) === 'camera') return node;
+    if (readNodeKind(node) !== 'camera') continue;
+    if (node.visible === false) continue;
+    if (filter?.isLiveAt && !filter.isLiveAt(node.id)) continue;
+    return node;
   }
   return null;
 }
@@ -286,8 +322,9 @@ export function readSceneDof(
   height: number,
   sample?: CameraSample,
   rootId?: string,
+  filter?: ActiveCameraFilter,
 ): DofConfig | null {
-  const active = activeCameraNode(graph, rootId);
+  const active = activeCameraNode(graph, rootId, filter);
   for (const node of active ? [active] : []) {
     let strength: number | undefined;
     let focus: number | undefined;

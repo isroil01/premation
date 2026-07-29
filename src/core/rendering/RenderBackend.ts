@@ -305,6 +305,16 @@ export interface RenderSnapshot {
    *  preview, alpha:0 in export). `background` is then ignored for compositing. */
   transparent?: boolean;
   /**
+   * Paint the composition backdrop? Default true; false in the orthographic and
+   * custom views, where the frame is marked by its projected outline only.
+   *
+   * The backdrop is a solid fill of the comp frame drawn through the 2D
+   * viewport transform, so it is always screen-axis-aligned — which contradicts
+   * the comp plane the moment you look at the scene from anywhere but the
+   * camera. See CompositionInfo.backdrop for the full reasoning.
+   */
+  backdrop?: boolean;
+  /**
    * Which channel to display. 'alpha' paints the comp's own alpha as opaque
    * greyscale — the standard way to inspect a matte. Preview-only; export
    * always writes real colour.

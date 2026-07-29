@@ -19,7 +19,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
 import { activeCameraNode, readSceneCamera } from '@core/scene/camera3d';
 import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
@@ -100,7 +100,9 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
    */
   const scene3d = (() => {
     if (mode !== 'active' || draft3d) return true;
-    for (const n of flattenScene(defaultSceneGraph)) {
+    // Comp-scoped: a camera or 3D layer in a DIFFERENT composition must not
+    // switch this one's reference geometry on.
+    for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
       const k = readNodeKind(n);
       if (k === 'camera') return true;
       if (k !== 'light' && is3DEnabled(n)) return true;

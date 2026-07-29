@@ -250,8 +250,32 @@ helper switches every 3D-capable layer in the *active* composition.
 shadows — with per-layer **Casts Shadows** and **Accepts Lights** switches, plus shininess and
 per-fragment shading.
 
+**Parenting a camera or a light** works exactly like parenting any other layer, which is what makes the
+standard null-object rig possible: parent a camera to a Null, animate the Null, and the shot follows.
+Binding a camera or light to a parent never moves it on screen — its values are simply reinterpreted in
+the parent's space from that point on.
+
+**Which camera you look through:** the **topmost enabled** Camera layer whose in/out range covers the
+current frame. Hide it, trim it away, or put another camera above it and the next one down takes over.
+A camera belongs to its own composition and has no effect on any other.
+
+**Point of Interest follows the parent.** A camera's (and a spot light's) Point of Interest is a
+parent-space property, just like its Position — so the whole rig travels together and a shot holds its
+subject as the Null moves. It is *not* world-locked: if you want a camera to keep staring at a fixed
+point in the composition while its rig moves, put an expression on the Point of Interest. This is the
+one convention you cannot infer from the UI, and the two behaviours look very different once a rig
+starts moving.
+
+**Camera tools only move 3D layers.** In the Active Camera view the camera tools (orbit / track /
+dolly) write to the camera layer itself, and keyframe it when Auto-Keyframe is on. In an orthographic
+or custom view they move *the view only* and leave every scene node untouched. A composition with no 3D
+layer has nothing for a camera to move, so the tools say so rather than doing nothing silently.
+
 **Also:** extrusion with bevel depth, per-face materials, face picking/selection, per-character 3D for
-text, 3D view presets (`1` active camera, `2` last custom view), and a 3D gizmo overlay.
+text, 3D view presets (`1` active camera, `2` last custom view), and a 3D gizmo overlay. In the
+orthographic and custom views the composition frame is drawn as a dashed outline over the plain
+viewport background — the solid backdrop is only painted in the camera view, because a flat fill can't
+be shown edge-on the way the frame itself is.
 
 ---
 
@@ -645,6 +669,23 @@ Stated plainly so you don't plan around something that isn't there.
 5. **No NLE editing model.** No ripple delete/insert, no clip-to-clip transitions on a timeline (you
    cross-fade with opacity keyframes), no speed-ramp UI (time remap covers it), no stabilization or
    motion tracking, no captions/subtitles, and every export re-encodes every frame.
+6. **Cameras and lights can't be dragged in the viewport.** Their wireframes — the frustum cone, the
+   spot cone, the falloff sphere, the Point of Interest crosshair — are drawn accurately in every view
+   but are not clickable. Move a camera or light with the camera tools, the 3D transform gizmo while
+   the layer is selected, or the inspector fields. In particular there is no drag handle for the Point
+   of Interest yet, so aiming a two-node camera or a spot means typing its Target values.
+7. **The camera wireframe is sized in composition pixels, not screen pixels.** It therefore shrinks as
+   you zoom out, and at low zoom on a large composition the body and lens stub get small enough that
+   which way the camera is pointing is hard to read. The geometry is correct and does turn with the
+   camera — it is only the on-screen size that doesn't hold.
+8. **The parent dropdown lists layers from other compositions.** Parenting is comp-scoped in every
+   other respect, but the eligible-parent list is built from the whole project, so a long project shows
+   parents that make no sense for the layer you're editing. Picking one produces a link across a
+   composition boundary that nothing else in the app expects.
+9. **A 3D layer whose origin passes behind the camera disappears completely.** That matches After
+   Effects — a layer is a flat plane and there is no per-fragment near-plane clipping — but the whole
+   layer pops out at once rather than being clipped progressively, and its wireframe box goes with it,
+   so there is no on-screen cue that it is still in the scene just behind you.
 
 Also worth knowing: video decoding uses standard HTML video seeking rather than a frame-exact decoder,
 so scrubbing heavy 4K footage is slow and frame blending degrades when the source frame rate differs

@@ -9,13 +9,13 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { is3DEnabled } from '@core/scene/threeD';
-import { defaultFocalLength } from '@core/scene/camera3d';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
+import { activeCameraNode, defaultFocalLength } from '@core/scene/camera3d';
+import { applyNodePropsKeyframed } from '@core/workspace/ports';
 import { bumpScene } from '@stores/sceneStore';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
-import type { SceneNode } from '@core/types';
 import type { Camera3D, OrthoView } from '@motion/scene';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
@@ -47,24 +47,23 @@ export interface CameraNavTarget {
  * flat scene moves nothing).
  */
 export function findCameraNav(): CameraNavTarget | null {
-  let camNode: SceneNode | undefined;
-  let any3D = false;
-  for (const n of flattenScene(defaultSceneGraph)) {
-    const k = readNodeKind(n);
-    if (k === 'camera') {
-      if (!camNode) camNode = n;
-      continue;
-    }
-    if (k !== 'light' && is3DEnabled(n)) any3D = true;
-  }
-  if (!camNode || !any3D) return null;
+  const rootId = activeCompRootId();
+  // THE shared selection rule — topmost enabled camera, not the first one found.
+  //
+  // This used to take the FIRST camera in traversal order while the renderer
+  // took the LAST. Paint order is back-to-front, so "first" is the BOTTOM-most
+  // camera: with two cameras in a comp the C tool drove one camera while the
+  // user watched through another, and every drag looked like it did nothing.
+  const camNode = activeCameraNode(defaultSceneGraph, rootId);
+  if (!camNode || !compHasAny3D()) return null;
   const t = camNode.components.find((c) => c.type === 'Transform');
   return t ? { nodeId: camNode.id, transId: t.id } : null;
 }
 
-/** True when the ACTIVE scene has any Camera layer at all (3D or not). */
+/** True when the ACTIVE COMPOSITION has any Camera layer at all (3D or not). */
 export function sceneHasCamera(): boolean {
-  return flattenScene(defaultSceneGraph).some((n) => readNodeKind(n) === 'camera');
+  return flattenComposition(defaultSceneGraph, activeCompRootId())
+    .some((n) => readNodeKind(n) === 'camera');
 }
 
 /**
@@ -89,16 +88,38 @@ export function readCamProp(nodeId: string, prop: string): number | undefined {
   return undefined;
 }
 
+/**
+ * Write one camera prop. Prefer {@link writeCamProps} when a gesture changes
+ * several at once — a single call is a single undo entry.
+ */
 export function writeCamProp(nav: CameraNavTarget, prop: string, value: number): void {
-  updateNodeComponentProp(defaultSceneGraph, nav.nodeId, nav.transId, prop, value);
+  writeCamProps(nav, { [prop]: value });
+}
+
+/**
+ * Write camera props through the SAME dual path the layer gizmo uses: the
+ * static base prop always, plus a keyframe when the prop is already animated or
+ * Auto-Keyframe is on.
+ *
+ * This used to call `updateNodeComponentProp` directly — base props only — so
+ * the camera tools could move a camera but never animate one. With
+ * Auto-Keyframe on, dragging a layer's gizmo keyframed and dragging the camera
+ * did not, which is not a distinction After Effects makes.
+ *
+ * All of a gesture's props go in ONE call so orbit (yaw + pitch) and track
+ * (x + y + POI) each collapse to a single undo entry instead of two or four.
+ */
+export function writeCamProps(nav: CameraNavTarget, values: Readonly<Record<string, number>>): void {
+  // Merge key stable for the gesture: the playhead cannot move mid-drag, so
+  // every write in one drag coalesces.
+  applyNodePropsKeyframed(nav.nodeId, values, `camnav:${nav.nodeId}`);
 }
 
 /** Orbit: swing the camera around its point of interest. Sensitivity 0.4°/px. */
 export function orbitCameraBy(nav: CameraNavTarget, dx: number, dy: number): void {
   const yaw = (readCamProp(nav.nodeId, 'orbitYaw') ?? 0) + dx * 0.4;
   const pitch = Math.max(-89, Math.min(89, (readCamProp(nav.nodeId, 'orbitPitch') ?? 0) + dy * 0.4));
-  writeCamProp(nav, 'orbitYaw', yaw);
-  writeCamProp(nav, 'orbitPitch', pitch);
+  writeCamProps(nav, { orbitYaw: yaw, orbitPitch: pitch });
   bumpScene();
 }
 
@@ -118,12 +139,14 @@ export function trackCameraBy(
   const s = viewScale || 1;
   const cx = readCamProp(nav.nodeId, 'x') ?? compWidth / 2;
   const cy = readCamProp(nav.nodeId, 'y') ?? compHeight / 2;
-  writeCamProp(nav, 'x', cx - dx / s);
-  writeCamProp(nav, 'y', cy - dy / s);
   const poiX = readCamProp(nav.nodeId, 'poiX');
   const poiY = readCamProp(nav.nodeId, 'poiY');
-  if (poiX !== undefined) writeCamProp(nav, 'poiX', poiX - dx / s);
-  if (poiY !== undefined) writeCamProp(nav, 'poiY', poiY - dy / s);
+  writeCamProps(nav, {
+    x: cx - dx / s,
+    y: cy - dy / s,
+    ...(poiX !== undefined ? { poiX: poiX - dx / s } : {}),
+    ...(poiY !== undefined ? { poiY: poiY - dy / s } : {}),
+  });
   bumpScene();
 }
 
@@ -149,13 +172,46 @@ export function dollyCameraBy(nav: CameraNavTarget, delta: number, compWidth: nu
 // custom views. Custom-view nav needs NO camera layer; its only gate is that
 // the comp has something 3D to look at.
 
-/** True when the ACTIVE scene has at least one 3D content layer. */
-export function sceneHasAny3D(): boolean {
-  for (const n of flattenScene(defaultSceneGraph)) {
+/**
+ * True when the ACTIVE COMPOSITION has at least one 3D CONTENT layer.
+ *
+ * Cameras and lights carry depth props but are not layers a camera can move, so
+ * they never count — a comp holding only a camera and a light has nothing to
+ * navigate around.
+ */
+export function compHasAny3D(): boolean {
+  for (const n of flattenComposition(defaultSceneGraph, activeCompRootId())) {
     const k = readNodeKind(n);
     if (k !== 'camera' && k !== 'light' && is3DEnabled(n)) return true;
   }
   return false;
+}
+
+/** @deprecated Renamed to {@link compHasAny3D} — it was never scene-wide in
+ *  intent, and the old name invited exactly the whole-project search that made
+ *  one composition's contents enable navigation in another. */
+export const sceneHasAny3D = compHasAny3D;
+
+/**
+ * Why camera navigation is unavailable right now, phrased as the next step —
+ * or null when it IS available.
+ *
+ * The inertness itself is correct: a camera only moves layers whose 3D switch
+ * is on, in After Effects too. Being inert *silently* is the bug. A user who
+ * adds a camera to a flat comp, picks the camera tool and drags has no way to
+ * tell the difference between "this tool does nothing here" and "this tool is
+ * broken", and reported it as the latter.
+ */
+export function describeNavUnavailable(): string | null {
+  if (findNavTarget()) return null;
+  const mode = useGuidesStore.getState().camera3dMode;
+  if (!compHasAny3D()) {
+    return mode === 'active' && !sceneHasCamera()
+      ? 'Camera tools need a Camera layer and a 3D layer — add a camera, then switch a layer to 3D.'
+      : 'Camera tools need something 3D to move around — switch a layer to 3D with its 3D toggle.';
+  }
+  // 3D content exists, so in 'active' the missing piece is the camera itself.
+  return 'Camera tools need a Camera layer in this composition — Layer ▸ New ▸ Camera.';
 }
 
 /** What viewport navigation writes to: a scene camera node, or a stored view. */

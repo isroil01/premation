@@ -17,6 +17,11 @@ export class BackgroundPass extends RenderPass {
 
   execute(ctx: RenderPassContext): void {
     const { scene, viewport, services } = ctx;
+    // Non-camera views draw no backdrop — see CompositionInfo.backdrop. The
+    // fill goes through `mvpFor`, the 2D viewport transform, so it is always a
+    // screen-axis-aligned rectangle; in a Left view that contradicts the comp
+    // plane, which the overlay correctly draws edge-on as a line.
+    if (scene.composition.backdrop === false) return;
     const bg = scene.composition.background ?? Color.of(1, 1, 1, 1);
     const rect = { x: 0, y: 0, width: scene.composition.size.width, height: scene.composition.size.height };
     emitSolid(services.commands, mvpFor(viewport, modelFromRect(rect)), bg, 1, 'normal');

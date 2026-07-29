@@ -13,7 +13,8 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { canBe3D, is3DEnabled, readNode3D } from '@core/scene/threeD';
 import { readNodeLight } from '@core/scene/light';
 import {
@@ -21,7 +22,11 @@ import {
   readCameraFocusDistance,
   readCameraPoi,
 } from '@core/scene/camera3d';
-import { nodeWorld3d } from '@core/scene/nodeMatrix';
+import {
+  deviceWorldPosition,
+  nodeWorldWithParents3d,
+  toWorldPointAt,
+} from '@core/scene/liveWorld3d';
 import { readGeometry, localBounds } from '@core/workspace/geometry';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { defaultAnimation } from '@motion/animation';
@@ -58,14 +63,24 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
       id === nodeId ? values.get(prop) : undefined;
   };
 
-  for (const node of flattenScene(defaultSceneGraph)) {
+  // Comp-scoped, not scene-wide. In After Effects a camera or light belongs to
+  // its composition and affects nothing outside it — there is no scene-wide
+  // anything. Walking the whole project drew every other composition's cameras
+  // and lights into this one's viewport.
+  for (const node of flattenComposition(defaultSceneGraph, activeCompRootId())) {
     const kind = readNodeKind(node);
     const selected = selectedIds.has(node.id);
 
     if (kind === 'camera') {
       if (node.id === opts.viewingThroughCameraId) continue;
       const sample = sampleOf(node.id);
-      const cam = cameraFromNode(node, compWidth, compHeight, sample);
+      // `toWorldPointAt` is the SAME parent lift the renderer hands
+      // `cameraFromNode`. Without it the gizmo resolved the camera's raw local
+      // props, so every parented camera's frustum and chassis were drawn at the
+      // position the rig had moved it away from.
+      const cam = cameraFromNode(node, compWidth, compHeight, sample, (id, p) =>
+        toWorldPointAt(id, time, p),
+      );
       out.push(
         SceneGizmos.buildCameraGizmo({
           nodeId: node.id,
@@ -73,7 +88,15 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
           orientation: cam.orientation,
           focalLength: cam.focalLength,
           focusDistance: readCameraFocusDistance(node, compWidth, sample),
-          poi: readCameraPoi(node, compWidth, compHeight, sample),
+          // `readCameraPoi` returns null for a ONE-node camera, and that
+          // distinction has to survive the parent lift — defaulting the POI
+          // would draw a target crosshair on every camera that never had one.
+          // When it exists it rides the parent transform with the eye (see
+          // `liveWorld3d`'s POI convention note).
+          poi: (() => {
+            const local = readCameraPoi(node, compWidth, compHeight, sample);
+            return local ? toWorldPointAt(node.id, time, local) : null;
+          })(),
           compWidth,
           compHeight,
           selected,
@@ -85,21 +108,20 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
     if (kind === 'light') {
       const values = defaultAnimation.evaluateNode(node.id, getRemappedTime(node.id, time));
       const lt = readNodeLight(node);
-      const g = readGeometry(node);
-      // Same trap the renderer documents twice: `values` holds ANIMATED props
-      // only, so falling back to a literal pins un-keyframed lights to the
-      // origin / to z = 0 instead of where the user actually put them.
-      const position = {
-        x: values.get('x') ?? g?.x ?? compWidth / 2,
-        y: values.get('y') ?? g?.y ?? compHeight / 2,
-        z: values.get('z') ?? readNode3D(node).z,
-      };
+      // Parent-aware, through the same resolver the renderer's wash, Lambert
+      // shading and shadow light all use. This read the raw LOCAL props, so a
+      // light on a null rig had its cone and falloff sphere drawn where the
+      // light used to be while the pixels it produced came from somewhere else.
+      const position = deviceWorldPosition(node, time);
+      // The aim rides the same parent transform as the origin — otherwise
+      // parenting a spot to a null swings its source while its target stays
+      // nailed to a fixed comp point, i.e. the cone shears open as the rig moves.
       const poi = lt.poi
-        ? {
+        ? toWorldPointAt(node.id, time, {
             x: values.get('poiX') ?? lt.poi.x,
             y: values.get('poiY') ?? lt.poi.y,
             z: values.get('poiZ') ?? lt.poi.z,
-          }
+          })
         : null;
       out.push(
         SceneGizmos.buildLightGizmo({
@@ -122,7 +144,11 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
     if (!canBe3D(node) || !is3DEnabled(node)) continue;
     if (node.visible === false) continue;
 
-    const world = nodeWorld3d(node, time);
+    // Parent chain INCLUDED. `nodeWorld3d` composes a node's own local
+    // transform only, so every parented 3D layer's bounding box was drawn at
+    // its unparented position — the same drift as the camera and light gizmos,
+    // in a third place.
+    const world = nodeWorldWithParents3d(node, time);
     const g = readGeometry(node);
     if (!world || !g) continue;
     const values = defaultAnimation.evaluateNode(node.id, getRemappedTime(node.id, time));

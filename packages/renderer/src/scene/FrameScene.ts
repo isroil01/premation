@@ -237,6 +237,15 @@ export function depthEligible3D(r: Renderable): boolean {
   if (!r.threeD) return false;
   if (r.matteSource || r.matte || r.adjustment || r.precomp) return false;
   if (r.advancedBlend && r.advancedBlend > 0) return false;
+  // GLASS / backdrop blur read what is composited BENEATH the layer, which the
+  // depth pass cannot supply: it draws into the scene target it would have to
+  // sample. render3DGroup has no backdrop branch, so a 3D glass panel used to
+  // fall through to the plain solid draw and render as an opaque white card —
+  // the style silently gone the moment the layer's 3D switch was flipped.
+  // Excluded for exactly the reason `advancedBlend` is (it samples the backdrop
+  // too): the affine painter path renders it correctly, at the cost of
+  // per-pixel depth intersection with its 3D siblings.
+  if (r.glass || (r.backdropBlur && r.backdropBlur > 0)) return false;
   if (r.motionSamples && r.motionSamples.length > 1) return false;
   if (r.deformedMesh) return false;
   return true;
@@ -263,6 +272,24 @@ export interface CompositionInfo {
   id: string;
   size: Size;
   background?: Color;
+  /**
+   * Paint the composition's backdrop? Default true.
+   *
+   * False in the orthographic and custom views. The backdrop is a solid fill of
+   * the comp FRAME drawn through the 2D viewport transform — it is canvas, not
+   * scene geometry, so it cannot be view-transformed and has no meaningful
+   * position once you are looking at the scene from the side. Drawn anyway, it
+   * appeared as a screen-axis-aligned rectangle sitting across the composition
+   * plane while that plane was correctly projected edge-on to a line: two comp
+   * frames, in different places, disagreeing.
+   *
+   * After Effects does the same thing — in a non-camera view the frame is
+   * marked by its outline only, over the uniform viewport background. Making the
+   * fill a view-transformed quad would instead raise a question we do not want
+   * to answer: if the backdrop is geometry, does a 3D layer behind it get
+   * occluded by it?
+   */
+  backdrop?: boolean;
 }
 
 export interface FrameScene {

@@ -755,6 +755,28 @@ export function buildSnapshot(
   // are sampled at the current (remapped) time via valuesOf, so animating the
   // camera pans / dollies / zooms the whole 3D scene; an unkeyframed camera
   // resolves from its static props exactly as before.
+  /**
+   * Is this node's layer live at the current frame? (AE in/out points.)
+   *
+   * Hoisted out of the layer walk below so the CAMERA selection can apply the
+   * same test: After Effects picks the topmost *live* camera, so a camera
+   * trimmed to the back half of the comp must not steer the front half. Sharing
+   * the predicate is the point — a camera judged live by one rule and drawn by
+   * another is the class of bug this file keeps re-learning.
+   */
+  const isLiveAt = (nodeId: string): boolean => {
+    const nodeClips = controller.getLayersForNode(nodeId);
+    if (nodeClips.length === 0) return true;
+    const rawFrame = Math.round(t * fps);
+    // Clip spans are end-EXCLUSIVE; clamp so a full-length layer doesn't blink
+    // out at the exactly-end playhead. Only meaningful when the caller gave us a
+    // duration (see the long note at the layer-walk call site).
+    const gateFrame = comp.durationSeconds !== undefined
+      ? Math.min(rawFrame, Math.max(0, Math.round(comp.durationSeconds * fps) - 1))
+      : rawFrame;
+    return nodeClips.some((l) => l.isActiveAt(gateFrame));
+  };
+
   const cameraMode = comp.camera3dMode ?? 'active';
   // The six axis views project orthographically (no perspective, no scene
   // camera); 'active' uses the scene's Camera layer. One `project` closure so
@@ -775,6 +797,7 @@ export function buildSnapshot(
         // The camera is a layer: it follows its parent chain like everything
         // else, through the renderer's own per-frame caches.
         toWorldPoint,
+        { isLiveAt },
       );
   const project = orthoView
     ? (p: { x: number; y: number; z: number }) => Project3D.projectOrtho(p, orthoView, comp.width, comp.height)
@@ -786,7 +809,7 @@ export function buildSnapshot(
   // Draft 3D skips DOF entirely (dof = null ⇒ withDof/dofEffectOf no-op).
   const dof = orthoView || customCamera || comp.draft3d
     ? null
-    : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p), comp.rootId);
+    : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p), comp.rootId, { isLiveAt });
   // `depth: undefined` = this layer is not in the camera's space (a 2D layer),
   // so it is never defocused.
   const withDof = (f: string | undefined, depth: number | undefined): string | undefined => {
@@ -1053,26 +1076,9 @@ export function buildSnapshot(
     // The gate frame clamps to the last comp frame so a full-length layer
     // doesn't blink out at the exactly-end playhead (clip spans are
     // end-exclusive).
-    {
-      const nodeClips = controller.getLayersForNode(node.id);
-      if (nodeClips.length > 0) {
-        const rawFrame = Math.round(t * fps);
-        // Clip spans are end-EXCLUSIVE, so a full-length layer would blink out
-        // at the exactly-end playhead; clamping to the comp's last frame fixes
-        // that. But the clamp is only meaningful when the caller actually told
-        // us the duration. Falling back to `t` made it
-        // `min(round(t·fps), round(t·fps) − 1)` — i.e. always one frame BEHIND
-        // the playhead — so every clip-gated layer appeared a frame late and
-        // its final frame was unreachable. Template previews, the preview
-        // controller and component thumbnails all pass a comp with no
-        // durationSeconds, so they rendered on that wrong axis while the
-        // viewport and export (which do pass it) rendered on the right one.
-        const gateFrame = comp.durationSeconds !== undefined
-          ? Math.min(rawFrame, Math.max(0, Math.round(comp.durationSeconds * fps) - 1))
-          : rawFrame;
-        if (!nodeClips.some((l) => l.isActiveAt(gateFrame))) continue;
-      }
-    }
+    // `isLiveAt` (hoisted above the camera block) holds the end-exclusive clamp
+    // and the reasoning behind it; the camera selection applies the same test.
+    if (!isLiveAt(node.id)) continue;
 
     // Draft 3D: light layers draw nothing (their glow wash IS lighting).
     if (kind === 'light' && comp.draft3d) continue;
@@ -1080,7 +1086,6 @@ export function buildSnapshot(
     // Light: a radial glow at its world position, composited (screen) to
     // brighten what's beneath. Intensity / radius are keyframeable.
     if (kind === 'light') {
-      const w = worldTransformOf(node.id, localOf, parentOf, worldCache);
       const av = valuesOf(node.id);
       const lt = readNodeLight(node);
       // PROJECT the glow through the current view. The wash used to be emitted
@@ -1092,10 +1097,17 @@ export function buildSnapshot(
       // Ambient lifts the whole frame uniformly and has no position to project,
       // so it stays centred — projecting it would make a whole-frame wash slide
       // off the frame.
-      const lz = av.get('z') ?? readNode3D(node).z;
+      //
+      // ONE light, ONE resolver. The wash used to take `worldTransformOf` (the
+      // 2D world affine) for x/y plus the RAW LOCAL z, while `sceneLights` and
+      // `shadowLight` took `nodeWorldPosition` (the parent-aware 4×4). So a
+      // light under a 3D null lit the scene from one place and glowed from
+      // another, and the wash ignored the parent's depth entirely. This is the
+      // remaining half of a bug already fixed at the other two call sites.
+      const wp = nodeWorldPosition(node);
       const lp = lt.type === 'ambient'
         ? { x: comp.width / 2, y: comp.height / 2 }
-        : project({ x: w.x, y: w.y, z: lz });
+        : project(wp);
       emitLayer({
         id: node.id, kind: 'shape',
         x: lp.x, y: lp.y, rotation: 0, scaleX: 1, scaleY: 1, depth: 0,
@@ -2466,6 +2478,9 @@ export function buildSnapshot(
     width: comp.width,
     height: comp.height,
     background: comp.background,
+    // Non-camera views (the six ortho views and the custom views) draw no comp
+    // backdrop — it is canvas, not scene geometry, and cannot be projected.
+    ...(orthoView || customCamera ? { backdrop: false } : {}),
     backgroundPaint: comp.backgroundPaint,
     transparent: comp.transparent,
     time: t,
