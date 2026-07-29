@@ -22,6 +22,7 @@ import { hiresScenes } from './hires';
 import { svgScenes } from './svg';
 import { glassScenes } from './glass';
 import { rigScenes } from './rig';
+import { alphaInterpScenes } from './alphaInterp';
 
 export const SCENES: Scene[] = [
   // Anchors + fill probes.
@@ -44,4 +45,5 @@ export const SCENES: Scene[] = [
   ...hiresScenes,
   ...svgScenes,
   ...glassScenes,
+  ...alphaInterpScenes,
 ];
