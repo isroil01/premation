@@ -6,6 +6,7 @@ import { AssetDatabase } from '@core/services/AssetDatabase';
 import { isLocalFirst } from '@core/config/flags';
 import { importLocalAsset } from '@core/assets/local/importLocalAsset';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
+import { probeMedia } from '@core/assets/mediaProbe';
 import { bumpScene } from '@stores/sceneStore';
 
 export interface ImportedAsset {
@@ -33,6 +34,13 @@ export interface ImportedAsset {
      * the composition's rate.
      */
     fps?: number;
+    /**
+     * Whether the container has an audio stream. Only a real probe can answer
+     * this at import; `undefined` means "nobody looked", which is a different
+     * claim from `false` and the audio UI must distinguish them.
+     */
+    hasAudioTrack?: boolean;
+    audioChannels?: number;
   };
   /**
    * Per-FILE reinterpretation (frame rate conform, pixel aspect, alpha, loop).
@@ -225,6 +233,42 @@ function saveInterpretations(assets: ImportedAsset[]): void {
   }
 }
 
+/**
+ * Fold a desktop ffprobe pass into an asset's metadata.
+ *
+ * Additive and best-effort by design. The media element already supplied size
+ * and duration; the probe's unique contribution is the **real frame rate**,
+ * the container's **pixel aspect**, and a definitive **audio stream inventory**
+ * — none of which the browser can report. When no probe ran, the asset keeps
+ * exactly the element-derived metadata it has always had (see `mediaProbe`'s
+ * tier table), so import behaviour is unchanged rather than degraded.
+ *
+ * The probed rate goes to `metadata.fps` — the file's own truth. It is
+ * deliberately NOT written to `interpret.conformFps`, which means "the user
+ * overrode the file"; `footageSourceOf` already prefers conform over probed, so
+ * writing both would make an untouched import indistinguishable from a
+ * hand-conformed one and there would be nothing to reset to.
+ */
+async function applyProbe(file: File, asset: ImportedAsset): Promise<void> {
+  if (asset.type !== 'video' && asset.type !== 'audio') return;
+  const facts = await probeMedia(file);
+  if (facts.tier !== 'probed') return;
+
+  asset.metadata = {
+    ...asset.metadata,
+    ...(facts.width ? { width: facts.width } : {}),
+    ...(facts.height ? { height: facts.height } : {}),
+    // The element's duration is often rounded; the container's is exact.
+    ...(facts.durationSec ? { duration: facts.durationSec } : {}),
+    ...(facts.fps ? { fps: facts.fps } : {}),
+    ...(facts.audio !== undefined ? { hasAudioTrack: facts.audio !== null } : {}),
+    ...(facts.audio?.channels ? { audioChannels: facts.audio.channels } : {}),
+  };
+  // A non-square pixel aspect IS an interpretation — it is the container
+  // telling us how it wants to be displayed, and the user can override it.
+  if (facts.par) asset.interpret = { ...(asset.interpret ?? {}), par: facts.par };
+}
+
 /** Overlay the saved folder assignments and interpretations onto a freshly
  *  loaded asset list. */
 function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): ImportedAsset[] {
@@ -265,6 +309,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             folderId,
             ...(imported.metadata ? { metadata: imported.metadata } : {}),
           };
+          await applyProbe(file, asset);
           set((s) => {
             s.assets.push(asset);
           });
@@ -352,6 +397,11 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           video.src = src;
         });
       }
+
+      // Real stream facts, where a demuxer is available (desktop + ffprobe).
+      // After the element pass so it can correct duration and add what the
+      // element cannot know; before the IndexedDB write so it persists.
+      await applyProbe(file, asset);
 
       // Downscaled panel preview (images only) — keeps the grid fast.
       const thumb = type === 'image' ? await makeImageThumb(file) : null;

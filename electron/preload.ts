@@ -38,6 +38,12 @@ const bridge = {
     list: (root: string) => ipcRenderer.invoke('blob:list', root),
   },
 
+  media: {
+    /** Real stream facts for an imported file (frame rate, audio track, codec).
+     *  Resolves null when ffprobe/ffmpeg is not installed — callers degrade. */
+    probe: (bytes: Uint8Array, ext: string) => ipcRenderer.invoke('media:probe', bytes, ext),
+  },
+
   render: {
     beginJob: () => ipcRenderer.invoke('render:beginJob'),
     stageFrame: (jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png') =>

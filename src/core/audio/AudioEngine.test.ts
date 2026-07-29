@@ -23,8 +23,21 @@ describe('AudioEngine', () => {
       stop: jest.fn(),
     };
 
+    // Gain is SCHEDULED now, not assigned — the mock param records what was
+    // scheduled so tests can assert the curve rather than a mutated `.value`.
     mockGain = {
-      gain: { value: 1 },
+      gain: {
+        value: 1,
+        scheduled: [] as Array<[number, number]>,
+        setValueAtTime: jest.fn(function (this: any, v: number, t: number) {
+          mockGain.gain.scheduled.push([t, v]);
+          mockGain.gain.value = v;
+        }),
+        linearRampToValueAtTime: jest.fn((v: number, t: number) => {
+          mockGain.gain.scheduled.push([t, v]);
+        }),
+        cancelScheduledValues: jest.fn(),
+      },
       connect: jest.fn().mockReturnThis(),
       disconnect: jest.fn(),
     };
@@ -62,7 +75,7 @@ describe('AudioEngine', () => {
       nodeId: 'n1',
       assetId: 'a1',
       src: 'http://test.com/audio.mp3',
-      level: 100,
+      levelDb: 0,
       startSec: 0,
       inSec: 0,
       outSec: 10,
@@ -86,7 +99,7 @@ describe('AudioEngine', () => {
       nodeId: 'n1',
       assetId: 'a1',
       src: 'test.mp3',
-      level: 100,
+      levelDb: 0,
       startSec: 0,
       inSec: 0,
       outSec: 10,
@@ -114,7 +127,7 @@ describe('AudioEngine', () => {
       nodeId: 'n1',
       assetId: 'a1',
       src: 'test.mp3',
-      level: 100,
+      levelDb: 0,
       startSec: 0,
       inSec: 0,
       outSec: 10,
@@ -151,7 +164,7 @@ describe('AudioEngine', () => {
       nodeId: 'n1',
       assetId: 'a1',
       src: 'test.mp3',
-      level: 100,
+      levelDb: 0,
       startSec: 0,
       inSec: 0,
       outSec: 2,
@@ -173,7 +186,7 @@ describe('AudioEngine', () => {
     // Two clips of the same asset, keyed by clip id. Keying by nodeId — as the
     // engine used to — let the second clip overwrite the first, so a split
     // audio layer only ever played one of its halves.
-    const base = { nodeId: 'n1', assetId: 'a1', src: 'test.mp3', level: 100, muted: false };
+    const base = { nodeId: 'n1', assetId: 'a1', src: 'test.mp3', levelDb: 0, muted: false };
     const clips: AudioLayerState[] = [
       { ...base, id: 'c1', startSec: 0, inSec: 0, outSec: 1 },
       { ...base, id: 'c2', startSec: 0.5, inSec: 0.5, outSec: 1 },
@@ -197,7 +210,7 @@ describe('AudioEngine', () => {
       nodeId: 'n1',
       assetId: 'a1',
       src: 'test.mp3',
-      level: 100,
+      levelDb: 0,
       startSec: 10,
       inSec: 0,
       outSec: 1,
@@ -211,12 +224,12 @@ describe('AudioEngine', () => {
     expect(audioEngine.currentLevel()).toBe(0);
   });
 
-  test('Per-layer gain: maps layer level to GainNode', async () => {
+  test('Per-layer gain: schedules the dB level as linear gain', async () => {
     const layer: AudioLayerState = {
       nodeId: 'n1',
       assetId: 'a1',
       src: 'test.mp3',
-      level: 50, // 50%
+      levelDb: -6.020599913279624, // half amplitude
       startSec: 0,
       inSec: 0,
       outSec: 10,
@@ -226,6 +239,10 @@ describe('AudioEngine', () => {
     await audioEngine.load('a1', 'test.mp3');
     audioEngine.sync(true, 1.0, [layer]);
 
-    expect(mockGain.gain.value).toBe(0.5); // 50 / 100
+    // An unanimated level is one anchored point, not a ramp — the common case
+    // must not pay for scheduling it does not need.
+    expect(mockGain.gain.setValueAtTime).toHaveBeenCalledTimes(1);
+    expect(mockGain.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
+    expect(mockGain.gain.scheduled[0][1]).toBeCloseTo(0.5, 6);
   });
 });

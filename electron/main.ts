@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerCredentialIpc } from './credentialStore';
+import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -302,6 +303,84 @@ function registerRenderIpc(): void {
     const jpg = files.filter((f) => /^frame_\d+\.jpg$/i.test(f)).length;
     return png > jpg ? { count: png, ext: 'png' } : { count: jpg, ext: 'jpg' };
   };
+
+  /**
+   * Probe a media file's real stream facts.
+   *
+   * The renderer cannot learn these on its own. Nothing in the browser reports a
+   * `<video>`'s frame rate — `requestVideoFrameCallback` is the only API that
+   * exposes real frame times and it never fires for a detached, paused element
+   * (measured) — and `decodeAudioData` only tells you whether a file HAS audio
+   * by throwing at playback time, long after import.
+   *
+   * Bytes come over IPC and land in a temp file rather than being piped to
+   * ffprobe's stdin, deliberately: a pipe is not seekable, and an mp4 with its
+   * moov atom at the end (every file a phone or a browser recorder produces)
+   * cannot be parsed without seeking. The temp file is always removed.
+   *
+   * Returns null rather than throwing when ffprobe/ffmpeg is absent — the probe
+   * is an enhancement, and an import must never fail because a codec tool is
+   * missing. `resolveFfmpeg` falls back to bare 'ffmpeg' on PATH, so "not
+   * installed" is a real, common state on desktop, not just on web.
+   */
+  const resolveFfprobe = (): string => {
+    if (process.env.FFPROBE_PATH && existsSync(process.env.FFPROBE_PATH)) return process.env.FFPROBE_PATH;
+    const name = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+    const bundled = path.join(process.resourcesPath ?? '', 'ffmpeg', name);
+    if (existsSync(bundled)) return bundled;
+    // Sibling of a resolved ffmpeg — the usual layout for both bundles and
+    // package managers.
+    const ff = resolveFfmpeg();
+    if (ff !== 'ffmpeg') {
+      const sibling = path.join(path.dirname(ff), name);
+      if (existsSync(sibling)) return sibling;
+    }
+    return 'ffprobe';
+  };
+
+  /** Run a binary and capture stdout. Resolves null on any failure, including
+   *  the executable not existing — every caller treats absence as "unknown". */
+  const capture = (bin: string, args: string[]): Promise<string | null> =>
+    new Promise((resolve) => {
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch {
+        resolve(null);
+        return;
+      }
+      let out = '';
+      let err = '';
+      proc.stdout?.on('data', (d) => (out += String(d)));
+      proc.stderr?.on('data', (d) => (err += String(d)));
+      proc.on('error', () => resolve(null));
+      proc.on('close', (code) => resolve(code === 0 ? out : err || null));
+    });
+
+  ipcMain.handle('media:probe', async (_e, bytes: Uint8Array, ext: string) => {
+    const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : 'bin';
+    const tmp = path.join(
+      app.getPath('temp'),
+      `motion-probe-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}.${safeExt}`,
+    );
+    try {
+      await writeFile(tmp, bytes);
+      const json = await capture(resolveFfprobe(), [
+        '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', tmp,
+      ]);
+      if (!json) return null;
+
+      try {
+        return parseProbeJson(JSON.parse(json) as ProbeJson);
+      } catch {
+        return null;
+      }
+    } catch {
+      return null;
+    } finally {
+      await unlink(tmp).catch(() => {});
+    }
+  });
 
   ipcMain.handle('render:beginJob', async () => {
     const jobId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;

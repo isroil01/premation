@@ -12,6 +12,7 @@
 const layers: Array<Record<string, unknown>> = [];
 const buffers = new Map<string, { duration: number }>();
 const started: Array<[number, number, number]> = [];
+const scheduledGain: Array<Array<[number, number]>> = [];
 
 jest.mock('./audioScene', () => ({ readAudioLayers: () => layers }));
 jest.mock('./AudioEngine', () => ({
@@ -34,7 +35,19 @@ class FakeOfflineContext {
     };
   }
   createGain() {
-    return { gain: { value: 1 }, connect(dest: unknown) { return dest; } };
+    // Gain is scheduled, not assigned — the fake records the curve so tests can
+    // assert what the export would actually render.
+    const points: Array<[number, number]> = [];
+    scheduledGain.push(points);
+    return {
+      gain: {
+        value: 1,
+        setValueAtTime(v: number, t: number) { points.push([t, v]); },
+        linearRampToValueAtTime(v: number, t: number) { points.push([t, v]); },
+        cancelScheduledValues() {},
+      },
+      connect(dest: unknown) { return dest; },
+    };
   }
   async startRendering() {
     return {
@@ -51,6 +64,7 @@ beforeEach(() => {
   layers.length = 0;
   buffers.clear();
   started.length = 0;
+  scheduledGain.length = 0;
   (globalThis as unknown as { OfflineAudioContext: unknown }).OfflineAudioContext = FakeOfflineContext;
 });
 
@@ -59,7 +73,7 @@ afterEach(() => {
 });
 
 function voice(over: Record<string, unknown> = {}) {
-  return { nodeId: 'v', assetId: 'clip', src: 'blob:clip.mp4', level: 100, startSec: 0, inSec: 0, outSec: 0, muted: false, ...over };
+  return { nodeId: 'v', assetId: 'clip', src: 'blob:clip.mp4', levelDb: 0, startSec: 0, inSec: 0, outSec: 0, muted: false, ...over };
 }
 
 describe('mixdown with an open-ended voice', () => {

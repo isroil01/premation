@@ -368,6 +368,17 @@ Images, video, audio, **SVG** (sanitised; hybrid import keeps static SVG as one 
 converts animated SVG to keyframes), **Lottie/bodymovin JSON**, and **numbered image sequences**
 (auto-detected and played as one footage layer). Assets are content-addressed into the project bundle.
 
+**On desktop, video and audio are probed on import** for facts the browser cannot report: the real
+source frame rate, the container's pixel aspect, and whether there is an audio stream at all. The rate
+is what frame blending brackets on, and the stream inventory is why a clip's audio controls appear
+immediately rather than after a decode eventually fails.
+
+The probe needs `ffprobe`/`ffmpeg` on `PATH` (or `FFMPEG_PATH`/`FFPROBE_PATH`), so it is best-effort
+even on desktop, and absent in the browser build. **Import never fails or is skipped when it does not
+run** — you get size and duration from the media element exactly as before, the frame rate reads as
+unknown, and frame blending falls back to the composition's rate. Conform can be set by hand in either
+case.
+
 ### Video layers
 
 Position/scale/rotate/opacity like any layer, in 2D or 3D · trim, split and slip on the timeline ·
@@ -390,19 +401,22 @@ that footage at once — you can fix a mis-tagged import after you have already 
 
 | Setting | What it does |
 |---|---|
-| **Conform frame rate** | Play the source as if shot at this rate (24 → 25 for PAL, 30 → 24 for a slow-mo look). Also what frame blending brackets on. |
+| **Conform frame rate** | Play the source as if shot at this rate (24 → 25 for PAL, 30 → 24 for a slow-mo look). Also what frame blending brackets on. Defaults to the probed rate; only set when you deliberately override the file. |
 | **Pixel aspect ratio** | Anamorphic and DV sources display at their true shape instead of stretched. Applied to width. |
 | **Loop count** | How many times the source plays. Extends a clip bar past the file's own length with real frames instead of a held one. `0` loops forever. |
 
 ### Audio
 
-Audio layers with waveform display (and display modes), a level control, gain, a VU meter,
+Audio layers with waveform display (and display modes), **keyframable levels in dB**, gain, a VU meter,
 **convert audio to keyframes** for audio-reactive animation, the **Audio Throb** behaviour, and audio
 mixdown attached to video exports. Clip bars own audio timing, so splitting an audio layer gives two
 independently-timed voices.
 
-Levels are a **single static value per layer, not keyframable** — see §21. This page previously claimed
-keyframable levels; it was wrong.
+**Level is keyframable on both audio layers and video layers**, in decibels, with the same stopwatch as
+any other property — so you can duck a clip under a voiceover. The curve is scheduled onto the gain
+rather than assigned per frame, so it slides smoothly instead of stepping, and **preview and export
+share one curve builder** so the rendered file matches what you heard. Mute is instant and not
+keyframable. **Solo covers audio too**, on both layer kinds.
 
 **A video layer plays its own audio.** Import an `.mp4`/`.webm` and the file's audio track is decoded
 alongside the picture and scheduled off the same clip bar — trim, split or move the bar and the sound
@@ -578,17 +592,16 @@ Stated plainly so you don't plan around something that isn't there.
    composites, but nothing re-rasterizes vector content at the scale it ends up drawn at. Blow a
    nested comp of shapes or text up past 100% and it magnifies its raster like a bitmap instead of
    redrawing crisp, the way After Effects' matching switch would.
-3. **Audio levels are not keyframable.** A layer's level is one static value applied to the whole
-   voice, in both preview and export — there is no automation, so you cannot duck a clip under a
-   voiceover. Fade in/out with opacity has no audio equivalent; trim the bar instead.
-4. **Premultiplied alpha fringes.** Footage whose alpha is premultiplied — ProRes 4444, most WebM/VP9
+3. **Premultiplied alpha fringes.** Footage whose alpha is premultiplied — ProRes 4444, most WebM/VP9
    alpha encodes — is multiplied by its own alpha a second time on the way to the screen, so soft
    edges carry a dark halo that is obvious against a light background. There is no Interpret Footage
    ▸ Alpha control yet to tell it otherwise.
-5. **A video layer's audio does not follow speed changes.** Time stretch, reverse and time remap
-   retime the picture only; the sound plays at natural speed. Use clip trimming rather than a speed
-   change on a shot whose audio has to stay in sync.
-6. **No NLE editing model.** No ripple delete/insert, no clip-to-clip transitions on a timeline (you
+4. **Speed changes mute a clip's audio.** Time stretch, reverse and time remap retime the picture by
+   choosing a different source frame; audio would have to be *resampled*, which needs a pitch
+   decision and a DSP pass that isn't built. Rather than let the sound drift steadily out of sync,
+   the clip's audio is muted and the inspector says why. Trim the clip bar instead of changing speed
+   when a shot's audio has to survive.
+5. **No NLE editing model.** No ripple delete/insert, no clip-to-clip transitions on a timeline (you
    cross-fade with opacity keyframes), no speed-ramp UI (time remap covers it), no stabilization or
    motion tracking, no captions/subtitles, and every export re-encodes every frame.
 

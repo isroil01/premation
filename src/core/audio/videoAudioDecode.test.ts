@@ -80,7 +80,7 @@ describe("a video file's audio track", () => {
     // What `sync` does on every single playhead change.
     for (let i = 0; i < 25; i++) {
       audioEngine.sync(true, i / 30, [
-        { nodeId: 'v', assetId: 'mute', src: 'blob:silent.mp4', level: 100, startSec: 0, inSec: 0, outSec: 5, muted: false },
+        { nodeId: 'v', assetId: 'mute', src: 'blob:silent.mp4', levelDb: 0, startSec: 0, inSec: 0, outSec: 5, muted: false },
       ]);
     }
     await Promise.resolve();

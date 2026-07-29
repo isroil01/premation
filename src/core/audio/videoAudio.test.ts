@@ -64,7 +64,7 @@ describe('readVideoAudioVoices', () => {
   it('yields a voice for a video layer, so its audio track is heard at all', () => {
     const voices = readVideoAudioVoices(videoNode());
     expect(voices).toHaveLength(1);
-    expect(voices[0]).toMatchObject({ nodeId: 'vid1', assetId: 'asset1', src: 'blob:clip.mp4', level: 100 });
+    expect(voices[0]).toMatchObject({ nodeId: 'vid1', assetId: 'asset1', src: 'blob:clip.mp4', levelDb: 0 });
   });
 
   it('takes timing from the clip bar, so trimming the bar trims the sound', () => {
@@ -83,8 +83,16 @@ describe('readVideoAudioVoices', () => {
   });
 
   it('honours the per-layer level and mute', () => {
+    // Legacy percent is migrated, not reinterpreted: 40% is about -8 dB, not
+    // +40 dB. Reading it as dB would make every existing project deafening.
     const [v] = readVideoAudioVoices(videoNode({ audioLevel: 40, audioMuted: true }));
-    expect(v).toMatchObject({ level: 40, muted: true });
+    expect(v!.levelDb).toBeCloseTo(-7.96, 1);
+    expect(v!.muted).toBe(true);
+  });
+
+  it('prefers an explicit dB level over the legacy percent', () => {
+    const [v] = readVideoAudioVoices(videoNode({ audioLevel: 40, audioLevelDb: -3 }));
+    expect(v!.levelDb).toBe(-3);
   });
 
   it('a hidden video layer is silent, like a hidden audio layer', () => {

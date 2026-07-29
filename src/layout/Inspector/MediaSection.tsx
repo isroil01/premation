@@ -15,14 +15,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
-import { Slider } from '@components/Slider';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useAssetStore } from '@stores/assetStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { getNodeHasSequence, getNodeSequenceLoop, setSequenceLoop } from '@core/scene/imageSequence';
 import { audioEngine } from '@core/audio/AudioEngine';
-import { readVideoAudioVoices, VIDEO_AUDIO_LEVEL_PROP, VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
+import { readVideoAudioVoices, videoHasAudioTrack, VIDEO_AUDIO_LEVEL_PROP, VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
+import { AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB, percentToDb } from '@core/audio/audioParams';
+import { KeyframeRow } from './KeyframeRow';
+import { readNodeLayerTime } from '@core/scene/layerTime';
+import { defaultAnimation } from '@motion/animation';
 import { TimeRemapRow } from './PrecompControl';
 import { customPrompt } from '@components/Modal';
 import styles from './TransformSection.module.css';
@@ -48,7 +51,8 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // A video layer's own audio track. Level/mute live on the same component; the
   // sound itself is scheduled by the AudioEngine off the layer's clip bar (see
   // audioScene.readVideoAudioVoices).
-  const [audioLevel, setAudioLevel] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, VIDEO_AUDIO_LEVEL_PROP);
+  const [audioLevelDb, setAudioLevelDb] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, AUDIO_LEVEL_DB_PROP);
+  const [legacyPercent] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, VIDEO_AUDIO_LEVEL_PROP);
   const [audioMuted, setAudioMuted] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, VIDEO_AUDIO_MUTED_PROP);
 
   // Kick the decode so the section can report whether this file has sound at
@@ -61,7 +65,25 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
   useEffect(() => {
     if (audioAssetId && audioSrc) void audioEngine.load(audioAssetId, audioSrc);
   }, [audioAssetId, audioSrc]);
+  // Real stream data when the import probe read the container; otherwise the
+  // decode outcome, which is all a web import can offer. `probedAudio === false`
+  // is the only case that justifies hiding the section outright — an unprobed
+  // file that has simply not finished decoding must not look like a silent one.
+  const probedAudio = isVideo && node ? videoHasAudioTrack(node) : null;
   const decodeState = audioAssetId ? audioEngine.decodeState(audioAssetId) : 'pending';
+  const silent = probedAudio === false || (probedAudio === null && decodeState === 'silent');
+
+  // Speed changes retime the PICTURE only — the audio path resamples nothing,
+  // so a stretched, reversed or time-remapped clip would drift steadily out of
+  // sync with no indication. Detected here and surfaced; the voice is muted in
+  // `readVideoAudioVoices` so the two can never disagree about whether the
+  // clip is audible.
+  const layerTime = node ? readNodeLayerTime(node) : undefined;
+  const remapped = node ? defaultAnimation.tracksFor(node.id).some((t) => t.prop === 'timeRemap' && t.keyframes.length > 0) : false;
+  const speedAltered =
+    (layerTime?.stretch !== undefined && Math.abs(layerTime.stretch - 100) > 0.01) ||
+    layerTime?.reverse === true ||
+    remapped;
 
   if (!node || !tComp) return null;
 
@@ -128,35 +150,44 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
           <h4 className={styles.title} style={{ marginTop: 12 }}>Playback</h4>
           <TimeRemapRow nodeId={nodeId} />
 
-          <h4 className={styles.title} style={{ marginTop: 12 }}>Audio</h4>
-          {decodeState === 'silent' ? (
-            <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-              This file has no audio track the player can decode, so the layer is silent.
-            </p>
-          ) : (
+          {!silent && (
             <>
-              <InspectorRow label="Level" align="center">
-                <Slider
-                  value={Number(audioLevel ?? 100)}
-                  min={0}
-                  max={200}
-                  step={1}
-                  showValue
-                  onChange={(v) => setAudioLevel(v)}
-                />
-              </InspectorRow>
-              <InspectorRow label="Mute" align="center">
-                <Switch
-                  checked={audioMuted === true}
-                  onChange={(e) => setAudioMuted(e.currentTarget.checked || undefined)}
-                  aria-label="Mute this video's audio track"
-                />
-              </InspectorRow>
-              <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-                {decodeState === 'pending'
-                  ? 'Decoding the audio track…'
-                  : "Plays and exports with the layer's timeline bar — trim or split the bar to trim the sound."}
-              </p>
+              <h4 className={styles.title} style={{ marginTop: 12 }}>Audio</h4>
+              {speedAltered ? (
+                <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-warning, #d08a3a)', lineHeight: 1.5 }}>
+                  Audio is muted because this layer&rsquo;s speed is changed. Time stretch, reverse and
+                  time remap retime the picture only &mdash; nothing resamples the sound, so it would
+                  drift out of sync. Trim the clip bar instead of changing speed to keep its audio.
+                </p>
+              ) : (
+                <>
+                  <KeyframeRow
+                    nodeId={nodeId}
+                    prop={AUDIO_LEVEL_DB_PROP}
+                    label="Level"
+                    value={Number(
+                      audioLevelDb ?? (typeof legacyPercent === 'number' ? percentToDb(legacyPercent) : 0),
+                    )}
+                    unit="dB"
+                    min={MIN_LEVEL_DB}
+                    max={MAX_LEVEL_DB}
+                    precision={1}
+                    onStatic={(v) => setAudioLevelDb(v)}
+                  />
+                  <InspectorRow label="Mute" align="center">
+                    <Switch
+                      checked={audioMuted === true}
+                      onChange={(e) => setAudioMuted(e.currentTarget.checked || undefined)}
+                      aria-label="Mute this video's audio track"
+                    />
+                  </InspectorRow>
+                  <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                    {decodeState === 'pending'
+                      ? 'Decoding the audio track…'
+                      : "Plays and exports with the layer's timeline bar — keyframe Level to duck under a voiceover."}
+                  </p>
+                </>
+              )}
             </>
           )}
         </>

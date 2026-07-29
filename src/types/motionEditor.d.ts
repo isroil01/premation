@@ -15,6 +15,26 @@ export interface MotionEditorFile {
 }
 
 /** What the desktop shell persists for a signed-in user. Never the password. */
+/** What an ffprobe pass can tell us about an imported file. Every field is
+ *  nullable: a probe that ran but could not determine a value must say so
+ *  rather than guess, because the whole point is to stop guessing. */
+export interface MediaProbeResult {
+  container: string | null;
+  durationSec: number | null;
+  video: {
+    codec: string | null;
+    width: number | null;
+    height: number | null;
+    fps: number | null;
+    par: number | null;
+  } | null;
+  audio: {
+    codec: string | null;
+    channels: number | null;
+    sampleRate: number | null;
+  } | null;
+}
+
 export interface StoredCredentials {
   /** The long-lived, single-use refresh token. Rotated on every exchange. */
   refreshToken: string;
@@ -86,6 +106,14 @@ export interface MotionEditorApi {
    * @see electron/main.ts registerRenderIpc
    * @see src/core/export/videoSink.ts (the renderer-side consumer)
    */
+  /**
+   * Media probing. Desktop only, and best-effort even there: resolves null when
+   * ffprobe/ffmpeg is not installed. See `@core/assets/mediaProbe`.
+   */
+  media?: {
+    probe?(bytes: Uint8Array, ext: string): Promise<MediaProbeResult | null>;
+  };
+
   render?: {
     beginJob?(): Promise<string>;
     stageFrame?(jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png'): Promise<void>;

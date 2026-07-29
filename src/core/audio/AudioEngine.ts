@@ -15,6 +15,7 @@
 
 import { computePeaks, mixToMono, amplitudeAt, type WaveformPeaks } from './waveform';
 import { rmsPeak, type Levels } from './audioLevels';
+import { buildParamRamp, applyRamp } from './audioParams';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
 export interface AudioLayerState {
@@ -28,8 +29,16 @@ export interface AudioLayerState {
   nodeId: string;
   assetId: string;
   src: string;
-  /** Layer gain, percent (100 = unity). */
-  level: number;
+  /** Static layer gain in DECIBELS (0 = unity). When `levelAnimated` is set
+   *  this is only the fallback — the real curve is sampled per frame. */
+  levelDb: number;
+  /** True when the node carries level keyframes, so a constant gain is not
+   *  enough and the voice needs a scheduled ramp. */
+  levelAnimated?: boolean;
+  /** `'audio'` for a real audio layer, `'video'` for a clip's own track.
+   *  Read by `currentLevel` so audio-reactive expressions can keep their
+   *  pre-existing meaning — see there. */
+  source?: 'audio' | 'video';
   /** Comp time (seconds) at which the clip starts. */
   startSec: number;
   /** In/out trim within the clip, seconds. */
@@ -244,6 +253,19 @@ class AudioEngine {
     let max = 0;
     for (const l of this.layers) {
       if (l.muted) continue;
+      // AUDIO LAYERS ONLY, deliberately.
+      //
+      // This drives the expression engine's `audio` accessor and the Audio
+      // Throb behaviour. Video layers only became voices recently; counting
+      // them here would silently re-key every existing audio-reactive
+      // composition to a louder, different signal the moment footage was added
+      // — a behaviour change to saved projects, arriving without an edit. The
+      // VU meter is a different question and correctly reads the whole master
+      // bus, footage included, because it is metering output rather than
+      // driving animation.
+      //
+      // If per-layer source selection lands, this is the seam it plugs into.
+      if (l.source === 'video') continue;
       const asset = this.assets.get(l.assetId);
       if (!asset) continue;
       const localT = this.timeSec - l.startSec;
@@ -258,7 +280,9 @@ class AudioEngine {
   }
 
   private voiceKey(l: AudioLayerState): string {
-    return `${l.assetId}|${l.level}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}`;
+    // `levelAnimated` is part of the identity: turning keyframes on or off
+    // changes how the voice must be scheduled, not just its value.
+    return `${l.assetId}|${l.levelDb}|${l.levelAnimated ? 'a' : 's'}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}`;
   }
 
   /** Stable per-voice identity — the clip id when the caller supplies one. */
@@ -338,11 +362,26 @@ class AudioEngine {
     const source = ctx.createBufferSource();
     source.buffer = asset.buffer;
     const gain = ctx.createGain();
-    gain.gain.value = Math.max(0, l.level / 100);
     source.connect(gain).connect(this.master ?? ctx.destination);
     const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
     const remaining = Math.max(0, outSec - offset);
     const startAt = Math.max(0, offset);
+
+    // Gain is SCHEDULED on the param, never assigned per frame — see
+    // audioParams for why (assignment steps once per render quantum and
+    // zippers). An unanimated level yields a single point, so the common case
+    // is still one setValueAtTime.
+    //
+    // The ramp is built from the comp time this voice resumes at, which is
+    // `startSec + (offset - inSec)` — NOT `startSec`. Seeking into the middle
+    // of a fade has to pick the curve up where the playhead is, or the fade
+    // restarts from its beginning every time the transport moves.
+    const resumeCompSec = l.startSec + (startAt - l.inSec);
+    const ramp = buildParamRamp(l.nodeId, l.levelDb, resumeCompSec, remaining, {
+      animated: l.levelAnimated === true,
+    });
+    applyRamp(gain.gain, ramp, ctx.currentTime);
+
     try {
       source.start(ctx.currentTime, startAt, remaining);
     } catch {
