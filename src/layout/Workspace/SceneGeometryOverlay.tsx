@@ -28,6 +28,15 @@ export interface SceneGeometryOverlayProps {
   viewTransform: { scale: number; offsetX: number; offsetY: number };
   groundGridVisible: boolean;
   sceneGizmos: readonly SceneGizmo[];
+  /**
+   * Draggable camera / light points, drawn as grab dots.
+   *
+   * Passed in rather than recollected here so the dot cannot land anywhere the
+   * hit test would not accept — one list, drawn and picked from the same values.
+   */
+  deviceHandles?: readonly { nodeId: string; kind: 'position' | 'poi'; world: Vec3 }[];
+  /** The handle under the pointer, drawn highlighted. */
+  hoveredDeviceHandle?: { nodeId: string; kind: 'position' | 'poi' } | null;
 }
 
 /**
@@ -56,6 +65,8 @@ export const SceneGeometryOverlay: React.FC<SceneGeometryOverlayProps> = ({
   viewTransform,
   groundGridVisible,
   sceneGizmos,
+  deviceHandles,
+  hoveredDeviceHandle,
 }) => {
   const projectScreen = (p: Vec3): { x: number; y: number } => {
     const cp = orthoView
@@ -164,11 +175,46 @@ export const SceneGeometryOverlay: React.FC<SceneGeometryOverlayProps> = ({
     );
   };
 
+  /**
+   * The grab dots. A wireframe alone gives no cue that it can be dragged, and
+   * the camera body is only a few pixels across at a typical zoom — the dot is
+   * what makes the handle findable and is sized to the same 12px tolerance the
+   * hit test uses, so anything you can see you can also grab.
+   */
+  const renderDeviceHandles = () => {
+    if (!deviceHandles || deviceHandles.length === 0) return null;
+    return (
+      <g className="device-handles">
+        {deviceHandles.map((h) => {
+          const p = projectScreen(h.world);
+          if (!finite(p)) return null;
+          const hot = hoveredDeviceHandle?.nodeId === h.nodeId && hoveredDeviceHandle?.kind === h.kind;
+          // POI keeps the pink of its crosshair, position the amber of the
+          // chassis, so a dot always reads as part of the wireframe it belongs to.
+          const stroke = h.kind === 'poi' ? '#ff9ecb' : '#ffd166';
+          return (
+            <circle
+              key={`${h.nodeId}_${h.kind}`}
+              cx={p.x}
+              cy={p.y}
+              r={hot ? 7 : 5}
+              fill={hot ? stroke : 'rgba(0,0,0,0.35)'}
+              fillOpacity={hot ? 0.9 : 0.6}
+              stroke={stroke}
+              strokeWidth={1.5}
+            />
+          );
+        })}
+      </g>
+    );
+  };
+
   return (
     <>
       {renderGroundGrid()}
       {renderCompFrame()}
       {renderSceneGizmos()}
+      {renderDeviceHandles()}
     </>
   );
 };

@@ -60,6 +60,7 @@ import { BoneOverlay } from './BoneOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
 import { AxisWidgetOverlay } from './AxisWidgetOverlay';
 import { useGizmo3d } from './useGizmo3d';
+import { useDeviceHandles } from './useDeviceHandles';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { useWorkspace } from './useWorkspace';
 import styles from './Workspace.module.css';
@@ -128,6 +129,10 @@ export function WorkspaceViewport({
   });
 
   const gizmo3dProps = useGizmo3d(overlayRef, stageRef);
+  // Camera / light handles. Mounted AFTER the layer gizmo so its capture-phase
+  // listener runs second: where a device handle overlaps a transform handle the
+  // layer gizmo claims the press first, which is the more specific intent.
+  const { deviceHandles, hoveredHandle } = useDeviceHandles(stageRef);
 
   const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>): void => {
     const target = e.target as HTMLElement | null;
@@ -341,6 +346,8 @@ export function WorkspaceViewport({
           {(gizmo3dProps.scene3d || (gizmo3dProps.is3D && gizmo3dProps.singleId)) && (
             <Gizmo3dOverlay
               {...gizmo3dProps}
+              deviceHandles={deviceHandles}
+              hoveredDeviceHandle={hoveredHandle}
               nodeId={gizmo3dProps.singleId ?? null}
               showGizmo={gizmo3dProps.is3D && !!gizmo3dProps.singleId}
             />

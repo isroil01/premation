@@ -787,6 +787,32 @@ export function applyNodePropsKeyframed(
  * and go through {@link perspectiveDelta3D}, which additionally needs the
  * layer's depth.
  */
+/**
+ * A projected 2D drag delta as a WORLD translation, for whichever view is
+ * active — the ortho table or the camera's own basis, chosen the same way the
+ * layer drag chooses it.
+ *
+ * Exported so dragging a camera or light handle cannot grow a fourth way to
+ * turn a pointer movement into world motion. `at` supplies the depth the
+ * perspective case divides by.
+ */
+export function viewDragToWorldDelta(
+  delta: { x: number; y: number },
+  view: Camera3dMode,
+  at: { x: number; y: number; z: number },
+  compW: number,
+  compH: number,
+  rawTime: number,
+): { x: number; y: number; z: number } {
+  const ortho = orthoDelta3D(delta, view);
+  if (ortho) return ortho;
+  const camera = currentViewCamera(compW, compH, rawTime, view);
+  // No view camera (shouldn't happen once ortho is excluded) ⇒ treat the drag
+  // as in-plane, which is the pre-3D behaviour.
+  if (!camera) return { x: delta.x, y: delta.y, z: 0 };
+  return perspectiveDelta3D(delta, camera, at);
+}
+
 function orthoDelta3D(
   delta: { x: number; y: number },
   view: Camera3dMode,
