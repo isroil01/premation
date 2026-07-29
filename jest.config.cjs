@@ -18,6 +18,10 @@ module.exports = {
     '^.+\\.tsx?$': 'ts-jest',
   },
   moduleNameMapper: {
+    // ESM-only render deps → component stub. They ship ESM, this suite is
+    // CommonJS, and one of them anywhere in a component tree fails the whole
+    // file at parse time — which is what made the editor untestable.
+    '^react-markdown$': '<rootDir>/jest.esmComponentMock.cjs',
     // CSS Modules → stub (must precede path aliases).
     '\\.(css|less|scss|sass)$': '<rootDir>/jest.styleMock.cjs',
     // Static assets (brand logos, etc.) → URL-string stub. Must also precede the
