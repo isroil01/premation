@@ -1,10 +1,11 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@stores/authStore';
-import { useProjectLibrary } from '@stores/projectLibraryStore';
+import { useProjectLibrary, type OrientationFilter } from '@stores/projectLibraryStore';
 import { Icon } from '@components/Icon';
 import { Logo } from '@components/Logo';
 import { Checkbox } from '@components/Checkbox';
+import { Pagination } from '@components/Pagination';
 import { Modal, customConfirm } from '@components/Modal';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
@@ -18,7 +19,14 @@ import {
   clampDimension, clampFps, clampDuration, describeSize, describeDuration, findSizePreset,
 } from '@core/composition/presets';
 import { useAssetStore, type AssetFolder } from '@stores/assetStore';
-import { api, type AccountRecord, type RenderJobDto, type TrashedProject } from '@core/api/client';
+import {
+  api,
+  type AccountRecord,
+  type ProjectSummary,
+  type RenderJobDto,
+  type TrashedProject,
+} from '@core/api/client';
+import { usePagedList } from '@core/api/usePagedList';
 import { clearRecovery } from '@core/persistence/recovery';
 import { useCompositionStore, type CompositionSettings } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -41,6 +49,11 @@ function timeAgo(iso: string): string {
 type TabType = 'home' | 'projects' | 'assets' | 'renders' | 'trash' | 'settings';
 
 type Orientation = 'landscape' | 'portrait' | 'square';
+
+/** Rows per page for the queue and the trash — both are read, not browsed. */
+const TABLE_PAGE_SIZE = 20;
+/** Cards per page in the asset grid. */
+const ASSET_PAGE_SIZE = 24;
 
 /**
  * A project's shape, from its real comp size.
@@ -124,7 +137,12 @@ function openUpgradeProModal(): void {
 export function DashboardPage(): JSX.Element {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const { projects, total, status, error, load, loadMore, create, remove } = useProjectLibrary();
+  // The projects list is one PAGE of the library — `total` is the library.
+  // Search, orientation and paging are all server-side; see projectLibraryStore.
+  const {
+    projects, total, limit, offset, orientation, status, busy, error,
+    load, refresh: refreshProjects, create, remove, removeMany,
+  } = useProjectLibrary();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   // `?tab=settings` lets other surfaces deep-link here — the assistant's
@@ -137,9 +155,9 @@ export function DashboardPage(): JSX.Element {
       : 'home';
   });
 
-  // Search & Filter States for Projects
+  // Search & Filter States for Projects. The orientation filter lives in the
+  // store because it is part of the server query, not a view of loaded rows.
   const [searchQuery, setSearchQuery] = useState('');
-  const [orientationFilter, setOrientationFilter] = useState<'all' | Orientation>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
 
@@ -160,11 +178,69 @@ export function DashboardPage(): JSX.Element {
   // the real /assets and /render endpoints entirely.
   const [assetTypeFilter, setAssetTypeFilter] = useState<'all' | 'video' | 'image' | 'audio'>('all');
   const [assetsBusy, setAssetsBusy] = useState(false);
-  const [rendersList, setRendersList] = useState<RenderJobDto[]>([]);
-  const [trash, setTrash] = useState<TrashedProject[]>([]);
+  const [assetPage, setAssetPage] = useState({ limit: ASSET_PAGE_SIZE, offset: 0 });
   const [dataError, setDataError] = useState('');
   /** Plan + credits, from /auth/me. The UI must not guess these. */
   const [account, setAccount] = useState<AccountRecord | null>(null);
+
+  /**
+   * The render queue and the trash, a page at a time.
+   *
+   * Both used to be a single `{limit: 50}` fetch on mount, rendered as if 50
+   * were all there is — and both are lists that only ever grow. They now load
+   * when their tab is opened, and say how much they aren't showing.
+   */
+  const fetchRenders = useCallback(
+    (page: { limit: number; offset: number }) => api.listRenders(page),
+    [],
+  );
+  const renders = usePagedList<RenderJobDto>(fetchRenders, {
+    pageSize: TABLE_PAGE_SIZE,
+    enabled: activeTab === 'renders',
+    errorMessage: 'Could not load the render queue.',
+  });
+
+  const fetchTrash = useCallback(
+    (page: { limit: number; offset: number }) => api.listTrash(page),
+    [],
+  );
+  const trash = usePagedList<TrashedProject>(fetchTrash, {
+    pageSize: TABLE_PAGE_SIZE,
+    enabled: activeTab === 'trash',
+    errorMessage: 'Could not load the trash.',
+  });
+
+  /**
+   * Library-wide numbers for the Home tab.
+   *
+   * Deliberately NOT derived from the loaded page: "Total Projects" counted the
+   * rows in the browser, so it showed 24 for a 143-project account, and
+   * "Active Renders" counted the running jobs among the newest 50. Both are now
+   * a `total` from a one-row query, which is the count the server actually has.
+   */
+  const [overview, setOverview] = useState<{
+    projects: number;
+    activeRenders: number;
+    recent: ProjectSummary | null;
+  }>({ projects: 0, activeRenders: 0, recent: null });
+
+  const refreshOverview = useCallback(async (): Promise<void> => {
+    try {
+      const [me, newest, active] = await Promise.all([
+        api.me(),
+        api.listProjects({ limit: 1 }),
+        api.listRenders({ limit: 1, status: 'active' }),
+      ]);
+      setAccount(me);
+      setOverview({
+        projects: newest.total,
+        activeRenders: active.total,
+        recent: newest.items[0] ?? null,
+      });
+    } catch (err) {
+      setDataError(err instanceof Error ? err.message : 'Could not load your library.');
+    }
+  }, []);
 
   // Workspace Setup Modal State
   const [setupModalOpen, setSetupModalOpen] = useState(false);
@@ -184,37 +260,21 @@ export function DashboardPage(): JSX.Element {
 
   // Search is server-side (the list is paged, so filtering here would only
   // filter the loaded page). Debounced so typing doesn't fire a query a
-  // keystroke.
+  // keystroke. `load` resets to page 1 when the query changes.
   useEffect(() => {
-    const t = setTimeout(() => { void load(searchQuery); }, 250);
+    const t = setTimeout(() => { void load({ query: searchQuery }); }, 250);
     return () => clearTimeout(t);
   }, [load, searchQuery]);
 
-  // Assets and renders are fetched once for the whole dashboard: the Home tab
-  // counts them and the Assets/Renders tabs list them.
   useEffect(() => {
-    let live = true;
-    void (async () => {
-      try {
-        const [renders, me] = await Promise.all([
-          api.listRenders({ limit: 50 }),
-          api.me(),
-        ]);
-        if (!live) return;
-        setRendersList(renders.items);
-        setAccount(me);
-      } catch (err) {
-        if (!live) return;
-        setDataError(err instanceof Error ? err.message : 'Could not load your library.');
-      }
-    })();
-    return () => { live = false; };
-  }, []);
+    void refreshOverview();
+  }, [refreshOverview]);
 
+  // A different folder or media type is a different list — start it at page 1
+  // rather than on whatever page number the previous one happened to be.
   useEffect(() => {
-    if (activeTab === 'trash') void loadTrash();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+    setAssetPage((p) => (p.offset === 0 ? p : { ...p, offset: 0 }));
+  }, [currentFolderId, assetTypeFilter]);
 
   const PRESET_TEMPLATES = [
     {
@@ -305,10 +365,10 @@ export function DashboardPage(): JSX.Element {
     }
   };
 
-  const mostRecentProject = useMemo(() => {
-    if (projects.length === 0) return null;
-    return [...projects].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0] || null;
-  }, [projects]);
+  // The newest project in the LIBRARY, not the newest on this page: sorting the
+  // loaded rows meant "pick up where you left off" pointed at whatever was on
+  // page 3 of a filtered search.
+  const mostRecentProject = overview.recent;
 
   const onCreate = () => {
     setSetupTitle('Untitled composition');
@@ -382,14 +442,28 @@ export function DashboardPage(): JSX.Element {
       next.delete(id);
       return next;
     });
+    void refreshOverview();
   };
 
+  /** Selects this page. There is no honest "select all 143" without loading them. */
   const toggleSelectAll = () => {
-    if (selectedIds.size === filteredProjects.length) {
+    if (selectedIds.size === projects.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredProjects.map((p) => p.id)));
+      setSelectedIds(new Set(projects.map((p) => p.id)));
     }
+  };
+
+  /**
+   * Move to another page of projects.
+   *
+   * Clears the selection on the way: selected ids survive a page change but
+   * their rows don't, so "Move to trash (3)" would delete projects that are no
+   * longer on screen.
+   */
+  const goToProjectPage = (page: { limit: number; offset: number }): void => {
+    setSelectedIds(new Set());
+    void load(page);
   };
 
   const toggleSelectOne = (id: string) => {
@@ -404,20 +478,18 @@ export function DashboardPage(): JSX.Element {
     });
   };
 
-  // Filter projects dynamically
   /**
-   * Filter on facts the server actually stores.
+   * Filtering happens on the server — see `orientation` in projectLibraryStore.
    *
-   * The previous version derived a "category" and a "status" from
-   * `revision % 3` / `revision % 5` — so a project's category changed every
-   * time you saved it, and the dropdowns filtered on pure noise. Orientation
-   * is a real, useful axis because it comes from the comp itself.
+   * It used to be a `projects.filter(...)` right here, which was correct only
+   * while the whole library was in memory. Against a page it silently means
+   * "portrait projects among the 24 loaded", and the count beside it would have
+   * been counting a different set than the server was.
+   *
+   * (The axis itself is real: orientation comes from the comp's own width and
+   * height. The Category and Status dropdowns this replaced filtered on values
+   * invented from `revision % 3`.)
    */
-  const filteredProjects = useMemo(() => {
-    if (orientationFilter === 'all') return projects;
-    return projects.filter((p) => orientationOf(p) === orientationFilter);
-  }, [projects, orientationFilter]);
-
   // Assets Import Simulation
   /** Upload real files the user picks. Replaces a handler that invented an
    *  asset from a random name and never touched the network. */
@@ -508,20 +580,14 @@ export function DashboardPage(): JSX.Element {
     }
   };
 
-  /** Trash contents. Loaded on demand — most visits never open the tab. */
-  const loadTrash = async (): Promise<void> => {
-    try {
-      setTrash((await api.listTrash({ limit: 50 })).items);
-    } catch (err) {
-      setDataError(err instanceof Error ? err.message : 'Could not load the trash.');
-    }
-  };
-
   const handleRestore = async (id: string): Promise<void> => {
     try {
       await api.restoreProject(id);
-      setTrash((t) => t.filter((p) => p.id !== id));
-      void load(searchQuery);
+      // Drop the row, refill the page from the server, and let the project list
+      // and the Home counts see the project that just came back.
+      trash.removeLocal([id]);
+      void refreshProjects();
+      void refreshOverview();
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Could not restore that project.');
     }
@@ -535,7 +601,8 @@ export function DashboardPage(): JSX.Element {
     )) return;
     try {
       await api.destroyProject(id);
-      setTrash((t) => t.filter((p) => p.id !== id));
+      trash.removeLocal([id]);
+      void refreshOverview();
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Could not delete that project.');
     }
@@ -543,8 +610,11 @@ export function DashboardPage(): JSX.Element {
 
   const handleCancelRender = async (id: string): Promise<void> => {
     try {
-      const updated = await api.cancelRender(id);
-      setRendersList((prev) => prev.map((j) => (j.id === id ? updated : j)));
+      await api.cancelRender(id);
+      // Refetch rather than patch the row in place: cancelling changes what the
+      // Home tab's "active" count is, and the page may be stale in other ways.
+      renders.reload();
+      void refreshOverview();
     } catch (err) {
       setDataError(err instanceof Error ? err.message : 'Could not cancel that render.');
     }
@@ -569,9 +639,23 @@ export function DashboardPage(): JSX.Element {
     return matchesType && inFolder;
   });
 
-  const activeRenders = useMemo(
-    () => rendersList.filter((r) => r.status === 'queued' || r.status === 'running').length,
-    [rendersList],
+  /**
+   * One page of the folder's contents, folders first.
+   *
+   * Paged in the browser, unlike every other list here, because the asset store
+   * is shared with the editor's Assets panel and holds the whole library
+   * already — the cost this avoids is a thousand cards in the DOM, not a
+   * thousand rows over the wire. (`assetStore.loadFromCloud` pages the fetch.)
+   */
+  const assetEntryTotal = subfoldersInView.length + visibleAssetsInView.length;
+  const pagedFolders = subfoldersInView.slice(
+    assetPage.offset,
+    assetPage.offset + assetPage.limit,
+  );
+  const assetStart = Math.max(0, assetPage.offset - subfoldersInView.length);
+  const pagedAssets = visibleAssetsInView.slice(
+    assetStart,
+    assetStart + (assetPage.limit - pagedFolders.length),
   );
 
   // Render Page Content based on selected sidebar Tab
@@ -639,7 +723,7 @@ export function DashboardPage(): JSX.Element {
                   <Icon name="folder" size={16} />
                 </div>
                 <div className={styles.statMeta}>
-                  <div className={styles.statValue}>{projects.length}</div>
+                  <div className={styles.statValue}>{overview.projects.toLocaleString()}</div>
                   <div className={styles.statLabel}>Total Projects</div>
                 </div>
               </div>
@@ -648,7 +732,7 @@ export function DashboardPage(): JSX.Element {
                   <Icon name="video" size={16} />
                 </div>
                 <div className={styles.statMeta}>
-                  <div className={styles.statValue}>{activeRenders}</div>
+                  <div className={styles.statValue}>{overview.activeRenders.toLocaleString()}</div>
                   <div className={styles.statLabel}>Active Renders</div>
                 </div>
               </div>
@@ -786,9 +870,10 @@ export function DashboardPage(): JSX.Element {
                 <p>{currentFolderId === null ? 'No assets yet. Import files, upload a folder, or create a new folder.' : 'This folder is empty. Import assets or create subfolders here.'}</p>
               </div>
             ) : (
+              <>
               <div className={styles.assetsGrid}>
                 {/* Render folders first */}
-                {subfoldersInView.map((folder) => {
+                {pagedFolders.map((folder) => {
                   const count = storeAssets.filter((a) => a.folderId === folder.id).length
                     + folders.filter((f) => f.parentId === folder.id).length;
                   return (
@@ -839,7 +924,7 @@ export function DashboardPage(): JSX.Element {
                 })}
 
                 {/* Render assets */}
-                {visibleAssetsInView.map((asset) => (
+                {pagedAssets.map((asset) => (
                   <div key={asset.id} className={styles.assetCard}>
                     <div className={styles.assetPreview}>
                       {asset.type === 'image' ? (
@@ -870,6 +955,14 @@ export function DashboardPage(): JSX.Element {
                   </div>
                 ))}
               </div>
+              <Pagination
+                total={assetEntryTotal}
+                limit={assetPage.limit}
+                offset={assetPage.offset}
+                onChange={setAssetPage}
+                itemLabel="item"
+              />
+              </>
             )}
           </div>
         );
@@ -878,7 +971,12 @@ export function DashboardPage(): JSX.Element {
         return (
           <div className={styles.tableCard}>
             {dataError ? <p className={styles.emptyHint}>{dataError}</p> : null}
-            {rendersList.length === 0 ? (
+            {renders.status === 'error' ? <p className={styles.emptyHint}>{renders.error}</p> : null}
+            {renders.status === 'loading' ? (
+              <div className={styles.loadingState}>
+                <p>Loading render queue…</p>
+              </div>
+            ) : renders.items.length === 0 ? (
               <div className={styles.emptyState}>
                 <Icon name="queue" size={48} className={styles.emptyStateIcon} />
                 <h3>No renders in queue</h3>
@@ -894,6 +992,7 @@ export function DashboardPage(): JSX.Element {
                 </button>
               </div>
             ) : (
+              <>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -906,7 +1005,10 @@ export function DashboardPage(): JSX.Element {
                   </tr>
                 </thead>
                 <tbody>
-                  {rendersList.map((job) => {
+                  {renders.items.map((job) => {
+                    // Only names a project that happens to be on the loaded
+                    // page — the job list is not scoped to it, so anything else
+                    // is genuinely unknown from here.
                     const project = projects.find((p) => p.id === job.projectId);
                     return (
                       <tr key={job.id}>
@@ -969,6 +1071,15 @@ export function DashboardPage(): JSX.Element {
                   })}
                 </tbody>
               </table>
+              <Pagination
+                total={renders.total}
+                limit={renders.limit}
+                offset={renders.offset}
+                busy={renders.busy}
+                onChange={renders.setPage}
+                itemLabel="render"
+              />
+              </>
             )}
           </div>
         );
@@ -977,7 +1088,12 @@ export function DashboardPage(): JSX.Element {
         return (
           <div className={styles.tableCard}>
             {dataError ? <p className={styles.emptyHint}>{dataError}</p> : null}
-            {trash.length === 0 ? (
+            {trash.status === 'error' ? <p className={styles.emptyHint}>{trash.error}</p> : null}
+            {trash.status === 'loading' ? (
+              <div className={styles.loadingState}>
+                <p>Loading trash…</p>
+              </div>
+            ) : trash.items.length === 0 ? (
               <div className={styles.emptyState}>
                 <Icon name="trash" size={28} />
                 <p>The trash is empty. Deleted projects rest here for 30 days before they're gone for good.</p>
@@ -1011,13 +1127,16 @@ export function DashboardPage(): JSX.Element {
                           `Permanently delete ${selectedTrashIds.size} selected projects? This cannot be undone.`,
                           { isDanger: true, confirmLabel: 'Permanently Delete' }
                         )) return;
+                        const gone = new Set<string>();
                         for (const id of selectedTrashIds) {
                           try {
                             await api.destroyProject(id);
+                            gone.add(id);
                           } catch { /* ignore individual fail */ }
                         }
-                        setTrash((t) => t.filter((p) => !selectedTrashIds.has(p.id)));
+                        trash.removeLocal(gone);
                         setSelectedTrashIds(new Set());
+                        void refreshOverview();
                       }}
                     >
                       <Icon name="trash" size={13} />
@@ -1030,13 +1149,13 @@ export function DashboardPage(): JSX.Element {
                     <tr>
                       <th style={{ width: '40px', textAlign: 'center' }}>
                         <Checkbox
-                          checked={selectedTrashIds.size === trash.length && trash.length > 0}
-                          indeterminate={selectedTrashIds.size > 0 && selectedTrashIds.size < trash.length}
+                          checked={selectedTrashIds.size === trash.items.length && trash.items.length > 0}
+                          indeterminate={selectedTrashIds.size > 0 && selectedTrashIds.size < trash.items.length}
                           onChange={() => {
-                            if (selectedTrashIds.size === trash.length) {
+                            if (selectedTrashIds.size === trash.items.length) {
                               setSelectedTrashIds(new Set());
                             } else {
-                              setSelectedTrashIds(new Set(trash.map((p) => p.id)));
+                              setSelectedTrashIds(new Set(trash.items.map((p) => p.id)));
                             }
                           }}
                         />
@@ -1048,7 +1167,7 @@ export function DashboardPage(): JSX.Element {
                     </tr>
                   </thead>
                   <tbody>
-                    {trash.map((p) => {
+                    {trash.items.map((p) => {
                       const isSelected = selectedTrashIds.has(p.id);
                       return (
                         <tr key={p.id} className={isSelected ? styles.rowSelected : ''}>
@@ -1111,6 +1230,20 @@ export function DashboardPage(): JSX.Element {
                     })}
                   </tbody>
                 </table>
+                <Pagination
+                  total={trash.total}
+                  limit={trash.limit}
+                  offset={trash.offset}
+                  busy={trash.busy}
+                  onChange={(page) => {
+                    // Same reason as the projects table: the ids outlive the
+                    // rows, and "Delete permanently (3)" must not reach rows
+                    // the user can no longer see.
+                    setSelectedTrashIds(new Set());
+                    trash.setPage(page);
+                  }}
+                  itemLabel="project"
+                />
               </>
             )}
           </div>
@@ -1207,13 +1340,13 @@ export function DashboardPage(): JSX.Element {
           <div className={styles.errorState}>
             <Icon name="warning" size={24} />
             <p>{error}</p>
-            <button type="button" className={styles.btnSecondary} onClick={() => load()}>
+            <button type="button" className={styles.btnSecondary} onClick={() => void load()}>
               Retry
             </button>
           </div>
         )}
 
-        {status === 'ready' && filteredProjects.length === 0 && (
+        {status === 'ready' && projects.length === 0 && (
           <div className={styles.emptyState}>
             <Icon name="folder" size={48} className={styles.emptyStateIcon} />
             <h3>No projects found</h3>
@@ -1230,19 +1363,16 @@ export function DashboardPage(): JSX.Element {
           </div>
         )}
 
-        {status === 'ready' && filteredProjects.length > 0 && (
+        {status === 'ready' && projects.length > 0 && (
           <table className={styles.table}>
             <thead>
               <tr>
                 <th style={{ width: '40px', textAlign: 'center' }}>
                   <Checkbox
-                    checked={
-                      selectedIds.size === filteredProjects.length && filteredProjects.length > 0
-                    }
-                    indeterminate={
-                      selectedIds.size > 0 && selectedIds.size < filteredProjects.length
-                    }
+                    checked={selectedIds.size === projects.length && projects.length > 0}
+                    indeterminate={selectedIds.size > 0 && selectedIds.size < projects.length}
                     onChange={toggleSelectAll}
+                    title="Select every project on this page"
                   />
                 </th>
                 <th>Project</th>
@@ -1253,7 +1383,7 @@ export function DashboardPage(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {filteredProjects.map((p) => {
+              {projects.map((p) => {
                 const isSelected = selectedIds.has(p.id);
                 const orientation = orientationOf(p);
                 const thumb = p.thumbnailUrl;
@@ -1315,17 +1445,15 @@ export function DashboardPage(): JSX.Element {
           </table>
         )}
 
-        {status === 'ready' && total > 0 && (
-          <div className={styles.pageFoot}>
-            <span className={styles.pageCount}>
-              Showing {projects.length} of {total} {total === 1 ? 'project' : 'projects'}
-            </span>
-            {projects.length < total && (
-              <button type="button" className={styles.btnSecondary} onClick={() => void loadMore()}>
-                <span>Load more</span>
-              </button>
-            )}
-          </div>
+        {status === 'ready' && (
+          <Pagination
+            total={total}
+            limit={limit}
+            offset={offset}
+            busy={busy}
+            onChange={goToProjectPage}
+            itemLabel="project"
+          />
         )}
       </div>
     );
@@ -1484,12 +1612,16 @@ export function DashboardPage(): JSX.Element {
                   />
                 </div>
 
-                {/* Filters on a real, stored fact. The Category and Status
+                {/* Filters on a real, stored fact, server-side — see the note
+                    on `filteredProjects`' removal. The Category and Status
                     dropdowns that used to sit here filtered on values invented
                     from the revision counter. */}
                 <select
-                  value={orientationFilter}
-                  onChange={(e) => setOrientationFilter(e.target.value as 'all' | Orientation)}
+                  value={orientation}
+                  onChange={(e) => {
+                    setSelectedIds(new Set());
+                    void load({ orientation: e.target.value as OrientationFilter });
+                  }}
                   className={styles.filterDropdown}
                 >
                   <option value="all">Format: All</option>
@@ -1506,10 +1638,11 @@ export function DashboardPage(): JSX.Element {
                     className={styles.btnDanger}
                     onClick={async () => {
                       if (await customConfirm('Move to Trash', `Move ${selectedIds.size} projects to the trash? You can restore them for 30 days.`, { confirmLabel: 'Move to Trash' })) {
-                        for (const id of selectedIds) {
-                          await remove(id).catch(() => undefined);
-                        }
+                        // One refetch for the batch — `remove` per id would
+                        // reload the page between every deletion.
+                        await removeMany(selectedIds);
                         setSelectedIds(new Set());
+                        void refreshOverview();
                       }
                     }}
                   >

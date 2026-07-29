@@ -209,6 +209,13 @@ export interface RenderJobDto {
   updatedAt: string;
 }
 
+/**
+ * What `GET /render?status=` accepts. `'active'` is queued-or-running — the
+ * question a queue view actually asks, answered by the server's `total` rather
+ * than by counting a page.
+ */
+export type RenderStatusFilter = 'active' | RenderJobDto['status'];
+
 export type VersionKind = 'autosave' | 'manual' | 'recovery';
 
 export interface ProjectVersionSummary {
@@ -409,10 +416,12 @@ export const api = {
 
   // projects
   /**
-   * A page of projects. `q` searches server-side — it must, because filtering
-   * a single page in the browser is filtering the wrong set.
+   * A page of projects. `q` and `orientation` filter server-side — they must,
+   * because filtering a single page in the browser is filtering the wrong set.
    */
-  listProjects: (params: PageQuery & { q?: string } = {}) =>
+  listProjects: (
+    params: PageQuery & { q?: string; orientation?: 'landscape' | 'portrait' | 'square' } = {},
+  ) =>
     cachedGet<Paginated<ProjectSummary>>(`/projects${query({ ...params })}`, {
       tags: ['projects'],
     }),
@@ -632,7 +641,12 @@ export const api = {
    * it hasn't.
    */
   getRender: (id: string) => request<RenderJobDto>(`/render/${id}`),
-  listRenders: (params: PageQuery = {}) =>
+  /**
+   * A page of render jobs. `status` filters server-side; `'active'` means
+   * queued-or-running, which is the only honest way to count what's in flight
+   * without holding the whole job history in the browser.
+   */
+  listRenders: (params: PageQuery & { status?: RenderStatusFilter } = {}) =>
     cachedGet<Paginated<RenderJobDto>>(`/render${query({ ...params })}`, {
       tags: ['renders'],
       // Short: a queue is the one list a user expects to be live.
