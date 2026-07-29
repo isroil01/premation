@@ -382,6 +382,79 @@ function registerRenderIpc(): void {
     }
   });
 
+  /**
+   * Transcode an imported file into a low-resolution editing proxy.
+   *
+   * Runs as a CHILD PROCESS for the same reason the export encode does: the
+   * transcode must never compete with the editor's UI thread, because the whole
+   * point is that the asset stays usable at full resolution while this runs.
+   *
+   * Cancellation is real, not cooperative. `proxy:cancel` kills the child, and
+   * killing it is also what happens on app close — an ffmpeg child does not
+   * outlive the app, which is precisely why a 'generating' record is never
+   * persisted (see `saveProxies`).
+   *
+   * Returns null rather than throwing when ffmpeg is missing, matching
+   * `media:probe`: no codec tool is a real desktop state, and the caller
+   * degrades to full resolution rather than surfacing an error.
+   */
+  const proxyJobs = new Map<string, ReturnType<typeof spawn>>();
+
+  ipcMain.handle(
+    'proxy:generate',
+    async (_e, assetId: string, bytes: Uint8Array, ext: string, args: string[], outExt: string) => {
+      const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : 'bin';
+      const safeOut = /^[a-z0-9]{1,5}$/i.test(outExt) ? outExt : 'mp4';
+      const stamp = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      const input = path.join(app.getPath('temp'), `motion-proxy-in-${stamp}.${safeExt}`);
+      const output = path.join(app.getPath('temp'), `motion-proxy-out-${stamp}.${safeOut}`);
+
+      // A second request for the same asset supersedes the first — re-importing
+      // or re-requesting must not leave two children racing to write one file.
+      proxyJobs.get(assetId)?.kill();
+
+      try {
+        await writeFile(input, bytes);
+        // The renderer chose the encode (`proxyEncodeArgs`), so the rule lives in
+        // one place; main only substitutes the paths it owns.
+        const resolved = args.map((a) => (a === '__IN__' ? input : a === '__OUT__' ? output : a));
+
+        const code = await new Promise<number | null>((resolve) => {
+          const proc = spawn(resolveFfmpeg(), resolved, { stdio: ['ignore', 'ignore', 'pipe'] });
+          proxyJobs.set(assetId, proc);
+          let stderr = '';
+          proc.stderr?.on('data', (d) => (stderr += String(d)));
+          proc.on('error', () => resolve(null));
+          proc.on('close', (c) => {
+            proxyJobs.delete(assetId);
+            if (c !== 0 && stderr) console.warn(`[proxy] ffmpeg ${c}: ${stderr.slice(-400)}`);
+            resolve(c);
+          });
+        });
+        if (code !== 0) return null;
+        return await readFile(output);
+      } catch {
+        return null;
+      } finally {
+        await unlink(input).catch(() => {});
+        await unlink(output).catch(() => {});
+      }
+    },
+  );
+
+  ipcMain.handle('proxy:cancel', (_e, assetId: string) => {
+    const proc = proxyJobs.get(assetId);
+    if (!proc) return false;
+    proc.kill();
+    proxyJobs.delete(assetId);
+    return true;
+  });
+
+  app.on('before-quit', () => {
+    for (const proc of proxyJobs.values()) proc.kill();
+    proxyJobs.clear();
+  });
+
   ipcMain.handle('render:beginJob', async () => {
     const jobId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     const dir = path.join(app.getPath('temp'), `motion-render-${jobId}`);

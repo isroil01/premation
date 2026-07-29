@@ -114,6 +114,22 @@ export interface MotionEditorApi {
    */
   media?: {
     probe?(bytes: Uint8Array, ext: string): Promise<MediaProbeResult | null>;
+    /**
+     * Transcode a file into an editing proxy. `args` is the ffmpeg argument
+     * list from `proxyEncodeArgs`, with `__IN__`/`__OUT__` placeholders the
+     * main process substitutes with paths it owns. Resolves null when ffmpeg
+     * is absent, the encode failed, or the job was cancelled — every one of
+     * which leaves the asset at full resolution.
+     */
+    generateProxy?(
+      assetId: string,
+      bytes: Uint8Array,
+      ext: string,
+      args: string[],
+      outExt: string,
+    ): Promise<Uint8Array | null>;
+    /** Kill a running proxy encode. True if one was actually running. */
+    cancelProxy?(assetId: string): Promise<boolean>;
   };
 
   render?: {
