@@ -1611,6 +1611,10 @@ export function buildSnapshot(
         const uv = size ? coverUvRect(size, slot) : null;
         return uv ? { uvRect: uv } : {};
       })(),
+      // Interpret Footage ▸ Alpha. Read from the ASSET's interpretation, so one
+      // correction fixes every layer using that file — including layers in
+      // other compositions — rather than being re-set per layer.
+      ...(footageSourceOf(node)?.alpha === 'premultiplied' ? { premultipliedSource: true } : {}),
     };
 
     // Per-quad Lambert lighting (Material Options → Accepts Lights, default

@@ -40,6 +40,10 @@ export interface ImportedAsset {
      * claim from `false` and the audio UI must distinguish them.
      */
     hasAudioTrack?: boolean;
+    /** The file carries an alpha channel (probe: pix_fmt OR the container's
+     *  alpha_mode tag). Gates the Alpha interpretation control — it is noise on
+     *  the opaque footage that makes up most of a project. */
+    hasAlpha?: boolean;
     audioChannels?: number;
   };
   /**
@@ -262,6 +266,7 @@ async function applyProbe(file: File, asset: ImportedAsset): Promise<void> {
     ...(facts.durationSec ? { duration: facts.durationSec } : {}),
     ...(facts.fps ? { fps: facts.fps } : {}),
     ...(facts.audio !== undefined ? { hasAudioTrack: facts.audio !== null } : {}),
+    ...(facts.hasAlpha ? { hasAlpha: true } : {}),
     ...(facts.audio?.channels ? { audioChannels: facts.audio.channels } : {}),
   };
   // A non-square pixel aspect IS an interpretation — it is the container

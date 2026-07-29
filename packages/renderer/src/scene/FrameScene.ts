@@ -130,6 +130,13 @@ export interface Renderable {
   textureKey?: string;
   /** Sub-rectangle of the source texture in [0,1] uv space (atlas/crop). */
   uvRect?: Rect;
+  /**
+   * This layer's source texture holds PREMULTIPLIED colour, so the shader must
+   * divide the premultiplication back out before grading (After Effects'
+   * Interpret Footage ▸ Alpha ▸ Premultiplied). Absent/false = straight, which
+   * is the default and every existing project.
+   */
+  premultipliedSource?: boolean;
   /** Clip children to this node's bounds. */
   clip?: boolean;
   /**

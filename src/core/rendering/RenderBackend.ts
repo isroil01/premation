@@ -243,6 +243,12 @@ export interface RenderLayer {
    * overflow impossible by construction.
    */
   uvRect?: { x: number; y: number; width: number; height: number };
+  /**
+   * The layer's footage is interpreted as PREMULTIPLIED (see
+   * `FootageInterpretation.alpha`). Nothing in a file records this, so it is
+   * always a user setting; absent = straight, the default.
+   */
+  premultipliedSource?: boolean;
   /** Digest of the fields that determine this layer's OWN rasterized pixels
    *  (geometry + fills/strokes/text/masks + pre-DOF effects + width/height),
    *  excluding transform + compositing. Computed once in buildSnapshot (see

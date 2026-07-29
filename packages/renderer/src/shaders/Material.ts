@@ -291,6 +291,33 @@ export const DEFORMED_MESH_MATERIAL: MaterialDescriptor = {
   buffers: [DEFORMED_MESH_LAYOUT],
 };
 
+// ── Premultiplied-source twins ──────────────────────────────────────────────
+//
+// One per textured material, differing only in which shader they name. See the
+// long note in builtin.ts for why the flag is a shader variant rather than a
+// field in the shared std140 `Object` block — and, importantly, for the
+// condition that ends this arrangement:
+//
+//   THE SECOND FLAG THAT NEEDS TO REACH THE FRAGMENT STAGE IS THE TRIGGER TO
+//   EXTEND THE UNIFORM BLOCK AND DELETE ALL OF THIS.
+//
+// Variants multiply per family: six materials for one flag, twelve for two,
+// twenty-four for three. A non-black matte colour, Ignore Alpha or Invert Alpha
+// would each be that second flag. Do not add a seventh variant by reflex.
+
+/** The premultiplied-source twin of a textured material. */
+function premulMaterial(base: MaterialDescriptor): MaterialDescriptor {
+  return { ...base, shader: `${base.shader}-premul` };
+}
+
+export const TEXTURED_PREMUL_MATERIAL = premulMaterial(TEXTURED_MATERIAL);
+export const MASKED_TEXTURED_PREMUL_MATERIAL = premulMaterial(MASKED_TEXTURED_MATERIAL);
+export const LUT_TEXTURED_PREMUL_MATERIAL = premulMaterial(LUT_TEXTURED_MATERIAL);
+export const DEFORMED_MESH_PREMUL_MATERIAL = premulMaterial(DEFORMED_MESH_MATERIAL);
+export const TEXTURED3D_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_MATERIAL);
+export const TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_NO_DEPTH_WRITE_MATERIAL);
+export const MASKED_TEXTURED3D_PREMUL_MATERIAL = premulMaterial(MASKED_TEXTURED3D_MATERIAL);
+
 export class MaterialSystem {
   constructor(
     private readonly resources: ResourceManager,

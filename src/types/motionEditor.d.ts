@@ -27,6 +27,8 @@ export interface MediaProbeResult {
     height: number | null;
     fps: number | null;
     par: number | null;
+    /** Source carries an alpha channel (pix_fmt or the container alpha_mode tag). */
+    hasAlpha: boolean;
   } | null;
   audio: {
     codec: string | null;

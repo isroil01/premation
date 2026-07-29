@@ -18,6 +18,8 @@ export interface ProbeStream {
   channels?: number | string;
   sample_rate?: number | string;
   duration?: number | string;
+  pix_fmt?: string;
+  tags?: Record<string, string | undefined>;
 }
 
 export interface ProbeJson {
@@ -34,6 +36,8 @@ export interface ParsedProbe {
     height: number | null;
     fps: number | null;
     par: number | null;
+    /** Does the video stream carry an alpha channel at all? */
+    hasAlpha: boolean;
   } | null;
   audio: { codec: string | null; channels: number | null; sampleRate: number | null } | null;
 }
@@ -61,6 +65,34 @@ const numOrNull = (v: unknown): number | null => {
 
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 
+/**
+ * Does this video stream carry alpha?
+ *
+ * TWO signals, because neither is sufficient. Measured against real files:
+ *
+ *   VP9 / WebM with alpha  pix_fmt yuv420p       tags.alpha_mode "1"
+ *   ProRes 4444 / MOV      pix_fmt yuva444p12le  no tag
+ *   PNG                    pix_fmt rgba          no tag
+ *   TGA                    pix_fmt bgra          no tag
+ *   H.264 / MP4, opaque    pix_fmt yuv420p       no tag
+ *
+ * A `pix_fmt`-only test — the obvious implementation — reports WebM alpha as
+ * opaque, because Matroska carries the alpha channel as a separate stream and
+ * announces it with a container tag rather than in the pixel format. WebM is one
+ * of the two formats people actually deliver alpha in, so that miss would matter.
+ *
+ * This says whether alpha EXISTS. Nothing in any of these files says whether the
+ * colour was PREMULTIPLIED by it — see FootageInterpretation.alpha.
+ */
+export function streamHasAlpha(v: ProbeStream | undefined): boolean {
+  if (!v) return false;
+  const tag = v.tags?.alpha_mode ?? v.tags?.ALPHA_MODE;
+  if (tag !== undefined && tag !== '0' && tag !== '') return true;
+  const pf = typeof v.pix_fmt === 'string' ? v.pix_fmt : '';
+  // yuva*/ya* cover the planar alpha formats; the packed ones are named directly.
+  return /^(yuva|ya)/.test(pf) || ['rgba', 'bgra', 'argb', 'abgr', 'rgba64le', 'rgba64be'].includes(pf);
+}
+
 export function parseProbeJson(parsed: ProbeJson): ParsedProbe {
   const streams = parsed.streams ?? [];
   const v = streams.find((s) => s.codec_type === 'video');
@@ -82,6 +114,7 @@ export function parseProbeJson(parsed: ProbeJson): ParsedProbe {
           fps: parseRational(v.avg_frame_rate) ?? parseRational(v.r_frame_rate),
           // ffprobe writes PAR with a colon ("1:1"), not a slash.
           par: parseRational(String(v.sample_aspect_ratio ?? '').replace(':', '/')),
+          hasAlpha: streamHasAlpha(v),
         }
       : null,
     audio: a

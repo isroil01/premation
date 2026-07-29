@@ -15,8 +15,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { InspectorRow } from '@components/Inspector';
 import { Switch } from '@components/Switch';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { useAssetStore } from '@stores/assetStore';
+import { assetIdOf, interpretationOf, type AlphaInterpretation } from '@core/source/sourceInfo';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { getNodeHasSequence, getNodeSequenceLoop, setSequenceLoop } from '@core/scene/imageSequence';
@@ -32,6 +33,24 @@ import styles from './TransformSection.module.css';
 
 export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
+  // Alpha interpretation is per-FILE, so it keys off the asset, not the layer.
+  const assetsRev = useAssetStore((st) => st.assets);
+  const alphaNode = defaultSceneGraph.getNode(nodeId);
+  const alphaAssetId = alphaNode ? assetIdOf(alphaNode) : null;
+  const alphaMode: AlphaInterpretation = alphaAssetId
+    ? interpretationOf(alphaAssetId).alpha
+    : 'straight';
+  // Only offered for footage that actually HAS an alpha channel. On opaque
+  // footage the setting changes nothing, and a control that does nothing on
+  // most of a project's media is the same noise as one nothing reads.
+  // Undefined (browser build, or a still whose probe never ran) is treated as
+  // "unknown" and the control is shown, because refusing to offer it would
+  // leave a user with fringing and no recourse.
+  const alphaAsset = alphaAssetId
+    ? useAssetStore.getState().assets.find((a) => a.id === alphaAssetId)
+    : undefined;
+  const showAlpha = !!alphaAssetId && alphaAsset?.metadata?.hasAlpha !== false;
+  void assetsRev; // subscription only — the value is read through interpretationOf
   const node = defaultSceneGraph.getNode(nodeId);
 
   // No early return above this line: every hook below has to run on every
@@ -134,6 +153,43 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
           Replace
         </button>
       </div>
+
+      {/*
+        Interpret Footage ▸ Alpha. The FIRST piece of interpretation UI — conform
+        fps, pixel aspect and loop count are all read by the renderer but have
+        never been settable, so this is where that starts rather than a fourth
+        orphan.
+
+        It has to be a manual control: nothing in a file records whether RGB was
+        premultiplied. Probed against real files, a VP9/WebM alpha clip reports
+        `pix_fmt: yuv420p`, ProRes 4444 `yuva444p12le`, PNG `rgba` — and not one
+        of them says which convention the colour follows. So the default is
+        Straight (correct for PNG, ProRes 4444 and WebM by their specs, and the
+        existing behaviour) and this is the escape hatch for rendered elements,
+        which is the material that carries no marker and is exactly what fringes.
+
+        Written to the ASSET, so correcting a mis-tagged import fixes every layer
+        using that file at once — including layers in other compositions.
+      */}
+      {showAlpha && alphaAssetId && (
+        <InspectorRow label="Alpha">
+          <select
+            className={styles.presetChip}
+            value={alphaMode}
+            onChange={(e) => {
+              useAssetStore.getState().setInterpretation(alphaAssetId, {
+                alpha: e.currentTarget.value as AlphaInterpretation,
+              });
+              bumpScene();
+            }}
+            aria-label="How this footage's colour relates to its alpha"
+            title="Premultiplied = the file's colour is already multiplied by its alpha (rendered elements, TGA). Straight = it is not (PNG, ProRes 4444, WebM)."
+          >
+            <option value="straight">Straight (Unmatted)</option>
+            <option value="premultiplied">Premultiplied (Matted With Black)</option>
+          </select>
+        </InspectorRow>
+      )}
 
       {getNodeHasSequence(nodeId) && (
         <InspectorRow label="Loop Sequence" align="center">

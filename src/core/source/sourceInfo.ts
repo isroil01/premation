@@ -33,16 +33,10 @@ import { readCompRef } from '@core/scene/compInstance';
  * Per-FILE reinterpretation. Every field is optional: absent means "believe
  * the file", which is what every existing project implicitly says.
  *
- * NOT HERE YET — alpha interpretation (straight vs premultiplied, with a matte
- * colour). It belongs in this model and is genuinely needed: the sprite shader
- * ends with `vec4(graded * c.a, c.a)`, so a source that is ALREADY
- * premultiplied — ProRes 4444, most WebM/VP9 alpha encodes — is multiplied by
- * its alpha twice and every soft edge carries a dark halo. Fixing it means
- * un-premultiplying before that line, which needs a per-object flag, and the
- * `Object` uniform is a fixed std140 block shared by the textured, masked and
- * 3D shader variants — so the field cannot be added in one place. It is
- * deliberately absent rather than stored-and-ignored: a setting the renderer
- * does not read is the exact defect this whole change set exists to remove.
+ * Alpha interpretation lives here too, as `alpha`. It is READ by the renderer
+ * (premultiplied sources take a dedicated shader variant that divides the
+ * premultiplication back out before grading), so it is a real setting rather
+ * than a stored-and-ignored one. Matte colour is black-only — see §21.
  */
 export interface FootageInterpretation {
   /**
@@ -57,7 +51,38 @@ export interface FootageInterpretation {
   /** How many times the source plays before it ends. 1 = once (default);
    *  0 = forever. This is where the dead Media-panel `loop` prop belongs. */
   loopCount?: number;
+  /**
+   * How the source's RGB relates to its alpha (After Effects' Interpret Footage
+   * ▸ Alpha).
+   *
+   * `straight` (default) = RGB is the unmatted colour; the compositor multiplies
+   * by alpha on the way to the screen. `premultiplied` = RGB has ALREADY been
+   * multiplied by alpha against a black matte, so it must be divided back out
+   * first or it gets multiplied twice and soft edges darken into a fringe.
+   *
+   * ## Why this cannot be detected, and therefore defaults to straight
+   *
+   * Nothing in the file records it. Probed against real files: a VP9/WebM alpha
+   * clip reports `pix_fmt: yuv420p` (its alpha is a container tag), ProRes 4444
+   * reports `yuva444p12le`, PNG `rgba`, TGA `bgra` — and not one of them, in
+   * `pix_fmt`, stream tags or side-data, says whether RGB was premultiplied. It
+   * is a convention carried out of band.
+   *
+   * Straight is the right default: it is what PNG mandates, what Apple's ProRes
+   * 4444 spec says, and what VP9/WebM alpha is — and it is the existing
+   * behaviour, so no project changes when this lands. Premultiplied is
+   * characteristic of RENDERED elements (After Effects' own "Premultiplied"
+   * output setting, TGA, some TIFF/EXR), which is exactly the material that
+   * carries no marker. Hence a user-set override rather than a guess.
+   *
+   * Only a BLACK matte is supported; see §21.
+   */
+  alpha?: AlphaInterpretation;
 }
+
+/** Interpret Footage ▸ Alpha. Ignore and Invert Alpha are not implemented —
+ *  see §21 for why they are filed rather than stubbed. */
+export type AlphaInterpretation = 'straight' | 'premultiplied';
 
 /** What a layer is showing, normalized across footage, stills and comps. */
 export interface SourceInfo {
@@ -82,6 +107,9 @@ export interface SourceInfo {
   fps: number | null;
   par: number;
   loopCount: number;
+  /** How RGB relates to alpha. See FootageInterpretation.alpha — nothing in a
+   *  file records this, so it is always the user's setting or the default. */
+  alpha: AlphaInterpretation;
 }
 
 /** The comp facts `sourceOf` needs. Injected, because the renderer must not
@@ -111,6 +139,9 @@ export function interpretationOf(assetId: string): Required<Omit<FootageInterpre
     ...(i.conformFps !== undefined ? { conformFps: i.conformFps } : {}),
     par: i.par ?? 1,
     loopCount: i.loopCount ?? 1,
+    // Straight is both the AE default and the EXISTING behaviour, so nothing
+    // renders differently until someone sets this deliberately.
+    alpha: i.alpha ?? 'straight',
   };
 }
 
@@ -141,6 +172,7 @@ export function footageSourceOf(node: SceneNode): SourceInfo | null {
     fps: fps !== null && fps > 0 ? fps : null,
     par: i.par,
     loopCount: i.loopCount,
+    alpha: i.alpha,
   };
 }
 
@@ -174,6 +206,9 @@ export function sourceOf(node: SceneNode, compLookup?: CompSourceLookup): Source
       fps: c.fps > 0 ? c.fps : null,
       par: 1,
       loopCount: 1,
+      // A composition is rendered by us, into a straight-alpha target. There is
+      // no file convention to reinterpret, so it is straight by construction.
+      alpha: 'straight',
     };
   }
 

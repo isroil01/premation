@@ -492,6 +492,16 @@ that footage at once — you can fix a mis-tagged import after you have already 
 | **Conform frame rate** | Play the source as if shot at this rate (24 → 25 for PAL, 30 → 24 for a slow-mo look). Also what frame blending brackets on. Defaults to the probed rate; only set when you deliberately override the file. |
 | **Pixel aspect ratio** | Anamorphic and DV sources display at their true shape instead of stretched. Applied to width. |
 | **Loop count** | How many times the source plays. Extends a clip bar past the file's own length with real frames instead of a held one. `0` loops forever. |
+| **Alpha** | **Straight (Unmatted)** or **Premultiplied (Matted With Black)**. Premultiplied footage — After Effects-rendered elements, TGA, some TIFF/EXR — stores colour already multiplied by its alpha; without this the compositor multiplies it a second time and every soft edge carries a dark fringe. Shown only for footage that actually has an alpha channel. |
+
+**Alpha cannot be detected, so it is a setting rather than a guess.** Nothing in a file records whether
+colour was premultiplied — probed against real files, a VP9/WebM alpha clip reports `pix_fmt yuv420p`
+(its alpha is a container tag), ProRes 4444 reports `yuva444p12le`, PNG `rgba`, and none of them says
+which convention the colour follows. The default is **Straight**, which is what PNG mandates, what
+Apple's ProRes 4444 spec says, and what VP9/WebM alpha is — so most footage is already correct and
+nothing in an existing project changes. Set Premultiplied on rendered elements if their edges look
+dark against a light background. Whether a file *has* alpha at all **is** detected reliably, and gates
+the control.
 
 ### Audio
 
@@ -688,10 +698,14 @@ reproducing, and nothing is carried forward on faith.
    composites, but nothing re-rasterizes vector content at the scale it ends up drawn at. Blow a
    nested comp of shapes or text up past 100% and it magnifies its raster like a bitmap instead of
    redrawing crisp, the way After Effects' matching switch would.
-3. **Premultiplied alpha fringes.** Footage whose alpha is premultiplied — ProRes 4444, most WebM/VP9
-   alpha encodes — is multiplied by its own alpha a second time on the way to the screen, so soft
-   edges carry a dark halo that is obvious against a light background. There is no Interpret Footage
-   ▸ Alpha control yet to tell it otherwise.
+3. **Alpha interpretation is Straight or Premultiplied-with-black only.** Those are the two cases that
+   matter and they are implemented and read by the renderer (§14). After Effects additionally offers a
+   **non-black matte colour**, **Ignore Alpha** and **Invert Alpha**; those are not here. Premultiplied
+   footage is essentially always matted against black — it is what every renderer emits by default —
+   so the gap is narrow, but if you have legacy hardware-keyed material matted against another colour
+   there is no way to tell it so. The reason it is filed rather than half-built: each extra mode needs
+   a value reaching the fragment stage, and the shared uniform block would have to be extended to carry
+   it, which is a change across every textured shader at once.
 4. **Speed changes mute a clip's audio.** Time stretch, reverse and time remap retime the picture by
    choosing a different source frame; audio would have to be *resampled*, which needs a pitch
    decision and a DSP pass that isn't built. Rather than let the sound drift steadily out of sync,

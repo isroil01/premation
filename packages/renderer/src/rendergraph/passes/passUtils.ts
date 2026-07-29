@@ -10,6 +10,21 @@ import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
 import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
+import { TEXTURED_PREMUL_MATERIAL, MASKED_TEXTURED_PREMUL_MATERIAL, LUT_TEXTURED_PREMUL_MATERIAL, DEFORMED_MESH_PREMUL_MATERIAL, TEXTURED3D_PREMUL_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL, MASKED_TEXTURED3D_PREMUL_MATERIAL } from '../../shaders/Material';
+
+/**
+ * Does this draw's source texture hold PREMULTIPLIED colour?
+ *
+ * Selects the shader twin that divides the premultiplication back out before
+ * grading (see builtin.ts). Threaded as a plain trailing flag on each emit
+ * helper, exactly like `depthWrite`, so the call sites that do not care stay
+ * unchanged and default to straight — which is every existing one.
+ */
+export type PremulFlag = boolean | undefined;
+
+/** Distinguishes the two twins in the batch key: they are different pipelines
+ *  and must not be batched together. */
+const premulKey = (p: PremulFlag): string => (p ? '|pm' : '');
 import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
 
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
@@ -90,10 +105,13 @@ export function emitTextured3D(
   /** False for a quad whose transparent margin must not occlude what is behind
    *  it — see TEXTURED3D_NO_DEPTH_WRITE_MATERIAL. */
   depthWrite = true,
+  premultiplied?: PremulFlag,
 ): void {
   cmds.add({
-    batchKey: `tex3d|${texture.id}|${blend}|${depthWrite ? 'dw' : 'nodw'}`,
-    material: depthWrite ? TEXTURED3D_MATERIAL : TEXTURED3D_NO_DEPTH_WRITE_MATERIAL,
+    batchKey: `tex3d|${texture.id}|${blend}|${depthWrite ? 'dw' : 'nodw'}${premulKey(premultiplied)}`,
+    material: premultiplied
+      ? (depthWrite ? TEXTURED3D_PREMUL_MATERIAL : TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL)
+      : (depthWrite ? TEXTURED3D_MATERIAL : TEXTURED3D_NO_DEPTH_WRITE_MATERIAL),
     blend,
     uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade),
     texture,
@@ -114,10 +132,11 @@ export function emitMaskedTextured3D(
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
   shade?: Shade3D,
+  premultiplied?: PremulFlag,
 ): void {
   cmds.add({
-    batchKey: `tex3d_mask|${texture.id}|${maskTexture.id}|${blend}`,
-    material: MASKED_TEXTURED3D_MATERIAL,
+    batchKey: `tex3d_mask|${texture.id}|${maskTexture.id}|${blend}${premulKey(premultiplied)}`,
+    material: premultiplied ? MASKED_TEXTURED3D_PREMUL_MATERIAL : MASKED_TEXTURED3D_MATERIAL,
     blend,
     uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade),
     texture,
@@ -203,10 +222,11 @@ export function emitTextured(
   sampler: SamplerHandle,
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
+  premultiplied?: PremulFlag,
 ): void {
   cmds.add({
-    batchKey: `tex|${texture.id}|${blend}`,
-    material: TEXTURED_MATERIAL,
+    batchKey: `tex|${texture.id}|${blend}${premulKey(premultiplied)}`,
+    material: premultiplied ? TEXTURED_PREMUL_MATERIAL : TEXTURED_MATERIAL,
     blend,
     uniforms: packTextured(mvp, uvRect, tint, opacity, color),
     texture,
@@ -227,10 +247,11 @@ export function emitDeformedMesh(
   indexBuffer: BufferHandle,
   indexCount: number,
   color?: ColorTransform,
+  premultiplied?: PremulFlag,
 ): void {
   cmds.add({
-    batchKey: `mesh|${texture.id}|${blend}`,
-    material: DEFORMED_MESH_MATERIAL,
+    batchKey: `mesh|${texture.id}|${blend}${premulKey(premultiplied)}`,
+    material: premultiplied ? DEFORMED_MESH_PREMUL_MATERIAL : DEFORMED_MESH_MATERIAL,
     blend,
     uniforms: packDeformedMesh(mvp, tint, opacity, color),
     texture,
@@ -280,7 +301,8 @@ export function emitLayerTexture(
       vertexBuffer,
       indexBuffer,
       indexCount,
-      r.colorMatrix
+      r.colorMatrix,
+      r.premultipliedSource,
     );
   } else {
     emitTextured(
@@ -292,7 +314,8 @@ export function emitLayerTexture(
       tex.texture,
       tex.sampler,
       r.uvRect ?? tex.uv,
-      r.colorMatrix
+      r.colorMatrix,
+      r.premultipliedSource,
     );
   }
 }
@@ -311,10 +334,11 @@ export function emitLutTextured(
   lutTexture: TextureHandle,
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
+  premultiplied?: PremulFlag,
 ): void {
   cmds.add({
-    batchKey: `tex_lut|${texture.id}|${lutTexture.id}|${blend}`,
-    material: LUT_TEXTURED_MATERIAL,
+    batchKey: `tex_lut|${texture.id}|${lutTexture.id}|${blend}${premulKey(premultiplied)}`,
+    material: premultiplied ? LUT_TEXTURED_PREMUL_MATERIAL : LUT_TEXTURED_MATERIAL,
     blend,
     uniforms: packTextured(mvp, uvRect, tint, opacity, color),
     texture,
@@ -384,10 +408,11 @@ export function emitMaskedTextured(
   maskTexture: TextureHandle,
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
+  premultiplied?: PremulFlag,
 ): void {
   cmds.add({
-    batchKey: `tex_mask|${texture.id}|${maskTexture.id}|${blend}`,
-    material: MASKED_TEXTURED_MATERIAL,
+    batchKey: `tex_mask|${texture.id}|${maskTexture.id}|${blend}${premulKey(premultiplied)}`,
+    material: premultiplied ? MASKED_TEXTURED_PREMUL_MATERIAL : MASKED_TEXTURED_MATERIAL,
     blend,
     uniforms: packTextured(mvp, uvRect, tint, opacity, color),
     texture,

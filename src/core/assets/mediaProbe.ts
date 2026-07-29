@@ -45,6 +45,13 @@ export interface MediaFacts {
   fps?: number;
   /** Pixel aspect from the container, when it is not square. */
   par?: number;
+  /**
+   * The source carries an alpha channel. Reliable (pix_fmt OR the container's
+   * alpha_mode tag — see streamHasAlpha), and used only to decide whether the
+   * Alpha interpretation control is worth showing. It says nothing about
+   * whether the colour is premultiplied; no file records that.
+   */
+  hasAlpha?: boolean;
   container?: string;
   videoCodec?: string;
   /** Present and non-null only on the `probed` tier. `null` means the container
@@ -99,6 +106,7 @@ export async function probeMedia(file: File): Promise<MediaFacts> {
     // Only carry a PAR that actually differs from square. Writing 1 would
     // present "believe the file" as an explicit user override.
     ...(v?.par && Math.abs(v.par - 1) > 1e-3 ? { par: v.par } : {}),
+    ...(v?.hasAlpha ? { hasAlpha: true } : {}),
     ...(result.container ? { container: result.container } : {}),
     ...(v?.codec ? { videoCodec: v.codec } : {}),
     audio: result.audio,
