@@ -26,7 +26,7 @@
  * strict and fail the run.
  */
 
-import type { AiRequest, ToolContext, ToolRegistry } from '@motion/ai-tools';
+import type { AiImage, AiRequest, ToolContext, ToolRegistry } from '@motion/ai-tools';
 import { LOOK_PACKS } from '@motion/design-system';
 import {
   briefPrompt,
@@ -35,6 +35,7 @@ import {
   type CasterHooks,
   type CastReport,
   type CreativeBrief,
+  type Direction,
 } from '@motion/caster';
 import type { GatewayProviderId } from '@core/api/client';
 import type { ProviderId } from '@motion/ai-tools';
@@ -56,6 +57,31 @@ export interface CasterRunOptions {
    * shown a blank summary for every step.
    */
   events?: AgentEvents;
+  /**
+   * Reference images the user attached to this turn.
+   *
+   * They reach the BRIEF call and nothing else. The brief is the only stage
+   * making a judgement an image can inform — which look pack, which accent, what
+   * the piece is about — and it was the one stage running blind: this file built
+   * its own message array and never carried them, so pasting a moodboard and
+   * typing "make it like this" fed the model the sentence and dropped the
+   * picture, on every generative prompt.
+   *
+   * Deliberately NOT sent to the cast calls. Those choose from a pre-filtered id
+   * list against constraints an image cannot speak to, and images are the
+   * heaviest thing in a request by a wide margin.
+   */
+  images?: readonly AiImage[];
+  /**
+   * Direction the user set in the composer, which overrides the model's brief.
+   *
+   * `casterPacks()` has been exported for a UI to render since the caster
+   * landed, and nothing called it — so every run guessed a look the user may
+   * already have decided.
+   */
+  direction?: Direction;
+  /** How many alternatives to emit. 1 keeps the previous single-result behaviour. */
+  variants?: number;
 }
 
 export interface CasterRunResult {
@@ -67,6 +93,10 @@ export interface CasterRunResult {
   problems: string[];
   /** The fit critic's prose, when one ran. Never a score — see runFitCritic. */
   critique?: string;
+  /** How many alternatives were emitted. 1 when the feature is off. */
+  variantCount: number;
+  /** Mean linter score per alternative, best first — the ranking that chose one. */
+  variantScores: readonly number[];
 }
 
 /** Pull the first balanced JSON object or array out of a model's prose. */
@@ -137,11 +167,12 @@ async function askJson(
   system: string,
   user: string,
   responseSchema: AiRequest['responseSchema'],
+  images?: readonly AiImage[],
 ): Promise<unknown> {
   const req: AiRequest = {
     model: o.model,
     system,
-    messages: [{ role: 'user', content: user }],
+    messages: [{ role: 'user', content: user, ...(images?.length ? { images } : {}) }],
     // No tools. The caster's model calls decide; they never act, and offering a
     // tool here is offering it a way to bypass the library.
     tools: [],
@@ -250,6 +281,7 @@ const BRIEF_SCHEMA: AiRequest['responseSchema'] = {
         properties: {
           purpose: { type: 'string' },
           weight: { type: 'number', minimum: 0.1, maximum: 10 },
+          art: { type: 'string' },
           content: {
             type: 'object',
             additionalProperties: false,
@@ -318,6 +350,10 @@ function coerceBrief(raw: unknown, prompt: string): CreativeBrief {
         purpose: String(b.purpose ?? 'beat'),
         weight: typeof b.weight === 'number' && Number.isFinite(b.weight) ? b.weight : 1,
         content: (b.content ?? {}) as CreativeBrief['beats'][number]['content'],
+        // Length-gated, not just type-gated. The backend's image DTO rejects a
+        // prompt under 8 characters, so an `art: "yes"` would cost a round trip
+        // to be told so — and a one-word subject was never art direction anyway.
+        ...(typeof b.art === 'string' && b.art.trim().length >= 8 ? { art: b.art.trim() } : {}),
       }))
     // A brief with no beats still has to render something. One beat carrying the
     // prompt as a headline is a worse piece than the model should have planned,
@@ -374,7 +410,15 @@ export async function runCasterPipeline(
   const hooks: CasterHooks = {
     brief: async (system, userPrompt) => {
       o.events?.onActivity?.('Writing the creative brief…');
-      const raw = await askJson(o, system, userPrompt, BRIEF_SCHEMA);
+      // The one stage that gets the user's reference images. Naming them in the
+      // prompt matters: without it a model handed an image and a schema tends to
+      // describe the image back rather than treat it as direction.
+      const withRefs = o.images?.length
+        ? `${userPrompt}\n\nThe attached image${o.images.length > 1 ? 's are' : ' is'} REFERENCE for the ` +
+          `look — read the palette, the type, the density and the mood from ${o.images.length > 1 ? 'them' : 'it'} ` +
+          `and choose the pack and accent that come closest. Do not describe the image back.`
+        : userPrompt;
+      const raw = await askJson(o, system, withRefs, BRIEF_SCHEMA, o.images);
       return coerceBrief(raw, userPrompt);
     },
     cast: async (prompts, kind) => {
@@ -396,7 +440,16 @@ export async function runCasterPipeline(
     width: comp.width,
     height: comp.height,
     fps: comp.fps,
+    ...(o.direction ? { direction: o.direction } : {}),
+    ...(o.variants && o.variants > 1 ? { variants: o.variants } : {}),
   });
+
+  if (result.variants.length > 1) {
+    // Say which one was applied and how the others scored. Emitting several and
+    // silently keeping the best would spend the work and hide the choice — and
+    // the choice is the feature.
+    o.events?.onActivity?.(`Comparing ${result.variants.length} directions…`);
+  }
 
   // ── Execute ─────────────────────────────────────────────────────────
   // Through the same registry the direct loop uses, so alias resolution, schema
@@ -429,9 +482,23 @@ export async function runCasterPipeline(
     ...result.problems.casting.map(
       (p) => `[cast beat ${p.beatIndex}] ${p.message}${p.replacedWith ? ` → used '${p.replacedWith}'` : ''}`,
     ),
+    // Errors AND warnings.
+    //
+    // This filtered to `severity === 'error'`, and the deterministic repair pass
+    // also only acts on errors — so a warning was computed, discarded here, and
+    // never fixed anywhere. `PRIMITIVE_ONLY` spent its whole life in that gap:
+    // it fired on every run, its message named the exact ceiling on the output's
+    // quality, and nobody ever saw it.
+    //
+    // Warnings are judgement calls, so they are labelled as such rather than
+    // presented as failures. The person who can act on "nothing in this
+    // composition is a picture" is the one typing the prompt.
     ...result.report.findings
       .filter((f) => f.severity === 'error')
       .map((f) => `[${f.source}/${f.rule}] ${f.message}`),
+    ...result.report.findings
+      .filter((f) => f.severity === 'warn')
+      .map((f) => `[${f.source}/${f.rule}, judgement call] ${f.message}`),
   ];
 
   // ── The fit critic ──────────────────────────────────────────────────
@@ -456,6 +523,10 @@ export async function runCasterPipeline(
     report: result.report,
     problems,
     ...(critique ? { critique } : {}),
+    variantCount: result.variants.length,
+    variantScores: result.variants.map((v) =>
+      Number(((v.report.designScore + v.report.craftScore + v.report.uiMotionScore) / 3).toFixed(3)),
+    ),
   };
 }
 

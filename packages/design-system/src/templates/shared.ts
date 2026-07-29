@@ -21,7 +21,7 @@ import { elevation, glass, type Elevation } from '../depth';
 import { backgroundLight } from '../surface';
 import { radius, type RadiusStep } from '../shape';
 import { snapBaseline } from '../grid';
-import type { ComposeContext } from '../compose';
+import { COMPOSITION_BACKDROP_ID, COMPOSITION_SURFACE_ID, type ComposeContext } from '../compose';
 import type { ToolCall } from '../toolcall';
 
 /**
@@ -29,10 +29,41 @@ import type { ToolCall } from '../toolcall';
  *
  * Returns the ids so a technique can animate the backdrop (a slow drift, a hue
  * shift) and so the caller can keep the treatment layer on top.
+ *
+ * When the composition already owns a backdrop this emits NOTHING and returns
+ * the composition's ids. See `ComposeContext.hasCompositionBackdrop` — a
+ * template that emits its own full-frame gradient inside a multi-beat piece
+ * paints over every beat composed before it.
  */
 export function emitBackdrop(
   ctx: ComposeContext,
   o: { angle?: number; kind?: 'linear' | 'radial' | 'corners'; lift?: number } = {},
+): { calls: ToolCall[]; backdropId: string; treatmentId: string } {
+  if (ctx.hasCompositionBackdrop) {
+    return { calls: [], backdropId: COMPOSITION_BACKDROP_ID, treatmentId: COMPOSITION_SURFACE_ID };
+  }
+  return buildBackdrop(ctx, `${ctx.idPrefix}_bg`, `${ctx.idPrefix}_surface`, o);
+}
+
+/**
+ * The composition's single backdrop, emitted once before any beat composes.
+ *
+ * Same treatment as a template's own backdrop — the difference is only that it
+ * is created FIRST, so it sits behind every beat, and that its ids are fixed so
+ * a technique can name it.
+ */
+export function emitCompositionBackdrop(
+  ctx: ComposeContext,
+  o: { angle?: number; kind?: 'linear' | 'radial' | 'corners'; lift?: number } = {},
+): { calls: ToolCall[]; backdropId: string; treatmentId: string } {
+  return buildBackdrop(ctx, COMPOSITION_BACKDROP_ID, COMPOSITION_SURFACE_ID, o);
+}
+
+function buildBackdrop(
+  ctx: ComposeContext,
+  backdropId: string,
+  treatmentId: string,
+  o: { angle?: number; kind?: 'linear' | 'radial' | 'corners'; lift?: number },
 ): { calls: ToolCall[]; backdropId: string; treatmentId: string } {
   const { palette } = ctx.pack;
   const light = backgroundLight(palette.bg, palette.accent, {
@@ -43,8 +74,6 @@ export function emitBackdrop(
   // Three stops, not two: the middle one is computed in OKLCH so the renderer's
   // sRGB blend only has to cover a short span where its error is invisible.
   const stops = gradientStops(light.stops[0]!, light.stops[1]!, 3);
-  const backdropId = `${ctx.idPrefix}_bg`;
-  const treatmentId = `${ctx.idPrefix}_surface`;
 
   const calls: ToolCall[] = [
     { name: 'create_gradient', args: { id: backdropId, name: 'Backdrop', stops, kind: light.kind, angle: light.angle } },

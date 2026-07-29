@@ -135,6 +135,10 @@ export function AiChatPanel(): JSX.Element {
     discardPending,
     isManualMode,
     toggleManualMode,
+    direction,
+    setDirection,
+    packs,
+    filmstrip,
   } = useAiChatContext();
 
   const [value, setValue] = useState('');
@@ -170,6 +174,8 @@ export function AiChatPanel(): JSX.Element {
 
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
+  /** Which direction chip has its popover open, if any. */
+  const [openChip, setOpenChip] = useState<'look' | 'shape' | 'variants' | null>(null);
   const modelPickerRef = useRef<HTMLDivElement | null>(null);
   const modePickerRef = useRef<HTMLDivElement | null>(null);
 
@@ -500,6 +506,13 @@ export function AiChatPanel(): JSX.Element {
                   <Icon name={isPlayingPreview ? 'pause' : 'play'} size={14} />
                 </button>
               </div>
+              {filmstrip.length > 1 && (
+                <div className={styles.filmstrip}>
+                  {filmstrip.map((src, i) => (
+                    <img key={i} src={src} alt={`Frame ${i + 1}`} />
+                  ))}
+                </div>
+              )}
               {pendingChanges.length > 0 && (
                 <div className={styles.previewChanges}>
                   {pendingChanges.length} change{pendingChanges.length > 1 ? 's' : ''} pending
@@ -521,6 +534,151 @@ export function AiChatPanel(): JSX.Element {
       {/* ── Composer (Pill Container matching screenshot) ────────── */}
       {!showHistory && (
         <div className={styles.composer}>
+          {/* Direction. Every control is optional and unset by default - the
+              caster has always been able to take a pack, an accent, an energy and
+              a duration, and nothing in the product could supply them, so the
+              model guessed all four on every run. */}
+          <div className={styles.directionBar}>
+            <div
+              className={`${styles.directionChip} ${direction.lookPackId ? styles.directionChipSet : ''}`}
+              title="Look pack - fixes palette, type, shape language, pacing and motion vocabulary"
+              onClick={() => setOpenChip((c) => (c === 'look' ? null : 'look'))}
+            >
+              <Icon name="sparkles" size={11} />
+              {packs.find((pk) => pk.id === direction.lookPackId)?.displayName ?? 'Any look'}
+              {direction.lookPackId && (
+                <span
+                  className={styles.directionClear}
+                  role="button"
+                  aria-label="Clear look"
+                  onClick={(e) => { e.stopPropagation(); setDirection({ lookPackId: undefined }); }}
+                >
+                  <Icon name="close" size={9} />
+                </span>
+              )}
+              {openChip === 'look' && (
+                <div className={styles.directionPopover} onClick={(e) => e.stopPropagation()}>
+                  <div className={styles.popoverHeader}>Look pack</div>
+                  <button
+                    type="button"
+                    className={`${styles.directionOption} ${!direction.lookPackId ? styles.directionOptionActive : ''}`}
+                    onClick={() => { setDirection({ lookPackId: undefined }); setOpenChip(null); }}
+                  >
+                    <span>Let the AI choose</span>
+                    <span className={styles.directionOptionIntent}>
+                      It reads the brief and picks the pack that fits.
+                    </span>
+                  </button>
+                  {packs.map((pk) => (
+                    <button
+                      key={pk.id}
+                      type="button"
+                      className={`${styles.directionOption} ${direction.lookPackId === pk.id ? styles.directionOptionActive : ''}`}
+                      onClick={() => { setDirection({ lookPackId: pk.id }); setOpenChip(null); }}
+                    >
+                      <span>{pk.displayName}</span>
+                      <span className={styles.directionOptionIntent}>{pk.intent}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div
+              className={`${styles.directionChip} ${
+                direction.energy !== undefined || direction.totalDurationMs || direction.accent
+                  ? styles.directionChipSet
+                  : ''
+              }`}
+              title="Energy, length and brand colour"
+              onClick={() => setOpenChip((c) => (c === 'shape' ? null : 'shape'))}
+            >
+              <Icon name="settings" size={11} />
+              Shape
+              {openChip === 'shape' && (
+                <div className={styles.directionPopover} onClick={(e) => e.stopPropagation()}>
+                  <div className={styles.popoverHeader}>Energy</div>
+                  <div className={styles.directionRow}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round((direction.energy ?? 0.5) * 100)}
+                      onChange={(e) => setDirection({ energy: Number(e.target.value) / 100 })}
+                    />
+                    <span className={styles.directionValue}>
+                      {direction.energy === undefined ? 'auto' : direction.energy.toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div className={styles.popoverHeader}>Length</div>
+                  <div className={styles.directionRow}>
+                    <input
+                      type="range"
+                      min={4}
+                      max={60}
+                      value={Math.round((direction.totalDurationMs ?? 12000) / 1000)}
+                      onChange={(e) => setDirection({ totalDurationMs: Number(e.target.value) * 1000 })}
+                    />
+                    <span className={styles.directionValue}>
+                      {direction.totalDurationMs ? `${Math.round(direction.totalDurationMs / 1000)}s` : 'auto'}
+                    </span>
+                  </div>
+
+                  <div className={styles.popoverHeader}>Brand colour</div>
+                  <div className={styles.directionRow}>
+                    <input
+                      type="color"
+                      value={direction.accent ?? '#2b7eff'}
+                      onChange={(e) => setDirection({ accent: e.target.value })}
+                    />
+                    <span className={styles.directionValue}>{direction.accent ?? 'auto'}</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    className={styles.directionOption}
+                    onClick={() => {
+                      setDirection({ energy: undefined, totalDurationMs: undefined, accent: undefined });
+                      setOpenChip(null);
+                    }}
+                  >
+                    <span>Reset to automatic</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div
+              className={`${styles.directionChip} ${direction.variants > 1 ? styles.directionChipSet : ''}`}
+              title="Emit several alternatives and rank them - costs no extra model calls"
+              onClick={() => setOpenChip((c) => (c === 'variants' ? null : 'variants'))}
+            >
+              <Icon name="copy" size={11} />
+              {direction.variants > 1 ? `${direction.variants} directions` : '1 direction'}
+              {openChip === 'variants' && (
+                <div className={styles.directionPopover} onClick={(e) => e.stopPropagation()}>
+                  <div className={styles.popoverHeader}>Alternatives</div>
+                  {[1, 2, 3, 5].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`${styles.directionOption} ${direction.variants === n ? styles.directionOptionActive : ''}`}
+                      onClick={() => { setDirection({ variants: n }); setOpenChip(null); }}
+                    >
+                      <span>{n === 1 ? 'One' : `${n} alternatives`}</span>
+                      <span className={styles.directionOptionIntent}>
+                        {n === 1
+                          ? 'Emit a single piece.'
+                          : 'Same brief and casting, re-seeded. No extra model calls - the strongest by the linters is applied.'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className={styles.composerPill}>
             {pendingImages.length > 0 && (
               <div className={styles.attachStrip}>

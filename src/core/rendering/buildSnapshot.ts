@@ -563,7 +563,7 @@ export function buildSnapshot(
   const customCamera = orthoView ? null : comp.customViewCamera ?? null;
   const camera = orthoView
     ? null
-    : customCamera ?? readSceneCamera(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p));
+    : customCamera ?? readSceneCamera(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p), comp.rootId);
   const project = orthoView
     ? (p: { x: number; y: number; z: number }) => Project3D.projectOrtho(p, orthoView, comp.width, comp.height)
     : (p: { x: number; y: number; z: number }) => Project3D.projectPoint(p, camera!);
@@ -574,7 +574,7 @@ export function buildSnapshot(
   // Draft 3D skips DOF entirely (dof = null ⇒ withDof/dofEffectOf no-op).
   const dof = orthoView || customCamera || comp.draft3d
     ? null
-    : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p));
+    : readSceneDof(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p), comp.rootId);
   // `depth: undefined` = this layer is not in the camera's space (a 2D layer),
   // so it is never defocused.
   const withDof = (f: string | undefined, depth: number | undefined): string | undefined => {

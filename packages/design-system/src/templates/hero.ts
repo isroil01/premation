@@ -43,7 +43,7 @@ export const centeredStack: LayoutTemplate = {
   displayName: 'Centred Stack',
   intent: 'Calm centred title stack, optically balanced, with generous air above and below.',
   tags: ['hero', 'centred', 'calm', 'keynote', 'product'],
-  packs: ['apple_keynote', 'saas_explainer', 'luxury_film'],
+  packs: ['apple_keynote', 'saas_explainer', 'luxury_film', 'mobile_app', 'saas_product'],
   slots: [
     { role: 'overline', required: false, max: 1 },
     { role: 'headline', required: true, max: 1 },

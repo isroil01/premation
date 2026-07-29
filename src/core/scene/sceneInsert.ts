@@ -679,6 +679,34 @@ export function insertShape(shape: ShapeKind, name: string, pos?: { x: number; y
 }
 
 /**
+ * The box a custom outline needs, symmetric about the local origin.
+ *
+ * A path layer's `width`/`height` are NOT cosmetic. The renderer rasterizes a
+ * custom path into a `width × height` canvas centred on the local origin
+ * (`Canvas2DVectorRasterizer.drawPath`) and places that texture on a
+ * `width × height` quad (`snapshotToFrameScene.centerModel`) — and since the
+ * engine unification there is only the GPU backend, nothing else draws the
+ * points. So a 0×0 path layer rasterizes to a 1×1 canvas, lands on a zero-area
+ * quad, and renders NOTHING while still existing and selecting. That is exactly
+ * how every imported Lottie `ty:'sh'` layer came in invisible — the file
+ * imported, the layers were there, and the canvas showed only selection
+ * outlines.
+ *
+ * Symmetric (`2 × max|v|`) because the rasterizer centres the box on the origin:
+ * a tight min/max box would clip every outline that is not already centred.
+ * Bezier handles are included — they can bulge well outside the anchors.
+ */
+export function outlineExtent(points: readonly BPoint[]): { width: number; height: number } {
+  let mx = 0;
+  let my = 0;
+  for (const p of points) {
+    mx = Math.max(mx, Math.abs(p.x), Math.abs(p.inX), Math.abs(p.outX));
+    my = Math.max(my, Math.abs(p.y), Math.abs(p.inY), Math.abs(p.outY));
+  }
+  return { width: mx * 2, height: my * 2 };
+}
+
+/**
  * Insert a custom-outline path layer carrying a `Geometry` points component —
  * the vector primitive the generic `create('shape', …)` action can't build
  * (it only makes rects/ellipses). Used by the Lottie importer to land `ty:'sh'`
@@ -695,8 +723,9 @@ export function insertPathNode(
   const node = makeNode('shape', name);
   const transform = node.components.find((c) => c.type === 'Transform');
   if (transform) {
-    transform.props.width = opts.width ?? 0;
-    transform.props.height = opts.height ?? 0;
+    const extent = outlineExtent(points);
+    transform.props.width = opts.width ?? extent.width;
+    transform.props.height = opts.height ?? extent.height;
     transform.props.shapeType = 'path';
     if (opts.x !== undefined) transform.props.x = opts.x;
     if (opts.y !== undefined) transform.props.y = opts.y;

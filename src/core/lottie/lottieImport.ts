@@ -34,11 +34,13 @@
  */
 
 import {
+  cubicBezierEase,
   lottiePathKeyframes,
   type DataKeyframe,
   type DataPoint,
   type LottieShapeProp,
 } from '@motion/animation';
+import type { MatteType } from '@core/effects/matte';
 
 // ── Minimal Lottie shapes (only what we read) ──────────────────────
 
@@ -94,6 +96,11 @@ interface LottieLayer {
   st?: number;
   /** Time stretch (1 = none) — warned, not applied. */
   sr?: number;
+  /** Track-matte mode carried by the matte SOURCE layer (1 alpha, 2 alpha-inv,
+   *  3 luma, 4 luma-inv). See `planTrackMattes`. */
+  tt?: number;
+  /** Marks the layer the matte above it is applied TO. */
+  td?: number;
   ks?: { o?: LottieProp; r?: LottieProp; p?: LottieProp; s?: LottieProp; a?: LottieProp };
   shapes?: LottieShapeItem[];
   hasMask?: boolean;
@@ -196,6 +203,19 @@ export interface PlannedLayer {
    * layer turns this into the node's timeline clip bar.
    */
   timing?: { inSec: number; outSec: number };
+  /**
+   * This layer is masked by another layer's alpha/luma (a Lottie track matte).
+   * The apply layer turns it into the engine's `fx.matte` with an explicit
+   * source id; the renderer then draws the source into an alpha texture instead
+   * of onto the canvas.
+   */
+  matte?: { mode: MatteType; sourceUid: string };
+  /**
+   * Do not draw this layer. Lottie never paints a matte source, so when the
+   * matte cannot be wired the source must still be hidden — painting it puts a
+   * raw, usually huge shape over the artwork.
+   */
+  hidden?: boolean;
 }
 export interface ImportPlan {
   comp: { width: number; height: number; fps: number; durationSeconds: number };
@@ -648,6 +668,110 @@ function buildTransformLayer(
   return layer;
 }
 
+/**
+ * Shift every direct child of `parentUid` by `(-ax, -ay)`.
+ *
+ * THE KEYSTONE, third time: the engine composes a parent's transform with
+ * anchor 0 (`worldTransform.localMatrix`), so a node's anchor moves only the
+ * node's OWN drawing — never its children. Lottie's layer matrix is
+ * `T(p)·R·S·T(-a)`, which moves the layer's whole contents. Precomps and shape
+ * groups already bake their anchor down; ordinary layers did not, so any layer
+ * with both a non-zero anchor and children (parented layers, or the shape tree
+ * expanded out of it) pushed that whole subtree `+a` away from where the file
+ * put it — parts of one artwork drifting apart by tens of pixels each.
+ */
+function bakeAnchorIntoChildren(out: readonly PlannedLayer[], parentUid: string, ax: number, ay: number): void {
+  if (ax === 0 && ay === 0) return;
+  for (const child of out) {
+    if (child.parentUid !== parentUid) continue;
+    child.x -= ax;
+    child.y -= ay;
+    for (const t of child.scalarTracks) {
+      if (t.prop === 'x') t.keyframes = t.keyframes.map((k) => ({ ...k, value: k.value - ax }));
+      if (t.prop === 'y') t.keyframes = t.keyframes.map((k) => ({ ...k, value: k.value - ay }));
+    }
+  }
+}
+
+/** Lottie's `tt` value → the engine's matte mode. */
+const MATTE_BY_TT: Record<number, MatteType | undefined> = {
+  1: 'alpha',
+  2: 'alpha-inv',
+  3: 'luma',
+  4: 'luma-inv',
+};
+
+/** Every planned layer descending from `uid` (inclusive of nothing else). */
+function subtreeOf(out: readonly PlannedLayer[], uid: string): PlannedLayer[] {
+  const found: PlannedLayer[] = [];
+  const frontier = new Set([uid]);
+  // The plan is emitted parent-before-child within a scope, so one forward pass
+  // reaches the whole subtree.
+  for (const l of out) {
+    if (l.parentUid !== undefined && frontier.has(l.parentUid)) {
+      frontier.add(l.uid);
+      found.push(l);
+    }
+  }
+  return found;
+}
+
+/**
+ * Wire up Lottie track mattes for one scope.
+ *
+ * A matte is an adjacent PAIR: the source layer carries `tt` (the mode) and the
+ * layer directly below it carries `td`, After Effects' rule that a matte sits
+ * immediately above what it masks. The source is NEVER painted — it only
+ * supplies alpha.
+ *
+ * Ignoring this was not a missing nicety, it was a wrong picture: the "Book a
+ * call" export mattes a rotated 37×210 bar over its label, and drawing that bar
+ * as ordinary artwork threw a large slab across the whole button.
+ *
+ * The engine has real track mattes (`fx.matte` with an explicit `sourceId`;
+ * `resolveMatteSources` then flags the source so the renderer bakes it to an
+ * alpha texture instead of the canvas). Two things have to line up:
+ *   • the SOURCE must be one drawable node — that node IS the alpha texture;
+ *   • the matte must land on layers that actually DRAW. A matted layer whose
+ *     shape tree expanded is a container, and a container emits no render layer
+ *     at all, so a matte parked on it is silently inert (measured: the matte was
+ *     written, and the source went on painting). The matte goes on each drawable
+ *     descendant instead — they can share one source.
+ * Anything that doesn't fit gets the source hidden and a warning: the matted
+ * layer then draws unmasked, which loses an effect but keeps the artwork.
+ */
+function planTrackMattes(
+  prepared: ReadonlyArray<{ ll: LottieLayer; uid: string }>,
+  out: readonly PlannedLayer[],
+  warnings: string[],
+): void {
+  const byUid = new Map(out.map((l) => [l.uid, l]));
+  for (let i = 0; i + 1 < prepared.length; i++) {
+    const src = prepared[i]!;
+    const dst = prepared[i + 1]!;
+    if (!src.ll.tt || !dst.ll.td) continue;
+    const mode = MATTE_BY_TT[src.ll.tt];
+    const sourceLayer = byUid.get(src.uid);
+    const targetLayer = byUid.get(dst.uid);
+    if (!sourceLayer || !targetLayer) continue;
+
+    const sourceKids = subtreeOf(out, src.uid);
+    const targetKids = subtreeOf(out, dst.uid);
+    const matted = targetKids.length === 0 ? [targetLayer] : targetKids.filter((l) => l.kind === 'shape');
+    if (mode && sourceKids.length === 0 && sourceLayer.kind === 'shape' && matted.length > 0) {
+      for (const m of matted) m.matte = { mode, sourceUid: src.uid };
+      continue;
+    }
+    // Cannot express this pair — hide the source outright so it at least stops
+    // painting over everything.
+    sourceLayer.hidden = true;
+    for (const child of sourceKids) child.hidden = true;
+    warnings.push(
+      `Layer "${targetLayer.name}": its track matte could not be applied (the matte layer "${sourceLayer.name}" is not a single shape) — the matte is hidden and this layer draws unmasked.`,
+    );
+  }
+}
+
 /** Depth guard for pathological / self-referential precomp graphs. */
 const MAX_PRECOMP_DEPTH = 12;
 
@@ -693,7 +817,13 @@ function sampleTrack(kfs: readonly PlannedScalarKf[], t: number): number {
     const b = kfs[i]!;
     if (t <= b.t) {
       if (a.easing === 'hold' || b.t === a.t) return a.value;
-      return a.value + ((b.value - a.value) * (t - a.t)) / (b.t - a.t);
+      const u = (t - a.t) / (b.t - a.t);
+      // Honour the file's own easing curve. Reading these segments as straight
+      // lines was fine while the value was only ever read AT a keyframe, but
+      // `foldContainerOpacity` resamples between them, and a linearised ease
+      // there would flatten every fade the file authored.
+      const eased = a.easing === 'bezier' && a.bezier ? cubicBezierEase(a.bezier, u) : u;
+      return a.value + (b.value - a.value) * eased;
     }
   }
   return last.value;
@@ -750,18 +880,49 @@ function gateOpacity(layer: PlannedLayer, window: { inSec: number; outSec: numbe
   }
 }
 
+/** Layers that put pixels on the canvas. Containers carry transform only. */
+const drawsPixels = (l: PlannedLayer): boolean => l.kind !== 'group' && l.kind !== 'null';
+
 /**
  * Attach a visibility window to a layer by whichever mechanism it can actually
  * use: a timeline clip bar for a composition's immediate children (`timing`,
  * realised by the apply layer), an opacity gate for everything nested.
+ *
+ * **A window put on a CONTAINER does nothing.** Parenting here works like After
+ * Effects: it propagates transform, not opacity — deliberately, since that is
+ * AE's rule — so fading a group leaves its children at full strength, and a
+ * group draws nothing of its own to fade. Every precomp becomes a container, so
+ * this quietly dropped the `ip` of whole scenes: "Book a call"'s phone icon and
+ * its "Call booked" bubble both start 2.2s in, and both were on screen from
+ * frame 0, layered over the icon that was supposed to precede them.
+ *
+ * So a container's window is pushed down to the drawables it contains — the
+ * things that can actually be faded. `gateOpacity` folds it into whatever
+ * animation each of them already has.
+ *
+ * PRECOMPS ARE NOT ROUTED HERE: their window already rides down as the child
+ * TimeScope, so every layer inside comes out clipped to it. This is only for a
+ * shape layer whose tree expanded into a container — the case with nothing else
+ * carrying its window.
+ *
+ * Runs at the END of a scope, once the children exist.
  */
 function applyWindow(
   layer: PlannedLayer,
-  window: { inSec: number; outSec: number } | undefined,
+  window: { inSec: number; outSec: number },
+  out: readonly PlannedLayer[],
   fr: number,
   compFrames: number,
 ): void {
-  if (!window) return;
+  const drawables = subtreeOf(out, layer.uid).filter(drawsPixels);
+  if (drawables.length > 0) {
+    for (const d of drawables) gateOpacity(d, window, fr, compFrames);
+    // A root container still gets its clip bar. It is not what hides anything —
+    // the gates above are — but the timeline row should show the layer's real
+    // range rather than claiming it runs the whole comp.
+    if (layer.parentUid === undefined) layer.timing = window;
+    return;
+  }
   if (layer.parentUid === undefined) layer.timing = window;
   else gateOpacity(layer, window, fr, compFrames);
 }
@@ -791,6 +952,11 @@ function planScope(
   seenRefs: ReadonlySet<string>,
 ): void {
   // Assign uids first so parent links resolve regardless of declaration order.
+  // Layer anchors are baked into children only once the whole scope is planned,
+  // since a child may be declared before its parent. Visibility windows wait for
+  // the same reason — a container's window has to reach its contents.
+  const anchored: Array<{ uid: string; ax: number; ay: number }> = [];
+  const windows: Array<{ uid: string; window: { inSec: number; outSec: number } }> = [];
   const uidByInd = new Map<number, string>();
   const prepared = layers.map((ll, i) => {
     const ind = ll.ind ?? i + 1;
@@ -830,7 +996,11 @@ function planScope(
       // The precomp becomes a group carrying the layer's transform.
       const group = buildTransformLayer(ll, ind, uid, 'group', ctx.fr, off);
       group.parentUid = parentUid;
-      applyWindow(group, timing, ctx.fr, ctx.compFrames);
+      // A precomp needs NO gate of its own: the recursive call below carries its
+      // window in the child TimeScope, so every layer inside already comes out
+      // clipped to it. Gating here as well would fold the same window in twice
+      // and read the hold value on the wrong side of its own boundary.
+      if (timing && parentUid === undefined) group.timing = timing;
       ctx.out.push(group);
       if (Array.isArray(ll.ef) && ll.ef.length > 0)
         ctx.warnings.push(`Layer "${name}": ${ll.ef.length} Lottie effect(s) not mapped.`);
@@ -857,8 +1027,9 @@ function planScope(
 
     const layer = buildTransformLayer(ll, ind, uid, kind, ctx.fr, off);
     layer.parentUid = parentUid;
-    applyWindow(layer, timing, ctx.fr, ctx.compFrames);
+    if (timing) windows.push({ uid, window: timing });
     ctx.out.push(layer);
+    anchored.push({ uid, ax: anchorComponent(ll.ks?.a, 0, ctx.fr), ay: anchorComponent(ll.ks?.a, 1, ctx.fr) });
 
     if (ll.shapes) {
       const produced: PlannedLayer[] = [];
@@ -887,12 +1058,183 @@ function planScope(
         // which is what a container must do (a 'shape' host with no geometry
         // would fall back to the facade's placeholder rectangle).
         layer.kind = 'group';
+        // …and a container's anchor is inert (nothing of its own is drawn), so
+        // it must not keep one — the bake below is what moves the contents.
+        delete layer.staticProps.anchorX;
+        delete layer.staticProps.anchorY;
+        layer.scalarTracks = layer.scalarTracks.filter((t) => t.prop !== 'anchorX' && t.prop !== 'anchorY');
       }
     }
 
     if (ll.ty === 5) ctx.warnings.push(`Layer "${name}": text imported as an empty text layer (glyph outlines/fonts are not embedded in Lottie).`);
     if (ll.ty === 2) ctx.warnings.push(`Layer "${name}": image layer needs its asset resolved before it renders.`);
     if (Array.isArray(ll.ef) && ll.ef.length > 0) ctx.warnings.push(`Layer "${name}": ${ll.ef.length} Lottie effect(s) not mapped.`);
+  }
+
+  // Every layer in this scope now exists (including shape trees and nested
+  // precomp expansions), so each anchor can move the children it should have
+  // moved all along. Precomp layers are NOT in this list — their anchor already
+  // rides in via `rootOffset` on the recursive call, and baking twice would
+  // double-shift the whole precomp.
+  for (const a of anchored) bakeAnchorIntoChildren(ctx.out, a.uid, a.ax, a.ay);
+
+  // Visibility windows, now that every container has its contents to gate.
+  const plannedByUid = new Map(ctx.out.map((l) => [l.uid, l]));
+  for (const w of windows) {
+    const layer = plannedByUid.get(w.uid);
+    if (layer) applyWindow(layer, w.window, ctx.out, ctx.fr, ctx.compFrames);
+  }
+
+  // Matte pairs are adjacent within THIS scope, and pairing needs the planned
+  // layers (to see whether the source stayed a single drawable).
+  planTrackMattes(prepared, ctx.out, ctx.warnings);
+}
+
+/** A layer's opacity (0..100) at `t`: animated track first, static prop next. */
+function opacityAt(l: PlannedLayer, t: number): number {
+  const tr = l.scalarTracks.find((s) => s.prop === 'opacity');
+  if (tr) return sampleTrack(tr.keyframes, t);
+  return typeof l.staticProps.opacity === 'number' ? l.staticProps.opacity : 100;
+}
+
+/**
+ * Multiply every container's opacity into the drawables underneath it.
+ *
+ * Parenting here works like After Effects: it propagates transform, not opacity.
+ * That is right for AE parenting and wrong for a Lottie PRECOMP, which is
+ * composited as a unit — its layer opacity fades everything inside. Every
+ * precomp becomes a container, so all of that was landing on nodes that draw
+ * nothing and doing nothing at all.
+ *
+ * It is not a detail: in "Book a call" the entire choreography is precomp
+ * opacity. The dotted arrow fades out (100→0 at frame 153) exactly as the phone
+ * fades in (0→100), the label fades out under the expanding green pill, and the
+ * "Call booked" bubble fades in and out again. With all four inert, every one of
+ * those layers drew at full strength at once — a phone on top of the arrow it
+ * replaces, and a label the pill was supposed to wipe.
+ *
+ * Multiplication is commutative, so nested containers can be folded in any order
+ * and each drawable ends up carrying the whole chain. The container's own
+ * opacity is then cleared: leaving it would show an animation in the inspector
+ * that drives nothing.
+ */
+function foldContainerOpacity(out: readonly PlannedLayer[], fr: number): void {
+  const step = 1 / fr;
+  for (const c of out) {
+    if (drawsPixels(c)) continue;
+    const track = c.scalarTracks.find((s) => s.prop === 'opacity');
+    const staticO = typeof c.staticProps.opacity === 'number' ? c.staticProps.opacity : 100;
+    if (!track && staticO === 100) continue;
+
+    for (const d of subtreeOf(out, c.uid).filter(drawsPixels)) {
+      const dTrack = d.scalarTracks.find((s) => s.prop === 'opacity');
+      if (!track && !dTrack) {
+        d.staticProps.opacity = (opacityAt(d, 0) * staticO) / 100;
+        continue;
+      }
+      // Sample both on the union of their breakpoints. A hold gets an extra
+      // sample one frame before the next one so the step survives as a cut
+      // rather than melting into a ramp — the same convention `gateOpacity` uses.
+      const times = new Set<number>([0]);
+      for (const src of [track, dTrack]) {
+        if (!src) continue;
+        src.keyframes.forEach((kf, i) => {
+          times.add(kf.t);
+          const next = src.keyframes[i + 1];
+          if (kf.easing === 'hold' && next && next.t - kf.t > step) times.add(next.t - step);
+        });
+      }
+      // Where BOTH factors move across a span, their product is curved and the
+      // endpoints do not describe it — two crossing linear fades read 50% at
+      // the midpoint when the real answer is 37.5%. Those spans get sampled per
+      // frame; a span where either side holds still stays a straight line and
+      // needs no extra keyframes.
+      const breaks = [...times].sort((a, b) => a - b);
+      for (let i = 0; i + 1 < breaks.length; i++) {
+        const t0 = breaks[i]!;
+        const t1 = breaks[i + 1]!;
+        const cMoves = opacityAt(c, t0) !== opacityAt(c, t1);
+        const dMoves = opacityAt(d, t0) !== opacityAt(d, t1);
+        if (!cMoves || !dMoves) continue;
+        for (let t = t0 + step; t < t1 - 1e-9; t += step) times.add(t);
+      }
+      const merged: PlannedScalarKf[] = [...times]
+        .sort((a, b) => a - b)
+        .map((t) => ({ t, value: (opacityAt(d, t) * opacityAt(c, t)) / 100, easing: 'linear' }));
+      const idx = d.scalarTracks.findIndex((s) => s.prop === 'opacity');
+      if (idx >= 0) d.scalarTracks[idx] = { prop: 'opacity', keyframes: merged };
+      else d.scalarTracks.push({ prop: 'opacity', keyframes: merged });
+      delete d.staticProps.opacity;
+    }
+
+    if (track) c.scalarTracks = c.scalarTracks.filter((s) => s.prop !== 'opacity');
+    delete c.staticProps.opacity;
+  }
+}
+
+/**
+ * Move each outline onto its own centre, compensating with the node's position.
+ *
+ * A path node's box is symmetric about its local origin (the rasterizer centres
+ * the texture there), so an outline drawn far from that origin needs a box big
+ * enough to reach it: one 30px glyph sitting 380px along its layer was getting a
+ * 766×142 texture, 32 of them at once. The artwork was in the right place, but
+ * the selection rectangle was the size of the whole word, the pivot marker sat
+ * off in space, and the wasted texture area is quadratic.
+ *
+ * Shifting the points by −c and the position by +c is a pure identity while the
+ * node's own rotation and scale are identity, which is the case for every
+ * drawable a shape tree produces (group transforms live on wrapper nodes). A
+ * collapsed host CAN carry rotation/scale, so its offset goes through that 2×2
+ * first — and if either is ANIMATED there is no constant that works, so the node
+ * keeps its loose box rather than drifting mid-animation.
+ *
+ * NOT done with the anchor, which is the AE-shaped answer: `anchorX`/`anchorY`
+ * are inert on the render path. Measured — moving a layer's anchor by (50,20)
+ * left its drawn pixels at exactly the same place.
+ */
+function recentreOutlines(out: readonly PlannedLayer[]): void {
+  for (const l of out) {
+    if (!l.pointsTrack) continue;
+    const animated = l.scalarTracks.some((t) => t.prop === 'rotation' || t.prop === 'scaleX' || t.prop === 'scaleY');
+    if (animated) continue;
+
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const kf of l.pointsTrack.keyframes) {
+      for (const p of (kf.value as DataPoint[] | undefined) ?? []) {
+        for (const [px, py] of [
+          [p.x, p.y], [p.inX ?? p.x, p.inY ?? p.y], [p.outX ?? p.x, p.outY ?? p.y],
+        ] as const) {
+          x0 = Math.min(x0, px); y0 = Math.min(y0, py);
+          x1 = Math.max(x1, px); y1 = Math.max(y1, py);
+        }
+      }
+    }
+    if (!Number.isFinite(x0)) continue;
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    if (cx === 0 && cy === 0) continue;
+
+    for (const kf of l.pointsTrack.keyframes) {
+      for (const p of (kf.value as DataPoint[] | undefined) ?? []) {
+        p.x -= cx; p.y -= cy;
+        if (p.inX !== undefined) p.inX -= cx;
+        if (p.inY !== undefined) p.inY -= cy;
+        if (p.outX !== undefined) p.outX -= cx;
+        if (p.outY !== undefined) p.outY -= cy;
+      }
+    }
+
+    // The node's own static rotation/scale, so a collapsed host stays exact.
+    const num = (k: string, dflt: number): number =>
+      typeof l.staticProps[k] === 'number' ? (l.staticProps[k] as number) : dflt;
+    const rad = (num('rotation', 0) * Math.PI) / 180;
+    const sx = num('scaleX', 1);
+    const sy = num('scaleY', 1);
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    l.x += cos * sx * cx - sin * sy * cy;
+    l.y += sin * sx * cx + cos * sy * cy;
   }
 }
 
@@ -919,6 +1261,12 @@ export function planLottieImport(json: LottieJson): ImportPlan {
     0,
     new Set<string>(),
   );
+
+  // Both run last, over the finished plan. Container opacity has to come after
+  // the windows (a window IS an opacity gate, and it must be folded down too),
+  // and re-centring only translates x/y, so it composes in any order.
+  foldContainerOpacity(out, fr);
+  recentreOutlines(out);
 
   return {
     comp: {

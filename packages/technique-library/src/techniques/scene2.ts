@@ -19,7 +19,7 @@
 import { mk, mulberry32, pick, type ToolCall } from '@motion/design-system';
 import type { TechniqueDef } from '../schema';
 import {
-  CURVES, emitCamera, blurIfFast, fadeOut, followThrough, heroMove, hold,
+  CURVES, emitCamera, enterCameraSpace, blurIfFast, fadeOut, followThrough, heroMove, hold,
   offsetFor, rolesTargets, staggerAt, subFrame, track, travel,
 } from '../emit';
 
@@ -76,6 +76,8 @@ export const whipPan: TechniqueDef = {
     // Wide, because apparent angular speed is what sells a whip — a long lens
     // moving the same distance barely changes what is on screen.
     calls.push(...emitCamera(ctx, camId, 'Whip Camera', 'wide').calls);
+    // A whip pans the CAMERA; a 2D layer does not answer to it at all.
+    calls.push(...enterCameraSpace(ctx, whipPan.roles));
     // Composition shutter wide open for the duration — this is the one technique
     // where the blur is not a garnish.
     calls.push(mk('set_motion_blur', { nodeId: camId, enabled: true }));
@@ -162,6 +164,8 @@ export const handheldFloat: TechniqueDef = {
     // The documentary default. Anything longer amplifies the drift into a
     // wobble; anything wider makes the operator look drunk.
     calls.push(...emitCamera(ctx, camId, 'Handheld Camera', 'normal').calls);
+    // Handheld drift is only visible on layers the camera actually projects.
+    calls.push(...enterCameraSpace(ctx, handheldFloat.roles));
 
     // Three channels, each with its OWN period and phase. Equal periods produce
     // a Lissajous figure — a perfectly repeating loop, which is the one thing a

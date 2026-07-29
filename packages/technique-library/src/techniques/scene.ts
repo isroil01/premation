@@ -9,7 +9,7 @@
 
 import { mk, mulberry32, pick, type ToolCall } from '@motion/design-system';
 import type { TechniqueDef } from '../schema';
-import { CURVES, emitCamera, blurIfFast, fadeOut, hold, offsetFor, rolesTargets, staggerAt, track, travel } from '../emit';
+import { CURVES, emitCamera, enterCameraSpace, blurIfFast, fadeOut, hold, offsetFor, rolesTargets, staggerAt, track, travel } from '../emit';
 
 // ── camera.push_in_slow ───────────────────────────────────────────────
 
@@ -136,7 +136,15 @@ export const crashZoom: TechniqueDef = {
     amount: { kind: 'number', default: 0.5, min: 0.15, max: 1 },
     durationMs: { kind: 'number', default: 260, min: 80, max: 700 },
   },
-  roles: ['camera'],
+  // NOT `['camera']`. A layout never produces a `camera` slot — the technique
+  // creates its own — so a camera-only role list matches nothing that
+  // `availableRolesFor` can ever return, and the candidate filter
+  // (`t.roles.some(r => roles.has(r))`) dropped this technique on 100% of beats.
+  // It was registered, linted, tested and unreachable: never once cast.
+  //
+  // The other five camera techniques declare the content they move, and a crash
+  // zoom moves everything in the frame.
+  roles: ['camera', 'background', 'media', 'headline', 'mark', 'stat'],
   requires: ['create_layer', 'set_keyframes', 'set_motion_blur'],
   minDurationMs: 300,
   maxDurationMs: 1200,
@@ -169,6 +177,9 @@ export const crashZoom: TechniqueDef = {
     // A crash zoom is the opposite decision: wide, so perspective stretches and
     // the move reads as hurtling INTO the frame rather than magnifying it.
     calls.push(...emitCamera(ctx, camId, 'Crash Camera', 'wide').calls);
+    // Without this the crash zoom moves a camera through an empty 3D space:
+    // the renderer only projects layers whose 3D switch is on.
+    calls.push(...enterCameraSpace(ctx, crashZoom.roles));
     // Pull BACK a frame before crashing in. Two frames of retreat is what makes
     // the crash feel like it was fired rather than scheduled.
     calls.push(

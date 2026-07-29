@@ -101,6 +101,27 @@ export function emitCamera(
   };
 }
 
+/**
+ * Put a technique's subject into the camera's space.
+ *
+ * **A camera does not move a 2D layer.** The renderer projects through the scene
+ * camera only when a layer has its 3D switch on (`is3D && world3d` in
+ * buildSnapshot); everything else is composited flat and is byte-identical
+ * whatever the camera does. So a camera technique that only keyframes the camera
+ * animates a viewpoint onto an empty 3D space, and nothing on screen changes.
+ *
+ * Three of the six camera techniques shipped that way — `crash_zoom`,
+ * `whip_pan` and `handheld_float` created a camera, keyframed it properly, and
+ * could not move a pixel. It is invisible in review because the calls are all
+ * valid and the camera layer really is animating; only the render is unaffected.
+ *
+ * Every camera technique must call this. `cameraSpace.test.ts` asserts it by
+ * emitting each one and checking its targets get the switch.
+ */
+export function enterCameraSpace(ctx: EmitContext, roles: readonly string[]): ToolCall[] {
+  return rolesTargets(ctx, roles).map((id) => mk('update_layer', { nodeId: id, threeD: true }));
+}
+
 // ── Keyframe construction ─────────────────────────────────────────────
 
 export interface Key {

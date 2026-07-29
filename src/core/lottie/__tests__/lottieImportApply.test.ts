@@ -144,4 +144,168 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
     expect(worldOf(arm.id).x).toBeCloseTo(230, 4);
     expect(worldOf(arm.id).y).toBeCloseTo(260, 4);
   });
+
+  /**
+   * A parent's ANCHOR has to move its children.
+   *
+   * Lottie's layer matrix is `T(p)·R·S·T(-a)` — the anchor moves the layer's
+   * whole contents. The engine composes parent transforms with anchor 0
+   * (`worldTransform.localMatrix`), so an anchor there moves only the node's own
+   * drawing. Precomps and shape groups already baked their anchor down into
+   * their children; ordinary layers did not, and pushed their whole subtree
+   * `+a` off — which is what pulled the parts of one imported artwork apart.
+   */
+  it('a parent layer anchor moves its children (Lottie T(p)·R·S·T(-a))', () => {
+    const json: LottieJson = {
+      fr: 30, w: 512, h: 512, op: 30,
+      layers: [
+        { ty: 4, ind: 1, nm: 'Host', ks: { p: { a: 0, k: [200, 100] }, a: { a: 0, k: [30, 10] } },
+          shapes: [{ ty: 'rc', s: { a: 0, k: [20, 20] }, r: { a: 0, k: 0 } }] },
+        { ty: 4, ind: 2, nm: 'Child', parent: 1, ks: { p: { a: 0, k: [50, 0] } },
+          shapes: [{ ty: 'rc', s: { a: 0, k: [10, 10] }, r: { a: 0, k: 0 } }] },
+      ],
+    };
+    const plan = planLottieImport(json);
+    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+
+    // Child local carries the anchor: 50 − 30 = 20, 0 − 10 = −10.
+    const child = findByName('Child');
+    expect(baseLocal(child).x).toBeCloseTo(20, 4);
+    expect(baseLocal(child).y).toBeCloseTo(-10, 4);
+    // …so its world is where the file puts it, not 30/10 further out.
+    expect(worldOf(child.id).x).toBeCloseTo(220, 4);
+    expect(worldOf(child.id).y).toBeCloseTo(90, 4);
+    // The host still draws through its own anchor — that part was never wrong.
+    const hostT = findByName('Host').components.find((c) => c.type === 'Transform')!;
+    expect(hostT.props.anchorX).toBe(30);
+    expect(hostT.props.anchorY).toBe(10);
+  });
+
+  /**
+   * THE INVISIBLE IMPORT.
+   *
+   * A `ty:'sh'` layer becomes a path node, and the renderer draws a custom path
+   * by rasterizing it into a `width × height` texture on a `width × height`
+   * quad. `insertPathNode` defaulted both to 0, so every imported path existed,
+   * selected, and painted NOTHING — a .lottie file came in as bare selection
+   * outlines. The box must cover the outline, across the WHOLE morph.
+   */
+  it('path layers get a box that covers their outline over the whole morph', () => {
+    const shapeAt = (r: number): object => ({
+      v: [[-r, -r], [r, -r], [r, r], [-r, r]],
+      i: [[0, 0], [0, 0], [0, 0], [0, 0]],
+      o: [[0, 0], [0, 0], [0, 0], [0, 0]],
+      c: true,
+    });
+    const json: LottieJson = {
+      fr: 30, w: 512, h: 512, op: 30,
+      layers: [
+        {
+          ty: 4, ind: 1, nm: 'Morph', ks: { p: { a: 0, k: [100, 100] } },
+          shapes: [{
+            ty: 'sh',
+            ks: { a: 1, k: [{ t: 0, s: [shapeAt(20)] }, { t: 20, s: [shapeAt(60)] }] },
+          } as never],
+        },
+      ],
+    };
+    const plan = planLottieImport(json);
+    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+
+    const t = findByName('Morph').components.find((c) => c.type === 'Transform')!;
+    expect(t.props.shapeType).toBe('path');
+    // Sized to the LARGEST frame (2 × 60), not frame 0 — a growing outline must
+    // not get clipped by its own texture partway through.
+    expect(t.props.width).toBe(120);
+    expect(t.props.height).toBe(120);
+  });
+
+  /**
+   * Z-ORDER. Lottie stacks like AE — `layers[0]` is the TOP layer — while the
+   * scene paints later siblings over earlier ones. Building in plan order turned
+   * every file inside out: the "Book a call" export's LAST layer is its
+   * background pill, so it painted over the label, button, light and arrow and
+   * the whole import opened as a bare dark slab.
+   */
+  it('builds back-to-front: the FIRST Lottie layer ends up on top', () => {
+    const rect = (nm: string, ind: number): object => ({
+      ty: 4, ind, nm, ks: { p: { a: 0, k: [100, 100] } },
+      shapes: [{ ty: 'rc', s: { a: 0, k: [20, 20] }, r: { a: 0, k: 0 } }],
+    });
+    const json: LottieJson = {
+      fr: 30, w: 512, h: 512, op: 30,
+      layers: [rect('Top', 1), rect('Middle', 2), rect('Bottom', 3)] as never,
+    };
+    applyImportPlan(planLottieImport(json), createToolContext(new AbortController().signal), { updateComp: false });
+
+    // Children paint in order, so the last child is the front-most.
+    const order = defaultSceneGraph.getChildren('comp_root').map((n) => n.name);
+    expect(order).toEqual(['Bottom', 'Middle', 'Top']);
+  });
+
+  /**
+   * TRACK MATTES. A matte pair is the source (carrying `tt`) directly above the
+   * layer it masks (carrying `td`), and Lottie NEVER paints the source. Ignoring
+   * this drew the source as ordinary artwork — in the real file, a rotated
+   * 37×210 bar thrown across the whole button.
+   *
+   * The matte has to land on layers that DRAW: a matted layer whose shape tree
+   * expanded is a container, and a matte parked on a container is silently inert.
+   */
+  it('wires a tt/td pair onto the matted layer‘s drawables', () => {
+    const path = (nm: string): object => ({
+      ty: 'sh', nm,
+      ks: { a: 0, k: { c: true, v: [[0, 0], [10, 0], [10, 10]], i: [[0, 0], [0, 0], [0, 0]], o: [[0, 0], [0, 0], [0, 0]] } },
+    });
+    const json: LottieJson = {
+      fr: 30, w: 512, h: 512, op: 30,
+      layers: [
+        // Source: ONE drawable, so it can be the alpha texture.
+        { ty: 4, ind: 1, nm: 'Sweep', tt: 1, ks: { p: { a: 0, k: [100, 100] } },
+          shapes: [{ ty: 'rc', s: { a: 0, k: [20, 200] }, r: { a: 0, k: 0 } }] },
+        // Matted: expands into two drawables, so the matte must go on BOTH.
+        { ty: 4, ind: 2, nm: 'Highlight', td: 1, ks: { p: { a: 0, k: [100, 100] } },
+          shapes: [path('A'), path('B')] },
+      ] as never,
+    };
+    const plan = planLottieImport(json);
+    expect(plan.warnings).toEqual([]);
+    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+
+    const sourceId = findByName('Sweep').id;
+    const matteOf = (nm: string): unknown =>
+      findByName(nm).components.find((c) => c.type === 'fx')?.props.matte;
+    expect(matteOf('A')).toEqual({ mode: 'alpha', sourceId });
+    expect(matteOf('B')).toEqual({ mode: 'alpha', sourceId });
+    // The container carries nothing — it draws nothing, so a matte there is inert.
+    expect(matteOf('Highlight')).toBeUndefined();
+    // The source stays in the scene (it IS the alpha texture) and stays visible;
+    // the renderer skips painting it via `isMatteSource`.
+    expect(findByName('Sweep').visible).not.toBe(false);
+  });
+
+  /** A matte the engine can't express must still not paint its source. */
+  it('hides the matte source and warns when it is not a single shape', () => {
+    const path = (nm: string): object => ({
+      ty: 'sh', nm,
+      ks: { a: 0, k: { c: true, v: [[0, 0], [10, 0], [10, 10]], i: [[0, 0], [0, 0], [0, 0]], o: [[0, 0], [0, 0], [0, 0]] } },
+    });
+    const json: LottieJson = {
+      fr: 30, w: 512, h: 512, op: 30,
+      layers: [
+        // Source expands into two drawables — there is no single node to point at.
+        { ty: 4, ind: 1, nm: 'Sweep', tt: 1, ks: { p: { a: 0, k: [100, 100] } },
+          shapes: [path('S1'), path('S2')] },
+        { ty: 4, ind: 2, nm: 'Highlight', td: 1, ks: { p: { a: 0, k: [100, 100] } },
+          shapes: [{ ty: 'rc', s: { a: 0, k: [20, 20] }, r: { a: 0, k: 0 } }] },
+      ] as never,
+    };
+    const plan = planLottieImport(json);
+    expect(plan.warnings).toHaveLength(1);
+    expect(plan.warnings[0]).toContain('track matte could not be applied');
+    applyImportPlan(plan, createToolContext(new AbortController().signal), { updateComp: false });
+
+    for (const nm of ['Sweep', 'S1', 'S2']) expect(findByName(nm).visible).toBe(false);
+    expect(findByName('Highlight').visible).not.toBe(false);
+  });
 });

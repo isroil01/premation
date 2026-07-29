@@ -194,50 +194,107 @@ function layer(spec: LayerSpec): object {
   };
 }
 
-function doc(name: string, frames: number, layers: readonly object[]): LottieJson {
+/**
+ * The position a spec settles at, in design-box coordinates. An animated
+ * channel resolves to its LAST keyframe: that is the layout the item is
+ * designed around (a toast that drops in from y=40 to y=100 is "at" y=100), and
+ * it is what a child should be positioned against.
+ */
+function restPosition(s: LayerSpec): { x: number; y: number } {
+  if (s.p) {
+    const last = s.p[s.p.length - 1];
+    return { x: last?.s[0] ?? LOTTIE_DESIGN_CENTER, y: last?.s[1] ?? LOTTIE_DESIGN_CENTER };
+  }
+  const axis = (v: number | readonly RawKf[] | undefined): number =>
+    v === undefined ? LOTTIE_DESIGN_CENTER : typeof v === 'number' ? v : v[v.length - 1]?.s[0] ?? LOTTIE_DESIGN_CENTER;
+  return { x: axis(s.x), y: axis(s.y) };
+}
+
+/**
+ * Rebase every parented layer's position from comp-absolute to PARENT-RELATIVE.
+ *
+ * These documents are authored in one flat 200×200 design box — "the left
+ * capsule is at (67,100)" — which is how they read and how the preview card is
+ * laid out. But Lottie parenting (like AE, and like this engine's
+ * `worldTransform`) COMPOSES: a child's position is measured from its parent's
+ * origin, so shipping the absolute number meant every parented layer landed at
+ * `parent + child`. A stepper authored inside a 200px box put its glyphs at
+ * (366,300) — each level of parenting flung the part further out, which is why
+ * inserting a library item exploded it across the scene instead of reproducing
+ * the card.
+ *
+ * Subtracting the parent's rest position is exact for the whole chain: each
+ * link cancels its parent's contribution, so world position comes back to the
+ * authored number while the parent's rotation/scale animation still carries the
+ * child along — which is the entire reason these items are parented.
+ */
+function toParentRelative(specs: readonly LayerSpec[]): LayerSpec[] {
+  const byInd = new Map(specs.map((s) => [s.ind, s]));
+  return specs.map((s) => {
+    if (s.parent === undefined) return s;
+    const parent = byInd.get(s.parent);
+    if (!parent) return s;
+    const origin = restPosition(parent);
+    const shift = (v: number | readonly RawKf[] | undefined, d: number, dflt: number): number | readonly RawKf[] =>
+      v === undefined
+        ? dflt - d
+        : typeof v === 'number'
+          ? v - d
+          : v.map((k) => ({ ...k, s: [k.s[0]! - d] }));
+    return {
+      ...s,
+      x: shift(s.x, origin.x, LOTTIE_DESIGN_CENTER),
+      y: shift(s.y, origin.y, LOTTIE_DESIGN_CENTER),
+      ...(s.p ? { p: s.p.map((k) => ({ ...k, s: [k.s[0]! - origin.x, k.s[1]! - origin.y] })) } : {}),
+    };
+  });
+}
+
+function doc(name: string, frames: number, specs: readonly LayerSpec[]): LottieJson {
+  const layers = toParentRelative(specs).map(layer);
   return { v: '5.7.0', nm: name, fr: FPS, op: frames, w: BOX, h: BOX, layers: layers as never[] } as LottieJson;
 }
 
 // ── The documents ──────────────────────────────────────────────────
 
 const PILL_STEPPER_DOC = doc('Pill Stepper', 60, [
-  layer({
+  {
     name: 'Outer Container', ind: 1,
     shape: { kind: 'rect', w: 140, h: 48, fill: '#09090b', radius: 24 },
     scale: [{ t: 0, s: [95] }, { t: 15, s: [105] }, { t: 25, s: [100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Left White Capsule', ind: 2, parent: 1, x: 67, y: 100,
     shape: { kind: 'rect', w: 66, h: 44, fill: '#ffffff', radius: 22 },
-  }),
-  layer({
+  },
+  {
     name: 'Right Dark Capsule', ind: 3, parent: 1, x: 133, y: 100,
     shape: { kind: 'rect', w: 66, h: 44, fill: '#000000', radius: 22 },
-  }),
-  layer({
+  },
+  {
     name: 'Minus Glyph', ind: 4, parent: 2, x: 67, y: 100,
     shape: { kind: 'rect', w: 16, h: 3, fill: '#000000', radius: 1.5 },
     scale: [{ t: 12, s: [100] }, { t: 18, s: [80] }, { t: 26, s: [100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Plus H Glyph', ind: 5, parent: 3, x: 133, y: 100,
     shape: { kind: 'rect', w: 16, h: 3, fill: '#ffffff', radius: 1.5 },
     scale: [{ t: 15, s: [100] }, { t: 22, s: [130] }, { t: 30, s: [100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Plus V Glyph', ind: 6, parent: 3, x: 133, y: 100,
     shape: { kind: 'rect', w: 3, h: 16, fill: '#ffffff', radius: 1.5 },
     scale: [{ t: 15, s: [100] }, { t: 22, s: [130] }, { t: 30, s: [100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Counter Number', ind: 7, x: 18, y: 100,
     shape: { kind: 'ellipse', w: 18, h: 18, fill: '#ffffff' },
     scale: [{ t: 15, s: [100] }, { t: 22, s: [140] }, { t: 30, s: [100] }],
-  }),
+  },
 ]);
 
 const DYNAMIC_ISLAND_DOC = doc('Dynamic Island', 60, [
-  layer({
+  {
     name: 'Pill Container', ind: 1,
     shape: { kind: 'rect', w: 140, h: 46, fill: '#09090b', radius: 23 },
     scaleXY: [
@@ -245,35 +302,35 @@ const DYNAMIC_ISLAND_DOC = doc('Dynamic Island', 60, [
       { t: 18, s: [115, 110] },
       { t: 28, s: [100, 100] },
     ],
-  }),
-  layer({
+  },
+  {
     name: 'Waveform Bar 1', ind: 2, parent: 1, x: 75, y: 100,
     shape: { kind: 'rect', w: 4, h: 20, fill: '#38bdf8', radius: 2 },
     scaleXY: [{ t: 0, s: [100, 40] }, { t: 15, s: [100, 120] }, { t: 30, s: [100, 40] }],
-  }),
-  layer({
+  },
+  {
     name: 'Waveform Bar 2', ind: 3, parent: 1, x: 84, y: 100,
     shape: { kind: 'rect', w: 4, h: 28, fill: '#38bdf8', radius: 2 },
     scaleXY: [{ t: 5, s: [100, 120] }, { t: 20, s: [100, 30] }, { t: 35, s: [100, 120] }],
-  }),
-  layer({
+  },
+  {
     name: 'Waveform Bar 3', ind: 4, parent: 1, x: 93, y: 100,
     shape: { kind: 'rect', w: 4, h: 16, fill: '#38bdf8', radius: 2 },
     scaleXY: [{ t: 10, s: [100, 30] }, { t: 25, s: [100, 140] }, { t: 40, s: [100, 30] }],
-  }),
-  layer({
+  },
+  {
     name: 'Status Dot', ind: 5, parent: 1, x: 130, y: 100,
     shape: { kind: 'ellipse', w: 10, h: 10, fill: '#22c55e' },
     scale: [{ t: 0, s: [80] }, { t: 20, s: [120] }, { t: 40, s: [80] }],
-  }),
+  },
 ]);
 
 const FLUID_SWITCH_DOC = doc('Fluid Switch', 50, [
-  layer({
+  {
     name: 'Track Background', ind: 1,
     shape: { kind: 'rect', w: 144, h: 44, fill: '#18181b', radius: 22 },
-  }),
-  layer({
+  },
+  {
     name: 'Sliding White Pill', ind: 2,
     shape: { kind: 'rect', w: 66, h: 36, fill: '#ffffff', radius: 18 },
     x: [{ t: 0, s: [67] }, { t: 20, s: [133] }, { t: 28, s: [133] }],
@@ -283,73 +340,73 @@ const FLUID_SWITCH_DOC = doc('Fluid Switch', 50, [
       { t: 22, s: [95, 105] },
       { t: 28, s: [100, 100] },
     ],
-  }),
-  layer({
+  },
+  {
     name: 'Left Icon Dot', ind: 3, x: 67, y: 100,
     shape: { kind: 'ellipse', w: 10, h: 10, fill: '#000000' },
-  }),
-  layer({
+  },
+  {
     name: 'Right Icon Dot', ind: 4, x: 133, y: 100,
     shape: { kind: 'ellipse', w: 10, h: 10, fill: '#a1a1aa' },
-  }),
+  },
 ]);
 
 const GLASS_ACTION_DOC = doc('Glass Action Pill', 60, [
-  layer({
+  {
     name: 'Outer Glow Ring', ind: 1,
     shape: { kind: 'ellipse', w: 110, h: 110, fill: '#6366f1' },
     opacity: [{ t: 0, s: [0] }, { t: 15, s: [40] }, { t: 35, s: [0] }],
     scale: [{ t: 0, s: [80] }, { t: 35, s: [140] }],
-  }),
-  layer({
+  },
+  {
     name: 'Glass Container', ind: 2,
     shape: { kind: 'rect', w: 130, h: 44, fill: '#0f172a', radius: 22 },
     scale: [{ t: 0, s: [95] }, { t: 18, s: [105] }, { t: 26, s: [100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Success Check Circle', ind: 3, parent: 2, x: 100, y: 100,
     shape: { kind: 'ellipse', w: 24, h: 24, fill: '#10b981' },
     scale: [{ t: 20, s: [0] }, { t: 32, s: [120] }, { t: 40, s: [100] }],
-  }),
+  },
 ]);
 
 const FACE_ID_DOC = doc('Face ID Scan', 50, [
-  layer({
+  {
     name: 'Scan Ring Outer', ind: 1,
     shape: { kind: 'ellipse', w: 110, h: 110, fill: '#38bdf8' },
     opacity: 30,
     scale: [{ t: 0, s: [90] }, { t: 20, s: [110] }, { t: 40, s: [90] }],
-  }),
-  layer({
+  },
+  {
     name: 'Center Lock Box', ind: 2,
     shape: { kind: 'rect', w: 50, h: 50, fill: '#09090b', radius: 14 },
     rotation: [{ t: 0, s: [0] }, { t: 25, s: [90] }, { t: 50, s: [180] }],
-  }),
-  layer({
+  },
+  {
     name: 'Biometric Dot', ind: 3, parent: 2, x: 100, y: 100,
     shape: { kind: 'ellipse', w: 16, h: 16, fill: '#22c55e' },
     scale: [{ t: 15, s: [60] }, { t: 30, s: [120] }, { t: 40, s: [100] }],
-  }),
+  },
 ]);
 
 const VOLUME_PILL_DOC = doc('Volume Slider Pill', 50, [
-  layer({
+  {
     name: 'Pill Track', ind: 1,
     shape: { kind: 'rect', w: 44, h: 130, fill: '#18181b', radius: 22 },
-  }),
-  layer({
+  },
+  {
     name: 'Level Fill', ind: 2, parent: 1, x: 100, y: 120,
     shape: { kind: 'rect', w: 38, h: 80, fill: '#f43f5e', radius: 19 },
     scaleXY: [{ t: 0, s: [100, 30] }, { t: 20, s: [100, 110] }, { t: 30, s: [100, 100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Speaker Dot', ind: 3, parent: 1, x: 100, y: 145,
     shape: { kind: 'ellipse', w: 10, h: 10, fill: '#ffffff' },
-  }),
+  },
 ]);
 
 const TOAST_BANNER_DOC = doc('Notification Toast', 60, [
-  layer({
+  {
     name: 'Toast Container', ind: 1,
     shape: { kind: 'rect', w: 150, h: 42, fill: '#09090b', radius: 21 },
     p: [
@@ -358,25 +415,25 @@ const TOAST_BANNER_DOC = doc('Notification Toast', 60, [
       { t: 26, s: [100, 100] },
     ],
     scale: [{ t: 0, s: [80] }, { t: 18, s: [108] }, { t: 26, s: [100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Notification Badge', ind: 2, parent: 1, x: 42, y: 100,
     shape: { kind: 'ellipse', w: 18, h: 18, fill: '#a855f7' },
     scale: [{ t: 15, s: [0] }, { t: 25, s: [120] }, { t: 32, s: [100] }],
-  }),
+  },
 ]);
 
 const LIQUID_TOGGLE_DOC = doc('Liquid Spring Toggle', 50, [
-  layer({
+  {
     name: 'Toggle Track', ind: 1,
     shape: { kind: 'rect', w: 120, h: 56, fill: '#18181b', radius: 28 },
-  }),
-  layer({
+  },
+  {
     name: 'Active Glow Fill', ind: 2, parent: 1, x: 100, y: 100,
     shape: { kind: 'rect', w: 112, h: 48, fill: '#10b981', radius: 24 },
     opacity: [{ t: 0, s: [0] }, { t: 20, s: [100] }],
-  }),
-  layer({
+  },
+  {
     name: 'Liquid Thumb Dot', ind: 3,
     shape: { kind: 'ellipse', w: 44, h: 44, fill: '#ffffff' },
     x: [{ t: 0, s: [66] }, { t: 20, s: [134] }, { t: 28, s: [134] }],
@@ -386,7 +443,7 @@ const LIQUID_TOGGLE_DOC = doc('Liquid Spring Toggle', 50, [
       { t: 22, s: [90, 110] },
       { t: 28, s: [100, 100] },
     ],
-  }),
+  },
 ]);
 
 export const LOTTIE_ITEMS: readonly LottieLibItem[] = [

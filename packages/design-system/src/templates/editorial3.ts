@@ -147,7 +147,7 @@ export const tileTrio: LayoutTemplate = {
   displayName: 'Tile Trio',
   intent: 'Three panels side by side, each with a title and a line of body.',
   tags: ['grid', 'feature', 'saas', 'comparison', 'scannable'],
-  packs: ['saas_explainer', 'apple_keynote', 'swiss_editorial', 'broadcast_sports'],
+  packs: ['saas_explainer', 'apple_keynote', 'swiss_editorial', 'broadcast_sports', 'cyberpunk_kinetic'],
   slots: [
     { role: 'headline', required: false, max: 1 },
     { role: 'list', required: true, max: 3 },
@@ -221,7 +221,7 @@ export const attributedCard: LayoutTemplate = {
   displayName: 'Attributed Card',
   intent: 'A testimonial on its own raised card, with the attribution below a short rule.',
   tags: ['quote', 'testimonial', 'saas', 'social-proof', 'card'],
-  packs: ['saas_explainer', 'apple_keynote', 'saas_product'],
+  packs: ['saas_explainer', 'apple_keynote', 'saas_product', 'mobile_app'],
   slots: [
     { role: 'quote', required: true, max: 1 },
     { role: 'support', required: false, max: 1 },
@@ -420,7 +420,7 @@ export const statPaired: LayoutTemplate = {
   displayName: 'Paired Metrics',
   intent: 'Two figures with their labels, side by side at equal weight.',
   tags: ['stat', 'data', 'report', 'comparison', 'symmetric'],
-  packs: ['saas_explainer', 'broadcast_sports', 'swiss_editorial', 'apple_keynote'],
+  packs: ['saas_explainer', 'broadcast_sports', 'swiss_editorial', 'apple_keynote', 'cyberpunk_kinetic'],
   slots: [
     { role: 'overline', required: false, max: 1 },
     { role: 'stat', required: true, max: 2 },

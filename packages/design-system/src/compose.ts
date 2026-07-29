@@ -83,14 +83,47 @@ export interface ComposeContext {
   durationMs: number;
   /** Prefix for generated layer ids, so two instances never collide. */
   idPrefix: string;
+  /**
+   * The composition already owns a full-frame backdrop, so this template must
+   * not emit one.
+   *
+   * Set by the caster when it composes several beats into ONE composition. Each
+   * template calls `emitBackdrop` unconditionally — correct when a template is
+   * the whole piece, catastrophic when five of them share a frame: paint order
+   * is creation order, so beat 3's opaque full-frame gradient is created after
+   * beat 2's content and therefore covers it. A five-beat piece rendered as the
+   * last beat's layout over a stack of gradients, and every earlier beat was
+   * composed, animated, linted and then buried.
+   *
+   * `emitBackdrop` returns the composition's ids rather than nothing when this
+   * is set, so a background technique cast against `backdropId` still animates
+   * a real layer.
+   */
+  hasCompositionBackdrop?: boolean;
 }
+
+/**
+ * Layer ids of the composition-level backdrop.
+ *
+ * Fixed rather than prefixed: there is exactly one of each per composition, and
+ * a technique that animates the backdrop has to be able to name it without
+ * knowing which beat it was cast in.
+ */
+export const COMPOSITION_BACKDROP_ID = 'comp_bg';
+export const COMPOSITION_SURFACE_ID = 'comp_surface';
 
 /** Build a ComposeContext from a resolved pack and a frame. */
 export function composeContext(
   pack: ResolvedPack,
   width: number,
   height: number,
-  o: { startMs?: number; durationMs?: number; idPrefix?: string; gridOver?: Partial<GridSpec> } = {},
+  o: {
+    startMs?: number;
+    durationMs?: number;
+    idPrefix?: string;
+    gridOver?: Partial<GridSpec>;
+    hasCompositionBackdrop?: boolean;
+  } = {},
 ): ComposeContext {
   const g = grid(width, height, o.gridOver);
   return {
@@ -102,6 +135,7 @@ export function composeContext(
     startMs: o.startMs ?? 0,
     durationMs: o.durationMs ?? 5000,
     idPrefix: o.idPrefix ?? 'l',
+    ...(o.hasCompositionBackdrop ? { hasCompositionBackdrop: true } : {}),
   };
 }
 

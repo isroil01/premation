@@ -168,7 +168,7 @@ export const LOOK_PACKS: readonly LookPack[] = [
       'entrance.type_writer_block', 'kinetic_type.marquee_band', 'entrance.split_flap',
       'background.contour_drift', 'kinetic_type.vertical_ticker'],
     forbid: ['entrance.rise_settle', 'camera.push_in_slow'],
-    layoutPrefer: ['data.terminal_block', 'editorial.rule_stack', 'hero.offset_mark'],
+    layoutPrefer: ['data.terminal_block', 'editorial.rule_stack', 'hero.offset_mark', 'data.legend_chart', 'stat.band'],
   },
   {
     id: 'luxury_film',
@@ -247,7 +247,7 @@ export const LOOK_PACKS: readonly LookPack[] = [
     forbidCategories: ['kinetic_type', 'camera', 'transition', 'exit'],
     // Nothing in a real interface peaks this hard.
     forbidAboveEnergy: 0.85,
-    layoutPrefer: ['ui.dashboard_frame', 'ui.browser_window', 'ui.card_detail_pair'],
+    layoutPrefer: ['ui.dashboard_frame', 'ui.split_app_copy', 'ui.browser_window', 'ui.metric_row', 'ui.card_detail_pair'],
   },
   {
     id: 'mobile_app',
@@ -279,7 +279,7 @@ export const LOOK_PACKS: readonly LookPack[] = [
     forbidCategories: ['kinetic_type', 'camera', 'transition', 'exit'],
     // Nothing in a real interface peaks this hard.
     forbidAboveEnergy: 0.85,
-    layoutPrefer: ['ui.phone_frame', 'ui.sheet_stack', 'ui.card_detail_pair'],
+    layoutPrefer: ['ui.phone_frame', 'ui.phone_copy', 'ui.notification_stack', 'ui.sheet_stack', 'ui.card_detail_pair'],
   },
 ] as const;
 

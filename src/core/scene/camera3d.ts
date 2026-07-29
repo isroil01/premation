@@ -10,7 +10,7 @@
 
 import type SceneGraph from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import { Project3D, type Camera3D } from '@motion/scene';
 
 /** Default focal length (px) for a comp of the given width. */
@@ -116,21 +116,59 @@ export function cameraFromNode(
 }
 
 /**
- * The active camera for a composition: the first Camera layer if present,
- * otherwise the default camera framed to the comp. Pass `sample` (a per-node
- * animated-value lookup at the current time) to make the camera animatable —
- * keyframed x/y/z/focalLength then drive the view.
+ * The active camera for a composition, or the default camera framed to the comp.
+ *
+ * Pass `sample` (a per-node animated-value lookup at the current time) to make
+ * the camera animatable — keyframed x/y/z/focalLength then drive the view.
+ *
+ * ## Which camera, and why it changed
+ *
+ * Two rules, and both used to be wrong:
+ *
+ * 1. **Scoped to `rootId` when given.** This walked the entire project and took
+ *    the first camera it found anywhere, so a camera in one composition steered
+ *    another composition's render.
+ * 2. **The LAST camera wins, not the first.** Creation order is paint order and
+ *    paint order is back-to-front, so "first found" meant the BOTTOM-most camera
+ *    — the opposite of After Effects, where the topmost camera above a layer is
+ *    the active one.
+ *
+ * Together these made repeat AI runs fail in a way that looked like the camera
+ * was broken: nothing deletes layers between runs, so run 2's camera was created
+ * after run 1's and lost. Every generative prompt after the first produced a
+ * fully keyframed camera the renderer never read.
+ *
+ * `rootId` is optional so the several call sites that legitimately have no
+ * composition context (the axis widget, scene-ref geometry) keep working; they
+ * get the whole-scene search, which is what they had.
  */
 export function readSceneCamera(
   graph: SceneGraph,
   width: number,
   height: number,
   sample?: CameraSample,
+  rootId?: string,
 ): Camera3D {
-  for (const node of flattenScene(graph)) {
-    if (readNodeKind(node) === 'camera') return cameraFromNode(node, width, height, sample);
+  const node = activeCameraNode(graph, rootId);
+  return node ? cameraFromNode(node, width, height, sample) : Project3D.defaultCamera(width, height);
+}
+
+/**
+ * The one camera node a composition renders through, or null.
+ *
+ * Shared by `readSceneCamera` and `readSceneDof` on purpose: they used to search
+ * independently, so any change to the selection rule could leave depth of field
+ * being read off a different camera than the one doing the projecting.
+ */
+export function activeCameraNode(graph: SceneGraph, rootId?: string): SceneNode | null {
+  const nodes = rootId ? flattenComposition(graph, rootId) : flattenScene(graph);
+  // Last, not first. Reverse rather than sort: paint order is the list order and
+  // the topmost layer is the final one.
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i]!;
+    if (readNodeKind(node) === 'camera') return node;
   }
-  return Project3D.defaultCamera(width, height);
+  return null;
 }
 
 /** Depth-of-field config (camera props; keyframeable). Null = DOF off. */
@@ -209,9 +247,10 @@ export function readSceneDof(
   width: number,
   height: number,
   sample?: CameraSample,
+  rootId?: string,
 ): DofConfig | null {
-  for (const node of flattenScene(graph)) {
-    if (readNodeKind(node) !== 'camera') continue;
+  const active = activeCameraNode(graph, rootId);
+  for (const node of active ? [active] : []) {
     let strength: number | undefined;
     let focus: number | undefined;
     let focal: number | undefined;

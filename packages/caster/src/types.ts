@@ -55,7 +55,42 @@ export interface BriefBeat {
   /** Fraction of the total duration. Normalised by the sequencer. */
   weight: number;
   content: SlotContent;
+  /**
+   * Art direction for imagery in this beat — subject and treatment, no layout.
+   *
+   * The one thing in the brief that is genuinely the model's to decide and that
+   * no library can supply: what the piece should be a picture OF. Everything
+   * else here is a choice among authored options; this is the only field whose
+   * value cannot be enumerated in advance.
+   *
+   * It exists because of a measured ceiling. The design linter has always had a
+   * `PRIMITIVE_ONLY` rule reading, in full: "Nothing in this composition is an
+   * imported or generated asset — it is entirely rectangles and text. That is
+   * the ceiling on how designed it can look." It fired on 100% of output, and no
+   * template could satisfy it, because nothing in the pipeline could produce an
+   * image. The rule was right and had nowhere to go.
+   *
+   * Absent means no imagery, which is correct for a product-UI beat and for any
+   * look built on type and space alone. Present means the emitter turns this
+   * beat's media slot into a real generated picture.
+   */
+  art?: string;
 }
+
+/**
+ * The `mediaAssetId` sentinel meaning "art direction, not a library asset".
+ *
+ * A beat carrying `art` needs to be a candidate for the media-required layout
+ * templates, and candidacy is decided by `availableRoles`, which reads
+ * `mediaAssetId`. So the sequencer stamps this value, the registry sees a
+ * fillable media role, and the emitter — the only place that knows the
+ * difference — rewrites the template's `create_media` into a `generate_image`.
+ *
+ * Deliberately not a real-looking id: if one ever escapes to `create_media` the
+ * failure is an obvious "no imported asset with id '__generated__'" rather than
+ * a silently wrong picture.
+ */
+export const GENERATED_MEDIA = '__generated__';
 
 // ── Stage 2: the sequencer (deterministic) ────────────────────────────
 
@@ -88,6 +123,8 @@ export interface Beat {
   tags: readonly string[];
   /** How this beat connects to the NEXT one. Absent on the last beat. */
   survival?: Survival;
+  /** Art direction carried through from the brief. See `BriefBeat.art`. */
+  art?: string;
 }
 
 export interface Sequence {

@@ -21,6 +21,7 @@ import { apiBaseUrl, getToken, type GatewayProviderId } from '@core/api/client';
 import { classifyPrompt } from './pipeline';
 import { runBackendDirector } from './DirectorRunner';
 import { runCasterPipeline } from './CasterRunner';
+import type { Direction as CasterDirection } from '@motion/caster';
 import { casterEnabled } from '@core/config/flags';
 import { deriveStyleFromBrief, setRuntimeStyle } from './design';
 import { buildExemplarBlock } from './exemplars';
@@ -334,6 +335,20 @@ export interface RunAgentOptions {
    */
   projectId?: string;
   conversationId?: string;
+  /**
+   * Direction from the composer, which overrides whatever the brief chose.
+   *
+   * Generative path only — a trivial edit has no brief to override.
+   */
+  direction?: CasterDirection;
+  /**
+   * How many alternatives the caster should emit for the user to choose between.
+   *
+   * Emit is pure and seeded, so this multiplies the CHEAP half of a run: three
+   * directions are one cast plus three pure re-emits, not three more model
+   * turns.
+   */
+  variants?: number;
 }
 
 /**
@@ -417,7 +432,14 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         if (casterEnabled()) {
           try {
             const cast = await runCasterPipeline(
-              { provider, dialect, model, prompt, signal, events },
+              {
+                provider, dialect, model, prompt, signal, events,
+                // The brief is the only caster stage an image can inform, and it
+                // was the only one not receiving them.
+                ...(opts.images?.length ? { images: opts.images } : {}),
+                ...(opts.direction ? { direction: opts.direction } : {}),
+                ...(opts.variants && opts.variants > 1 ? { variants: opts.variants } : {}),
+              },
               ctx, reg, writeNames, tally,
             );
             if (cast.ok) {
@@ -428,6 +450,13 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
               planSummary =
                 `Cast ${cast.report.beats} beats in the '${cast.report.lookPackId}' look ` +
                 `(${cast.report.techniques.length} techniques, ${cast.toolCallCount} steps).`;
+              // Emitting several and silently keeping the best would spend the
+              // work and hide the choice, and the choice is the point.
+              if (cast.variantCount > 1) {
+                planSummary +=
+                  ` Compared ${cast.variantCount} directions and applied the strongest ` +
+                  `(scores ${cast.variantScores.join(', ')}).`;
+              }
               // Problems are reported, never hidden — and "reported" has to mean
               // TO THE USER. They went only to `recordPathFailure`, which writes
               // a console global nobody opening the app will ever look at, so a

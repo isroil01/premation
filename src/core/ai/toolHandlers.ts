@@ -28,6 +28,13 @@ import { readNodePuppet } from '@core/rig/puppet';
 import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
 
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
+import {
+  MATERIAL_PCT_DEFAULTS,
+  setNodeAcceptsLights,
+  setNodeMaterialPct,
+  setNodeShininess,
+  setNodeSpecular,
+} from '@core/scene/material';
 import { rectangleMask, ellipseMask, addMaskPath, type MaskMode } from '@core/effects/mask';
 import { bumpScene } from '@stores/sceneStore';
 import { useAssetStore } from '@stores/assetStore';
@@ -58,7 +65,7 @@ import {
   recipePathMorph,
 } from './recipes';
 import { selectScene } from './sceneWindow';
-import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, isAnimatableProp } from './toolContext';
+import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, CAMERA_PROPS, isAnimatableProp } from './toolContext';
 import { setNodeBlend } from '@core/effects/blendMode';
 import { setNodeMatte } from '@core/effects/matte';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
@@ -310,6 +317,11 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
   const i = input as Record<string, unknown> & {
     nodeId: string;
     threeD?: boolean;
+    acceptsLights?: boolean;
+    ambient?: number;
+    diffuse?: number;
+    specular?: number;
+    shininess?: number;
     name?: string;
     visible?: boolean;
     locked?: boolean;
@@ -326,6 +338,30 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
   if (i.threeD !== undefined && node) {
     set3DEnabled(i.nodeId, !!i.threeD);
     applied.push(`threeD=${!!i.threeD}`);
+  }
+  // Material switches. Without these `set_light` was a tool that could not
+  // change a pixel from a library-emitted batch: shading is gated on the 3D
+  // switch AND `acceptsLights`, the flag defaults to false, and the only writer
+  // was the inspector checkbox. A light could be created, positioned and tuned,
+  // and nothing in the scene would ever be lit by it.
+  if (i.acceptsLights !== undefined && node) {
+    setNodeAcceptsLights(i.nodeId, !!i.acceptsLights);
+    applied.push(`acceptsLights=${!!i.acceptsLights}`);
+  }
+  for (const key of ['ambient', 'diffuse'] as const) {
+    const v = i[key];
+    if (typeof v === 'number' && node) {
+      setNodeMaterialPct(i.nodeId, key, v, MATERIAL_PCT_DEFAULTS[key]);
+      applied.push(`${key}=${v}`);
+    }
+  }
+  if (typeof i.specular === 'number' && node) {
+    setNodeSpecular(i.nodeId, i.specular);
+    applied.push(`specular=${i.specular}`);
+  }
+  if (typeof i.shininess === 'number' && node) {
+    setNodeShininess(i.nodeId, i.shininess);
+    applied.push(`shininess=${i.shininess}`);
   }
   if (i.name !== undefined && node) {
     node.name = String(i.name);
@@ -368,8 +404,33 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
     // were unreachable from any tool. `backdropBlur` in particular is the whole
     // glass-surface vocabulary and it was already fully wired and tested.
     'cornerRadius', 'backdropBlur',
+    // Static 3D placement. Previously the ONLY way to give a layer a z was a
+    // one-keyframe `set_keyframes` call, which sets the value but also creates
+    // an animation track — so a technique that later animated z inherited a
+    // keyframe it did not author and started from the wrong place.
+    'z', 'rotationX', 'rotationY',
+    // Camera. These were keyframeable and NOT settable, which meant every
+    // library-emitted camera ran on the engine's default lens — `emitCamera`
+    // picked one and its `update_layer` call was rejected for an unknown
+    // property, on all six camera techniques, silently. They route to the
+    // Transform component, which is where CameraSection writes them too and
+    // where `cameraFromNode` reads them from.
+    ...CAMERA_PROPS,
   ]) {
     if (i[key] === undefined) continue;
+    // The 3D props are inert without the switch, and silently so. Refusing is
+    // better than writing a value the renderer will never read.
+    if ((CAMERA_PROPS as readonly string[]).includes(key) && node && readNodeKind(node) !== 'camera') {
+      return fail(
+        `'${key}' is a camera property and '${i.nodeId}' is a ${readNodeKind(node)}. ` +
+        `Create one with create_layer { kind: "camera" } first.`,
+      );
+    }
+    if ((THREE_D_PROPS as readonly string[]).includes(key) && node && !is3DEnabled(node)) {
+      return fail(
+        `'${key}' needs the layer's 3D switch — pass threeD: true in this same call (it is applied first).`,
+      );
+    }
     if (ctx.scene.setProp(i.nodeId, map[key] ?? key, i[key])) applied.push(key);
   }
 

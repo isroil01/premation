@@ -18,6 +18,8 @@ import { type AiTransaction } from '@core/ai/aiTransaction';
 import type { PendingImage } from '@core/ai/imageAttachment';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { casterPacks } from '@core/ai/CasterRunner';
 import { api, isAuthenticated, type AiConversationSummary } from '@core/api/client';
 
 export interface ChatMessage {
@@ -31,6 +33,14 @@ export interface ChatMessage {
 
 /** How many prior turns to replay. Enough for context, bounded for cost. */
 const HISTORY_TURNS = 24;
+
+/**
+ * The look packs the caster can be pointed at.
+ *
+ * Static — `casterPacks()` reads a frozen array — so it is resolved once here
+ * rather than on every render of the composer.
+ */
+const PACKS = casterPacks();
 
 /**
  * How many image-bearing user turns keep their images in the model-facing
@@ -295,6 +305,30 @@ export interface UseAiChat {
   pendingChanges: string[];
   acceptPending: () => void;
   discardPending: () => void;
+
+  /**
+   * Direction the user has set for generative runs.
+   *
+   * `casterPacks()` was exported for a UI to render from the day the caster
+   * landed and nothing ever called it, so every run guessed a look the user may
+   * already have decided.
+   */
+  direction: AiDirection;
+  setDirection: (patch: Partial<AiDirection>) => void;
+  /** The look packs the caster can be pointed at. */
+  packs: readonly { id: string; displayName: string; intent: string }[];
+  /** Frames sampled across the last result, for the preview strip. */
+  filmstrip: string[];
+}
+
+/** What the composer can pin. Every field is optional — unset means "you decide". */
+export interface AiDirection {
+  lookPackId?: string;
+  accent?: string;
+  energy?: number;
+  totalDurationMs?: number;
+  /** How many alternatives to emit and rank. 1 = the previous behaviour. */
+  variants: number;
 }
 
 export function useAiChat(): UseAiChat {
@@ -328,6 +362,21 @@ export function useAiChat(): UseAiChat {
   }, []);
 
   // V3 state declarations
+  /**
+   * Composer direction. Defaults to nothing pinned and ONE variant.
+   *
+   * One, not three, because every extra variant is another full emit + three
+   * linter passes, and a user who has not asked to compare directions should not
+   * pay for the comparison. The control is opt-in.
+   */
+  const [direction, setDirectionState] = useState<AiDirection>({ variants: 1 });
+  const setDirection = useCallback((patch: Partial<AiDirection>) => {
+    setDirectionState((d) => ({ ...d, ...patch }));
+  }, []);
+
+  /** Frames sampled across the last result. Cleared when a new run starts. */
+  const [filmstrip, setFilmstrip] = useState<string[]>([]);
+
   const [isManualMode, setIsManualMode] = useState<boolean>(() => {
     try {
       return localStorage.getItem('motion_editor_ai_manual_mode') === 'true';
@@ -620,6 +669,7 @@ export function useAiChat(): UseAiChat {
     setActivity('Reading the scene');
     setPipelineStages(null); // reset from any prior run
     setPlanItems([]);
+    setFilmstrip([]);
 
     const controller = new AbortController();
     abort.current = controller;
@@ -636,6 +686,20 @@ export function useAiChat(): UseAiChat {
         // behind it. Manual mode holds the transaction open for Apply/Discard;
         // auto mode commits when the run finishes.
         preview: isManualMode,
+        // Only the fields the user actually pinned. Sending `energy: undefined`
+        // and sending nothing are the same to the caster, but building the
+        // object conditionally keeps "unset" meaning "the model decides".
+        ...(direction.lookPackId || direction.accent || direction.energy !== undefined || direction.totalDurationMs
+          ? {
+              direction: {
+                ...(direction.lookPackId ? { lookPackId: direction.lookPackId } : {}),
+                ...(direction.accent ? { accent: direction.accent } : {}),
+                ...(direction.energy !== undefined ? { energy: direction.energy } : {}),
+                ...(direction.totalDurationMs ? { totalDurationMs: direction.totalDurationMs } : {}),
+              },
+            }
+          : {}),
+        ...(direction.variants > 1 ? { variants: direction.variants } : {}),
         history: history.current.slice(-HISTORY_TURNS),
         images: attachments.length ? attachments : undefined,
         // Both ids were already live in this hook and neither was ever passed
@@ -671,6 +735,23 @@ export function useAiChat(): UseAiChat {
       const answer = result.text || 'Done.';
       setStreaming('');
       setMessages((m) => [...m, { role: 'assistant', text: answer }]);
+
+      // A filmstrip, not a snapshot. `renderCritiqueEvidence` has built one for
+      // the fit critic since the caster landed and the user has never seen it —
+      // and one still frame is a poor preview of a moving piece, especially when
+      // the thing most likely to be wrong is the timing between frames.
+      if (result.changes.length) {
+        try {
+          const { renderSceneFrames } = await import('@core/ai/renderFeedback');
+          const c = useCompositionStore.getState().comp();
+          const d = c.durationSeconds;
+          const shots = await renderSceneFrames([d * 0.08, d * 0.3, d * 0.55, d * 0.8, Math.max(0, d - 1 / c.fps)]);
+          setFilmstrip(shots.map((img) => `data:${img.mediaType};base64,${img.dataBase64}`));
+        } catch {
+          // A preview that could not render is not a failed run.
+          setFilmstrip([]);
+        }
+      }
 
       if (result.tx) {
         // Hold open transaction for review: Apply commits it, Discard rolls it back.
@@ -739,6 +820,11 @@ export function useAiChat(): UseAiChat {
     pendingChanges,
     acceptPending,
     discardPending,
+
+    direction,
+    setDirection,
+    packs: PACKS,
+    filmstrip,
   };
 }
 

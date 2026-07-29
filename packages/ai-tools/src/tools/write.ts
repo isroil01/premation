@@ -157,6 +157,39 @@ export const updateLayerDef: AiToolDef = {
       width: { type: 'number', description: 'Layer width in px. Required for GPU renderer to display the layer.' },
       height: { type: 'number', description: 'Layer height in px. Required for GPU renderer to display the layer.' },
       rotation: { type: 'number', description: 'Degrees.' },
+      z: {
+        type: 'number',
+        description:
+          'Depth, px. Needs the 3D switch. Positive is AWAY from the camera. Setting it here is a ' +
+          'static placement — use set_keyframes to animate it. Separating layers in z is what gives ' +
+          'a camera move parallax; with everything at 0 a push reads as a scale.',
+      },
+      rotationX: { type: 'number', description: 'Degrees about the horizontal axis. Needs the 3D switch.' },
+      rotationY: { type: 'number', description: 'Degrees about the vertical axis. Needs the 3D switch.' },
+      // ── Camera layers ──
+      // These were animatable via set_keyframes (they are in CAMERA_PROPS) but
+      // could not be SET. So every camera a library emitted ran on the engine's
+      // default lens: `emitCamera` chose one and its `update_layer` call was
+      // rejected for an unknown property, silently, on all six camera
+      // techniques. A slow contemplative push (long lens, 2.6x frame) and a
+      // crash zoom (wide, 0.5x) rendered identically.
+      focalLength: {
+        type: 'number',
+        minimum: 1,
+        description:
+          'Camera layers only. Distance to the projection plane in px, so the ratio to the frame IS ' +
+          'the focal length: ~0.5x frame is very wide (strong perspective, edges stretch), ~0.85x ' +
+          'normal, ~1.5x portrait, ~2.6x long (depth collapses, planes stack). This is the first ' +
+          'decision a camera operator makes and it changes a shot more than the move does.',
+      },
+      orbitYaw: { type: 'number', description: 'Camera layers only. Degrees around the look-at point, horizontally.' },
+      orbitPitch: { type: 'number', description: 'Camera layers only. Degrees around the look-at point, vertically.' },
+      poiX: { type: 'number', description: 'Camera layers only. Look-at target X in comp px.' },
+      poiY: { type: 'number', description: 'Camera layers only. Look-at target Y in comp px.' },
+      poiZ: { type: 'number', description: 'Camera layers only. Look-at target Z in comp px.' },
+      dofStrength: { type: 'number', minimum: 0, description: 'Camera layers only. Max defocus blur, px. 0 = depth of field off.' },
+      focusDistance: { type: 'number', minimum: 0, description: 'Camera layers only. In-focus distance from the camera, px.' },
+      dofAperture: { type: 'number', minimum: 0, description: 'Camera layers only. How fast defocus becomes blur. Wider = shallower depth of field.' },
       scaleX: { type: 'number' },
       scaleY: { type: 'number' },
       opacity: { type: 'number', minimum: 0, maximum: 100 },
@@ -176,6 +209,36 @@ export const updateLayerDef: AiToolDef = {
           'sheet, or an iOS-style toolbar; pair it with a low-opacity light fill.',
       },
       threeD: { type: 'boolean', description: 'Enable the 3D switch (required before z/rotationX/rotationY).' },
+      acceptsLights: {
+        type: 'boolean',
+        description:
+          'Let scene lights shade this layer. OFF by default, and until it is on a light layer ' +
+          'changes NOTHING about how this layer renders — the shading path is gated on the 3D ' +
+          'switch AND this flag. Turn both on for any layer a set_light call is meant to affect.',
+      },
+      ambient: {
+        type: 'number',
+        minimum: 0,
+        maximum: 100,
+        description: 'Percent of the layer\'s own colour that survives with no light on it. 100 = unlit look.',
+      },
+      diffuse: {
+        type: 'number',
+        minimum: 0,
+        maximum: 100,
+        description: 'Percent of scene light this surface scatters. The main lighting response.',
+      },
+      specular: {
+        type: 'number',
+        minimum: 0,
+        maximum: 100,
+        description: 'Percent highlight strength. 0 for matte paper, high for glass or metal.',
+      },
+      shininess: {
+        type: 'number',
+        minimum: 1,
+        description: 'Highlight tightness. Low = broad sheen, high = a small hot spot.',
+      },
       motionBlur: { type: 'boolean', description: 'Enable/disable motion blur for smooth movement.' },
       blendMode: {
         type: 'string',
