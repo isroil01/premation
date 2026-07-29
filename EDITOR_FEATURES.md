@@ -427,6 +427,12 @@ survive intact and the fitted content rides along inside them.
 An **unfilled slot renders exactly as the author designed it** — in the editor and on export. An
 unfilled template exports looking unfinished, not broken.
 
+**Filling a slot fills every placement of that template.** A template is a composition, so the way to
+deliver one piece of content to several platforms is to instance it into a 16:9, a 9:16 and a 1:1 host
+composition. Slots belong to the template, so filling one once puts the clip in all three, each framed
+against its own slot rect — nothing has to be kept in sync by hand. The case this deliberately does not
+serve is three *different* clips in three placements of the same template; see §21.
+
 ---
 
 ## 14. Working with footage, images and audio
@@ -685,7 +691,13 @@ reproducing, and nothing is carried forward on faith.
    you zoom out, and at low zoom on a large composition the body and lens stub get small enough that
    which way the camera is pointing is hard to read. The geometry is correct and does turn with the
    camera — it is only the on-screen size that doesn't hold.
-7. **A 3D layer whose origin passes behind the camera disappears completely.** That matches After
+7. **Template slots have no per-instance override.** A slot belongs to the template composition, so
+   filling one changes every placement of that template at once. That is what multi-format delivery
+   wants, and it is the wrong shape for the other job — three product variants from one template, each
+   placement holding a different clip. After Effects covers that with Master Properties, which exposes a
+   precomp's essential properties per layer; there is no equivalent here. Duplicate the composition per
+   variant in the meantime.
+8. **A 3D layer whose origin passes behind the camera disappears completely.** That matches After
    Effects — a layer is a flat plane and there is no per-fragment near-plane clipping — but the whole
    layer pops out at once rather than being clipped progressively, and its wireframe box goes with it,
    so there is no on-screen cue that it is still in the scene just behind you.
