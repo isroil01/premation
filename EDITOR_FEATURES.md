@@ -415,6 +415,19 @@ source's intrinsic size, so it never has to know which kind it got.
 There is no Stretch: contain, cover and native cover the real cases, and an author who genuinely wants
 distortion can pick native and scale the layer.
 
+**Masked slots: a mask is an aperture, and the content moves under it.** A slot is often a masked
+region — a phone screen inside a device mockup, a card cut out of a grid. A mask path is authored
+geometry and filling a slot never touches it, so the aperture holds still while the content refits
+inside it. That is the behaviour you want: a mask that resized with the content would change the shape
+of the phone's screen every time someone dropped in a differently-shaped clip.
+
+**For a masked slot, choose Cover.** It leaves the layer's box exactly at the aperture and crops in
+texture space, so the content fills the cutout with no gap and nothing for the mask to have to hide.
+Contain inside a mask is safe but can *under*-fill — the fitted box may be smaller than the aperture,
+letterboxing inside the cutout and showing whatever sits behind it. It can never spill, because a mask
+only ever removes pixels. Native inside a mask is the deliberate "let the aperture do the cropping"
+choice: the content keeps its own pixel size and the mask decides how much of it you see.
+
 **The slot's frame is the placeholder's own box**, not the composition — so a phone screen inside a
 device mockup, or a card in a grid, frames against itself. The authored box is captured when the slot
 is created, so **re-filling reframes from the original rect** rather than nesting each fill inside the
