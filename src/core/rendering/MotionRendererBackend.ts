@@ -65,6 +65,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<
 
 export class MotionRendererBackend implements RenderBackend {
   readonly kind: string;
+  /**
+   * The tier that ACTUALLY initialized, or null until one does.
+   *
+   * `kind` is the tier this backend was ASKED for and never changes, because
+   * callers read it before init has resolved. That made it a poor answer to
+   * "what rendered this frame": ask for WebGPU on a machine with no adapter and
+   * `kind` still says `motion-webgpu` after the ladder has stepped down to
+   * WebGL2. The render-tests harness believed it, so every WebGPU parity figure
+   * this project has ever reported was measured on WebGL2 pixels read back
+   * through the WebGPU path — see packages/render-tests/harness/renderEntry.ts,
+   * which now refuses to render a backend whose resolvedKind is not the one it
+   * asked for.
+   *
+   * Proven by: src/core/rendering/backendResolvedKind.test.ts.
+   */
+  resolvedKind: RendererBackendKind | null = null;
   readonly readyPromise: Promise<void>;
   /**
    * True when EVERY init attempt (preferred tier + fallbacks + retry) failed.
@@ -339,6 +355,9 @@ export class MotionRendererBackend implements RenderBackend {
       this.sizeCanvas();
       renderer.resize(this.cssW, this.cssH, this.dpr);
       this.ready = true;
+      // Set BEFORE EngineReady: a listener that reacts to the event and reads
+      // the backend would otherwise see the previous rung's answer.
+      this.resolvedKind = attempt.kind;
       // Corrects the tier badge after a successful fallback/retry (an earlier
       // EngineError may have flipped it to 'software' prematurely).
       getEventBus().emit('EngineReady', { engine: `motion-${attempt.kind}`, role: this.role });
@@ -642,6 +661,8 @@ export class MotionRendererBackend implements RenderBackend {
     this.disposed = true;
     this.ready = false;
     this.pending = null;
+    // Nothing is rendering any more, so "which tier rendered" has no answer.
+    this.resolvedKind = null;
     // Release retained media BEFORE the renderer goes: <video> elements keep a
     // decoder running and ImageBitmaps hold off-heap pixels, and neither is
     // reachable once `textures` is nulled. Also drop cached video frames — nothing

@@ -703,9 +703,15 @@ reproducing, and nothing is carried forward on faith.
    **non-black matte colour**, **Ignore Alpha** and **Invert Alpha**; those are not here. Premultiplied
    footage is essentially always matted against black — it is what every renderer emits by default —
    so the gap is narrow, but if you have legacy hardware-keyed material matted against another colour
-   there is no way to tell it so. The reason it is filed rather than half-built: each extra mode needs
-   a value reaching the fragment stage, and the shared uniform block would have to be extended to carry
-   it, which is a change across every textured shader at once.
+   there is no way to tell it so. The reason it is filed rather than half-built is no longer the
+   uniform block — with the alpha invariant now stated and enforced at decode, all three fall out
+   CPU-side for **images** without any shader change (matte colour un-mattes as
+   `rgb = (rgb − C·(1−a))/a`, Ignore Alpha forces `a = 1`, Invert Alpha is `1 − a`). The reason is
+   **video**: the `<video>` element uploads straight to the GPU with no pixel buffer in the path, so
+   a decode-side implementation would cover images and silently do nothing on footage — and
+   hardware-keyed video matted against a non-black colour is precisely the material that wants it.
+   A setting that quietly applies to half the file types it is offered for is worse than its
+   absence, so it stays filed until it can cover both.
 4. **Speed changes mute a clip's audio.** Time stretch, reverse and time remap retime the picture by
    choosing a different source frame; audio would have to be *resampled*, which needs a pitch
    decision and a DSP pass that isn't built. Rather than let the sound drift steadily out of sync,
@@ -734,3 +740,33 @@ so scrubbing heavy 4K footage is slow and frame blending degrades when the sourc
 from the composition's when neither the desktop probe nor Conform has supplied the real source rate. A
 video's audio is decoded from the file as a whole rather than streamed, so the sound of a very long
 clip appears a moment after the picture does.
+
+### Which GPU backend you get, and what that means
+
+**WebGPU is the supported backend.** It is what the app tries first, what the render tests gate
+their semantics on, and what "the renderer behaves like this" means everywhere in this document.
+
+**WebGL2 is a best-effort fallback.** On a machine where WebGPU will not start, the app steps down
+to it automatically (the tier is shown in the viewport badge). It boots, it renders, and it is not
+allowed to crash — but it is **not held to pixel parity with WebGPU** and may differ in rendering
+details. If you are comparing two machines' output, check the badge before filing a difference.
+
+There is no CPU renderer. If both tiers fail the viewport shows an error rather than a blank stage.
+
+**On alpha, specifically.** Both backends now hold one stated invariant — textures carry straight
+(non-premultiplied) alpha, enforced at each backend's upload call and proven per run by
+`packages/render-tests/scripts/verify-alpha.mjs`. That was not always true, and the record is worth
+correcting because an earlier note claimed the opposite:
+
+- **WebGPU has always composited alpha images correctly.** There was never a user-visible alpha
+  defect on the supported backend. An earlier report of "every PNG logo and ProRes clip is fringing"
+  came from the test harness, whose oracle ran WebGL2, and is withdrawn.
+- **WebGL2 did double-multiply straight-alpha images**, because `createImageBitmap` hands back
+  premultiplied pixels and WebGL's unpack flag can only multiply, never divide. Fixed by asking for
+  straight alpha at decode. That is a real fix to the fallback, and the same project now renders the
+  same pixels on both backends.
+- **A known cost, on both backends.** Straight is the wrong space to filter in, so a magnified alpha
+  edge picks up a dark halo — measured at **63 of 255 levels** at a half-covered edge, matching the
+  straight-space prediction to within one level. This is pre-existing rather than new, and removing
+  it means making premultiplied the invariant and inverting which shader variant is the base. Filed,
+  not started.

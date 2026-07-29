@@ -375,7 +375,13 @@ export interface RenderSnapshot {
 }
 
 export interface RenderBackend {
+  /** The tier this backend was ASKED for. Stable from construction, so it is
+   *  readable before init resolves — and therefore NOT an answer to "what
+   *  rendered this frame". Use `resolvedKind` for that. */
   readonly kind: string;
+  /** The tier that actually initialized, or null before/after one does. See
+   *  MotionRendererBackend.resolvedKind for why the distinction matters. */
+  resolvedKind?: 'webgl2' | 'webgpu' | 'null' | null;
   attach(canvas: HTMLCanvasElement): void;
   /** CSS pixel size + device pixel ratio. */
   resize(width: number, height: number, dpr: number): void;

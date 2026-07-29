@@ -35,16 +35,44 @@ const ACTUAL = path.join(ARTIFACTS, 'actual');
 const MANIFEST_OUT = path.join(ARTIFACTS, 'manifest.json');
 
 /**
- * The backend the references are blessed from and the gate compares against.
+ * The backend the golden PNGs are blessed from and diffed against.
  *
- * NOT the product's primary engine — that is WebGPU. The references were blessed
- * from WebGL2 and WebGPU does not yet reproduce them in the offscreen harness
- * (see reportSecondaryBackend), so gating on WebGPU today would fail 80 of 93
- * scenes for reasons nobody has isolated to the renderer. Moving this to
- * 'webgpu' is the goal; it needs the divergence diagnosed on real hardware and
- * the references re-blessed first.
+ * ## Why this is WebGL2 when WebGPU is the product's backend
+ *
+ * NOT the reason that used to be written here. That reason — "WebGPU diverges
+ * on 80 of 93 scenes, whole layers missing" — was never a fact about WebGPU.
+ * The harness had no WebGPU adapter at all: `--use-angle=swiftshader`
+ * suppresses Dawn, `requestAdapter()` returned null, MotionRendererBackend
+ * stepped silently down to WebGL2, and the harness filed the result under
+ * `actual/webgpu/` because `kind` reported the tier it ASKED for. Every WebGPU
+ * parity figure this suite ever printed was measured on non-WebGPU pixels.
+ * Given a real adapter (electron/main.cjs) the same suite reports 122/164 where
+ * it used to report 18/164, with no renderer change.
+ *
+ * The actual blocker is narrower and is about DETERMINISM, not correctness:
+ * golden-PNG diffing needs a software rasterizer so any machine reproduces the
+ * bytes, and there is no software WebGPU here. Dawn's Vulkan-SwiftShader path
+ * yields an adapter and a device, then kills the render process on first submit
+ * ("Instance dropped in onSubmittedWorkDone") on Electron 32.3.3. Blessing from
+ * the real adapter instead would pin every reference to one GPU.
+ *
+ * So the split is deliberate:
+ *
+ *   golden PIXELS   WebGL2 / ANGLE-SwiftShader — portable and byte-deterministic
+ *   SEMANTICS       WebGPU — gated by scripts/verify-alpha.mjs, which asserts
+ *                   SHAPES (linear vs quadratic in alpha) rather than bytes and
+ *                   is therefore immune to the driver differences that stop the
+ *                   pixel gate from moving
+ *
+ * That gives the product's real backend a gate that can fail, which is what was
+ * missing, without pretending a hardware-blessed PNG is portable. Move the
+ * pixel gate here to 'webgpu' when a software adapter works; the WebGL2 run
+ * stays as the fallback's smoke check either way.
  */
 const GATE_BACKEND = process.env.HARNESS_GATE_BACKEND || 'webgl2';
+
+/** The backend whose SEMANTICS gate (verify-alpha) must pass. The product's. */
+const SEMANTIC_GATE_BACKEND = 'webgpu';
 
 /** Rendered every run. The gate backend is forced in regardless. */
 const DEFAULT_BACKENDS = ['webgl2', 'webgpu'];
@@ -147,18 +175,17 @@ async function bless(scenes) {
 }
 
 /**
- * Non-gating parity report for a secondary backend.
+ * Non-gating PIXEL parity report for the secondary backend.
  *
- * WebGPU is the product's PRIMARY engine, but its references cannot be gated
- * yet: rendered in the offscreen harness it diverges from the WebGL2-blessed
- * PNGs on 80 of 93 scenes, and spot-checking the pixels shows whole layers
- * missing (blend-add comes back as flat background where the reference has
- * content) rather than a sub-pixel parity gap. That is either a WebGPU-backend
- * bug or a SwiftShader-Vulkan limitation, and telling those apart needs real
- * hardware — neither conclusion should be reached by turning the build red.
+ * Pixels only — WebGPU's semantics ARE gated, by verify-alpha (see
+ * SEMANTIC_GATE_BACKEND). What stays ungated here is byte equality against
+ * PNGs blessed on a different rasterizer, which is not something a hardware
+ * adapter can be expected to reproduce exactly.
  *
- * So: measure it, print it every run, gate nothing on it. The number moving is
- * the signal; when it reaches parity, promote this to the gate.
+ * The number is worth printing every run because it is now a real measurement
+ * of the product's backend rather than of a silent fallback: it moved from
+ * 18/164 to 122/164 the moment the harness was given an adapter. The remaining
+ * gap is a genuine WebGPU-vs-WebGL2 list to work through, not a phantom.
  */
 async function reportSecondaryBackend(scenes, backend) {
   let compared = 0;
@@ -260,6 +287,39 @@ async function gateFidelityTwins(scenes) {
     process.stdout.write(dim(`  · ${e.id} passes at a raised ${pct(e.tolerance)}: ${e.why}\n`));
   }
   return { fidelityFail, fidelityChecked };
+}
+
+/**
+ * The semantics gate for the PRODUCT's backend.
+ *
+ * Runs verify-alpha against the WebGPU actuals. This is the gate that can fail
+ * on WebGPU, and the reason the pixel gate staying on WebGL2 is a determinism
+ * decision rather than a coverage hole: the alpha invariant and the footage
+ * interpretation are asserted as SHAPES (linear vs quadratic in alpha), which
+ * hold on any conforming driver, so they gate the backend users actually run.
+ *
+ * Skipped, loudly, if WebGPU produced no frames — a machine with no adapter
+ * must not silently lose the gate, but must not fail the build for it either.
+ */
+async function gateAlphaSemantics(scenes, backends) {
+  if (!backends.includes(SEMANTIC_GATE_BACKEND)) return 0;
+  const probe = await readPngSafe(
+    path.join(ACTUAL, SEMANTIC_GATE_BACKEND, 'alpha-control-straight-src', '0.png'),
+  );
+  if (!probe) {
+    process.stdout.write(
+      '\n' + yellow(`  alpha semantics gate SKIPPED — ${SEMANTIC_GATE_BACKEND} rendered no frames on this machine.\n`),
+    );
+    return 0;
+  }
+  process.stdout.write('\n' + dim(`  alpha semantics gate (${SEMANTIC_GATE_BACKEND}, shapes not bytes):\n`));
+  const code = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(__dirname, 'verify-alpha.mjs'), SEMANTIC_GATE_BACKEND], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    child.on('exit', (c) => resolve(c ?? 1));
+  });
+  return code === 0 ? 0 : 1;
 }
 
 async function compareAll(scenes) {
@@ -391,6 +451,7 @@ async function main() {
 
   const { parityFail, parityKnownGap, parityResolved } = await compareAll(scenes);
   const { fidelityFail } = await gateFidelityTwins(scenes);
+  const alphaFail = await gateAlphaSemantics(scenes, backends);
 
   process.stdout.write('\n');
   process.stdout.write(dim('  GPU-parity dashboard (unified engine comparison against committed reference):\n'));
@@ -410,12 +471,12 @@ async function main() {
     if (backend !== GATE_BACKEND) await reportSecondaryBackend(scenes, backend);
   }
 
-  if (parityFail === 0 && fidelityFail === 0) {
+  if (parityFail === 0 && fidelityFail === 0 && alphaFail === 0) {
     process.stdout.write(green(`\n✓ gate green — unified engine output matches golden expectations.\n`));
     process.exit(0);
   }
   process.stdout.write(
-    red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}.\n`) +
+    red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}, alpha semantics: ${alphaFail}.\n`) +
       dim(`  artifacts: ${path.join(ARTIFACTS, 'diff')}\n`),
   );
   process.exit(1);

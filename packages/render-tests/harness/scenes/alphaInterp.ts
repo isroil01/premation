@@ -10,7 +10,9 @@
  * look. These scenes are that path: they render through the production
  * pipeline, write openable PNGs, and are measured by
  * scripts/verify-alpha.mjs, which asserts the invariants below rather than
- * diffing a blessed image.
+ * diffing a blessed image. That script gates every run against the WebGPU
+ * actuals (see SEMANTIC_GATE_BACKEND in scripts/run.mjs) — when this comment
+ * was first written it named a file that did not exist yet.
  *
  * ## The subject, and why it is a LINEAR ramp
  *
@@ -163,6 +165,74 @@ function straightRampDataUrl(size = SUB): string {
   return c.toDataURL('image/png');
 }
 
+/**
+ * A tiny hard-edged source, drawn MAGNIFIED so bilinear filtering dominates.
+ *
+ * This is the scene that measures what the straight-alpha invariant costs, and
+ * the ramp scenes cannot do it: their source is constant white, so averaging a
+ * transparent texel with an opaque one in straight space averages white with
+ * white and no artifact can appear. Here the opaque half is saturated RED and
+ * the transparent half is (0,0,0,0) — the state every canvas-rasterized source
+ * has, because a 2D canvas stores premultiplied and zeroes RGB at zero alpha.
+ *
+ * Magnified 30×, one texel spans ~30 screen px, so the interpolated band is
+ * wide enough to sample away from both endpoints.
+ *
+ *   filtered in PREMULTIPLIED space  edge stays red, fades to the background
+ *   filtered in STRAIGHT space       RGB averages red→BLACK while alpha fades,
+ *                                    so the shader's out = rgb·a darkens twice
+ *                                    over — the classic dark halo
+ *
+ * Both readings agree at the two endpoints and differ only in between, so this
+ * is the same "correctness as a shape" test as the ramp, on the axis the ramp
+ * is blind to.
+ */
+function hardEdgeDataUrl(): string {
+  const c = document.createElement('canvas');
+  c.width = 8;
+  c.height = 8;
+  const g = c.getContext('2d')!;
+  // Left half opaque red, right half untouched — i.e. (0,0,0,0).
+  g.fillStyle = '#ff0000';
+  g.fillRect(0, 0, 4, 8);
+  return c.toDataURL('image/png');
+}
+
+/**
+ * The magnified hard edge over a light background.
+ *
+ * Registered as STRAIGHT (the default and the invariant), because the question
+ * is what the SHIPPING configuration costs — not what an opt-in setting can
+ * recover.
+ */
+function softEdgeFilterScene(): Scene {
+  return defineScene({
+    id: 'alpha-filter-hard-edge',
+    description: 'Magnified hard alpha edge — measures the filtering cost of the straight invariant.',
+    size: { w: W, h: H },
+    comp: { width: W, height: H, background: LIGHT },
+    fps: 30, frames: [0], oracle: 'gpu',
+    build: (graph) => {
+      const src = hardEdgeDataUrl();
+      const assetId = 'alpha-filter-hard-edge-asset';
+      const prev = useAssetStore.getState().assets.filter((a) => a.id !== assetId);
+      useAssetStore.setState({
+        assets: [...prev, {
+          id: assetId, type: 'image', src,
+          metadata: { width: 8, height: 8, hasAlpha: true },
+          interpret: { alpha: 'straight' },
+        }] as never,
+      });
+      graph.addNode(node('subject', {
+        kind: 'image',
+        position: { x: W / 2, y: H / 2 },
+        transform: { width: 240, height: 240, src, assetId, __assetId: assetId },
+        style: { opacity: 100 },
+      }));
+    },
+  });
+}
+
 /** 3D marker props — a numeric z/rotationX/rotationY is what is3DEnabled tests. */
 const THREE_D = { z: 0, rotationX: 0, rotationY: 0 };
 
@@ -188,6 +258,11 @@ function straightControlScene(id: string, description: string, alpha: 'straight'
 }
 
 export const alphaInterpScenes: Scene[] = [
+  // 6 — what the invariant COSTS. See softEdgeFilterScene: the ramp scenes are
+  //     structurally blind to filtering artifacts, so this is the only scene
+  //     that can price the straight-vs-premultiplied choice.
+  softEdgeFilterScene(),
+
   // 0 — the control that tells us what the UPLOAD does. A genuinely straight
   //     source read as straight must composite LINEARLY in alpha. If it comes
   //     out quadratic, the texture was premultiplied before the shader saw it

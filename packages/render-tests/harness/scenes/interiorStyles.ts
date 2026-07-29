@@ -201,7 +201,7 @@ export const interiorStyleScenes: Scene[] = [
   // runs the SAME input through both paths and asserts the capped profile tracks
   // the full-resolution one. That is the test that would catch the flat-shading
   // regression the previous attempt shipped; these scenes would not.
-  scene('bevel-profile-lowres', 'Bevel below the working-buffer cap — computed at full resolution.', (graph) => {
+  scene('bevel-below-cap', 'Bevel below the working-buffer cap — computed at full resolution.', (graph) => {
     graph.addNode(node('s', {
       kind: 'shape',
       position: { x: 320, y: 240 },
@@ -219,7 +219,7 @@ export const interiorStyleScenes: Scene[] = [
     });
   }, { size: { w: 640, h: 480 }, comp: { width: 640, height: 480, background: '#0c0c12' } }),
 
-  scene('bevel-profile-hires', 'Same bevel at 2× — computed on the capped buffer and upsampled.', (graph) => {
+  scene('bevel-above-cap', 'Same bevel at 2× — computed on the capped buffer and upsampled.', (graph) => {
     graph.addNode(node('s', {
       kind: 'shape',
       position: { x: 640, y: 480 },
