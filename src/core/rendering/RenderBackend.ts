@@ -232,6 +232,17 @@ export interface RenderLayer {
   src?: string;
   /** Referenced project asset ID. */
   assetId?: string;
+  /**
+   * Sub-rect of the SOURCE texture to sample, in 0..1 UV space. Absent = the
+   * whole texture.
+   *
+   * This is how a `cover` media slot crops: the drawn quad stays exactly the
+   * slot rect and the overflow is removed in texture space, so a covered source
+   * cannot bleed over the rest of the composition. Scaling the quad up instead
+   * would need a clipping step that could be forgotten; cropping the UVs makes
+   * overflow impossible by construction.
+   */
+  uvRect?: { x: number; y: number; width: number; height: number };
   /** Digest of the fields that determine this layer's OWN rasterized pixels
    *  (geometry + fills/strokes/text/masks + pre-DOF effects + width/height),
    *  excluding transform + compositing. Computed once in buildSnapshot (see

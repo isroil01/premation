@@ -50,6 +50,7 @@ import { readRuns, normalizeRuns } from '@core/text/richText';
 import { resolveTextPath, resolveTextPathMask, flattenMaskPath } from '@core/text/textPath';
 import { bracketFrames } from './videoFrameCache';
 import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
+import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import type { PropPath } from '@motion/animation';
@@ -1583,6 +1584,21 @@ export function buildSnapshot(
       // the SAME source this layer draws (its coverage mask is keyed off it).
       src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id)),
       assetId: base.assetId,
+      // Media-slot COVER crop. The quad is already the slot rect (fillSlot
+      // keeps the box there on purpose), so filling it without distortion means
+      // sampling a sub-rect of the source. Computed per frame rather than baked
+      // at fill time because the slot's box can be animated — a scaling slot
+      // must re-crop as its aspect changes, and a baked rect would smear.
+      ...(() => {
+        if (slotFitOf(node) !== 'cover') return {};
+        const slot = { width: base.width ?? 0, height: base.height ?? 0 };
+        const source = footageSourceOf(node);
+        const size = source && source.width > 0
+          ? { width: source.width, height: source.height }
+          : null;
+        const uv = size ? coverUvRect(size, slot) : null;
+        return uv ? { uvRect: uv } : {};
+      })(),
     };
 
     // Per-quad Lambert lighting (Material Options → Accepts Lights, default

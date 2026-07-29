@@ -71,7 +71,11 @@ one project and can be nested into each other.
 Six built-in native templates — **Gradient Hero, Lower Third, Photo Promo, Quote Card, Reel Intro,
 Title Card** — plus two demo scenes loadable from the command palette (*Nova AI — SaaS Ad*,
 *Complex Showcase*). Templates support MOGRT-style **exposed fields**, so a template author can publish
-just the text/colour/image slots for someone else to fill in.
+just the text, colour and **media slots** for someone else to fill in.
+
+A **media slot** is a placeholder layer the author exposes with a **fit policy**. The person filling the
+template drops in a clip — any aspect ratio, any source kind — and it lands correctly framed without
+touching the transform tools. See §13.
 
 ---
 
@@ -348,15 +352,46 @@ Drop-in content, all editable after insertion:
 
 | Library | Count | Examples |
 |---|---|---|
-| **Mograph** | 25 | Slam Title · Glitch Title · Split Duo · Word Swap · Tracking Reveal · Number Counter · Progress Bar · Loader Ring · Orbit Spinner · Particle Burst · Ripple Rings · News Ticker · Neon Flicker · Glass Panel · Grid Reveal · Stacked Blocks · Focus Frame · Marker Pin · Handle Bar · Corner Tab · Badge Float · Chat Pop · Arrow Point · Minimal Line |
-| **Transitions** | 21 | Cross Fade · Dip to Black · Luma Flash · Blur Through · Glitch Cut · Iris Circle · Venetian Bars · Whip Pan · Whip Vertical · Spin Whip · Zoom Through · Scale Bounce · Wipe (Up/Down/Left/Right) · Slide (Up/Down/Left/Right) |
-| **SFX** | 13 | Fast/Heavy Whoosh · Cinematic Boom · Sub Drop · Riser · Hit Impact · Thud · UI Click · Button Pop · Toggle Switch · Room Tone · Rain Noise |
-| **Cursors** | 26 | macOS/Windows arrows · Pointer · Grab/Grabbing · Text I-Beam · Crosshair · Pen Nib · Eyedropper · Resize (4 directions) · Zoom In/Out · Not Allowed · Busy Spinner · Click Ripple · Double Burst · Glow Trail · Spotlight Follow |
-| **UI Kit** | 17 | Pro Phone Mockup · Pro Browser Window · Glass Command Bar · Glass Music Player · Glass Credit Card · Glass Input Field · Glass Toast · Glowing Action Button · Glowing Analytics Card · Modern Toggle · Gradient Hero Banner · User Profile Card · Audio Waveform Card · Action Icon Pill |
-| **Lottie components** | ~40 | Dynamic Island · Face ID Scan · Liquid Toggle · Notification Toast · Success Check · Volume Slider · Pill Stepper · Scan Ring · Waveform bars · Status/Speaker dots |
+| **Mograph** | 24 | Slam Title · Glitch Title · Split Duo · Word Swap · Tracking Reveal · Number Counter · Progress Bar · Loader Ring · Orbit Spinner · Particle Burst · Ripple Rings · News Ticker · Neon Flicker · Glass Panel · Grid Reveal · Stacked Blocks · Focus Frame · Marker Pin · Handle Bar · Corner Tab · Badge Float · Chat Pop · Arrow Point · Minimal Line |
+| **Transitions** | 20 | Cross Fade · Dip to Black · Luma Flash · Blur Through · Glitch Cut · Iris Circle · Venetian Bars · Whip Pan · Whip Vertical · Spin Whip · Zoom Through · Scale Bounce · Wipe (Up/Down/Left/Right) · Slide (Up/Down/Left/Right) |
+| **SFX** | 12 | Fast/Heavy Whoosh · Cinematic Boom · Sub Drop · Riser · Hit Impact · Thud · UI Click · Button Pop · Toggle Switch · Room Tone · Rain Noise |
+| **Cursors** | 24 | macOS/Windows arrows · Pointer · Grab/Grabbing · Text I-Beam · Crosshair · Pen Nib · Eyedropper · Resize (4 directions) · Zoom In/Out · Not Allowed · Busy Spinner · Click Ripple · Double Burst · Glow Trail · Spotlight Follow |
+| **UI Kit** | 15 | Pro Phone Mockup · Pro Browser Window · Glass Command Bar · Glass Music Player · Glass Credit Card · Glass Input Field · Glass Toast · Glowing Action Button · Glowing Analytics Card · Modern Toggle · Gradient Hero Banner · User Profile Card · Audio Waveform Card · Action Icon Pill |
+| **Lottie components** | 8 | Pill Stepper · Dynamic Island · Fluid Switch · Glass Action Pill · Face ID Scan · Volume Slider Pill · Notification Toast · Liquid Toggle |
 | **Templates** | 6 | Gradient Hero · Lower Third · Photo Promo · Quote Card · Reel Intro · Title Card |
 
 Cursor + UI-kit + mograph together are aimed squarely at **app/product demo videos**.
+
+*Counts above are the actual catalog lengths (`MOGRAPH_ITEMS`, `TRANSITION_ITEMS`, `SFX_ITEMS`,
+`CURSOR_ITEMS`, `UI_COMPONENTS`, `LOTTIE_ITEMS`). They were previously overstated by one to two in
+every row, and the Lottie library was listed as "~40" when it holds 8.*
+
+### Template media slots
+
+Expose a placeholder layer as a **media slot** and the person filling the template just drops a source
+in. Slots take **video, stills, image sequences and whole compositions** — the fit resolves against the
+source's intrinsic size, so it never has to know which kind it got.
+
+| Fit policy | What the filler gets |
+|---|---|
+| **Contain** (default) | The whole source visible, letterboxed inside the slot. Nothing is cropped away without the author asking for it. |
+| **Cover** | Fills the slot, overflow cropped, centred. The crop happens in texture space, so a covered source can never spill outside the slot into the rest of the composition. |
+| **Native** | The source at its own pixel size. For slots that mark a position rather than a frame. |
+
+There is no Stretch: contain, cover and native cover the real cases, and an author who genuinely wants
+distortion can pick native and scale the layer.
+
+**The slot's frame is the placeholder's own box**, not the composition — so a phone screen inside a
+device mockup, or a card in a grid, frames against itself. The authored box is captured when the slot
+is created, so **re-filling reframes from the original rect** rather than nesting each fill inside the
+last.
+
+**A slot in an animated template still animates as authored.** Filling writes only the layer's size (and
+a texture crop for cover); position, scale and rotation are never touched, so the author's keyframes
+survive intact and the fitted content rides along inside them.
+
+An **unfilled slot renders exactly as the author designed it** — in the editor and on export. An
+unfilled template exports looking unfinished, not broken.
 
 ---
 

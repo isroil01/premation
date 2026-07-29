@@ -485,6 +485,9 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     // Texture-backed kinds resolve via the provider
     ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
     ...(!isCustomPath && (kind === 'image' || kind === 'video') ? { textureKey: `asset:${layer.id}` } : {}),
+    // Media-slot cover crop. FrameScene already carries `uvRect` and the pass
+    // reads `r.uvRect ?? tex.uv`, so this is the whole of the plumbing.
+    ...(layer.uvRect ? { uvRect: layer.uvRect } : {}),
     ...(kind === 'text' ? { textureKey: `text:${layer.id}` } : {}),
     ...(!cpuBaked && layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
     // Colour LUT (Levels/Curves/Posterize) on a textured layer: the provider

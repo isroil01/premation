@@ -10,9 +10,35 @@
  * for the read/write and templates/ for authored definitions.
  */
 
-/** The kinds of value an exposed field can hold (drives the panel control).
- *  'image' holds a URL string written to the target's `src` (swap the picture). */
-export type TemplateFieldKind = 'text' | 'color' | 'number' | 'image';
+/**
+ * The kinds of value an exposed field can hold (drives the panel control).
+ *
+ * `'media'` is a SLOT: it holds a source URL written to the target's `src`, and
+ * carries a fit policy so the filler's clip lands correctly framed whatever its
+ * aspect ratio. `'image'` is the older, policy-less spelling of the same thing,
+ * kept so existing templates keep loading; it behaves as `media` with the
+ * default policy.
+ */
+export type TemplateFieldKind = 'text' | 'color' | 'number' | 'image' | 'media';
+
+/**
+ * How a filled source is reconciled with its slot rect.
+ *
+ * `contain` — whole source visible, letterboxed inside the slot. The default,
+ *   because a slot that crops by default silently loses the part of the user's
+ *   footage they cared about.
+ * `cover` — fills the slot, overflow cropped. Cropping happens in UV space, so
+ *   the drawn quad never exceeds the slot rect and cover cannot bleed into the
+ *   rest of the composition.
+ * `native` — the source's own pixel size, unscaled. For authors who want the
+ *   slot to be a position marker rather than a frame.
+ *
+ * Deliberately NO `stretch`. Contain, cover and native cover every real case;
+ * stretch exists only to distort deliberately, which an author can already get
+ * by choosing native and scaling the layer. Adding it would mostly serve as a
+ * way to get a wrong-looking result by accident.
+ */
+export type SlotFit = 'contain' | 'cover' | 'native';
 
 /** Which prop on which node a field edits. Resolved to a concrete componentId
  *  at write time (by componentType), so authors don't hand-track component ids. */
@@ -37,6 +63,12 @@ export interface TemplateField {
   default: string | number;
   /** Optional grouping header in the panel (e.g. 'Text', 'Colours'). */
   group?: string;
+  /**
+   * Fit policy for a `media` slot. Set by the template AUTHOR; the person
+   * filling the template does not choose it, which is the point — they drop a
+   * clip in and it is framed the way the design intended.
+   */
+  fit?: SlotFit;
 }
 
 /** A ready template: an authored scene + its exposed fields. */
