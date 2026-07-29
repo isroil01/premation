@@ -18,6 +18,7 @@ import type { AiImage } from '@motion/ai-tools';
 import { useCompositionStore } from '@stores/compositionStore';
 import { renderStillFrame } from '@core/export/offlineRenderer';
 import { processImageFile } from './imageAttachment';
+import { compSizeOf } from '@core/composition/compSizes';
 
 /** A frame render can hang in a backgrounded tab — never let it stall the run. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
@@ -48,7 +49,7 @@ export async function renderSceneFrames(timesSec: number[]): Promise<AiImage[]> 
       height: c.height,
       fps: c.fps,
       durationSec: c.durationSeconds,
-      comp: { ...c, rootId: c.id },
+      comp: { ...c, rootId: c.id, compSizeOf },
     };
     const lastFrame = Math.max(0, Math.round(c.durationSeconds * c.fps) - 1);
     for (const t of timesSec) {

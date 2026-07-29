@@ -24,6 +24,7 @@ import { runExport, isAbortError, availableExportPresets, type ExportFormat } fr
 import type { ExportQuality } from '@core/export/videoSink';
 import { ExportPreview } from './ExportPreview';
 import styles from './ExportDialog.module.css';
+import { compSizeOf } from '@core/composition/compSizes';
 
 const RES = [
   { label: 'Full', scale: 1 },
@@ -74,7 +75,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
 
   // A stable comp object, or the preview re-renders on every parent render.
   const comp = useMemo(
-    () => ({ ...baseComp, rootId: baseComp.id, transparent: alpha }),
+    () => ({ ...baseComp, rootId: baseComp.id, transparent: alpha, compSizeOf }),
     [baseComp, alpha],
   );
 

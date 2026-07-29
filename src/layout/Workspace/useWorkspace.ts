@@ -85,6 +85,7 @@ import { moveNodeInStack } from '@core/scene/parenting';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace } from '@core/scene/facePicking';
+import { compSizeOf } from '@core/composition/compSizes';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
@@ -373,6 +374,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           {
             ...compRef.current,
             rootId: compRef.current.id,
+            compSizeOf,
             // Custom views resolve to a pre-built override camera; ortho /
             // active pass straight through (resolveViewCameraInput reads the
             // live store, so the closure never freezes a stale view).

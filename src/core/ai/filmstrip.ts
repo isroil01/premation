@@ -30,6 +30,7 @@ import type { AiImage } from '@motion/ai-tools';
 import type { ToolContext } from '@motion/ai-tools';
 import { useCompositionStore } from '@stores/compositionStore';
 import { renderStillFrame } from '@core/export/offlineRenderer';
+import { compSizeOf } from '@core/composition/compSizes';
 
 /** Target frames in a strip. Enough to show a curve; few enough to stay legible. */
 export const STRIP_MIN = 16;
@@ -139,7 +140,7 @@ export async function renderFilmstrip(timesSec: number[]): Promise<AiImage | nul
       height: c.height,
       fps: c.fps,
       durationSec: c.durationSeconds,
-      comp: { ...c, rootId: c.id },
+      comp: { ...c, rootId: c.id, compSizeOf },
     };
     const lastFrame = Math.max(0, Math.round(c.durationSeconds * c.fps) - 1);
 

@@ -50,9 +50,10 @@ import { readRuns, normalizeRuns } from '@core/text/richText';
 import { resolveTextPath, resolveTextPathMask, flattenMaskPath } from '@core/text/textPath';
 import { bracketFrames } from './videoFrameCache';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
-import { expandCompInstances, instanceSourceOf } from '@core/scene/compInstance';
+import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import type { PropPath } from '@motion/animation';
-import { Project3D, Matrix4Math, type Matrix2D } from '@motion/scene';
+import { Project3D, Matrix4Math, type Matrix2D, type Matrix4 } from '@motion/scene';
+import type { LayerMask } from '@core/effects/mask';
 import { Color } from '@motion/renderer';
 
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -114,6 +115,49 @@ export interface SnapshotComp {
    * other. Absent = the whole scene (single-comp projects, tests).
    */
   rootId?: string;
+  /**
+   * The pixel dimensions of ANOTHER composition, by its root id.
+   *
+   * A composition placed as a layer has to render at ITS OWN size, not the
+   * host's — that is what makes a 1080×1920 vertical cut of a 1920×1080 master
+   * a portrait rectangle inside it rather than a landscape one. Comp sizes live
+   * in the project store, which the renderer must not import (it has to stay
+   * callable from export, tests and the headless paths), so the caller injects
+   * the lookup.
+   *
+   * Absent, or returning undefined, falls back to the host's size — the
+   * behaviour before comp instances had a size of their own.
+   */
+  compSizeOf?: (compRootId: string) => { width: number; height: number } | undefined;
+  /**
+   * INTERNAL — the chain of composition roots currently being rendered.
+   *
+   * A sealed comp instance is rendered by a recursive `buildSnapshot` call, so
+   * this is what stops A-inside-B-inside-A from recursing forever, and what caps
+   * absurd nesting. Set by the renderer itself; callers never pass it.
+   */
+  compStack?: readonly string[];
+}
+
+/** Nesting cap for recursive composition rendering. */
+const MAX_COMP_DEPTH = 8;
+
+/**
+ * Re-key a nested composition's layers under the instance that placed them.
+ *
+ * The same composition can be placed many times, and the recursive pass renders
+ * the SAME source nodes each time — so without this both placements emit layers
+ * with identical ids. Ids are not cosmetic here: they are offscreen texture keys
+ * (`precomp:<id>`) and track-matte source references, so a collision makes two
+ * instances share one texture and matte off each other's layers.
+ */
+function prefixLayerIds(layers: ReadonlyArray<RenderLayer>, prefix: string): RenderLayer[] {
+  return layers.map((l) => ({
+    ...l,
+    id: `${prefix}${l.id}`,
+    ...(l.matteSourceId ? { matteSourceId: `${prefix}${l.matteSourceId}` } : {}),
+    ...(l.precompLayers ? { precompLayers: prefixLayerIds(l.precompLayers, prefix) } : {}),
+  }));
 }
 
 const DEFAULT_COMP: SnapshotComp = { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG };
@@ -281,6 +325,18 @@ function materializeForFrame(n: SceneNode): SceneNode {
     solo: n.solo,
     color: n.color,
     components: renderComponentsOf(n),
+    // Comp-instance bookkeeping. This is an explicit field list, not a spread,
+    // so anything not named here is DROPPED — and both of these are set on
+    // render-only clones by `expandCompInstances`, after which every downstream
+    // reader looks them up on the materialized node:
+    //   • `__instanceSource` is the id-indirection that makes a clone sample the
+    //     ORIGINAL node's keyframes. Losing it means `srcId` returns the
+    //     prefixed id, which has no tracks at all — animation inside a placed
+    //     composition simply does not play.
+    //   • `__compInstanceRoot` stops the instance's transform composing into
+    //     children that are already in the referenced comp's own space.
+    ...(instanceSourceOf(n) !== null ? { __instanceSource: instanceSourceOf(n) } : {}),
+    ...(isCompInstanceRoot(n) ? { __compInstanceRoot: true } : {}),
   } as SceneNode;
 }
 
@@ -305,8 +361,13 @@ export function buildSnapshot(
   // Comp instances expand into render-only clones of their referenced comp's
   // subtree (routed through the precomp path); clones carry `__instanceSource`
   // so animation and clips sample the ORIGINAL nodes via `srcId` below.
-  const nodes = expandCompInstances(graph, flattenComposition(graph, comp.rootId), comp.rootId)
-    .map(materializeForFrame);
+  // Only COLLAPSED instances expand into this walk. A sealed one stays a bare
+  // `comp` node and is rendered below by its own recursive pass, so that it
+  // resolves ITS camera, its depth of field and its own 3D sort rather than
+  // borrowing the host's.
+  const nodes = expandCompInstances(
+    graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
+  ).map(materializeForFrame);
   const anySolo = nodes.some((n) => n.solo === true);
 
   const rawController = getTimelineController();
@@ -450,7 +511,16 @@ export function buildSnapshot(
       scaleY: av.get('scaleY') ?? sc ?? b.scaleY,
     };
   };
-  const parentOf: ParentOf = (id) => nodeById.get(id)?.parent ?? null;
+  // A comp instance's expanded children are authored in the REFERENCED comp's
+  // own coordinate space, so the instance's transform must not compose into
+  // them — it is applied once, to the container. They keep `parent` pointing at
+  // the instance (precomp routing and time-remap inheritance both walk it);
+  // only the TRANSFORM chain stops here. See `isCompInstanceRoot`.
+  const parentOf: ParentOf = (id) => {
+    const n = nodeById.get(id);
+    if (!n || isCompInstanceRoot(n)) return null;
+    return n.parent ?? null;
+  };
 
   // 3D parenting: the accumulated 4×4 of a layer's ancestor chain, or null when
   // no ancestor is 3D (the overwhelmingly common case, which keeps the ordinary
@@ -490,10 +560,20 @@ export function buildSnapshot(
   // and itself routed, so nested precomps nest correctly.
   const precompInner = new Map<string, RenderLayer[]>();
   const precompEmitted = new Set<string>();
-  const buildPrecompContainer = (groupNode: SceneNode): RenderLayer => {
+  /**
+   * The internal time a precomp's content is sampled at: its own time-remap
+   * track when keyframed, otherwise the comp time through its clip/stretch.
+   * Split out because the recursive pass has to render the nested composition at
+   * exactly the time its container claims to be showing.
+   */
+  const precompSourceTime = (groupNode: SceneNode): number => {
+    const remapped = anim.sample(groupNode.id, 'timeRemap', t) ?? anim.sample(groupNode.id, 'precompTime', t);
+    return remapOf(groupNode.id)(remapped !== undefined ? remapped : t);
+  };
+  const buildPrecompContainer = (groupNode: SceneNode, innerOverride?: RenderLayer[]): RenderLayer => {
     const gv = valuesOf(groupNode.id);
     const gBase = readBase(groupNode);
-    const inner = precompInner.get(groupNode.id) ?? [];
+    const inner = innerOverride ?? precompInner.get(groupNode.id) ?? [];
     // Resolve the container's effect stack once — the CSS string stays for
     // tests/legacy readers, the structured list is what the GPU path renders
     // (without it a precomp's effects were silently dropped on composite).
@@ -506,31 +586,79 @@ export function buildSnapshot(
     // now rather than a CSS string nothing reads.
     const gFx = [...gFxOwn, ...layerStylesToEffects(readNodeLayerStyles(groupNode), globalLight.angle, globalLight.altitude)];
     const filter = effectsToFilter(gFxOwn) || undefined;
+    // A comp INSTANCE has an intrinsic frame: the referenced composition's own
+    // width/height, placed at the instance layer's own transform. A plain
+    // precomp GROUP (from Pre-compose) has no frame of its own — its children
+    // are already in comp space and its transform reaches them through ordinary
+    // parenting — so it keeps the full-comp carrier it has always had.
+    //
+    // NOTE: this places and sizes the frame; it does not yet CROP to it. Content
+    // that overflows the referenced comp's bounds still shows, where After
+    // Effects would clip it at the instance's edges.
+    const ref = readCompRef(groupNode);
+    const refSize = ref ? comp.compSizeOf?.(ref) : undefined;
+    const isInstance = ref !== null && refSize !== undefined;
+    const gWorld = isInstance
+      ? worldTransformOf(groupNode.id, localOf, parentOf, worldCache)
+      : null;
+    // Crop to the frame. A composition is a rectangle of a stated size, and
+    // content outside it is not part of the composition — placing a 1080×1920
+    // cut into a wider master must show the 1080-wide slice, not everything that
+    // happens to sit beside it.
+    //
+    // Expressed as a full-box rectangle mask because that is machinery the
+    // isolated composite already has: `prepareIsolatedPrecomp` bakes the
+    // container's mask into the offscreen before compositing. It is appended
+    // with `intersect` so an authored mask still applies and the frame then
+    // clips the result, rather than the two unioning.
+    //
+    // The id is derived from the node, NOT minted per call: the mask raster is
+    // cached on a signature that includes it, so a fresh id every frame would
+    // miss the cache on every frame.
+    const authoredMask = readNodeMaskAt(groupNode, remapOf(groupNode.id)(t));
+    const frameMask: LayerMask | undefined = isInstance && refSize
+      ? {
+          paths: [
+            ...(authoredMask?.paths ?? []),
+            {
+              id: `${groupNode.id}::frame`,
+              mode: authoredMask?.paths.length ? 'intersect' : 'add',
+              closed: true,
+              feather: 0,
+              opacity: 1,
+              expansion: 0,
+              inverted: false,
+              points: [
+                { x: -refSize.width / 2, y: -refSize.height / 2, inX: -refSize.width / 2, inY: -refSize.height / 2, outX: -refSize.width / 2, outY: -refSize.height / 2 },
+                { x: refSize.width / 2, y: -refSize.height / 2, inX: refSize.width / 2, inY: -refSize.height / 2, outX: refSize.width / 2, outY: -refSize.height / 2 },
+                { x: refSize.width / 2, y: refSize.height / 2, inX: refSize.width / 2, inY: refSize.height / 2, outX: refSize.width / 2, outY: refSize.height / 2 },
+                { x: -refSize.width / 2, y: refSize.height / 2, inX: -refSize.width / 2, inY: refSize.height / 2, outX: -refSize.width / 2, outY: refSize.height / 2 },
+              ],
+            },
+          ],
+        }
+      : authoredMask;
     return {
       id: groupNode.id,
       kind: 'shape',
       blend: readNodeBlend(groupNode),
-      mask: readNodeMaskAt(groupNode, remapOf(groupNode.id)(t)),
+      mask: frameMask,
       matte: readNodeMatte(groupNode),
-      x: comp.width / 2,
-      y: comp.height / 2,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
+      x: gWorld ? gWorld.x : comp.width / 2,
+      y: gWorld ? gWorld.y : comp.height / 2,
+      rotation: gWorld ? gWorld.rotation : 0,
+      scaleX: gWorld ? gWorld.scaleX : 1,
+      scaleY: gWorld ? gWorld.scaleY : 1,
       depth: 0,
       opacity: gv?.has('opacity') ? (gv.get('opacity') as number) / 100 : gBase.opacity,
-      width: comp.width,
-      height: comp.height,
+      width: refSize ? refSize.width : comp.width,
+      height: refSize ? refSize.height : comp.height,
       fill: '#000',
       visible: groupNode.visible !== false,
       filter,
       effects: gFx.length ? gFx : undefined,
       precompLayers: inner,
-      sourceTime: (() => {
-        const remapped = anim.sample(groupNode.id, 'timeRemap', t) ?? anim.sample(groupNode.id, 'precompTime', t);
-        if (remapped !== undefined) return remapOf(groupNode.id)(remapped);
-        return remapOf(groupNode.id)(t);
-      })(),
+      sourceTime: precompSourceTime(groupNode),
     };
   };
   const emitLayer = (l: RenderLayer, node: SceneNode): void => {
@@ -543,6 +671,62 @@ export function buildSnapshot(
       precompEmitted.add(pc.id);
       emitLayer(buildPrecompContainer(pc), pc); // route the container itself (nesting)
     }
+  };
+
+  /**
+   * A camera or light's WORLD position — its own animated x/y/z composed with
+   * its parent chain, exactly like a content layer.
+   *
+   * This exists because the readers of a light's position disagreed. The visible
+   * wash resolved through `worldTransformOf` (parent-aware) while the Lambert
+   * shading and `shadowLight` read `readBase` (the raw LOCAL props). Parent a
+   * light to a null and drag it: the glow flew across the frame while the
+   * shading on every lit layer did not move at all, because two of the three
+   * were reading a position the user had already moved away from. Cameras were
+   * worse — they had no parent path at all, so the standard "camera parented to
+   * a null" rig moved nothing.
+   *
+   * The 4×4 parent chain is preferred (it carries z / rotationX / rotationY, so
+   * a 3D null dollying in depth takes the light with it) and the 2D world affine
+   * is the fallback — the same rule the layer walk uses, so a camera, a light
+   * and the layers around them can never be composed by different rules.
+   *
+   * Declared HERE, above the camera block, because the camera resolves before
+   * the layer walk and needs the identical lift.
+   */
+  const parentWorldMatrixOf = (id: string): Matrix4 | null => {
+    const parentId = parentOf(id);
+    if (!parentId) return null;
+    // A 3D ancestor anywhere in the chain ⇒ compose in 4×4 so depth and X/Y
+    // rotation carry. `parentWorld3d` already folds any 2D ancestors above it.
+    const p3 = parent3dOf(id);
+    if (p3) return p3;
+    // Pure-2D chain: the parent's own WORLD affine, lifted to 4×4. z is left
+    // untouched, which is AE's rule for a 2D parent.
+    const pw = worldTransformOf(parentId, localOf, parentOf, worldCache);
+    return Matrix4Math.fromMatrix2D(
+      localMatrix({ x: pw.x, y: pw.y, rotation: pw.rotation, scaleX: pw.scaleX, scaleY: pw.scaleY }),
+    );
+  };
+
+  /** A point expressed in `id`'s parent space, lifted into world space. */
+  const toWorldPoint = (
+    id: string,
+    p: { x: number; y: number; z: number },
+  ): { x: number; y: number; z: number } => {
+    const m = parentWorldMatrixOf(id);
+    return m ? Matrix4Math.transformPoint(m, p) : p;
+  };
+
+  /** A camera / light node's own animated position, lifted into world space. */
+  const nodeWorldPosition = (n: SceneNode): { x: number; y: number; z: number } => {
+    const av = valuesOf(n.id);
+    const b = readBase(n);
+    return toWorldPoint(n.id, {
+      x: av.get('x') ?? b.x,
+      y: av.get('y') ?? b.y,
+      z: av.get('z') ?? readNode3D(n).z,
+    });
   };
 
   // 3D: the composition camera (a Camera layer if present, else the default)
@@ -563,7 +747,16 @@ export function buildSnapshot(
   const customCamera = orthoView ? null : comp.customViewCamera ?? null;
   const camera = orthoView
     ? null
-    : customCamera ?? readSceneCamera(graph, comp.width, comp.height, (id, p) => valuesOf(id).get(p), comp.rootId);
+    : customCamera ?? readSceneCamera(
+        graph,
+        comp.width,
+        comp.height,
+        (id, p) => valuesOf(id).get(p),
+        comp.rootId,
+        // The camera is a layer: it follows its parent chain like everything
+        // else, through the renderer's own per-frame caches.
+        toWorldPoint,
+      );
   const project = orthoView
     ? (p: { x: number; y: number; z: number }) => Project3D.projectOrtho(p, orthoView, comp.width, comp.height)
     : (p: { x: number; y: number; z: number }) => Project3D.projectPoint(p, camera!);
@@ -607,10 +800,10 @@ export function buildSnapshot(
       const lt = readNodeLight(n);
       if (!lt.shadows || lt.type === 'ambient') continue;
       const av = valuesOf(n.id);
-      const g = readBase(n);
+      const wp = nodeWorldPosition(n);
       return {
-        x: av.get('x') ?? g.x,
-        y: av.get('y') ?? g.y,
+        x: wp.x,
+        y: wp.y,
         // Z matters: it is what turns a flat offset into a real projection.
         // A light in FRONT of the caster (z < casterZ) throws the shadow onto
         // the surfaces behind it, growing with the gap — which is the whole
@@ -622,7 +815,9 @@ export function buildSnapshot(
         // collapsed to the caster's z, so a caster at z = 0 hit the
         // divide-by-zero guard and anything under z ≈ 150 blew the t > 8 cap —
         // no shadow, for exactly the layers most likely to be at the front.
-        z: av.get('z') ?? readNode3D(n).z,
+        // `nodeWorldPosition` keeps that base-prop fallback and adds the parent
+        // chain on top.
+        z: wp.z,
         intensity: av.get('intensity') ?? lt.intensity,
         // AE's Shadow Darkness / Shadow Diffusion. Darkness scales the shadow's
         // opacity; diffusion adds to its blur. Both default to the values that
@@ -666,10 +861,13 @@ export function buildSnapshot(
         .padStart(2, '0');
     return `#${ch(16)}${ch(8)}${ch(0)}`;
   };
-  // Scene lights in world space, for per-quad Lambert shading of 3D layers
-  // that opt in via Material Options → Accepts Lights. Same pre-pass pattern
-  // as shadowLight (parenting of light layers is approximated by their own
-  // animated x/y/z, matching the wash rendering).
+  // Scene lights in WORLD space, for per-quad Lambert shading of 3D layers that
+  // opt in via Material Options → Accepts Lights.
+  //
+  // Position comes from `nodeWorldPosition` — the same resolver the wash and
+  // `shadowLight` use. It used to read the raw LOCAL props here, so a light
+  // parented to a null lit the scene from wherever it had been *before* the
+  // null moved: the glow moved, the shading did not.
   // Draft 3D collects no lights ⇒ per-quad shading, per-fragment shade3d and
   // lights3d all fall away without touching the pipeline itself.
   const sceneLights: SceneLight[] = [];
@@ -677,7 +875,7 @@ export function buildSnapshot(
     if (readNodeKind(n) !== 'light') continue;
     const lt = readNodeLight(n);
     const av = valuesOf(n.id);
-    const g = readBase(n);
+    const wp = nodeWorldPosition(n);
     sceneLights.push({
       ...lt,
       intensity: av.get('intensity') ?? lt.intensity,
@@ -689,22 +887,26 @@ export function buildSnapshot(
       // A keyframed POI aims the light in 3D over time. Any single component
       // being animated is enough to make the light a targeted one, so the base
       // POI (which may be null) has to be filled in rather than spread through.
+      //
+      // The target rides the SAME parent transform as the eye — otherwise
+      // parenting a spot to a null swung its origin while its aim stayed nailed
+      // to a fixed comp point, i.e. the cone sheared open as the null moved.
       poi: (() => {
         const px = av.get('poiX') ?? lt.poi?.x;
         const py = av.get('poiY') ?? lt.poi?.y;
         const pz = av.get('poiZ') ?? lt.poi?.z;
         return px === undefined && py === undefined && pz === undefined
           ? null
-          : { x: px ?? 0, y: py ?? 0, z: pz ?? 0 };
+          : toWorldPoint(n.id, { x: px ?? 0, y: py ?? 0, z: pz ?? 0 });
       })(),
-      x: av.get('x') ?? g.x,
-      y: av.get('y') ?? g.y,
-      // Same trap as shadowLight: `av` holds ANIMATED values only, so this
-      // pinned every unanimated light to z = 0 — i.e. into the comp plane. All
-      // per-fragment lighting therefore lit from dead ahead no matter where the
-      // user put the light in depth, which is why moving a light forward or
-      // back changed nothing.
-      z: av.get('z') ?? readNode3D(n).z,
+      // Same trap as shadowLight: `av` holds ANIMATED values only, so a literal
+      // fallback pinned every unanimated light to z = 0 — i.e. into the comp
+      // plane. All per-fragment lighting then lit from dead ahead no matter
+      // where the user put the light in depth. `nodeWorldPosition` keeps the
+      // base-prop fallback and composes the parent chain on top.
+      x: wp.x,
+      y: wp.y,
+      z: wp.z,
     });
   }
 
@@ -756,10 +958,74 @@ export function buildSnapshot(
     };
   };
 
+  /**
+   * A SEALED composition placed as a layer: render the referenced comp through
+   * its OWN recursive pass and hand the result to the container.
+   *
+   * This is what makes a placed composition a real composition rather than a bag
+   * of borrowed nodes. Everything the nested pass resolves is now the CHILD's:
+   * its camera and depth of field, its own 3D depth sort, its own solo scope,
+   * its own frame size. Previously its nodes were spliced into this walk, so a
+   * 3D layer two comps deep was projected through whatever camera the outermost
+   * composition happened to own — the sealed frame leaked.
+   *
+   * `compStack` is the cycle guard. Insertion already refuses reference loops
+   * (`wouldCreateCompCycle`), but a hand-edited or migrated document must not be
+   * able to hang the renderer.
+   */
+  const stack = comp.compStack ?? [];
+  const nestedCompLayers = (node: SceneNode, ref: string): RenderLayer[] | null => {
+    if (stack.includes(ref) || stack.length >= MAX_COMP_DEPTH) return null;
+    if (!graph.getNode(ref)) return null;
+    const size = comp.compSizeOf?.(ref) ?? { width: comp.width, height: comp.height };
+    const nested = buildSnapshot(
+      graph,
+      rawAnim,
+      // The container reports this as its `sourceTime`; the content has to be
+      // rendered at the same instant or a time-remapped comp shows one frame and
+      // claims another.
+      precompSourceTime(node),
+      // Focus rings, guides and the region of interest belong to the composition
+      // the user is EDITING, never to one nested inside it.
+      undefined,
+      undefined,
+      undefined,
+      motionBlur,
+      {
+        ...comp,
+        width: size.width,
+        height: size.height,
+        rootId: ref,
+        // A nested comp contributes content, not a backdrop — its own
+        // background must not paint over the host.
+        transparent: true,
+        backgroundPaint: undefined,
+        // The host's view mode does not reach inside a sealed comp: it is
+        // composited as a flat card, so an ortho view or a custom view camera
+        // would be re-applied on top of the host's own.
+        camera3dMode: 'active',
+        customViewCamera: undefined,
+        compStack: [...stack, ref],
+      },
+    );
+    return prefixLayerIds(nested.layers, `${node.id}::`);
+  };
+
   for (const node of nodes) {
     const kind = readNodeKind(node);
+    if (kind === 'comp') {
+      // A COLLAPSED instance is structural here: its layers were already
+      // expanded into this walk, so the node itself draws nothing and must not
+      // also mint a container — that would render its content twice, once
+      // spliced and once as a card.
+      const ref = readCompRef(node);
+      const innerLayers =
+        ref !== null && !readCompCollapse(node) ? nestedCompLayers(node, ref) : null;
+      if (innerLayers) emitLayer(buildPrecompContainer(node, innerLayers), node);
+      continue;
+    }
     // Groups / nulls / cameras / audio are structural — they never draw.
-    if (kind === 'group' || kind === 'null' || kind === 'camera' || kind === 'audio' || kind === 'comp') continue;
+    if (kind === 'group' || kind === 'null' || kind === 'camera' || kind === 'audio') continue;
 
     // AE-style layer in/out points: when the timeline has clip bars for this
     // node and NONE is active at the current frame, the layer sits outside its

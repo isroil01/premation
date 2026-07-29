@@ -23,6 +23,7 @@ import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useProjectStore } from '@stores/projectStore';
+import { compSizeOf } from '@core/composition/compSizes';
 
 
 
@@ -173,6 +174,7 @@ export function useViewportRenderer(
           {
             ...compRef.current,
             rootId: compRef.current.id,
+            compSizeOf,
             draft3d: draft3dRef.current,
             ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
           },

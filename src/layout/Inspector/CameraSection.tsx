@@ -13,7 +13,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useCompositionStore } from '@stores/compositionStore';
 import { Project3D } from '@motion/scene';
-import { flattenScene } from '@core/scene/sceneDerive';
+import { flattenComposition } from '@core/scene/sceneDerive';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { ValueField } from '@components/ValueField';
 import styles from './TransformSection.module.css';
@@ -71,7 +72,13 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   // canBe3D = the shared "renderer can actually project this in 3D" predicate
   // — it also excludes solids/particles, which the old kind list let through
   // ("Make all 3D" lit switches that changed no pixel on those).
-  const contentLayers = flattenScene(defaultSceneGraph).filter((n) => canBe3D(n));
+  // Scoped to the ACTIVE comp, not the scene. Comps are separate root subtrees,
+  // so `flattenScene` here meant one click flipped the 3D switch on layers in
+  // every other composition too — a persisted write (writeProp + autosave) that
+  // no render-path fix undoes. Worse for solids: set3DEnabled seeds their
+  // placement from the ACTIVE comp's dimensions, so a solid in a comp of a
+  // different size was repositioned and resized as well.
+  const contentLayers = flattenComposition(defaultSceneGraph, activeCompRootId()).filter((n) => canBe3D(n));
   const threeDCount = contentLayers.filter((n) => is3DEnabled(n)).length;
   const enableAll3D = (): void => {
     for (const n of contentLayers) set3DEnabled(n.id, true);

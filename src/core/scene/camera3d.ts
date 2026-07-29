@@ -28,12 +28,32 @@ function num(v: unknown): number | undefined {
  */
 export type CameraSample = (nodeId: string, prop: string) => number | undefined;
 
+/**
+ * Lifts a point from a node's PARENT space into world space.
+ *
+ * A camera is a layer, and in After Effects a layer follows its parent — the
+ * standard camera rig is a camera parented to a null, which is then animated or
+ * orbited. This module resolved the camera's raw local props, so that rig moved
+ * nothing at all: the timeline showed the parent link, the UI let you create it,
+ * and the render ignored it.
+ *
+ * It is injected rather than read from the graph because the renderer and the
+ * viewport chrome must compose parents with their OWN per-frame caches and time
+ * remapping — the two agreeing is what keeps the gizmo on the pixels. Omitted
+ * (tests, the axis widget) ⇒ identity, i.e. the previous behaviour exactly.
+ */
+export type CameraWorldOf = (
+  nodeId: string,
+  point: { x: number; y: number; z: number },
+) => { x: number; y: number; z: number };
+
 /** Read x/y/z/focalLength/orbit off a camera node's components (animated values win). */
 export function cameraFromNode(
   node: SceneNode,
   width: number,
   height: number,
   sample?: CameraSample,
+  worldOf?: CameraWorldOf,
 ): Camera3D {
   const def = Project3D.defaultCamera(width, height);
   let x: number | undefined, y: number | undefined, z: number | undefined, focal: number | undefined;
@@ -67,7 +87,18 @@ export function cameraFromNode(
   const focalLength = focal ?? def.focalLength;
   // A camera with no explicit z sits pulled back by its focal length (so the
   // comp plane renders 1:1), matching the default camera.
-  const basePosition = { x: x ?? def.position.x, y: y ?? def.position.y, z: z ?? -focalLength };
+  //
+  // `worldOf` then composes the parent chain, so a camera parented to a null
+  // moves, orbits and dollies with it. The eye AND the point of interest go
+  // through the same lift: transforming only the eye would swing the camera
+  // around a target that stayed pinned in comp space, which reads as the shot
+  // sliding off its subject as the rig moves.
+  const lift = worldOf ?? ((_id: string, p: { x: number; y: number; z: number }) => p);
+  const basePosition = lift(node.id, {
+    x: x ?? def.position.x,
+    y: y ?? def.position.y,
+    z: z ?? -focalLength,
+  });
 
   // Two-node camera: any POI prop present means the camera has an explicit
   // Point of Interest and always LOOKS AT it (AE's two-node camera). The orbit
@@ -84,7 +115,11 @@ export function cameraFromNode(
 
   const hasPOI = poiX !== undefined || poiY !== undefined || poiZ !== undefined;
   if (hasPOI) {
-    const poi = { x: poiX ?? def.principal.x, y: poiY ?? def.principal.y, z: poiZ ?? 0 };
+    const poi = lift(node.id, {
+      x: poiX ?? def.principal.x,
+      y: poiY ?? def.principal.y,
+      z: poiZ ?? 0,
+    });
     const orbited = Project3D.orbitCamera(basePosition, poi, yaw ?? 0, pitch ?? 0);
     const orientation = withRoll(Project3D.lookAtOrientation(orbited.position, poi));
     return {
@@ -148,9 +183,12 @@ export function readSceneCamera(
   height: number,
   sample?: CameraSample,
   rootId?: string,
+  worldOf?: CameraWorldOf,
 ): Camera3D {
   const node = activeCameraNode(graph, rootId);
-  return node ? cameraFromNode(node, width, height, sample) : Project3D.defaultCamera(width, height);
+  return node
+    ? cameraFromNode(node, width, height, sample, worldOf)
+    : Project3D.defaultCamera(width, height);
 }
 
 /**

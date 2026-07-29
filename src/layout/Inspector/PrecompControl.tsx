@@ -17,7 +17,8 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { isPrecomp, setPrecomp } from '@core/scene/precomp';
+import { isPrecomp, setPrecomp, setCompCollapse } from '@core/scene/precomp';
+import { readCompCollapse } from '@core/scene/compInstance';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
 import { Checkbox } from '@components/Checkbox';
@@ -71,7 +72,35 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
   useSceneRevision((s) => s.rev);
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || nodeId === 'comp_root') return null;
-  if (readNodeKind(node) !== 'group') return null;
+  const kind = readNodeKind(node);
+
+  // A placed COMPOSITION (kind 'comp') has no Precompose switch — it is already
+  // a composition — but it owns the one switch that decides whether it is a flat
+  // card or part of the host's 3D scene. It used to show neither, nor Time
+  // Remap, because this component returned null for every kind but 'group'.
+  if (kind === 'comp') {
+    const collapsed = readCompCollapse(node);
+    return (
+      <>
+        <div className={styles.row}>
+          <span className={styles.label}>Collapse Transformations</span>
+          <Switch
+            checked={collapsed}
+            onChange={(e) => setCompCollapse(nodeId, e.currentTarget.checked)}
+            aria-label="Collapse Transformations (join the host composition's 3D space)"
+          />
+        </div>
+        <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+          {collapsed
+            ? 'This composition’s layers render in the host: they meet its camera, depth sort and lights, and are not cropped to their own frame.'
+            : 'This composition renders to its own frame first, then composites as one flat layer — so its 3D layers cannot meet the host’s camera.'}
+        </p>
+        <TimeRemapRow nodeId={nodeId} />
+      </>
+    );
+  }
+
+  if (kind !== 'group') return null;
 
   const on = isPrecomp(node);
 
