@@ -147,8 +147,9 @@ From the Layer menu: **Text, Solid…, Camera, Light, Null Object, Adjustment La
 emitters, precomps and comp instances come from the insert dialogs.
 
 **Ordering:** Bring to Front / Bring Forward / Send Backward / Send to Back.
-**Structure:** parenting (any layer to any layer), grouping, precomposing, and comp instances that
-re-use one composition in many places.
+**Structure:** parenting (any layer to any other layer **in the same composition** — there is no
+cross-composition parenting, as in After Effects), grouping, precomposing, and comp instances that
+re-use one composition in many places. Binding a layer to a parent never moves it on screen.
 
 **Per-layer switches:** visibility, lock, solo/shy (with a Global Shy toggle), 3D, motion blur,
 adjustment, draft quality, **auto-orient**, label colour, blend mode, track matte, **frame blend**,
@@ -678,11 +679,7 @@ Stated plainly so you don't plan around something that isn't there.
    you zoom out, and at low zoom on a large composition the body and lens stub get small enough that
    which way the camera is pointing is hard to read. The geometry is correct and does turn with the
    camera — it is only the on-screen size that doesn't hold.
-8. **The parent dropdown lists layers from other compositions.** Parenting is comp-scoped in every
-   other respect, but the eligible-parent list is built from the whole project, so a long project shows
-   parents that make no sense for the layer you're editing. Picking one produces a link across a
-   composition boundary that nothing else in the app expects.
-9. **A 3D layer whose origin passes behind the camera disappears completely.** That matches After
+8. **A 3D layer whose origin passes behind the camera disappears completely.** That matches After
    Effects — a layer is a flat plane and there is no per-fragment near-plane clipping — but the whole
    layer pops out at once rather than being clipped progressively, and its wireframe box goes with it,
    so there is no on-screen cue that it is still in the scene just behind you.

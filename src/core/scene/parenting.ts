@@ -56,7 +56,11 @@ export function canReparent(childId: string, newParentId: string | null): boolea
   if (newParentId === null || newParentId === COMP_ROOT) return true;
   if (newParentId === childId) return false; // no self-parent
   if (!defaultSceneGraph.getNode(newParentId)) return false;
-  return !isDescendant(childId, newParentId); // no loops
+  if (isDescendant(childId, newParentId)) return false; // no loops
+  // Same composition only. Enforced HERE and not just in the dropdown, because
+  // the AI tools and any future scripting path call `reparentNode` directly —
+  // a rule that lives only in the UI is a rule that gets bypassed.
+  return compRootOf(childId) === compRootOf(newParentId);
 }
 
 /**
@@ -88,16 +92,49 @@ export function parentOfNode(childId: string): string | null {
   return p === COMP_ROOT ? null : p;
 }
 
-/** Layers eligible as a parent for `childId` (excludes self, descendants, root). */
+/**
+ * The composition a node belongs to: its top-most ancestor.
+ *
+ * Not the hardcoded `comp_root` — that is only the FIRST composition, and in a
+ * multi-composition project every other one has a different root id.
+ */
+export function compRootOf(nodeId: string): string | null {
+  let cur = defaultSceneGraph.getNode(nodeId);
+  if (!cur) return null;
+  const seen = new Set<string>([cur.id]);
+  while (cur.parent) {
+    const p = defaultSceneGraph.getNode(cur.parent);
+    // A cycle or a dangling parent id must not hang the walk.
+    if (!p || seen.has(p.id)) break;
+    seen.add(p.id);
+    cur = p;
+  }
+  return cur.id;
+}
+
+/**
+ * Layers eligible as a parent for `childId` — excludes self, descendants, the
+ * composition root, and anything in a DIFFERENT composition.
+ *
+ * After Effects has no cross-composition parenting, and here it was worse than
+ * merely unsupported: `parent` IS the tree structure in this graph, so picking a
+ * parent from another composition physically relocated the layer into that
+ * composition. It vanished from the comp you were editing and started rendering
+ * in one you weren't looking at. The dropdown offered every layer in the project
+ * with nothing to distinguish them, so the only cue was the layer disappearing.
+ */
 export function eligibleParents(childId: string): Array<{ id: string; name: string }> {
   const out: Array<{ id: string; name: string }> = [];
+  const root = compRootOf(childId);
+  if (!root) return out;
   const walk = (n: SceneNode): void => {
-    if (n.id !== COMP_ROOT && n.id !== childId && !isDescendant(childId, n.id)) {
+    if (n.id !== root && n.id !== COMP_ROOT && n.id !== childId && !isDescendant(childId, n.id)) {
       out.push({ id: n.id, name: n.name ?? n.id });
     }
     for (const c of defaultSceneGraph.getChildren(n.id)) walk(c);
   };
-  for (const r of defaultSceneGraph.getRoots()) walk(r);
+  const rootNode = defaultSceneGraph.getNode(root);
+  if (rootNode) walk(rootNode);
   return out;
 }
 
