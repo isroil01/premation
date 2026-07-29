@@ -6,6 +6,7 @@ import { AssetDatabase } from '@core/services/AssetDatabase';
 import { isLocalFirst } from '@core/config/flags';
 import { importLocalAsset } from '@core/assets/local/importLocalAsset';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
+import type { ProxyRecord } from '@core/assets/proxy';
 import { probeMedia } from '@core/assets/mediaProbe';
 import { bumpScene } from '@stores/sceneStore';
 
@@ -52,6 +53,15 @@ export interface ImportedAsset {
    * using this footage at once. See `@core/source/sourceInfo`.
    */
   interpret?: FootageInterpretation;
+  /**
+   * Low-resolution stand-in used while EDITING only.
+   *
+   * Deliberately NOT reflected in `metadata`: a proxy substitutes pixels, never
+   * facts. Size, duration, fps, PAR and alpha keep describing the original, so
+   * `sourceOf` and every timing operation are unaffected by a proxy existing.
+   * See `@core/assets/proxy`.
+   */
+  proxy?: ProxyRecord;
 }
 
 /** Longest edge (px) of a generated panel thumbnail — comfortably sharp for the
@@ -163,6 +173,8 @@ interface AssetStoreActions {
    * value.
    */
   setInterpretation: (assetId: string, patch: FootageInterpretation) => void;
+  /** Write or clear an asset's proxy record. Pass null to detach. */
+  setProxy: (assetId: string, proxy: ProxyRecord | null) => void;
   /** Replace the local list with the signed-in user's cloud assets. */
   loadFromCloud: () => Promise<void>;
   /** Initialize local assets hydrated from IndexedDB. */
@@ -181,6 +193,10 @@ const ASSIGN_KEY = 'motion-editor.assetFolderAssignments.v1';
 // neither the cloud schema nor the IndexedDB record carries it. Losing it on
 // reload would silently un-conform footage that had already been cut with.
 const INTERPRET_KEY = 'motion-editor.assetInterpretations.v1';
+// Proxies persist alongside interpretations, for the same reason: the record is
+// a statement the editor makes about a file, and neither the cloud schema nor
+// the IndexedDB record carries it.
+const PROXY_KEY = 'motion-editor.assetProxies.v1';
 
 function loadFolders(): AssetFolder[] {
   try {
@@ -224,6 +240,43 @@ function loadInterpretations(): Record<string, FootageInterpretation> {
     return raw ? (JSON.parse(raw) as Record<string, FootageInterpretation>) : {};
   } catch {
     return {};
+  }
+}
+
+/**
+ * Restore proxy records.
+ *
+ * A persisted 'generating' is dropped rather than restored — see `saveProxies`.
+ * It should never be written, but a record from a crashed session or a hand
+ * -edited store must not resurrect a job with no child process behind it.
+ */
+function loadProxies(): Record<string, ProxyRecord> {
+  try {
+    const raw = localStorage.getItem(PROXY_KEY);
+    const map = raw ? (JSON.parse(raw) as Record<string, ProxyRecord>) : {};
+    for (const [id, p] of Object.entries(map)) if (p?.status === 'generating') delete map[id];
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Persist proxy records.
+ *
+ * `generating` is deliberately NOT persisted. An ffmpeg child dies with the app,
+ * so a stored 'generating' would reload as a job that will never finish and can
+ * never be cancelled — the asset would sit spinning forever. On reload an
+ * interrupted job is simply absent, and the asset is back to full resolution
+ * with the Create Proxy action available again, which is the honest state.
+ */
+function saveProxies(assets: ImportedAsset[]): void {
+  try {
+    const map: Record<string, ProxyRecord> = {};
+    for (const a of assets) if (a.proxy && a.proxy.status !== 'generating') map[a.id] = a.proxy;
+    localStorage.setItem(PROXY_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
   }
 }
 
@@ -279,14 +332,17 @@ async function applyProbe(file: File, asset: ImportedAsset): Promise<void> {
 function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): ImportedAsset[] {
   const map = loadAssignments();
   const interp = loadInterpretations();
+  const proxies = loadProxies();
   const validFolder = new Set(folders.map((f) => f.id));
   return assets.map((a) => {
     const fid = map[a.id];
     const i = interp[a.id];
+    const p = proxies[a.id];
     return {
       ...a,
       folderId: fid && validFolder.has(fid) ? fid : a.folderId ?? null,
       ...(i ? { interpret: i } : {}),
+      ...(p ? { proxy: p } : {}),
     };
   });
 }
@@ -592,6 +648,25 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       // renderer's per-frame caches and the timeline's duration bounds are both
       // stale. Bumping the scene is what makes the change visible everywhere at
       // once rather than on the next unrelated edit.
+      bumpScene();
+    },
+
+    /**
+     * Write a proxy record. The ONE mutation point for `asset.proxy`, so a
+     * generation job, a user attach and a failure all land the same way.
+     *
+     * `bumpScene` is what makes the change visible: `resolveRigImageSrc` reads
+     * the store per snapshot, so without a bump the viewport would keep
+     * decoding the previous source until some unrelated edit forced a rebuild.
+     */
+    setProxy: (assetId, proxy) => {
+      set((s) => {
+        const a = s.assets.find((x) => x.id === assetId);
+        if (!a) return;
+        if (proxy) a.proxy = proxy;
+        else delete a.proxy;
+      });
+      saveProxies(get().assets);
       bumpScene();
     },
 

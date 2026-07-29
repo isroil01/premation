@@ -107,6 +107,17 @@ export interface SnapshotComp {
    * full quality (export/tests unchanged).
    */
   draft3d?: boolean;
+  /**
+   * Decode low-resolution PROXIES instead of the original media.
+   *
+   * Absent/false = full resolution, and that polarity is deliberate: export,
+   * the offline renderer and the render-test harness never set it, so no output
+   * path can reach a proxy by forgetting to opt out. Only the interactive
+   * viewport passes it, from the global Use Proxies preference. Substitution is
+   * PIXELS ONLY — duration, fps, PAR, alpha and loop still come from the
+   * original asset, so timing cannot drift. See `@core/assets/proxy`.
+   */
+  useProxies?: boolean;
   /** Comp length in seconds — used to clamp the layer in/out gate frame. */
   durationSeconds?: number;
   /**
@@ -1594,7 +1605,7 @@ export function buildSnapshot(
       // Heal absolute backend URLs baked into older documents → same-origin path.
       // Resolution order lives in rigMeshInputs so the puppet overlay resolves
       // the SAME source this layer draws (its coverage mask is keyed off it).
-      src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id)),
+      src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id), comp.useProxies === true),
       assetId: base.assetId,
       // Media-slot COVER crop. The quad is already the slot rect (fillSlot
       // keeps the box there on purpose), so filling it without distortion means

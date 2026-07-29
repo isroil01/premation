@@ -29,6 +29,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
@@ -241,6 +242,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   const draft3dRef = useRef(draft3d);
   draft3dRef.current = draft3d;
 
+  // Proxies are a VIEWPORT concession — the other opt-in site is
+  // useViewportRenderer. Export never sets this. See `@core/assets/proxy`.
+  const useProxiesPref = usePreferenceStore((s) => s.useProxies);
+  const useProxiesRef = useRef(useProxiesPref);
+  useProxiesRef.current = useProxiesPref;
+
   const mbEnabled = useMotionBlurStore((s) => s.enabled);
   const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
   const mbPhase = useMotionBlurStore((s) => s.shutterPhase);
@@ -380,6 +387,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             // live store, so the closure never freezes a stale view).
             ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
             draft3d: draft3dRef.current,
+            useProxies: useProxiesRef.current,
           },
         ),
         // The only producer of `snapshot.roi`. Read live from the store so the
