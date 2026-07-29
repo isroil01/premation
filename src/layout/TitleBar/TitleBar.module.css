@@ -34,23 +34,18 @@
   z-index: 1;
 }
 
+/* The brand mark supplies its own blue rounded-square, so this only handles
+   layout — a tinted badge behind it would read as blue-on-blue. */
 .appIconBadge {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
-  background: linear-gradient(135deg, rgba(41, 136, 255, 0.22) 0%, rgba(41, 136, 255, 0.06) 100%);
-  border: 1px solid rgba(41, 136, 255, 0.25);
-  color: var(--color-primary, #2988ff);
-  transition: all 0.15s ease;
+  transition: opacity 0.15s ease;
   flex-shrink: 0;
 }
 
 .appIconBadge:hover {
-  background: linear-gradient(135deg, rgba(41, 136, 255, 0.32) 0%, rgba(41, 136, 255, 0.12) 100%);
-  border-color: rgba(41, 136, 255, 0.4);
+  opacity: 0.8;
 }
 
 .appName {

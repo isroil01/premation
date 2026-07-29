@@ -38,6 +38,7 @@ import { type Mat2D, apply, invert, multiply } from './mat2d';
 import { solveTwoBone, solveFabrik, anglesFromJoints, type Vec2 } from './ik';
 import { boneSegments, autoWeightVertex, type BoneSegment } from './autoWeight';
 import { skinVertex, type SkinVertex, type VertexWeight } from './skinning';
+import { applyWeightPaint, weightPaintMatches, type WeightPaintMap } from './weightPaint';
 
 // ────────────────────────────────────────────────────────────────────────────
 // IK — chain resolution and pose override
@@ -50,6 +51,12 @@ export interface IkTargetResolved {
   y: number;
   /** Bones in the chain (the target bone + its ancestors). Default 2, max 8. */
   chainLength?: number;
+  /**
+   * Optional pole vector (layer-local): the side a two-bone chain bends toward.
+   * Without it the solver preserves the CURRENT bend side, which never flips —
+   * a pole is how you choose (and keyframe) the elbow/knee direction.
+   */
+  pole?: { x: number; y: number };
 }
 
 const MAX_CHAIN = 8;
@@ -133,9 +140,22 @@ export function applyIk(bones: readonly Bone[], targets: readonly IkTargetResolv
       const j0 = joints[0]!;
       const j1 = joints[1]!;
       const j2 = joints[2]!;
-      const cross =
-        (j1.x - j0.x) * (j2.y - j1.y) - (j1.y - j0.y) * (j2.x - j1.x);
-      const sol = solveTwoBone(j0, lengths[0]!, lengths[1]!, target, cross >= 0);
+      let bendPositive: boolean;
+      if (t.pole) {
+        // Explicit pole: bend toward whichever side of the root→target line the
+        // pole sits on. Deterministic and keyframeable, so the joint can be made
+        // to flip rather than only holding its current side.
+        const ax = target.x - j0.x;
+        const ay = target.y - j0.y;
+        const side = ax * (t.pole.y - j0.y) - ay * (t.pole.x - j0.x);
+        bendPositive = side >= 0;
+      } else {
+        // Preserve the current bend side so the joint does not pop when the
+        // target crosses the chain line.
+        bendPositive =
+          (j1.x - j0.x) * (j2.y - j1.y) - (j1.y - j0.y) * (j2.x - j1.x) >= 0;
+      }
+      const sol = solveTwoBone(j0, lengths[0]!, lengths[1]!, target, bendPositive);
       solvedAngles = [sol.angle1, sol.angle2];
     } else {
       const solved = solveFabrik(joints, lengths, target);
@@ -177,6 +197,29 @@ function restBonesKey(bones: readonly Bone[]): string {
     .join(';');
 }
 
+/**
+ * Deterministic signature of a paint map (FNV-1a over bone → index:weight, in
+ * sorted order so key order can never change the hash). Painting must
+ * invalidate the cached binding, but the map is far too large to key on
+ * directly.
+ */
+function paintKey(paint: WeightPaintMap | undefined): string {
+  if (!paint) return 'nopaint';
+  let h = 2166136261 >>> 0;
+  const mix = (s: string): void => {
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+  };
+  for (const boneId of Object.keys(paint.bones).sort()) {
+    mix(boneId);
+    const per = paint.bones[boneId]!;
+    for (const idx of Object.keys(per).sort((a, b) => Number(a) - Number(b))) {
+      mix(idx);
+      mix(String(Math.round(per[Number(idx)]! * 1024)));
+    }
+  }
+  return `p${paint.vertexCount}:${h.toString(36)}`;
+}
+
 /** Bindings kept per mesh — bone edits churn keys, so keep this small. */
 const BINDING_CACHE_CAP = 4;
 const bindingCache = new WeakMap<DeformedMesh, Map<string, SkeletonBinding>>();
@@ -189,13 +232,18 @@ const bindingCache = new WeakMap<DeformedMesh, Map<string, SkeletonBinding>>();
 export function getSkeletonBinding(
   restMesh: DeformedMesh,
   restBones: readonly Bone[],
+  paint?: WeightPaintMap,
 ): SkeletonBinding {
   let perMesh = bindingCache.get(restMesh);
   if (!perMesh) {
     perMesh = new Map();
     bindingCache.set(restMesh, perMesh);
   }
-  const key = restBonesKey(restBones);
+  const numVerts = restMesh.vertices.length / 4;
+  // Painted overrides are positional, so a paint map from a different mesh
+  // resolution is ignored rather than smeared onto unrelated vertices.
+  const livePaint = weightPaintMatches(paint, numVerts) ? paint : undefined;
+  const key = `${restBonesKey(restBones)}|${paintKey(livePaint)}`;
   const cached = perMesh.get(key);
   if (cached) return cached;
 
@@ -204,13 +252,13 @@ export function getSkeletonBinding(
   const segments = boneSegments(restBones, bindWorld);
 
   const verts = restMesh.vertices;
-  const numVerts = verts.length / 4;
   const weights: VertexWeight[][] = new Array(numVerts);
   for (let i = 0; i < numVerts; i++) {
-    weights[i] = autoWeightVertex(
+    const auto = autoWeightVertex(
       { x: verts[i * 4 + 0]!, y: verts[i * 4 + 1]! },
       segments,
     );
+    weights[i] = livePaint ? applyWeightPaint(auto, i, livePaint) : auto;
   }
 
   const binding: SkeletonBinding = { weights, bindWorld, bindInverse, segments };
@@ -294,8 +342,26 @@ export function skinPointAt(
   return apply(m, source.x, source.y);
 }
 
-/** Fixed-point iterations for unskinPoint — fixed count → deterministic. */
-const UNSKIN_ITERATIONS = 3;
+/**
+ * Fixed-point iterations for unskinPoint — FIXED count → deterministic.
+ *
+ * Was 3, which is not enough. Measured worst-case round-trip residual on a
+ * posed two-bone arm (`puppetPinPlacement.test.ts`), at a point where the two
+ * weight columns are still meaningfully mixed and the displacement is large —
+ * the hardest case for this iteration:
+ *
+ *     iters:  3      4      6      8      10     12
+ *     resid:  6.43   2.22   0.187  0.028  0.007  0.002   (px)
+ *
+ * At 3 the inverse was off by ~11% of the displacement, which fed a visibly
+ * wrong rest coordinate into puppet pin placement. Convergence is ~0.28x per
+ * iteration, so 12 is essentially exact with headroom for sharper weight fields
+ * (more bones / higher falloff) than that test exercises.
+ *
+ * This runs on POINTER INPUT only — once per click-add, once per pointermove
+ * during a drag — never in the render loop, so the extra iterations are free.
+ */
+const UNSKIN_ITERATIONS = 12;
 
 /**
  * Inverse of skinPointAt for pointer input: given a POSED-space point, recover

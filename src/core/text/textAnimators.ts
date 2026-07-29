@@ -1,112 +1,249 @@
 /**
- * Text animators (MG Phase D) — After Effects–style per-glyph animation.
+ * Text ANIMATORS — After Effects–style per-glyph animation.
  *
- * A text layer can carry one or more ANIMATOR GROUPS. Each group has a RANGE
- * SELECTOR (which characters / words / lines it covers, and with what falloff
- * shape) and a set of TRANSFORM OFFSETS (position, scale, rotation, opacity,
- * tracking, colour) applied to the covered glyphs, weighted by the selector.
+ * A text layer carries a stack of animator groups. Each group holds:
  *
- * Storage: the group metadata lives as a hidden `__animators` array on the
+ *   Animator
+ *   ├── Properties   what changes (position, scale, rotation, opacity, fill
+ *   │                and stroke colour, stroke width, tracking, line spacing,
+ *   │                character offset, blur, skew…) — STATIC values
+ *   └── Selectors    which characters it applies to, and how much
+ *
+ * The properties are static: "affected characters move up 100px". The SELECTOR
+ * is what you keyframe — sweep a range selector's Offset across the string and
+ * every character passes through its influence in turn, so two keyframes on one
+ * property produce a full per-character stagger. See textSelectors.ts, which
+ * owns that half and all of its maths.
+ *
+ * Storage: animator metadata lives as a hidden `__animators` array on the
  * layer's `Text` component (the `__` prefix keeps it out of the generic
- * NodeInspector list). Each numeric parameter is also keyframeable under a
- * stable prop-path `ta.<index>.<param>` — the animation engine keys tracks by
- * (nodeId, propPath), so these animate through the exact same reversible
- * command path (Prompt 2) as x/y/rotation. buildSnapshot reads an animated
- * value with `av.get(path) ?? staticValue`.
+ * NodeInspector list). Every numeric parameter is ALSO keyframeable under a
+ * stable prop-path — `ta.<i>.<param>` for an animator property, `ta.<i>.s<j>.
+ * <param>` for a selector parameter — so they animate through the same
+ * reversible command path as x/y/rotation, and buildSnapshot reads them with
+ * `av.get(path) ?? staticValue`.
  *
- * The evaluation ({@link evaluateTextAnimators}) is a pure function of the text
- * plus the resolved (already-sampled) animators — it produces per-glyph OFFSETS
- * only. Pixel-level layout/measuring happens in the render backend, which has a
- * canvas context. This keeps the animator math fully unit-testable.
+ * Legacy: animators used to hold exactly ONE inlined range selector, whose
+ * start/end/offset/wiggleFreq lived directly on the animator. Those prop-paths
+ * are still the canonical paths for selector 0 (see `selectorPropPath`), so
+ * projects, presets and the AI tool schema written against `ta.0.offset` keep
+ * animating without a migration pass.
+ *
+ * The evaluation ({@link evaluateTextAnimators}) is pure — text plus resolved
+ * animators in, per-glyph OFFSETS out. Pixel layout happens in the rasterizer,
+ * which has a canvas; this keeps the animator maths fully unit-testable.
  */
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
+import { parseExpression, evaluateExpression } from '@motion/animation';
+import {
+  defaultRangeSelector,
+  defaultSelector,
+  evaluateSelectors,
+  setExpressionSelectorCompiler,
+  unitPositions,
+  type RangeBasedOn,
+  type RangeSelectorData,
+  type SelectorData,
+  type SelectorKind,
+  type SelectorShape,
+  type UnitMap,
+} from './textSelectors';
 
-export type RangeBasedOn = 'characters' | 'words' | 'lines';
-export type SelectorShape = 'square' | 'rampUp' | 'rampDown' | 'triangle' | 'round' | 'smooth';
+export {
+  unitPositions,
+  defaultRangeSelector,
+  defaultWigglySelector,
+  defaultExpressionSelector,
+  defaultSelector,
+  rangeSelectorAt,
+  wigglySelectorAt,
+  shapeFalloff,
+  applyEase,
+  combineWeights,
+  orderPermutation,
+} from './textSelectors';
+export type {
+  RangeBasedOn,
+  SelectorShape,
+  SelectorUnits,
+  SelectorCombineMode,
+  SelectorKind,
+  SelectorData,
+  RangeSelectorData,
+  WigglySelectorData,
+  ExpressionSelectorData,
+} from './textSelectors';
 
-export type SelectorMode = 'range' | 'wiggly';
+// ── Expression selector compiler (CSP-safe) ─────────────────────────
 
-/** The numeric parameters of an animator, each keyframeable by prop-path. */
+// `new Function` is refused by the app's script-src, so expression selectors go
+// through the same interpreted AST the property expressions use, with a scope
+// carrying the per-character names AE exposes.
+setExpressionSelectorCompiler((src) => {
+  const ast = parseExpression(src);
+  return (scope) => {
+    const map = new Map<string, unknown>([
+      ['textIndex', scope.textIndex],
+      ['textTotal', scope.textTotal],
+      ['selectorValue', scope.selectorValue],
+      ['time', scope.time],
+      ['Math', Math],
+    ]);
+    const v = evaluateExpression(ast, map);
+    return typeof v === 'number' ? v : 0;
+  };
+});
+
+// ── Animator model ──────────────────────────────────────────────────
+
+/**
+ * Keyframeable numeric parameters of an animator PROPERTY (not its selectors).
+ *
+ * `start`/`end`/`offset`/`wiggleFreq` are still listed because they remain the
+ * canonical prop-paths for selector 0 — see the legacy note in the file header.
+ */
 export const ANIMATOR_PARAMS = [
-  'start', 'end', 'offset', 'x', 'y', 'scale', 'rotation', 'opacity', 'tracking',
-  'skew', 'wiggleFreq',
-  // Per-character 3D channels. Only meaningful on a 3D text layer with
-  // "Enable Per-character 3D" — each glyph becomes its own 3D plane, so an
-  // animator can push glyphs in Z and tumble them about X/Y (AE parity).
-  // On a 2D text layer these evaluate but the flat backend ignores them.
+  // Legacy selector-0 aliases.
+  'start', 'end', 'offset', 'wiggleFreq',
+  // Transform.
+  'x', 'y', 'scale', 'scaleY', 'rotation', 'opacity', 'tracking', 'skew',
+  // Per-character 3D. Only meaningful on a 3D text layer with "Enable
+  // Per-character 3D" — each glyph becomes its own plane, so an animator can
+  // push glyphs in Z and tumble them about X/Y. Flat text ignores them.
   'z', 'rotationX', 'rotationY',
+  // Paint / typography.
+  'fillOpacity', 'strokeWidth', 'lineSpacing', 'characterOffset', 'blur',
 ] as const;
 export type AnimatorParam = (typeof ANIMATOR_PARAMS)[number];
 
-/** Prop-path an animator's numeric parameter animates under. */
+/** Keyframeable numeric parameters of a SELECTOR. */
+export const SELECTOR_PARAMS = [
+  'start', 'end', 'offset', 'amount', 'smoothness', 'easeHigh', 'easeLow',
+  'maxAmount', 'minAmount', 'wigglesPerSecond', 'correlation',
+  'temporalPhase', 'spatialPhase',
+] as const;
+export type SelectorParam = (typeof SELECTOR_PARAMS)[number];
+
+/** Prop-path an animator's own numeric parameter animates under. */
 export function animatorPropPath(index: number, param: AnimatorParam): string {
   return `ta.${index}.${param}`;
+}
+
+/**
+ * Prop-path a selector parameter animates under.
+ *
+ * Selector 0's window parameters keep their legacy flat paths so nothing
+ * written against `ta.0.offset` — projects, the preset library, the AI tool
+ * schema — silently stops animating.
+ */
+export function selectorPropPath(
+  index: number,
+  selectorIndex: number,
+  param: SelectorParam,
+): string {
+  if (selectorIndex === 0) {
+    if (param === 'start' || param === 'end' || param === 'offset') {
+      return `ta.${index}.${param}`;
+    }
+    if (param === 'wigglesPerSecond') return `ta.${index}.wiggleFreq`;
+  }
+  return `ta.${index}.s${selectorIndex}.${param}`;
 }
 
 /** Serialized animator metadata (JSON-safe) stored on the Text component. */
 export interface TextAnimatorData {
   id: string;
-  basedOn: RangeBasedOn;
-  shape: SelectorShape;
-  /** Selector window, percent 0..100. */
-  start: number;
-  end: number;
-  /** Window shift, percent -100..100. */
-  offset: number;
+  /** Author-facing name. AE numbers them; a name survives reordering. */
+  name?: string;
+  /** Off keeps the group in the stack contributing nothing. */
+  enabled?: boolean;
+  /** The selector stack. Absent on data written before selectors were split
+   *  out — `normalizeAnimator` rebuilds one from the legacy flat fields. */
+  selectors?: SelectorData[];
+
+  // ── Properties ──
   /** Position offset, comp px. */
   x: number;
   y: number;
-  /** Scale, percent (100 = no change). */
-  scale: number;
-  /** Rotation offset, degrees. */
-  rotation: number;
   /** Depth offset, comp px (per-character 3D only). */
   z?: number;
+  /** Scale, percent (100 = no change). `scaleY` falls back to `scale`. */
+  scale: number;
+  scaleY?: number;
+  /** Rotation offset, degrees. */
+  rotation: number;
   /** Tumble about the glyph's own X / Y axis, degrees (per-character 3D only). */
   rotationX?: number;
   rotationY?: number;
   /** Opacity, percent (100 = no change). */
   opacity: number;
+  /** Fill opacity, percent — fades the glyph's fill but not its stroke. */
+  fillOpacity?: number;
   /** Extra tracking, px. */
   tracking: number;
+  /** Extra leading between lines, px. */
+  lineSpacing?: number;
+  /**
+   * Shifts each affected character N places through its alphabet — AE's
+   * Character Offset. A staggered offset that rolls back to 0 is the
+   * scrambling / decode reveal, and it cannot be faked with transforms.
+   */
+  characterOffset?: number;
+  /** Per-glyph blur, px. */
+  blur?: number;
   /** Skew, degrees (italic-style shear per glyph). */
   skew?: number;
-  /** Selector mode: 'range' (static window) or 'wiggly' (per-unit noise over time). */
-  mode?: SelectorMode;
-  /** Wiggly selector frequency, Hz. */
-  wiggleFreq?: number;
-  /** Optional fill colour the covered glyphs blend toward. */
+  /** Fill colour the covered glyphs blend toward. */
   color?: string;
+  /** Stroke colour and width for the covered glyphs. */
+  strokeColor?: string;
+  strokeWidth?: number;
+
+  // ── Legacy flat selector fields (read for migration, never written) ──
+  /** @deprecated moved to `selectors[0].basedOn`. */
+  basedOn?: RangeBasedOn;
+  /** @deprecated moved to `selectors[0].shape`. */
+  shape?: SelectorShape;
+  /** @deprecated moved to `selectors[0].start`. */
+  start?: number;
+  /** @deprecated moved to `selectors[0].end`. */
+  end?: number;
+  /** @deprecated moved to `selectors[0].offset`. */
+  offset?: number;
+  /** @deprecated selector kind now lives on the selector itself. */
+  mode?: 'range' | 'wiggly';
+  /** @deprecated moved to `selectors[0].wigglesPerSecond`. */
+  wiggleFreq?: number;
 }
 
 /** An animator with every parameter resolved to a concrete number for a frame. */
 export interface ResolvedAnimator {
-  basedOn: RangeBasedOn;
-  shape: SelectorShape;
-  mode: SelectorMode;
-  start: number;
-  end: number;
-  offset: number;
+  enabled: boolean;
+  selectors: SelectorData[];
   x: number;
   y: number;
+  z: number;
   scale: number;
+  scaleY: number;
   rotation: number;
-  /** Per-character 3D channels; absent on animators authored before the
-   *  feature (and on flat text, where they have no effect). */
-  z?: number;
-  rotationX?: number;
-  rotationY?: number;
+  rotationX: number;
+  rotationY: number;
   opacity: number;
+  fillOpacity: number;
   tracking: number;
+  lineSpacing: number;
+  characterOffset: number;
+  blur: number;
   skew: number;
-  wiggleFreq: number;
+  strokeWidth: number;
   color?: string;
+  strokeColor?: string;
 }
 
-/** Per-glyph transform the renderer applies when laying out animated text. */
+/** Per-glyph transform the rasterizer applies when laying out animated text. */
 export interface GlyphTransform {
   char: string;
   /** Position offset, comp px. */
@@ -117,147 +254,189 @@ export interface GlyphTransform {
   /** Tumble about the glyph's own X / Y axis, degrees (per-character 3D only). */
   rotationX?: number;
   rotationY?: number;
-  /** Scale multiplier (1 = none). */
+  /** Scale multipliers (1 = none). */
   scale: number;
+  scaleY: number;
   /** Rotation, degrees. */
   rotation: number;
   /** Opacity multiplier, 0..1. */
   opacity: number;
+  /** Fill-only opacity multiplier, 0..1 — the stroke stays put. */
+  fillOpacity: number;
   /** Extra advance width, px. */
   tracking: number;
-  /** Shear, degrees (applied as a horizontal skew transform per glyph). */
+  /** Extra leading for the line this glyph sits on, px. */
+  lineSpacing: number;
+  /** Blur radius, px. */
+  blur: number;
+  /** Shear, degrees (applied as a horizontal skew per glyph). */
   skew: number;
   /** Colour to blend toward, with `colorMix` as the blend amount. */
   color?: string;
   colorMix?: number;
+  /** Stroke to paint under/over the glyph. */
+  strokeColor?: string;
+  strokeWidth: number;
+  /** The character actually drawn, after Character Offset walked it through
+   *  its alphabet. Equals `char` when no animator offsets it. */
+  displayChar: string;
+}
+
+/** An identity glyph transform — every field at its no-op value. Callers that
+ *  build a transform by hand (tests, the per-character 3D splitter) start here
+ *  so a field added later cannot silently arrive as `undefined`. */
+export function identityGlyphTransform(
+  char: string,
+  patch: Partial<GlyphTransform> = {},
+): GlyphTransform {
+  return {
+    char,
+    displayChar: char,
+    dx: 0,
+    dy: 0,
+    scale: 1,
+    scaleY: 1,
+    rotation: 0,
+    opacity: 1,
+    fillOpacity: 1,
+    tracking: 0,
+    lineSpacing: 0,
+    blur: 0,
+    skew: 0,
+    strokeWidth: 0,
+    ...patch,
+  };
 }
 
 /** A fresh animator that covers the whole string and does nothing until edited. */
 export function defaultAnimator(): TextAnimatorData {
   return {
     id: `anim_${Math.random().toString(36).slice(2, 9)}`,
-    basedOn: 'characters',
-    shape: 'square',
-    start: 0,
-    end: 100,
-    offset: 0,
+    enabled: true,
+    selectors: [defaultRangeSelector()],
     x: 0,
     y: 0,
-    scale: 100,
-    rotation: 0,
     z: 0,
+    scale: 100,
+    scaleY: 100,
+    rotation: 0,
     rotationX: 0,
     rotationY: 0,
     opacity: 100,
+    fillOpacity: 100,
     tracking: 0,
+    lineSpacing: 0,
+    characterOffset: 0,
+    blur: 0,
     skew: 0,
-    mode: 'range',
-    wiggleFreq: 2,
+    strokeWidth: 0,
   };
 }
 
+/**
+ * Fill in everything a stored animator may be missing, including rebuilding a
+ * selector stack from the legacy inline fields.
+ *
+ * Every read goes through here so an old document and a new one are the same
+ * shape by the time anything looks at them — relying on a single migration
+ * point at load is how a stale shape ends up rendering wrong somewhere else.
+ */
+export function normalizeAnimator(d: TextAnimatorData): TextAnimatorData {
+  const selectors: SelectorData[] =
+    Array.isArray(d.selectors) && d.selectors.length > 0
+      ? d.selectors.map(normalizeSelector)
+      : [legacySelector(d)];
+  return {
+    ...d,
+    enabled: d.enabled !== false,
+    selectors,
+    x: d.x ?? 0,
+    y: d.y ?? 0,
+    z: d.z ?? 0,
+    scale: d.scale ?? 100,
+    scaleY: d.scaleY ?? d.scale ?? 100,
+    rotation: d.rotation ?? 0,
+    rotationX: d.rotationX ?? 0,
+    rotationY: d.rotationY ?? 0,
+    opacity: d.opacity ?? 100,
+    fillOpacity: d.fillOpacity ?? 100,
+    tracking: d.tracking ?? 0,
+    lineSpacing: d.lineSpacing ?? 0,
+    characterOffset: d.characterOffset ?? 0,
+    blur: d.blur ?? 0,
+    skew: d.skew ?? 0,
+    strokeWidth: d.strokeWidth ?? 0,
+  };
+}
+
+/** Rebuild the single inline selector an old animator carried. */
+function legacySelector(d: TextAnimatorData): SelectorData {
+  if (d.mode === 'wiggly') {
+    return {
+      ...defaultSelector('wiggly'),
+      id: `${d.id}_s0`,
+      basedOn: d.basedOn ?? 'characters',
+      wigglesPerSecond: d.wiggleFreq ?? 2,
+      // The old wiggly multiplied the range weight; `intersect` is that.
+      mode: 'intersect',
+    } as SelectorData;
+  }
+  const base = defaultRangeSelector();
+  return {
+    ...base,
+    id: `${d.id}_s0`,
+    basedOn: d.basedOn ?? 'characters',
+    shape: d.shape ?? 'square',
+    start: d.start ?? 0,
+    end: d.end ?? 100,
+    offset: d.offset ?? 0,
+    // The old range selector had a hard window with no edge softening; keeping
+    // smoothness at 0 means an existing project looks exactly as it did.
+    smoothness: 0,
+  };
+}
+
+function normalizeSelector(s: SelectorData): SelectorData {
+  const kind: SelectorKind = s.kind ?? 'range';
+  const base = defaultSelector(kind);
+  return { ...base, ...s, kind } as SelectorData;
+}
+
+// ── Evaluation ──────────────────────────────────────────────────────
+
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-/**
- * Selector coverage weight in [0,1] for a unit at normalized position `u`
- * (0..1) given the window [start,end] (+offset) and falloff `shape`. Influence
- * is confined to the window; outside it the weight is 0.
- */
-export function rangeSelectorWeight(
-  u: number,
-  start: number,
-  end: number,
-  offset: number,
-  shape: SelectorShape,
-): number {
-  const lo = Math.min(start + offset, end + offset) / 100;
-  const hi = Math.max(start + offset, end + offset) / 100;
-  if (hi <= lo) return 0; // empty selection
-  if (u < lo || u > hi) return 0; // outside the window
-  const t = (u - lo) / (hi - lo); // 0..1 across the window
-  switch (shape) {
-    case 'square':
-      return 1;
-    case 'rampUp':
-      return t;
-    case 'rampDown':
-      return 1 - t;
-    case 'triangle':
-      return 1 - Math.abs(2 * t - 1);
-    case 'round':
-      return Math.sqrt(Math.max(0, 1 - (2 * t - 1) ** 2));
-    case 'smooth': {
-      const tri = 1 - Math.abs(2 * t - 1);
-      return tri * tri * (3 - 2 * tri);
+/** Ranges Character Offset walks through. A digit rolls within digits, a letter
+ *  within its own case — offsetting 'Z' by 1 must not produce '['. */
+const ALPHABETS: ReadonlyArray<readonly [number, number]> = [
+  [0x30, 0x39], // 0-9
+  [0x41, 0x5a], // A-Z
+  [0x61, 0x7a], // a-z
+];
+
+/** Shift a character `n` places through its alphabet, wrapping. Characters in
+ *  no alphabet (punctuation, spaces, CJK) are left alone. */
+export function offsetCharacter(ch: string, n: number): string {
+  if (!n) return ch;
+  const code = ch.codePointAt(0);
+  if (code === undefined) return ch;
+  for (const [lo, hi] of ALPHABETS) {
+    if (code >= lo && code <= hi) {
+      const span = hi - lo + 1;
+      const shifted = (((code - lo + Math.round(n)) % span) + span) % span;
+      return String.fromCodePoint(lo + shifted);
     }
-    default:
-      return 1;
   }
+  return ch;
 }
 
 /**
- * Map each character to the index of the unit (character / word / line) it
- * belongs to, and report the total unit count. Whitespace characters take the
- * unit of the word/line they sit within.
- */
-export function unitPositions(
-  text: string,
-  basedOn: RangeBasedOn,
-): { count: number; unitOfChar: number[] } {
-  const chars = [...text];
-  if (basedOn === 'characters') {
-    return { count: chars.length, unitOfChar: chars.map((_, i) => i) };
-  }
-  if (basedOn === 'lines') {
-    const unitOfChar: number[] = [];
-    let unit = 0;
-    for (const c of chars) {
-      unitOfChar.push(unit);
-      if (c === '\n') unit++;
-    }
-    return { count: unit + 1, unitOfChar };
-  }
-  // words: a new word starts on the first non-space after a space.
-  const unitOfChar: number[] = [];
-  let wordIdx = -1;
-  let prevSpace = true;
-  for (const c of chars) {
-    const space = /\s/.test(c);
-    if (!space && prevSpace) wordIdx++;
-    unitOfChar.push(wordIdx < 0 ? 0 : wordIdx);
-    prevSpace = space;
-  }
-  return { count: wordIdx < 0 ? Math.max(1, chars.length) : wordIdx + 1, unitOfChar };
-}
-
-/** Integer lattice hash → [0, 1). Deterministic — wiggly must not boil between
- *  renders of the same frame. */
-function hash01(a: number, b: number): number {
-  let n = ((a | 0) + 1) * 374761393 + ((b | 0) + 1) * 668265263;
-  n = (n ^ (n >>> 13)) * 1274126177;
-  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
-}
-
-/**
- * Wiggly-selector weight for a unit at time `t`: smooth per-unit noise cycling
- * at `freq` Hz. Deterministic per (unit, frame) so scrubbing is stable; every
- * unit wiggles on its own rhythm (that's what makes AE's wiggly read organic).
- */
-export function wigglyWeight(unit: number, t: number, freq: number): number {
-  const ts = t * Math.max(0.01, freq);
-  const i = Math.floor(ts);
-  const f = ts - i;
-  const s = f * f * (3 - 2 * f);
-  const a = hash01(unit, i);
-  const b = hash01(unit, i + 1);
-  return a + (b - a) * s;
-}
-
-/**
- * Evaluate the animator stack into per-glyph transforms. Pure: given the same
- * text, resolved animators and time it always yields the same result. Multiple
- * animators accumulate (position/rotation/tracking/skew add; scale/opacity
- * multiply). `time` only matters to wiggly-mode selectors.
+ * Evaluate the animator stack into per-glyph transforms.
+ *
+ * Pure: same text, animators and time always yields the same result. Multiple
+ * animators accumulate — position / rotation / tracking / skew / blur add,
+ * scale and the opacities multiply — which is how you stack a position stagger
+ * and a colour sweep on different schedules over one string.
  */
 export function evaluateTextAnimators(
   text: string,
@@ -265,45 +444,62 @@ export function evaluateTextAnimators(
   time = 0,
 ): GlyphTransform[] {
   const chars = [...text];
-  const glyphs: GlyphTransform[] = chars.map((ch) => ({
-    char: ch,
-    dx: 0,
-    dy: 0,
-    scale: 1,
-    rotation: 0,
-    opacity: 1,
-    tracking: 0,
-    skew: 0,
-  }));
+  const glyphs: GlyphTransform[] = chars.map((ch) => identityGlyphTransform(ch));
+
+  // One unit map per basedOn per string, shared across every selector that
+  // asks for it — recomputing it per glyph is an O(n²) walk of the string.
+  const unitCache = new Map<RangeBasedOn, UnitMap>();
+  const unitsFor = (basedOn: RangeBasedOn): UnitMap => {
+    let hit = unitCache.get(basedOn);
+    if (!hit) {
+      hit = unitPositions(text, basedOn);
+      unitCache.set(basedOn, hit);
+    }
+    return hit;
+  };
+
+  // Character Offset accumulates as a number and is applied ONCE at the end —
+  // walking the alphabet twice for two animators would compound the wrap.
+  const charShift = new Array<number>(chars.length).fill(0);
+
   for (const a of animators) {
-    const { count, unitOfChar } = unitPositions(text, a.basedOn);
+    if (!a.enabled) continue;
     for (let i = 0; i < chars.length; i++) {
-      const unit = unitOfChar[i] ?? 0;
-      const u = count <= 0 ? 0.5 : (unit + 0.5) / count;
-      let w = rangeSelectorWeight(u, a.start, a.end, a.offset, a.shape);
-      if (a.mode === 'wiggly') w *= wigglyWeight(unit, time, a.wiggleFreq);
-      if (w <= 0) continue;
+      const w = evaluateSelectors(a.selectors, i, unitsFor, time);
+      if (w.x <= 0 && w.y <= 0) continue;
       const g = glyphs[i]!;
-      g.dx += a.x * w;
-      g.dy += a.y * w;
-      if (a.z) g.dz = (g.dz ?? 0) + a.z * w;
-      if (a.rotationX) g.rotationX = (g.rotationX ?? 0) + a.rotationX * w;
-      if (a.rotationY) g.rotationY = (g.rotationY ?? 0) + a.rotationY * w;
-      g.rotation += a.rotation * w;
-      g.tracking += a.tracking * w;
-      g.skew += a.skew * w;
-      g.scale *= 1 + (a.scale / 100 - 1) * w; // lerp(1, scale/100, w)
-      g.opacity *= 1 + (a.opacity / 100 - 1) * w; // lerp(1, opacity/100, w)
+      g.dx += a.x * w.x;
+      g.dy += a.y * w.y;
+      if (a.z) g.dz = (g.dz ?? 0) + a.z * w.x;
+      if (a.rotationX) g.rotationX = (g.rotationX ?? 0) + a.rotationX * w.x;
+      if (a.rotationY) g.rotationY = (g.rotationY ?? 0) + a.rotationY * w.y;
+      g.rotation += a.rotation * w.x;
+      g.tracking += a.tracking * w.x;
+      g.lineSpacing += a.lineSpacing * w.y;
+      g.skew += a.skew * w.x;
+      g.blur += a.blur * w.x;
+      g.strokeWidth += a.strokeWidth * w.x;
+      charShift[i] = (charShift[i] ?? 0) + a.characterOffset * w.x;
+      g.scale *= 1 + (a.scale / 100 - 1) * w.x; // lerp(1, scale/100, w)
+      g.scaleY *= 1 + (a.scaleY / 100 - 1) * w.y;
+      g.opacity *= 1 + (a.opacity / 100 - 1) * w.x;
+      g.fillOpacity *= 1 + (a.fillOpacity / 100 - 1) * w.x;
       if (a.color) {
         g.color = a.color;
-        g.colorMix = Math.max(g.colorMix ?? 0, clamp01(w));
+        g.colorMix = Math.max(g.colorMix ?? 0, clamp01(w.x));
       }
+      if (a.strokeColor) g.strokeColor = a.strokeColor;
     }
+  }
+
+  for (let i = 0; i < glyphs.length; i++) {
+    const shift = Math.round(charShift[i] ?? 0);
+    if (shift) glyphs[i]!.displayChar = offsetCharacter(glyphs[i]!.char, shift);
   }
   return glyphs;
 }
 
-// ── Scene integration ─────────────────────────────────────────────
+// ── Scene integration ───────────────────────────────────────────────
 
 interface CompRef {
   id: string;
@@ -319,11 +515,12 @@ export function hasTextComponent(node: SceneNode): boolean {
   return textComponent(node) !== undefined;
 }
 
-/** Read the stored animator metadata for a node (empty when none). */
+/** Read the stored animator metadata for a node, normalized (empty when none). */
 export function readAnimatorData(node: SceneNode): TextAnimatorData[] {
   const t = textComponent(node);
   const raw = t?.props.__animators;
-  return Array.isArray(raw) ? (raw as TextAnimatorData[]) : [];
+  if (!Array.isArray(raw)) return [];
+  return (raw as TextAnimatorData[]).map(normalizeAnimator);
 }
 
 /**
@@ -340,26 +537,51 @@ export function resolveAnimators(
     const val = (param: AnimatorParam, fallback: number): number =>
       av?.get(animatorPropPath(i, param)) ?? fallback;
     return {
-      basedOn: d.basedOn,
-      shape: d.shape,
-      mode: d.mode === 'wiggly' ? 'wiggly' : 'range',
-      start: val('start', d.start),
-      end: val('end', d.end),
-      offset: val('offset', d.offset),
+      enabled: d.enabled !== false,
+      selectors: (d.selectors ?? []).map((s, j) => resolveSelector(s, i, j, av)),
       x: val('x', d.x),
       y: val('y', d.y),
-      scale: val('scale', d.scale),
-      rotation: val('rotation', d.rotation),
       z: val('z', d.z ?? 0),
+      scale: val('scale', d.scale),
+      scaleY: val('scaleY', d.scaleY ?? d.scale),
+      rotation: val('rotation', d.rotation),
       rotationX: val('rotationX', d.rotationX ?? 0),
       rotationY: val('rotationY', d.rotationY ?? 0),
       opacity: val('opacity', d.opacity),
+      fillOpacity: val('fillOpacity', d.fillOpacity ?? 100),
       tracking: val('tracking', d.tracking),
+      lineSpacing: val('lineSpacing', d.lineSpacing ?? 0),
+      characterOffset: val('characterOffset', d.characterOffset ?? 0),
+      blur: val('blur', d.blur ?? 0),
       skew: val('skew', d.skew ?? 0),
-      wiggleFreq: val('wiggleFreq', d.wiggleFreq ?? 2),
+      strokeWidth: val('strokeWidth', d.strokeWidth ?? 0),
       color: d.color,
+      strokeColor: d.strokeColor,
     };
   });
+}
+
+/** Override a selector's numeric parameters with their sampled tracks. */
+function resolveSelector(
+  s: SelectorData,
+  animIndex: number,
+  selIndex: number,
+  av: Map<string, number> | undefined,
+): SelectorData {
+  if (!av || av.size === 0) return s;
+  const out: Record<string, unknown> = { ...s };
+  for (const param of SELECTOR_PARAMS) {
+    if (!(param in out)) continue;
+    const v = av.get(selectorPropPath(animIndex, selIndex, param));
+    if (v !== undefined) out[param] = v;
+  }
+  return out as unknown as SelectorData;
+}
+
+/** Replace a layer's whole animator stack. Public because applying a preset
+ *  installs a serialized rig wholesale rather than one field at a time. */
+export function writeAnimatorData(nodeId: string, animators: TextAnimatorData[]): void {
+  writeAnimators(nodeId, animators.map(normalizeAnimator));
 }
 
 function writeAnimators(nodeId: string, animators: TextAnimatorData[]): void {
@@ -371,19 +593,20 @@ function writeAnimators(nodeId: string, animators: TextAnimatorData[]): void {
   bumpScene();
 }
 
-/** Add a fresh animator group to a text layer. */
-export function addTextAnimator(nodeId: string): void {
+/** Add a fresh animator group to a text layer. Returns its index, or -1. */
+export function addTextAnimator(nodeId: string): number {
   const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  writeAnimators(nodeId, [...readAnimatorData(node), defaultAnimator()]);
+  if (!node) return -1;
+  const next = [...readAnimatorData(node), defaultAnimator()];
+  writeAnimators(nodeId, next);
+  return next.length - 1;
 }
 
 /** Remove the animator at `index`. */
 export function removeTextAnimator(nodeId: string, index: number): void {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return;
-  const next = readAnimatorData(node).filter((_, i) => i !== index);
-  writeAnimators(nodeId, next);
+  writeAnimators(nodeId, readAnimatorData(node).filter((_, i) => i !== index));
 }
 
 /** Patch fields of the animator at `index` (static base values). */
@@ -398,8 +621,71 @@ export function updateAnimator(
   const cur = data[index];
   if (!cur) return;
   const next = data.slice();
-  next[index] = { ...cur, ...patch };
+  next[index] = normalizeAnimator({ ...cur, ...patch });
   writeAnimators(nodeId, next);
+}
+
+/** Append a selector of `kind` to the animator at `index`. */
+export function addSelector(
+  nodeId: string,
+  index: number,
+  kind: SelectorKind = 'range',
+): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const cur = readAnimatorData(node)[index];
+  if (!cur) return;
+  updateAnimator(nodeId, index, {
+    selectors: [...(cur.selectors ?? []), defaultSelector(kind)],
+  });
+}
+
+/** Remove the selector at `selectorIndex`. The last one cannot be removed —
+ *  an animator with no selector affects nothing and reads as broken. */
+export function removeSelector(
+  nodeId: string,
+  index: number,
+  selectorIndex: number,
+): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const cur = readAnimatorData(node)[index];
+  if (!cur || (cur.selectors?.length ?? 0) <= 1) return;
+  updateAnimator(nodeId, index, {
+    selectors: cur.selectors!.filter((_, j) => j !== selectorIndex),
+  });
+}
+
+/** Patch one selector. Changing `kind` rebuilds it from that kind's defaults,
+ *  keeping only what both kinds share. */
+export function updateSelector(
+  nodeId: string,
+  index: number,
+  selectorIndex: number,
+  patch: Partial<RangeSelectorData> & Record<string, unknown>,
+): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const cur = readAnimatorData(node)[index];
+  const sel = cur?.selectors?.[selectorIndex];
+  if (!cur || !sel) return;
+  let next: SelectorData;
+  if (patch.kind && patch.kind !== sel.kind) {
+    const fresh = defaultSelector(patch.kind as SelectorKind);
+    next = {
+      ...fresh,
+      id: sel.id,
+      basedOn: sel.basedOn,
+      mode: sel.mode,
+      enabled: sel.enabled,
+      ...patch,
+    } as SelectorData;
+  } else {
+    next = { ...sel, ...patch } as SelectorData;
+  }
+  const selectors = cur.selectors!.slice();
+  selectors[selectorIndex] = next;
+  updateAnimator(nodeId, index, { selectors });
 }
 
 /** Blend two `#rrggbb` colours by `mix` (0 = a, 1 = b). Falls back to `b`. */

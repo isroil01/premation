@@ -28,6 +28,7 @@ import { SplitPane } from '@components/SplitPane';
 import { LeftSidebar } from '@layout/LeftSidebar';
 import { RightInspector } from '@layout/RightInspector';
 import { WorkspaceViewport, type WorkspaceViewportProps } from '@layout/Workspace';
+import { Icon } from '@components/Icon';
 import { useLayoutStore } from '@stores/layoutStore';
 import styles from './EditorLayout.module.css';
 
@@ -60,41 +61,117 @@ export function EditorLayout({
   const setLeftSize = useLayoutStore((s) => s.setRegionSize);
   const setRightSize = useLayoutStore((s) => s.setRegionSize);
   const setBottomSize = useLayoutStore((s) => s.setRegionSize);
+  const externalPanels = useLayoutStore((s) => s.externalPanels);
+  const dockPanel = useLayoutStore((s) => s.dockPanel);
 
+  /**
+   * Which edge each dock sits on.
+   *
+   * The store has carried these three since workspaces were added — they
+   * persist, they ride along in saved layouts, and Customize → Appearance has
+   * had buttons for them — but this component laid itself out with the order
+   * hardcoded, so every one of those buttons was inert. It highlighted, it
+   * saved, and the panel did not move.
+   *
+   * A dock is expressed here as (pane order, which pane `size` applies to).
+   * `primary` must follow the order: it names the sized pane, so swapping the
+   * children without swapping it resizes the wrong side of the splitter.
+   */
+  const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition);
+  const inspectorPos = useLayoutStore((s) => s.rightInspectorPosition);
+  const timelinePos = useLayoutStore((s) => s.timelinePosition);
+
+  const sidebarFirst = leftSidebarPos !== 'right';
+  const inspectorLast = inspectorPos !== 'left';
+  const timelineLast = timelinePos !== 'top';
+
+  const isViewportExternal = externalPanels.includes('viewport');
+  const isTimelineExternal = externalPanels.includes('timeline');
+
+  /**
+   * Every pane carries a stable `key`.
+   *
+   * They are handed to SplitPane as an array whose ORDER changes when a dock
+   * moves. Without keys React reconciles by index, so flipping the inspector
+   * from right to left would re-mount both panes — remounting the viewport
+   * means tearing down and rebuilding the WebGL context, which is both slow
+   * and visible as a flash.
+   */
   const leftSidebarEl = (
-    <LeftSidebar renderers={sidebarRenderers} className={left.collapsed ? 'sidebar-collapsed-view' : ''} />
+    <LeftSidebar key="sidebar" renderers={sidebarRenderers} className={left.collapsed ? 'sidebar-collapsed-view' : ''} />
   );
   const rightInspectorEl = (
-    <RightInspector renderers={inspectorRenderers} header={inspectorHeader} className={right.collapsed ? 'inspector-collapsed-view' : ''} />
+    <RightInspector key="inspector" renderers={inspectorRenderers} header={inspectorHeader} className={right.collapsed ? 'inspector-collapsed-view' : ''} />
   );
 
-  // Top Content: Viewport (left) and RightInspector (right)
+  const viewportPane = (
+    <div className={styles.workspacePane} key="viewport">
+      {isViewportExternal ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.6)', gap: 12 }}>
+            <Icon name="export" size={24} />
+            <span style={{ fontSize: 13, fontWeight: 500 }}>Preview Canvas is open in an external window</span>
+            <button onClick={() => dockPanel('viewport')} style={{ padding: '6px 16px', background: 'var(--color-primary, #2b7eff)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+              Re-dock Preview to Main Window
+            </button>
+          </div>
+        ) : (
+          <WorkspaceViewport {...(workspaceExtras ?? {})} />
+        )}
+    </div>
+  );
+
+  // Viewport and inspector, in whichever order the inspector is docked.
+  // Typed as a tuple because SplitPane takes exactly two children — a plain
+  // array would widen to ReactNode[] and stop being checked.
+  const inspectorRow: [ReactNode, ReactNode] = inspectorLast
+    ? [viewportPane, rightInspectorEl]
+    : [rightInspectorEl, viewportPane];
+
   const topContent = (
     <SplitPane
+      key="viewport-row"
       className={styles.split}
       direction="horizontal"
-      primary="last"
+      primary={inspectorLast ? 'last' : 'first'}
       defaultSize={right.size}
-      minSize={right.collapsed ? 36 : right.minSize}
+      minSize={right.collapsed ? 44 : right.minSize}
       maxSize={Math.min(right.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : right.maxSize)}
-      size={right.collapsed ? 36 : right.size}
+      size={right.collapsed ? 44 : right.size}
       collapsed={right.collapsed}
       storageKey="rightInspector"
       onResizeEnd={(s) => setRightSize('rightInspector', s)}
     >
-      <div className={styles.workspacePane}>
-        <WorkspaceViewport {...(workspaceExtras ?? {})} />
-      </div>
-      {rightInspectorEl}
+      {inspectorRow}
     </SplitPane>
   );
 
-  // Main Right Pane: topContent (top) and Timeline (bottom)
+  const timelinePane = (
+    <div className={styles.timelinePane} key="timeline">
+      {isTimelineExternal ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.6)', gap: 12, background: 'var(--color-surface-2, #181819)' }}>
+            <Icon name="export" size={16} />
+            <span style={{ fontSize: 12 }}>Timeline is open in an external window</span>
+            <button onClick={() => dockPanel('timeline')} style={{ padding: '4px 12px', background: 'var(--color-primary, #2b7eff)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+              Re-dock Timeline
+            </button>
+          </div>
+        ) : (
+          timeline
+        )}
+    </div>
+  );
+
+  // Viewport row and timeline, in whichever order the timeline is docked.
+  const timelineColumn: [ReactNode, ReactNode] = timelineLast
+    ? [topContent, timelinePane]
+    : [timelinePane, topContent];
+
   const mainContent = (
     <SplitPane
+      key="main-column"
       className={styles.split}
       direction="vertical"
-      primary="last"
+      primary={timelineLast ? 'last' : 'first'}
       defaultSize={bottom.size}
       minSize={44}
       maxSize={bottom.maxSize}
@@ -103,32 +180,34 @@ export function EditorLayout({
       storageKey="bottomTimeline"
       onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
     >
-      {topContent}
-      <div className={styles.timelinePane}>{timeline}</div>
+      {timelineColumn}
     </SplitPane>
   );
+
+  const bodyRow: [ReactNode, ReactNode] = sidebarFirst
+    ? [leftSidebarEl, mainContent]
+    : [mainContent, leftSidebarEl];
 
   return (
     <div className={styles.root}>
       {/* Full-width AE-style top chrome (menu bar + tool row). */}
       {topNav}
 
-      {/* Body row: LeftSidebar (left) and mainContent (right) */}
+      {/* Body row: the sidebar on whichever edge it is docked to. */}
       <div className={styles.body}>
         <SplitPane
           className={styles.split}
           direction="horizontal"
-          primary="first"
+          primary={sidebarFirst ? 'first' : 'last'}
           defaultSize={left.size}
-          minSize={left.collapsed ? 36 : left.minSize}
+          minSize={left.collapsed ? 44 : left.minSize}
           maxSize={Math.min(left.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : left.maxSize)}
-          size={left.collapsed ? 36 : left.size}
+          size={left.collapsed ? 44 : left.size}
           collapsed={left.collapsed}
           storageKey="leftSidebar"
           onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
         >
-          {leftSidebarEl}
-          {mainContent}
+          {bodyRow}
         </SplitPane>
       </div>
 
@@ -136,3 +215,4 @@ export function EditorLayout({
     </div>
   );
 }
+

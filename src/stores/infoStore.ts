@@ -2,7 +2,7 @@
  * Info readout (AE's Info panel) — the pixel colour + composition coordinate
  * under the pointer, sampled live from the content canvas as the cursor moves
  * over the viewport. The workspace pointer handler writes it; the StatusBar
- * reads it. `present` is false when the cursor is off the canvas (show "—").
+ * reads it. `present` is false when the cursor is off the canvas (show " —").
  */
 
 import { create } from 'zustand';

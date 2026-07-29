@@ -61,7 +61,7 @@ describe('timeline property values', () => {
       />,
     );
     expect(screen.getByRole('spinbutton', { name: 'Opacity' }).getAttribute('aria-valuenow')).toBe('100');
-    // ...and the stopwatch is still the way to start animating.
+    //...and the stopwatch is still the way to start animating.
     expect(screen.queryByRole('button', { name: /Enable Opacity animation/i })).not.toBeNull();
   });
 

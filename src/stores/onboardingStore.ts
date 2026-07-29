@@ -1,5 +1,5 @@
 /**
- * Onboarding tour (spec §Onboarding & Migration). A short, first-run walkthrough
+ * Onboarding tour. A short, first-run walkthrough
  * of the five signature differences. Never a lecture — each step names a real
  * action the user can try. Persisted so it only auto-runs once.
  */

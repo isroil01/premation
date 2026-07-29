@@ -1,7 +1,7 @@
 /**
  * Context-menu manager (store-backed). Open a menu at a point from anywhere:
  *
- *   onContextMenu={(e) => { e.preventDefault();
+ *   onContextMenu={(e) => { e.preventDefault;
  *     openContextMenu(e.clientX, e.clientY, [
  *       { id: 'rename', label: 'Rename', onSelect: rename },
  *       { id: 'sep', separator: true },

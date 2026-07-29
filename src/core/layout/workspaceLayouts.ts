@@ -63,9 +63,19 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
   },
 ];
 
+/**
+ * Must match the ids actually registered in App.tsx.
+ *
+ * This list had gone stale: it named `components`, `shapes`, `text` and
+ * `comments` — none of which are registered (`comments` has no renderer at all)
+ * — while OMITTING `library` and `ai`. Since every built-in workspace preset and
+ * "Reset Layout to Default" applies this list verbatim, choosing any workspace
+ * silently DELETED the Elements & Library and AI Assistant tabs from the
+ * sidebar, and the dead ids were dropped on the floor.
+ */
 const DEFAULT_PANEL_ORDER: Record<RegionId, ReadonlyArray<string>> = {
-  leftSidebar: ['scene', 'assets', 'flow', 'components', 'shapes', 'text'],
-  rightInspector: ['properties', 'style', 'rig', 'effects', 'motion', 'motiontools', 'presets', 'misc', 'comments', 'history', 'renderQueue'],
+  leftSidebar: ['scene', 'assets', 'library', 'ai'],
+  rightInspector: ['properties', 'style', 'rig', 'effects', 'presets', 'misc'],
   centerWorkspace: [],
   bottomTimeline: [],
 };

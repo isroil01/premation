@@ -26,6 +26,14 @@ export default defineConfig({
       '@motion/animation': path.resolve(__dirname, 'packages/animation/src/index.ts'),
       '@motion/renderer': path.resolve(__dirname, 'packages/renderer/src/index.ts'),
       '@motion/ai-tools': path.resolve(__dirname, 'packages/ai-tools/src/index.ts'),
+      // These four resolve through tsconfig `paths` and the Jest moduleNameMapper
+      // as well. All three lists have to agree: a package missing from THIS one
+      // typechecks, tests green, and then fails to resolve in the dev server.
+      '@motion/design-system': path.resolve(__dirname, 'packages/design-system/src/index.ts'),
+      '@motion/technique-library': path.resolve(__dirname, 'packages/technique-library/src/index.ts'),
+      '@motion/product-motion': path.resolve(__dirname, 'packages/product-motion/src/index.ts'),
+      '@motion/caster': path.resolve(__dirname, 'packages/caster/src/index.ts'),
+      '@motion/audio': path.resolve(__dirname, 'packages/audio/src/index.ts'),
     },
   },
   build: {

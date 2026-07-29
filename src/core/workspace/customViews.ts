@@ -12,7 +12,7 @@
  * Pure and store-free: everything here is testable math + types.
  */
 
-import { Project3D, type Camera3D } from '@motion/scene';
+import { Project3D, type Camera3D, type OrthoView } from '@motion/scene';
 
 export const CUSTOM_VIEW_IDS = ['custom1', 'custom2', 'custom3'] as const;
 export type CustomViewId = (typeof CUSTOM_VIEW_IDS)[number];
@@ -103,6 +103,31 @@ export function customViewCamera(v: CustomViewParams, width: number, height: num
     ...(orientation.yaw !== 0 || orientation.pitch !== 0 ? { orientation } : {}),
   };
 }
+
+/**
+ * The custom-view orbit angles that reproduce each orthographic axis view.
+ *
+ * An axis view cannot be orbited and stay an axis view — the moment you swing
+ * off the axis it is, by definition, a custom view. So orbiting in Left view
+ * promotes the viewport to a Custom View seeded from these angles, which keeps
+ * the gesture continuous (the scene does not jump) while never writing to a
+ * scene node. See `orbitNavBy` in cameraNav.ts.
+ *
+ * Derived from `customViewCamera`'s convention: the eye starts at
+ * `poi + (0, 0, −distance)` — i.e. Front — and `orbitCamera` swings it by
+ * Rx(pitch) then Ry(yaw). yaw = +90 puts the eye at −x (Left); pitch = −90
+ * puts it at −y, which is ABOVE the comp because comp space is y-DOWN (Top).
+ * Pitch is clamped to ±89 to match `orbitViewParams` and avoid the degenerate
+ * straight-down look-at.
+ */
+export const ORTHO_VIEW_ANGLES: Record<OrthoView, { yaw: number; pitch: number }> = {
+  front: { yaw: 0, pitch: 0 },
+  back: { yaw: 180, pitch: 0 },
+  left: { yaw: 90, pitch: 0 },
+  right: { yaw: -90, pitch: 0 },
+  top: { yaw: 0, pitch: -89 },
+  bottom: { yaw: 0, pitch: 89 },
+};
 
 // ── Navigation math (pure patches; sensitivities match cameraNav.ts) ────────
 

@@ -4,7 +4,13 @@ import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
+import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import './styles/global.css';
+
+// FIRST, before any store hydrates or any plugin host boots: remove plaintext
+// provider keys an earlier build mirrored into localStorage. Ordering is the
+// whole point — a purge that runs after a plugin can read storage is theatre.
+purgeLegacyLocalAiKeys();
 
 // Read the LOCAL_FIRST build flag once, here at the entry — `import.meta.env` is
 // a Vite construct, and keeping it out of shared modules avoids Jest's CJS

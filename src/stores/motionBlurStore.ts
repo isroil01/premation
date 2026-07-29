@@ -1,5 +1,5 @@
 /**
- * Composition-level motion-blur settings (Prompt 6). Enables motion blur for the
+ * Composition-level motion-blur settings. Enables motion blur for the
  * comp and sets the shutter angle + sample count; individual layers still opt in
  * via their own toggle. The render hooks read this and pass it to buildSnapshot.
  */

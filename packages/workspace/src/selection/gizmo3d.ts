@@ -42,6 +42,17 @@ export interface RenderedGizmoAxis {
   endScreen: { x: number; y: number };
   headScreen: { x: number; y: number };
   axis3DDir: Vec3;
+  /**
+   * This axis points (nearly) straight at or away from the viewer, so it
+   * projects to a stub or a single point. It stays in the list so the overlay
+   * can still draw a marker, but it is EXCLUDED from segment hit-testing —
+   * a zero-length segment otherwise claims a full hit-radius disc at the origin
+   * and swallows every other handle there — and its drag must use the
+   * screen-delta fallback, because ray/axis intersection is singular.
+   */
+  degenerate: boolean;
+  /** Projected length in composition px (0 when degenerate). */
+  screenLen: number;
 }
 
 export interface RenderedGizmoArc {
@@ -217,15 +228,37 @@ export function buildRenderedGizmo3D(
 
   const basis = getGizmoBasis(config.axisMode, nodeRotation, cam);
 
-  // Compute fixed pixel length in 3D world space relative to perspective scale
+  // Screen-constant arm length, computed PER AXIS.
+  //
+  // This used to derive one shared scale from basis.x alone, which is wrong the
+  // moment the axes don't foreshorten equally: in a front view basis.z points at
+  // the camera, so its true px-per-world-unit is ~0 while X's is 1 — the Z arm
+  // was then drawn at X's length and collapsed to a zero-length segment at the
+  // origin (the "Z arrow doesn't exist / can't be dragged" bug). Scaling each
+  // axis by its own rate keeps every arm that CAN be seen at `gizmoLengthPx`.
   const targetPx = config.gizmoLengthPx;
-  const unitProjX = project({
-    x: position3D.x + basis.x.x,
-    y: position3D.y + basis.x.y,
-    z: position3D.z + basis.x.z,
-  });
-  const pxPerWorldUnit = Math.hypot(unitProjX.x - centerScreen.x, unitProjX.y - centerScreen.y) || 1;
-  const axisLen3D = targetPx / pxPerWorldUnit;
+  const pxPerUnit = (dir: Vec3): number => {
+    const p = project({ x: position3D.x + dir.x, y: position3D.y + dir.y, z: position3D.z + dir.z });
+    return Math.hypot(p.x - centerScreen.x, p.y - centerScreen.y);
+  };
+  const rateX = pxPerUnit(basis.x);
+  const rateY = pxPerUnit(basis.y);
+  const rateZ = pxPerUnit(basis.z);
+  // An axis whose projected rate is below this is edge-on: no 3D length makes it
+  // visible, so cap the extension instead of letting `targetPx / ~0` explode the
+  // arm off-screen.
+  const MIN_RATE = 0.02;
+  const lenFor = (rate: number): number => targetPx / Math.max(rate, MIN_RATE);
+  const axisLenX = lenFor(rateX);
+  const axisLenY = lenFor(rateY);
+  const axisLenZ = lenFor(rateZ);
+  // Rings, planes and the reference length for anything not per-axis follow the
+  // largest visible arm, so the gizmo keeps one coherent size.
+  const axisLen3D = Math.max(axisLenX, axisLenY, axisLenZ) === Infinity
+    ? targetPx
+    : Math.min(axisLenX, axisLenY, axisLenZ);
+  /** Below this projected length an arm is a point, not a draggable segment. */
+  const MIN_AXIS_SCREEN_PX = 8;
 
   const axes: RenderedGizmoAxis[] = [];
   const arcs: RenderedGizmoArc[] = [];
@@ -248,19 +281,20 @@ export function buildRenderedGizmo3D(
 
   // ── Position / Scale Axes ──
   if (isPos || isScale) {
-    const list: Array<{ type: GizmoHandleType; dir: Vec3; c: string; hc: string }> = [
-      { type: isPos ? 'pos_x' : 'scale_x', dir: basis.x, c: colors.x, hc: colors.hoverX },
-      { type: isPos ? 'pos_y' : 'scale_y', dir: basis.y, c: colors.y, hc: colors.hoverY },
-      { type: isPos ? 'pos_z' : 'scale_z', dir: basis.z, c: colors.z, hc: colors.hoverZ },
+    const list: Array<{ type: GizmoHandleType; dir: Vec3; len: number; c: string; hc: string }> = [
+      { type: isPos ? 'pos_x' : 'scale_x', dir: basis.x, len: axisLenX, c: colors.x, hc: colors.hoverX },
+      { type: isPos ? 'pos_y' : 'scale_y', dir: basis.y, len: axisLenY, c: colors.y, hc: colors.hoverY },
+      { type: isPos ? 'pos_z' : 'scale_z', dir: basis.z, len: axisLenZ, c: colors.z, hc: colors.hoverZ },
     ];
 
     for (const item of list) {
       const tip3D = {
-        x: position3D.x + item.dir.x * axisLen3D,
-        y: position3D.y + item.dir.y * axisLen3D,
-        z: position3D.z + item.dir.z * axisLen3D,
+        x: position3D.x + item.dir.x * item.len,
+        y: position3D.y + item.dir.y * item.len,
+        z: position3D.z + item.dir.z * item.len,
       };
       const tipProj = project(tip3D);
+      const screenLen = Math.hypot(tipProj.x - centerScreen.x, tipProj.y - centerScreen.y);
 
       axes.push({
         type: item.type,
@@ -270,6 +304,8 @@ export function buildRenderedGizmo3D(
         endScreen: { x: tipProj.x, y: tipProj.y },
         headScreen: { x: tipProj.x, y: tipProj.y },
         axis3DDir: item.dir,
+        degenerate: !Number.isFinite(screenLen) || screenLen < MIN_AXIS_SCREEN_PX,
+        screenLen: Number.isFinite(screenLen) ? screenLen : 0,
       });
     }
 
@@ -306,8 +342,20 @@ export function buildRenderedGizmo3D(
 
   // ── Rotation Arcs ──
   if (isRot) {
-    const arcRadius3D = axisLen3D * 0.85;
-    const segments = 32;
+    // Rings sit OUTSIDE the position arrows (AE: arrows inside, trackball rings
+    // outside), not inside them at 0.85×.
+    //
+    // This is the root of "only one side of the rotation ring is selectable".
+    // A ring seen edge-on projects to a straight line THROUGH the origin,
+    // spanning ±radius along one axis. At 0.85× that line was entirely covered
+    // by the position arrows on the positive side, so — with the arrows also
+    // hit-tested first — only the negative half of each ring could ever be
+    // grabbed. Pushing the radius past the arrow tip leaves an unambiguous
+    // outer band on BOTH sides, and the negative side is free either way
+    // (arrows are drawn positive-only).
+    const RING_RADIUS_FACTOR = 1.4;
+    const arcRadius3D = axisLen3D * RING_RADIUS_FACTOR;
+    const segments = 48;
 
     const mkArc = (t: GizmoHandleType, normal: Vec3, u: Vec3, v: Vec3, col: string, hcol: string): RenderedGizmoArc => {
       const pointsScreen: Array<{ x: number; y: number }> = [];
@@ -329,7 +377,7 @@ export function buildRenderedGizmo3D(
         color: col,
         hoverColor: hcol,
         centerScreen,
-        radiusPx: targetPx * 0.85,
+        radiusPx: targetPx * RING_RADIUS_FACTOR,
         axis3DNormal: normal,
         pointsScreen,
       };
@@ -357,13 +405,29 @@ export function buildRenderedGizmo3D(
 /**
  * Hit test a mouse click/hover against the rendered 3D Gizmo components.
  * Returns the hit handle type, or null if outside hit threshold.
+ *
+ * NEAREST WINS, not first-match.
+ *
+ * This used to be a priority cascade — every axis, then every plane, then every
+ * arc, then the centre — returning on the first handle within tolerance. Because
+ * all three axes start at the gizmo origin and the cascade order was the exact
+ * REVERSE of the paint order, the handle drawn on top was always the one tested
+ * last:
+ *   • the centre uniform-scale dot (drawn topmost) could never be clicked at all
+ * — `pos_x` claimed the origin first;
+ *   • the planar handles share two edges with the axes, so only their far corner
+ *     was reachable;
+ *   • an edge-on rotation ring collapses onto an axis, and the axis won — so half
+ *     of each ring was dead.
+ * Distance-ranked hit-testing removes the ordering bias; ties fall back to paint
+ * order (topmost drawn wins), which is what a user expects from what they see.
  */
 export function hitTestGizmo3D(
   mouseScreen: { x: number; y: number },
   gizmo: RenderedGizmo3D,
   hitThresholdPx = 10,
 ): GizmoHandleType | null {
-  const distToLine = (p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number => {
+  const distToSegment = (p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number => {
     const l2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
     if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
     let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
@@ -371,49 +435,81 @@ export function hitTestGizmo3D(
     return Math.hypot(p.x - (a.x + t * (b.x - a.x)), p.y - (a.y + t * (b.y - a.y)));
   };
 
-  // 1. Check axis handles & heads
-  for (const axis of gizmo.axes) {
-    const dLine = distToLine(mouseScreen, axis.startScreen, axis.endScreen);
-    if (dLine <= hitThresholdPx) return axis.type;
-  }
+  // Tie-break priority (higher wins at equal distance).
+  //
+  // Planes sit under everything (they share two edges with the axes by
+  // construction). Rings come next, then arrows, then the centre dot.
+  //
+  // Arrows outrank rings deliberately: an edge-on ring projects to a straight
+  // line THROUGH the origin, so it overlaps its neighbouring arrow's whole shaft
+  // at distance ~0. The ring is not stranded by losing that band — it is 1.4×
+  // longer than the arrows, so it keeps an exclusive stretch beyond each tip, and
+  // the entire negative side is arrow-free. The centre dot outranks all of them
+  // because it is the smallest target and is painted topmost.
+  const LAYER_PLANE = 0;
+  const LAYER_ARC = 1;
+  const LAYER_AXIS = 2;
+  const LAYER_CENTRE = 3;
+  const TIE_EPS = 0.75;
 
-  // 2. Check planar handles
-  for (const plane of gizmo.planes) {
-    if (plane.pointsScreen.length === 4) {
-      // Point-in-polygon test for quadrilateral
-      let inside = false;
-      const pts = plane.pointsScreen;
-      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const pi = pts[i];
-        const pj = pts[j];
-        if (!pi || !pj) continue;
-        const xi = pi.x, yi = pi.y;
-        const xj = pj.x, yj = pj.y;
-        const intersect = yi > mouseScreen.y !== yj > mouseScreen.y &&
-          mouseScreen.x < ((xj - xi) * (mouseScreen.y - yi)) / (yj - yi) + xi;
-        if (intersect) inside = !inside;
-      }
-      if (inside) return plane.type;
+  let best: { type: GizmoHandleType; dist: number; layer: number } | null = null;
+  const consider = (type: GizmoHandleType, dist: number, layer: number): void => {
+    if (!Number.isFinite(dist) || dist > hitThresholdPx) return;
+    if (
+      best === null ||
+      dist < best.dist - TIE_EPS ||
+      (Math.abs(dist - best.dist) <= TIE_EPS && layer > best.layer)
+    ) {
+      best = { type, dist, layer };
     }
+  };
+
+  // Centre uniform-scale handle — a small target drawn on top of everything.
+  consider(
+    'scale_center',
+    Math.hypot(mouseScreen.x - gizmo.centerScreen.x, mouseScreen.y - gizmo.centerScreen.y),
+    LAYER_CENTRE,
+  );
+
+  // Axis arms. A degenerate (edge-on) arm is skipped: its segment has zero
+  // length, so `distToSegment` would report the distance to the ORIGIN and let it
+  // claim a full-tolerance disc there, beating every handle that legitimately
+  // lives at the origin.
+  for (const axis of gizmo.axes) {
+    if (axis.degenerate) continue;
+    consider(axis.type, distToSegment(mouseScreen, axis.startScreen, axis.endScreen), LAYER_AXIS);
   }
 
-  // 3. Check rotation arc rings
+  // Planar handles — inside the quad counts as distance 0.
+  for (const plane of gizmo.planes) {
+    const pts = plane.pointsScreen;
+    if (pts.length !== 4) continue;
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const pi = pts[i];
+      const pj = pts[j];
+      if (!pi || !pj) continue;
+      const intersect =
+        pi.y > mouseScreen.y !== pj.y > mouseScreen.y &&
+        mouseScreen.x < ((pj.x - pi.x) * (mouseScreen.y - pi.y)) / (pj.y - pi.y) + pi.x;
+      if (intersect) inside = !inside;
+    }
+    if (inside) consider(plane.type, 0, LAYER_PLANE);
+  }
+
+  // Rotation rings — nearest point on the polyline.
   for (const arc of gizmo.arcs) {
     const pts = arc.pointsScreen;
+    let nearest = Infinity;
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i];
       const b = pts[i + 1];
       if (!a || !b) continue;
-      if (distToLine(mouseScreen, a, b) <= hitThresholdPx) {
-        return arc.type;
-      }
+      const d = distToSegment(mouseScreen, a, b);
+      if (d < nearest) nearest = d;
     }
+    consider(arc.type, nearest, LAYER_ARC);
   }
 
-  // 4. Center scale handle
-  if (Math.hypot(mouseScreen.x - gizmo.centerScreen.x, mouseScreen.y - gizmo.centerScreen.y) <= hitThresholdPx + 2) {
-    return 'scale_center';
-  }
-
-  return null;
+  return best === null ? null : (best as { type: GizmoHandleType }).type;
 }

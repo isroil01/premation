@@ -1,6 +1,6 @@
 /**
  * Material system. A material binds a shader to fixed pipeline state (blend,
- * topology, bind-group layout). `MaterialSystem.pipeline()` compiles the shader
+ * topology, bind-group layout). `MaterialSystem.pipeline` compiles the shader
  * (cached) and builds the pipeline (deduped via ResourceManager) — so N objects
  * sharing a material share one pipeline. Custom materials register new shaders
  * and pass their own layout.
@@ -90,6 +90,22 @@ export const MATTE_COMBINE_MATERIAL: MaterialDescriptor = {
 /** Built-in material: advanced blend combine (layer src + backdrop dst). */
 export const BLEND_COMBINE_MATERIAL: MaterialDescriptor = {
   shader: 'blend-combine',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+/**
+ * Built-in material: glass composite. Uniform + blurred-backdrop texture +
+ * sampler + the layer texture (binding 3), whose ALPHA is the glass silhouette
+ * and whose gradient drives refraction. See shaders/glass.ts.
+ */
+export const GLASS_MATERIAL: MaterialDescriptor = {
+  shader: 'glass-composite',
   topology: 'triangle-list',
   layout: [
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
@@ -256,8 +272,15 @@ export class MaterialSystem {
     private readonly shaderCache: ShaderCache,
   ) {}
 
-  /** Get (or build) the pipeline for a material + blend + target format. */
-  pipeline(material: MaterialDescriptor, blend: BlendMode, colorFormat: TextureFormat): PipelineHandle {
+  /**
+   * Get (or build) the pipeline for a material + blend + target format.
+   *
+   * `samples` is part of the identity, not a detail: on WebGPU a pipeline is
+   * only valid in a pass whose attachments have the same sample count, so a
+   * cache shared between the MSAA 3D target and the single-sample surface would
+   * hand back a pipeline the next pass rejects.
+   */
+  pipeline(material: MaterialDescriptor, blend: BlendMode, colorFormat: TextureFormat, samples = 1): PipelineHandle {
     const source = this.registry.require(material.shader);
     const shader = this.shaderCache.get(source);
     const depth = material.depth;
@@ -269,6 +292,7 @@ export class MaterialSystem {
       blend,
       colorFormat,
       depth ? `d${depth.test ? 1 : 0}${depth.write ? 1 : 0}` : 'd00',
+      `s${samples}`,
     );
     return this.resources.pipeline(key, {
       label: `${material.shader}/${blend}`,
@@ -279,6 +303,7 @@ export class MaterialSystem {
       blend,
       colorFormat,
       ...(depth ? { depthTest: depth.test, depthWrite: depth.write, depthFormat: 'depth24plus' as const } : {}),
+      ...(samples > 1 ? { samples } : {}),
     });
   }
 }

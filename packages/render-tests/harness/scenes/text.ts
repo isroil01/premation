@@ -62,11 +62,22 @@ export const textScenes: Scene[] = [
         ],
       }),
     );
-  }, 'known-divergent'),
+    // Was 'known-divergent' on two counts, both now fixed: glyph transforms
+    // were dropped between buildSnapshot and the rasterizer so this rendered
+    // un-animated text, and once it DID animate the lifted glyphs were clipped
+    // at the texture edge because text raster padding ignored animator extents.
+    // With both fixed it matches, so it is GATED — a regression in either goes
+    // red rather than being quietly tolerated.
+  }, 'expect-pass'),
 
   scene('text-on-path', 'Text riding an ellipse mask path.', (graph) => {
     graph.addNode(textNode('t', 'ORBITING TEXT', { fontSize: 34 }));
     graph.setMask('t', { paths: [ellipseMask(360, 150)] });
     graph.setTextPath('t', { pathId: '', firstMargin: 0, reversed: false, perpendicular: true });
-  }, 'known-divergent'),
+    // Was 'known-divergent' because `layer.textPath` died at the same seam as
+    // the animator glyphs — buildSnapshot resolved the path placement and
+    // nothing forwarded it, so this rendered a straight line of text. With the
+    // seam wired it matches the reference exactly, so it is GATED now: if the
+    // forwarding regresses, this goes red instead of being quietly tolerated.
+  }, 'expect-pass'),
 ];

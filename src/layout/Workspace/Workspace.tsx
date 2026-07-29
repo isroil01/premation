@@ -109,12 +109,16 @@ export function WorkspaceViewport({
 
   const stageRef   = useRef<HTMLDivElement | null>(null);
   const canvasRef  = useRef<HTMLCanvasElement | null>(null);
+  // RAM-preview blit layer — see `.cacheCanvas`. Sits between the content and
+  // the interaction overlay so cached pixels replace the render, not the chrome.
+  const cacheRef   = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const { focus, focusKey } = useFocusContext();
 
 
   const { ready, renderError } = useWorkspace({
     contentCanvasRef: canvasRef,
+    cacheCanvasRef: cacheRef,
     overlayCanvasRef: overlayRef,
     stageRef,
     sceneRev,
@@ -308,6 +312,7 @@ export function WorkspaceViewport({
           }
         >
           <canvas ref={canvasRef} className={styles.canvas} />
+          <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
           {/* Scene loading indicator — until the backend paints its first frame. */}
           {!ready && !renderError && (
@@ -329,8 +334,16 @@ export function WorkspaceViewport({
           <TextEditOverlay />
           <PuppetOverlay />
           <BoneOverlay />
-          {gizmo3dProps.is3D && gizmo3dProps.singleId && (
-            <Gizmo3dOverlay {...gizmo3dProps} nodeId={gizmo3dProps.singleId} />
+          {/* Mounts for the whole 3D SCENE, not for the selection: the ground
+              plane and comp frame are how you orient yourself in a side view,
+              so gating them on "a 3D layer is selected" hid them in exactly
+              the case they exist for. The gizmo inside still needs a target. */}
+          {(gizmo3dProps.scene3d || (gizmo3dProps.is3D && gizmo3dProps.singleId)) && (
+            <Gizmo3dOverlay
+              {...gizmo3dProps}
+              nodeId={gizmo3dProps.singleId ?? null}
+              showGizmo={gizmo3dProps.is3D && !!gizmo3dProps.singleId}
+            />
           )}
           {/* Persistent view-orientation axis widget (whenever the comp is 3D). */}
           <AxisWidgetOverlay />

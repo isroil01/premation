@@ -1,7 +1,7 @@
 /**
  * LeftSidebar — host for the left region. Uses DockPanel to render the
  * tabbed panel set defined in the layout store. Future engine panels
- * (scene graph, asset library, ...) register their panel id + renderers
+ * (scene graph, asset library,...) register their panel id + renderers
  * via the DockPanel renderers prop.
  */
 
@@ -19,10 +19,11 @@ export interface LeftSidebarProps {
 }
 
 export function LeftSidebar({ renderers, headerExtras, header, className }: LeftSidebarProps): JSX.Element {
+  const isCollapsed = className?.includes('collapsed-view') || false;
   return (
     <aside className={cn(styles.root, className)}>
-      {header ? <div className={styles.header}>{header}</div> : null}
-      <DockPanel region="leftSidebar" renderers={renderers} headerExtras={headerExtras} />
+      {!isCollapsed && header ? <div className={styles.header}>{header}</div> : null}
+      <DockPanel region="leftSidebar" renderers={renderers} headerExtras={headerExtras} className={className} />
     </aside>
   );
 }

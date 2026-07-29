@@ -13,7 +13,7 @@ import { addRoot, addShape, addText, addGradientShape, radialFill, liveKf, type 
 
 const CW = 1920, CH = 1080, CX = CW / 2, CY = CH / 2;
 
-/** Nodes only (graph-agnostic) — shared by build() and the thumbnail. */
+/** Nodes only (graph-agnostic) — shared by build and the thumbnail. */
 export function layoutTitleCard(g: SceneGraph, rootId = 'tpl_root'): void {
   addRoot(g, rootId, 'Title Card');
   addShape(g, 'tpl_bg', rootId, CX, CY, CW, CH, '#0e0e1c');

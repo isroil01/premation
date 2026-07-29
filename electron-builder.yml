@@ -8,18 +8,36 @@ directories:
   output: release
   buildResources: build
 
+# App/installer icon — build/icon.png (512×512 Premation mark). electron-builder
+# derives the .ico / .icns / Linux icon set from it.
+icon: build/icon.png
+
 # The renderer bundle + compiled main/preload + manifest are all that ship.
 files:
   - dist/**
   - dist-electron/**
   - package.json
 
-# Bundle the motion-back server as a sidecar so the packaged desktop app can
-# launch it itself (electron/backend.ts resolves <resources>/backend/dist/main.js).
-# NOTE: this ships the server's node_modules (incl. the Prisma engine) and .env.
-# The app still needs a reachable database — for a portable installer switch
-# motion-back to SQLite, and provide the OpenAI key via a first-run setting
-# rather than shipping .env. Run `npm run build` in ../motion-back first.
+# ── Optional server sidecar ───────────────────────────────────────────────────
+# Bundles the companion `motion-back` server so the packaged app can launch it
+# itself (electron/backend.ts resolves <resources>/backend/dist/main.js).
+#
+# READ BEFORE BUILDING A RELEASE:
+#
+#  1. This requires a sibling `../motion-back` checkout that has already been
+#     built (`npm run build` there). Without it, `npm run dist` fails. If you
+#     only need the editor, delete this whole `extraResources` block — everything
+#     except sign-in, cloud projects and AI works fully offline.
+#  2. It copies `../motion-back/.env` into the installer. That file holds
+#     database credentials and API keys, so ANY build you distribute leaks them.
+#     Remove that entry and provide configuration at first run instead.
+#  3. The bundled server still needs a reachable database. For a portable
+#     installer, point motion-back at SQLite first.
+#
+# To bundle ffmpeg (so MP4/WebM/GIF export works without a system install), add:
+#   - from: <path-to>/ffmpeg           # containing ffmpeg[.exe]
+#     to: ffmpeg
+# electron/main.ts checks <resources>/ffmpeg before falling back to PATH.
 extraResources:
   - from: ../motion-back/dist
     to: backend/dist

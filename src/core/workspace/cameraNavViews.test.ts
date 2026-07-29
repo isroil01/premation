@@ -14,7 +14,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { useGuidesStore } from '@stores/guidesStore';
 import type { SceneNode } from '@core/types';
-import { customViewCamera, defaultCustomViews } from './customViews';
+import { customViewCamera, defaultCustomViews, ORTHO_VIEW_ANGLES } from './customViews';
 import {
   dollyNavBy,
   findNavTarget,
@@ -87,6 +87,86 @@ describe('findNavTarget', () => {
     useGuidesStore.getState().setCamera3dMode('custom1');
     expect(findNavTarget()).toBeNull();
     expect(sceneHasAny3D()).toBe(false);
+  });
+
+  it.each(['front', 'back', 'left', 'right', 'top', 'bottom'] as const)(
+    "ortho view '%s' → its OWN target, never the scene camera",
+    (view) => {
+      add3DShape();
+      addCamera(); // present, and must be ignored
+      useGuidesStore.getState().setCamera3dMode(view);
+      expect(findNavTarget()).toEqual({ kind: 'ortho', view });
+    },
+  );
+
+  it('ortho view without any 3D layer → null', () => {
+    useGuidesStore.getState().setCamera3dMode('top');
+    expect(findNavTarget()).toBeNull();
+  });
+});
+
+describe('ortho-view navigation never touches the scene camera', () => {
+  beforeEach(() => {
+    add3DShape();
+    addCamera();
+    useGuidesStore.getState().setCamera3dMode('top');
+  });
+
+  it('orbit promotes to a custom view seeded from the axis, leaving the scene camera alone', () => {
+    const before = { ...camProps() };
+    orbitNavBy({ kind: 'ortho', view: 'top' }, 10, 30);
+
+    // Seeded from ORTHO_VIEW_ANGLES.top = { yaw: 0, pitch: -89 }, then dragged.
+    const v = useGuidesStore.getState().customViews.custom1;
+    expect(v.yaw).toBeCloseTo(0 + 4, 9); // 10 × 0.4
+    expect(v.pitch).toBeCloseTo(-89 + 12, 9); // 30 × 0.4, tilting down off the pole
+    // The viewport is now a custom view — the label changes, so the promotion
+    // is visible rather than silent.
+    expect(useGuidesStore.getState().camera3dMode).toBe('custom1');
+    expect(camProps()).toEqual(before);
+  });
+
+  it('orbit writes no orbitYaw/orbitPitch onto the camera layer (the reported bug)', () => {
+    orbitNavBy({ kind: 'ortho', view: 'left' }, 40, 25);
+    expect(camProps().orbitYaw).toBeUndefined();
+    expect(camProps().orbitPitch).toBeUndefined();
+  });
+
+  it('track and dolly leave every scene-camera prop untouched', () => {
+    const before = { ...camProps() };
+    trackNavBy({ kind: 'ortho', view: 'top' }, 10, 20, 1, 1920, 1080);
+    dollyNavBy({ kind: 'ortho', view: 'top' }, -50, 1920, 1080);
+    expect(camProps()).toEqual(before);
+  });
+});
+
+describe('ORTHO_VIEW_ANGLES reproduce each axis view', () => {
+  // The promotion must not make the scene jump: a custom view built at these
+  // angles has to look down the SAME axis the ortho view looks down. The ortho
+  // "into screen" direction is right × down (project3d's ORTHO_BASIS).
+  const W = 1920;
+  const H = 1080;
+  const AXIS: Record<string, { x: number; y: number; z: number }> = {
+    front: { x: 0, y: 0, z: 1 },
+    back: { x: 0, y: 0, z: -1 },
+    left: { x: 1, y: 0, z: 0 },
+    right: { x: -1, y: 0, z: 0 },
+    top: { x: 0, y: 1, z: 0 },
+    bottom: { x: 0, y: -1, z: 0 },
+  };
+
+  it.each(Object.keys(AXIS))('%s', (view) => {
+    const a = ORTHO_VIEW_ANGLES[view as keyof typeof ORTHO_VIEW_ANGLES];
+    const cam = customViewCamera({ ...a, distance: null, poi: null }, W, H);
+    const poi = { x: W / 2, y: H / 2, z: 0 };
+    // Eye → POI, normalised, should be the view axis.
+    const d = { x: poi.x - cam.position.x, y: poi.y - cam.position.y, z: poi.z - cam.position.z };
+    const len = Math.hypot(d.x, d.y, d.z);
+    const want = AXIS[view]!;
+    // Top/bottom are clamped to ±89°, so allow 1° of slop on those.
+    expect(d.x / len).toBeCloseTo(want.x, 1);
+    expect(d.y / len).toBeCloseTo(want.y, 1);
+    expect(d.z / len).toBeCloseTo(want.z, 1);
   });
 });
 

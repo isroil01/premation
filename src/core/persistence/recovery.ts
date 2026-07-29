@@ -1,5 +1,5 @@
 /**
- * Crash recovery (spec §Trust Infrastructure).
+ * Crash recovery.
  *
  * A recovery snapshot is a non-destructive copy of the editable state (scene +
  * animation + playhead) written to persistent settings by the autosave loop.
@@ -10,6 +10,7 @@
 import { getSettingsManager } from '@core/services/coreServices';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
+import { baselineHistory } from '@stores/historyStore';
 import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
 import type { ProjectFile } from '@core/types';
 
@@ -85,5 +86,8 @@ export function restoreRecovery(snap: RecoverySnapshot): number {
     sceneProjectIO.restore(structuredClone(snap.scene));
     defaultAnimation.restore(snap.anim);
   }
+  // Recovering IS a load: undo must not be able to step behind it into the
+  // seeded starter scene captured at boot.
+  baselineHistory('Recovered');
   return snap.time;
 }

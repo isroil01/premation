@@ -8,7 +8,7 @@
  * and the `__` prefix keeps it out of the generic NodeInspector's prop list.
  *
  * Runs index the **code-point array** `[...text]`, the same index space
- * `unitPositions()` uses, so a run and an animator selector mean the same thing
+ * `unitPositions` uses, so a run and an animator selector mean the same thing
  * by "character 5". (Neither is grapheme-cluster aware — a ZWJ emoji still
  * splits. That is a pre-existing limit of the animator path, not a new one.)
  *

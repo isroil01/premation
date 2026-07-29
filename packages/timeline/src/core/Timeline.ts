@@ -5,7 +5,7 @@
  *
  * It does NOT render, animate objects, or touch React/DOM. It emits typed events
  * and routes every structural change through a local undo/redo History. Playback
- * is timer-free: an external clock calls `tick(dtMs)` (or `nextFrame()`), so the
+ * is timer-free: an external clock calls `tick(dtMs)` (or `nextFrame`), so the
  * engine stays framework-independent.
  *
  * Canonical time unit: frames. Use the `time/` conversions for ms/seconds/timecode.
@@ -81,7 +81,7 @@ export class Timeline {
     };
   }
 
-  /** Factory mirroring the documented `timeline.create()` API. */
+  /** Factory mirroring the documented `timeline.create` API. */
   static create(init: TimelineInit = {}): Timeline {
     const t = new Timeline(init);
     t.events.emit('TimelineCreated', { id: t.id });

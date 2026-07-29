@@ -14,9 +14,34 @@ export interface MotionEditorFile {
   contents: string;
 }
 
+/** What the desktop shell persists for a signed-in user. Never the password. */
+export interface StoredCredentials {
+  /** The long-lived, single-use refresh token. Rotated on every exchange. */
+  refreshToken: string;
+  refreshExpiresAt?: string;
+  /** For "continue as …" on the sign-in screen. Not a secret. */
+  email?: string;
+  userId?: string;
+}
+
 export interface MotionEditorApi {
   readonly platform: string;
   readonly version: string;
+  /**
+   * OS-keystore-backed session storage, held in the main process.
+   *
+   * The refresh token is a 90-day credential, so it does not belong in
+   * renderer `localStorage` — a plaintext file the user (and anything running
+   * as them) can read and edit from DevTools. Encrypted here with DPAPI /
+   * Keychain / libsecret via Electron's `safeStorage`.
+   */
+  credentials?: {
+    get?(): Promise<StoredCredentials | null>;
+    set?(credentials: StoredCredentials): Promise<{ persisted: boolean }>;
+    clear?(): Promise<void>;
+    /** False when the OS has no keystore — sessions then last only as long as the app runs. */
+    available?(): Promise<boolean>;
+  };
   project?: {
     /** Native open dialog → the chosen project file (or null if cancelled). */
     open?(): Promise<MotionEditorFile | null>;
@@ -53,15 +78,37 @@ export interface MotionEditorApi {
     list?(root: string): Promise<string[]>;
   };
   /**
-   * Offline mp4 muxing (RFC §12). The renderer stages locally-rasterized frames
-   * (and optional audio) to a per-job temp dir, then muxes with a bundled ffmpeg
-   * — so mp4 export needs no network.
+   * Offline video encoding. The renderer stages locally-rasterized frames (and
+   * optional audio) to a per-job temp dir one at a time, then ffmpeg encodes them
+   * in a CHILD PROCESS — no network, no renderer-heap copy of the whole render,
+   * and no competition with the editor's UI thread.
+   *
+   * @see electron/main.ts registerRenderIpc
+   * @see src/core/export/videoSink.ts (the renderer-side consumer)
    */
   render?: {
     beginJob?(): Promise<string>;
-    stageFrame?(jobId: string, index: number, bytes: Uint8Array): Promise<void>;
+    stageFrame?(jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png'): Promise<void>;
     stageAudio?(jobId: string, bytes: Uint8Array): Promise<void>;
-    muxMp4?(jobId: string, opts: { fps: number; hasAudio?: boolean }): Promise<{ path: string }>;
+    encode?(
+      jobId: string,
+      opts: {
+        format: 'mp4' | 'webm' | 'gif' | 'mov';
+        fps: number;
+        hasAudio?: boolean;
+        quality?: 'high' | 'medium' | 'draft';
+      },
+    ): Promise<{ path: string; frames: number }>;
+    /** Kill an in-flight encode (Cancel / queue Pause). */
+    cancel?(jobId: string): Promise<void>;
+    /** Native save dialog, then move the encoded file there. Null if cancelled. */
+    save?(jobId: string, defaultName: string): Promise<{ path: string } | null>;
+    /** Move the encoded file into an already-chosen folder, no dialog. Never
+     *  overwrites — a clashing name is suffixed ` (2)`. */
+    saveTo?(jobId: string, dir: string, filename: string): Promise<{ path: string }>;
+    /** Directory picker for the render queue's output folder. */
+    chooseOutputDir?(): Promise<string | null>;
+    cleanJob?(jobId: string): Promise<void>;
   };
   /**
    * Local project index (SQLite in the main process). Every method mirrors the
@@ -83,6 +130,11 @@ export interface MotionEditorApi {
     minimize?(): Promise<void>;
     maximize?(): Promise<void>;
     close?(): Promise<void>;
+  };
+  popout?: {
+    spawnWindow?(panelId: string): void;
+    sendStateUpdate?(data: unknown): void;
+    onStateSync?(handler: (data: unknown) => void): () => void;
   };
   app?: {
     quit?(): Promise<void>;

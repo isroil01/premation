@@ -106,11 +106,31 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const [rowIdx, setRowIdx] = useState(1);
   const row = ROW_HEIGHTS[rowIdx]!;
   const cycleRow = (): void => setRowIdx((i) => (i + 1) % ROW_HEIGHTS.length);
-  const model = useMemo(
+
+  // The playhead is the one value that changes 60×/s during playback. We
+  // pull it directly from the workspace store and hand it to <Timeline> as a
+  // SEPARATE prop, so the model itself (and the memo that builds it) stays
+  // referentially stable across frames. Without this split the model's
+  // identity changes every frame and forces the entire row tree to
+  // re-evaluate, which is what made complex 3D/2D projects feel laggy.
+  //
+  // `currentTime` is still required on the model itself (the timecode and
+  // GraphEditor read it directly), so we keep it in the model unchanged.
+  // The win is that *all the other model fields* — tracks, markers, workArea,
+  // cachedRanges, etc. — are now stable across playback frames, and a
+  // memoized <Timeline> can skip the work. <Timeline> prefers the separate
+  // `playheadTime` prop when set and only falls back to `model.currentTime`
+  // for unmemoized callers.
+  const playheadTime = ws?.time ?? timelineProps.model.currentTime;
+  const model = useMemo<TimelineProps['model']>(
     () => ({ ...timelineProps.model, trackHeight: row.value }),
     [timelineProps.model, row.value],
   );
-  const timelineModelProps = { ...timelineProps, model };
+  const timelineModelProps: TimelineProps & { playheadTime: number } = {
+    ...timelineProps,
+    model,
+    playheadTime,
+  };
 
 
 
@@ -198,7 +218,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 className={styles.play}
                 onClick={() => getTimelineController().togglePlay()}
               >
-                <Icon name={ws?.playing ? 'pause' : 'play'} size={12} />
+                <Icon name={ws?.playing ? 'pause' : 'play'} size={15} />
               </IconButton>
               <IconButton aria-label="Next frame" title="Next frame (Page Down)" size="sm" onClick={() => getTimelineController().nextFrame()}>
                 <Icon name="chevron-right" size={13} />

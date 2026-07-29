@@ -267,14 +267,14 @@ export function MenuCheckbox({ id, label, checked, onChange, disabled = false }:
       role="menuitemcheckbox"
       aria-checked={checked}
       disabled={disabled}
-      className={cn(styles.item, disabled && styles.disabled)}
+      className={cn(styles.item, checked && styles.checked, disabled && styles.disabled)}
       onClick={() => { if (!disabled) onChange(!checked); }}
       onKeyDown={onKey}
     >
-      <span className={styles.itemIconSpacer}>
+      <span className={cn(styles.itemIconSpacer, checked && styles.itemIconActive)}>
         {checked ? <Icon name="check" size={12} /> : null}
       </span>
-      <span className={styles.itemLabel}>{label}</span>
+      <span className={cn(styles.itemLabel, checked && styles.itemLabelActive)}>{label}</span>
     </button>
   );
 }

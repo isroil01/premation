@@ -17,9 +17,11 @@ export type { WorkspaceState } from './state/WorkspaceState';
 export * as Vec from './math/Vec2';
 export * as Mat from './math/Mat2D';
 export * as Rect from './math/Rect';
+export * as OBox from './math/OrientedBox';
 export type { Vec2 } from './math/Vec2';
 export type { Mat2D } from './math/Mat2D';
 export type { Rect as RectType, Size } from './math';
+export type { Corners } from './math/OrientedBox';
 export type { BezierPoint } from './math/BezierPoint';
 export { corner as bezierCorner, smooth as bezierSmooth } from './math/BezierPoint';
 
@@ -68,10 +70,23 @@ export { SpatialIndex, type SpatialItem, type SpatialIndexOptions } from './hit/
 // ── Selection ─────────────────────────────────────────────────────
 export { SelectionController } from './selection/SelectionController';
 export { Marquee, type MarqueeMode } from './selection/Marquee';
-export { computeHandles, pickHandle, handleCursor, type Handle, type HandleId } from './selection/handles';
-export { resizeBounds, rotationDelta, isResizeHandle } from './selection/transform';
+export {
+  computeHandles,
+  pickHandle,
+  handleCursor,
+  visibleHandleIds,
+  CORNER_HANDLES,
+  EDGE_HANDLES,
+  EDGE_HANDLE_MIN_PX,
+  ANY_HANDLE_MIN_PX,
+  type Handle,
+  type HandleId,
+} from './selection/handles';
+export { resizeBounds, resizeBoundsAboutPivot, rotationDelta, isResizeHandle } from './selection/transform';
 export * as Gizmo3D from './selection/gizmo3d';
 export type { GizmoHandleType, RenderedGizmo3D, RenderedGizmoAxis, RenderedGizmoArc, RenderedGizmoPlane } from './selection/gizmo3d';
+export * as SceneGizmos from './selection/sceneGizmos';
+export type { GizmoSegment, GizmoSegmentKind, SceneGizmo } from './selection/sceneGizmos';
 export * as DimensionalGuides from './selection/dimensionalGuides';
 export type { DimensionalGuideState, DimensionalGuideRenderData } from './selection/dimensionalGuides';
 

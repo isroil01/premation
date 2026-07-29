@@ -5,8 +5,8 @@
  *
  * The renderer's passes call `get(key)` synchronously mid-frame, but image decode
  * is async, so the flow is:
- *   1. Each frame, MotionRendererBackend feeds current sources via `setImage()`.
- *   2. `get()` returns the decoded texture once ready, else a shared 1×1 white
+ *   1. Each frame, MotionRendererBackend feeds current sources via `setImage`.
+ *   2. `get` returns the decoded texture once ready, else a shared 1×1 white
  *      placeholder (so a box still shows while loading — matching Canvas2D — and
  *      no textured layer ever silently vanishes).
  *   3. When a decode completes we flip the entry to ready and fire `onChange`,
@@ -75,11 +75,18 @@ async function imageToBitmap(img: HTMLImageElement, w: number, h: number): Promi
  * letterbox a viewBox-only file into its bogus 300×150 default, then draw it to
  * a canvas. This also sidesteps Chromium's flaky `createImageBitmap(svgBlob)`.
  */
-function decodeSvgDataUrl(src: string): string {
+export function decodeSvgDataUrl(src: string): string {
   const comma = src.indexOf(',');
   const meta = src.slice(0, comma);
   const body = src.slice(comma + 1);
-  return /;base64/i.test(meta) ? atob(body) : decodeURIComponent(body);
+  if (!/;base64/i.test(meta)) return decodeURIComponent(body);
+  // `atob` yields one char per BYTE, not per character — feeding that straight
+  // to the parser renders every non-ASCII glyph as mojibake (`안녕` → `ìêµ`).
+  // SVG data URLs are UTF-8, so the bytes have to be decoded as UTF-8.
+  const binary = atob(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
 }
 
 async function rasterizeSvg(src: string, fillColor?: string): Promise<ImageBitmap> {
@@ -156,7 +163,7 @@ function isSvgBlob(blob: Blob, src: string): boolean {
 const defaultLoader: ImageLoader = async (src, fillColor) => {
   // Local-first asset (`motion-blob:<hash>`): resolve bytes from the bundle blob
   // store to a temporary object URL, decode it, then revoke. No network — the
-  // bytes are already on disk (RFC §6).
+  // bytes are already on disk.
   if (isLocalBlobRef(src)) {
     const url = await loadLocalBlobObjectUrl(src);
     if (!url) return rasterizeViaImage(src); // resolver missing → let <img> try (and fail visibly)
@@ -211,6 +218,8 @@ interface ImageEntry {
  *  Canvas2DBackend's text exactly (was: hardcoded 600 Inter, centred). */
 export interface TextSpec {
   text: string;
+  /** 0..1; fades the glyphs but not the layer styles. See applyEffectChain. */
+  fillOpacity?: number;
   fontSize: number;
   color: string;
   width: number;
@@ -227,9 +236,31 @@ export interface TextSpec {
   lineHeight?: number;
   /** Extra px between paragraphs (every newline starts one). */
   paragraphSpacing?: number;
+  /** Paint the per-glyph stroke over the fill rather than under it. */
+  strokeOverFill?: boolean;
   /** Per-character style overrides. Free on the GPU path: the runs are baked
    *  into the texture, so the shader never learns text had more than one font. */
   runs?: ReadonlyArray<RichRun>;
+  /**
+   * Per-glyph transforms from the layer's text animators.
+   *
+   * Was computed by buildSnapshot and then DROPPED here: `setText` never passed
+   * it on, so `drawText` never saw it and every 2D text animator rendered
+   * exactly nothing. (Per-character-3D text escaped, because buildSnapshot
+   * splits those into one layer per glyph before this point.) Presence forces
+   * the glyph-by-glyph draw.
+   */
+  glyphs?: ReadonlyArray<import('@core/text/textAnimators').GlyphTransform>;
+  /** Text riding a mask path, already flattened to a polyline in layer-local
+   *  space by buildSnapshot. Dropped at the same seam as `glyphs`, for the same
+   *  reason. */
+  textPath?: {
+    points: ReadonlyArray<{ x: number; y: number }>;
+    closed: boolean;
+    firstMargin: number;
+    reversed: boolean;
+    perpendicular: boolean;
+  };
   /** A Canvas2D-only effect stack (Fill/Stroke/Sharpen/Noise/…) baked into the
    *  text texture — those effects have no GPU shader form. Undefined when the
    *  layer has none (the common case). */
@@ -303,6 +334,22 @@ interface VideoEntry {
   texture: TextureHandle | null;
   w: number;
   h: number;
+  /**
+   * True once this element has completed (or at least requested) one seek.
+   *
+   * A loaded-but-never-seeked `<video>` presents a black surface, so the first
+   * upload must always be preceded by a seek even when the requested time already
+   * equals `currentTime`. See setVideo.
+   */
+  hasSeeked: boolean;
+  /** Kept so `releaseVideoEntry` can detach it — an anonymous handler could not
+   *  be removed, and it drives renders via `onChange`. */
+  onSeeked?: (() => void) | undefined;
+  /** ResourceManager pool key of `texture`, so it can actually be freed. */
+  poolKey?: string | undefined;
+  /** Last time we ASKED the element to seek to (not where it landed). Breaks the
+   *  seek → render → seek feedback loop; see setVideo. */
+  requestedTime: number | null;
 }
 
 interface ParticleEntry {
@@ -325,6 +372,15 @@ const PARTICLE_TEX_MAX = 4096;
 const HAVE_CURRENT_DATA = 2;
 /** Only re-seek a video when the playhead drifts past this (seconds). */
 const SEEK_EPSILON = 0.05;
+/**
+ * How far past the target the FIRST seek of a video goes, in seconds.
+ *
+ * Assigning `currentTime` a value it already holds is a no-op that fires no
+ * `seeked` event, so a video sitting at 0 asked to show 0 would never decode.
+ * 0.5 ms is orders of magnitude inside a single frame at any frame rate, so the
+ * decoded frame is still the correct one.
+ */
+const FIRST_DECODE_NUDGE = 0.0005;
 
 export class AppTextureProvider implements TextureProvider {
   /** Fired when an async decode finishes and a texture becomes ready. */
@@ -365,7 +421,7 @@ export class AppTextureProvider implements TextureProvider {
   private readonly gradientEntries = new Map<string, GradientEntry>();
   private readonly lutEntries = new Map<string, LutEntry>();
   /** Externally-rasterized frames (decoded video frames for Frame Mix). */
-  private readonly frameEntries = new Map<string, { signature: string; texture: TextureHandle }>();
+  private readonly frameEntries = new Map<string, { signature: string; texture: TextureHandle; poolKey: string }>();
   private readonly particleEntries = new Map<string, ParticleEntry>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
@@ -381,7 +437,7 @@ export class AppTextureProvider implements TextureProvider {
     this.rasterScale = scale > 0 && Number.isFinite(scale) ? scale : 1;
   }
 
-  /** Vector-raster cache hit/miss counters. A hit = a set*() call whose content
+  /** Vector-raster cache hit/miss counters. A hit = a set* call whose content
    *  signature was unchanged (no re-rasterization) — the transform-only-animation
    *  fast path. Exposed so the hot path can be asserted (Phase 1 cache gate). */
   private readonly rasterizer: Canvas2DVectorRasterizer;
@@ -415,7 +471,15 @@ export class AppTextureProvider implements TextureProvider {
     if (existing && existing.src === fullKey) return; // already loading or loaded
     const entry: ImageEntry = { kind: 'image', src: fullKey, texture: null, bitmap: null, width: 1, height: 1, ready: false };
     this.entries.set(key, entry);
-    void this.decode(key, src, fillColor, entry);
+    const decoding = this.decode(key, src, fillColor, entry);
+    // Under exact media timing (offline render / the golden-frame harness) the
+    // caller renders, awaits the waits, then re-renders. Video registered here
+    // but image decode did NOT, so a freshly-created backend — which is what
+    // export builds — could capture the 1×1 white placeholder instead of the
+    // picture. In the viewport that self-corrects via onChange a frame later;
+    // in a one-shot render there is no later.
+    if (this.exactMediaTiming) this.mediaWaits.push(decoding);
+    void decoding;
   }
 
   /**
@@ -424,6 +488,8 @@ export class AppTextureProvider implements TextureProvider {
   setText(key: string, spec: TextSpec): void {
     const layerScale = Math.max(1, Math.abs(spec.scaleX || 1), Math.abs(spec.scaleY || 1));
     const effectiveScale = this.rasterScale * layerScale;
+    // Fill opacity changes the baked pixels, so it belongs in the cache key.
+    const fillSig = spec.fillOpacity !== undefined && spec.fillOpacity < 1 ? `|fo${spec.fillOpacity}` : '';
     const fxSig = effectsNeedCpuBake(spec.effects)
       ? `|fx:${JSON.stringify(spec.effects)}|mask:${spec.mask ? JSON.stringify(spec.mask.paths) : 0}`
       : '';
@@ -431,9 +497,18 @@ export class AppTextureProvider implements TextureProvider {
       `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}` +
       `|${spec.fontFamily ?? ''}|${spec.fontWeight ?? ''}|${spec.fontStyle ?? ''}` +
       `|${spec.align ?? ''}|${spec.letterSpacing ?? 0}|${spec.lineHeight ?? ''}` +
-      `|${spec.paragraphSpacing ?? 0}|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}` +
+      `|${spec.paragraphSpacing ?? 0}|${spec.strokeOverFill ? 'sof' : ''}` +
+      `|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}${fillSig}` +
+      // Animator output and path placement change the baked pixels, so they
+      // belong in the cache key — otherwise frame 1 of a sweep is reused for
+      // every frame of it.
+      `${spec.glyphs && spec.glyphs.length ? `|g${JSON.stringify(spec.glyphs)}` : ''}` +
+      `${spec.textPath ? `|tp${JSON.stringify(spec.textPath)}` : ''}` +
       `|t${resolutionTier(effectiveScale)}`;
 
+    // Non-zero only when a CPU-baked chain would bleed outside the text box
+    // (see rasterPadding) — otherwise this stays 0 exactly as before.
+    const pad = rasterPadding({ ...spec, kind: 'text' } as unknown as RenderLayer);
     const result = this.rasterizer.rasterize({
       drawable: {
         ...spec,
@@ -441,10 +516,10 @@ export class AppTextureProvider implements TextureProvider {
         contentHash: signature,
       },
       resolutionScale: effectiveScale,
-      padding: 0,
+      padding: pad,
     });
 
-    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~0`;
+    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~${paddingClass(pad)}`;
     const texture = this.resources.texture(texKey, {
       label: `raster:${signature}`,
       width: result.texture.width,
@@ -545,10 +620,11 @@ export class AppTextureProvider implements TextureProvider {
     const ptsSig = layer.pathPoints ? layer.pathPoints.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') : '';
     const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
     const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';
+    const fillSig = layer.fillOpacity !== undefined && layer.fillOpacity < 1 ? `|fo${layer.fillOpacity}` : '';
     const fxSig = effectsNeedCpuBake(layer.effects)
       ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
       : '';
-    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}|t${resolutionTier(effectiveScale)}`;
+    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${resolutionTier(effectiveScale)}`;
 
     const pad = rasterPadding(layer);
     const result = this.rasterizer.rasterize({
@@ -576,17 +652,21 @@ export class AppTextureProvider implements TextureProvider {
    * `timeSec`. Reuses one HTMLVideoElement per source, seeks it toward the
    * playhead, and re-uploads the current frame each call (video content changes
    * every frame, so there is no signature cache). Returns the placeholder via
-   * get() until the element has decoded a frame.
+   * get until the element has decoded a frame.
    */
   setVideo(key: string, src: string, timeSec: number): void {
     let entry = this.videoEntries.get(key);
     if (!entry || entry.src !== src) {
-      entry = { kind: 'video', src, video: this.videoFactory(src), texture: null, w: 1, h: 1 };
+      // Swapping the source must release the outgoing element and its texture —
+      // replacing the map entry alone left a decoding <video> and a pinned texture
+      // alive for the rest of the session.
+      if (entry) this.releaseVideoEntry(entry);
+      const video = this.videoFactory(src);
+      const onSeeked = (): void => this.onChange?.();
+      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null, hasSeeked: false };
       this.videoEntries.set(key, entry);
-      
-      const notifyReady = () => this.onChange?.();
-      entry.video.addEventListener('loadeddata', notifyReady, { once: true });
-      entry.video.addEventListener('seeked', notifyReady);
+      video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
+      video.addEventListener('seeked', onSeeked);
     }
     const v = entry.video;
     if (v.readyState < HAVE_CURRENT_DATA) {
@@ -596,8 +676,35 @@ export class AppTextureProvider implements TextureProvider {
       return; // not decoded yet → placeholder
     }
     const deadband = this.exactMediaTiming ? 1e-4 : SEEK_EPSILON;
-    if (Math.abs(v.currentTime - timeSec) > deadband) {
-      v.currentTime = timeSec;
+    // Seek only when the TARGET changes, not whenever the element's currentTime is
+    // off-target. `seeked` fires onChange → requestRender → setVideo, and on
+    // long-GOP sources the decoder often cannot land within the deadband — so
+    // re-requesting the same time on every pass was a self-sustaining full-render
+    // loop at rAF rate even with playback paused.
+    //
+    // `hasSeeked` is what makes time 0 work. A `<video>` that has loaded but never
+    // seeked presents a BLACK surface even at readyState 4 (measured: drawImage of
+    // a fully-loaded element at currentTime 0 yields all-zero pixels; the same
+    // element after seeking to 0.1s yields the real frame). At comp time 0 the
+    // target and `currentTime` are both 0, so the deadband check alone declined to
+    // seek and this uploaded that black surface — which is why a video layer read
+    // as a black rectangle at the start of every composition, exactly where the
+    // playhead sits when a preview opens.
+    const needsFirstDecode = !entry.hasSeeked;
+    const wantsSeek =
+      needsFirstDecode ||
+      (Math.abs(v.currentTime - timeSec) > deadband &&
+        (entry.requestedTime === null || Math.abs(entry.requestedTime - timeSec) > deadband));
+    if (wantsSeek) {
+      entry.hasSeeked = true;
+      entry.requestedTime = timeSec;
+      // Seeking to exactly the current position is a no-op that fires no `seeked`
+      // event, so nudge the first decode a hair forward. A sub-millisecond offset
+      // is far inside one frame at any frame rate, so the frame shown is still the
+      // right one.
+      v.currentTime = needsFirstDecode && Math.abs(v.currentTime - timeSec) <= deadband
+        ? timeSec + FIRST_DECODE_NUDGE
+        : timeSec;
       if (this.exactMediaTiming) {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'seeked'));
       }
@@ -605,6 +712,7 @@ export class AppTextureProvider implements TextureProvider {
     const w = v.videoWidth || 1;
     const h = v.videoHeight || 1;
     if (entry.texture === null || entry.w !== w || entry.h !== h) {
+      if (entry.texture) this.resources.freeTexture(`vid:${key}:${entry.w}x${entry.h}`);
       entry.texture = this.resources.texture(
         `vid:${key}:${w}x${h}`,
         { label: `video:${key}`, width: w, height: h, format: 'rgba8unorm', externalCopy: true },
@@ -612,6 +720,7 @@ export class AppTextureProvider implements TextureProvider {
       );
       entry.w = w;
       entry.h = h;
+      entry.poolKey = `vid:${key}:${w}x${h}`;
     }
     this.resources.writeTexture(entry.texture, { type: 'video', video: v });
   }
@@ -625,13 +734,26 @@ export class AppTextureProvider implements TextureProvider {
     if (canvas.width < 1 || canvas.height < 1) return;
     const existing = this.frameEntries.get(key);
     if (existing && existing.signature === signature) return;
-    const tex = this.resources.texture(
-      `frame:${key}:${signature}`,
-      { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
-      /* pinned */ true,
-    );
+    // ONE texture per key, rewritten in place — the setVideo/setParticles pattern.
+    //
+    // This used to include `signature` (the source TIME) in the pool key, so every
+    // decoded frame minted a brand-new `pinned: true` texture. Pinned entries are
+    // skipped by the pool's idle GC, and overwriting `frameEntries[key]` threw away
+    // the only record of the previous pool key — so nothing could ever free it.
+    // Playing ten seconds of 1080p footage with Frame Mix on leaked ~600 textures,
+    // several GB of VRAM.
+    const poolKey = `frame:${key}:${canvas.width}x${canvas.height}`;
+    let tex = existing?.texture;
+    if (!tex || existing?.poolKey !== poolKey) {
+      if (existing?.poolKey) this.resources.freeTexture(existing.poolKey);
+      tex = this.resources.texture(
+        poolKey,
+        { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+        /* pinned */ true,
+      );
+    }
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
-    this.frameEntries.set(key, { signature, texture: tex });
+    this.frameEntries.set(key, { signature, texture: tex, poolKey });
   }
 
   /**
@@ -688,16 +810,33 @@ export class AppTextureProvider implements TextureProvider {
     entry.signature = signature;
   }
 
-  /** Forget keys no longer present in the scene (frees the GPU textures via GC). */
+  /**
+   * Release keys no longer present in the scene.
+   *
+   * This used to only `delete` from the maps, on the stated assumption that GC
+   * would reclaim the textures. It does not: every texture here is created
+   * `pinned: true`, which excludes it from the ResourceManager pool's idle GC, and
+   * the pool holds the handle (and the live WebGLTexture) regardless of whether
+   * this class still references it. Dropping a video entry additionally abandoned
+   * an HTMLVideoElement that still owned a decoder pipeline and two live
+   * listeners, and an image entry's decoded ImageBitmap holds off-heap pixel
+   * memory until explicitly closed. Deleting a layer while scrubbing therefore
+   * stranded a texture, a decoder and a bitmap every time.
+   */
   retain(activeKeys: ReadonlySet<string>): void {
-    for (const key of this.entries.keys()) {
-      if (!activeKeys.has(key)) this.entries.delete(key);
+    for (const [key, entry] of [...this.entries]) {
+      if (activeKeys.has(key)) continue;
+      this.resources.freeTexture(`img:${entry.src}`);
+      entry.bitmap?.close();
+      this.entries.delete(key);
     }
     for (const key of this.textEntries.keys()) {
       if (!activeKeys.has(key)) this.textEntries.delete(key);
     }
-    for (const key of this.videoEntries.keys()) {
-      if (!activeKeys.has(key)) this.videoEntries.delete(key);
+    for (const [key, entry] of [...this.videoEntries]) {
+      if (activeKeys.has(key)) continue;
+      this.releaseVideoEntry(entry);
+      this.videoEntries.delete(key);
     }
     for (const key of this.pathEntries.keys()) {
       if (!activeKeys.has(key)) this.pathEntries.delete(key);
@@ -711,12 +850,37 @@ export class AppTextureProvider implements TextureProvider {
     for (const key of this.gradientEntries.keys()) {
       if (!activeKeys.has(key)) this.gradientEntries.delete(key);
     }
-    for (const key of this.frameEntries.keys()) {
-      if (!activeKeys.has(key)) this.frameEntries.delete(key);
+    for (const [key, entry] of [...this.frameEntries]) {
+      if (activeKeys.has(key)) continue;
+      this.resources.freeTexture(entry.poolKey);
+      this.frameEntries.delete(key);
     }
     for (const key of this.particleEntries.keys()) {
       if (!activeKeys.has(key)) this.particleEntries.delete(key);
     }
+  }
+
+  /**
+   * Tear a video entry all the way down. `src = ''` alone does not reliably stop
+   * Chromium's decoder; pause + removeAttribute + load does, and the `seeked`
+   * listener must go with it — it calls `onChange`, which requests a render, so a
+   * stranded element could still drive the render loop after its layer was gone.
+   */
+  private releaseVideoEntry(entry: VideoEntry): void {
+    if (entry.onSeeked) entry.video.removeEventListener('seeked', entry.onSeeked);
+    try {
+      entry.video.pause();
+      entry.video.removeAttribute('src');
+      entry.video.load();
+    } catch {
+      /* element already detached — nothing left to release */
+    }
+    if (entry.poolKey) this.resources.freeTexture(entry.poolKey);
+  }
+
+  /** Release every retained GPU/media resource. Call before dropping the provider. */
+  dispose(): void {
+    this.retain(new Set());
   }
 
   private async decode(key: string, src: string, fillColor: string | undefined, entry: ImageEntry): Promise<void> {
@@ -726,7 +890,7 @@ export class AppTextureProvider implements TextureProvider {
     } catch {
       return; // broken source — leave the placeholder in place
     }
-    // A newer setImage() for this key (different src) supersedes this decode.
+    // A newer setImage for this key (different src) supersedes this decode.
     if (this.entries.get(key) !== entry) return;
     entry.width = bitmap.width || 1;
     entry.height = bitmap.height || 1;

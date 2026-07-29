@@ -40,11 +40,16 @@ const bridge = {
 
   render: {
     beginJob: () => ipcRenderer.invoke('render:beginJob'),
-    stageFrame: (jobId: string, index: number, bytes: Uint8Array) =>
-      ipcRenderer.invoke('render:stageFrame', jobId, index, bytes),
+    stageFrame: (jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png') =>
+      ipcRenderer.invoke('render:stageFrame', jobId, index, bytes, ext),
     stageAudio: (jobId: string, bytes: Uint8Array) => ipcRenderer.invoke('render:stageAudio', jobId, bytes),
-    muxMp4: (jobId: string, opts: { fps: number; hasAudio?: boolean }) =>
-      ipcRenderer.invoke('render:muxMp4', jobId, opts),
+    encode: (jobId: string, opts: unknown) => ipcRenderer.invoke('render:encode', jobId, opts),
+    cancel: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),
+    save: (jobId: string, defaultName: string) => ipcRenderer.invoke('render:save', jobId, defaultName),
+    saveTo: (jobId: string, dir: string, filename: string) =>
+      ipcRenderer.invoke('render:saveTo', jobId, dir, filename),
+    chooseOutputDir: () => ipcRenderer.invoke('render:chooseOutputDir'),
+    cleanJob: (jobId: string) => ipcRenderer.invoke('render:cleanJob', jobId),
   },
 
   index: {
@@ -59,6 +64,10 @@ const bridge = {
     clearRecovery: (projectId: string) => ipcRenderer.invoke('index:clearRecovery', projectId),
   },
 
+  popout: {
+    spawnWindow: (panelId: string) => ipcRenderer.invoke('popout:spawnWindow', panelId),
+  },
+
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
@@ -68,6 +77,22 @@ const bridge = {
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
     version: () => ipcRenderer.invoke('app:version'),
+  },
+
+  /**
+   * The signed-in session, kept in the main process and encrypted with the OS
+   * keystore (see electron/credentialStore.ts).
+   *
+   * Only the long-lived refresh token goes through here. The access token
+   * stays in renderer memory and is never written anywhere — it lives an hour,
+   * so persisting it would add risk and save nothing.
+   */
+  credentials: {
+    get: () => ipcRenderer.invoke('credentials:get'),
+    set: (credentials: unknown) => ipcRenderer.invoke('credentials:set', credentials),
+    clear: () => ipcRenderer.invoke('credentials:clear'),
+    /** False when the OS has no keystore — the app then never persists a session. */
+    available: () => ipcRenderer.invoke('credentials:available'),
   },
 
   onMenuCommand: (handler: (commandId: string) => void) => {

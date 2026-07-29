@@ -32,13 +32,30 @@ import { insertMedia, setNodeWorldPosition } from '@core/scene/sceneInsert';
 import { bumpScene } from '@stores/sceneStore';
 import type { SceneNode } from '@core/types';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
+import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
+import { readNodePuppet } from '@core/rig/puppet';
 
 /**
  * Layer kinds that can carry a puppet / bone rig directly: a rig's warp mesh
  * needs a bitmap alpha or a path silhouette, which only these kinds provide.
  * Groups / precomps / nulls / cameras / lights have no such surface.
+ *
+ * TEXT IS DELIBERATELY EXCLUDED. It used to be listed here, and the three
+ * places that care disagreed about what that meant (§12.10):
+ *   • this set said yes, so the AI tools happily rigged a text layer;
+ *   • `resolveRigTarget` only ever rigged image | shape in place;
+ *   • `buildSnapshot` gives text NEITHER a path silhouette (it has no vector
+ *     geometry) NOR an alpha coverage mask (that path is image-only), so the
+ *     mesh fell back to the plain bounding box — deforming the empty space
+ *     between glyphs, exactly the artifact coverage culling exists to prevent.
+ * A comment here once claimed "Text rigs its glyph mask"; nothing implemented
+ * that. Text now routes through Rig Logo, which rasterizes it to an image whose
+ * alpha DOES cull correctly — so all three agree and the result is right.
+ *
+ * Deriving a silhouette from live glyph outlines (keeping the text editable)
+ * is the better long-term answer; it is not what ships today.
  */
-export const RIGGABLE_KINDS: ReadonlySet<SceneKind> = new Set(['shape', 'image', 'text']);
+export const RIGGABLE_KINDS: ReadonlySet<SceneKind> = new Set(['shape', 'image']);
 
 /** Whether a scene kind can be rigged directly (see RIGGABLE_KINDS). */
 export function isRiggableKind(kind: SceneKind): boolean {
@@ -53,7 +70,9 @@ export function isRiggableLeafNode(node: SceneNode | undefined, graph: SceneGrap
   if (!node) return false;
   const kind = readNodeKind(node);
   // Image/shape are the true leaves; a shape may nest booleans but rigging its
-  // own silhouette is still valid. Text rigs its glyph mask.
+  // own silhouette is still valid. Text is not directly riggable — it has no
+  // silhouette or alpha mask to cull against, so it routes through Rig Logo's
+  // rasterize path instead (see RIGGABLE_KINDS).
   if (!isRiggableKind(kind)) return false;
   // Groups masquerade as no kind → readNodeKind returns 'group', already
   // excluded above, so no extra child check is needed here.
@@ -171,17 +190,25 @@ function localSize(node: SceneNode): { w: number; h: number } {
  * A minimal, deterministic starter rig in layer-local coordinates centered on
  * the origin: an anchor pin at bottom-center and a "wave" mover pin at
  * top-center, so the user can immediately drag to wave the logo and add more.
- * Pin ids follow the codebase's existing `pin_<ts>_<i>` author-time convention
- * (see toolHandlers.createPuppetRig).
+ *
+ * Ids come from the shared ordinal allocator (`rigIds`), so this is now fully
+ * deterministic — it used to embed `Date.now`, which made the same call
+ * return different ids on every invocation and could collide with a pin added
+ * in the same millisecond. `existingIds` lets a caller rig a layer that already
+ * carries pins without reissuing one of them.
  */
-export function starterPuppetPins(w: number, h: number): { pins: Array<{ id: string; name: string; x: number; y: number }> } {
-  const now = Date.now();
+export function starterPuppetPins(
+  w: number,
+  h: number,
+  existingIds: Iterable<string> = [],
+): { pins: Array<{ id: string; name: string; x: number; y: number }> } {
   void w; // pins sit on the vertical center line; width is accepted for symmetry
   const halfH = Math.max(1, h / 2);
+  const [anchorId, waveId] = nextRigIds('pin_', existingIds, 2);
   return {
     pins: [
-      { id: `pin_${now}_0`, name: 'Anchor', x: 0, y: halfH },
-      { id: `pin_${now}_1`, name: 'Wave', x: 0, y: -halfH },
+      { id: anchorId!, name: 'Anchor', x: 0, y: halfH },
+      { id: waveId!, name: 'Wave', x: 0, y: -halfH },
     ],
   };
 }
@@ -251,6 +278,7 @@ export async function rasterizeSelection(roots: readonly string[], graph: SceneG
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
 
+  let backend: import('@core/rendering/RenderBackend').RenderBackend | null = null;
   try {
     // Lazy-load the render engine so this module (and its pure helpers) stays
     // importable in environments without a GPU/canvas.
@@ -265,7 +293,7 @@ export async function rasterizeSelection(roots: readonly string[], graph: SceneG
     const dpr = Math.min(dpr0, MAX_RASTER_DIM / Math.max(w, h));
 
     const canvas = document.createElement('canvas');
-    const backend = createRenderBackend();
+    backend = createRenderBackend('auto', 'auxiliary');
     backend.attach(canvas);
     backend.setPreviewChrome?.(false);
     backend.resize(w, h, dpr);
@@ -294,19 +322,17 @@ export async function rasterizeSelection(roots: readonly string[], graph: SceneG
     scratch.width = Math.max(1, Math.round(w * dpr));
     scratch.height = Math.max(1, Math.round(h * dpr));
     const ctx = scratch.getContext('2d');
-    if (!ctx) {
-      backend.dispose();
-      return null;
-    }
+    if (!ctx) return null;
     ctx.drawImage(canvas, 0, 0);
     const dataUrl = scratch.toDataURL('image/png');
-    backend.dispose();
 
     const first = graph.getNode(roots[0]!);
     const baseName = (first?.name ?? 'Logo').replace(/\s*\(Rigged\)\s*$/i, '');
     return { dataUrl, compWidth: w, compHeight: h, centerX, centerY, name: `${baseName} (Rigged)` };
   } catch {
     return null;
+  } finally {
+    backend?.dispose();
   }
 }
 
@@ -372,7 +398,7 @@ export async function rigLogoForAnimation(deps: RigLogoDeps = {}): Promise<void>
     const node = graph.getNode(targetId);
     if (!node) return;
     const { w, h } = localSize(node);
-    graph.setPuppet(targetId, starterPuppetPins(w, h));
+    graph.setPuppet(targetId, starterPuppetPins(w, h, usedRigIds(readNodePuppet(node)?.pins)));
     setSelection([targetId]);
     setActiveTool('puppet-pin');
     bumpScene();

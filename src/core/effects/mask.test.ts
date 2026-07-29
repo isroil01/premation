@@ -4,6 +4,8 @@ import {
   maskSegments,
   readNodeMask,
   type LayerMask,
+  maskModeToComposite,
+  maskModeStartsFull,
 } from './mask';
 import type { SceneNode } from '@core/types';
 
@@ -84,5 +86,34 @@ describe('readNodeMask', () => {
   test('returns a stored non-empty mask', () => {
     const mask: LayerMask = { paths: [rectangleMask(50, 50)] };
     expect(readNodeMask(nodeWithFx({ mask }))).toBe(mask);
+  });
+});
+
+describe('mask modes — lighten / darken / difference', () => {
+  it('maps each mode to its compositing operation', () => {
+    expect(maskModeToComposite('add')).toBe('source-over');
+    expect(maskModeToComposite('subtract')).toBe('destination-out');
+    expect(maskModeToComposite('intersect')).toBe('destination-in');
+    expect(maskModeToComposite('lighten')).toBe('lighten');
+    expect(maskModeToComposite('darken')).toBe('darken');
+    expect(maskModeToComposite('difference')).toBe('difference');
+  });
+
+  it('only the additive modes start from an EMPTY matte', () => {
+    // A leading subtractive mode against nothing would erase from nothing and
+    // the layer would vanish — AE starts those from a full frame instead.
+    expect(maskModeStartsFull('add')).toBe(false);
+    expect(maskModeStartsFull('lighten')).toBe(false);
+    for (const m of ['subtract', 'intersect', 'darken', 'difference'] as const) {
+      expect(maskModeStartsFull(m)).toBe(true);
+    }
+  });
+
+  it('every mode has a composite op — no silent fallthrough to Add', () => {
+    const modes = ['add', 'subtract', 'intersect', 'lighten', 'darken', 'difference'] as const;
+    const ops = modes.map(maskModeToComposite);
+    // Six distinct modes must not collapse onto fewer than five operations
+    // (add/source-over is the only default, and nothing else may share it).
+    expect(new Set(ops).size).toBe(modes.length);
   });
 });

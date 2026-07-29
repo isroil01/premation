@@ -1,0 +1,180 @@
+/**
+ * The property row grid — the reason values line up.
+ *
+ * Columns are FIXED, not flex-with-a-min-width. The old inspector used
+ * `min-width: 76px` on the label inside a flex row, which is a floor rather
+ * than a column: any row carrying an extra control before its field (the
+ * rotation dial) pushed its value 24px right of every other row's. Measured in
+ * the running app, values sat at x=107 on nine rows and x=131 on one.
+ *
+ * Grid: [stopwatch] [navigator] [name] [value(s)] [reset]
+ * The navigator column reserves its width even when the property is not
+ * animated, so enabling animation does not shove the name and value sideways.
+ */
+
+.row {
+  display: grid;
+  /* The value column is FIXED, not `auto`. With `auto` it sized to content, so
+     a 32px opacity field and a 46px width field produced different column
+     widths and their numbers still did not share a right edge — the original
+     complaint in a new place. */
+  grid-template-columns:
+    var(--prop-stopwatch-col, 18px)
+    var(--prop-nav-col, 54px)
+    minmax(0, 1fr)
+    var(--prop-value-col, 96px)
+    var(--prop-reset-col, 18px);
+  align-items: center;
+  column-gap: 6px;
+  min-height: 26px;
+  width: 100%;
+  box-sizing: border-box;
+  /* The name column is the one that yields; without this the grid grows past
+     its panel instead of ellipsising the label. */
+  min-width: 0;
+}
+
+/* Compact variant for dense panels (effect params). */
+.compact {
+  min-height: 22px;
+  column-gap: 4px;
+}
+
+.name {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameAnimated {
+  color: var(--color-text-primary);
+}
+
+/* Values share one right-aligned cell so multi-field rows (Position X/Y) stay
+   flush with single-field rows. */
+.values {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* Every numeric field is the same width, so the NUMBERS line up — not merely
+   the cells that contain them. A row with an extra control (the rotation dial)
+   puts it left of the field inside this cell, which keeps the field's right
+   edge where every other row's is. */
+.values > [data-numeric] {
+  flex: 0 0 var(--prop-field-width, 58px);
+  min-width: 0;
+}
+
+/* Non-numeric controls (a colour swatch, a dropdown) take the rest of the cell. */
+.values > *:not([data-numeric]) {
+  min-width: 0;
+}
+
+/* ── Stopwatch ──────────────────────────────────────────────────── */
+.stopwatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard),
+              background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.stopwatch:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.stopwatch[data-on] {
+  color: var(--color-primary);
+}
+
+.stopwatch:focus-visible {
+  outline: 1px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* ── Keyframe navigator (prev / add-remove / next) ──────────────── */
+.nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.navBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.navBtn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.navBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Filled when the playhead sits exactly on a keyframe — the whole point of the
+   middle button is telling you that at a glance. */
+.navBtn[data-on] {
+  color: var(--color-primary);
+}
+
+.navBtn:focus-visible {
+  outline: 1px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* ── Reset ──────────────────────────────────────────────────────── */
+.reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Revealed on row hover/focus: a reset button on every row at all times is
+   visual noise on a panel that may show fifty of them. */
+.row:hover .reset,
+.row:focus-within .reset {
+  opacity: 1;
+}
+
+.reset:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}

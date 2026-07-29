@@ -30,11 +30,15 @@ export interface Camera3D {
   principal: { x: number; y: number };
   /**
    * Optional look orientation, degrees. `yaw` turns the camera about its
-   * vertical (Y) axis, `pitch` tilts about its horizontal (X) axis. Absent or
-   * zero orientation follows the EXACT legacy projection path, so unrotated
-   * cameras render byte-identically.
+   * vertical (Y) axis, `pitch` tilts about its horizontal (X) axis, and `roll`
+   * spins it about the view axis (a dutch angle). Absent or zero orientation
+   * follows the EXACT legacy projection path, so unrotated cameras render
+   * byte-identically.
+   *
+   * World → camera is Rz(−roll)·Rx(−pitch)·Ry(−yaw)·T(−eye): roll is applied
+   * LAST, which is what makes it rotate the frame rather than the aim.
    */
-  orientation?: { yaw: number; pitch: number };
+  orientation?: { yaw: number; pitch: number; roll?: number };
 }
 
 export interface Projected {
@@ -44,12 +48,37 @@ export interface Projected {
   scale: number;
   /** Distance from the camera along z; larger = further (sort descending to paint). */
   depth: number;
+  /**
+   * True when the point sits at or behind the camera's near plane, i.e. the
+   * returned x/y/scale are the NEAR clamp rather than a real projection.
+   *
+   * The clamp exists so the divide can't blow up, but a clamped point is not a
+   * projection — a layer just behind the camera resolves to `focalLength / 1`,
+   * which for a 1920-wide comp is a ~1111× scale: one layer smeared opaque over
+   * the whole frame instead of disappearing. Callers that draw geometry must
+   * drop the layer; callers that only need a finite number (overlays, gizmos)
+   * can keep ignoring this field, which is why it is additive rather than a
+   * change to the existing return shape.
+   */
+  clipped?: boolean;
 }
 
 /** Focal length (px) for a horizontal field of view over a comp of `width`. */
 export function focalLengthForFov(width: number, fovDeg: number): number {
   const fov = Math.max(1, Math.min(179, fovDeg)) * (Math.PI / 180);
   return width / 2 / Math.tan(fov / 2);
+}
+
+/**
+ * The inverse of {@link focalLengthForFov} — the horizontal field of view (deg)
+ * a given focal length produces over a comp of `width`.
+ *
+ * AE exposes Zoom and Angle of View as two editable views of ONE value, and the
+ * two must stay in lockstep: editing either has to update the other, which is
+ * only possible with both directions of the conversion available.
+ */
+export function fovForFocalLength(width: number, focalLength: number): number {
+  return (2 * Math.atan(width / 2 / Math.max(1e-6, focalLength)) * 180) / Math.PI;
 }
 
 /**
@@ -94,6 +123,30 @@ const ORTHO_BASIS: Record<OrthoView, { right: Axis3; down: Axis3 }> = {
 };
 
 const dot3 = (a: Axis3, x: number, y: number, z: number): number => a[0] * x + a[1] * y + a[2] * z;
+
+/**
+ * The world directions that screen-right and screen-down correspond to in an
+ * orthographic view — the INVERSE of what `projectOrtho` does, for turning a
+ * drag back into a world translation.
+ *
+ * A parallel projection has no foreshortening, so this mapping is exact and
+ * depth-independent: a drag of `d` screen units along screen-right moves the
+ * layer `d` world units along `right`, wherever it sits. Dragging DOWN in Top
+ * view therefore moves a layer in −Z (toward the viewer), not in +Y — writing
+ * the raw 2D delta into x/y instead slides the layer along the one axis that
+ * view projects away, so it appears frozen while its real position drifts.
+ *
+ * There is deliberately no perspective equivalent: under a perspective camera
+ * the same screen delta is a different world delta at every depth, so the
+ * conversion needs the layer's distance and is not a property of the view alone.
+ */
+export function orthoDragBasis(view: OrthoView): { right: Vec3; down: Vec3 } {
+  const b = ORTHO_BASIS[view];
+  return {
+    right: { x: b.right[0], y: b.right[1], z: b.right[2] },
+    down: { x: b.down[0], y: b.down[1], z: b.down[2] },
+  };
+}
 const cross3 = (a: Axis3, b: Axis3): Axis3 => [
   a[1] * b[2] - a[2] * b[1],
   a[2] * b[0] - a[0] * b[2],
@@ -137,7 +190,8 @@ export function projectPoint(p: Vec3, cam: Camera3D): Projected {
   }
   const yaw = cam.orientation?.yaw ?? 0;
   const pitch = cam.orientation?.pitch ?? 0;
-  if (yaw !== 0 || pitch !== 0) {
+  const roll = cam.orientation?.roll ?? 0;
+  if (yaw !== 0 || pitch !== 0 || roll !== 0) {
     // Rotated camera: bring the point into CAMERA SPACE — translate by the
     // eye, then undo the camera's yaw (about Y) and pitch (about X) — and
     // apply the same pinhole divide the straight path uses.
@@ -158,6 +212,15 @@ export function projectPoint(p: Vec3, cam: Camera3D): Projected {
     const z2 = sx * vy + cx * vz;
     vy = y1;
     vz = z2;
+    // Rz(−roll), applied LAST so it spins the frame about the view axis rather
+    // than re-aiming the camera.
+    if (roll !== 0) {
+      const cz = Math.cos(-roll * DEG);
+      const sz = Math.sin(-roll * DEG);
+      const rx = cz * vx - sz * vy;
+      vy = sz * vx + cz * vy;
+      vx = rx;
+    }
     const clamped = vz < NEAR ? NEAR : vz;
     const scale = cam.focalLength / clamped;
     return {
@@ -165,6 +228,7 @@ export function projectPoint(p: Vec3, cam: Camera3D): Projected {
       y: cam.principal.y + vy * scale,
       scale,
       depth: clamped,
+      ...(vz < NEAR ? { clipped: true } : {}),
     };
   }
   const dist = p.z - cam.position.z; // > 0 when the point is in front of the camera
@@ -175,6 +239,35 @@ export function projectPoint(p: Vec3, cam: Camera3D): Projected {
     y: cam.principal.y + (p.y - cam.position.y) * scale,
     scale,
     depth: clamped,
+    ...(dist < NEAR ? { clipped: true } : {}),
+  };
+}
+
+/**
+ * The world directions that screen-right and screen-down correspond to under a
+ * PERSPECTIVE camera — the counterpart of {@link orthoDragBasis}, for turning a
+ * drag in an Active Camera or Custom View back into a world translation.
+ *
+ * Unlike the orthographic case this is only half the answer: the basis gives the
+ * DIRECTION, but a perspective screen delta also means a different world
+ * distance at every depth. The magnitude is `delta / projected.scale` — that is
+ * the exact inverse of the pinhole divide `projectPoint` applies, so a layer
+ * ends up under the pointer at any depth. For an un-orbited camera this reduces
+ * to right = (1,0,0), down = (0,1,0), and a layer on the comp plane has
+ * scale = 1, which is why writing the raw delta into x/y was right in the
+ * default view and only ever wrong once the camera moved.
+ *
+ * Read off `cameraViewMatrix` rather than re-deriving the rotation: R is
+ * orthonormal, so camera→world is Rᵀ, and screen-right/-down are its first two
+ * ROWS. Re-expanding those nine entries by hand is precisely where a sign error
+ * would hide, and it would drift from `projectPoint` silently.
+ */
+export function cameraDragBasis(cam: Camera3D): { right: Vec3; down: Vec3 } {
+  const m = cameraViewMatrix(cam);
+  // Column-major: m[col*4 + row]. Row 0 of R = (m[0], m[4], m[8]).
+  return {
+    right: { x: m[0]!, y: m[4]!, z: m[8]! },
+    down: { x: m[1]!, y: m[5]!, z: m[9]! },
   };
 }
 
@@ -211,11 +304,23 @@ export function cameraViewMatrix(cam: Camera3D): Matrix4 {
   const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
   const cx = Math.cos(-pitch), sx = Math.sin(-pitch);
   // R = Rx(−pitch) · Ry(−yaw), row-major rows:
-  //   projectPoint applies Ry(−yaw) first: x1 = cy·vx + sy·vz ; z1 = −sy·vx + cy·vz
-  //   then Rx(−pitch):                     y2 = cx·vy − sx·z1 ; z2 = sx·vy + cx·z1
-  const r00 = cy,        r01 = 0,  r02 = sy;
-  const r10 = -sx * -sy, r11 = cx, r12 = -sx * cy;
-  const r20 = cx * -sy,  r21 = sx, r22 = cx * cy;
+  //   projectPoint applies Ry(−yaw) first: x1 = cy·vx + sy·vz; z1 = −sy·vx + cy·vz
+  //   then Rx(−pitch):                     y2 = cx·vy − sx·z1; z2 = sx·vy + cx·z1
+  let r00 = cy,        r01 = 0,  r02 = sy;
+  let r10 = -sx * -sy, r11 = cx, r12 = -sx * cy;
+  const r20 = cx * -sy, r21 = sx, r22 = cx * cy;
+  // Premultiply by Rz(−roll) — computed rather than hand-expanded, because
+  // re-deriving nine entries by hand is exactly where a sign error hides.
+  // Rz only mixes rows 0 and 1; row 2 (the view axis) is untouched.
+  const roll = (cam.orientation?.roll ?? 0) * DEG;
+  if (roll !== 0) {
+    const cz = Math.cos(-roll);
+    const sz = Math.sin(-roll);
+    const n00 = cz * r00 - sz * r10, n01 = cz * r01 - sz * r11, n02 = cz * r02 - sz * r12;
+    const n10 = sz * r00 + cz * r10, n11 = sz * r01 + cz * r11, n12 = sz * r02 + cz * r12;
+    r00 = n00; r01 = n01; r02 = n02;
+    r10 = n10; r11 = n11; r12 = n12;
+  }
   const ex = cam.position.x, ey = cam.position.y, ez = cam.position.z;
   // Column-major store; translation column = −R·eye.
   return [
@@ -388,8 +493,16 @@ export function unprojectScreenRay(
 
   const yaw = (cam.orientation?.yaw ?? 0) * DEG;
   const pitch = (cam.orientation?.pitch ?? 0) * DEG;
-  if (yaw !== 0 || pitch !== 0) {
-    // Forward rotation R = Ry(yaw) · Rx(pitch)
+  const roll = (cam.orientation?.roll ?? 0) * DEG;
+  if (yaw !== 0 || pitch !== 0 || roll !== 0) {
+    // Forward rotation R = Ry(yaw) · Rx(pitch) · Rz(roll) — the exact inverse
+    // of projectPoint's Rz(−roll)·Rx(−pitch)·Ry(−yaw), so roll comes FIRST here.
+    if (roll !== 0) {
+      const cz = Math.cos(roll), sz = Math.sin(roll);
+      const rx = cz * vx - sz * vy;
+      vy = sz * vx + cz * vy;
+      vx = rx;
+    }
     const cx = Math.cos(pitch), sx = Math.sin(pitch);
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
     const y1 = cx * vy - sx * vz;

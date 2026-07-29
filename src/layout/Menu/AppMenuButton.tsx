@@ -12,12 +12,14 @@ import { Icon } from '@components/Icon';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
-import { APP_MENU } from './menuModel';
+import { useAppMenuGroups } from './useAppMenuGroups';
 import { formatChord } from './formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import styles from './AppMenuBar.module.css';
 
 export function AppMenuButton(): JSX.Element {
+  // Includes the dynamic Plugins group — see useAppMenuGroups.
+  const menuGroups = useAppMenuGroups();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -29,7 +31,7 @@ export function AppMenuButton(): JSX.Element {
       if (ref.current?.contains(target)) return;
       if (document.getElementById('app-menu-dropdown')?.contains(target)) return;
       // Submenus render in their own portal on document.body (a sibling of the
-      // dropdown, not a descendant), so contains() misses them. Without this,
+      // dropdown, not a descendant), so contains misses them. Without this,
       // pressing a submenu item closes the menu before its click can fire.
       if ((target as Element).closest?.('[data-menu-portal]')) return;
       setOpen(false);
@@ -64,7 +66,7 @@ export function AppMenuButton(): JSX.Element {
         ? createPortal(
             <div id="app-menu-dropdown" className={styles.dropdown} style={{ left: anchor.left, top: anchor.top }}>
               <Menu onItemActivate={() => setOpen(false)}>
-                {APP_MENU.map((group) => (
+                {menuGroups.map((group) => (
                   <MenuItem key={group.id} id={group.id} label={group.label}>
                     {group.items.map((it, i) => {
                       if (it.separator) return <MenuSeparator key={`sep-${i}`} />;

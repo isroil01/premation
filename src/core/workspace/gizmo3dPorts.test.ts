@@ -2,7 +2,7 @@
  * 3D gizmo transform I/O (ports.ts) — the read/write contract that fixes the
  * gizmo/object desync:
  *
- *   READ  — sampleTransform3DAtPlayhead returns the ANIMATED value when a
+ *   READ — sampleTransform3DAtPlayhead returns the ANIMATED value when a
  *           track exists (what the renderer draws), base props otherwise.
  *   WRITE — applyGizmo3DTransforms keyframes props with a lit stopwatch at the
  *           current remapped playhead (base-only writes are invisible there,

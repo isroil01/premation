@@ -6,73 +6,15 @@
  */
 
 import { useMemo } from 'react';
-import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
 import { useSceneRevision } from '@stores/sceneStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { LIGHT_DEFAULTS } from '@core/scene/light';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
-import { useActiveWorkspace } from '@stores/projectStore';
-import { usePreferenceStore } from '@stores/preferenceStore';
-import { defaultAnimation } from '@motion/animation';
-import { runAnimEdit } from '@core/animation/animationCommands';
-import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import styles from './TransformSection.module.css';
-
-function KfRow({
-  nodeId,
-  prop,
-  label,
-  value,
-  unit,
-  min,
-  onStatic,
-}: {
-  nodeId: string;
-  prop: string;
-  label: string;
-  value: number;
-  unit: string;
-  min?: number;
-  onStatic: (v: number) => void;
-}): JSX.Element {
-  const time = useActiveWorkspace()?.time ?? 0;
-  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
-  const animated = defaultAnimation.isAnimated(nodeId, prop);
-  // The canonical keyframe axis — what the renderer samples for this node.
-  const layerT = compToKeyframeTime(nodeId, time);
-  const display = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
-
-  const handleChange = (v: number) => {
-    if (animated || autoKeyframe) {
-      runAnimEdit(
-        `Set ${prop}`,
-        () => defaultAnimation.setKeyframe(nodeId, prop, layerT, v),
-        `set:${nodeId}:${prop}:${layerT}`,
-      );
-    } else {
-      onStatic(v);
-    }
-  };
-
-  return (
-    <div className={styles.popoverRow}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
-        <Checkbox
-          checked={animated}
-          onChange={() => {
-            if (animated) runAnimEdit(`Remove ${prop} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
-            else runAnimEdit(`Animate ${prop}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
-          }}
-          title="Toggle Keyframes"
-          style={{ width: 13, height: 13 }}
-        />
-        <span className={styles.popoverLabel}>{label}</span>
-      </div>
-      <ValueField value={Math.round(display ?? 0)} unit={unit} {...(min !== undefined ? { min } : {})} onChange={(v) => handleChange(Number(v))} aria-label={label} />
-    </div>
-  );
-}
+import { KeyframeRow as KfRow } from './KeyframeRow';
 
 export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
@@ -86,14 +28,35 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [coneRaw, setCone] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightCone');
   const [fillRaw, setFill] = useNodeComponentProp(defaultSceneGraph, nodeId, sComp?.id, 'fill');
   const [shadowsRaw, setShadows] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'castShadows');
+  const [featherRaw, setFeather] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lightConeFeather');
+  const [falloffRaw, setFalloff] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'falloff');
+  const [falloffDistRaw, setFalloffDist] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'falloffDistance');
+  const [darknessRaw, setDarkness] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowDarkness');
+  const [diffusionRaw, setDiffusion] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowDiffusion');
+  const [poiXRaw, setPoiX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiX');
+  const [poiYRaw, setPoiY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiY');
+  const [poiZRaw, setPoiZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiZ');
+  const compWidth = useCompositionStore((s) => s.width);
+  const compHeight = useCompositionStore((s) => s.height);
   if (!node || !tComp) return null;
 
-  const intensity = typeof intensityRaw === 'number' ? intensityRaw : 100;
-  const radius = typeof radiusRaw === 'number' ? radiusRaw : 500;
+  const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
+  const intensity = num(intensityRaw, LIGHT_DEFAULTS.intensity);
+  const radius = num(radiusRaw, LIGHT_DEFAULTS.radius);
   const color = typeof fillRaw === 'string' ? fillRaw : '#fff3c0';
   const type = typeRaw === 'ambient' || typeRaw === 'spot' || typeRaw === 'parallel' ? typeRaw : 'point';
-  const angle = typeof angleRaw === 'number' ? angleRaw : 0;
-  const cone = typeof coneRaw === 'number' ? coneRaw : 45;
+  const angle = num(angleRaw, LIGHT_DEFAULTS.angle);
+  const cone = num(coneRaw, LIGHT_DEFAULTS.cone);
+  const feather = num(featherRaw, LIGHT_DEFAULTS.coneFeather);
+  const falloff = falloffRaw === 'smooth' || falloffRaw === 'inverse-square' ? falloffRaw : 'none';
+  const falloffDistance = num(falloffDistRaw, LIGHT_DEFAULTS.falloffDistance);
+  const darkness = num(darknessRaw, LIGHT_DEFAULTS.shadowDarkness);
+  const diffusion = num(diffusionRaw, LIGHT_DEFAULTS.shadowDiffusion);
+  const castsShadows = shadowsRaw === true || shadowsRaw === 1;
+  // A light is "targeted" (aimed in 3D) as soon as any POI component exists —
+  // the same test readNodeLight applies.
+  const hasPOI = [poiXRaw, poiYRaw, poiZRaw].some((v) => typeof v === 'number');
+  const aimable = type === 'spot' || type === 'parallel';
 
   return (
     <div className={styles.section}>
@@ -122,21 +85,102 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
         {type !== 'ambient' && (
           <KfRow nodeId={nodeId} prop="radius" label="Radius" value={radius} unit="px" min={1} onStatic={(v) => setRadius(v)} />
         )}
-        {(type === 'spot' || type === 'parallel') && (
+        {type !== 'ambient' && (
+          <>
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Falloff</span>
+              <select
+                className={styles.select}
+                style={{ width: 110 }}
+                value={falloff}
+                onChange={(e) => setFalloff(e.target.value === 'none' ? undefined : e.target.value)}
+                aria-label="Falloff"
+              >
+                <option value="none">None</option>
+                <option value="smooth">Smooth</option>
+                <option value="inverse-square">Inverse Square Clamped</option>
+              </select>
+            </div>
+            {falloff !== 'none' && (
+              <KfRow
+                nodeId={nodeId}
+                prop="falloffDistance"
+                label="Falloff distance"
+                value={falloffDistance}
+                unit="px"
+                min={1}
+                onStatic={(v) => setFalloffDist(v)}
+              />
+            )}
+          </>
+        )}
+        {aimable && !hasPOI && (
           <KfRow nodeId={nodeId} prop="lightAngle" label="Direction" value={angle} unit="°" onStatic={(v) => setAngle(v)} />
         )}
         {type === 'spot' && (
-          <KfRow nodeId={nodeId} prop="lightCone" label="Cone" value={cone} unit="°" min={1} onStatic={(v) => setCone(v)} />
+          <>
+            <KfRow nodeId={nodeId} prop="lightCone" label="Cone angle" value={cone} unit="°" min={1} onStatic={(v) => setCone(v)} />
+            <KfRow
+              nodeId={nodeId}
+              prop="lightConeFeather"
+              label="Cone feather"
+              value={feather}
+              unit="%"
+              min={0}
+              max={100}
+              onStatic={(v) => setFeather(v)}
+            />
+          </>
+        )}
+        {aimable && (
+          <>
+            <div className={styles.subhead} style={{ marginTop: 8 }}>Point of Interest</div>
+            {hasPOI ? (
+              <>
+                <KfRow nodeId={nodeId} prop="poiX" label="Target X" value={num(poiXRaw, compWidth / 2)} unit="px" onStatic={(v) => setPoiX(v)} />
+                <KfRow nodeId={nodeId} prop="poiY" label="Target Y" value={num(poiYRaw, compHeight / 2)} unit="px" onStatic={(v) => setPoiY(v)} />
+                <KfRow nodeId={nodeId} prop="poiZ" label="Target Z" value={num(poiZRaw, 0)} unit="px" onStatic={(v) => setPoiZ(v)} />
+                <button
+                  type="button"
+                  onClick={() => { setPoiX(undefined); setPoiY(undefined); setPoiZ(undefined); }}
+                  style={{ height: 20, padding: '0 8px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer' }}
+                >
+                  Remove target (aim by angle)
+                </button>
+              </>
+            ) : (
+              <>
+                <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                  Direction alone can only swing this light within the comp plane —
+                  it can never aim at a layer sitting at a different depth. A target
+                  aims it in real 3D.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => { setPoiX(compWidth / 2); setPoiY(compHeight / 2); setPoiZ(0); }}
+                  style={{ height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer' }}
+                >
+                  Add target
+                </button>
+              </>
+            )}
+          </>
         )}
         {type !== 'ambient' && (
           <div className={styles.popoverRow}>
             <span className={styles.popoverLabel}>Cast shadows</span>
             <Checkbox
-              checked={shadowsRaw === true || shadowsRaw === 1}
-              onChange={() => setShadows(shadowsRaw === true || shadowsRaw === 1 ? false : true)}
+              checked={castsShadows}
+              onChange={() => setShadows(castsShadows ? false : true)}
               title="Content layers drop a soft shadow away from this light"
             />
           </div>
+        )}
+        {type !== 'ambient' && castsShadows && (
+          <>
+            <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
+            <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
+          </>
         )}
         <p style={{ margin: '6px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           {type === 'ambient'

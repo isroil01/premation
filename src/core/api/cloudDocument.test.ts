@@ -114,7 +114,7 @@ describe('captureDocument → restoreDocument', () => {
     const actions = useProjectStore.getState().actions;
     actions.updateComp('comp_root', { name: 'Main', width: 1080, height: 1920, fps: 24 });
     // A second comp exists only in the comps table — the bug was that capture
-    // saved `comp()` (the active tab's) and every other comp reverted.
+    // saved `comp` (the active tab's) and every other comp reverted.
     actions.updateComp('comp_second', { name: 'Lower Third', width: 800, height: 200, fps: 60 });
 
     const doc = structuredClone(captureDocument());
@@ -143,19 +143,47 @@ describe('captureDocument → restoreDocument', () => {
   });
 
   it('preserves guides', () => {
-    useGuidesStore.getState().restore({ rulers: true, grid: true, gridDivisions: 12, safeArea: true });
+    useGuidesStore.getState().restore({
+      rulers: true, grid: true, gridSpacing: 120, gridSubdivisions: 3, gridStyle: 'dashed',
+      snapToGrid: true, proportionalGrid: true, proportionalColumns: 3, proportionalRows: 3,
+      safeArea: true,
+    });
 
     const doc = structuredClone(captureDocument());
-    useGuidesStore.getState().restore({ rulers: false, grid: false, gridDivisions: 3, safeArea: false });
+    useGuidesStore.getState().restore({
+      rulers: false, grid: false, gridSpacing: 100, gridSubdivisions: 4, gridStyle: 'lines',
+      snapToGrid: false, proportionalGrid: false, proportionalColumns: 8, proportionalRows: 6,
+      safeArea: false,
+    });
 
     restoreDocument(doc);
 
     expect(useGuidesStore.getState().settings()).toMatchObject({
       rulers: true,
       grid: true,
-      gridDivisions: 12,
+      gridSpacing: 120,
+      gridSubdivisions: 3,
+      gridStyle: 'dashed',
+      snapToGrid: true,
+      proportionalGrid: true,
+      proportionalColumns: 3,
+      proportionalRows: 3,
       safeArea: true,
     });
+  });
+
+  it('migrates a legacy gridDivisions onto the PROPORTIONAL grid', () => {
+    // Projects saved before the absolute/proportional split stored one
+    // `gridDivisions` (cells per axis). That only ever described a
+    // comp-relative division, so it must not land on the absolute grid's
+    // pixel spacing — 12 cells and 12 pixels are wildly different things.
+    useGuidesStore.getState().restore({ proportionalColumns: 8, proportionalRows: 6, gridSpacing: 100 });
+    useGuidesStore.getState().restore({ gridDivisions: 12 } as never);
+
+    const s = useGuidesStore.getState().settings();
+    expect(s.proportionalColumns).toBe(12);
+    expect(s.proportionalRows).toBe(12);
+    expect(s.gridSpacing).toBe(100);
   });
 
   it('reads v1.0.0 documents, which carried only the active comp', () => {

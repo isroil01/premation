@@ -4,7 +4,7 @@
  * + geometry; Style carries fill/opacity; Text carries content/font/fill), so
  * templates render through the same buildSnapshot pipeline as everything else.
  *
- * Every builder takes the target `graph` so a template's `layout()` can be built
+ * Every builder takes the target `graph` so a template's `layout` can be built
  * into either the live singleton (real apply) or a throwaway SceneGraph (gallery
  * thumbnail). Ids are STABLE so exposed fields target nodes reliably.
  */
@@ -130,7 +130,7 @@ export function addImage(
 }
 
 /** Keyframe a prop on a node in the LIVE scene (seconds → layer time). Only used
- *  by build() — thumbnails render the static resting state, no animation. */
+ *  by build — thumbnails render the static resting state, no animation. */
 export function kf(id: string, prop: string, frames: Frame[]): void {
   for (const [t, v, e] of frames) liveKf(id, prop, t, v, e);
 }

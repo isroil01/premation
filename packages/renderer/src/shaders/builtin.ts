@@ -10,6 +10,11 @@ export interface ShaderSource {
   glsl: { vertex: string; fragment: string };
 }
 
+// Lives in its own file — it is the one shader long enough that inlining it
+// here would bury everything else.
+import { GLASS_COMPOSITE } from './glass';
+export { GLASS_COMPOSITE };
+
 // Solid-colored quad with an optional SDF mask so shapes render with real
 // geometry, not just flat rectangles. `shape` = (kind, radiusPx, worldW, worldH):
 //   kind 0 = plain rect (alpha 1 — unchanged; used by masks & default solids)
@@ -600,7 +605,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var c = vec4<f32>(0.0);
   var total = 0.0;
 
-  // CSS blur() semantics: the radius IS the Gaussian sigma (what Canvas2D's
+  // CSS blur semantics: the radius IS the Gaussian sigma (what Canvas2D's
   // filter uses, so both backends match). Taps span ±2.5σ; when that exceeds
   // the loop cap, taps spread out and linear filtering fills the gaps. The
   // old kernel used σ = r/2 truncated at ±r — visibly tighter than Canvas2D
@@ -644,7 +649,7 @@ void main() {
   vec4 c = vec4(0.0);
   float total = 0.0;
 
-  // CSS blur() semantics: radius IS sigma (matches Canvas2D). ±2.5σ extent,
+  // CSS blur semantics: radius IS sigma (matches Canvas2D). ±2.5σ extent,
   // spaced taps under the loop cap — see the WGSL twin above.
   float sigma = r;
   const int steps = 30;
@@ -1191,6 +1196,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
+  let metal = obj.shadeParams.w;
   let shin = max(obj.shadeParams.z, 1.0);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
@@ -1241,7 +1247,9 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
-  return baseRgb * diff + spec * specI;
+  // Metal tints the highlight by the SURFACE colour rather than the light's:
+  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
+  return baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal);
 }
 
 fn shapeAlpha(local : vec2<f32>) -> f32 {
@@ -1295,6 +1303,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
+  float metal = shadeParams.w;
   float shin = max(shadeParams.z, 1.0);
   vec3 diff = vec3(0.0);
   vec3 spec = vec3(0.0);
@@ -1341,7 +1350,9 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
-  return baseRgb * diff + spec * specI;
+  // Metal tints the highlight by the SURFACE colour rather than the light's:
+  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
+  return baseRgb * diff + spec * specI * mix(vec3(1.0), baseRgb, metal);
 }
 float shapeAlpha(vec2 local) {
   int kind = int(shape.x + 0.5);
@@ -1396,6 +1407,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
+  let metal = obj.shadeParams.w;
   let shin = max(obj.shadeParams.z, 1.0);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
@@ -1446,7 +1458,9 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
-  return baseRgb * diff + spec * specI;
+  // Metal tints the highlight by the SURFACE colour rather than the light's:
+  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
+  return baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal);
 }
 `;
 
@@ -1459,6 +1473,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
+  float metal = shadeParams.w;
   float shin = max(shadeParams.z, 1.0);
   vec3 diff = vec3(0.0);
   vec3 spec = vec3(0.0);
@@ -1505,7 +1520,9 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
-  return baseRgb * diff + spec * specI;
+  // Metal tints the highlight by the SURFACE colour rather than the light's:
+  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
+  return baseRgb * diff + spec * specI * mix(vec3(1.0), baseRgb, metal);
 }
 `;
 
@@ -1707,4 +1724,5 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, TEXTURED, MASKED_TEXTURED, LUT_TEXTURED, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
   FILL, STROKE, SHARPEN, NOISE, DEFORMED_MESH,
   SOLID3D, TEXTURED3D, MASKED_TEXTURED3D,
+  GLASS_COMPOSITE,
 ];

@@ -11,15 +11,17 @@
  * Everything the run changes lands in ONE undo entry (see aiTransaction).
  */
 
-import { ToolRegistry, getAdapter } from '@motion/ai-tools';
+import { ToolRegistry, getAdapter, mutates } from '@motion/ai-tools';
 import type { AiEvent, AiImage, AiMessage, AiRequest, AiToolCall, ProviderId } from '@motion/ai-tools';
 import { buildAiTools } from './toolHandlers';
 import { createToolContext } from './toolContext';
 import { beginAiTransaction, type AiTransaction } from './aiTransaction';
 import { SYSTEM_PROMPT, buildContextPreamble } from './buildContext';
 import { apiBaseUrl, getToken, type GatewayProviderId } from '@core/api/client';
-import { Router, PipelineOrchestrator } from './pipeline';
+import { classifyPrompt } from './pipeline';
 import { runBackendDirector } from './DirectorRunner';
+import { runCasterPipeline } from './CasterRunner';
+import { casterEnabled } from '@core/config/flags';
 import { deriveStyleFromBrief, setRuntimeStyle } from './design';
 import { buildExemplarBlock } from './exemplars';
 
@@ -33,6 +35,99 @@ const MAX_STEPS = 22;
 /** Identical calls before we intervene / give up. */
 const LOOP_NUDGE = 3;
 const LOOP_ABORT = 5;
+
+/**
+ * Which generation path a run actually took, and why the earlier ones were
+ * skipped.
+ *
+ * Three paths can serve a generative prompt — backend director, client
+ * pipeline, direct tool loop — and the first two used to fail into bare
+ * `catch` blocks. Nothing recorded the failure, so a path could be dead in
+ * production indefinitely while every run silently paid its latency and token
+ * cost before degrading. `runAgent` cannot throw on these (the fallback is the
+ * correct behaviour), so the failure has to be *recorded* instead.
+ *
+ * Readable from the console as `window.__aiPathFailures` for diagnosis.
+ */
+export interface AiPathFailure {
+  path: 'backend-director' | 'generative-path' | 'caster';
+  message: string;
+  at: number;
+}
+
+const pathFailures: AiPathFailure[] = [];
+
+/** The last 20 path failures, newest last. */
+export function getAiPathFailures(): readonly AiPathFailure[] {
+  return pathFailures;
+}
+
+/**
+ * Record a path failure.
+ *
+ * Exported so the caster host can use the same channel. A caster failure that
+ * logged somewhere else would be invisible to the one console command everyone
+ * already knows to run.
+ */
+export function recordAiPathFailure(path: AiPathFailure['path'], err: unknown): void {
+  recordPathFailure(path, err);
+}
+
+function recordPathFailure(path: AiPathFailure['path'], err: unknown): void {
+  const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  pathFailures.push({ path, message, at: Date.now() });
+  if (pathFailures.length > 20) pathFailures.shift();
+  // eslint-disable-next-line no-console
+  console.warn(`[ai] ${path} failed, falling back:`, err);
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __aiPathFailures?: readonly AiPathFailure[] }).__aiPathFailures = pathFailures;
+  }
+}
+
+/**
+ * How a run spent its tool calls.
+ *
+ * The brief's key quality metric: compose calls should dominate the writes. A
+ * compose call applies a vetted entrance archetype with timing the library owns;
+ * a raw primitive asks the model to invent easing curves and stagger offsets it
+ * has no way to evaluate. When the ratio drops, output starts looking
+ * hand-assembled — which is the failure this whole audit is chasing.
+ *
+ * Recorded rather than argued about: it was previously uncomputable, because
+ * every mutating tool shared one `kind`.
+ */
+export interface ToolCallTally {
+  compose: number;
+  primitive: number;
+  read: number;
+}
+
+/** Compose share of MUTATING calls, 0–1. `null` when a run wrote nothing. */
+export function composeRatio(tally: ToolCallTally): number | null {
+  const writes = tally.compose + tally.primitive;
+  return writes === 0 ? null : tally.compose / writes;
+}
+
+const runTallies: Array<ToolCallTally & { at: number; ratio: number | null }> = [];
+
+/** The last 20 runs' call tallies, newest last. Also `window.__aiToolRatio`. */
+export function getAiToolTallies(): ReadonlyArray<ToolCallTally & { at: number; ratio: number | null }> {
+  return runTallies;
+}
+
+function recordTally(tally: ToolCallTally): void {
+  const ratio = composeRatio(tally);
+  runTallies.push({ ...tally, ratio, at: Date.now() });
+  if (runTallies.length > 20) runTallies.shift();
+  // eslint-disable-next-line no-console
+  console.info(
+    `[ai] tool mix — compose ${tally.compose}, primitive ${tally.primitive}, read ${tally.read}` +
+    (ratio === null ? ' (no writes)' : ` → compose ratio ${(ratio * 100).toFixed(0)}%`),
+  );
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __aiToolRatio?: unknown }).__aiToolRatio = runTallies;
+  }
+}
 
 let registry: ToolRegistry | null = null;
 
@@ -86,12 +181,17 @@ export interface AgentResult {
   toolCallCount: number;
   /**
    * In preview mode, the still-open transaction — the caller decides whether to
-   * commit() (Apply) or rollback() (Discard). Absent in auto mode (already
+   * commit (Apply) or rollback (Discard). Absent in auto mode (already
    * committed).
    */
   tx?: AiTransaction;
   /** Plain-language summaries of each write the run made, for the preview list. */
   changes: string[];
+  /**
+   * How the run split its calls between the technique library and raw
+   * primitives. See `composeRatio`.
+   */
+  tally: ToolCallTally;
 }
 
 export class AiError extends Error {
@@ -220,6 +320,20 @@ export interface RunAgentOptions {
   visualFeedback?: boolean;
   signal: AbortSignal;
   events?: AgentEvents;
+  /**
+   * The project and conversation this run belongs to.
+   *
+   * Both are forwarded to `/ai/director/run`, whose DTO has always accepted them
+   * and whose `assembleRunMemory` keys on them — but no call site ever supplied
+   * one, so project memory and conversation memory have been permanently
+   * `undefined`. Every run has started from nothing.
+   *
+   * `useCloudProjectStore` holds the live projectId; `useAiChat` holds the live
+   * conversationId. Both are passed in by the caller rather than read here,
+   * because this module is deliberately store-free.
+   */
+  projectId?: string;
+  conversationId?: string;
 }
 
 /**
@@ -238,14 +352,26 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
   const tools = reg.list();
   // Which tools mutate the document — only these feed the "pending changes"
   // preview list; read calls ("describe_scene") are not changes to review.
-  const writeNames = new Set(tools.filter((t) => t.kind === 'write').map((t) => t.name));
+  //
+  // `mutates`, not `kind === 'write'`: compose tools are now their own kind,
+  // and a literal 'write' test would have quietly dropped all sixteen of them
+  // from the pending-changes list — i.e. the tools that do the most visible
+  // work would have been the ones the user could not review.
+  const writeNames = new Set(tools.filter((t) => mutates(t.kind)).map((t) => t.name));
+  const composeNames = new Set(tools.filter((t) => t.kind === 'compose').map((t) => t.name));
   const changes: string[] = [];
+  const callTally: ToolCallTally = { compose: 0, primitive: 0, read: 0 };
+  /** Classify every executed call, wherever in the run it was issued from. */
+  const tally = (name: string): void => {
+    if (composeNames.has(name)) callTally.compose++;
+    else if (writeNames.has(name)) callTally.primitive++;
+    else callTally.read++;
+  };
 
   const label = `AI: ${prompt.length > 48 ? `${prompt.slice(0, 48)}…` : prompt}`;
   const tx = beginAiTransaction(label);
 
   let requestPrompt = prompt;
-  let pipelinePlan: any = null;
   /**
    * True once a programmatic plan (backend director OR client pipeline) has
    * executed against the scene. Both paths then flow into the SAME sighted
@@ -256,6 +382,8 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
   /** How many render→look→fix passes this run may take. */
   let maxCritiques = MAX_CRITIQUES;
   let isGenerative = false;
+  /** The caster's fit-critic verdict, if one ran. Shown with the answer. */
+  let casterCritique = '';
   /** Frames rendered after a successful plan run — seeds the polish pass. */
   let pipelineReviewShots: AiImage[] = [];
   let finalText = '';
@@ -270,103 +398,121 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
   try {
     // 1. Router Classification & Pipeline Orchestration
     try {
-      const router = new Router({ provider, dialect, model, signal });
-      const classification = await router.classify(prompt);
+      const classification = classifyPrompt(prompt);
 
       if (classification === 'generative') {
         isGenerative = true;
         maxCritiques = MAX_CRITIQUES_GENERATIVE;
-        events?.onActivity?.('Connecting to Director Service…');
         let backendRan = false;
+
+        // ── The caster ────────────────────────────────────────────────────
+        // Three model calls, and none of them authors a keyframe: the brief
+        // picks a look and the beats, the cast picks a layout and a technique
+        // per beat, and every keyframe comes from a hand-authored library that
+        // the timing, design and UI linters have already verified.
+        //
+        // Tried FIRST, and the director is kept as the fallback rather than
+        // deleted — until the caster has carried real traffic, a path that has
+        // shipped is worth more than a path that has passed tests.
+        if (casterEnabled()) {
+          try {
+            const cast = await runCasterPipeline(
+              { provider, dialect, model, prompt, signal, events },
+              ctx, reg, writeNames, tally,
+            );
+            if (cast.ok) {
+              backendRan = true;
+              planExecuted = true;
+              toolCallCount += cast.toolCallCount;
+              changes.push(...cast.changes);
+              planSummary =
+                `Cast ${cast.report.beats} beats in the '${cast.report.lookPackId}' look ` +
+                `(${cast.report.techniques.length} techniques, ${cast.toolCallCount} steps).`;
+              // Problems are reported, never hidden — and "reported" has to mean
+              // TO THE USER. They went only to `recordPathFailure`, which writes
+              // a console global nobody opening the app will ever look at, so a
+              // run that quietly substituted three techniques read as one that
+              // got exactly what it asked for. That is the failure mode this
+              // rule exists to prevent, reintroduced one layer up.
+              //
+              // The console record stays: it carries the full object for
+              // debugging. The summary carries the short version, because the
+              // person who can act on "your look pack forbade the technique the
+              // brief asked for" is the one typing the prompt.
+              for (const p of cast.problems) recordPathFailure('caster', p);
+              if (cast.problems.length) {
+                const shown = cast.problems.slice(0, 3).map((p) => `• ${String(p)}`);
+                const more = cast.problems.length - shown.length;
+                const NL = String.fromCharCode(10);
+                planSummary +=
+                  NL + NL + 'Substitutions made while casting:' + NL + shown.join(NL) +
+                  (more > 0 ? NL + '• …and ' + more + ' more.' : '');
+              }
+              // The fit critic's verdict, carried into the answer. It is the one
+              // judgement in the run that a linter could not make, so burying it
+              // in a console log would waste the only call that produced it.
+              if (cast.critique) casterCritique = cast.critique;
+            }
+          } catch (err) {
+            recordPathFailure('caster', err);
+          }
+        }
+
+        // The director only runs if the caster did not. Guarding here rather
+        // than throwing a sentinel keeps the catch below meaning exactly one
+        // thing — "the director failed" — which is what its message says.
+        if (!backendRan) {
+        events?.onActivity?.('Connecting to Director Service…');
         try {
           const dirRes = await runBackendDirector(
-            { provider, model, prompt, signal, events },
+            {
+              provider, model, prompt, signal, events,
+              // Without these the backend's memory lookups key on `undefined`
+              // and every run starts cold. This is what makes run #10 better
+              // than run #1.
+              ...(opts.projectId ? { projectId: opts.projectId } : {}),
+              ...(opts.conversationId ? { conversationId: opts.conversationId } : {}),
+            },
             ctx,
             reg,
             writeNames,
+            tally,
           );
           if (dirRes.ok) {
             // Do NOT return here. The director authored the scene blind; the
             // sighted polish pass below is what turns "executed" into "looks
-            // right". Same treatment as the client-pipeline path.
+            // right". Same treatment as the surrounding generative path.
             backendRan = true;
             planExecuted = true;
             toolCallCount += dirRes.toolCallCount;
             changes.push(...dirRes.changes);
             planSummary = `Executed ${dirRes.toolCallCount} director production steps.`;
           }
-        } catch {
-          // Backend director unavailable or unsupported — fall back to client orchestrator
+        } catch (err) {
+          // Backend director unavailable or unsupported — fall back to the
+          // client orchestrator, but NEVER silently. A bare `catch {}` here is
+          // how ~13k LOC of backend director stayed dead in production without
+          // anyone noticing: every generative prompt paid its latency, failed,
+          // and quietly degraded to the direct loop.
+          recordPathFailure('backend-director', err);
+        }
         }
 
-        if (!backendRan) {
-          events?.onActivity?.('Orchestrating production pipeline…');
-          const orchestrator = new PipelineOrchestrator({
-            provider,
-            dialect,
-            model,
-            history: opts.history,
-            images: opts.images,
-            signal,
-            existingLayerNames: ctx.scene.all().map((n) => n.name),
-            events: {
-              onActivity: (label) => events?.onActivity?.(label),
-            },
-          });
-
-          const compPreamble = buildContextPreamble(ctx);
-          const planContext = await orchestrator.execute(prompt, compPreamble);
-          
-          if (planContext.toolPlan) {
-            pipelinePlan = planContext.toolPlan.executionPlan;
-          }
-        }
+        // The client PipelineOrchestrator used to sit here as a third
+        // generative path. It is deleted (Phase 3.4): it was a second
+        // LLM-authors-keyframes pipeline behind the first, so when it ran at all
+        // it produced exactly the output the caster exists to replace — and when
+        // it did not, it was ~2,200 lines of latency nobody could see.
+        //
+        // Two paths remain and the fallback order is deliberate: the caster,
+        // whose craft floor is deterministic; then the backend director; then the
+        // direct tool loop below, which at least lets the model see the scene.
       }
     } catch (err) {
-      // Fail-safe fallback to legacy direct path on pipeline error
+      // Fail-safe fallback to the direct tool loop. Same rule as above: the
+      // fallback is fine, the silence is not.
+      recordPathFailure('generative-path', err);
       events?.onActivity?.('Pipeline failed. Falling back to direct mode…');
-    }
-
-    // 2. Programmatic Execution Turn (Stage 10)
-    if (pipelinePlan) {
-      events?.onActivity?.('Executing planned production steps…');
-      const roleToNodeId = new Map<string, string>();
-      for (const layer of ctx.scene.all()) {
-        roleToNodeId.set(layer.name, layer.id);
-        roleToNodeId.set(layer.name.toLowerCase(), layer.id);
-      }
-
-      for (const step of pipelinePlan) {
-        if (signal.aborted) throw new AiError('cancelled', 'Cancelled.');
-        
-        const resolvedArgs = resolveRoles(step.args, roleToNodeId);
-        events?.onToolStart?.({ id: `step_${step.stepIndex}`, name: step.tool, args: resolvedArgs });
-        toolCallCount++;
-        
-        const res = await reg.execute(step.tool, resolvedArgs, ctx);
-        events?.onToolEnd?.({ id: `step_${step.stepIndex}`, name: step.tool, args: resolvedArgs }, res.ok, res.content);
-        
-        if (!res.ok) {
-          throw new AiError('unknown', `Failed execution step ${step.stepIndex} (${step.tool}): ${res.content}`);
-        }
-        
-        if (step.tool === 'create_layer' && res.data && typeof res.data === 'object') {
-          const createdId = (res.data as any).id;
-          if (createdId && step.args.name) {
-            roleToNodeId.set(step.args.name, createdId);
-            roleToNodeId.set(step.args.name.toLowerCase(), createdId);
-          }
-        }
-        
-        if (writeNames.has(step.tool)) {
-          changes.push(res.content);
-        }
-        
-        const toolTurn: AiMessage = { role: 'tool', id: `step_${step.stepIndex}`, name: step.tool, content: res.content, isError: false };
-        produced.push(toolTurn);
-      }
-      planExecuted = true;
-      planSummary = `Successfully executed ${pipelinePlan.length} planned production steps.`;
     }
 
     // 3. Sighted polish pass — a plan (backend director OR client pipeline)
@@ -390,15 +536,22 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         }
       }
       if (!pipelineReviewShots.length) {
-        finalText = planSummary;
+        finalText = casterCritique ? `${planSummary}
+
+${casterCritique}` : planSummary;
         const assistantTurn: AiMessage = { role: 'assistant', content: finalText };
         produced.push(assistantTurn);
 
+        // A programmatic run that never got a frame to critique still spent
+        // tool calls, and this is the path a director run takes when rendering
+        // fails — precisely the run whose tool mix is most worth knowing.
+        recordTally(callTally);
+
         if (opts.preview) {
-          return { text: finalText, messages: produced, toolCallCount, tx, changes };
+          return { text: finalText, messages: produced, toolCallCount, tx, changes, tally: callTally };
         }
         tx.commit();
-        return { text: finalText, messages: produced, toolCallCount, changes };
+        return { text: finalText, messages: produced, toolCallCount, changes, tally: callTally };
       }
     }
 
@@ -452,34 +605,60 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
       // what's wrong. This is the difference between authoring blind and
       // authoring with eyes — the single biggest lever on output quality.
       if (!calls.length) {
-        const worthReviewing =
-          opts.visualFeedback !== false &&
-          changes.length > 0 &&
-          critiques < maxCritiques &&
-          !signal.aborted;
+        const madeChanges = changes.length > 0;
+        const budgetLeft = critiques < maxCritiques && !signal.aborted;
 
-        if (worthReviewing) {
-          events?.onActivity?.('Reviewing the result');
-          let shots: AiImage[] = [];
+        if (madeChanges && budgetLeft) {
+          // Mechanical checks first: they are arithmetic over the scene graph,
+          // so they cost nothing and they catch the class of defect a vision
+          // pass shouldn't be spending a render on. Read verify.ts before
+          // trusting a finding — its checks are shaped by three false positives
+          // that a naive version produced against correct output.
+          let mechanical: string | null = null;
           try {
-            const { renderSceneFrames, critiqueTimes } = await import('./renderFeedback');
-            const comp = ctx.comp.get();
-            shots = await renderSceneFrames(critiqueTimes(comp.durationSeconds, comp.fps));
-          } catch {
-            shots = [];
+            const { verifyScene, formatFindings } = await import('./verify');
+            mechanical = formatFindings(verifyScene(ctx));
+          } catch (err) {
+            // A broken verifier must never take the run down with it.
+            // eslint-disable-next-line no-console
+            console.warn('[ai] mechanical verification failed:', err);
           }
-          if (shots.length && !signal.aborted) {
+
+          let shots: AiImage[] = [];
+          if (opts.visualFeedback !== false) {
+            events?.onActivity?.('Reviewing the result');
+            try {
+              const { renderSceneFrames, critiqueTimes } = await import('./renderFeedback');
+              const comp = ctx.comp.get();
+              shots = await renderSceneFrames(critiqueTimes(comp.durationSeconds, comp.fps));
+            } catch {
+              shots = [];
+            }
+          }
+
+          // One turn, not two: findings ride along with the frames when we have
+          // them. When rendering fails — which is exactly the path a director
+          // run takes when it produces no frame — the findings still go out on
+          // their own, so a run that can't be looked at is not unchecked.
+          if ((shots.length || mechanical) && !signal.aborted) {
             critiques++;
             // Keep the premature answer in the MODEL's context so the critique
             // turn has something to react to — but NOT in `produced`, so the
             // saved/visible thread only ever shows the final answer.
             messages.push({ role: 'assistant', content: text });
-            messages.push({ role: 'user', content: CRITIQUE_PROMPT, images: shots });
+            const prompt = shots.length
+              ? mechanical ? `${CRITIQUE_PROMPT}\n\n${mechanical}` : CRITIQUE_PROMPT
+              : mechanical!;
+            messages.push({ role: 'user', content: prompt, ...(shots.length ? { images: shots } : {}) });
             continue;
           }
         }
 
-        finalText = text;
+        finalText = casterCritique && !text.includes(casterCritique)
+          ? `${text}
+
+${casterCritique}`
+          : text;
         const turn: AiMessage = { role: 'assistant', content: text };
         messages.push(turn);
         produced.push(turn);
@@ -504,6 +683,7 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
 
         events?.onToolStart?.(call);
         toolCallCount++;
+        tally(call.name);
         const res =
           n >= LOOP_NUDGE
             ? { ok: false, content: `You have called ${call.name} with these exact arguments ${n} times. It will not return anything different. Change your approach or answer the user.` }
@@ -534,13 +714,18 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
       }
     }
 
+    // Recorded before the preview branch so a run the user later discards is
+    // still measured — the metric is about what the model chose to call, not
+    // about what survived review.
+    recordTally(callTally);
+
     // Manual mode: leave the transaction open so the user can Apply or Discard
     // after seeing the result on the canvas. Auto mode commits now.
     if (opts.preview) {
-      return { text: finalText, messages: produced, toolCallCount, tx, changes };
+      return { text: finalText, messages: produced, toolCallCount, tx, changes, tally: callTally };
     }
     tx.commit();
-    return { text: finalText, messages: produced, toolCallCount, changes };
+    return { text: finalText, messages: produced, toolCallCount, changes, tally: callTally };
   } catch (err) {
     // A half-applied AI edit is worse than none — the user can't tell which
     // half landed, and undo would only reach part of it.
@@ -549,23 +734,3 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
   }
 }
 
-function resolveRoles(val: any, mapping: Map<string, string>): any {
-  if (typeof val === 'string') {
-    if (val.startsWith('role:')) {
-      const role = val.slice(5);
-      return mapping.get(role) ?? mapping.get(role.toLowerCase()) ?? role;
-    }
-    return val;
-  }
-  if (Array.isArray(val)) {
-    return val.map((item) => resolveRoles(item, mapping));
-  }
-  if (val && typeof val === 'object') {
-    const copy: any = {};
-    for (const [k, v] of Object.entries(val)) {
-      copy[k] = resolveRoles(v, mapping);
-    }
-    return copy;
-  }
-  return val;
-}

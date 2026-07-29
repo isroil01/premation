@@ -21,7 +21,7 @@ import {
 } from '@core/paint/fill';
 import { openModal } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { useGuidesStore } from '@stores/guidesStore';
+import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { FPS_PRESETS, MAX_DURATION } from '@core/composition/presets';
 import styles from './CompositionSettingsDialog.module.css';
@@ -32,11 +32,23 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   // Grid overlay is view/session state (guidesStore), surfaced here so its
   // divisions + line colour are discoverable alongside the comp's own look.
   const gridOn = useGuidesStore((g) => g.grid);
-  const gridDivisions = useGuidesStore((g) => g.gridDivisions);
+  const snapToGrid = useGuidesStore((g) => g.snapToGrid);
+  const gridSpacing = useGuidesStore((g) => g.gridSpacing);
+  const gridSubdivisions = useGuidesStore((g) => g.gridSubdivisions);
+  const gridStyle = useGuidesStore((g) => g.gridStyle);
   const gridColor = useGuidesStore((g) => g.gridColor);
+  const proportionalGrid = useGuidesStore((g) => g.proportionalGrid);
+  const proportionalColumns = useGuidesStore((g) => g.proportionalColumns);
+  const proportionalRows = useGuidesStore((g) => g.proportionalRows);
   const toggleGrid = useGuidesStore((g) => g.toggleGrid);
-  const setGridDivisions = useGuidesStore((g) => g.setGridDivisions);
+  const toggleSnapToGrid = useGuidesStore((g) => g.toggleSnapToGrid);
+  const setGridSpacing = useGuidesStore((g) => g.setGridSpacing);
+  const setGridSubdivisions = useGuidesStore((g) => g.setGridSubdivisions);
+  const setGridStyle = useGuidesStore((g) => g.setGridStyle);
   const setGridColor = useGuidesStore((g) => g.setGridColor);
+  const toggleProportionalGrid = useGuidesStore((g) => g.toggleProportionalGrid);
+  const setProportionalColumns = useGuidesStore((g) => g.setProportionalColumns);
+  const setProportionalRows = useGuidesStore((g) => g.setProportionalRows);
 
   // Size is fixed at creation and displayed in the viewport top bar — no need to
   // repeat it here. This dialog edits only the mutable settings (name, fps,
@@ -134,17 +146,17 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
       <div className={styles.section}>
         <div className={styles.label}>Scene Background</div>
         <p className={styles.hint} style={{ marginTop: 0, marginBottom: 8 }}>
-          The composition's own background — this is what appears on the video screen and in exports.
+          The composition's background — rendered on canvas and captured in video exports.
         </p>
         <div className={styles.bgRow}>
-          {/* Style selector — solid colour, or a linear / radial gradient. */}
-          <div className={styles.chips} style={{ margin: 0 }}>
+          {/* Segmented Control style selector — Solid, Linear, or Radial gradient. */}
+          <div className={styles.segmentedControl}>
             {(['solid', 'linear', 'radial'] as FillType[]).map((t) => (
               <button
                 key={t}
                 type="button"
                 title={`${t[0]!.toUpperCase()}${t.slice(1)} background`}
-                className={bgPaint.type === t ? styles.chipOn : styles.chip}
+                className={bgPaint.type === t ? styles.segmentBtnActive : styles.segmentBtn}
                 disabled={s.transparent}
                 onClick={() => setBgType(t)}
               >
@@ -160,19 +172,21 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         </div>
 
         {!s.transparent && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
             {bgPaint.type === 'solid' && (
-              <ColorPicker
-                value={s.background}
-                onChange={(hex) => s.setBackgroundPaint(solidFill(hex))}
-                className={styles.colorTrigger}
-                aria-label="Background color"
-              />
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Solid Fill Color</span>
+                <ColorPicker
+                  value={s.background}
+                  onChange={(hex) => s.setBackgroundPaint(solidFill(hex))}
+                  aria-label="Background color"
+                />
+              </div>
             )}
 
             {bgPaint.type === 'linear' && (
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Angle</span>
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Gradient Angle</span>
                 <ValueField
                   value={bgPaint.angle}
                   onChange={(angle) => s.setBackgroundPaint({ ...bgPaint, angle })}
@@ -182,12 +196,12 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                   unit="°"
                   aria-label="Gradient angle"
                 />
-              </label>
+              </div>
             )}
 
             {bgPaint.type === 'radial' && (
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Radius</span>
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Gradient Radius</span>
                 <ValueField
                   value={Math.round(bgPaint.radius * 100)}
                   onChange={(v) => s.setBackgroundPaint({ ...bgPaint, radius: v / 100 })}
@@ -197,14 +211,14 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                   unit="%"
                   aria-label="Gradient radius"
                 />
-              </label>
+              </div>
             )}
 
             {bgPaint.type !== 'solid' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span className={styles.fieldLabel}>Gradient stops</span>
+              <div className={styles.stopsContainer}>
+                <span className={styles.colorCardLabel} style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Gradient Stops</span>
                 {sortedStops(bgPaint.stops).map((stop) => (
-                  <div key={stop.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div key={stop.id} className={styles.stopRow}>
                     <ColorPicker
                       compact
                       value={stop.color}
@@ -226,6 +240,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                       title="Remove stop"
                       disabled={bgPaint.stops.length <= 2}
                       onClick={() => removeStop(stop.id)}
+                      style={{ height: 26, width: 26, padding: 0, display: 'grid', placeItems: 'center' }}
                     >
                       <Icon name="trash" size={12} />
                     </button>
@@ -236,8 +251,9 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                   size="sm"
                   leftIcon={<Icon name="plus" size={12} />}
                   onClick={addStop}
+                  style={{ alignSelf: 'flex-start', marginTop: 2 }}
                 >
-                  Add stop
+                  Add Stop
                 </Button>
               </div>
             )}
@@ -245,41 +261,110 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         )}
 
         {s.transparent ? (
-          <p className={styles.hint}>The comp has no background — exports keep an alpha channel.</p>
+          <p className={styles.hint} style={{ marginTop: 6 }}>The comp has no background — exports keep an alpha channel.</p>
         ) : null}
       </div>
 
-      {/* Grid overlay */}
+      {/* Grids & Guides — After Effects' two grids, which behave differently. */}
       <div className={styles.section}>
         <div className={styles.label}>Grid</div>
         <div className={styles.bgRow}>
           <Switch checked={gridOn} onChange={() => toggleGrid()} label="Show grid" />
         </div>
-        {gridOn && (
-          <div className={styles.row} style={{ marginTop: 8 }}>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Divisions</span>
-              <ValueField
-                value={gridDivisions}
-                onChange={setGridDivisions}
-                min={2}
-                max={64}
-                step={1}
-                aria-label="Grid divisions"
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Line color</span>
-              <ColorPicker
-                value={gridColor}
-                onChange={setGridColor}
-                className={styles.colorTrigger}
-                aria-label="Grid line color"
-              />
-            </label>
+        <div className={styles.bgRow} style={{ marginTop: 6 }}>
+          {/* Independent of "Show grid" on purpose — see the store's note. */}
+          <Switch checked={snapToGrid} onChange={() => toggleSnapToGrid()} label="Snap to grid" />
+        </div>
+        <div className={styles.row} style={{ marginTop: 8 }}>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Gridline every</span>
+            <ValueField
+              value={gridSpacing}
+              onChange={setGridSpacing}
+              min={1}
+              max={10000}
+              step={1}
+              aria-label="Gridline every (pixels)"
+            />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Subdivisions</span>
+            <ValueField
+              value={gridSubdivisions}
+              onChange={setGridSubdivisions}
+              min={1}
+              max={64}
+              step={1}
+              aria-label="Grid subdivisions"
+            />
+          </label>
+        </div>
+        <div className={styles.row} style={{ marginTop: 8 }}>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Style</span>
+            <select
+              value={gridStyle}
+              onChange={(e) => setGridStyle(e.target.value as GridStyle)}
+              aria-label="Grid style"
+            >
+              <option value="lines">Lines</option>
+              <option value="dashed">Dashed Lines</option>
+              <option value="dots">Dots</option>
+            </select>
+          </label>
+          <div className={styles.field}>
+            <span className={styles.fieldLabel}>Line color</span>
+            <ColorPicker
+              value={gridColor}
+              onChange={setGridColor}
+              aria-label="Grid line color"
+            />
           </div>
-        )}
-        <p className={styles.hint}>Overlay only — the grid never renders into exports.</p>
+        </div>
+        <p className={styles.hint}>
+          Cells are a fixed pixel size, so they do not change with the comp. Snapping uses this grid,
+          and — as in After Effects — keeps working while the grid is hidden.
+        </p>
+      </div>
+
+      {/* The second grid: comp-relative, reference only. */}
+      <div className={styles.section}>
+        <div className={styles.label}>Proportional Grid</div>
+        <div className={styles.bgRow}>
+          <Switch
+            checked={proportionalGrid}
+            onChange={() => toggleProportionalGrid()}
+            label="Show proportional grid"
+          />
+        </div>
+        <div className={styles.row} style={{ marginTop: 8 }}>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Columns</span>
+            <ValueField
+              value={proportionalColumns}
+              onChange={setProportionalColumns}
+              min={1}
+              max={64}
+              step={1}
+              aria-label="Proportional grid columns"
+            />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Rows</span>
+            <ValueField
+              value={proportionalRows}
+              onChange={setProportionalRows}
+              min={1}
+              max={64}
+              step={1}
+              aria-label="Proportional grid rows"
+            />
+          </label>
+        </div>
+        <p className={styles.hint}>
+          Divides the comp, so it rescales with it. Reference only — nothing snaps to it. 3 × 3 gives
+          rule-of-thirds. Overlays never render into exports.
+        </p>
       </div>
 
       <div className={styles.footer}>

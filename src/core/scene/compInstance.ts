@@ -16,6 +16,7 @@
 
 import type { SceneNode } from '@core/types';
 import type SceneGraphT from './DefaultSceneGraph';
+import { renderComponentsOf } from './SceneGraph';
 
 type SceneGraph = typeof SceneGraphT;
 
@@ -27,7 +28,10 @@ const MAX_INSTANCE_DEPTH = 8;
 
 /** The referenced composition root id, when `node` is a comp instance. */
 export function readCompRef(node: SceneNode): string | null {
-  for (const c of node.components) {
+  // `renderComponentsOf`, not `node.components`: `expandCompInstances` calls this
+  // for every node of the composition, every frame, on live views — see
+  // `readNodeKind`. Read-only.
+  for (const c of renderComponentsOf(node)) {
     const v = (c.props as Record<string, unknown>)[COMP_REF_PROP];
     if (typeof v === 'string' && v) return v;
   }

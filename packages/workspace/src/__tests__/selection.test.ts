@@ -35,12 +35,15 @@ describe('Marquee', () => {
 });
 
 describe('handles', () => {
-  it('produces 8 resize + 1 rotate handle', () => {
-    const handles = computeHandles(R.rect(0, 0, 100, 100), { rotateOffset: 20 });
-    expect(handles).toHaveLength(9);
-    expect(handles.filter((h) => h.kind === 'resize')).toHaveLength(8);
-    expect(handles.find((h) => h.id === 'rotate')?.position).toEqual({ x: 50, y: -20 });
+  it('produces 8 resize handles and NO rotate handle', () => {
+    const handles = computeHandles(R.rect(0, 0, 100, 100));
+    expect(handles).toHaveLength(8);
+    expect(handles.every((h) => h.kind === 'resize')).toBe(true);
+    // Rotation is a tool mode (RotateTool), not a grip floating off a corner:
+    // that grip cost a dead zone and accidental rotation on every wide reach.
+    expect(handles.some((h) => (h.id as string) === 'rotate')).toBe(false);
     expect(handles.find((h) => h.id === 'se')?.position).toEqual({ x: 100, y: 100 });
+    expect(handles.find((h) => h.id === 'n')?.position).toEqual({ x: 50, y: 0 });
   });
 
   it('picks the handle under a point within radius', () => {
@@ -91,7 +94,7 @@ describe('SelectionController', () => {
     selection.set(['a', 'b']);
     const bounds = controller.selectionBounds();
     expect(bounds).toEqual({ x: 0, y: 0, width: 300, height: 100 });
-    expect(controller.handles()).toHaveLength(9);
+    expect(controller.handles()).toHaveLength(8);
   });
 
   it('selectAll picks visible unlocked nodes', () => {

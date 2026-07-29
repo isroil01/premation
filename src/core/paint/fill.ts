@@ -1,19 +1,19 @@
 /**
- * Fill paints (Prompt E2 — solids, fills, gradients, strokes).
+ * Fill paints — solids, gradients and strokes.
  *
  * A layer's fill is a paint: a solid colour, a linear gradient, or a radial
  * gradient (multi-stop). It lives on the node's `fx` component (key 'fill'),
- * sibling to blend/mask/matte, so History / autosave / export capture it for
- * free — the same pattern as [[project-motion-editor]] Prompt 5's compositing.
+ * sibling to blend/mask/matte, so History, autosave and export capture it for
+ * free without any extra wiring.
  *
  * Coordinates are LAYER-LOCAL and relative: gradient geometry is expressed in
  * the centred [-0.5..0.5] box, so it composes with any layer size/transform.
  * Both solid and gradient fills render through the Canvas2DVectorRasterizer in
- * the unified GPU engine — no fallback to first-stop approximation.
+ * the GPU engine — no fallback to a first-stop approximation.
  *
- * Deferred (like Prompt 5's keyframeable mask points): per-stop colour / angle
- * KEYFRAME animation — the AnimationEngine is scalar-only in v1, so animatable
- * gradients wait on colour/vector tracks. Static editing + undo work now.
+ * Not yet supported: KEYFRAMING per-stop colour or gradient angle. The
+ * AnimationEngine holds scalar tracks only, so animatable gradients wait on
+ * colour/vector track support. Static editing and undo work today.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -29,6 +29,24 @@ export interface ColorStop {
   color: string;
 }
 
+/**
+ * An OPACITY stop — a separate list from the colour stops.
+ *
+ * Photoshop and After Effects keep colour and opacity as two independent stop
+ * lists, and copying that is deliberate: it is the difference between "fade
+ * this gradient out at the top" (one opacity stop) and "duplicate every colour
+ * stop so you can add alpha to each" (what a single combined list forces).
+ * CSS gradients have no equivalent, which is why the naive model everyone
+ * reaches for first is the combined one.
+ */
+export interface OpacityStop {
+  id: string;
+  /** Position along the same axis as the colour stops, 0..1. */
+  offset: number;
+  /** 0..1. */
+  opacity: number;
+}
+
 export type FillType = 'solid' | 'linear' | 'radial';
 
 export interface SolidFill {
@@ -40,6 +58,8 @@ export interface LinearFill {
   /** Gradient direction in degrees (0 = →, 90 = ↓). */
   angle: number;
   stops: ColorStop[];
+  /** Independent opacity ramp. Absent = fully opaque throughout. */
+  opacityStops?: OpacityStop[];
 }
 export interface RadialFill {
   type: 'radial';
@@ -49,6 +69,8 @@ export interface RadialFill {
   /** Radius as a fraction of the layer's half-diagonal. */
   radius: number;
   stops: ColorStop[];
+  /** Independent opacity ramp. Absent = fully opaque throughout. */
+  opacityStops?: OpacityStop[];
 }
 
 export type FillPaint = SolidFill | LinearFill | RadialFill;
@@ -250,8 +272,71 @@ export function makeCanvasGradient(
     const r = (Math.max(0.01, paint.radius) * Math.hypot(w, h)) / 2;
     grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
   }
-  for (const s of sortedStops(paint.stops)) grad.addColorStop(clamp01(s.offset), s.color);
+  // Colour and opacity are separate ramps, so the canvas gradient is built from
+  // their MERGED offsets — a stop from either list becomes a stop in the
+  // result, with the other channel sampled at that offset. Without the merge,
+  // an opacity stop between two colour stops would simply be ignored.
+  const colors = sortedStops(paint.stops);
+  const alphas = sortedOpacityStops(paint.opacityStops);
+  if (alphas.length === 0) {
+    for (const s of colors) grad.addColorStop(clamp01(s.offset), s.color);
+    return grad;
+  }
+  const offsets = [...new Set([...colors.map((c) => c.offset), ...alphas.map((a) => a.offset)])]
+    .map(clamp01)
+    .sort((p, q) => p - q);
+  for (const off of offsets) {
+    grad.addColorStop(off, applyAlpha(sampleGradientColor(colors, off), sampleGradientOpacity(alphas, off)));
+  }
   return grad;
+}
+
+/** Opacity stops sorted by offset ([] when the gradient has none). */
+export function sortedOpacityStops(stops: ReadonlyArray<OpacityStop> | undefined): OpacityStop[] {
+  return stops ? [...stops].sort((a, b) => a.offset - b.offset) : [];
+}
+
+/**
+ * Opacity at `t` along the ramp. Clamps outside the stop range, and returns 1
+ * for an empty list so a gradient without an opacity ramp is fully opaque.
+ */
+export function sampleGradientOpacity(stops: ReadonlyArray<OpacityStop>, t: number): number {
+  const s = sortedOpacityStops(stops);
+  if (s.length === 0) return 1;
+  if (t <= s[0]!.offset) return s[0]!.opacity;
+  const last = s[s.length - 1]!;
+  if (t >= last.offset) return last.opacity;
+  for (let i = 0; i < s.length - 1; i++) {
+    const a = s[i]!;
+    const b = s[i + 1]!;
+    if (t >= a.offset && t <= b.offset) {
+      const span = b.offset - a.offset;
+      const u = span === 0 ? 0 : (t - a.offset) / span;
+      return a.opacity + (b.opacity - a.opacity) * u;
+    }
+  }
+  return last.opacity;
+}
+
+/** Multiply a hex colour's alpha by `opacity`, returning 8-digit hex. */
+export function applyAlpha(hex: string, opacity: number): string {
+  const c = parseHex(hex);
+  const a = Math.max(0, Math.min(255, Math.round(c.a * clamp01(opacity))));
+  const h = (v: number): string => Math.round(v).toString(16).padStart(2, '0');
+  return `#${h(c.r)}${h(c.g)}${h(c.b)}${h(a)}`;
+}
+
+/** A fresh two-stop opacity ramp, opaque throughout. */
+export function defaultOpacityStops(): OpacityStop[] {
+  return [
+    { id: sid(), offset: 0, opacity: 1 },
+    { id: sid(), offset: 1, opacity: 1 },
+  ];
+}
+
+/** A new opacity stop. */
+export function makeOpacityStop(offset: number, opacity: number): OpacityStop {
+  return { id: sid(), offset: clamp01(offset), opacity: clamp01(opacity) };
 }
 
 /** Switch fill type, preserving colour/stops where sensible. */

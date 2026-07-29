@@ -17,12 +17,14 @@ import { bumpScene } from '@stores/sceneStore';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import type { SceneNode } from '@core/types';
 import type { Camera3D, OrthoView } from '@motion/scene';
+import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
   customViewCamera,
   DollyEaser,
   dollyViewParams,
   isCustomViewId,
   orbitViewParams,
+  ORTHO_VIEW_ANGLES,
   resolveCustomView,
   trackViewParams,
   type CustomViewId,
@@ -159,16 +161,26 @@ export function sceneHasAny3D(): boolean {
 /** What viewport navigation writes to: a scene camera node, or a stored view. */
 export type NavTarget =
   | { kind: 'scene'; nodeId: string; transId: string }
-  | { kind: 'view'; viewId: CustomViewId };
+  | { kind: 'view'; viewId: CustomViewId }
+  | { kind: 'ortho'; view: OrthoView };
 
 /**
  * The navigation target for the CURRENT view mode, or null when navigation is
- * meaningless (no camera+3D in 'active'; no 3D layer at all in custom views).
+ * meaningless (no camera+3D in 'active'; no 3D layer at all in the views).
+ *
+ * The six axis views resolve to their OWN target, not to the scene camera.
+ * They used to fall through to `findCameraNav`, so Alt+drag in Top view wrote
+ * orbitYaw / orbitPitch / x / y / z to the shot camera — invisibly, because an
+ * orthographic view ignores the scene camera entirely and so showed no sign of
+ * the change. Switching views must never modify the scene.
  */
 export function findNavTarget(): NavTarget | null {
   const mode = useGuidesStore.getState().camera3dMode;
   if (isCustomViewId(mode)) {
     return sceneHasAny3D() ? { kind: 'view', viewId: mode } : null;
+  }
+  if (mode !== 'active') {
+    return sceneHasAny3D() ? { kind: 'ortho', view: mode as OrthoView } : null;
   }
   const nav = findCameraNav();
   return nav ? { kind: 'scene', ...nav } : null;
@@ -178,10 +190,28 @@ function readView(viewId: CustomViewId) {
   return useGuidesStore.getState().customViews[viewId];
 }
 
-/** Orbit through the mode-aware target (0.4°/px both paths). */
+/**
+ * The custom view an orbited axis view is promoted into. Fixed rather than
+ * "last used" so the promotion is predictable, and the view label visibly
+ * changes to "Custom View 1" — the user can see what happened rather than
+ * having a saved view silently rewritten under them.
+ */
+const ORTHO_ORBIT_PROMOTES_TO: CustomViewId = 'custom1';
+
+/** Orbit through the mode-aware target (0.4°/px on every path). */
 export function orbitNavBy(t: NavTarget, dx: number, dy: number): void {
   if (t.kind === 'scene') {
     orbitCameraBy(t, dx, dy);
+    return;
+  }
+  if (t.kind === 'ortho') {
+    // Swinging off the axis makes this a custom view by definition. Seed one
+    // from the axis angles so the scene does not jump, apply the drag, and
+    // switch the viewport to it. Pure view state — no scene node is touched.
+    const seeded = orbitViewParams(ORTHO_VIEW_ANGLES[t.view], dx, dy);
+    const g = useGuidesStore.getState();
+    g.updateCustomView(ORTHO_ORBIT_PROMOTES_TO, { ...seeded, distance: null, poi: null });
+    g.setCamera3dMode(ORTHO_ORBIT_PROMOTES_TO);
     return;
   }
   const v = readView(t.viewId);
@@ -201,6 +231,12 @@ export function trackNavBy(
     trackCameraBy(t, dx, dy, viewScale, compWidth, compHeight);
     return;
   }
+  if (t.kind === 'ortho') {
+    // An axis view has no eye to move — "track" here IS the viewport pan, and
+    // the framing follows the cursor (drag right, scene comes with you).
+    getWorkspaceController().ws.pan(dx, dy);
+    return;
+  }
   const v = resolveCustomView(readView(t.viewId), compWidth, compHeight);
   useGuidesStore.getState().updateCustomView(t.viewId, trackViewParams(v, dx, dy, viewScale));
 }
@@ -210,6 +246,13 @@ export function trackNavBy(
 export function dollyNavBy(t: NavTarget, delta: number, compWidth: number, compHeight = 1080): void {
   if (t.kind === 'scene') {
     dollyCameraBy(t, delta, compWidth);
+    return;
+  }
+  if (t.kind === 'ortho') {
+    // Parallel projection: moving the eye along the view axis changes nothing,
+    // so dolly maps to the viewport zoom — the only "closer" an ortho view has.
+    // delta < 0 (wheel-up / drag-up) zooms IN, matching the other two paths.
+    getWorkspaceController().ws.zoom(Math.exp(-delta * 0.002));
     return;
   }
   const v = resolveCustomView(readView(t.viewId), compWidth, compHeight);

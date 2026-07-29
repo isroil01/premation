@@ -41,7 +41,7 @@ const SCENE_PROP = {
 
 export const addBackgroundDef: AiToolDef = {
   name: 'add_background',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Create ONE full-composition background for a SINGLE-scene piece. ' +
     'Do NOT use this in a multi-scene video — add_scene already gives each scene its own ' +
@@ -58,7 +58,7 @@ export const addBackgroundDef: AiToolDef = {
 
 export const addTitleDef: AiToolDef = {
   name: 'add_title',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Add a headline, subtitle, or tagline that is positioned in the layout and animated in with a ' +
     'staggered fade-and-rise (and a glow on titles). Successive calls auto-stagger so nothing appears ' +
@@ -80,7 +80,7 @@ export const addTitleDef: AiToolDef = {
 
 export const addEmblemDef: AiToolDef = {
   name: 'add_emblem',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Add a glowing circular emblem/badge that scales up with an overshoot and gently pulses — a logo ' +
     'mark or focal accent. Returns the layer id.',
@@ -99,7 +99,7 @@ export const addEmblemDef: AiToolDef = {
 
 export const addCardsDef: AiToolDef = {
   name: 'add_cards',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Add a centred row of evenly-spaced cards that stagger in — the backbone of feature grids, ' +
     'pricing tiers, and step sequences. Returns the card ids so you can place text or icons on each. ' +
@@ -119,7 +119,7 @@ export const addCardsDef: AiToolDef = {
 
 export const staggerInDef: AiToolDef = {
   name: 'stagger_in',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Give existing layers a staggered fade-and-rise entrance (each offset from the last), so a group ' +
     'of elements enters with rhythm instead of all at once. Pass the layer ids in the order they should appear.',
@@ -137,7 +137,7 @@ export const staggerInDef: AiToolDef = {
 
 export const defineStyleDef: AiToolDef = {
   name: 'define_style',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Define THIS run\'s custom motion style — palette, type scale, easing personality, pacing — derived from the ' +
     'brief instead of a preset. Call it FIRST, before compose tools, whenever the brief names brand colours, a mood, ' +
@@ -147,6 +147,12 @@ export const defineStyleDef: AiToolDef = {
     type: 'object',
     additionalProperties: false,
     properties: {
+      accent: {
+        type: 'string',
+        description:
+          'Brand accent colour as hex (e.g. "#c8a862"). The single most useful field — ' +
+          'everything else is derived from it and `basedOn` when omitted.',
+      },
       name: { type: 'string', description: 'A short name for the style (default "custom").' },
       brief: { type: 'string', description: 'Free-text brief (brand colours, mood words) to derive unspecified fields from.' },
       basedOn: { type: 'string', description: 'Preset anchor supplying defaults: premium/minimal/bold/playful/cyberpunk/saas.' },
@@ -183,7 +189,7 @@ export const defineStyleDef: AiToolDef = {
 
 export const addCameraMoveDef: AiToolDef = {
   name: 'add_camera_move',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Add a slow, cinematic push-in (or pull-out) across the whole scene — the subtle continuous ' +
     'scale that makes a hero shot feel alive and three-dimensional. Call this AFTER the content ' +
@@ -201,7 +207,7 @@ export const addCameraMoveDef: AiToolDef = {
 
 export const addKineticTitleDef: AiToolDef = {
   name: 'add_kinetic_title',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Add word-by-word kinetic typography: each word of the phrase pops in on a tight beat with an ' +
     'overshoot scale and rise — the "words land like drums" hero treatment. Use for short punchy ' +
@@ -222,7 +228,7 @@ export const addKineticTitleDef: AiToolDef = {
 
 export const addLightSweepDef: AiToolDef = {
   name: 'add_light_sweep',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Sweep a soft blurred light bar diagonally across the frame once — the premium "sheen" beat. ' +
     'Call AFTER the content exists; by default it times itself to pass after entrances finish.',
@@ -238,7 +244,7 @@ export const addLightSweepDef: AiToolDef = {
 
 export const addAmbientOrbsDef: AiToolDef = {
   name: 'add_ambient_orbs',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Add a field of soft blurred accent orbs drifting slowly at background depth (bokeh). Instant ' +
     'atmosphere + real 3D parallax under a camera move. Call after add_background, before content.',
@@ -254,7 +260,7 @@ export const addAmbientOrbsDef: AiToolDef = {
 
 export const addLowerThirdDef: AiToolDef = {
   name: 'add_lower_third',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Add a broadcast-style lower third (accent bar + name/title + optional subtitle) in the lower ' +
     'left, sliding in with the bar opening first. Use for speaker names, captions, product labels.',
@@ -273,7 +279,7 @@ export const addLowerThirdDef: AiToolDef = {
 
 export const addSceneDef: AiToolDef = {
   name: 'add_scene',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Open a SCENE — a distinct segment of the video with its OWN full-frame background, running ' +
     'from startSec for durationSec. This is the backbone of a multi-scene video: call it once per ' +
@@ -299,7 +305,7 @@ export const addSceneDef: AiToolDef = {
 
 export const addTransitionDef: AiToolDef = {
   name: 'add_transition',
-  kind: 'write',
+  kind: 'compose',
   description:
     'Punctuate a cut with a full-frame fade-through-black (or a white flash) centred at a time. ' +
     'Optional — scenes already cross-dissolve on their own. Use it for a deliberate beat between ' +

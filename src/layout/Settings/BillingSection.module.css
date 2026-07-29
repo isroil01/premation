@@ -73,14 +73,14 @@
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  border-radius: var(--radius-md, 6px);
-  border: 1px solid var(--color-border-strong, #333);
-  background: var(--color-surface-2, #1c1c1c);
+  border-radius: var(--radius-surface);
+  border: 1px solid var(--color-border-subtle, #1a1a1a);
+  background: var(--color-surface-2);
 }
 
 .planCurrent {
-  border-color: var(--color-accent, #3b82f6);
-  background: color-mix(in srgb, var(--color-accent, #3b82f6) 8%, transparent);
+  border-color: var(--color-accent, #2988ff);
+  background: color-mix(in srgb, var(--color-accent, #2988ff) 8%, transparent);
 }
 
 .planHead {

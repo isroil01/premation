@@ -7,7 +7,7 @@
  * or be registered by a future engine (e.g. SceneGraph.AddKeyframeCommand).
  *
  * Properties:
- *   - Engine-agnostic (no React / no DOM references inside execute())
+ *   - Engine-agnostic (no React / no DOM references inside execute)
  *   - Idempotent registration (re-registering the same id replaces)
  *   - Undo/redo capable when paired with the History service
  *   - Observable (commands can be queried for menus, palettes, shortcuts)
@@ -20,7 +20,7 @@ import { asCommandId } from '@app-types/common';
 export interface CommandContext {
   /** Read-only snapshot of current app state (provided by Application). */
   readonly state: Readonly<Record<string, unknown>>;
-  /** Imperative services available to the command (undo, io, selection, ...). */
+  /** Imperative services available to the command (undo, io, selection,...). */
   readonly services: CommandServices;
 }
 
@@ -30,7 +30,7 @@ export interface CommandServices {
   readonly selection: SelectionService;
   readonly panels: PanelService;
   readonly workspace: WorkspaceService;
-  // Engines register additional services (timeline, scene, render, ai, ...).
+  // Engines register additional services (timeline, scene, render, ai,...).
   // Commands should access them via services.get('timeline') etc.
   get<T>(name: string): T | undefined;
 }

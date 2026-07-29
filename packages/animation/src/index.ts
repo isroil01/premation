@@ -42,12 +42,25 @@ export type {
   LoopMode,
 } from './expressions';
 
+// The raw parser/evaluator, for callers that need their own scope rather than
+// the property-expression one (text expression SELECTORS see `textIndex` /
+// `textTotal` / `selectorValue`, which `compileExpression` knows nothing
+// about). Interpreted, never eval'd — the app's CSP refuses `new Function`.
+export { parseExpression, evaluateExpression, ExprSyntaxError, ExprRuntimeError } from './exprLang';
+export type { ExprNode } from './exprLang';
+
 // ── Keyframe ids (timeline ↔ engine reference encoding) ───────────
 export { makeKeyframeId, parseKeyframeId, expandKeyframeProp, POSITION_PSEUDO_PROP } from './keyframeId';
 export type { KeyframeRefParts } from './keyframeId';
 
-export { sampleDataTrack, upsertDataKeyframe, cloneDataValue, growOutline } from './dataTracks';
-export type { DataKind, DataTrack, DataValue, DataKeyframe, DataPoint, GradientStop } from './dataTracks';
+export {
+  sampleDataTrack, upsertDataKeyframe, setDataKeyframeEasing, cloneDataValue, growOutline,
+  dataPathTangents, setDataSpatialTangent, clearDataSpatialTangents,
+  hasDataSpatialTangents, smoothDataSpatialTangents,
+} from './dataTracks';
+export type {
+  DataKind, DataTrack, DataValue, DataKeyframe, DataPoint, GradientStop, DataPathTangents,
+} from './dataTracks';
 
 export { lottieBezierToPoints, pointsToLottieBezier, lottiePathKeyframes } from './lottiePath';
 export type { LottieBezier, LottieShapeProp } from './lottiePath';

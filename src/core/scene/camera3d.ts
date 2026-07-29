@@ -29,7 +29,7 @@ function num(v: unknown): number | undefined {
 export type CameraSample = (nodeId: string, prop: string) => number | undefined;
 
 /** Read x/y/z/focalLength/orbit off a camera node's components (animated values win). */
-function cameraFromNode(
+export function cameraFromNode(
   node: SceneNode,
   width: number,
   height: number,
@@ -39,8 +39,10 @@ function cameraFromNode(
   let x: number | undefined, y: number | undefined, z: number | undefined, focal: number | undefined;
   let yaw: number | undefined, pitch: number | undefined;
   let poiX: number | undefined, poiY: number | undefined, poiZ: number | undefined;
+  let rollProp: number | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
+    rollProp = num(p.orientationZ) ?? rollProp;
     x = num(p.x) ?? x;
     y = num(p.y) ?? y;
     z = num(p.z) ?? z;
@@ -71,16 +73,25 @@ function cameraFromNode(
   // Point of Interest and always LOOKS AT it (AE's two-node camera). The orbit
   // tool swings the eye about the POI; the camera then re-aims at it. A one-node
   // camera (no POI props) keeps the exact legacy orbit-about-comp-centre path.
+  // Camera ROLL (a dutch angle): spins the frame about the view axis without
+  // re-aiming. Stored as `orientationZ` to match the layer transform naming, so
+  // the inspector row and the keyframe track look like every other rotation.
+  const roll = sample?.(node.id, 'orientationZ') ?? rollProp ?? 0;
+  const withRoll = (o: { yaw: number; pitch: number }) =>
+    roll !== 0 ? { ...o, roll } : o;
+  const nonZero = (o: { yaw: number; pitch: number; roll?: number }) =>
+    o.yaw !== 0 || o.pitch !== 0 || (o.roll ?? 0) !== 0;
+
   const hasPOI = poiX !== undefined || poiY !== undefined || poiZ !== undefined;
   if (hasPOI) {
     const poi = { x: poiX ?? def.principal.x, y: poiY ?? def.principal.y, z: poiZ ?? 0 };
     const orbited = Project3D.orbitCamera(basePosition, poi, yaw ?? 0, pitch ?? 0);
-    const orientation = Project3D.lookAtOrientation(orbited.position, poi);
+    const orientation = withRoll(Project3D.lookAtOrientation(orbited.position, poi));
     return {
       focalLength,
       position: orbited.position,
       principal: def.principal,
-      ...(orientation && (orientation.yaw !== 0 || orientation.pitch !== 0) ? { orientation } : {}),
+      ...(orientation && nonZero(orientation) ? { orientation } : {}),
     };
   }
 
@@ -93,15 +104,14 @@ function cameraFromNode(
     pitch ?? 0,
   );
 
+  const orientation = withRoll(orbited.orientation);
   return {
     focalLength,
     position: orbited.position,
     // The optical axis stays on the comp centre no matter where the camera
     // moves — that's what makes panning the camera shift the frame.
     principal: def.principal,
-    ...(orbited?.orientation && (orbited.orientation.yaw !== 0 || orbited.orientation.pitch !== 0)
-      ? { orientation: orbited.orientation }
-      : {}),
+    ...(orientation && nonZero(orientation) ? { orientation } : {}),
   };
 }
 
@@ -148,6 +158,50 @@ export interface DofConfig {
 export function dofBlurPx(depth: number, dof: DofConfig): number {
   const defocus = Math.abs(depth - dof.focus) / Math.max(1, dof.focus);
   return Math.min(dof.strength, defocus * dof.aperture);
+}
+
+/**
+ * A camera node's Point of Interest at `sample` time, or null for a one-node
+ * camera. Split out because the viewport gizmo has to draw the POI crosshair
+ * and the eye→POI line, and `cameraFromNode` folds the POI away into a look
+ * orientation — by the time it returns, the target itself is gone.
+ */
+export function readCameraPoi(
+  node: SceneNode,
+  width: number,
+  height: number,
+  sample?: CameraSample,
+): { x: number; y: number; z: number } | null {
+  let px: number | undefined, py: number | undefined, pz: number | undefined;
+  for (const c of node.components) {
+    const p = c.props as Record<string, unknown>;
+    px = num(p.poiX) ?? px;
+    py = num(p.poiY) ?? py;
+    pz = num(p.poiZ) ?? pz;
+  }
+  px = sample?.(node.id, 'poiX') ?? px;
+  py = sample?.(node.id, 'poiY') ?? py;
+  pz = sample?.(node.id, 'poiZ') ?? pz;
+  if (px === undefined && py === undefined && pz === undefined) return null;
+  return { x: px ?? width / 2, y: py ?? height / 2, z: pz ?? 0 };
+}
+
+/** A camera node's focus distance (px) at `sample` time — where the frustum
+ *  cone is drawn to. Falls back to the focal length (the comp plane). */
+export function readCameraFocusDistance(
+  node: SceneNode,
+  width: number,
+  sample?: CameraSample,
+): number {
+  let focus: number | undefined, focal: number | undefined;
+  for (const c of node.components) {
+    const p = c.props as Record<string, unknown>;
+    focus = num(p.focusDistance) ?? focus;
+    focal = num(p.focalLength) ?? focal;
+  }
+  focus = sample?.(node.id, 'focusDistance') ?? focus;
+  focal = sample?.(node.id, 'focalLength') ?? focal;
+  return focus ?? focal ?? defaultFocalLength(width);
 }
 
 export function readSceneDof(

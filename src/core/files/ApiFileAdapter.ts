@@ -42,7 +42,7 @@ export class ApiFileAdapter implements FileAdapter {
       const project = await api.getProject(path);
       const doc = project.document as EditorDocument | null | undefined;
       // A freshly-created project has no real scene yet: the backend seeds
-      // `emptyDocument()` with `scene.nodes: []`, so we must treat an empty node
+      // `emptyDocument` with `scene.nodes: []`, so we must treat an empty node
       // list the same as a missing scene. Seed a default composition root (so the
       // Scene panel shows "Composition 1" and inserted layers have a parent),
       // while still restoring the doc's default comp/animation. Only a genuinely

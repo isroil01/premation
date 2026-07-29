@@ -6,7 +6,7 @@
  * each frame to the Electron main process via the preload bridge.
  *
  * This is the ONLY new render-driving code in the suite, and it deliberately
- * mirrors renderOffline() so references and actuals share one definition of
+ * mirrors renderOffline so references and actuals share one definition of
  * "document → pixels".
  */
 
@@ -41,6 +41,12 @@ interface SceneManifestEntry {
   tolerance?: number;
   gpuParity: 'expect-pass' | 'known-divergent';
   oracle: 'canvas2d' | 'gpu';
+  /** Scene id whose output is this scene's fidelity oracle (see sceneKit). */
+  fidelityTwin?: string;
+  fidelityTolerance?: number;
+  fidelityException?: string;
+  /** True when this scene exists only to BE a twin (no committed reference). */
+  fidelityOnly?: boolean;
 }
 
 declare global {
@@ -176,6 +182,10 @@ async function main(): Promise<void> {
         tolerance: s.tolerance,
         gpuParity: s.gpuParity ?? 'expect-pass',
         oracle: s.oracle ?? 'canvas2d',
+        fidelityTwin: s.fidelityTwin,
+        fidelityTolerance: s.fidelityTolerance,
+        fidelityException: s.fidelityException,
+        fidelityOnly: s.fidelityOnly,
       })),
     );
     const failures: string[] = [];

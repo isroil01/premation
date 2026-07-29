@@ -1,5 +1,5 @@
 /**
- * Sync reconciliation (RFC §10.4) — the chunk-level 3-way merge that makes most
+ * Sync reconciliation — the chunk-level 3-way merge that makes most
  * multi-device divergence a clean fast-forward and flags only true same-chunk
  * conflicts.
  */

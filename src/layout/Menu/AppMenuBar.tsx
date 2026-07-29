@@ -1,6 +1,8 @@
 /**
  * AppMenuBar — the classic desktop menu bar (File / Edit / Composition / Layer /
- * Effect / Examples / View / Window / Help — see APP_MENU in menuModel).
+ * Effect / Examples / View / Window / Plugins / Help — the static groups come
+ * from APP_MENU in menuModel, Plugins is built per render from what is
+ * installed; see useAppMenuGroups).
  *
  * Purely a renderer over the menu model + CommandRegistry: labels, enabled
  * state and shortcuts come from the registered commands, activation goes
@@ -14,12 +16,15 @@ import { Menu, MenuItem, MenuSeparator } from '@components/Menu';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
-import { APP_MENU } from './menuModel';
+import { useAppMenuGroups } from './useAppMenuGroups';
 import { formatChord } from './formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import styles from './AppMenuBar.module.css';
 
 export function AppMenuBar(): JSX.Element {
+  // Not the static APP_MENU: the Plugins group is assembled from what the user
+  // installed and rebuilds as plugins start, stop and crash.
+  const menuGroups = useAppMenuGroups();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
@@ -54,11 +59,11 @@ export function AppMenuBar(): JSX.Element {
     setOpenGroup(null);
   };
 
-  const group = APP_MENU.find((g) => g.id === openGroup) ?? null;
+  const group = menuGroups.find((g) => g.id === openGroup) ?? null;
 
   return (
     <div className={styles.bar} ref={barRef}>
-      {APP_MENU.map((g) => (
+      {menuGroups.map((g) => (
         <button
           key={g.id}
           type="button"

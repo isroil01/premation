@@ -1,15 +1,17 @@
 /**
  * CustomizeDialog (Prompt E10) — workspace & UI customization in one place:
- *   • Shortcuts  — rebind / disable / reset command keys, with conflict warnings
+ *   • Shortcuts — rebind / disable / reset command keys, with conflict warnings
  *   • Workspaces — apply a layout preset, save the current one, delete user ones
  *   • Appearance — accent colour + theme
- *   • AI         — connect your own OpenAI / Claude / Gemini account
+ *
+ * There is deliberately no AI tab — see the note above the import list, and the
+ * assistant's own error copy, which sends people to Dashboard → Settings →
+ * Assistant. This docstring used to advertise one, which is why messages
+ * elsewhere in the app told users to look for it here.
  *
  * Shortcut rebinds persist via shortcutOverrides and re-apply through the
  * ShortcutManager; layout presets drive the layout store; accent overrides the
- * primary CSS token. Those all ride the existing SettingsManager — the AI tab
- * is the exception: API keys go to the OS keychain instead, because
- * SettingsManager is synchronous localStorage and secrets don't belong there.
+ * primary CSS token. Those all ride the existing SettingsManager.
  */
 
 import { useState } from 'react';
@@ -199,11 +201,14 @@ function AppearanceTab(): JSX.Element {
   const [accent, setAccent] = useState<string>(() => getAccentColor());
   const applyAccent = (c: string): void => { setAccent(c); setAccentColor(c); };
 
+  const uiScale = usePreferenceStore((s) => s.uiScale ?? 1);
   const buttonSize = usePreferenceStore((s) => s.buttonSize ?? 'md');
   const iconSize = usePreferenceStore((s) => s.iconSize ?? 'md');
   const sidebarDensity = usePreferenceStore((s) => s.sidebarDensity ?? 'default');
   const reduceMotion = usePreferenceStore((s) => s.editorReduceMotion);
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const confirmOnClose = usePreferenceStore((s) => s.confirmOnClose);
+  const retainOriginalSvg = usePreferenceStore((s) => s.retainOriginalSvg);
   const setPref = usePreferenceStore((s) => s.set);
 
   const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition);
@@ -251,8 +256,47 @@ function AppearanceTab(): JSX.Element {
         </div>
       </div>
 
+      {/*
+        Whole-UI zoom.
+        `uiScale` was fully implemented and completely unreachable: the store
+        held it, `applyUiPreferences` pushed it onto `document.zoom`, and
+        useResponsiveLayout divided by it so breakpoints stayed honest — but no
+        surface anywhere let anyone change it from 1. This is that surface. It
+        belongs next to the other size controls, not buried in a menu.
+      */}
       <div className={styles.row}>
-        <span className={styles.rowLabel}>Sidebar Items Density</span>
+        <span className={styles.rowLabel}>Interface Scale</span>
+        <div className={styles.rowRight}>
+          <input
+            type="range"
+            min={75}
+            max={150}
+            step={5}
+            value={Math.round(uiScale * 100)}
+            onChange={(e) => setPref('uiScale', Number(e.target.value) / 100)}
+            aria-label="Interface scale"
+          />
+          <span style={{ minWidth: 46, textAlign: 'right' }}>{Math.round(uiScale * 100)}%</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setPref('uiScale', 1)}
+            disabled={uiScale === 1}
+          >
+            Reset
+          </Button>
+        </div>
+      </div>
+
+      {/*
+        Named for what it actually does. It was "Sidebar Items Density", which
+        promises the whole sidebar; the two CSS variables it sets are read by
+        exactly one stylesheet — the Library's item grid. Widening it to every
+        panel's rows is a real change to a lot of untested CSS; renaming it to
+        the truth costs nothing and stops the control lying about its reach.
+      */}
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Library Item Density</span>
         <div className={styles.rowRight}>
           <Button variant={sidebarDensity === 'compact' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'compact')}>Compact</Button>
           <Button variant={sidebarDensity === 'default' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'default')}>Default</Button>
@@ -351,6 +395,23 @@ function AppearanceTab(): JSX.Element {
         </div>
       </div>
 
+      {/*
+        Auto-keyframe used to live only on the dashboard's settings tab, which
+        is the one screen you cannot see while editing — the exact moment you
+        want to turn it on or off. Moved here with the other editing behaviour.
+      */}
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Auto-keyframe</span>
+        <div className={styles.rowRight}>
+          <input
+            type="checkbox"
+            checked={autoKeyframe}
+            onChange={(e) => setPref('timelineAutoKeyframe', e.target.checked)}
+            aria-label="Record a keyframe automatically when a property changes with the playhead parked"
+          />
+        </div>
+      </div>
+
       <div className={styles.row}>
         <span className={styles.rowLabel}>Confirm before discarding unsaved changes</span>
         <div className={styles.rowRight}>
@@ -359,6 +420,18 @@ function AppearanceTab(): JSX.Element {
             checked={confirmOnClose}
             onChange={(e) => setPref('confirmOnClose', e.target.checked)}
             aria-label="Ask before New/Open/Close discards unsaved changes"
+          />
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Retain original SVG data after conversion</span>
+        <div className={styles.rowRight}>
+          <input
+            type="checkbox"
+            checked={retainOriginalSvg}
+            onChange={(e) => setPref('retainOriginalSvg', e.target.checked)}
+            aria-label="Keep the original SVG on a layer after Convert to Editable Shapes, so it can be reverted"
           />
         </div>
       </div>

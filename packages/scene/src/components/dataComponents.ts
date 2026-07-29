@@ -9,6 +9,7 @@
 
 import type { Component, SerializedComponent } from './Component';
 import { componentRegistry, deepCloneData } from './Component';
+import { bumpSceneMutationEpoch } from '../core/mutationEpoch';
 
 export class DataComponent implements Component {
   constructor(
@@ -21,8 +22,14 @@ export class DataComponent implements Component {
     return v === undefined ? fallback : (v as T);
   }
 
+  /**
+   * The sole write path into a data component's props — which is why the
+   * mutation epoch is bumped here rather than in any of the callers. See
+   * `core/mutationEpoch.ts`.
+   */
   set(key: string, value: unknown): void {
     this.data[key] = value;
+    bumpSceneMutationEpoch();
   }
 
   clone(): DataComponent {

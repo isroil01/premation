@@ -1,5 +1,5 @@
 /**
- * Minimal STORE (uncompressed) ZIP writer (Prompt 9) — enough to package a
+ * Minimal STORE (uncompressed) ZIP writer — enough to package a
  * deterministic PNG/JPEG frame sequence into one downloadable archive without
  * pulling in a dependency. Uses the standard local-file-header + central-
  * directory + end-of-central-directory layout with CRC-32 checksums.

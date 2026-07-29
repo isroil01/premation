@@ -3,12 +3,15 @@
  *
  * Features:
  *  - Value mode: shows animated property curves as SVG Bézier paths.
- *  - Speed mode: shows the derivative (rate-of-change) of the curve — read-only
- *    on the vertical axis, since a y position there is a speed, not a value.
+ *  - Speed mode: shows the derivative (rate-of-change) of the curve. A y
+ *    position here is a SPEED, so a vertical drag solves the segment's bezier
+ *    for that speed (holding influence) rather than writing a value — see
+ *    speedGraph.ts. Being able to say "leave this keyframe at 240 px/s" is the
+ *    entire reason a speed graph exists; without it the mode was a read-out.
  *  - Interactive keyframe diamonds: drag horizontally to retime; vertically to
- *    change value (value mode only).
+ *    change the value (value mode) or the speed (speed mode).
  *  - Bézier handle tangents: when a keyframe is selected, two circular handles appear;
- *    dragging them updates the easing via `defaultAnimation.setBezier()`.
+ *    dragging them updates the easing via `defaultAnimation.setBezier`.
  *  - Playhead scrubbing by clicking the graph background.
  *  - Property legend with color dots.
  *
@@ -25,6 +28,7 @@ import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineC
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
+import { withOutgoingSpeed, withIncomingSpeed, type Bezier } from './speedGraph';
 import styles from './GraphEditor.module.css';
 
 export interface GraphEditorProps {
@@ -320,6 +324,47 @@ export function GraphEditor({
     [svgCoords, mode],
   );
 
+  /**
+   * Apply a speed-graph vertical drag: set the speed LEAVING this keyframe, and
+   * — when the keyframe is continuous — the matching speed ARRIVING at it, so
+   * the two sides stay joined exactly as they do in the value graph.
+   *
+   * Seeds a linear-equivalent bezier first when the segment is not already
+   * bezier, so the curve does not jump on the first pixel of the drag.
+   */
+  const applySpeedDrag = useCallback(
+    (nodeId: string, prop: string, t: number, targetSpeed: number) => {
+      const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
+      if (!kfs) return;
+      const i = kfs.findIndex((k) => Math.abs(k.t - t) < 1e-6);
+      if (i < 0) return;
+      const self = kfs[i]!;
+      const next = kfs[i + 1];
+      const prev = kfs[i - 1];
+
+      // Outgoing side — this keyframe's own easing governs the segment to `next`.
+      if (next) {
+        const dv = next.value - self.value;
+        const dt = next.t - self.t;
+        const base: Bezier = (self.easing === 'bezier' && self.bezier ? self.bezier : LINEAR_BEZIER) as Bezier;
+        const bz = withOutgoingSpeed(base, dv, dt, targetSpeed);
+        defaultAnimation.setBezier(nodeId, prop, self.t, bz, self.continuous);
+      }
+
+      // Incoming side lives on the PREVIOUS keyframe's bezier. Only matched when
+      // the keyframe is continuous — a broken (alt-dragged) key is meant to have
+      // two independent speeds, and forcing them equal would undo that.
+      if (prev && self.continuous !== false) {
+        const dv = self.value - prev.value;
+        const dt = self.t - prev.t;
+        const base: Bezier = (prev.easing === 'bezier' && prev.bezier ? prev.bezier : LINEAR_BEZIER) as Bezier;
+        const bz = withIncomingSpeed(base, dv, dt, targetSpeed);
+        defaultAnimation.setBezier(nodeId, prop, prev.t, bz, prev.continuous);
+      }
+    },
+    [],
+  );
+
   const onSvgPointerMove = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
       const d = dragRef.current;
@@ -338,16 +383,20 @@ export function GraphEditor({
           clamp(keyframeToCompTime(d.nodeId, d.origT, d.prop) + dx / pps, 0, duration),
           d.prop,
         );
-        // In speed mode the vertical axis is the derivative, not the value —
-        // there is no meaningful value to read off a y position, so the drag
-        // retimes only and the value is carried through untouched. (AE maps
-        // vertical drag here to influence; until that's implemented, moving the
-        // key in time is the honest subset.)
+        // In SPEED mode the vertical axis is the derivative, so a y position is
+        // a speed, not a value. Dragging vertically therefore solves the
+        // segment's bezier for that speed (holding influence) rather than
+        // writing the y into the keyframe's value — which is what it used to do
+        // before `plotted` was split from `value`, silently turning a position
+        // key at x=100 travelling 250px/s into x=250.
         const newV = d.mode === 'value'
           ? clamp(yToValue(d.startY + dy, d.minV, d.maxV, INNER_H), d.minV, d.maxV)
           : d.origValue;
         // `newT` is canonical keyframe time — same axis `d.origT` is stored on.
         defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.origT, { t: newT, value: newV });
+        if (d.mode === 'speed' && Math.abs(dy) > 0) {
+          applySpeedDrag(d.nodeId, d.prop, newT, yToValue(y, d.minV, d.maxV, INNER_H));
+        }
         dragRef.current!.origT = newT;
         dragRef.current!.startX = x;
         dragRef.current!.startY = y;

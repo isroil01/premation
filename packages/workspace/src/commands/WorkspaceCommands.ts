@@ -34,6 +34,23 @@ export interface ResizeNodePayload {
   id: NodeId;
   /** New world-space bounds. */
   bounds: Rect;
+  /**
+   * Absolute target scale and centre, resolved by the TOOL.
+   *
+   * Without these the handler had to infer scale by dividing the world AABB by
+   * the node's LOCAL width — which is wrong for anything rotated, because
+   * rotation inflates the AABB (`|w·cosθ| + |h·sinθ|`). The first drag tick
+   * jumped the scale by that inflation factor and every following tick
+   * re-inflated it, so grabbing a corner of a rotated (or 3D-projected) layer
+   * made it lurch sideways and grow without control. Text was worse: its local
+   * width and its rendered extents disagree, so the ratio was never 1 and the
+   * box could not settle on the glyph width.
+   *
+   * The tool knows the scale at drag START, so it can express the drag as a
+   * RATIO against the starting bounds — stable across ticks and rotation-safe.
+   */
+  scale?: Vec2;
+  center?: Vec2;
 }
 
 export interface RotateNodePayload {
@@ -81,8 +98,11 @@ export const commands = {
   moveNodes(ids: readonly NodeId[], delta: Vec2): WorkspaceCommand {
     return { type: WorkspaceCommandType.MoveNodes, payload: { ids, delta } satisfies MoveNodesPayload };
   },
-  resizeNode(id: NodeId, bounds: Rect): WorkspaceCommand {
-    return { type: WorkspaceCommandType.ResizeNode, payload: { id, bounds } satisfies ResizeNodePayload };
+  resizeNode(id: NodeId, bounds: Rect, scale?: Vec2, center?: Vec2): WorkspaceCommand {
+    return {
+      type: WorkspaceCommandType.ResizeNode,
+      payload: { id, bounds, ...(scale ? { scale } : {}), ...(center ? { center } : {}) } satisfies ResizeNodePayload,
+    };
   },
   rotateNode(id: NodeId, rotation: number, pivot: Vec2): WorkspaceCommand {
     return {

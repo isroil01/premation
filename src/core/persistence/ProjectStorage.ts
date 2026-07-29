@@ -5,7 +5,7 @@
  * `VersionedDocument` via its `ProjectDocumentIO` and hands that document to a
  * `ProjectStorage` to persist or load by path. Two strategies exist:
  *
- *   - `FileProjectStorage`   — the legacy single-file blob (serialize → write).
+ *   - `FileProjectStorage` — the legacy single-file blob (serialize → write).
  *   - `BundleProjectStorage` — a chunked `.motion` directory bundle.
  *
  * `RoutedProjectStorage` picks between them per path + the `LOCAL_FIRST` flag,

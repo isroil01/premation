@@ -7,7 +7,7 @@
  *   3. We render the editor: toolbar, layout, status bar.
  *
  * Engine integration points:
- *   - Register additional panels: `useLayoutStore.getState().registerPanel(...)`
+ *   - Register additional panels: `useLayoutStore.getState.registerPanel(...)`
  *   - Mount a rendering engine: call `useLayoutStore.setState` or use the
  *     layout-registered WorkspaceViewport selector `[data-workspace-viewport]`.
  *   - Push timeline data: pass a `model` prop to <BottomTimeline />.
@@ -26,11 +26,17 @@ import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
+import { useProjectStore } from '@stores/projectStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import {
+  resolvePropertyMeta,
+  propertyLabel,
+  propertyOrder,
+  groupPlaceholderPath,
+} from '@core/inspector/propertyMeta';
 import { Icon } from '@components/Icon';
 import { EditorLayout } from '@layout/EditorLayout';
 
@@ -40,6 +46,7 @@ import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
 import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
+import { PANEL_DEFS } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineClip } from '@layout/Timeline';
 import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -84,19 +91,10 @@ import { usePreferenceStore } from '@stores/preferenceStore';
  * One definition on purpose. The stopwatch, the add-keyframe command and the
  * timeline's value fields all need this answer, and three copies of the rule is
  * three chances to key a different number than the one on screen — which is
- * exactly how "Enable animation" on Position once wrote y := x.
+ * exactly how "Enable animation" on Position once wrote y:= x.
  *
  * `layerT` must be the LAYER's time (`getRemappedTime`), not raw comp time.
  */
-/** Unit suffix shown beside a property's value in the timeline. */
-const UNIT_FOR_PROP: Record<string, string> = {
-  x: 'px', y: 'px', z: 'px', anchorX: 'px', anchorY: 'px',
-  width: 'px', height: 'px',
-  scaleX: 'x', scaleY: 'x', scale: 'x',
-  rotation: '°', rotationX: '°', rotationY: '°',
-  opacity: '%',
-};
-
 function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
   const sampled = defaultAnimation.sample(nodeId, prop, layerT);
   if (sampled !== undefined) return sampled;
@@ -146,7 +144,18 @@ function EditorShellInner(): JSX.Element {
   const setSelected = useSelectionStore((s) => s.set);
   const addSelected = useSelectionStore((s) => s.add);
   const sceneRev = useSceneRevision((s) => s.rev);
-  const active = useActiveWorkspace();
+  // Scalar selectors, NOT `useActiveWorkspace`.
+  //
+  // `useActiveWorkspace` returns the whole tab OBJECT, which immer replaces on
+  // every `setTime` — 60×/s during playback. That subscription sat right next to
+  // a comment claiming it had been removed for exactly this reason, so this
+  // ~1200-line component (which hosts the entire editor tree, and whose children
+  // are almost all unmemoized) re-rendered every playback frame. Only three
+  // fields were ever read off it, and none of them change per frame.
+  const activeCompId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
+  const activeDirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty ?? false : false));
+  const activeTitle = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.title : undefined));
+  const activeTime = useProjectStore((s) => s.activeTabId ? (s.tabs[s.activeTabId]?.time ?? 0) : 0);
   
   const compFps = useCompositionStore((s) => s.fps);
   const compWidth = useCompositionStore((s) => s.width);
@@ -174,51 +183,35 @@ function EditorShellInner(): JSX.Element {
     const node = defaultSceneGraph.getNode(primaryId as any);
     if (!node) return;
     const kind = readNodeKind(node);
-    if (kind === 'text') {
-      useLayoutStore.getState().openPanel('style');
-    } else if (kind === 'shape' || kind === 'image' || kind === 'video' || kind === 'camera' || kind === 'light') {
-      useLayoutStore.getState().openPanel('properties');
+
+    // Only ever open a tab the current one CANNOT serve — never move the user off
+    // a tab that still applies.
+    //
+    // This used to force 'style' for text and 'properties' for everything else on
+    // every selection change, so reading Transform and clicking a text layer
+    // yanked you to Style; adjusting a fill and clicking the next shape yanked you
+    // back. Both target tabs are valid for both kinds, so the switch was pure
+    // disruption. Kinds with a genuinely dedicated home (camera/light live in
+    // Settings) are the only case worth acting on, and only when the active tab
+    // has nothing to show for them.
+    const active = useLayoutStore.getState().activePanelByRegion.rightInspector;
+    const NEEDS_SETTINGS = kind === 'camera' || kind === 'light' || kind === 'particle';
+    if (NEEDS_SETTINGS && active !== 'misc') {
+      useLayoutStore.getState().openPanel('misc');
     }
   }, [selectedIds]);
 
   // Register the default panels exactly once.
   useEffect(() => {
-    // The old "Project" (Compositions) tab was removed — compositions are created
-    // from the dashboard, one project per composition, so an in-editor comp list
-    // is redundant. Its Folder icon also collided with Assets. Scene now leads.
-    // ── Left Sidebar (4 Core Workstation Categories) ──────────────────────────
-    registerPanel({ id: 'scene',       title: 'Scene & Layers', icon: 'layout',        region: 'leftSidebar',   weight: 10, closable: false });
-    registerPanel({ id: 'assets',      title: 'Assets & Media', icon: 'image',         region: 'leftSidebar',   weight: 8, closable: false });
-    registerPanel({ id: 'flow',        title: 'Flow & EaseCopy', icon: 'ease',         region: 'leftSidebar',   weight: 7, closable: false });
-    registerPanel({ id: 'library',     title: 'Elements & Library', icon: 'sparkles',  region: 'leftSidebar',   weight: 6, closable: false });
-    registerPanel({ id: 'ai',          title: 'AI Assistant',   icon: 'ai',            region: 'leftSidebar',   weight: 4, closable: false });
-    // ── Right Inspector ───────────────────────────────────────────────────────
-    registerPanel({ id: 'properties',  title: 'Transform',    icon: 'move',          region: 'rightInspector', weight: 5, closable: false });
-    registerPanel({ id: 'style',       title: 'Style',        icon: 'brush',         region: 'rightInspector', weight: 4, closable: false });
-    registerPanel({ id: 'rig',         title: 'Rigging',      icon: 'bone',          region: 'rightInspector', weight: 3.5, closable: false });
-    registerPanel({ id: 'effects',     title: 'Effects',      icon: 'zap',           region: 'rightInspector', weight: 3, closable: false });
-    registerPanel({ id: 'motion',      title: 'Easing',       icon: 'ease',          region: 'rightInspector', weight: 2, closable: false });
-    registerPanel({ id: 'motiontools',  title: 'Motion Tools', icon: 'sliders-h',     region: 'rightInspector', weight: 1.5, closable: false });
-    registerPanel({ id: 'presets',     title: 'Presets',      icon: 'star',          region: 'rightInspector', weight: 1, closable: false });
-    registerPanel({ id: 'misc',        title: 'Settings',     icon: 'settings',      region: 'rightInspector', weight: 0, closable: false });
-    // ── On-demand panels (Window menu / F6 / ExportDialog) ───────────────────
-    // These renderers exist in getAllPanelRenderers() but were never registered,
-    // and layoutStore's openPanel/togglePanel bail on unknown ids — so F6,
-    // Window ▸ Project and ExportDialog's "Added to Render Queue (F6)" toast
-    // all silently did nothing. Register them closable, then close any a
-    // persisted layout didn't already keep open (registerPanel appends to the
-    // tab strip): fresh sessions get them on demand, not by default. Regions
-    // match workspaceLayouts' DEFAULT_PANEL_ORDER (rightInspector) — except
-    // Project, an AE-style bin that belongs with the left-sidebar lists.
+    // Registrations come from the SHARED registry (panelDefs.ts) so a pop-out
+    // window can resolve the same titles/icons — it renders PopoutRoute, never
+    // EditorShell, so it never runs this effect and used to show a raw id.
+    // On-demand panels are registered (so menus/shortcuts can open them) then
+    // closed unless a persisted layout already had them open.
     const openBefore = new Set(Object.values(useLayoutStore.getState().panelOrder).flat());
-    const onDemand = [
-      { id: 'project',     title: 'Project',      icon: 'folder',  region: 'leftSidebar' as const,    weight: 3,   closable: true },
-      { id: 'history',     title: 'History',      icon: 'history', region: 'rightInspector' as const, weight: 0.8, closable: true },
-      { id: 'renderQueue', title: 'Render Queue', icon: 'queue',   region: 'rightInspector' as const, weight: 0.7, closable: true },
-    ];
-    for (const p of onDemand) {
-      registerPanel(p);
-      if (!openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
+    for (const p of PANEL_DEFS) {
+      registerPanel({ id: p.id, title: p.title, icon: p.icon, region: p.region, weight: p.weight, closable: p.closable });
+      if (p.onDemand && !openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
     }
   }, [registerPanel]);
 
@@ -229,13 +222,19 @@ function EditorShellInner(): JSX.Element {
 
   const [expandedIds, setExpandedIds] = useState<ReadonlyArray<string>>([]);
 
+  // Re-read engine markers + work area when they change (add/remove, in/out).
+  // Declared here rather than beside its effect because the track model reads
+  // layer markers, so it has to re-derive when one is added or removed.
+  const [markerRev, setMarkerRev] = useState(0);
+
   // Timeline tracks derived from the scene graph — one track per node, in
   // layer order. Clip bars come from the Timeline Engine's layers for that node.
   const tracks = useMemo<TimelineTrack[]>(() => {
     void sceneRev;
     void clipRev;
+    void markerRev;
     const controller = getTimelineController();
-    const compId = active?.compositionId || 'comp_root';
+    const compId = activeCompId || 'comp_root';
 
     const result: TimelineTrack[] = [];
 
@@ -252,23 +251,11 @@ function EditorShellInner(): JSX.Element {
         .tracksFor(node.id)
         .map((track) => ({
           prop: track.prop,
-          label:
-            track.prop === 'x'
-              ? 'Position X'
-              : track.prop === 'y'
-                ? 'Position Y'
-                : track.prop === 'z'
-                  ? 'Position Z'
-                  : track.prop === 'fillAngle'
-                    ? 'Fill Angle'
-                    : track.prop === 'fillCenterX'
-                      ? 'Fill Center X'
-                      : track.prop === 'fillCenterY'
-                        ? 'Fill Center Y'
-                        : track.prop === 'fillRadius'
-                          ? 'Fill Radius'
-                          : track.prop,
-          keyframes: track.keyframes.map((kf) => ({
+          // Label and unit both come from the property registry, resolved with
+          // this node so `effect.<id>.<key>` reads "Glow Radius" and not its
+          // raw path.
+          label: propertyLabel(track.prop, node.id),
+          keyframes: track.keyframes.map((kf, kfIndex, all) => ({
             id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
             // Diamonds draw at the comp time where the renderer actually
@@ -276,12 +263,21 @@ function EditorShellInner(): JSX.Element {
             // trim/sourceIn, the active clip, stretch and precomp remaps.
             time: keyframeToCompTime(node.id, kf.t, track.prop),
             roving: kf.roving,
-            isHold: kf.easing === 'hold',
+            // Both spellings: Easy Ease → Hold writes 'step' on a scalar track,
+            // so checking only 'hold' meant a held keyframe never drew as one.
+            isHold: kf.easing === 'hold' || kf.easing === 'step',
+            // The glyph is drawn as two halves, so it needs BOTH sides. The
+            // engine stores easing on the segment that starts at a keyframe, so
+            // the incoming side is the previous keyframe's.
+            easeIn: all[kfIndex - 1]?.easing,
+            easeOut: kf.easing,
+            isFirst: kfIndex === 0,
+            isLast: kfIndex === all.length - 1,
           })),
           // A real (animated) row edits its own prop — one field, so the value
           // can be changed here rather than only in the inspector.
           valueProps: [track.prop],
-          valueUnit: UNIT_FOR_PROP[track.prop],
+          valueUnit: resolvePropertyMeta(track.prop, node.id).unit || undefined,
           // The row's stopwatch toggles exactly what its fields edit.
           stopwatchProps: [track.prop],
         }));
@@ -290,20 +286,24 @@ function EditorShellInner(): JSX.Element {
       // Diamond-only rows — there is no numeric value to scrub; the stopwatch
       // key is the data prop so the reveal/expand machinery treats them like
       // any other animated row.
-      const DATA_LABELS: Record<string, string> = {
-        'text.source': 'Source Text',
-        'fill.stops': 'Gradient Stops',
-      };
       for (const dt of defaultAnimation.dataTracksFor(node.id)) {
         if (dt.keyframes.length === 0) continue;
         properties.push({
           prop: dt.prop,
-          label: DATA_LABELS[dt.prop] ?? dt.prop,
-          keyframes: dt.keyframes.map((kf) => ({
+          label: propertyLabel(dt.prop, node.id),
+          keyframes: dt.keyframes.map((kf, kfIndex, all) => ({
             id: makeKeyframeId(node.id, dt.prop, kf.t) as KeyId,
             nodeId: node.id as NodeId,
             time: keyframeToCompTime(node.id, kf.t, dt.prop),
-            isHold: dt.kind === 'text' || undefined,
+            // `text` can never tween, so its rows are always hold. Otherwise
+            // report the keyframe's own curve — data keyframes carry easing
+            // exactly like scalar ones, so the diamond must draw it or Easy
+            // Ease on a puppet pin would apply with no visible feedback.
+            isHold: dt.kind === 'text' || kf.easing === 'hold' || kf.easing === 'step' || undefined,
+            easeIn: all[kfIndex - 1]?.easing,
+            easeOut: kf.easing,
+            isFirst: kfIndex === 0,
+            isLast: kfIndex === all.length - 1,
           })),
           stopwatchProps: [dt.prop],
         });
@@ -333,11 +333,11 @@ function EditorShellInner(): JSX.Element {
           }
           properties.unshift({
             prop: POSITION_PSEUDO_PROP,
-            label: 'Position',
+            label: propertyLabel(POSITION_PSEUDO_PROP),
             keyframes: Array.from(mergedKfs.values()).sort((a, b) => a.time - b.time),
             // The merged Position row edits the two real props behind it.
             valueProps: ['x', 'y'],
-            valueUnit: 'px',
+            valueUnit: resolvePropertyMeta(POSITION_PSEUDO_PROP).unit || undefined,
             stopwatchProps: ['x', 'y'],
           });
         }
@@ -353,43 +353,40 @@ function EditorShellInner(): JSX.Element {
       if (hasTransform && kind !== 'audio') {
         const has = (...props: string[]) => properties.some((p) => props.includes(p.prop));
         const placeholders: TimelinePropertyTrack[] = [];
-        // AE shows units beside timeline values; keep them in one place.
-        const UNIT_OF: Record<string, string> = { anchor: 'px', position: 'px', scale: 'x', rotation: '°', orientation: '°', opacity: '%' };
-        const placeholder = (key: string, label: string, stopwatchProps: string[]) =>
-          placeholders.push({ prop: `__static:${key}`, label, keyframes: [], animated: false, stopwatchProps,
+        // Label, unit and sort position all come from the property registry —
+        // the placeholder only decides WHICH real props it stands for.
+        const placeholder = (key: string, stopwatchProps: string[]) => {
+          const path = groupPlaceholderPath(key);
+          const meta = resolvePropertyMeta(path);
+          placeholders.push({ prop: path, label: meta.label, keyframes: [], animated: false, stopwatchProps,
             // A static row is still editable: AE lets you set a value before
             // keyframing, and the props it would key are the props it edits.
-            valueProps: stopwatchProps, valueUnit: UNIT_OF[key] });
+            valueProps: stopwatchProps, valueUnit: meta.unit || undefined });
+        };
         const is3DNode = is3DEnabled(node);
         if (kind !== 'camera' && !has('anchorX', 'anchorY', 'anchorZ')) {
-          placeholder('anchor', 'Anchor Point', is3DNode ? ['anchorX', 'anchorY', 'anchorZ'] : ['anchorX', 'anchorY']);
+          placeholder('anchor', is3DNode ? ['anchorX', 'anchorY', 'anchorZ'] : ['anchorX', 'anchorY']);
         }
         if (!has(POSITION_PSEUDO_PROP, 'x', 'y', 'z')) {
-          placeholder('position', 'Position', is3DNode || kind === 'camera' ? ['x', 'y', 'z'] : ['x', 'y']);
+          placeholder('position', is3DNode || kind === 'camera' ? ['x', 'y', 'z'] : ['x', 'y']);
         }
         if (kind !== 'camera' && !has('scale', 'scaleX', 'scaleY', 'scaleZ')) {
-          placeholder('scale', 'Scale', is3DNode ? ['scaleX', 'scaleY', 'scaleZ'] : ['scaleX', 'scaleY']);
+          placeholder('scale', is3DNode ? ['scaleX', 'scaleY', 'scaleZ'] : ['scaleX', 'scaleY']);
         }
         if (kind !== 'camera' && !has('rotation', 'rotationX', 'rotationY', 'orientationX', 'orientationY', 'orientationZ')) {
-          placeholder('rotation', 'Rotation', is3DNode ? ['rotation', 'rotationX', 'rotationY'] : ['rotation']);
+          placeholder('rotation', is3DNode ? ['rotation', 'rotationX', 'rotationY'] : ['rotation']);
         }
         if (is3DNode && kind !== 'camera' && !has('orientationX', 'orientationY', 'orientationZ')) {
-          placeholder('orientation', 'Orientation', ['orientationX', 'orientationY', 'orientationZ']);
+          placeholder('orientation', ['orientationX', 'orientationY', 'orientationZ']);
         }
-        if (hasStyle && !has('opacity')) placeholder('opacity', 'Opacity', ['opacity']);
+        if (hasStyle && !has('opacity')) placeholder('opacity', ['opacity']);
         // Stable-sort into AE's canonical Transform order (Anchor → Position →
-        // Scale → Rotation → Orientation → Opacity), leaving non-transform rows after them
-        // in their original relative order.
-        const groupOf = (prop: string): number => {
-          if (prop === 'anchorX' || prop === 'anchorY' || prop === 'anchorZ' || prop === '__static:anchor') return 0;
-          if (prop === POSITION_PSEUDO_PROP || prop === 'x' || prop === 'y' || prop === 'z' || prop === '__static:position') return 1;
-          if (prop.startsWith('scale') || prop === '__static:scale') return 2;
-          if (prop.startsWith('rotation') || prop === '__static:rotation') return 3;
-          if (prop.startsWith('orientation') || prop === '__static:orientation') return 4;
-          if (prop === 'opacity' || prop === '__static:opacity') return 5;
-          return 6;
-        };
-        properties = [...placeholders, ...properties].sort((a, b) => groupOf(a.prop) - groupOf(b.prop));
+        // Scale → Rotation → Orientation → Opacity), leaving non-transform rows
+        // after them in their original relative order. The order lives on each
+        // property's registry entry, so a new property sorts itself.
+        properties = [...placeholders, ...properties].sort(
+          (a, b) => propertyOrder(a.prop, node.id) - propertyOrder(b.prop, node.id),
+        );
       }
 
       // Flat union of all keyframes (collapsed summary row).
@@ -430,6 +427,13 @@ function EditorShellInner(): JSX.Element {
         keyframes,
         properties,
         clips,
+        // Layer markers, already on the comp axis (see getLayerMarkers).
+        markers: controller.getLayerMarkers(node.id).map((m) => ({
+          id: m.id,
+          time: m.time,
+          label: m.label,
+          ...(m.color ? { color: m.color } : {}),
+        })),
         depth,
         isGroup: kind === 'group',
         expanded: expandedIds.includes(node.id),
@@ -445,21 +449,22 @@ function EditorShellInner(): JSX.Element {
     
     traverse(compId, 0);
     return result;
-  }, [sceneRev, clipRev, compFps, expandedIds, active?.compositionId]);
+  }, [sceneRev, clipRev, markerRev, compFps, expandedIds, activeCompId]);
 
-  // Mirror the scene graph into the Timeline Engine's layers whenever the scene
-  // changes (structural, non-undoable). The engine then owns the time domain.
+  // Mirror the scene graph into the Timeline Engine's layers on STRUCTURAL
+  // changes only (add/remove/reparent). Pure keyframe or property edits do not
+  // change layer geometry, so there is no need to walk the whole scene for them.
+  // Previously this was keyed on sceneRev, which fired on every drag tick and
+  // caused a full syncFromScene walk 30-60 times/second during a slider drag.
   useEffect(() => {
-    void sceneRev;
-    getTimelineController().syncFromScene();
-  }, [sceneRev]);
+    const sub = getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene());
+    return () => sub.dispose();
+  }, []);
 
   // Session hydration is owned by AppRouter (before any route renders), so the
   // editor must NOT re-hydrate here — doing so flips auth status to 'loading'
   // mid-session and bounces RequireAuth back to /login.
 
-  // Re-read engine markers + work area when they change (add/remove, in/out).
-  const [markerRev, setMarkerRev] = useState(0);
   // Bumped on timeline zoom changes (engine owns pixels-per-frame).
   const [viewRev, setViewRev] = useState(0);
   useEffect(() => {
@@ -480,7 +485,7 @@ function EditorShellInner(): JSX.Element {
     return () => {
       for (const s of subs) s.dispose();
     };
-  }, [active?.compositionId]);
+  }, [activeCompId]);
 
   // Track visibility / lock toggles → scene node state.
   const toggleTrackVisible = (trackId: string): void => {
@@ -697,18 +702,27 @@ function EditorShellInner(): JSX.Element {
     };
   }, [compFps]);
 
-  // Model object carries the live playhead (currentTime) without rebuilding tracks.
+  // Model object for the timeline — deliberately does NOT include the live
+  // playhead time (activeTime). BottomTimeline reads ws?.time directly and
+  // passes it to <Timeline> as a separate `playheadTime` prop, so the model
+  // object stays referentially stable across playback frames. Without this,
+  // timelineModel was a new object 60×/s and forced the entire row tree to
+  // re-evaluate on every frame tick.
   const timelineModel = useMemo<TimelineModel>(() => ({
     duration: compDuration,
     frameRate: compFps,
     startFrame: compStartFrame,
-    currentTime: active?.time ?? 0,
+    // Keep currentTime in the model as a fallback for consumers that read it
+    // directly (GraphEditor, timecode display in BottomTimeline header). Its
+    // identity doesn't affect the timeline row tree because BottomTimeline
+    // prefers the separate playheadTime prop.
+    currentTime: activeTime,
     pixelsPerSecond: pps,
     markers,
     tracks: focusTracks,
     cachedRanges,
     ...(workArea ? { workArea } : {}),
-  }), [focusTracks, active?.time, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges]);
+  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges, activeTime]);
 
   // Real-time playback clock: pumps the Timeline Engine while `playing` is set.
   usePlaybackClock();
@@ -838,7 +852,7 @@ function EditorShellInner(): JSX.Element {
   const handlePropertyKeyframeToggle = (trackId: string, prop: string): void => {
     // Same source as the model's currentTime, so what the navigator draws and
     // what this writes can't disagree.
-    const layerT = getRemappedTime(trackId, active?.time ?? 0);
+    const layerT = getRemappedTime(trackId, activeTime);
     const at = (p: string) =>
       (defaultAnimation.getTrackKeyframes(trackId, p) ?? []).find(
         (k) => Math.abs(k.t - layerT) < KEYFRAME_EPSILON,
@@ -885,7 +899,7 @@ function EditorShellInner(): JSX.Element {
       });
       return;
     }
-    const layerT = getRemappedTime(trackId, active?.time ?? 0);
+    const layerT = getRemappedTime(trackId, activeTime);
     runAnimEdit('Enable animation', () => {
       for (const p of props) defaultAnimation.setKeyframe(trackId, p, layerT, propertyValueAt(trackId, p, layerT));
     });
@@ -901,12 +915,12 @@ function EditorShellInner(): JSX.Element {
    * keyframe at 1s.
    */
   const handlePropertyValue = (trackId: string, prop: string): number =>
-    propertyValueAt(trackId, prop, getRemappedTime(trackId, active?.time ?? 0));
+    propertyValueAt(trackId, prop, getRemappedTime(trackId, activeTime));
 
   const handlePropertyValueChange = (trackId: string, prop: string, value: number): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node || node.locked) return;
-    const rawTime = active?.time ?? 0;
+    const rawTime = activeTime;
     const layerT = getRemappedTime(trackId, rawTime);
     // Same contract as the inspector: an animated property keyframes at the
     // playhead; an un-animated one edits its static base.
@@ -1039,8 +1053,8 @@ function EditorShellInner(): JSX.Element {
               left={
                 <>
                   {/* Real state, not a hardcoded "Ready": amber while unsaved. */}
-                  <span style={{ color: active?.dirty ? 'var(--color-modified)' : 'var(--color-success)' }}>●</span>
-                  <span>{active?.dirty ? 'Unsaved changes' : 'Ready'}</span>
+                  <span style={{ color: activeDirty ? 'var(--color-modified)' : 'var(--color-success)' }}>●</span>
+                  <span>{activeDirty ? 'Unsaved changes' : 'Ready'}</span>
                   <span style={{ opacity: 0.4 }}>·</span>
                   <span>{tracks.length} layers</span>
                   {selectionCount > 0 ? (
@@ -1082,11 +1096,11 @@ function EditorShellInner(): JSX.Element {
                   }}
                 >
                   <Icon name="layers" size={11} style={{ color: 'var(--color-text-tertiary)' }} />
-                  <span style={{ fontWeight: 500 }}>{active?.title ?? 'Untitled'}</span>
+                  <span style={{ fontWeight: 500 }}>{activeTitle ?? 'Untitled'}</span>
                   <span style={{ fontFamily: 'var(--font-family-mono)', fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
                     {compWidth}×{compHeight} · {compFps}fps
                   </span>
-                  {active?.dirty ? (
+                  {activeDirty ? (
                     <span
                       aria-label="Unsaved changes"
                       title="Unsaved changes"
@@ -1101,7 +1115,7 @@ function EditorShellInner(): JSX.Element {
                   <FpsMeter />
                   <span style={{ opacity: 0.4 }}>·</span>
                   <span style={{ fontFamily: 'var(--font-family-mono)', fontVariantNumeric: 'tabular-nums' }}>
-                    {framesToTimecode(active?.time ?? 0, compFps, compStartFrame)}
+                    {framesToTimecode(activeTime, compFps, compStartFrame)}
                   </span>
                   <span style={{ opacity: 0.4 }}>·</span>
                   <button

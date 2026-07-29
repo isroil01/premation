@@ -11,11 +11,25 @@
 import React from 'react';
 import type { Camera3D, OrthoView, Vec3 } from '@motion/scene';
 import { Project3D } from '@motion/scene';
-import { Gizmo3D, DimensionalGuides, type GizmoHandleType, type RenderedGizmo3D } from '@motion/workspace';
+import {
+  Gizmo3D,
+  DimensionalGuides,
+  type GizmoHandleType,
+  type RenderedGizmo3D,
+  type SceneGizmo,
+} from '@motion/workspace';
+import { SceneGeometryOverlay } from './SceneGeometryOverlay';
 import type { DragState3D } from './useGizmo3d';
 
 export interface Gizmo3dOverlayProps {
-  nodeId: string;
+  nodeId: string | null;
+  /**
+   * Draw the transform gizmo (a 3D layer is selected). The overlay itself
+   * mounts whenever the viewport shows a 3D scene, because the ground plane
+   * and comp frame are SCENE reference geometry — they must not depend on
+   * what happens to be selected.
+   */
+  showGizmo: boolean;
   position3D: Vec3;
   nodeRotation: { rotX: number; rotY: number; rotZ: number };
   nodeScale: { scaleX: number; scaleY: number; scaleZ: number };
@@ -28,12 +42,15 @@ export interface Gizmo3dOverlayProps {
   gizmoState: 'universal' | 'position' | 'scale' | 'rotation';
   axisMode: 'local' | 'world' | 'view';
   groundGridVisible: boolean;
+  /** Camera frustums, light cones and 3D layer boxes, in comp space. */
+  sceneGizmos: readonly SceneGizmo[];
   activeHandle: GizmoHandleType | null;
   hoverHandle: GizmoHandleType | null;
   dragState: DragState3D | null;
 }
 
 export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
+  showGizmo,
   position3D,
   nodeRotation,
   camera,
@@ -44,6 +61,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
   gizmoState,
   axisMode,
   groundGridVisible,
+  sceneGizmos,
   activeHandle,
   hoverHandle,
   dragState,
@@ -75,38 +93,6 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
     compHeight,
   );
 
-  // ── Render 3D Ground Grid (floor plane centred under the comp) ──
-  const renderGroundGrid = () => {
-    if (!groundGridVisible) return null;
-    // Centred on (compWidth/2, z=0) at y = compHeight (comp bottom = floor) —
-    // world origin is the comp's TOP-LEFT, so an origin-centred grid rendered
-    // off in the top-left corner instead of receding under the view like AE's.
-    // projectScreen applies the current camera / ortho view AND the viewport
-    // pan/zoom, so the grid tracks navigation.
-    const gridLines = Gizmo3D.buildGroundGridLines(compWidth, compHeight).map((l) => ({
-      start: projectScreen(l.start),
-      end: projectScreen(l.end),
-      alpha: l.major ? 0.4 : 0.15,
-    }));
-
-    return (
-      <g className="ground-grid">
-        {gridLines.map((line, idx) => (
-          <line
-            key={`grid_${idx}`}
-            x1={line.start.x}
-            y1={line.start.y}
-            x2={line.end.x}
-            y2={line.end.y}
-            stroke="rgba(255, 255, 255, 0.9)"
-            strokeOpacity={line.alpha}
-            strokeWidth={line.alpha > 0.2 ? 1.5 : 1}
-            strokeDasharray={line.alpha <= 0.2 ? '3 3' : undefined}
-          />
-        ))}
-      </g>
-    );
-  };
 
   // ── Render Dimensional Guides (Active Drag Feedback) ──
   const renderDimensionalGuides = () => {
@@ -220,10 +206,25 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
         </marker>
       </defs>
 
-      {renderGroundGrid()}
+      {/* Scene reference geometry, drawn UNDER the handles so the interactive
+          gizmo always wins. Shared with the inspection panes — one component,
+          so the two cannot disagree about where a camera or light sits. */}
+      <SceneGeometryOverlay
+        camera={camera}
+        orthoView={orthoView}
+        compWidth={compWidth}
+        compHeight={compHeight}
+        viewTransform={viewTransform}
+        groundGridVisible={groundGridVisible}
+        sceneGizmos={sceneGizmos}
+      />
 
       {/* ── Render 3D Gizmo Handles ── */}
-      <g className="gizmo-3d" transform={`translate(${viewTransform.offsetX}, ${viewTransform.offsetY}) scale(${viewTransform.scale})`}>
+      <g
+        className="gizmo-3d"
+        style={{ display: showGizmo ? undefined : 'none' }}
+        transform={`translate(${viewTransform.offsetX}, ${viewTransform.offsetY}) scale(${viewTransform.scale})`}
+      >
         {/* Planar Quad Handles */}
         {renderedGizmo.planes.map((plane) => {
           const isSelected = activeHandle === plane.type || hoverHandle === plane.type;

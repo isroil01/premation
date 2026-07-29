@@ -65,17 +65,21 @@ export function CloudThumbnailWorker({ projectId }: { projectId: string }): null
       if (timerRef.current) clearTimeout(timerRef.current);
       subs.forEach((s) => s.dispose());
       worker.removeEventListener('message', handleMessage);
-      worker.terminate();
-      // Capture final thumbnail on unmount
+      // Capture final thumbnail on unmount BEFORE terminating the worker —
+      // otherwise the postMessage is silently dropped and the last edit never
+      // gets a thumbnail. Best effort: post, then terminate after a short
+      // grace so the message has time to flush.
       if (dirtyRef.current) {
-        // Synchronously capture using the worker (fire and forget)
-        // Note: we cannot await here; best effort.
+        const c = useCompositionStore.getState();
         worker.postMessage({
-          width: useCompositionStore.getState().width,
-          height: useCompositionStore.getState().height,
-          background: useCompositionStore.getState().background,
-          transparent: useCompositionStore.getState().transparent,
+          width: c.width,
+          height: c.height,
+          background: c.background,
+          transparent: c.transparent,
         });
+        setTimeout(() => worker.terminate(), 250);
+      } else {
+        worker.terminate();
       }
     };
   }, [projectId]);

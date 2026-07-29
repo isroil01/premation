@@ -41,7 +41,8 @@ export class QuadRenderer {
     let binds = 0;
 
     for (const batch of batches) {
-      const pipeline = this.materials.pipeline(batch.material, batch.blend, this.colorFormat);
+      // The pass knows its own sample count; the pipeline must agree with it.
+      const pipeline = this.materials.pipeline(batch.material, batch.blend, this.colorFormat, encoder.samples ?? 1);
       encoder.setPipeline(pipeline);
       binds += 1;
 

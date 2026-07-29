@@ -62,13 +62,24 @@ const noopDeps = () => ({
 // ── Kind predicates ────────────────────────────────────────────────
 
 describe('riggable-kind predicates', () => {
-  it('shape/image/text are riggable; group/null/camera are not', () => {
+  it('shape/image are riggable; group/null/camera are not', () => {
     expect(isRiggableKind('shape')).toBe(true);
     expect(isRiggableKind('image')).toBe(true);
-    expect(isRiggableKind('text')).toBe(true);
     expect(isRiggableKind('group')).toBe(false);
     expect(isRiggableKind('null')).toBe(false);
     expect(isRiggableKind('camera')).toBe(false);
+  });
+
+  it('text is NOT directly riggable — it routes through Rig Logo (§12.10)', () => {
+    // It used to report riggable while resolveRigTarget refused to rig it in
+    // place and buildSnapshot gave it neither a silhouette nor an alpha mask.
+    expect(isRiggableKind('text')).toBe(false);
+  });
+
+  it('a text selection resolves to the rasterize path, not in-place rigging', () => {
+    const g = new SceneGraph();
+    g.addNode(makeNode('t1', 'text'));
+    expect(resolveRigTarget(['t1'], g)).toEqual({ mode: 'rasterize', roots: ['t1'] });
   });
 
   it('isRiggableLeafNode follows the kind for a single node', () => {
@@ -132,9 +143,20 @@ describe('starterPuppetPins', () => {
     expect(rig.pins).toHaveLength(2);
     expect(rig.pins[0]).toMatchObject({ name: 'Anchor', x: 0, y: 50 });
     expect(rig.pins[1]).toMatchObject({ name: 'Wave', x: 0, y: -50 });
-    // Author-time id convention: pin_<ts>_<i>
-    expect(rig.pins[0]!.id).toMatch(/^pin_\d+_0$/);
-    expect(rig.pins[1]!.id).toMatch(/^pin_\d+_1$/);
+    // Ordinal ids from the shared allocator. This used to assert the old
+    // `pin_<ts>_<i>` timestamp convention — the very convention that let two
+    // pins authored in the same millisecond collide (§12.7).
+    expect(rig.pins[0]!.id).toBe('pin_1');
+    expect(rig.pins[1]!.id).toBe('pin_2');
+  });
+
+  it('is deterministic — the same call twice yields the same ids', () => {
+    expect(starterPuppetPins(200, 100)).toEqual(starterPuppetPins(200, 100));
+  });
+
+  it('does not reissue ids already used by the layer it rigs', () => {
+    const rig = starterPuppetPins(200, 100, ['pin_1', 'pin_3']);
+    expect(rig.pins.map((p) => p.id)).toEqual(['pin_2', 'pin_4']);
   });
 });
 

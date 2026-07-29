@@ -31,9 +31,31 @@ export interface JsonSchema {
 
 /**
  * Read tools never mutate, so they are exempt from the undo transaction and
- * are safe to call speculatively. Write tools mutate the live document.
+ * are safe to call speculatively. Write and compose tools both mutate the live
+ * document — use `mutates` rather than testing `kind === 'write'`.
+ *
+ * `compose` exists to make one number computable: the share of a run's
+ * mutations that went through the technique library rather than hand-authoring
+ * primitives. That ratio is the single best proxy for whether output will look
+ * authored — `add_title` applies an entrance archetype with vetted timing,
+ * where `create_layer` + `set_keyframes` asks the model to invent easing and
+ * stagger it has no way to judge.
+ *
+ * All 43 mutating tools used to share `kind: 'write'`, so a compose call and a
+ * raw primitive were indistinguishable and the ratio could not be computed even
+ * in principle.
  */
-export type ToolKind = 'read' | 'write';
+export type ToolKind = 'read' | 'write' | 'compose';
+
+/**
+ * Does this tool change the document?
+ *
+ * Prefer this to `kind === 'write'`, which silently stopped meaning "mutates"
+ * when `compose` was added.
+ */
+export function mutates(kind: ToolKind): boolean {
+  return kind !== 'read';
+}
 
 /** The wire-facing half of a tool: exactly MCP's `tools/list` entry shape. */
 export interface AiToolDef {
@@ -76,7 +98,29 @@ export interface SceneFacade {
   setProp(nodeId: string, prop: string, value: unknown): boolean;
   addEffect(nodeId: string, type: string): string;
   updateEffect(nodeId: string, effectId: string, amount: number): void;
+  /**
+   * Set a **named** effect parameter.
+   *
+   * `updateEffect` only reaches an effect's *primary* param, which made most of
+   * the effect registry unreachable: a drop-shadow has distance / angle /
+   * softness / colour / opacity, and only one of them could be set. Authoring a
+   * layered elevation stack, a tinted shadow, or an angled gradient is
+   * impossible without this. (`add_effect`'s own description already told the
+   * model to use `update_effect_param` — a tool that did not exist.)
+   */
+  updateEffectParam(nodeId: string, effectId: string, key: string, value: number | string | boolean): void;
+  /** Effects currently on a layer, so a handler can find one it did not create. */
+  listEffects(nodeId: string): readonly { id: string; type: string }[];
   removeEffect(nodeId: string, effectId: string): void;
+  /**
+   * Wrap layers into a nested composition and return the new group's id.
+   * Nesting is how complexity grows without the step count exploding — one
+   * transform on the precomp moves everything inside it, and `timeRemap` on it
+   * retimes the whole subtree.
+   */
+  precompose(nodeIds: readonly string[], name: string): string;
+  /** Enable/disable time remapping on a group/precomp layer. */
+  setTimeRemapEnabled(nodeId: string, enabled: boolean): boolean;
   selection(): readonly string[];
   setPuppet(nodeId: string, puppet: any): void;
   /** The layer's puppet pins (id + name), or undefined if the layer isn't rigged. */
@@ -143,6 +187,16 @@ export interface CompFacade {
   update(patch: Partial<{ width: number; height: number; fps: number; durationSeconds: number; background: string }>): void;
   /** Current playhead, in composition seconds. */
   playhead(): number;
+  /**
+   * Composition-level motion blur: shutter angle, phase, and sample count.
+   *
+   * Per-layer `motionBlur` is only an opt-in switch — the shutter that decides
+   * whether a fast move reads as *rendered* or as *stepped* lives here, and it
+   * was invisible to the AI entirely. 180° is the film default; 16+ samples is
+   * what stops a fast move banding.
+   */
+  motionBlur(): { enabled: boolean; shutterAngle: number; shutterPhase: number; samples: number };
+  setMotionBlur(patch: Partial<{ enabled: boolean; shutterAngle: number; shutterPhase: number; samples: number }>): void;
 }
 
 /**
@@ -169,6 +223,34 @@ export interface ToolContext {
   signal: AbortSignal;
   /** Attached reference images in the current turn. */
   images?: readonly { mediaType: string; dataBase64: string }[];
+  /**
+   * Caller-supplied handle → real engine id, for one run.
+   *
+   * A library emitter produces its entire `ToolCall[]` up front with no model in
+   * the loop, so it cannot know the ids the engine will assign. It passes an
+   * `id` handle on creation and refers to that handle afterwards; the creating
+   * handler records the binding here and every `nodeId` is resolved through it.
+   *
+   * Run-scoped and created fresh by `createToolContext`, so two runs can use the
+   * same handles without colliding.
+   */
+  aliases: Map<string, string>;
+}
+
+/**
+ * Resolve a possibly-aliased node id to a real engine id.
+ *
+ * Falls through to the input when there is no binding, so a real id is always
+ * accepted — the model does not have to know whether a given id came from an
+ * alias or from the engine.
+ */
+export function resolveAlias(ctx: ToolContext, id: string): string {
+  return ctx.aliases.get(id) ?? id;
+}
+
+/** Record a handle for a freshly created layer. Ignores an empty handle. */
+export function bindAlias(ctx: ToolContext, handle: string | undefined, realId: string): void {
+  if (handle && realId) ctx.aliases.set(handle, realId);
 }
 
 export type ToolHandler<I = unknown> = (

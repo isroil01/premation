@@ -46,17 +46,20 @@
 
 .row {
   display: grid;
-  grid-template-columns: 84px 1fr;
+  grid-template-columns: 96px 1fr;
   gap: var(--space-4);
-  align-items: baseline;
+  align-items: center;
   min-height: 28px;
+  margin-bottom: 2px;
 }
 
 .row[data-align="center"] { align-items: center; }
+.row[data-align="baseline"] { align-items: baseline; }
 
 .rowLabel {
   color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
   user-select: none;
   overflow: hidden;
   text-overflow: ellipsis;

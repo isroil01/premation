@@ -139,6 +139,77 @@ describe('AudioEngine', () => {
     expect(mockSource.start).toHaveBeenCalledTimes(2); // Restarted at new offset
   });
 
+  test('Bar out-point: stops a running voice once the playhead passes it', async () => {
+    // A bar trimmed to end at 2s. `source.start(…, duration)` bounds the voice
+    // it was scheduled with, but a bar trimmed SHORTER mid-playback (or a jump
+    // past the tail) leaves the voice's layer otherwise unchanged — without an
+    // explicit out-point check the clip kept sounding past the end of its bar,
+    // which is exactly the "audio ignores the timeline" complaint.
+    const layer: AudioLayerState = {
+      id: 'c1',
+      nodeId: 'n1',
+      assetId: 'a1',
+      src: 'test.mp3',
+      level: 100,
+      startSec: 0,
+      inSec: 0,
+      outSec: 2,
+      muted: false,
+    };
+
+    await audioEngine.load('a1', 'test.mp3');
+    audioEngine.sync(true, 1.0, [layer]);
+    expect(mockSource.start).toHaveBeenCalledTimes(1);
+
+    // Playhead and context both advance 1.5s — no drift, but now past the out.
+    mockContext.currentTime = 1.5;
+    audioEngine.sync(true, 2.5, [layer]);
+    expect(mockSource.stop).toHaveBeenCalled();
+    expect((audioEngine as any).voices.size).toBe(0);
+  });
+
+  test('Split bar: each clip of one node gets its own voice', async () => {
+    // Two clips of the same asset, keyed by clip id. Keying by nodeId — as the
+    // engine used to — let the second clip overwrite the first, so a split
+    // audio layer only ever played one of its halves.
+    const base = { nodeId: 'n1', assetId: 'a1', src: 'test.mp3', level: 100, muted: false };
+    const clips: AudioLayerState[] = [
+      { ...base, id: 'c1', startSec: 0, inSec: 0, outSec: 1 },
+      { ...base, id: 'c2', startSec: 0.5, inSec: 0.5, outSec: 1 },
+    ];
+
+    await audioEngine.load('a1', 'test.mp3');
+    audioEngine.sync(true, 0.6, clips);
+
+    expect((audioEngine as any).voices.size).toBe(2);
+    expect(mockSource.start).toHaveBeenCalledTimes(2);
+  });
+
+  test('currentLevel only samples layers the playhead is actually over', async () => {
+    // The old implementation read every DECODED asset at raw comp time, so
+    // expressions reacted to clips the playhead had not reached, to muted
+    // layers, and to assets whose layer had been deleted (the decode cache
+    // outlives the scene).
+    await audioEngine.load('a1', 'test.mp3');
+    const layer: AudioLayerState = {
+      id: 'c1',
+      nodeId: 'n1',
+      assetId: 'a1',
+      src: 'test.mp3',
+      level: 100,
+      startSec: 10,
+      inSec: 0,
+      outSec: 1,
+      muted: false,
+    };
+
+    audioEngine.sync(false, 0, [layer]); // playhead well before the bar
+    expect(audioEngine.currentLevel()).toBe(0);
+
+    audioEngine.sync(false, 0, []); // decoded, but no layer references it
+    expect(audioEngine.currentLevel()).toBe(0);
+  });
+
   test('Per-layer gain: maps layer level to GainNode', async () => {
     const layer: AudioLayerState = {
       nodeId: 'n1',

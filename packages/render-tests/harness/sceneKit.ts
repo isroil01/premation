@@ -48,13 +48,37 @@ export interface SceneMeta {
   oracle?: 'canvas2d' | 'gpu';
   /**
    * GPU parity expectation vs the Canvas2D reference:
-   *   'expect-pass'      — GPU must match the reference (gates the build).
-   *   'known-divergent'  — a documented gap the later phases will close; the
+   *   'expect-pass' — GPU must match the reference (gates the build).
+   *   'known-divergent' — a documented gap the later phases will close; the
    *                        parity diff is reported but not gated. If it turns
    *                        green, the runner flags it so we can re-classify.
    * Defaults to 'expect-pass'.
    */
   gpuParity?: 'expect-pass' | 'known-divergent';
+  /**
+   * Scene id whose rendered output is this scene's FIDELITY ORACLE.
+   *
+   * A committed reference PNG is blessed from our own output, so it can only
+   * catch regressions from whatever we blessed — if a transform were wrong
+   * today, we would bless the wrong pixels and guard them forever. A twin is a
+   * second scene rendering the same content by an independent route (for SVG
+   * layers: the untouched source file), so the diff answers "did our pipeline
+   * change the pixels?" on the very first run, with nothing to eyeball.
+   *
+   * Gated separately from, and in addition to, the reference comparison.
+   */
+  fidelityTwin?: string;
+  /** Fraction of pixels allowed to differ from the twin (default 1%, per §10). */
+  fidelityTolerance?: number;
+  /** Why this scene needs a raised `fidelityTolerance`. Printed in the report. */
+  fidelityException?: string;
+  /**
+   * This scene exists only to be some other scene's `fidelityTwin`. It is
+   * rendered, but has no committed reference and is excluded from the reference
+   * gate and the parity dashboard — otherwise every oracle would need a blessed
+   * PNG whose only job is to duplicate the scene it is checking.
+   */
+  fidelityOnly?: boolean;
 }
 
 export interface Scene extends SceneMeta {

@@ -1,5 +1,5 @@
 /**
- * HistoryPanel — Photoshop-style visual history (spec §Trust Infrastructure).
+ * HistoryPanel — Photoshop-style visual history.
  *
  * Lists every recorded state oldest → newest with the current one highlighted
  * and future (redoable) states dimmed. Click a row to jump there

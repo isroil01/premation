@@ -234,6 +234,10 @@ export class WebGPUBackend implements RenderBackend {
         targets: [{ format: desc.colorFormat, blend: blendState(desc.blend) }],
       },
       primitive: { topology: desc.topology },
+      // WebGPU validates the pipeline's sample count against the pass's
+      // attachments, unlike WebGL2 where multisampling lives entirely in the
+      // framebuffer. A mismatch is a validation error, not a silent fallback.
+      ...(desc.samples && desc.samples > 1 ? { multisample: { count: desc.samples } } : {}),
       // Depth state is baked into WebGPU pipelines; a depth-tested pipeline is
       // only valid inside a pass carrying a depth attachment (and vice versa).
       ...(desc.depthTest
@@ -262,14 +266,37 @@ export class WebGPUBackend implements RenderBackend {
   destroyBindGroup(_group: BindGroupHandle): void {}
 
   createRenderTarget(desc: RenderTargetDescriptor): RenderTargetHandle {
+    // MSAA in WebGPU is a texture property, and a multisampled texture is NOT
+    // sampleable — so a multisampled target is a pair: the multisample
+    // attachment drawn into, and a single-sample texture the pass resolves
+    // into, which is the one everything else binds. Callers stay unaware, in
+    // keeping with `RenderTargetDescriptor.samples`.
+    const samples = Math.max(1, Math.floor(desc.samples ?? 1));
+    // WebGPU guarantees only 1 and 4.
+    const sampleCount = samples >= 4 ? 4 : 1;
+
     const texture = this.device.createTexture({
       label: desc.label,
       size: { width: desc.width, height: desc.height },
       format: desc.format,
       usage: TEX.RENDER_ATTACHMENT | TEX.TEXTURE_BINDING,
     });
+    let msaaTexture: GPUTexture | undefined;
+    let msaaView: GPUTextureView | undefined;
+    if (sampleCount > 1) {
+      msaaTexture = this.device.createTexture({
+        label: desc.label ? `${desc.label}/msaa` : 'render-target-msaa',
+        size: { width: desc.width, height: desc.height },
+        format: desc.format,
+        sampleCount,
+        // Never TEXTURE_BINDING: a multisampled texture cannot be sampled.
+        usage: TEX.RENDER_ATTACHMENT,
+      });
+      msaaView = msaaTexture.createView();
+    }
     // Depth attachment for 3D group rendering (created only when asked for —
-    // effect scratch targets stay colour-only).
+    // effect scratch targets stay colour-only). Its sample count must match the
+    // colour attachment's.
     let depthTexture: GPUTexture | undefined;
     let depthView: GPUTextureView | undefined;
     if (desc.depth) {
@@ -277,6 +304,7 @@ export class WebGPUBackend implements RenderBackend {
         label: desc.label ? `${desc.label}/depth` : 'render-target-depth',
         size: { width: desc.width, height: desc.height },
         format: 'depth24plus',
+        ...(sampleCount > 1 ? { sampleCount } : {}),
         usage: TEX.RENDER_ATTACHMENT,
       });
       depthView = depthTexture.createView();
@@ -284,7 +312,7 @@ export class WebGPUBackend implements RenderBackend {
     return {
       kind: 'render-target',
       id: nextId(),
-      native: { texture, view: texture.createView(), depthTexture, depthView },
+      native: { texture, view: texture.createView(), msaaTexture, msaaView, sampleCount, depthTexture, depthView },
     };
   }
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
@@ -292,8 +320,9 @@ export class WebGPUBackend implements RenderBackend {
     return { kind: 'texture', id: target.id, native: texture };
   }
   destroyRenderTarget(target: RenderTargetHandle): void {
-    const native = target.native as { texture: GPUTexture; depthTexture?: GPUTexture };
+    const native = target.native as { texture: GPUTexture; msaaTexture?: GPUTexture; depthTexture?: GPUTexture };
     native.texture.destroy();
+    native.msaaTexture?.destroy();
     native.depthTexture?.destroy();
   }
 
@@ -315,24 +344,44 @@ export class WebGPUBackend implements RenderBackend {
     if (!this.encoder) throw new Error('beginRenderPass outside a frame');
     const attach = desc.color;
     const toSurface = attach.target === 'surface';
+    // A multisampled target renders into its MSAA attachment and RESOLVES into
+    // the single-sample texture everything else binds — the resolve is what
+    // makes the extra samples visible downstream, and skipping it would leave
+    // the bound texture empty.
+    const native = toSurface
+      ? null
+      : (attach.target.native as {
+          view: GPUTextureView;
+          msaaView?: GPUTextureView;
+          sampleCount?: number;
+          depthView?: GPUTextureView;
+        });
+    const sampleCount = native?.sampleCount ?? 1;
     const view = toSurface
       ? this.context.getCurrentTexture().createView()
-      : (attach.target.native as { view: GPUTextureView }).view;
+      : (native!.msaaView ?? native!.view);
+    const resolveTarget = !toSurface && native!.msaaView ? native!.view : undefined;
     const clear = attach.clear;
     // Depth attachment only when the pass asks for it AND the target carries
     // one — the surface has no depth texture, and a depth-tested pipeline is
     // never routed at it (CompositionPass only forms 3D groups on offscreen
     // targets created with depth).
-    const depthView = !toSurface && desc.depth
-      ? (attach.target.native as { depthView?: GPUTextureView }).depthView
-      : undefined;
+    const depthView = !toSurface && desc.depth ? native!.depthView : undefined;
     const pass = this.encoder.beginRenderPass({
       label: desc.label,
       colorAttachments: [
         {
           view,
+          ...(resolveTarget ? { resolveTarget } : {}),
           clearValue: clear ? { r: clear.r, g: clear.g, b: clear.b, a: clear.a } : undefined,
           loadOp: clear ? 'clear' : 'load',
+          // ALWAYS store, even when resolving. It is tempting to discard the
+          // multisample samples once they are resolved — nothing samples them —
+          // but the composition re-opens the same target with `loadOp: 'load'`
+          // to keep drawing into it (CompositionPass flushes and continues per
+          // layer group). Discarding would hand that next pass an undefined
+          // attachment and silently drop everything drawn so far, leaving only
+          // whatever the final pass wrote.
           storeOp: 'store',
         },
       ],
@@ -359,7 +408,7 @@ export class WebGPUBackend implements RenderBackend {
       const h = Math.max(0, Math.min(this.surfaceH - y, Math.round(clip.height)));
       pass.setScissorRect(x, y, w, h);
     }
-    return new WebGPUPassEncoder(pass);
+    return new WebGPUPassEncoder(pass, sampleCount);
   }
   endFrame(): void {
     if (!this.encoder) return;
@@ -379,7 +428,7 @@ export class WebGPUBackend implements RenderBackend {
   }
   dispose(): void {
     // Drop any half-built frame, detach from the canvas, then destroy the
-    // device. destroy() releases every resource created from it (buffers,
+    // device. destroy releases every resource created from it (buffers,
     // textures, pipelines — WebGPU's ownership model), so per-resource
     // teardown is unnecessary; unconfigure frees the canvas' swap chain so a
     // fresh backend can reconfigure the same canvas on re-entry.
@@ -397,7 +446,7 @@ export class WebGPUBackend implements RenderBackend {
 
 class WebGPUPassEncoder implements RenderPassEncoder {
   private pipeline: GPURenderPipeline | null = null;
-  constructor(private readonly pass: GPURenderPassEncoder) {}
+  constructor(private readonly pass: GPURenderPassEncoder, readonly samples: number = 1) {}
   setPipeline(pipeline: PipelineHandle): void {
     this.pipeline = (pipeline.native as { pipeline: GPURenderPipeline }).pipeline;
     this.pass.setPipeline(this.pipeline);

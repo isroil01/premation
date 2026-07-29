@@ -1,5 +1,5 @@
 import { Icon } from '@components/Icon';
-import { getRemappedTime } from '@core/timeline/TimelineController';
+import { getRemappedTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { useMemo, useState } from 'react';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -9,11 +9,15 @@ import { moveAnchorCompensated } from '@core/scene/anchor';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
+import { PropertyRow } from '@components/PropertyRow';
+import { buildPropertyMenu } from '@core/inspector/propertyMenu';
+import { openContextMenu } from '@stores/contextMenuStore';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
-import { useActiveWorkspace } from '@stores/projectStore';
+import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { Checkbox } from '@components/Checkbox';
+import { useCompositionStore } from '@stores/compositionStore';
 import { AngleDial } from '@components/AngleDial';
 
 import styles from './TransformSection.module.css';
@@ -37,6 +41,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   // displaying the value it last rendered with after you edit one.
   useAnimationRevision();
   const time = useActiveWorkspace()?.time ?? 0;
+  const fps = useCompositionStore((c) => c.fps) || 30;
   // The layer's own time axis — the one the renderer samples on. Every read and
   // every write in this panel goes through it, so what you see is what renders.
   const layerT = getRemappedTime(nodeId, time);
@@ -44,10 +49,14 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const node = defaultSceneGraph.getNode(nodeId);
   const [linkedScale, setLinkedScale] = useState(true);
 
-  if (!node) return null;
-
-  const tComp = useMemo(() => node.components.find((c) => c.type === 'Transform'), [node]);
-  const sComp = useMemo(() => node.components.find((c) => c.type === 'Style' || c.type === 'Text'), [node]);
+  // NO early return before the hooks below. `if (!node) return null` used to sit
+  // here, above ~22 more hooks (two useMemo + twenty useNodeComponentProp), so
+  // selecting a layer whose node lookup misses — or deselecting while this panel
+  // stays mounted — changed the hook count between renders and React threw
+  // "Rendered fewer hooks than expected", taking the whole Properties tab down.
+  // The hooks all tolerate `undefined` ids; the render guard moved below them.
+  const tComp = useMemo(() => node?.components.find((c) => c.type === 'Transform'), [node]);
+  const sComp = useMemo(() => node?.components.find((c) => c.type === 'Style' || c.type === 'Text'), [node]);
 
   const [xValRaw, setXVal] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'x');
   const [yValRaw, setYVal] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'y');
@@ -63,6 +72,10 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const [oriYRaw, setOriY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationY');
   const [oriZRaw, setOriZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationZ');
   const [anchorZRaw, setAnchorZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'anchorZ');
+  const [skewRaw, setSkew] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'skew');
+  const [skewAxisRaw, setSkewAxis] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'skewAxis');
+  const skewVal = typeof skewRaw === 'number' ? skewRaw : 0;
+  const skewAxisVal = typeof skewAxisRaw === 'number' ? skewAxisRaw : 0;
   const oriXVal = typeof oriXRaw === 'number' ? oriXRaw : 0;
   const oriYVal = typeof oriYRaw === 'number' ? oriYRaw : 0;
   const oriZVal = typeof oriZRaw === 'number' ? oriZRaw : 0;
@@ -76,6 +89,8 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const anchorXVal = typeof anchorXValRaw === 'number' ? anchorXValRaw : 0;
   const anchorYVal = typeof anchorYValRaw === 'number' ? anchorYValRaw : 0;
   const [opacityValRaw, setOpacityVal] = useNodeComponentProp(defaultSceneGraph, nodeId, sComp?.id, 'opacity');
+  const [fillOpacityRaw, setFillOpacity] = useNodeComponentProp(defaultSceneGraph, nodeId, sComp?.id, 'fillOpacity');
+  const fillOpacityVal = typeof fillOpacityRaw === 'number' ? fillOpacityRaw : 100;
 
   const xVal = typeof xValRaw === 'number' ? xValRaw : 0;
   const yVal = typeof yValRaw === 'number' ? yValRaw : 0;
@@ -85,16 +100,25 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const rotYVal = typeof rotYValRaw === 'number' ? rotYValRaw : 0;
   const opacityVal = typeof opacityValRaw === 'number' ? opacityValRaw : 100;
 
-  if (!tComp) return null;
+  // Single render guard, AFTER every hook — so the hook order is identical on
+  // every render regardless of what is selected.
+  if (!node || !tComp) return null;
 
+  /**
+   * One animatable transform row. Label, unit, range, step, precision and the
+   * reset value all come from the property registry — the call site supplies
+   * only the prop path, its current value and how to write it, so the same
+   * property cannot be described one way here and another in the timeline.
+   */
   const renderAnimPropInner = (
-    label: string,
     propName: string,
     value: number,
     setVal: (v: number) => void,
-    unit = '',
-    resetVal?: number
   ) => {
+    const meta = resolvePropertyMeta(propName, nodeId);
+    const label = meta.label;
+    const unit = meta.unit;
+    const resetVal = meta.resettable && typeof meta.defaultValue === 'number' ? meta.defaultValue : undefined;
     const numeric = typeof value === 'number';
     const animated = numeric && defaultAnimation.isAnimated(nodeId, propName);
     // Sample on the SAME axis we write to. This used to sample the raw comp
@@ -133,68 +157,100 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
       }
     };
 
+    // Keyframe navigation, on the property's own time axis.
+    const kfs = animated ? defaultAnimation.getTrackKeyframes(nodeId, propName) ?? [] : [];
+    const EPS = 1e-4;
+    const at = kfs.find((k) => Math.abs(k.t - layerT) < EPS);
+    const prev = [...kfs].reverse().find((k) => k.t < layerT - EPS);
+    const next = kfs.find((k) => k.t > layerT + EPS);
+    const seek = (t: number): void => {
+      const compT = keyframeToCompTime(nodeId, t, propName);
+      useProjectStore.getState().actions.setTime(compT, Math.round(compT * fps));
+    };
+
+    const toggleStopwatch = (): void => {
+      if (animated) {
+        runAnimEdit(`Remove ${propName} animation`, () => defaultAnimation.removeTrack(nodeId, propName));
+      } else {
+        runAnimEdit(`Animate ${propName}`, () =>
+          defaultAnimation.setKeyframe(nodeId, propName, layerT, Number(value)),
+        );
+      }
+    };
+
     return (
-      <div className={styles.popoverRow} key={propName}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
-          {numeric && (
-            <Checkbox
-              checked={animated}
-              onChange={() => {
-                if (animated) {
-                  runAnimEdit(`Remove ${propName} animation`, () =>
-                    defaultAnimation.removeTrack(nodeId, propName)
-                  );
-                } else {
-                  runAnimEdit(`Animate ${propName}`, () =>
-                    defaultAnimation.setKeyframe(nodeId, propName, layerT, Number(value))
-                  );
-                }
-              }}
-              title="Toggle Keyframes"
-              style={{ width: 13, height: 13 }}
-            />
-          )}
-          <span className={styles.popoverLabel}>
-            {label.replace(/(Position|Scale|Rotation|Anchor Point)\s*/i, '') || label}
-          </span>
-        </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          {/* Rotation rows: AE-style dial (drag = rotate, Shift snaps 15°,
-              winds through revolutions) sharing the row's write path. */}
-          {ROTATION_PROPS.has(propName) && (
-            <AngleDial
-              value={Number(displayVal ?? 0)}
-              onChange={handleChange}
-              aria-label={`${label} dial`}
-            />
-          )}
-          {/* The visible label is stripped to "X"/"Y" under a group header, so
-              several rows read identically; the field carries the full name for
-              screen readers (and anything else addressing it by name). */}
-          <ValueField
+      <PropertyRow
+        key={propName}
+        // The group header already says "Position"; the row says "X". The FULL
+        // name still reaches assistive tech through the field's aria-label.
+        label={label.replace(/(Position|Scale|Rotation|Anchor Point)\s*/i, '') || label}
+        srLabel={label}
+        animated={animated}
+        onStopwatch={numeric ? toggleStopwatch : undefined}
+        navigator={{
+          hasPrev: !!prev,
+          hasNext: !!next,
+          atKeyframe: !!at,
+          onPrev: () => prev && seek(prev.t),
+          onNext: () => next && seek(next.t),
+          onToggleKeyframe: () => {
+            if (at) {
+              runAnimEdit(`Remove ${propName} keyframe`, () =>
+                defaultAnimation.removeKeyframe(nodeId, propName, at.t),
+              );
+            } else {
+              // Adds at the CURRENT value — anchoring a property without
+              // changing what it renders.
+              runAnimEdit(`Add ${propName} keyframe`, () =>
+                defaultAnimation.setKeyframe(nodeId, propName, layerT, Number(displayVal ?? 0)),
+              );
+            }
+          },
+        }}
+        onReset={resetVal !== undefined ? () => handleChange(resetVal) : undefined}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          openContextMenu(
+            e.clientX,
+            e.clientY,
+            buildPropertyMenu({
+              nodeId,
+              prop: propName,
+              layerT,
+              value: Number(displayVal ?? 0),
+              setValue: setVal,
+            }),
+          );
+        }}
+      >
+        {/* Rotation rows: AE-style dial (drag = rotate, Shift snaps 15°,
+            winds through revolutions) sharing the row's write path. It lives
+            INSIDE the value cell, so it can no longer push the number out of
+            the column every other row shares. */}
+        {ROTATION_PROPS.has(propName) && (
+          <AngleDial
             value={Number(displayVal ?? 0)}
-            unit={unit}
             onChange={handleChange}
-            aria-label={label}
+            aria-label={`${label} dial`}
           />
-          {resetVal !== undefined && (
-            <button
-              type="button"
-              title={`Reset ${label}`}
-              onClick={() => handleChange(resetVal)}
-              className={styles.resetBtn}
-            >
-              <Icon name="rotate" size={10} />
-            </button>
-          )}
-        </div>
-      </div>
+        )}
+        <ValueField
+          value={Number(displayVal ?? 0)}
+          unit={unit}
+          min={meta.min}
+          max={meta.max}
+          step={meta.step}
+          precision={meta.precision}
+          onChange={handleChange}
+          aria-label={label}
+        />
+      </PropertyRow>
     );
   };
 
   // Render a stopwatch icon button directly on a grid cell (outside popover).
   // Each prop carries ITS OWN current value — keying every prop to a single
-  // shared value made "Enable animation" on Position write y := x (the layer
+  // shared value made "Enable animation" on Position write y:= x (the layer
   // visibly jumped the moment the stopwatch was clicked).
   const renderStopwatchBtn = (props: Array<{ prop: string; value: number }>) => {
     const animated = props.some(({ prop }) => defaultAnimation.isAnimated(nodeId, prop));
@@ -234,6 +290,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const isRotationAnimated = defaultAnimation.isAnimated(nodeId, 'rotation') || defaultAnimation.isAnimated(nodeId, 'rotationX') || defaultAnimation.isAnimated(nodeId, 'rotationY');
   const isSizeAnimated = defaultAnimation.isAnimated(nodeId, 'width') || defaultAnimation.isAnimated(nodeId, 'height');
   const isOpacityAnimated = defaultAnimation.isAnimated(nodeId, 'opacity');
+  const isSkewAnimated = defaultAnimation.isAnimated(nodeId, 'skew') || defaultAnimation.isAnimated(nodeId, 'skewAxis');
 
   // AE-style flat property list: a subhead per group (label · animated dot ·
   // stopwatch), then its rows inline — no popovers, everything one glance away.
@@ -257,13 +314,13 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
               { prop: 'anchorX', value: anchorXVal },
               { prop: 'anchorY', value: anchorYVal },
             ]))}
-            {renderAnimPropInner('Anchor Point X', 'anchorX', anchorXVal, (v) => {
+            {renderAnimPropInner('anchorX', anchorXVal, (v) => {
               moveAnchorCompensated(nodeId, v, anchorYVal);
-            }, 'px', 0)}
-            {renderAnimPropInner('Anchor Point Y', 'anchorY', anchorYVal, (v) => {
+            })}
+            {renderAnimPropInner('anchorY', anchorYVal, (v) => {
               moveAnchorCompensated(nodeId, anchorXVal, v);
-            }, 'px', 0)}
-            {is3D && renderAnimPropInner('Anchor Point Z', 'anchorZ', anchorZVal, (v) => setAnchorZ(v), 'px', 0)}
+            })}
+            {is3D && renderAnimPropInner('anchorZ', anchorZVal, (v) => setAnchorZ(v))}
           </>
         )}
 
@@ -272,9 +329,9 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
           { prop: 'y', value: yVal },
           ...(isCamera || is3D ? [{ prop: 'z', value: zVal }] : []),
         ]))}
-        {renderAnimPropInner('Position X', 'x', xVal, (v) => setXVal(v), 'px', 0)}
-        {renderAnimPropInner('Position Y', 'y', yVal, (v) => setYVal(v), 'px', 0)}
-        {(isCamera || is3D) && renderAnimPropInner('Position Z', 'z', zVal, (v) => setZVal(v), 'px', 0)}
+        {renderAnimPropInner('x', xVal, (v) => setXVal(v))}
+        {renderAnimPropInner('y', yVal, (v) => setYVal(v))}
+        {(isCamera || is3D) && renderAnimPropInner('z', zVal, (v) => setZVal(v))}
 
         <div className={styles.subhead}>
           <span>Scale</span>
@@ -294,8 +351,8 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
             { prop: 'scaleY', value: scaleYVal },
           ])}
         </div>
-        {renderAnimPropInner('Scale X', 'scaleX', scaleXVal, (v) => setScaleXVal(v), 'x', 1)}
-        {renderAnimPropInner('Scale Y', 'scaleY', scaleYVal, (v) => setScaleYVal(v), 'x', 1)}
+        {renderAnimPropInner('scaleX', scaleXVal, (v) => setScaleXVal(v))}
+        {renderAnimPropInner('scaleY', scaleYVal, (v) => setScaleYVal(v))}
 
         {subhead('Rotation', isRotationAnimated, renderStopwatchBtn([
           { prop: 'rotation', value: rotVal },
@@ -306,14 +363,14 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
               ]
             : []),
         ]))}
-        {renderAnimPropInner('Rotation', 'rotation', rotVal, (v) => setRotVal(v), '°', 0)}
+        {renderAnimPropInner('rotation', rotVal, (v) => setRotVal(v))}
         {is3D && (
           <>
-            {renderAnimPropInner('Rotation X', 'rotationX', rotXVal, (v) => setRotXVal(v), '°', 0)}
-            {renderAnimPropInner('Rotation Y', 'rotationY', rotYVal, (v) => setRotYVal(v), '°', 0)}
-            {renderAnimPropInner('Orientation X', 'orientationX', oriXVal, (v) => setOriX(v), '°', 0)}
-            {renderAnimPropInner('Orientation Y', 'orientationY', oriYVal, (v) => setOriY(v), '°', 0)}
-            {renderAnimPropInner('Orientation Z', 'orientationZ', oriZVal, (v) => setOriZ(v), '°', 0)}
+            {renderAnimPropInner('rotationX', rotXVal, (v) => setRotXVal(v))}
+            {renderAnimPropInner('rotationY', rotYVal, (v) => setRotYVal(v))}
+            {renderAnimPropInner('orientationX', oriXVal, (v) => setOriX(v))}
+            {renderAnimPropInner('orientationY', oriYVal, (v) => setOriY(v))}
+            {renderAnimPropInner('orientationZ', oriZVal, (v) => setOriZ(v))}
           </>
         )}
 
@@ -323,15 +380,26 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
               { prop: 'width', value: widthVal },
               { prop: 'height', value: heightVal },
             ]))}
-            {renderAnimPropInner('Width', 'width', widthVal, (v) => setWidthVal(v), 'px')}
-            {renderAnimPropInner('Height', 'height', heightVal, (v) => setHeightVal(v), 'px')}
+            {renderAnimPropInner('width', widthVal, (v) => setWidthVal(v))}
+            {renderAnimPropInner('height', heightVal, (v) => setHeightVal(v))}
           </>
         )}
+
+        {/* Skew — a shear applied between rotation and scale. `skewAxis` turns
+            the horizontal default into any direction. */}
+        {subhead('Skew', isSkewAnimated, renderStopwatchBtn([
+          { prop: 'skew', value: skewVal },
+        ]))}
+        {renderAnimPropInner('skew', skewVal, (v) => setSkew(v))}
+        {renderAnimPropInner('skewAxis', skewAxisVal, (v) => setSkewAxis(v))}
 
         {sComp && (
           <>
             {subhead('Opacity', isOpacityAnimated, renderStopwatchBtn([{ prop: 'opacity', value: opacityVal }]))}
-            {renderAnimPropInner('Opacity', 'opacity', opacityVal, (v) => setOpacityVal(v), '%', 100)}
+            {renderAnimPropInner('opacity', opacityVal, (v) => setOpacityVal(v))}
+            {/* Fill opacity fades the layer's pixels but not its styles — at 0
+                a shadowed layer leaves the shadow floating. */}
+            {renderAnimPropInner('fillOpacity', fillOpacityVal, (v) => setFillOpacity(v))}
           </>
         )}
       </div>

@@ -2,7 +2,7 @@
  * FontPicker — searchable font-family dropdown for the text inspector.
  *
  * Enumerates locally installed fonts via the Chromium Local Font Access API
- * (`window.queryLocalFonts()`) lazily on first open (the call may show a
+ * (`window.queryLocalFonts`) lazily on first open (the call may show a
  * permission prompt). On failure or unavailability it falls back to a curated
  * Google-font list plus universal system fonts. Each option renders in its own
  * font family as a live preview. Arrow keys + Enter select, Escape closes

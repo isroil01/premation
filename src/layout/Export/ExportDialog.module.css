@@ -1,9 +1,39 @@
 .root {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
-  min-width: 340px;
+  gap: var(--space-5);
+  min-width: 420px;
 }
+
+/* One line of the facts that decide whether an export is worth starting. */
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.summaryNote {
+  margin-left: auto;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-subtle);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-base);
+}
+
+.checkRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.checkHint { color: var(--color-text-tertiary); }
 
 .section {
   display: flex;

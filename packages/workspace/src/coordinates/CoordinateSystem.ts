@@ -5,11 +5,11 @@
  * spaces.
  *
  * Spaces:
- *   screen   — OS/client pixels (raw pointer event coords)
+ *   screen — OS/client pixels (raw pointer event coords)
  *   viewport — pixels relative to the canvas top-left (screen − offset)
- *   world    — the infinite canvas, what the camera looks at
- *   parent   — a node's parent's local space
- *   local    — a node's own space (its worldMatrix maps local→world)
+ *   world — the infinite canvas, what the camera looks at
+ *   parent — a node's parent's local space
+ *   local — a node's own space (its worldMatrix maps local→world)
  *
  * Viewport and screen differ only by the canvas's page offset. World is reached
  * through the camera. Local/parent need a node's world matrix.

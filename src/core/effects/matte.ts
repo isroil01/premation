@@ -1,11 +1,11 @@
 /**
- * Track / alpha mattes (Prompt 5 — GPU compositing, feature 3).
+ * Track / alpha mattes.
  *
  * A matte makes the layer directly above it define the alpha of this layer:
- *   • alpha      — keep this layer where the layer above is opaque
- *   • alpha-inv  — keep this layer where the layer above is transparent
- *   • luma       — this layer's alpha follows the above layer's luminance
- *   • luma-inv   — …follows the inverse luminance
+ *   • alpha — keep this layer where the layer above is opaque
+ *   • alpha-inv — keep this layer where the layer above is transparent
+ *   • luma — this layer's alpha follows the above layer's luminance
+ *   • luma-inv — …follows the inverse luminance
  * The matte source layer is consumed (not drawn on its own).
  *
  * Stored on the matted layer's `fx` component. Canvas2DBackend composites it via

@@ -1,5 +1,5 @@
 /**
- * History store (spec §Trust Infrastructure — Photoshop-style visual history).
+ * History store.
  *
  * Holds an ordered list of fully non-destructive snapshots of the editable
  * state (scene graph + animation). Jumping to an entry restores that state;
@@ -81,8 +81,16 @@ const RECORD_DEBOUNCE_MS = 700;
 interface HistoryStore {
   restoring: boolean;
   record: (label?: string, named?: boolean) => void;
-  /** Coalesce rapid edits into a single entry. Call on every edit event. */
-  schedule: () => void;
+  /**
+   * Coalesce rapid edits into a single entry. Call on every edit event.
+   *
+   * `key` identifies WHAT is being edited (node + property, or the kind of
+   * structural change). A pending entry whose key differs is committed first,
+   * so only a genuine burst on the SAME target coalesces. Without it the window
+   * merged whatever happened to fall inside 700 ms — recolour one layer, move
+   * another, and both vanished on a single Ctrl+Z with no way to get one back.
+   */
+  schedule: (key?: string) => void;
   /**
    * Record any pending edit NOW.
    *
@@ -101,6 +109,8 @@ let seq = 0;
 let lastState: { scene: ProjectFile; anim: AnimSnapshot } | null = null;
 
 let recordTimer: ReturnType<typeof setTimeout> | undefined;
+/** What the pending debounced entry is editing (see `schedule`). */
+let pendingKey: string | undefined;
 
 export const useHistoryStore = create<HistoryStore>((set, get) => ({
   restoring: false,
@@ -109,6 +119,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     if (get().restoring) return;
     clearTimeout(recordTimer);
     recordTimer = undefined;
+    pendingKey = undefined;
     const currentState = captureState();
 
     // A NAMED record is a deliberate act — the "Open" baseline, or the History
@@ -116,7 +127,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     // record a real change.
     //
     // Both guards used to block the baseline: `record('Open')` runs right after
-    // `reset()`, whose `clear()` emits UndoStackChanged, whose listener sets
+    // `reset`, whose `clear` emits UndoStackChanged, whose listener sets
     // `lastState` to the current state. So `statesEqual` was true and nothing
     // was pushed — the document's opening state had no row to jump back to.
     if (!named) {
@@ -137,11 +148,18 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     lastState = currentState;
   },
 
-  schedule: () => {
+  schedule: (key) => {
     if (get().restoring) return;
+    // A different target means a different action: commit the pending one so it
+    // keeps its own undo step rather than being absorbed into this one.
+    if (recordTimer !== undefined && key !== undefined && pendingKey !== undefined && key !== pendingKey) {
+      get().record(); // clears the timer
+    }
+    pendingKey = key;
     clearTimeout(recordTimer);
     recordTimer = setTimeout(() => {
       recordTimer = undefined;
+      pendingKey = undefined;
       get().record();
     }, RECORD_DEBOUNCE_MS);
   },
@@ -168,6 +186,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   reset: () => {
     clearTimeout(recordTimer);
     recordTimer = undefined;
+    pendingKey = undefined;
     lastState = null;
     getCommandSystem().getHistory().clear();
   },
@@ -181,6 +200,34 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
  * reachable from four places (the command, both TopNav buttons and the History
  * panel) — so this lives here rather than being repeated at each call site.
  */
+/**
+ * Re-baseline history onto a freshly LOADED document.
+ *
+ * The "Open" baseline is captured during boot, right after `seedDefaultScene`
+ * — but a project loads AFTERWARDS and asynchronously. Without this, history's
+ * `lastState` still described the seeded demo scene, so the load itself became
+ * an undoable entry whose "before" was that demo scene: **one Ctrl+Z after
+ * opening a project replaced it with the starter content.** That is how a layer
+ * could vanish on the first undo of a session.
+ *
+ * Call this at every LOAD boundary (open a bundle, restore a recovery snapshot),
+ * never on incremental sync — a cross-window document push is not a load and
+ * must not wipe the user's undo stack.
+ */
+export function baselineHistory(label = 'Open'): void {
+  // Never let history stop a document from loading. `reset`/`record` reach into
+  // the CommandSystem, which is not initialized in headless contexts (tests,
+  // pop-out boot order) — and a project failing to open because the undo stack
+  // was not ready would be a far worse bug than the one this fixes.
+  try {
+    const h = useHistoryStore.getState();
+    h.reset();
+    h.record(label, true);
+  } catch {
+    /* no CommandSystem yet — nothing to baseline against */
+  }
+}
+
 export function performUndo(): void {
   const h = useHistoryStore.getState();
   h.flush();

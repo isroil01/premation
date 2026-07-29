@@ -1,5 +1,5 @@
 /**
- * ProjectCipher — client-side encryption for the opt-in sync vault (RFC §10.1).
+ * ProjectCipher — client-side encryption for the opt-in sync vault.
  *
  * This is what keeps principle #6 true: the server stores only ciphertext it
  * cannot read. The project key is derived from the user's passphrase on-device

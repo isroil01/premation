@@ -2,14 +2,14 @@
  * History / UndoRedo service.
  *
  * Maintains two stacks of commands. A command participates in undo only if
- * it provides an `undo()` method. The service itself is engine-agnostic
+ * it provides an `undo` method. The service itself is engine-agnostic
  * — it does not know what state commands mutate.
  */
 
 import { getEventBus } from '@core/events/EventBus';
 import type { CommandContext, IUndoableCommand } from './Command';
 
-/** Builds the context a command's execute()/undo() runs with during undo/redo. */
+/** Builds the context a command's execute/undo runs with during undo/redo. */
 export type ContextBuilder = (command: IUndoableCommand) => CommandContext;
 
 export class HistoryService {
@@ -138,11 +138,11 @@ export class HistoryService {
   }
 
   /**
-   * Suppress pushes until the matching `resume()`. Re-entrant (counted).
+   * Suppress pushes until the matching `resume`. Re-entrant (counted).
    *
    * The scoped `withSuppressed` can't cover an ASYNC macro — an AI run spans
    * many awaits — so callers that span ticks pair these manually and must
-   * guarantee `resume()` (e.g. in a finally). Prefer `withSuppressed` whenever
+   * guarantee `resume` (e.g. in a finally). Prefer `withSuppressed` whenever
    * the work is synchronous.
    */
   suspend(): void {
@@ -154,9 +154,9 @@ export class HistoryService {
   }
 
   private ctxFor(command: IUndoableCommand): CommandContext {
-    // CommandSystem injects a context builder at construction so undo()/redo()
-    // can re-run commands with the same services execute() saw. Commands whose
-    // execute()/undo() are self-contained (e.g. keyframe edits that close over
+    // CommandSystem injects a context builder at construction so undo/redo
+    // can re-run commands with the same services execute saw. Commands whose
+    // execute/undo are self-contained (e.g. keyframe edits that close over
     // their engine) ignore the context, but it must still be well-formed.
     if (!this.buildContext) {
       throw new Error(

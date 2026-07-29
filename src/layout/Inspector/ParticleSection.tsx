@@ -33,6 +33,14 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
   const set = <K extends keyof ParticleConfig>(key: K, value: ParticleConfig[K]): void => {
     defaultSceneGraph.setParticle(nodeId, { ...cfg, [key]: value });
+    const transformComp = node.components.find((c) => c.type === 'Transform');
+    if (transformComp) {
+      if (key === 'emitterWidth' && typeof value === 'number') {
+        defaultSceneGraph.writeProp(nodeId, transformComp.id, 'width', value);
+      } else if (key === 'emitterHeight' && typeof value === 'number') {
+        defaultSceneGraph.writeProp(nodeId, transformComp.id, 'height', value);
+      }
+    }
     bumpScene();
   };
 

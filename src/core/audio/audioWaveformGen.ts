@@ -22,7 +22,7 @@ import { corner, type BezierPoint } from '../../../packages/workspace/src/math/B
 import { peakAtNorm, type WaveformPeaks } from './waveform';
 import { audioEngine } from './AudioEngine';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { audioComponent } from './audioScene';
+import { audioComponent, readAudioClipTimings } from './audioScene';
 import type { SceneNode } from '@core/types';
 import { bumpScene } from '@stores/sceneStore';
 
@@ -183,8 +183,15 @@ export function resolveAudioWaveformPoints(
   if (!assetId) return EMPTY_WAVEFORM_PATH as BezierPoint[];
   const wave = getWave(assetId);
   if (!wave) return EMPTY_WAVEFORM_PATH as BezierPoint[];
-  // Clip-local time so the playhead window tracks the audio, honouring its start.
-  const start = num(comp?.props.__start, 0);
-  const pts = audioWaveformPoints(wave.peaks, wave.duration, width, height, timeSec - start, cfg);
+  // Clip-local time so the playhead window tracks the audio, honouring where
+  // the source layer's BAR sits (and which part of the source it plays). The
+  // timeline clip is the authority — see audioScene; `__start` is only the
+  // fallback for audio with no bar.
+  const timings = readAudioClipTimings(cfg.sourceLayerId);
+  const at = timings.find((t) => timeSec >= t.startSec && timeSec < t.startSec + (t.outSec - t.inSec)) ?? timings[0];
+  const localT = at
+    ? at.inSec + (timeSec - at.startSec)
+    : timeSec - num(comp?.props.__start, 0);
+  const pts = audioWaveformPoints(wave.peaks, wave.duration, width, height, localT, cfg);
   return pts.length > 1 ? pts : (EMPTY_WAVEFORM_PATH as BezierPoint[]);
 }

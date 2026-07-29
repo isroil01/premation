@@ -57,7 +57,7 @@ describe('TextEditOverlay', () => {
     const box = getByRole('textbox');
     expect(box.getAttribute('contenteditable')).toBe('true');
     expect(box.textContent).toBe('Hello');
-    // The whole point: no prompt() — that's what Electron refuses.
+    // The whole point: no prompt — that's what Electron refuses.
     expect(promptSpy).not.toHaveBeenCalled();
     promptSpy.mockRestore();
   });

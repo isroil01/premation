@@ -3,17 +3,17 @@
  * only through the `ToolContext`. They cover the core editor verbs; a future AI
  * tool registers the same way with zero engine changes.
  *
- *   SelectTool     — click-select, shift-toggle, marquee, drag-to-move (+snap)
- *   MoveTool       — drag the current selection (no marquee)
- *   RotateTool     — drag to spin the selection about its anchor
- *   PanBehindTool  — drag to place the anchor without moving the layer
- *   HandTool       — pan the camera
- *   ZoomTool       — click to zoom (alt = out), drag a region to frame it
- *   RectangleTool  — drag to create a rectangle
- *   EllipseTool    — drag to create an ellipse
- *   PenTool        — click to place path points, double-click to finish
- *   TextTool       — click to place a text box
- *   CameraTool     — navigate (drag-pan) without touching the scene
+ *   SelectTool — click-select, shift-toggle, marquee, drag-to-move (+snap)
+ *   MoveTool — drag the current selection (no marquee)
+ *   RotateTool — drag to spin the selection about its anchor
+ *   PanBehindTool — drag to place the anchor without moving the layer
+ *   HandTool — pan the camera
+ *   ZoomTool — click to zoom (alt = out), drag a region to frame it
+ *   RectangleTool — drag to create a rectangle
+ *   EllipseTool — drag to create an ellipse
+ *   PenTool — click to place path points, double-click to finish
+ *   TextTool — click to place a text box
+ *   CameraTool — navigate (drag-pan) without touching the scene
  */
 
 import type { Rect } from '../math/Rect';
@@ -25,8 +25,8 @@ import { corner as bezierCorner } from '../math/BezierPoint';
 import { commands } from '../commands/WorkspaceCommands';
 import * as Mat from '../math/Mat2D';
 import type { HandleId } from '../selection/handles';
-import { resizeBounds, rotationDelta } from '../selection/transform';
-import { handleCursor } from '../selection/handles';
+import { resizeBounds, resizeBoundsAboutPivot, rotationDelta } from '../selection/transform';
+import { handleCursor, visibleHandleIds } from '../selection/handles';
 import type { CursorType } from '../cursor/CursorManager';
 import type { Tool, ToolContext, ToolPointerEvent, ToolDragEvent, ToolKeyEvent } from './Tool';
 
@@ -43,16 +43,17 @@ export class SelectTool implements Tool {
   readonly shortcut = 'v';
   readonly cursor = 'default' as const;
 
-  private mode: 'idle' | 'marquee' | 'move' | 'resize' | 'rotate' = 'idle';
+  private mode: 'idle' | 'marquee' | 'move' | 'resize' = 'idle';
   private downNodeId: NodeId | null = null;
   private downHandle: HandleId | null = null;
   private moveIds: NodeId[] = [];
   private startBounds: Rect | null = null;
+  /** Scale at the moment a resize drag began — the base the ratio applies to. */
+  private startScale: { x: number; y: number } | null = null;
   private appliedDelta: Vec2 = { x: 0, y: 0 };
   private excludeIds: Set<string> = new Set();
   // Transform (single-node) state.
   private transformId: NodeId | null = null;
-  private transformStartRotation = 0;
   private transformPivot: Vec2 = { x: 0, y: 0 };
   private cursorPop: (() => void) | null = null;
 
@@ -64,14 +65,31 @@ export class SelectTool implements Tool {
       // grips that can't be grabbed, so draw none.
       return [];
     }
+    // Degrade with on-screen size: eight 8px grips on a 30px box overlap into
+    // an unusable blob. Filtering HERE (rather than in the painter) is what
+    // keeps hidden handles from staying grabbable as invisible hit targets —
+    // `pickHandle` reads the same list.
+    const allowed = new Set(this.visibleIds(ctx));
     const out: OverlayHandle[] = ctx.selection
-      .handles(ctx.camera.screenDistanceToWorld(24))
+      .handles()
+      .filter((h) => allowed.has(h.id))
       .map((h) => ({ id: h.id, position: h.position, kind: h.kind }));
     // AE always shows the layer's pivot on selection — not only under the
-    // Pan-Behind tool. Visual-only here; dragging it still needs Y.
+    // Pan-Behind tool. Visual-only here; dragging it still needs Y. Drawn as a
+    // crosshair, never a square, so it cannot be mistaken for a resize grip.
     const node = ctx.scene.getNode(sel[0]!);
     if (node) out.push({ id: `anchor_${sel[0]!}`, position: anchorWorld(node), kind: 'anchor' });
     return out;
+  }
+
+  /** Handle ids large enough to show at the current zoom. */
+  private visibleIds(ctx: ToolContext): readonly HandleId[] {
+    const b = ctx.selection.selectionBounds();
+    if (!b) return [];
+    // screenDistanceToWorld is the inverse of what we need (world px per
+    // screen px), so invert it to get screen px per world unit.
+    const perWorld = 1 / Math.max(1e-9, ctx.camera.screenDistanceToWorld(1));
+    return visibleHandleIds(b.width * perWorld, b.height * perWorld);
   }
 
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext): void {
@@ -81,11 +99,23 @@ export class SelectTool implements Tool {
   }
 
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext): void {
-    // Hover feedback over handles: show the matching resize/rotate cursor.
+    // Hover feedback over handles: the matching resize cursor, ROTATED to match
+    // the layer. A corner grip on a 45-degree layer showing the unrotated
+    // diagonal promises an axis the drag will not follow.
     if (this.mode !== 'idle') return;
     const handle = this.pickHandle(e.screen, ctx);
     this.cursorPop?.();
-    this.cursorPop = handle ? ctx.cursor.pushOverride(handleCursor(handle) as CursorType) : null;
+    this.cursorPop = handle
+      ? ctx.cursor.pushOverride(handleCursor(handle, this.selectionRotation(ctx)) as CursorType)
+      : null;
+  }
+
+  /** Rotation (radians) of the single selected layer, 0 for anything else. */
+  private selectionRotation(ctx: ToolContext): number {
+    const sel = ctx.selectionIds();
+    if (sel.length !== 1) return 0;
+    const n = ctx.scene.getNode(sel[0]!);
+    return n ? Math.atan2(n.worldMatrix.b, n.worldMatrix.a) : 0;
   }
 
   onClick(e: ToolPointerEvent, ctx: ToolContext): void {
@@ -113,14 +143,24 @@ export class SelectTool implements Tool {
     if (this.downHandle && sel.length === 1) {
       this.transformId = sel[0]!;
       this.startBounds = ctx.selection.selectionBounds();
-      this.transformPivot = this.startBounds ? R.center(this.startBounds) : e.startWorld;
-      if (this.downHandle === 'rotate') {
-        this.mode = 'rotate';
-        const node = ctx.scene.getNode(this.transformId);
-        this.transformStartRotation = node ? Math.atan2(node.worldMatrix.b, node.worldMatrix.a) : 0;
-      } else {
-        this.mode = 'resize';
-      }
+      this.mode = 'resize';
+      const rn = ctx.scene.getNode(this.transformId);
+      // Scale happens about the ANCHOR — the one point the renderer leaves
+      // fixed when Scale changes (`position + R*S*(local - anchor)`). Scaling
+      // about the opposite corner instead moves Position as a side effect, so a
+      // handle drag and a keyframed scale of the same magnitude disagree.
+      this.transformPivot = rn
+        ? anchorWorld(rn)
+        : this.startBounds
+          ? R.center(this.startBounds)
+          : e.startWorld;
+      // Capture the scale the drag starts from, so the drag can be applied as
+      // a RATIO. Derived from the world matrix because that is what the
+      // selection box was measured in; for an unparented layer it equals the
+      // node's own scaleX/scaleY.
+      this.startScale = rn
+        ? { x: Math.hypot(rn.worldMatrix.a, rn.worldMatrix.b), y: Math.hypot(rn.worldMatrix.c, rn.worldMatrix.d) }
+        : { x: 1, y: 1 };
       return;
     }
     if (this.downNodeId === null) {
@@ -145,15 +185,32 @@ export class SelectTool implements Tool {
       return;
     }
     if (this.mode === 'resize' && this.transformId && this.startBounds && this.downHandle) {
-      // Alt = scale from center, Shift = constrain aspect ratio (AE/Figma).
-      const bounds = resizeBounds(this.startBounds, this.downHandle, e.currentWorld, e.modifiers.alt, undefined, e.modifiers.shift);
-      ctx.execute(commands.resizeNode(this.transformId, bounds));
-      ctx.requestRender();
-      return;
-    }
-    if (this.mode === 'rotate' && this.transformId) {
-      const delta = rotationDelta(this.transformPivot, e.startWorld, e.currentWorld);
-      ctx.execute(commands.rotateNode(this.transformId, this.transformStartRotation + delta, this.transformPivot));
+      // Shift = constrain aspect ratio. Alt keeps its old meaning — scale
+      // symmetrically about the BOX CENTRE rather than the anchor — so the
+      // modifier still does something distinct now that the default pivot moved.
+      const bounds = e.modifiers.alt
+        ? resizeBounds(this.startBounds, this.downHandle, e.currentWorld, true, undefined, e.modifiers.shift)
+        : resizeBoundsAboutPivot(
+            this.startBounds,
+            this.downHandle,
+            e.currentWorld,
+            this.transformPivot,
+            undefined,
+            e.modifiers.shift,
+          );
+      // Express the drag as a ratio of the STARTING bounds and apply it to the
+      // starting scale. Absolute-AABB-over-local-width made rotated and 3D
+      // layers lurch and grow (see ResizeNodePayload).
+      const from = this.startBounds;
+      const base = this.startScale ?? { x: 1, y: 1 };
+      const scale = {
+        x: from.width > 0 ? base.x * (bounds.width / from.width) : base.x,
+        y: from.height > 0 ? base.y * (bounds.height / from.height) : base.y,
+      };
+      // The AABB of a rotated rectangle stays centred on the rectangle, so the
+      // AABB centre is the layer's position even when rotated.
+      const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center));
       ctx.requestRender();
       return;
     }
@@ -194,7 +251,10 @@ export class SelectTool implements Tool {
   /** Which selection handle is under a screen point, if any. */
   private pickHandle(screen: Vec2, ctx: ToolContext): HandleId | null {
     if (ctx.selectionIds().length !== 1) return null;
-    const handles = ctx.selection.handles(ctx.camera.screenDistanceToWorld(24));
+    // Only the handles that are actually drawn — an invisible grip that still
+    // resizes is worse than no grip at all.
+    const allowed = new Set(this.visibleIds(ctx));
+    const handles = ctx.selection.handles().filter((h) => allowed.has(h.id));
     let best: HandleId | null = null;
     let bestDist = HANDLE_PICK_RADIUS;
     for (const h of handles) {
@@ -457,7 +517,7 @@ export class PenTool implements Tool {
 
   deactivate(ctx: ToolContext): void {
     // Switching tools mid-draw should KEEP the path, not silently discard it —
-    // commit whatever has been drawn so far (finish() no-ops for < 2 points).
+    // commit whatever has been drawn so far (finish no-ops for < 2 points).
     this.finish(ctx);
     this.mouse = null;
     this.draggingHandle = false;
@@ -643,14 +703,51 @@ interface BrushSample extends Vec2 {
 }
 
 /**
+ * Stylus pressure that should paint exactly `brushSize`.
+ *
+ * Raw pressure used to be a direct multiplier, so the configured size was only
+ * ever reached by pressing all the way down — every normal stroke came out
+ * thinner than advertised. Normalising against the neutral value makes "Size:
+ * 14 px" mean 14 px, with lighter/heavier pressure deviating around it.
+ */
+const NEUTRAL_PRESSURE = 0.5;
+
+/**
  * Build the closed outline of a variable-width stroke: offset each centreline
  * point along its normal by half the local width (pressure × taper), walk the
  * left side forward and the right side back. Returned smoothed, so the ink
  * commits as flowing curves.
  */
 export function ribbonOutline(samples: readonly BrushSample[], size: number, taperPct: number, usePressure: boolean): BezierPoint[] {
+  if (samples.length < 2) return [];
+
+  // Densify a 2–3 sample flick before building the taper profile.
+  //
+  // The taper ramps from 0 at each end to full width in the middle. With only
+  // two samples there IS no middle sample: both points sit at taper 0, get
+  // clamped to the 0.05 floor, and the whole stroke collapses to the width floor
+  // — a hairline instead of a mark. Any quick flick produced one. Interpolating
+  // gives the profile somewhere to reach full width. Strokes of 4+ samples
+  // already have an interior point and are left untouched.
+  const MIN_SAMPLES = 9;
+  let work: BrushSample[] = [...samples];
+  if (work.length < 4) {
+    const dense: BrushSample[] = [];
+    const segs = work.length - 1;
+    const per = Math.ceil((MIN_SAMPLES - 1) / segs);
+    for (let s = 0; s < segs; s++) {
+      const a = work[s]!;
+      const b = work[s + 1]!;
+      for (let k = 0; k < per; k++) {
+        const u = k / per;
+        dense.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, pressure: a.pressure + (b.pressure - a.pressure) * u });
+      }
+    }
+    dense.push(work[work.length - 1]!);
+    work = dense;
+  }
+  samples = work;
   const n = samples.length;
-  if (n < 2) return [];
 
   // Cumulative arc length for the taper profile.
   const arc: number[] = [0];
@@ -667,13 +764,22 @@ export function ribbonOutline(samples: readonly BrushSample[], size: number, tap
     const p0 = samples[Math.max(0, i - 1)]!.pressure;
     const p1 = samples[i]!.pressure;
     const p2 = samples[Math.min(n - 1, i + 1)]!.pressure;
-    const p = usePressure ? Math.max(0.15, Math.min(1, (p0 + p1 + p2) / 3 || 0.5)) : 1;
+    // Normalized so a stylus at its NEUTRAL pressure paints the size the user
+    // set, and only lighter/heavier pressure deviates from it. Raw pressure was
+    // used as a direct multiplier, so even a real stylus never reached the
+    // configured width unless the user pressed all the way down.
+    const p = usePressure
+      ? Math.max(0.15, Math.min(1.4, ((p0 + p1 + p2) / 3 || 0.5) / NEUTRAL_PRESSURE))
+      : 1;
     let taper = 1;
     if (taperLen > 0) {
       taper = Math.min(1, arc[i]! / taperLen, (total - arc[i]!) / taperLen);
       taper = Math.max(0.05, taper);
     }
-    return Math.max(0.5, size * p * taper);
+    // Floor proportional to the brush, not a fixed half-pixel. A 0.5px absolute
+    // floor is invisible for any realistic brush size and is what made tapered
+    // ends and short strokes read as a thin outline rather than ink.
+    return Math.max(Math.min(size, 0.5), Math.min(size * 1.4, size * p * taper));
   };
 
   const left: Vec2[] = [];
@@ -705,15 +811,31 @@ export class BrushTool implements Tool {
 
   private pts: BrushSample[] = [];
   private drawing = false;
+  /**
+   * Whether THIS stroke came from a stylus.
+   *
+   * Pressure must only modulate width for a real pen. A mouse reports a flat
+   * 0.5 (Chromium) or 0, and the Pressure option defaults ON — so with a mouse
+   * every stroke was silently painted at half the configured size, and a fast
+   * flick collapsed to a hairline. Gating on the device, not on the number,
+   * keeps genuine stylus sensitivity intact (including a deliberately light,
+   * constant-pressure stroke) while a mouse always paints the size that is set.
+   */
+  private isPen = false;
+
+  private get pressureActive(): boolean {
+    return drawToolOptions.brushPressure && this.isPen;
+  }
 
   /** Live preview: the actual ribbon outline (painted filled by the host). */
   get pendingPoints(): readonly BezierPoint[] {
     const o = drawToolOptions;
-    return ribbonOutline(this.pts, o.brushSize, o.brushTaper, o.brushPressure);
+    return ribbonOutline(this.pts, o.brushSize, o.brushTaper, this.pressureActive);
   }
 
   onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
     this.drawing = true;
+    this.isPen = e.pointer.pointerType === 'pen';
     this.pts = [{ x: e.startWorld.x, y: e.startWorld.y, pressure: e.pointer.pressure }];
     ctx.requestRender();
   }
@@ -741,7 +863,7 @@ export class BrushTool implements Tool {
       const keepIdx = simplifyPathIndices(this.pts, 1.25);
       const centre = keepIdx.map((i) => this.pts[i]!);
       const o = drawToolOptions;
-      const outline = ribbonOutline(centre, o.brushSize, o.brushTaper, o.brushPressure);
+      const outline = ribbonOutline(centre, o.brushSize, o.brushTaper, this.pressureActive);
       if (outline.length >= 3) {
         const bounds = R.bounds(outline.map((p) => R.rect(p.x, p.y, 0, 0))) ?? R.rect();
         const cx = bounds.x + bounds.width / 2;

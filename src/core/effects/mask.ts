@@ -1,23 +1,31 @@
 /**
- * Vector masks (Prompt 5 — GPU compositing, feature 2).
+ * Vector masks.
  *
  * A layer carries a set of closed bezier paths (stored on its `fx` component)
  * that clip what the layer draws. Points live in the layer's LOCAL space, the
  * same centred space Canvas2DBackend draws its primitives in ([-w/2..w/2]), so a
  * mask composes cleanly with the layer transform.
  *
- * This slice implements the data model + presets + geometry (points → cubic
- * segments) + read/write on the scene graph. Rendering (Canvas2D clip) and the
- * inspector consume it. Deferred to later sub-commits: on-canvas pen editing,
- * keyframeable point coordinates (they'll route through the Prompt 2 command
- * system), feather blur, per-mask opacity compositing, and the GPU MaskPass.
+ * This module owns the data model, the presets, the geometry (points → cubic
+ * segments) and the scene-graph read/write. The rasterizer and the inspector
+ * consume it. Not yet supported: on-canvas pen editing of mask points, feather
+ * blur, and per-mask opacity compositing.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 
-export type MaskMode = 'add' | 'subtract' | 'intersect';
+/**
+ * How a mask combines with the matte accumulated from the masks above it.
+ *
+ * The first three are set operations on coverage; `lighten`, `darken` and
+ * `difference` are AE's per-pixel modes, which matter once masks have FEATHER
+ * or partial opacity — with hard-edged, fully-opaque masks `lighten` matches
+ * `add` and `darken` matches `intersect`, and the difference only appears in
+ * the soft overlap.
+ */
+export type MaskMode = 'add' | 'subtract' | 'intersect' | 'lighten' | 'darken' | 'difference';
 
 /** A single anchor with absolute in/out bezier handles (local space). */
 export interface MaskPoint {
@@ -185,14 +193,35 @@ export function maskModeToComposite(mode: MaskMode): GlobalCompositeOperation {
   switch (mode) {
     case 'subtract': return 'destination-out';
     case 'intersect': return 'destination-in';
+    // The matte is a white-on-transparent coverage map, so the separable blend
+    // modes act on COVERAGE: `lighten` keeps the greater of the two (a softer
+    // union than `add`, which sums toward opaque), `darken` the lesser (a
+    // softer intersection), and `difference` the absolute gap — which is what
+    // makes an XOR-style cut-out of two overlapping feathered masks.
+    case 'lighten': return 'lighten';
+    case 'darken': return 'darken';
+    case 'difference': return 'difference';
     case 'add':
     default: return 'source-over';
   }
 }
 
 /**
+ * Modes that need a full-frame starting matte when they lead the stack.
+ *
+ * `add` and `lighten` build up from nothing, so they start empty. Everything
+ * else REMOVES from what is already there — leading with one against an empty
+ * matte would erase from nothing and the layer would simply vanish, which is
+ * the AE behaviour this preserves.
+ */
+export function maskModeStartsFull(mode: MaskMode): boolean {
+  return mode !== 'add' && mode !== 'lighten';
+}
+
+/**
  * Paint a layer's masks into `g` as a white alpha matte, honouring MODE
- * (Add paints / Subtract erases / Intersect keeps the overlap), FEATHER
+ * (Add paints / Subtract erases / Intersect keeps the overlap / Lighten,
+ * Darken and Difference blend coverage per-pixel), FEATHER
  * (canvas blur at half the AE diameter) and per-mask OPACITY — the single
  * shared implementation both render backends rasterize through, so the GPU
  * path cannot drift from Canvas2D again (it used to union everything with one
@@ -209,7 +238,7 @@ export function paintMaskMatte(
   w: number,
   h: number,
 ): void {
-  if (mask.paths[0] && mask.paths[0].mode !== 'add') {
+  if (mask.paths[0] && maskModeStartsFull(mask.paths[0].mode)) {
     g.fillStyle = '#fff';
     g.fillRect(-w / 2, -h / 2, w, h);
   }

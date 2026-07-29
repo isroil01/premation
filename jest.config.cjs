@@ -12,6 +12,14 @@ module.exports = {
   moduleNameMapper: {
     // CSS Modules → stub (must precede path aliases).
     '\\.(css|less|scss|sass)$': '<rootDir>/jest.styleMock.cjs',
+    // Static assets (brand logos, etc.) → URL-string stub. Must also precede the
+    // path aliases, or `@assets/brand/*.png` would resolve to the real binary and
+    // Jest would try to parse it as JavaScript.
+    '\\.(png|jpe?g|gif|webp|avif|ico|bmp|svg)$': '<rootDir>/jest.fileMock.cjs',
+    // `import.meta.url` is ESM-only and these files are parsed as CommonJS, so
+    // the module that builds the plugin-sandbox Worker URL is swapped for a
+    // stub. Tests inject a fake worker via PluginHost.setWorkerFactory().
+    '^\\./spawnPluginWorker$': '<rootDir>/src/core/plugins/spawnPluginWorker.stub.ts',
     // Path aliases — keep in sync with tsconfig.json "paths".
     '^@motion/scene$': '<rootDir>/packages/scene/src/index.ts',
     '^@motion/animation$': '<rootDir>/packages/animation/src/index.ts',
@@ -19,6 +27,11 @@ module.exports = {
     '^@motion/workspace$': '<rootDir>/packages/workspace/src/index.ts',
     '^@motion/timeline$': '<rootDir>/packages/timeline/src/index.ts',
     '^@motion/ai-tools$': '<rootDir>/packages/ai-tools/src/index.ts',
+    '^@motion/design-system$': '<rootDir>/packages/design-system/src/index.ts',
+    '^@motion/technique-library$': '<rootDir>/packages/technique-library/src/index.ts',
+    '^@motion/product-motion$': '<rootDir>/packages/product-motion/src/index.ts',
+    '^@motion/caster$': '<rootDir>/packages/caster/src/index.ts',
+    '^@motion/audio$': '<rootDir>/packages/audio/src/index.ts',
     '^@core(.*)$': '<rootDir>/src/core$1',
     '^@components(.*)$': '<rootDir>/src/components$1',
     '^@layout(.*)$': '<rootDir>/src/layout$1',

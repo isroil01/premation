@@ -26,6 +26,7 @@
  */
 
 import type { TrackId, KeyId, NodeId } from '@app-types/common';
+import type { EasingKind } from '@motion/animation';
 import type { ReactNode } from 'react';
 
 export interface TimelineKeyframeRef {
@@ -34,6 +35,20 @@ export interface TimelineKeyframeRef {
   time: number;
   roving?: boolean;
   isHold?: boolean;
+  /**
+   * Easing of the segment ARRIVING at this keyframe — i.e. the previous
+   * keyframe's `easing`. Undefined on the first keyframe of a track.
+   *
+   * Carried separately from `easeOut` because the two sides are independent:
+   * this is what lets the diamond be drawn as two halves and show "eased in,
+   * hold out" as the distinct thing it is.
+   */
+  easeIn?: EasingKind;
+  /** Easing of the segment LEAVING this keyframe (its own `easing`). */
+  easeOut?: EasingKind;
+  /** True for the first / last keyframe of its track (no segment on that side). */
+  isFirst?: boolean;
+  isLast?: boolean;
 }
 
 /**
@@ -101,6 +116,14 @@ export interface TimelineTrack {
   keyframes?: ReadonlyArray<TimelineKeyframeRef>;
   /** Clips to render on this lane. */
   clips?: ReadonlyArray<TimelineClip>;
+  /**
+   * The layer's own markers, already converted to COMP seconds.
+   *
+   * Stored layer-relative on the engine side so they travel with a trimmed
+   * layer; the conversion happens once, in `getLayerMarkers`, so this row can be
+   * drawn on the same axis as everything else on it.
+   */
+  markers?: ReadonlyArray<TimelineMarker>;
   /** Animatable properties, revealed as sub-rows when the track is expanded. */
   properties?: ReadonlyArray<TimelinePropertyTrack>;
   /** Optional custom header content (icons, etc.). */
@@ -135,6 +158,14 @@ export interface TimelineModel {
   markers: ReadonlyArray<TimelineMarker>;
   duration: number;
   frameRate: number;
+  /**
+   * Playhead time in seconds. The playhead is a per-frame value, so prefer
+   * the host passing it via the separate `playheadTime` prop — that lets the
+   * model object keep a stable identity across playback frames. Required
+   * because non-realtime consumers (timecode display, GraphEditor) read it
+   * from the model; <Timeline> itself falls back to `model.currentTime`
+   * when the host doesn't pass `playheadTime` as a separate prop.
+   */
   currentTime: number;
   /** Frame the DISPLAYED timecode starts from (comp start timecode). Ruler
    *  labels add it; tick positions stay 0-based. Default 0. */

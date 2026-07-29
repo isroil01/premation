@@ -119,7 +119,7 @@ export interface RenderLayer {
    *  snapshot's `lights3d`/camera eye) to renderables that take the depth path,
    *  where the shader replaces the per-quad tint fold with real per-fragment
    *  Lambert + specular. */
-  shade3d?: { specular: number; shininess: number };
+  shade3d?: { specular: number; shininess: number; metal?: number };
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */
   depth?: number;
@@ -139,6 +139,21 @@ export interface RenderLayer {
   /** Multi-stroke stack (bottom→top). Supersedes `stroke` when present;
    *  entry 0 mirrors `stroke`. */
   strokes?: Stroke[];
+  /**
+   * Frosted-glass backdrop blur radius (comp px). Blurs what is BEHIND the layer
+   * and shows it through the layer's alpha — a normal `blur` effect blurs the
+   * layer itself, which is why glass could not be expressed before.
+   */
+  backdropBlur?: number;
+  /**
+   * The resolved GLASS layer style — refraction, chromatic aberration, tint,
+   * rim, specular and grain over the blurred backdrop.
+   *
+   * Carried on the layer rather than compiled into `effects` because the effect
+   * chain operates on the layer's OWN pixels and glass is a function of what is
+   * behind it. It rides the same backdrop machinery as `backdropBlur`.
+   */
+  glass?: import('@core/effects/glassResolve').ResolvedGlass;
   /** Layer color (e.g. for label tagging in the UI). */
   color?: string;
   visible: boolean;
@@ -179,6 +194,10 @@ export interface RenderLayer {
   runs?: ReadonlyArray<import('@core/text/textLayout').RichRun>;
   /** Extra px between paragraphs (every newline starts one). */
   paragraphSpacing?: number;
+  /** Paint the per-glyph stroke OVER the fill rather than under it (AE's
+   *  Fill & Stroke order). Under is the default: an animated stroke then
+   *  thickens outward instead of eating into the glyph. */
+  strokeOverFill?: boolean;
   /** Text on a path: the layer's chosen mask, already flattened to a polyline
    *  in layer-local space, plus how to ride it. Resolved in buildSnapshot so a
    *  backend never has to reach back into the scene graph for geometry. */
@@ -194,6 +213,16 @@ export interface RenderLayer {
    *  assert against it and it documents the frame in one greppable string. The
    *  renderer consumes `effects` instead. */
   filter?: string;
+  /**
+   * FILL OPACITY, 0..1. Fades the layer's own pixels but NOT its layer styles,
+   * so fill 0 on a shadowed layer leaves the shadow floating. Distinct from
+   * `opacity`, which fades both. Absent = 1.
+   */
+  fillOpacity?: number;
+  /** Shear angle in degrees (AE's Skew). 0 = none. */
+  skew?: number;
+  /** Direction the shear acts along, in degrees. 0 = horizontal. */
+  skewAxis?: number;
   /** The resolved effect stack (amounts sampled at the current time), including
    *  synthetic entries buildSnapshot appends for 3D depth-of-field blur and
    *  2.5D light-cast shadows. The GPU path renders from THIS (colour matrix +
@@ -213,15 +242,29 @@ export interface RenderLayer {
   deformedMesh?: {
     vertices: Float32Array;
     triangles: Uint16Array;
+    /**
+     * Optional per-vertex OVERLAP depth (AE's blue Overlap pin). Signed; higher
+     * draws in front. Absent means the mesh composites flat, exactly as before.
+     */
+    depth?: Float32Array;
   };
 }
 
 export interface RenderOverlays {
+  /** AE's standard grid: fixed-size cells, the only grid that snaps. */
   grid?: boolean;
-  /** Number of grid cells per axis (default 3 = rule-of-thirds). */
-  gridDivisions?: number;
+  /** AE "Gridline every" — cell size in composition pixels. */
+  gridSpacing?: number;
+  /** AE "Subdivisions" — minor lines between gridlines (1 = none). */
+  gridSubdivisions?: number;
+  /** AE "Grid Style". */
+  gridStyle?: 'lines' | 'dashed' | 'dots';
   /** Grid line colour (#rrggbbaa). Default: faint white. */
   gridColor?: string;
+  /** AE's proportional grid: comp divided into cells; reference only, no snap. */
+  proportionalGrid?: boolean;
+  proportionalColumns?: number;
+  proportionalRows?: number;
   safeArea?: boolean;
   rulers?: boolean;
 }
@@ -267,6 +310,13 @@ export interface RenderSnapshot {
    * Export ignores this — a render always covers the whole comp.
    */
   roi?: { x: number; y: number; width: number; height: number };
+  /**
+   * False when the frame is being rendered through an ORTHO or CUSTOM view
+   * rather than the active camera. Those are inspection views and must not be
+   * clipped to the composition rectangle — a Top view exists precisely to show
+   * where layers sit outside the render frame. Defaults to true (clip).
+   */
+  viewIsActiveCamera?: boolean;
   /** Camera-driven comp→canvas transform (falls back to fit when omitted). */
   view?: RenderView;
   /** 3D camera as column-major 4×4 view/projection matrices (world →

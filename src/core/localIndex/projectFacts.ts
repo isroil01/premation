@@ -2,7 +2,7 @@
  * deriveProjectFacts — the pure projector from a document to the scalar facts
  * the index mirrors (so a dashboard card renders without opening the bundle).
  *
- * This is the local counterpart of the backend's `projectFacts()`: the same
+ * This is the local counterpart of the backend's `projectFacts`: the same
  * summary — size, fps, duration, layer count — computed from the live
  * `EditorDocument` on every save. Deterministic and dependency-free.
  */

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
  * EffectStack — the applied-effects list for a layer (AE Effect Controls): each
@@ -14,11 +15,12 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
  */
 
 import { Icon } from '@components/Icon';
+import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
+import { PropertyRow } from '@components/PropertyRow';
 import { ColorPicker } from '@components/ColorPicker';
 import { CurveEditor } from './CurveEditor';
-import { EmptyState } from '@components/EmptyState';
 
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -33,6 +35,7 @@ import {
   removeEffect,
   toggleEffect,
   moveEffect,
+  dragEffectTo,
   effectPropPath,
   effectParam,
   type Effect,
@@ -40,6 +43,9 @@ import {
   type EffectParamDef,
   type CurvePoints,
 } from '@core/effects/effects';
+import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
+import { buildPropertyMenu } from '@core/inspector/propertyMenu';
+import { openContextMenu } from '@stores/contextMenuStore';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
@@ -99,14 +105,7 @@ function EffectParamRow({
       }
     };
     return (
-      <div className={row.paramRow}>
-        <Checkbox
-          checked={animated}
-          onChange={toggleColorAnim}
-          title="Toggle Keyframes"
-          style={{ width: 13, height: 13 }}
-        />
-        <span className={row.paramLabel}>{param.label}</span>
+      <PropertyRow label={param.label} animated={animated} onStopwatch={toggleColorAnim} compact>
         <ColorPicker
           value={displayed}
           onChange={(hex) => {
@@ -116,7 +115,7 @@ function EffectParamRow({
           aria-label={label}
           compact
         />
-      </div>
+      </PropertyRow>
     );
   }
 
@@ -210,27 +209,47 @@ function EffectParamRow({
     else runAnimEdit(`Animate ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, stored));
   };
 
+  // Range, step, precision and unit all resolve through the property registry,
+  // which reads them off this effect's own definition — so the timeline row and
+  // this row describe the same parameter identically.
+  const meta = resolvePropertyMeta(path, nodeId);
   return (
-    <div className={row.paramRow}>
-      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-        <Checkbox
-          checked={animated}
-          onChange={toggle}
-          title="Toggle Animation"
-          style={{ width: 14, height: 14 }}
-        />
-      </div>
-      <span className={row.paramLabel}>{param.label}</span>
+    <PropertyRow
+      label={param.label}
+      animated={animated}
+      onStopwatch={toggle}
+      onReset={
+        typeof meta.defaultValue === 'number' && meta.resettable
+          ? () => updateEffectParam(nodeId, effect.id, param.key, meta.defaultValue as number)
+          : undefined
+      }
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openContextMenu(
+          e.clientX,
+          e.clientY,
+          buildPropertyMenu({
+            nodeId,
+            prop: path,
+            layerT,
+            value: display,
+            setValue: (v) => updateEffectParam(nodeId, effect.id, param.key, v),
+          }),
+        );
+      }}
+      compact
+    >
       <ValueField
         value={display}
-        min={param.min}
-        max={param.max}
-        unit={param.unit}
-        precision={param.precision ?? 0}
+        min={meta.min}
+        max={meta.max}
+        unit={meta.unit}
+        step={meta.step}
+        precision={meta.precision}
         onChange={onChange}
         aria-label={label}
       />
-    </div>
+    </PropertyRow>
   );
 }
 
@@ -239,45 +258,152 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   const effects = getNodeEffects(nodeId);
   const defByType = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
 
+  const [userToggledIds, setUserToggledIds] = useState<Map<string, boolean>>(new Map());
+  /** Effect being dragged, and the gap index the drop indicator sits in. */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  const toggleEffectCard = (id: string, currentCollapsed: boolean) => {
+    setUserToggledIds((prev) => {
+      const next = new Map(prev);
+      next.set(id, !currentCollapsed);
+      return next;
+    });
+  };
+
   if (effects.length === 0) {
-    return <EmptyState icon="sparkles" message="No effects — add one to grade, blur, or shadow this layer." />;
+    return (
+      <div className={panel.hint}>
+        No active effects on this layer. Choose an effect below to add one.
+      </div>
+    );
   }
 
   return (
-    <div className={panel.list}>
+    <div className={panel.stackList}>
       {effects.map((e, i) => {
         const def = defByType.get(e.type);
         if (!def) return null;
         const off = e.enabled === false;
+        const defaultCollapsed = i > 0;
+        const isCollapsed = userToggledIds.has(e.id) ? userToggledIds.get(e.id)! : defaultCollapsed;
+
+        // Drop BEFORE this card when the pointer is in its top half, after it
+        // when in the bottom half — the gap the indicator is drawn in is the
+        // index the effect lands at, so what you see is what you get.
+        const onDragOver = (ev: React.DragEvent): void => {
+          if (!dragId) return;
+          ev.preventDefault();
+          const r = ev.currentTarget.getBoundingClientRect();
+          setDropIndex(ev.clientY < r.top + r.height / 2 ? i : i + 1);
+        };
+
         return (
-          <div key={e.id} className={panel.item}>
-            <div className={panel.itemHead}>
+          <div
+            key={e.id}
+            className={cn(
+              panel.effectCardItem,
+              dragId === e.id && panel.effectCardDragging,
+              dropIndex === i && panel.effectDropBefore,
+              dropIndex === effects.length && i === effects.length - 1 && panel.effectDropAfter,
+            )}
+            onDragOver={onDragOver}
+            onDrop={(ev) => {
+              ev.preventDefault();
+              if (dragId && dropIndex !== null) dragEffectTo(nodeId, dragId, dropIndex);
+              setDragId(null);
+              setDropIndex(null);
+            }}
+          >
+            {/* Accordion Header: Disclosure Chevron + Checkbox + Effect Label + Actions */}
+            <div
+              className={panel.effectCardHead}
+              // The HEADER is the drag handle, not the whole card — dragging
+              // from the body would fight every scrubby slider inside it.
+              draggable
+              onDragStart={(ev) => {
+                setDragId(e.id);
+                ev.dataTransfer.effectAllowed = 'move';
+                // Firefox refuses to start a drag without payload.
+                ev.dataTransfer.setData('text/plain', e.id);
+              }}
+              onDragEnd={() => { setDragId(null); setDropIndex(null); }}
+            >
+              <span className={panel.dragGrip} aria-hidden title="Drag to reorder">
+                <Icon name="grip-vertical" size={12} />
+              </span>
+              <button
+                type="button"
+                className={panel.disclosureBtn}
+                onClick={() => toggleEffectCard(e.id, isCollapsed)}
+                title={isCollapsed ? 'Expand effect parameters' : 'Collapse effect parameters'}
+              >
+                <Icon name={isCollapsed ? 'chevron-right' : 'chevron-down'} size={12} />
+              </button>
+
               <Checkbox
                 checked={!off}
                 onChange={() => toggleEffect(nodeId, e.id)}
                 title={off ? 'Enable effect' : 'Disable effect'}
-                style={{ width: 14, height: 14, marginRight: 8 }}
+                style={{ width: 15, height: 15, flexShrink: 0 }}
               />
-              <span className={off ? panel.itemLabelOff : panel.itemLabel} style={{ flex: 1 }}>{def.label}</span>
+
+              <span
+                className={off ? panel.itemLabelOff : panel.itemLabel}
+                onClick={() => toggleEffectCard(e.id, isCollapsed)}
+                style={{
+                  flex: 1,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: off ? 'var(--color-text-muted)' : 'var(--color-text-primary)',
+                  letterSpacing: '0.01em',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {def.label}
+              </span>
+
               <div className={panel.itemActions}>
-                <button type="button" className={panel.remove} aria-label={`Move ${def.label} up`}
-                  disabled={i === 0} onClick={() => moveEffect(nodeId, e.id, -1)}>
+                <button
+                  type="button"
+                  className={panel.remove}
+                  aria-label={`Move ${def.label} up`}
+                  disabled={i === 0}
+                  onClick={() => moveEffect(nodeId, e.id, -1)}
+                >
                   <Icon name="arrow-up" size={12} />
                 </button>
-                <button type="button" className={panel.remove} aria-label={`Move ${def.label} down`}
-                  disabled={i === effects.length - 1} onClick={() => moveEffect(nodeId, e.id, 1)}>
+                <button
+                  type="button"
+                  className={panel.remove}
+                  aria-label={`Move ${def.label} down`}
+                  disabled={i === effects.length - 1}
+                  onClick={() => moveEffect(nodeId, e.id, 1)}
+                >
                   <Icon name="arrow-down" size={12} />
                 </button>
-                <button type="button" className={panel.remove} aria-label={`Remove ${def.label}`}
-                  onClick={() => removeEffect(nodeId, e.id)}>
+                <button
+                  type="button"
+                  className={panel.remove}
+                  aria-label={`Remove ${def.label}`}
+                  onClick={() => removeEffect(nodeId, e.id)}
+                >
                   <Icon name="close" size={12} />
                 </button>
               </div>
             </div>
-            {!off &&
-              def.params.map((p) => (
-                <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
-              ))}
+
+            {/* Accordion Body: Effect Parameters */}
+            {!isCollapsed && !off && (
+              <div className={panel.effectParamsBody}>
+                {def.params.map((p) => (
+                  <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

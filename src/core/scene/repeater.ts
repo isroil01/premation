@@ -1,5 +1,5 @@
 /**
- * Shape Repeater (Prompt 11 / MG Phase C) — duplicate a layer into N copies,
+ * Shape Repeater — duplicate a layer into N copies,
  * each offset from the previous by a transform. Composed iteratively (AE-style)
  * so a rotation offset makes the copies sweep an arc/circle/spiral rather than
  * a straight line — the core of generative motion graphics.

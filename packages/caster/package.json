@@ -1,0 +1,11 @@
+{
+  "name": "@motion/caster",
+  "version": "1.0.0",
+  "description": "The caster pipeline: brief -> sequencer -> cast layout -> compose -> cast motion -> emit -> lint. Three LLM calls; every keyframe from the libraries.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "test": "jest --config jest.config.cjs" },
+  "license": "MIT"
+}

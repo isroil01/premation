@@ -75,12 +75,30 @@ describe('buildSnapshot — 3D extrusion geometry synthesis', () => {
     expect(ob.z).toBeCloseTo(of.z + 40, 6); // +z = away from the default camera
   });
 
-  it('all faces share the front face sort depth (one object, one depth)', () => {
+  // Was: "all faces share the front face sort depth (one object, one depth)".
+  // That premise was the bug. Giving every face the parent layer's depth left the
+  // painter sort with nothing to order them by, so the darker back cap and walls
+  // could paint OVER the front face — a dark patch with a border, inside the
+  // object. Each face must carry its own projected depth.
+  it('each face carries its OWN sort depth, ordered back cap → walls → front', () => {
     const g = new SceneGraph();
     g.addNode(shape3D('box', { extrusionDepth: 40, z: 150 }));
     const layers = snap(g).layers;
-    const d = layers.find((l) => l.id === 'box')!.depth;
-    for (const l of layers) expect(l.depth).toBe(d);
+    const depthOf = (id: string): number => layers.find((l) => l.id === id)!.depth!;
+
+    const front = depthOf('box');
+    const back = depthOf('box::ext-back');
+    const wall = depthOf('box::ext-r');
+
+    // Back cap sits a full extrusionDepth behind the front face.
+    expect(back - front).toBeCloseTo(40, 6);
+    // Walls span the middle, so their origin is at half depth.
+    expect(wall - front).toBeCloseTo(20, 6);
+    // Farther = larger depth = painted earlier (the sort is descending).
+    expect(back).toBeGreaterThan(wall);
+    expect(wall).toBeGreaterThan(front);
+    // The front face is still emitted last, i.e. painted on top.
+    expect(layers[layers.length - 1]!.id).toBe('box');
   });
 
   it('unlit: walls carry the fixed wall gain, back cap the back gain, front none', () => {
@@ -192,15 +210,22 @@ describe('buildSnapshot — 3D extrusion bevel', () => {
     const g = new SceneGraph();
     g.addNode(shape3D('box', { extrusionDepth: 40, bevelDepth: 10 }));
     const layers = snap(g).layers;
+    // Back-to-front by true depth: back cap, then the BACK chamfer ring, then the
+    // walls, then the FRONT chamfer ring, then the front face. Previously the
+    // back chamfers were painted after the front chamfers (they all shared one
+    // depth, so emission order won) — visibly wrong on a bevelled box.
     expect(layers.map((l) => l.id)).toEqual([
-      'box::ext-back', 'box::ext-r', 'box::ext-l', 'box::ext-t', 'box::ext-b',
-      'box::ext-cfr', 'box::ext-cfl', 'box::ext-cft', 'box::ext-cfb',
+      'box::ext-back',
       'box::ext-cbr', 'box::ext-cbl', 'box::ext-cbt', 'box::ext-cbb',
+      'box::ext-r', 'box::ext-l', 'box::ext-t', 'box::ext-b',
+      'box::ext-cfr', 'box::ext-cfl', 'box::ext-cft', 'box::ext-cfb',
       'box',
     ]);
-    // One object, one sort depth — the whole run stays a single depth group.
-    const d = layers.find((l) => l.id === 'box')!.depth;
-    for (const l of layers) expect(l.depth).toBe(d);
+    // Depths are strictly non-increasing along paint order (farthest first).
+    const depths = layers.map((l) => l.depth!);
+    for (let i = 1; i < depths.length; i++) {
+      expect(depths[i]!).toBeLessThanOrEqual(depths[i - 1]! + 1e-9);
+    }
     // Chamfers are solid wall quads carrying the fixed wall gain (unlit).
     const cf = layers.find((l) => l.id === 'box::ext-cfr')!;
     expect(cf.kind).toBe('shape');

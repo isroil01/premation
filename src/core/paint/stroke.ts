@@ -5,7 +5,7 @@
  * Stored on the node's `fx` component (key 'stroke'), captured by History /
  * autosave / export like the other fx data. Rendered by Canvas2D over the
  * layer's primitive path; the GPU backend skips strokes for now (documented
- * gap, mirrors Prompt 5's deferred GPU passes).
+ * gap, mirrors deferred GPU passes).
  *
  * Alignment shifts the stroke relative to the fill edge: 'center' straddles it
  * (Canvas default), 'inside'/'outside' clip one half away — implemented in the

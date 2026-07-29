@@ -60,6 +60,89 @@
   background: var(--color-primary-subtle);
 }
 
+/* ── Segmented Control Tabs (Solid / Linear / Radial) ───────── */
+.segmentedControl {
+  display: flex;
+  background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  padding: 3px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-subtle);
+  gap: 2px;
+  width: 240px;
+  flex: none;
+}
+
+.segmentBtn {
+  flex: 1 1 0px;
+  min-width: 0;
+  width: 0;
+  padding: 6px 0;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.segmentBtn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-surface-3) 40%, transparent);
+}
+
+.segmentBtnActive {
+  background: var(--color-surface-3, #2b2e38) !important;
+  color: var(--color-text-primary) !important;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.segmentBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Color Selector Card Rows ────────────────────────────────── */
+.colorCardRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--color-surface-2) 40%, transparent);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+}
+
+.colorCardLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.stopsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--color-surface-2) 40%, transparent);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+}
+
+.stopRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .bgRow {
   display: flex;
   align-items: center;

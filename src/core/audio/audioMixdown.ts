@@ -62,7 +62,7 @@ export interface PcmSource {
 }
 
 /** Render a 16-bit stereo PCM buffer to WAV bytes. Exported for testing (jsdom
- *  Blobs lack `.arrayBuffer()`, so tests read this directly). */
+ *  Blobs lack `.arrayBuffer`, so tests read this directly). */
 export function encodeWav(buffer: PcmSource): ArrayBuffer {
   const channels = Math.min(2, buffer.numberOfChannels);
   const frames = buffer.length;
@@ -123,7 +123,7 @@ export interface AudioMixdown {
  * all muted) or Web Audio is unavailable — the caller then keeps the video
  * silent, exactly as before, rather than failing. Deterministic: no wall-clock.
  */
-export async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuffer | null> {
+async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuffer | null> {
   const Ctor = offlineCtor();
   const duration = Math.max(0, endSec - startSec);
   if (!Ctor || duration <= 0) return null;

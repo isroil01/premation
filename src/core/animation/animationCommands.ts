@@ -21,7 +21,7 @@
  *
  * Authoring helpers:
  *   • runAnimEdit(label, mutate) — snapshot → mutate → diff → record one command.
- *   • beginAnimEdit()/commit()   — for pointer drags that mutate live on every
+ *   • beginAnimEdit/commit — for pointer drags that mutate live on every
  *     move; records a single command on release.
  */
 
@@ -47,8 +47,8 @@ export interface TrackChange {
 export const ANIM_EDIT_COMMAND = asCommandId('anim.edit');
 
 /**
- * A reversible animation edit spanning one or more property tracks. `execute()`
- * applies every change's `after`; `undo()` applies every `before`. Both are pure
+ * A reversible animation edit spanning one or more property tracks. `execute`
+ * applies every change's `after`; `undo` applies every `before`. Both are pure
  * state swaps, so redo (which re-runs `execute`) is deterministic.
  */
 export class AnimEditCommand implements Command {
@@ -213,7 +213,7 @@ export function captureAnimEdit(
 
 /**
  * A live-drag transaction: snapshot now, let the caller mutate the engine
- * directly on every pointer move, then `commit()` on release to record one
+ * directly on every pointer move, then `commit` on release to record one
  * command covering the whole drag.
  */
 export function beginAnimEdit(engine: AnimationEngine = defaultAnimation): {

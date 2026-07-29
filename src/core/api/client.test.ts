@@ -3,7 +3,7 @@ import { api, setToken } from './client';
 jest.mock('./env', () => ({ API_URL: undefined }));
 
 /**
- * These cover the shared `request()` helper — auth header, body shape, and the
+ * These cover the shared `request` helper — auth header, body shape, and the
  * ApiError contract — through a real endpoint. They used to ride on `aiEdit`,
  * which is gone: the assistant now calls the user's own provider directly and
  * the server only stores the transcript. Retargeted onto `appendMessages`, the

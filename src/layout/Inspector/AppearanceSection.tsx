@@ -4,7 +4,12 @@ import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
-import { getNodeFill, setNodeFill, getNodeFills, setNodeFills, convertFill, makeStop, sortedStops, solidFill, type FillType, type FillPaint, type ColorStop } from '@core/paint/fill';
+import { getNodeFill, setNodeFill, getNodeFills, setNodeFills, convertFill, makeStop, sortedStops, solidFill, type FillType, type FillPaint, type ColorStop,
+  sortedOpacityStops,
+  defaultOpacityStops,
+  makeOpacityStop,
+  type OpacityStop,
+} from '@core/paint/fill';
 import { getNodeStroke, updateNodeStroke, getNodeStrokes, setNodeStrokes, defaultStroke, normalizeStroke, type StrokeAlign, type StrokeCap, type StrokeJoin } from '@core/paint/stroke';
 import { Icon } from '@components/Icon';
 import { ColorPicker } from '@components/ColorPicker';
@@ -14,6 +19,7 @@ import styles from './TransformSection.module.css';
 import effStyles from '../Effects/EffectsPanel.module.css';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -30,26 +36,28 @@ import { useSelectionStore } from '@stores/selectionStore';
 function GradientGeomRow({
   nodeId,
   prop,
-  label,
+  label: labelOverride,
   value,
-  unit,
-  min,
-  max,
-  scale = 1,
   onStatic,
 }: {
   nodeId: string;
   prop: 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius';
-  label: string;
+  /** Overrides the registry label — the panel shows "Angle" under a Fill
+   *  heading where the timeline needs the unambiguous "Fill Angle". */
+  label?: string;
   /** Current PAINT value (engine units). */
   value: number;
-  unit: string;
-  min?: number;
-  max?: number;
-  /** displayValue = engineValue × scale. */
-  scale?: number;
   onStatic: (engineValue: number) => void;
 }): JSX.Element {
+  // Label, unit, range, step and the stored→displayed scale all come from the
+  // property registry, so this row and the timeline row for the same track
+  // cannot disagree about what the number means.
+  const meta = resolvePropertyMeta(prop, nodeId);
+  const label = labelOverride ?? meta.label;
+  const unit = meta.unit;
+  const scale = meta.displayScale ?? 1;
+  const min = meta.min !== undefined ? meta.min * scale : undefined;
+  const max = meta.max !== undefined ? meta.max * scale : undefined;
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const animated = defaultAnimation.isAnimated(nodeId, prop);
@@ -92,6 +100,8 @@ function GradientGeomRow({
         unit={unit}
         {...(min !== undefined ? { min } : {})}
         {...(max !== undefined ? { max } : {})}
+        step={meta.step * scale}
+        precision={meta.precision}
         onChange={(v) => handleChange(Number(v))}
         aria-label={label}
       />
@@ -99,6 +109,85 @@ function GradientGeomRow({
   );
 }
 
+
+/**
+ * Editor for a gradient's OPACITY stops — a second, independent list.
+ *
+ * Deliberately its own control rather than an alpha field on each colour stop:
+ * that is the whole point of the separate list. Fading a five-colour gradient
+ * out at one end is two opacity stops here, versus editing alpha on all five
+ * and re-editing them every time a colour moves.
+ *
+ * Absent means opaque, so the list starts collapsed behind an "Add opacity
+ * ramp" affordance — an existing gradient must not change appearance just
+ * because the control now exists.
+ */
+function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.Element | null {
+  if (paint.type === 'solid') return null;
+  const ramp = sortedOpacityStops(paint.opacityStops);
+
+  const write = (next: OpacityStop[] | undefined): void => {
+    setNodeFill(nodeId, { ...paint, opacityStops: next && next.length > 0 ? next : undefined });
+  };
+
+  if (ramp.length === 0) {
+    return (
+      <button
+        type="button"
+        className={effStyles.addChip}
+        title="Fade this gradient independently of its colours"
+        onClick={() => write(defaultOpacityStops())}
+      >
+        <Icon name="plus" size={11} /> Add opacity ramp
+      </button>
+    );
+  }
+
+  return (
+    <>
+      {ramp.map((o, i) => (
+        <div key={o.id} className={effStyles.stopRow}>
+          <span className={effStyles.blendLabel} style={{ minWidth: 46 }}>Alpha</span>
+          <ValueField
+            value={Math.round(o.opacity * 100)}
+            min={0}
+            max={100}
+            precision={0}
+            unit="%"
+            onChange={(v) => write(ramp.map((x) => (x.id === o.id ? { ...x, opacity: v / 100 } : x)))}
+            aria-label={`Opacity stop ${i + 1} value`}
+          />
+          <ValueField
+            value={Math.round(o.offset * 100)}
+            min={0}
+            max={100}
+            precision={0}
+            unit="%"
+            onChange={(v) => write(ramp.map((x) => (x.id === o.id ? { ...x, offset: v / 100 } : x)))}
+            aria-label={`Opacity stop ${i + 1} position`}
+          />
+          <button
+            type="button"
+            className={effStyles.remove}
+            aria-label={`Remove opacity stop ${i + 1}`}
+            // Dropping below two stops removes the ramp entirely rather than
+            // leaving one stop behind, which would read as a constant fade.
+            onClick={() => write(ramp.length <= 2 ? undefined : ramp.filter((x) => x.id !== o.id))}
+          >
+            <Icon name="close" size={12} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className={effStyles.addChip}
+        onClick={() => write([...ramp, makeOpacityStop(0.5, 0.5)])}
+      >
+        <Icon name="plus" size={11} /> Add opacity stop
+      </button>
+    </>
+  );
+}
 
 /** Editor for a gradient's stop list (shared by linear + radial fills). */
 function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.Element | null {
@@ -192,6 +281,8 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
       >
         <Icon name="plus" size={11} /> Add stop
       </button>
+
+      <OpacityStopList nodeId={nodeId} paint={paint} />
     </div>
   );
 }
@@ -279,48 +370,6 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
   const selectedIds = useSelectionStore((s) => s.ids);
   const isGroupNode = node ? defaultSceneGraph.getChildren(node.id).length > 0 || (node.components.some(c => c.type === 'group')) : false;
 
-  const applyPresetStyle = (preset: 'glass' | 'neon' | 'purple' | 'emerald' | 'sunset' | 'dark') => {
-    switch (preset) {
-      case 'glass':
-        setNodeFill(nodeId, { type: 'solid', color: 'rgba(255, 255, 255, 0.08)' });
-        updateNodeStroke(nodeId, { width: 1.5, color: '#ffffff', enabled: true, align: 'inside' });
-        setCornerRadius(16);
-        break;
-      case 'neon':
-        setNodeFill(nodeId, { type: 'solid', color: '#0f172a' });
-        updateNodeStroke(nodeId, { width: 2, color: '#38bdf8', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-      case 'purple':
-        setNodeFill(nodeId, { type: 'solid', color: '#1e1b4b' });
-        updateNodeStroke(nodeId, { width: 2, color: '#a855f7', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-      case 'emerald':
-        setNodeFill(nodeId, { type: 'solid', color: '#064e3b' });
-        updateNodeStroke(nodeId, { width: 1.5, color: '#34d399', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-      case 'sunset':
-        setNodeFill(nodeId, {
-          type: 'linear',
-          angle: 135,
-          stops: [
-            { id: 's1', offset: 0, color: '#f43f5e' },
-            { id: 's2', offset: 1, color: '#fb923c' },
-          ],
-        });
-        updateNodeStroke(nodeId, { width: 1.5, color: '#ffffff', enabled: true, align: 'inside' });
-        setCornerRadius(16);
-        break;
-      case 'dark':
-        setNodeFill(nodeId, { type: 'solid', color: '#18181b' });
-        updateNodeStroke(nodeId, { width: 1, color: '#27272a', enabled: true, align: 'inside' });
-        setCornerRadius(12);
-        break;
-    }
-  };
-
   return (
     <div className={styles.section}>
       <h4 className={styles.title}>Appearance & Assembly</h4>
@@ -349,59 +398,12 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
         )}
       </div>
 
-      {/* 1-Click Pro Quick Style Presets Bar */}
-      <div className={styles.subhead} style={{ marginBottom: 6 }}>Quick Style Presets</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 14, padding: '0 4px' }}>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('glass')}
-        >
-          💎 Glass
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('neon')}
-        >
-          🌌 Neon Cyan
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('purple')}
-        >
-          ⚡ Purple
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('emerald')}
-        >
-          🍃 Emerald
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('sunset')}
-        >
-          🌅 Sunset
-        </button>
-        <button
-          type="button"
-          className={effStyles.addChip}
-          style={{ justifyContent: 'center', fontSize: 11 }}
-          onClick={() => applyPresetStyle('dark')}
-        >
-          🖤 Dark Card
-        </button>
-      </div>
-
+      {/* A six-button "Quick Style Presets" grid lived here — a second preset
+          grid ONE ACCORDION away from the registry-backed Style Presets section
+          in this same panel, with its own hard-coded looks that bypassed
+          `applyStylePreset`. Removed rather than kept in sync: the presets
+          section previews the real paint stack and covers all four categories
+          plus 3D materials. */}
       <div className={styles.inlineRows}>
         <div className={styles.subhead}>
           Fill
@@ -438,7 +440,6 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                 prop="fillAngle"
                 label="Angle"
                 value={fill.angle}
-                unit="°"
                 onStatic={(angle) => setNodeFill(nodeId, { ...fill, angle })}
               />
             )}
@@ -450,10 +451,6 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                   prop="fillCenterX"
                   label="Center X"
                   value={fill.cx}
-                  unit="%"
-                  min={0}
-                  max={100}
-                  scale={100}
                   onStatic={(cx) => setNodeFill(nodeId, { ...fill, cx })}
                 />
                 <GradientGeomRow
@@ -461,10 +458,6 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                   prop="fillCenterY"
                   label="Center Y"
                   value={fill.cy}
-                  unit="%"
-                  min={0}
-                  max={100}
-                  scale={100}
                   onStatic={(cy) => setNodeFill(nodeId, { ...fill, cy })}
                 />
                 <GradientGeomRow
@@ -472,10 +465,6 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                   prop="fillRadius"
                   label="Radius"
                   value={fill.radius}
-                  unit="%"
-                  min={1}
-                  max={200}
-                  scale={100}
                   onStatic={(radius) => setNodeFill(nodeId, { ...fill, radius })}
                 />
               </>

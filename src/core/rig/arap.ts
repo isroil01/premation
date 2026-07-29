@@ -64,6 +64,12 @@ const GS_SWEEPS = 64;
 /** Max free-vertex count for the dense Cholesky path (else Gauss–Seidel). */
 const DENSE_MAX = 1200;
 /**
+ * Same value, exported so the UI can tell the user WHEN the solver quality
+ * changes. Crossing it is deterministic and stable, but visibly softer — and it
+ * used to happen silently while the density slider ran on to 50 (§12.11).
+ */
+export const ARAP_DENSE_MAX = DENSE_MAX;
+/**
  * Stiffness → energy coupling constant K in  w'_ij = w_ij·(1 + K·(s_i+s_j)/2).
  * Larger K = stiffer regions resist deformation harder. Fixed → deterministic.
  */
@@ -79,6 +85,53 @@ const STIFF_QUANT = 1024;
  * Chosen below DENSE_MAX so mid/large stiff meshes stay bounded per frame.
  */
 const STIFF_DENSE_MAX = 512;
+/** Exported alongside ARAP_DENSE_MAX for the same UI-disclosure reason. */
+export const ARAP_STIFF_DENSE_MAX = STIFF_DENSE_MAX;
+
+/**
+ * Highest `meshDensity` whose mesh still fits the EXACT dense-Cholesky solve.
+ *
+ * A bbox grid at density d has (d+1)² vertices; handles subtract a couple, and
+ * silhouette / alpha culling can remove many more, so this is the CONSERVATIVE
+ * bound — a heavily culled mesh may stay exact somewhat above it. Above this
+ * density the solver is guaranteed-or-likely to fall back to the fixed-sweep
+ * Gauss–Seidel path: still deterministic, still stable, just softer.
+ *
+ * Any pin with stiffness > 0 uses the lower cap, because animated stiffness
+ * would otherwise force an O(m³) refactor every frame.
+ */
+export function maxExactMeshDensity(hasStiffness: boolean): number {
+  const cap = hasStiffness ? STIFF_DENSE_MAX : DENSE_MAX;
+  return Math.max(2, Math.floor(Math.sqrt(cap)) - 1);
+}
+
+/**
+ * Highest `meshDensity` that still solves fast enough for smooth playback.
+ *
+ * MEASURED (600x300 layer, 2 pins, warm cache — i.e. the steady per-frame cost
+ * once the factorisation is cached; the first call after any change to the mesh
+ * or handle set is far worse):
+ *
+ *   density  verts   first call   warm/frame   ~fps
+ *   15        256       27 ms       3.1 ms      319   ← default
+ *   25        676      122 ms      10.2 ms       98
+ *   33       1156      673 ms      36.5 ms       27   ← maxExactMeshDensity
+ *   40       1681      110 ms      34.1 ms       29
+ *   50       2601       68 ms      43.4 ms       23
+ *
+ * Two things that surprise people, both visible above:
+ *   • The EXACT-solve boundary is not the performance boundary. Density 33 is
+ *     the last density that fits the dense Cholesky path, and it is also where
+ *     a 673 ms hitch and 27 fps live — the factorisation is O(m³). Quality
+ *     guidance and cost guidance must be given separately or the "exact"
+ *     marker reads as a recommendation to go there.
+ *   • Past 33 the FIRST call gets cheaper (no dense factorisation) while the
+ *     steady cost stays high — so a slow first frame is not a reliable signal.
+ *
+ * Cost scales with the LAYER's vertex count and is paid per rigged layer per
+ * frame, so several rigged layers multiply it.
+ */
+export const SMOOTH_PLAYBACK_MAX_DENSITY = 25;
 /**
  * Bounded LRU-ish cap on distinct stiffness-signature factorisations kept per
  * mesh (insertion-order eviction). Static stiffness needs 1; animating stiffness
@@ -409,8 +462,13 @@ function resolvePinnedVertices(
     targetX[best] = pin.x;
     targetY[best] = pin.y;
     const rot = (pin.rotation ?? 0) * DEG_TO_RAD;
-    cos[best] = Math.cos(rot);
-    sin[best] = Math.sin(rot);
+    // Uniform scale folds into the local frame as a SIMILARITY (R·s). The local
+    // step fixes this frame at the pin's vertex, so its 1-ring rotates AND
+    // scales rigidly — the "as-similar-as-possible" relaxation of ARAP. scale 1
+    // leaves this a pure rotation, bit-identical to the unscaled path.
+    const scl = pin.scale ?? 1;
+    cos[best] = Math.cos(rot) * scl;
+    sin[best] = Math.sin(rot) * scl;
   }
 
   // Stable signature of the handle set (drives the factor cache).
@@ -432,6 +490,7 @@ export function deformArap(
   pins: DeformPin[],
   restMesh: DeformedMesh,
   lbsResult: Float32Array,
+  maxRotationDeg?: number,
 ): Float32Array {
   const verts = restMesh.vertices;
   const n = verts.length / 4;
@@ -521,6 +580,12 @@ export function deformArap(
     }
   }
 
+  /** Local-step rotation cap in radians, or null for unlimited. */
+  const rotLimit =
+    maxRotationDeg !== undefined && Number.isFinite(maxRotationDeg)
+      ? Math.abs(maxRotationDeg) * DEG_TO_RAD
+      : null;
+
   const cosV = new Float64Array(n);
   const sinV = new Float64Array(n);
   // RHS + solution scratch for the dense path.
@@ -553,7 +618,14 @@ export function deformArap(
         s11 += w * ey * epy;
       }
       // 2D orthogonal Procrustes: θ = atan2(S10−S01, S00+S11).
-      const theta = Math.atan2(s10 - s01, s00 + s11);
+      let theta = Math.atan2(s10 - s01, s00 + s11);
+      // Mesh Rotation Refinement: cap how far any vertex may rotate. A sparse
+      // handle set lets the local step fit large rotations that read as
+      // twisting; clamping the magnitude suppresses that. No limit → untouched.
+      if (rotLimit !== null) {
+        if (theta > rotLimit) theta = rotLimit;
+        else if (theta < -rotLimit) theta = -rotLimit;
+      }
       cosV[i] = Math.cos(theta);
       sinV[i] = Math.sin(theta);
     }

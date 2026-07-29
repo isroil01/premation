@@ -1,5 +1,5 @@
 /**
- * Adjustment layers (Prompt 5 — GPU compositing, feature 4).
+ * Adjustment layers.
  *
  * An adjustment layer doesn't draw its own content — instead its effect stack
  * (the CSS filter buildSnapshot already compiles) applies to the composite of

@@ -9,6 +9,8 @@ import { type Mat2D, IDENTITY, fromTRS, multiply, apply, invert } from './mat2d'
 
 export interface Bone {
   id: string;
+  /** Human-readable label. Falls back to `id` in the UI when absent. */
+  name?: string;
   parentId: string | null;
   /** Bone length along its local +x axis — the tip is at (length, 0). */
   length: number;

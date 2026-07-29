@@ -1,29 +1,37 @@
 /**
  * RenderQueuePanel — After Effects–style Render Queue.
  *
- * Lists export jobs; shows status, progress, format. Lets the user add jobs
- * (targeting the current composition), start/pause all, skip or remove
- * individual jobs, and clear finished items.
+ * Lists export jobs; shows status, progress, elapsed time and, when something
+ * goes wrong, the actual reason. Jobs run serially through the same deterministic
+ * pipeline the Export dialog uses, so a queued render is not a second
+ * implementation of exporting.
  *
- * Rendering is real (Prompt 9): each job runs through the deterministic offline
- * renderer, reports true per-frame progress, and downloads the output file
- * (PNG/JPEG-sequence zip, or WebM). Pause aborts the in-flight render.
+ * Rendering does not take the app away from you: frames are rasterised between
+ * yields to the main thread and, on the desktop, encoded by ffmpeg in a separate
+ * process. Pause aborts the in-flight render and kills its encoder.
  */
 
 import { useState } from 'react';
 import { Icon } from '@components/Icon';
 import { useCompositionStore } from '@stores/compositionStore';
-import { useRenderQueueStore, outputExtFor, type OutputFormat, type RenderJob } from '@stores/renderQueueStore';
+import {
+  canChooseOutputDir,
+  useRenderQueueStore,
+  outputExtFor,
+  type OutputFormat,
+  type RenderJob,
+} from '@stores/renderQueueStore';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
 import styles from './RenderQueuePanel.module.css';
 
-const FORMAT_OPTIONS: ReadonlyArray<{ value: OutputFormat; label: string }> = [
-  { value: 'mp4',          label: 'H.264 MP4' },
-  { value: 'webm',         label: 'WebM VP9' },
-  { value: 'gif',          label: 'Animated GIF' },
-  { value: 'png-sequence', label: 'PNG Sequence' },
-  { value: 'jpg-sequence', label: 'JPEG Sequence' },
-] as const;
+const FORMAT_LABEL: Record<OutputFormat, string> = {
+  mp4: 'H.264 MP4',
+  webm: 'WebM VP9',
+  mov: 'ProRes 4444',
+  gif: 'Animated GIF',
+  'png-sequence': 'PNG Sequence',
+  'jpg-sequence': 'JPEG Sequence',
+};
 
 function statusClass(s: RenderJob['status']): string {
   switch (s) {
@@ -59,9 +67,13 @@ export function RenderQueuePanel(): JSX.Element {
   const isRunning = useRenderQueueStore((s) => s.isRunning);
   const addJob = useRenderQueueStore((s) => s.addJob);
   const removeJob = useRenderQueueStore((s) => s.removeJob);
+  const duplicateJob = useRenderQueueStore((s) => s.duplicateJob);
+  const skipJob = useRenderQueueStore((s) => s.skipJob);
   const startAll = useRenderQueueStore((s) => s.startAll);
   const pauseAll = useRenderQueueStore((s) => s.pauseAll);
   const clearFinished = useRenderQueueStore((s) => s.clearFinished);
+  const outputDir = useRenderQueueStore((s) => s.outputDir);
+  const chooseOutputDir = useRenderQueueStore((s) => s.chooseOutputDir);
 
   const [showDialog, setShowDialog] = useState(false);
 
@@ -82,9 +94,14 @@ export function RenderQueuePanel(): JSX.Element {
       format: settings.format,
       width: settings.width,
       height: settings.height,
+      // The composition's real size — the output size above is what the user
+      // typed and may be smaller or larger than the comp.
+      compWidth: comp.width,
+      compHeight: comp.height,
       fps: settings.fps,
       durationSec: settings.durationSec,
       transparent: settings.transparent,
+      quality: settings.quality,
     });
   };
 
@@ -108,6 +125,18 @@ export function RenderQueuePanel(): JSX.Element {
         <button type="button" className={styles.toolbarBtn} onClick={() => setShowDialog(true)} title="Add current composition to queue">
           <Icon name="plus" size={12} /> Add Comp
         </button>
+
+        {canChooseOutputDir() && (
+          <button
+            type="button"
+            className={styles.toolbarBtn}
+            onClick={() => void chooseOutputDir()}
+            title={outputDir ? `Renders are written to ${outputDir}` : 'Choose where renders are written'}
+          >
+            <Icon name="folder" size={12} />
+            {outputDir ? (outputDir.split(/[\\/]/).pop() || outputDir) : 'Output folder…'}
+          </button>
+        )}
 
         <span className={styles.spacer} />
 
@@ -153,9 +182,25 @@ export function RenderQueuePanel(): JSX.Element {
                 <span className={styles.compName}>{job.compositionName}</span>
               </div>
               <div className={styles.cardHeaderRight}>
-                <span className={styles.formatBadge}>
-                  {FORMAT_OPTIONS.find((f) => f.value === job.format)?.label ?? job.format}
-                </span>
+                <span className={styles.formatBadge}>{FORMAT_LABEL[job.format] ?? job.format}</span>
+                <button
+                  type="button"
+                  className={styles.removeBtn}
+                  title="Duplicate this job"
+                  onClick={() => duplicateJob(job.id)}
+                >
+                  <Icon name="copy" size={10} />
+                </button>
+                {job.status === 'queued' && (
+                  <button
+                    type="button"
+                    className={styles.removeBtn}
+                    title="Skip this job — leave it in the list but don't render it"
+                    onClick={() => skipJob(job.id)}
+                  >
+                    <Icon name="skip-forward" size={10} />
+                  </button>
+                )}
                 <button
                   type="button"
                   className={styles.removeBtn}
@@ -169,7 +214,14 @@ export function RenderQueuePanel(): JSX.Element {
 
             <div className={styles.cardBody}>
               <span className={styles.outputPath} title={job.outputPath}>{job.outputPath}</span>
-              
+              <span className={styles.jobSpec}>
+                {job.width}×{job.height}
+                {job.compWidth && job.compWidth !== job.width ? ` (comp ${job.compWidth}×${job.compHeight})` : ''}
+                {' · '}{job.fps} fps · {job.durationSec.toFixed(2)}s
+                {job.transparent ? ' · alpha' : ''}
+                {job.quality && job.quality !== 'high' ? ` · ${job.quality}` : ''}
+              </span>
+
               <div className={styles.statusProgressRow}>
                 <span className={`${styles.statusChip} ${statusClass(job.status)}`}>
                   {statusLabel(job.status)}
@@ -187,6 +239,16 @@ export function RenderQueuePanel(): JSX.Element {
                   </div>
                 </div>
               </div>
+
+              {/* A failed job used to show the word "Failed" and nothing else —
+                  the reason was captured on the job and never rendered, so every
+                  failure looked identical and none of them were actionable. */}
+              {job.error && (
+                <div className={styles.jobError} title={job.error}>
+                  <Icon name="warning" size={11} />
+                  <span>{job.error}</span>
+                </div>
+              )}
             </div>
           </div>
         ))}

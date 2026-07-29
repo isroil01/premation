@@ -18,13 +18,13 @@
  * (`return (${src})`). No statements, declarations, assignment or loops — so
  * this is a bounded grammar, not a JS engine. Supported:
  *
- *   literals        1, 1.5, .5, 1e3, "s", 'a', true, false, null
+ *   literals        1, 1.5,.5, 1e3, "s", 'a', true, false, null
  *   identifiers     time, value, wiggle, Math, thisComp, …
  *   member          a.b, a["b"]
  *   call            f(x), Math.sin(t), thisComp.layer('A', 'x')
  *   unary           -x, +x, !x
  *   binary          * / % + - < <= > >= == != === !== && ||
- *   ternary         c ? a : b
+ *   ternary         c ? a: b
  *   grouping        (…)
  *   array           [a, b]
  *
@@ -82,7 +82,7 @@ function lex(src: string): Tok[] {
 
     if (/\s/.test(c)) { i++; continue; }
 
-    // Number: 1, 1.5, .5, 1e-3
+    // Number: 1, 1.5,.5, 1e-3
     if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(src[i + 1] ?? ''))) {
       const start = i;
       while (i < src.length && /[0-9]/.test(src[i]!)) i++;

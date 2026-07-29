@@ -194,7 +194,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     folders: loadFolders(),
 
     addAsset: async (file: File, folderId: string | null = null) => {
-      // Local-first (principles 2 & 3): content-address the bytes into the open
+      // Local-first: content-address the bytes into the open
       // project bundle and render from disk — never upload. Falls through to the
       // in-memory object-URL path (still upload-free) if no bundle is open.
       if (isLocalFirst()) {
@@ -482,20 +482,33 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     initialize: async () => {
       try {
         const dbAssets = await AssetDatabase.getAllAssets();
-        const hydratedAssets: ImportedAsset[] = dbAssets.map((dbAsset) => ({
-          id: dbAsset.id,
-          name: dbAsset.name,
-          type: dbAsset.type,
-          src: URL.createObjectURL(dbAsset.data),
-          size: dbAsset.size,
-          metadata: dbAsset.metadata,
-          // Reuse the persisted thumbnail so reload stays as fast as import.
-          thumbSrc: dbAsset.thumb ? URL.createObjectURL(dbAsset.thumb) : undefined,
-        }));
+        // Filter FIRST, mint object URLs second.
+        //
+        // This used to createObjectURL for every asset in IndexedDB and only then
+        // drop the ones already loaded — but a discarded URL stays registered and
+        // pins its entire Blob (the whole video/PSD/image) in renderer memory
+        // until the page reloads. `initialize` runs on every boot, twice under
+        // StrictMode, and again on each editor re-entry, so a project with 2 GB of
+        // footage leaked roughly that much every time.
+        const existingIds = new Set(get().assets.map((a) => a.id));
+        const hydratedAssets: ImportedAsset[] = dbAssets
+          .filter((dbAsset) => !existingIds.has(dbAsset.id))
+          .map((dbAsset) => ({
+            id: dbAsset.id,
+            name: dbAsset.name,
+            type: dbAsset.type,
+            src: URL.createObjectURL(dbAsset.data),
+            size: dbAsset.size,
+            metadata: dbAsset.metadata,
+            // Reuse the persisted thumbnail so reload stays as fast as import.
+            thumbSrc: dbAsset.thumb ? URL.createObjectURL(dbAsset.thumb) : undefined,
+          }));
         set((s) => {
-          const existingIds = new Set(s.assets.map((a) => a.id));
+          // Re-check inside the transaction: a concurrent import may have landed
+          // between the read above and this commit.
+          const present = new Set(s.assets.map((a) => a.id));
           const fresh = applyAssignments(
-            hydratedAssets.filter((ha) => !existingIds.has(ha.id)),
+            hydratedAssets.filter((ha) => !present.has(ha.id)),
             s.folders,
           );
           for (const ha of fresh) s.assets.push(ha);

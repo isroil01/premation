@@ -28,7 +28,7 @@ const strp = (v: unknown): string | undefined => (typeof v === 'string' ? v : un
 /**
  * Count the characters before (`node`, `offset`) within `root`.
  *
- * A Range's own `toString().length` would be simpler, but it does not count a
+ * A Range's own `toString.length` would be simpler, but it does not count a
  * `<br>` — which is exactly what Shift+Enter inserts here — so every offset
  * after a line break would be short by one and style the wrong characters. This
  * walks the tree the way `innerText` reads it: text nodes contribute their

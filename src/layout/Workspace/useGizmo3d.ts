@@ -10,20 +10,16 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSceneRevision } from '@stores/sceneStore';
-import { is3DEnabled } from '@core/scene/threeD';
+import { is3DEnabled, canBe3D } from '@core/scene/threeD';
 import {
   sampleTransform3DAtPlayhead,
   applyGizmo3DTransforms,
   type Gizmo3DNodeUpdate,
 } from '@core/workspace/ports';
-import { readSceneCamera } from '@core/scene/camera3d';
-import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { getRemappedTime } from '@core/timeline/TimelineController';
-import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { useSceneRefGeometry } from './useSceneRefGeometry';
 import type { RenderView } from '@core/rendering/RenderBackend';
-import { Project3D, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
+import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, type GizmoHandleType, type RenderedGizmo3D } from '@motion/workspace';
 import type { SceneNode } from '@core/types';
 
@@ -53,8 +49,10 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
   const gizmoState = useGuidesStore((s) => s.gizmo3dState);
   const axisMode = useGuidesStore((s) => s.gizmo3dAxisMode);
-  const groundGridVisible = useGuidesStore((s) => s.groundGridVisible);
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
+  // Camera, ortho axis, ground-plane visibility and the scene wireframes all
+  // come from ONE shared resolver — the inspection panes use it too.
+  const refGeometry = useSceneRefGeometry(camera3dMode);
   const customViews = useGuidesStore((s) => s.customViews);
 
   const compWidth = useCompositionStore((s) => s.width);
@@ -74,10 +72,17 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
   const [activeHandle, setActiveHandle] = useState<GizmoHandleType | null>(null);
   const [dragState, setDragState] = useState<DragState3D | null>(null);
 
-  // Filter selected nodes to those with 3D enabled (AE multi-layer 3D selection)
+  // Filter selected nodes to those with 3D enabled (AE multi-layer 3D selection).
+  //
+  // `canBe3D` — not bare `is3DEnabled` — is the gate, and it is the SAME predicate
+  // the renderer, the selection chrome (ports.ts) and the axis widget use.
+  // insertCamera writes `z = -focalLength`, so every camera satisfies
+  // `is3DEnabled` and used to get a full layer transform gizmo whose drags wrote
+  // camera x/y/z; lights had the same problem. Cameras and lights are positioned
+  // with the camera-navigation tools and their own inspector, not this gizmo.
   const selected3DNodes = selectedIds
     .map((id) => defaultSceneGraph.getNode(id))
-    .filter((node): node is SceneNode => node != null && is3DEnabled(node));
+    .filter((node): node is SceneNode => node != null && canBe3D(node) && is3DEnabled(node));
 
   const is3D = selected3DNodes.length > 0;
   const singleId = selectedIds.length === 1 ? selectedIds[0] : (selected3DNodes[0]?.id ?? null);
@@ -113,34 +118,10 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
   const nodeRotation = firstRot;
   const nodeScale = firstScale;
 
-  // Resolve the scene camera at the CURRENT playhead time — same resolver
-  // chain the renderer (buildSnapshot) and selection chrome (ports.ts) use.
-  let camera: Camera3D;
-  if (isCustomViewId(camera3dMode)) {
-    // Custom views: the gizmo projects through the STORED view camera — the
-    // scene's Camera layer is ignored, matching the renderer.
-    camera = customViewCamera(customViews[camera3dMode], compWidth, compHeight);
-  } else {
-    let cameraNode: SceneNode | undefined;
-    for (const n of flattenScene(defaultSceneGraph)) {
-      if (readNodeKind(n) === 'camera') {
-        cameraNode = n;
-        break;
-      }
-    }
-    if (cameraNode) {
-      const camNode = cameraNode;
-      const camTime = getRemappedTime(camNode.id, time);
-      const camValues = defaultAnimation.evaluateNode(camNode.id, camTime);
-      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, (id, p) =>
-        id === camNode.id ? camValues.get(p) : undefined,
-      );
-    } else {
-      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight);
-    }
-  }
-  const orthoView: OrthoView | null =
-    camera3dMode === 'active' || isCustomViewId(camera3dMode) ? null : (camera3dMode as OrthoView);
+  // Camera / ortho axis / scene gizmos come from the SHARED resolver, which the
+  // read-only inspection panes use too — one resolution path, so the panes and
+  // the interactive viewport cannot disagree about where anything sits.
+  const { camera, orthoView, sceneGizmos, groundGridVisible, scene3d } = refGeometry;
 
   // Comp → canvas view transform (RenderView: canvasPx = compPx·scale + offset,
   // CSS px). Kept in state and re-synced on wheel / pointer input so the SVG
@@ -180,6 +161,11 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
       compWidth,
       compHeight,
     );
+  } else {
+    // Clear it. Leaving the last gizmo behind meant the capture-phase pointerdown
+    // handler could hit-test against a stale gizmo for a selection that is no
+    // longer 3D (or no longer selected) and swallow the click.
+    renderedGizmoRef.current = null;
   }
 
   // Pointer event handlers for 3D Gizmo interaction
@@ -222,7 +208,20 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
         if (handle === 'pos_x' || handle === 'pos_y' || handle === 'pos_z') {
           const axisDir = handle === 'pos_x' ? basis.x : handle === 'pos_y' ? basis.y : basis.z;
-          const { tAxis } = Project3D.closestPointRayAxis(ray, dragState.startPos3D, axisDir);
+          // Ray/axis intersection is SINGULAR when the axis points at the camera:
+          // `closestPointRayAxis` divides by `a*c - b*b`, which goes to 0, and
+          // returns tAxis = 0 — so dragging the Z arrow in a front view (the
+          // default view, where basis.z faces the viewer) did precisely nothing.
+          // Fall back to vertical screen travel, AE-style: drag up pushes the
+          // layer along +axis, away from the camera.
+          const axisEntry = renderedGizmoRef.current?.axes.find((a) => a.type === handle);
+          let tAxis: number;
+          if (axisEntry?.degenerate) {
+            const viewScale = getWorkspaceController().getView().scale || 1;
+            tAxis = -(stagePt.y - dragState.startMouseScreen.y) / viewScale;
+          } else {
+            tAxis = Project3D.closestPointRayAxis(ray, dragState.startPos3D, axisDir).tAxis;
+          }
           newPos = {
             x: dragState.startPos3D.x + axisDir.x * tAxis,
             y: dragState.startPos3D.y + axisDir.y * tAxis,
@@ -260,9 +259,17 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
           if (handle === 'rot_x') newRot.rotX = dragState.startRot3D.rotX + deltaDeg;
           else if (handle === 'rot_y') newRot.rotY = dragState.startRot3D.rotY + deltaDeg;
           else newRot.rotZ = dragState.startRot3D.rotZ + deltaDeg;
-        } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_z' || handle === 'scale_center') {
-          const dx = (stagePt.x - dragState.startMouseScreen.x) * 0.01;
-          const factor = Math.max(0.05, 1 + dx);
+        } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_center') {
+          // Each handle follows the axis it points along. Every scale handle used
+          // to read `stagePt.x` only, so the VERTICAL Y-scale handle grew when you
+          // dragged sideways and ignored vertical motion entirely.
+          const dxPx = stagePt.x - dragState.startMouseScreen.x;
+          const dyPx = stagePt.y - dragState.startMouseScreen.y;
+          const travel =
+            handle === 'scale_y' ? -dyPx
+            : handle === 'scale_center' ? (dxPx - dyPx) / 2
+            : dxPx;
+          const factor = Math.max(0.05, 1 + travel * 0.01);
           if (handle === 'scale_x' || handle === 'scale_center') newScale.scaleX = dragState.startScale3D.scaleX * factor;
           if (handle === 'scale_y' || handle === 'scale_center') newScale.scaleY = dragState.startScale3D.scaleY * factor;
         }
@@ -275,7 +282,11 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
         const deltaRotY = newRot.rotY - dragState.startRot3D.rotY;
         const deltaRotZ = newRot.rotZ - dragState.startRot3D.rotZ;
 
-        const scaleFactor = newScale.scaleX / Math.max(0.001, dragState.startScale3D.scaleX);
+        // Per-axis factors. A single factor derived from scaleX made `scale_y` a
+        // no-op: that handle only changes scaleY, so the X ratio stayed 1 and the
+        // update below multiplied both axes by 1.
+        const scaleFactorX = newScale.scaleX / Math.max(0.001, dragState.startScale3D.scaleX);
+        const scaleFactorY = newScale.scaleY / Math.max(0.001, dragState.startScale3D.scaleY);
 
         // Apply to all selected 3D nodes through ports' dual write path: props
         // with a lit stopwatch (or Auto-Keyframe on) keyframe at the playhead —
@@ -299,7 +310,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
               ? { rotation: st.rot.rotZ + deltaRotZ }
               : {}),
             ...(isScaleHandle
-              ? { scaleX: st.scale.scaleX * scaleFactor, scaleY: st.scale.scaleY * scaleFactor }
+              ? { scaleX: st.scale.scaleX * scaleFactorX, scaleY: st.scale.scaleY * scaleFactorY }
               : {}),
           },
         }));
@@ -425,6 +436,8 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
   return {
     is3D,
+    scene3d,
+    sceneGizmos,
     singleId,
     position3D,
     nodeRotation,

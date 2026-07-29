@@ -1,7 +1,7 @@
 /**
  * TimelineState — a flat, serializable snapshot of the timeline's live state.
  * Panels/devtools read this; it is derived, never authoritative. Produced by
- * `Timeline.getState()`.
+ * `Timeline.getState`.
  */
 
 import type { FrameRate } from '../time/FrameRate';

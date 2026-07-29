@@ -14,7 +14,7 @@ interface PromptDialogContentProps {
   onCancel: () => void;
 }
 
-export function PromptDialogContent({
+function PromptDialogContent({
   message,
   defaultValue,
   placeholder,
@@ -111,53 +111,6 @@ export function customConfirm(
               }}
             >
               {confirmLabel}
-            </Button>
-          </div>
-        </div>
-      ),
-    });
-  });
-}
-
-export function customAlert(
-  title: string,
-  message: string,
-  options?: { buttonLabel?: string }
-): Promise<void> {
-  const { buttonLabel = 'OK' } = options ?? {};
-  return new Promise((resolve) => {
-    let resolved = false;
-
-    openModal({
-      title: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Icon name="info" size={18} style={{ color: 'var(--color-primary)' }} />
-          <span>{title}</span>
-        </div>
-      ),
-      size: 'sm',
-      persistent: true,
-      onClose: () => {
-        if (!resolved) {
-          resolved = true;
-          resolve();
-        }
-      },
-      render: (close) => (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)', margin: 0, lineHeight: 'var(--line-height-normal)' }}>
-            {message}
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
-            <Button
-              variant="primary"
-              onClick={() => {
-                resolved = true;
-                close();
-                resolve();
-              }}
-            >
-              {buttonLabel}
             </Button>
           </div>
         </div>

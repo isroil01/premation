@@ -12,6 +12,7 @@
 import type { Vec2 } from '../math/Vec2';
 import type { Mat2D } from '../math/Mat2D';
 import type { Rect } from '../math/Rect';
+import type { Corners } from '../math/OrientedBox';
 import type { BezierPoint } from '../math/BezierPoint';
 
 /** Opaque node identifier — a string id owned by the Scene Graph. */
@@ -32,8 +33,25 @@ export interface WorkspaceNode {
   readonly id: NodeId;
   /** Parent id, or null for a top-level node. */
   readonly parentId: NodeId | null;
-  /** World-space axis-aligned bounding box (already transformed). */
+  /**
+   * World-space axis-aligned bounding box (already transformed).
+   *
+   * A conservative SUPERSET of the layer for any rotation that is not a
+   * multiple of 90°. Correct for what it is used for — spatial indexing, broad
+   * phase, culling, fit-to-selection — and wrong for anything the user sees or
+   * clicks, which is what `worldCorners` is for.
+   */
   readonly worldBounds: Rect;
+  /**
+   * The layer's ORIENTED box: `localBounds`' four corners through
+   * `worldMatrix`, in [TL, TR, BR, BL] order. This is what the selection
+   * outline draws and what marquee selection tests against, so a rotated layer
+   * gets a rotated box rather than a padded upright one.
+   *
+   * Optional so an adapter that has not been updated still works (it falls back
+   * to the AABB's corners), but every real adapter should provide it.
+   */
+  readonly worldCorners?: Corners;
   /** Local → world matrix (for precise/local-space hit tests). */
   readonly worldMatrix: Mat2D;
   /** Untransformed local bounds (origin + size in the node's own space). */
@@ -42,6 +60,16 @@ export interface WorkspaceNode {
   readonly locked: boolean;
   /** Higher renders on top; used to resolve overlapping hits. */
   readonly zIndex: number;
+  /**
+   * True for a 3D layer, whose transform the 3D gizmo owns.
+   *
+   * The 2D resize/rotate handles are suppressed for these: they operate on the
+   * axis-aligned world bounds, which for a projected 3D layer describes neither
+   * its size nor its orientation, so dragging one moved the layer somewhere the
+   * user did not ask for. The gizmo's axis arrows and rotation rings are the
+   * correct control surface.
+   */
+  readonly is3D?: boolean;
   /** Optional precise hit test in the node's *local* space (path/shape/mask). */
   readonly hitTestLocal?: (localPoint: Vec2) => boolean;
   /** Bezier path points in LOCAL space (only for shapes with custom paths). */
@@ -115,12 +143,27 @@ export interface RendererPort {
 
 /** Everything the workspace wants painted above the scene, in screen pixels. */
 export interface WorkspaceOverlay {
+  /**
+   * Union AABB of the selection, screen space.
+   *
+   * Retained for surfaces that genuinely need one rectangle (measurements,
+   * fit-to-selection). NOT the selection outline — `selectionBoxes` is.
+   */
   selectionBounds: Rect | null;
+  /**
+   * One oriented box per selected layer, screen space. This is the selection
+   * outline: rotated with its layer, and one per layer rather than a single
+   * merged rectangle.
+   */
+  selectionBoxes: readonly Corners[];
   handles: readonly OverlayHandle[];
   marquee: Rect | null;
   snapLines: readonly SnapLine[];
   guides: readonly OverlayGuide[];
+  /** AABB of the hovered layer, screen space. Kept beside `hoveredCorners`. */
   hoveredBounds: Rect | null;
+  /** Oriented box of the hovered layer, screen space. */
+  hoveredCorners: Corners | null;
   /** Bezier path currently being drawn by a tool (e.g. PenTool). Screen-space. */
   pendingPath?: readonly BezierPoint[];
 }

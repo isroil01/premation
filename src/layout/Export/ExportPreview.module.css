@@ -1,0 +1,85 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The stage is sized by aspect-ratio from the output dimensions, so the preview
+   is always framed exactly like the exported file. */
+.stage,
+.stageTransparent {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #000;
+}
+
+/* A checkerboard makes real alpha visible — on a flat backdrop a transparent
+   export and a black one look identical. */
+.stageTransparent {
+  background-color: var(--color-surface-2);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.06) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.06) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.06) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.06) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.overlayError,
+.overlayWarn,
+.overlayMuted {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  text-align: center;
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  backdrop-filter: blur(2px);
+}
+
+.overlayMuted {
+  color: var(--color-text-tertiary);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.overlayWarn {
+  color: var(--color-text-primary);
+  background: rgba(120, 80, 0, 0.55);
+}
+
+.overlayError {
+  color: var(--color-text-primary);
+  background: rgba(120, 20, 20, 0.6);
+}
+
+.scrubRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.scrub {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-primary);
+}
+
+.timecode {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}

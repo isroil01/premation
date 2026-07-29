@@ -7,11 +7,20 @@
 
 import type { SceneNode } from '../types';
 import type SceneGraph from './SceneGraph';
+import { renderComponentsOf } from './SceneGraph';
 import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
 
-/** Read a node's kind from whichever component carries the meta prop. */
+/**
+ * Read a node's kind from whichever component carries the meta prop.
+ *
+ * Goes through `renderComponentsOf` rather than `node.components`: this runs
+ * per node per frame on LIVE views during the flatten/expand pass — before
+ * `materializeForFrame` has read each field once — and the raw getter rebuilds
+ * the node's whole component array on every call. Read-only, so the shared
+ * memoized array is safe here.
+ */
 export function readNodeKind(node: SceneNode): SceneKind {
-  for (const c of node.components) {
+  for (const c of renderComponentsOf(node)) {
     const k = (c.props as Record<string, unknown>)[SCENE_KIND_PROP];
     if (typeof k === 'string') return k as SceneKind;
   }
@@ -63,6 +72,7 @@ export const KIND_COLOR: Record<SceneKind, string> = {
   text: 'var(--color-category-text)',
   image: 'var(--color-category-image)',
   video: 'var(--color-category-video)',
+  svg: 'var(--color-category-shape)',
   audio: 'var(--color-category-audio, var(--color-category-video))',
   camera: 'var(--color-category-camera)',
   light: 'var(--color-category-light)',
@@ -82,6 +92,7 @@ export const KIND_FILL: Record<SceneKind, string> = {
   text: '#60a5fa',
   image: '#f59e0b',
   video: '#f43f5e',
+  svg: '#14b8a6',
   audio: '#22d3ee',
   camera: '#38bdf8',
   light: '#fbbf24',
@@ -101,6 +112,7 @@ export const KIND_ICON: Record<SceneKind, string> = {
   text: 'type',
   image: 'image',
   video: 'video',
+  svg: 'shape',
   audio: 'audio',
   camera: 'camera',
   light: 'light',

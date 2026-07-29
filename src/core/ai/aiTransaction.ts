@@ -48,10 +48,24 @@ export interface AiTransaction {
 /**
  * Begin an AI run.
  *
- * Call `commit()` when the run finishes and `rollback()` if it throws or the
+ * Call `commit` when the run finishes and `rollback` if it throws or the
  * user cancels — a half-applied AI edit is worse than none, because the user
  * can't tell which half landed.
  */
+/**
+ * The same one-act-one-undo transaction for NON-AI bulk edits.
+ *
+ * A file import is the other operation that fans out into dozens of scene and
+ * animation mutations plus a timeline resync. Without this a Lottie import was
+ * effectively un-undoable: `syncFromScene` pushed a timeline command per created
+ * clip, so Ctrl+Z peeled the import off one layer at a time (measured: 25
+ * presses to walk a 23-layer import back, leaving a half-deleted scene on the
+ * way). Same machinery, honest name.
+ */
+export function beginDocumentTransaction(label: string): AiTransaction {
+  return beginAiTransaction(label);
+}
+
 export function beginAiTransaction(label: string): AiTransaction {
   const before = capture();
   let settled = false;

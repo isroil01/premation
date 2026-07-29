@@ -73,7 +73,7 @@ describe('Puppet Rigging Engine', () => {
     ];
 
     // LBS-specific closed-form assertions → pin to the 'lbs' solver explicitly
-    // (deform() now defaults to ARAP, which is a different algorithm).
+    // (deform now defaults to ARAP, which is a different algorithm).
     const deformed = deform(animatedPins, mesh, 'lbs');
     expect(deformed.length).toBe(mesh.vertices.length);
 

@@ -17,16 +17,10 @@ import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
 import { applyPasteboardColor } from '@core/theme/pasteboard';
 import { applyAccentColor } from '@core/theme/accent';
 
+import { LoadingScreen } from '@components/LoadingScreen';
+
 function BootSplash(): JSX.Element {
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, display: 'grid', placeItems: 'center',
-      background: 'var(--color-surface-0, #0e0e12)', color: 'var(--color-text-tertiary, #888)',
-      font: '500 0.9rem system-ui, sans-serif', letterSpacing: '0.02em',
-    }}>
-      Loading…
-    </div>
-  );
+  return <LoadingScreen message="Loading…" fullScreen />;
 }
 
 // ── Route-level code splitting ───────────────────────────────────────
@@ -36,12 +30,14 @@ function BootSplash(): JSX.Element {
 const AuthPage = lazy(() => import('../pages/AuthPage').then(m => ({ default: m.AuthPage })));
 const DashboardPage = lazy(() => import('../pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const EditorPage = lazy(() => import('../pages/EditorPage').then(m => ({ default: m.EditorPage })));
-
-
+const PopoutRoute = lazy(() => import('../pages/PopoutRoute').then(m => ({ default: m.PopoutRoute })));
+const OAuthCallbackPage = lazy(() =>
+  import('../pages/OAuthCallbackPage').then(m => ({ default: m.OAuthCallbackPage })),
+);
 
 function AppLayout(): JSX.Element {
   const location = useLocation();
-  const isEditor = location.pathname.startsWith('/editor');
+  const isEditor = location.pathname.startsWith('/editor') || location.pathname.startsWith('/popout');
 
   useEffect(() => {
     if (isEditor) {
@@ -69,9 +65,16 @@ function AppLayout(): JSX.Element {
               emailed token is itself the credential. */}
           <Route path="/forgot-password" element={<AuthPage mode="forgot" />} />
           <Route path="/reset-password" element={<AuthPage mode="reset" />} />
+          {/* Where the backend's OAuth callback drops the browser, carrying a
+              one-time code to exchange for a session. */}
+          <Route path="/oauth" element={<OAuthCallbackPage />} />
+          <Route path="/popout/:panelId" element={<PopoutRoute />} />
           <Route path="/dashboard" element={<RequireAuth><DashboardPage /></RequireAuth>} />
           <Route path="/editor" element={<RequireAuth><EditorPage /></RequireAuth>} />
           <Route path="/editor/:projectId" element={<RequireAuth><EditorPage /></RequireAuth>} />
+          {/* No /admin route: the admin console lives in the motion-landing web
+              app, not in the desktop app. Anything under /admin falls through to
+              the catch-all below. */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>

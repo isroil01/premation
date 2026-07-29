@@ -45,7 +45,19 @@ export class WorkspaceController {
 
   private readonly commandPort: CommandPort;
   private readonly scenePort: SceneGraphPort;
-  private renderCb: (() => void) | null = null;
+  /**
+   * Render-tick subscribers. This was a SINGLE slot (`renderCb = cb`), but
+   * three call sites register: the viewport draw in useWorkspace, and the
+   * puppet + bone canvas overlays. Last writer won, so the overlays' "redraw on
+   * camera movement" effect was silently dead — VERIFIED: panning the camera
+   * with the puppet tool active left the pin handles frozen in place until some
+   * unrelated state change (a scene bump) happened to re-render the component,
+   * at which point they snapped to the correct position.
+   *
+   * A Set + disposer means every subscriber gets the tick and unmounting one
+   * overlay cannot silently disable another's.
+   */
+  private renderCbs = new Set<() => void>();
   private rafId: number | null = null;
 
   /** AE-style auto-fit: when on, the comp is re-framed to fill the viewport on
@@ -105,15 +117,23 @@ export class WorkspaceController {
   }
 
   // ── Render scheduling ────────────────────────────────────────────
-  onRender(cb: () => void): void {
-    this.renderCb = cb;
+  /**
+   * Subscribe to render ticks. Returns a disposer — CALL IT on unmount, or the
+   * subscriber leaks and keeps ticking against a dead component.
+   */
+  onRender(cb: () => void): () => void {
+    this.renderCbs.add(cb);
+    return () => {
+      this.renderCbs.delete(cb);
+    };
   }
 
   private scheduleRender(): void {
-    if (this.rafId !== null || !this.renderCb) return;
+    if (this.rafId !== null || this.renderCbs.size === 0) return;
     this.rafId = requestAnimationFrame(() => {
       this.rafId = null;
-      this.renderCb?.();
+      // Copy first: a subscriber may unsubscribe (or subscribe) during the tick.
+      for (const cb of [...this.renderCbs]) cb();
     });
   }
 
@@ -180,6 +200,32 @@ export class WorkspaceController {
   /** Frame the current selection (falls back to fit-all). */
   fitSelection(): void {
     this.ws.zoomToSelection(64, 260);
+  }
+
+  // ── Per-view framing ─────────────────────────────────────────────
+  //
+  // Each 3D view (Active Camera, the six axis views, the custom views) keeps
+  // its OWN pan and zoom, the way After Effects does. They used to share one
+  // viewport transform, so panning in Top view also panned Active Camera view —
+  // you could not frame a side view without disturbing the shot.
+
+  /** The camera's raw pan/zoom state, for stashing against a view. */
+  framing(): { center: { x: number; y: number }; zoom: number } {
+    return this.ws.camera.getState();
+  }
+
+  /** Restore a stashed pan/zoom. Marked as programmatic so it does not count
+   *  as a user gesture and cancel auto-fit. */
+  restoreFraming(state: { center: { x: number; y: number }; zoom: number }): void {
+    this.fitting = true;
+    try {
+      this.ws.camera.setState(state);
+      // Nudge the camera through a public mutator so the workspace reconciles
+      // and emits CameraChanged — setState alone touches only the camera object.
+      this.ws.pan(0, 0);
+    } finally {
+      this.fitting = false;
+    }
   }
 
   // ── Keyboard-driven edits ────────────────────────────────────────

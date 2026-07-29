@@ -2,7 +2,7 @@
  * Inverse kinematics for 2D bone chains.
  *   • solveTwoBone — analytic (law-of-cosines) two-bone solver: the common
  *     arm/leg case, exact and single-shot.
- *   • solveFabrik  — FABRIK iterative solver for chains of any length.
+ *   • solveFabrik — FABRIK iterative solver for chains of any length.
  * Both are pure and return positions/angles the rig layer writes back onto
  * bone rotations. No engine deps.
  */

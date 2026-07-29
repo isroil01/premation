@@ -17,7 +17,17 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { EFFECT_DEFS, addEffect } from '@core/effects/effects';
+import { EFFECT_DEFS, addEffect, getNodeEffects } from '@core/effects/effects';
+import {
+  copyAllEffects,
+  pasteEffects,
+  hasEffectClipboard,
+  effectClipboardSize,
+  saveEffectPreset,
+  applyEffectPreset,
+  deleteEffectPreset,
+  listEffectPresets,
+} from '@core/effects/effectClipboard';
 import { EffectStack } from './EffectStack';
 import {
   getNodeMask,
@@ -40,6 +50,9 @@ const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
   { mode: 'add', label: 'Add' },
   { mode: 'subtract', label: 'Subtract' },
   { mode: 'intersect', label: 'Intersect' },
+  { mode: 'lighten', label: 'Lighten' },
+  { mode: 'darken', label: 'Darken' },
+  { mode: 'difference', label: 'Difference' },
 ];
 
 export function EffectsPanel(): JSX.Element {
@@ -47,6 +60,10 @@ export function EffectsPanel(): JSX.Element {
   useSceneRevision((s) => s.rev);
   const maskTime = useActiveWorkspace()?.time ?? 0;
   const [effectQuery, setEffectQuery] = useState('');
+  // The clipboard and the preset list live outside React (module state and
+  // localStorage), so a counter is what tells this panel they changed.
+  const [clipboardRev, bumpClipboard] = useState(0);
+  const presets = useMemo(() => listEffectPresets(), [clipboardRev]);
 
 
   // NOTE: the empty-state early return must come AFTER every hook — the
@@ -99,11 +116,11 @@ export function EffectsPanel(): JSX.Element {
   const browserAccordionItems = useMemo((): AccordionItem[] => {
     return Object.entries(effectGroups)
       .filter(([_, items]) => items.length > 0)
-      .map(([cat, items]) => ({
+      .map(([cat, items], index) => ({
         id: cat,
         title: cat,
         badge: <span className={styles.catBadge}>{items.length}</span>,
-        defaultOpen: true,
+        defaultOpen: index === 0,
         content: (
           <div className={styles.effectRowsList}>
             {items.map((d) => {
@@ -143,8 +160,63 @@ export function EffectsPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
-      {/* Effects browser — searchable list of effect types to add. */}
-      <div className={styles.sectionTitle}>Effects &amp; presets</div>
+      {/* Active Applied Effects — front and center at the top for easy access */}
+      <div className={styles.sectionTitle}>Active Layer Effects</div>
+      <div className={styles.addRow}>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={getNodeEffects(primary).length === 0}
+          title="Copy this layer's whole effect stack"
+          onClick={() => { copyAllEffects(primary); bumpClipboard((n) => n + 1); }}
+        >
+          <Icon name="copy" size={11} /> Copy Stack
+        </button>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={!hasEffectClipboard()}
+          title={hasEffectClipboard() ? `Paste ${effectClipboardSize()} effect(s) onto this layer` : 'Nothing copied yet'}
+          onClick={() => { pasteEffects([primary]); bumpClipboard((n) => n + 1); }}
+        >
+          <Icon name="plus" size={11} /> Paste
+        </button>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={getNodeEffects(primary).length === 0}
+          title="Save this stack as a reusable preset"
+          onClick={() => {
+            const name = window.prompt('Preset name');
+            if (name?.trim()) { saveEffectPreset(primary, name.trim()); bumpClipboard((n) => n + 1); }
+          }}
+        >
+          <Icon name="star" size={11} /> Save Preset
+        </button>
+      </div>
+      {presets.length > 0 && (
+        <div className={styles.addRow}>
+          {presets.map((p) => (
+            <button
+              key={p.name}
+              type="button"
+              className={styles.addChip}
+              title={`Apply "${p.name}" (${p.items.length} effect(s)) — Alt-click to delete`}
+              onClick={(e) => {
+                if (e.altKey) deleteEffectPreset(p.name);
+                else applyEffectPreset(p.name, [primary]);
+                bumpClipboard((n) => n + 1);
+              }}
+            >
+              <Icon name="sparkles" size={11} /> {p.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <EffectStack nodeId={primary} />
+
+      {/* Effects & presets browser — list of effect types to add */}
+      <div className={styles.sectionTitle}>Add Effect &amp; Presets</div>
       <div className={styles.browser}>
         <Input
           value={effectQuery}
@@ -159,10 +231,7 @@ export function EffectsPanel(): JSX.Element {
         ) : (
           <div className={styles.hint}>No effects match “{effectQuery}”.</div>
         )}
-
       </div>
-
-      <EffectStack nodeId={primary} />
 
       <div className={styles.sectionTitle}>Masks</div>
       <div className={styles.addRow}>

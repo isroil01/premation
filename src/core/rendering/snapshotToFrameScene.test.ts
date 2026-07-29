@@ -306,7 +306,7 @@ describe('viewToCamera', () => {
     const view = { scale: 0.5, offsetX: 40, offsetY: 30 };
     const cam = viewToCamera(view, comp, 800, 600);
     expect(cam.zoom).toBe(0.5);
-    // Inverse of screen = (world-center)*zoom + vp/2 ; solving for center:
+    // Inverse of screen = (world-center)*zoom + vp/2; solving for center:
     expect(cam.center.x).toBeCloseTo((800 / 2 - 40) / 0.5);
     expect(cam.center.y).toBeCloseTo((600 / 2 - 30) / 0.5);
   });

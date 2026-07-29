@@ -14,7 +14,7 @@ import { getEventBus } from '@core/events/EventBus';
 
 export interface Preferences {
   theme: ThemeId;
-  /** Whole-UI zoom, 0.75 .. 1.5 (applied as document zoom). */
+  /** Whole-UI zoom, 0.75.. 1.5 (applied as document zoom). */
   uiScale: number;
   buttonSize: 'sm' | 'md' | 'lg';
   iconSize: 'sm' | 'md' | 'lg';
@@ -32,6 +32,28 @@ export interface Preferences {
    * on every launch would undo the point of the control.
    */
   timelineHeaderWidth: number;
+  /**
+   * Keep the original SVG markup on a layer after Convert to Editable Shapes.
+   *
+   * On by default: without it, converting is a one-way door, and "convert" is
+   * exactly the operation a user tries in order to see what it does. Retaining
+   * also lets a future release re-run the conversion against untouched source.
+   * The cost is negligible next to any raster asset.
+   */
+  retainOriginalSvg: boolean;
+  /**
+   * Draw the thin bounding box around every layer in the 3D reference overlay.
+   *
+   * A PREFERENCE, not view state, and the distinction is the whole reason this
+   * lives here rather than next to `groundGridVisible` in the guides store.
+   * Whether you want an outline around every layer is a settled personal
+   * working style — someone who turns it off wants it off tomorrow too, and a
+   * session-scoped toggle would make them turn it off on every launch.
+   *
+   * On by default: it is the existing behaviour, and the complaint was that the
+   * boxes could not be turned OFF, not that they were on.
+   */
+  showLayerBounds: boolean;
 }
 
 interface PreferenceActions {
@@ -52,6 +74,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorReduceMotion: false,
   confirmOnClose: true,
   timelineHeaderWidth: 460,
+  retainOriginalSvg: true,
+  showLayerBounds: true,
 };
 
 /** Pluggable persistence backend. */
@@ -129,24 +153,36 @@ export const usePreferenceStore = create<PreferenceStore>()(
   })),
 );
 
-/** Push the document-level preferences (zoom + reduced motion + element sizes) onto the DOM. */
+/**
+ * Push the document-level preferences onto the DOM.
+ *
+ * Only the ones the DOM is the right home for: whole-page zoom, the
+ * reduced-motion class, and the density variables. `buttonSize`/`iconSize` are
+ * read directly by Button, IconButton and Icon — see the note below.
+ */
 export function applyUiPreferences(): void {
-  const { uiScale, buttonSize, iconSize, sidebarDensity, editorReduceMotion } = usePreferenceStore.getState();
+  const { uiScale, sidebarDensity, editorReduceMotion } = usePreferenceStore.getState();
   const root = document.documentElement as HTMLElement & { style: CSSStyleDeclaration & { zoom?: string } };
 
   root.style.zoom = uiScale === 1 ? '' : String(uiScale);
   root.classList.toggle('reduce-motion', editorReduceMotion);
 
-  // Element scaling maps
-  const buttonScaleMap = { sm: '0.88', md: '1.0', lg: '1.15' };
-  const iconScaleMap = { sm: '0.88', md: '1.0', lg: '1.18' };
-  const sidebarPadMap = { compact: '4px 8px', default: '8px 12px', comfortable: '12px 16px' };
-  const sidebarFontMap = { compact: '11px', default: '12px', comfortable: '13px' };
+  /**
+   * Density, as CSS variables the item styles read.
+   *
+   * `buttonSize` and `iconSize` are deliberately NOT here. They used to publish
+   * `--app-button-scale` / `--app-icon-scale`, which no stylesheet ever read —
+   * Button, IconButton and Icon each compute their own multiplier from the
+   * preference in JS. Two mechanisms for one setting is bad enough; these two
+   * had drifted to different numbers (icons scaled 0.88/1.18 here against
+   * 0.82/1.25 in Icon.tsx), so whichever a reader believed was wrong half the
+   * time. The JS path is the one that works, so it is the one that stays.
+   */
+  const padMap = { compact: '4px 8px', default: '8px 12px', comfortable: '12px 16px' };
+  const fontMap = { compact: '11px', default: '12px', comfortable: '13px' };
 
-  root.style.setProperty('--app-button-scale', buttonScaleMap[buttonSize || 'md']);
-  root.style.setProperty('--app-icon-scale', iconScaleMap[iconSize || 'md']);
-  root.style.setProperty('--sidebar-item-padding', sidebarPadMap[sidebarDensity || 'default']);
-  root.style.setProperty('--sidebar-item-font-size', sidebarFontMap[sidebarDensity || 'default']);
+  root.style.setProperty('--sidebar-item-padding', padMap[sidebarDensity || 'default']);
+  root.style.setProperty('--sidebar-item-font-size', fontMap[sidebarDensity || 'default']);
 
   window.dispatchEvent(new Event('resize'));
 }

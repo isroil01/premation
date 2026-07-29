@@ -1,5 +1,5 @@
 /**
- * Presentation mode (spec §Collaboration V1) — a distraction-free, full-bleed
+ * Presentation mode — a distraction-free, full-bleed
  * playback of the composition for client review. Enter from Preview; Esc exits.
  */
 

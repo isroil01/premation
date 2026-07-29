@@ -81,13 +81,27 @@ describe('packShade3D (per-fragment 3D lighting tail)', () => {
     expect(Array.from(out.slice(0, 16))).toEqual(model);
     // eye + lit flag
     expect(Array.from(out.slice(16, 20))).toEqual([7, 8, 9, 1]);
-    // params: count, specular, shininess
+    // params: count, specular, shininess, metal (absent ⇒ 0)
     expect(Array.from(out.slice(20, 24))).toEqual([1, 0.5, 32, 0]);
     // light: pos+type(point=1), color+gain, radius/halfCone/aim
     expect(Array.from(out.slice(24, 28))).toEqual([10, 20, -30, 1]);
     const colGain = Array.from(out.slice(28, 32));
     [1, 0.5, 0.25, 0.8].forEach((v, i) => expect(colGain[i]!).toBeCloseTo(v, 6));
     expect(Array.from(out.slice(32, 36))).toEqual([500, 0.5, 1, 0]);
+  });
+
+  it('carries Metal in the spare shadeParams.w slot', () => {
+    // Metal fits in padding that was already reserved, so it costs no uniform
+    // layout change — but that also means a regression here is silent: the
+    // value would simply never reach the shader.
+    const out = new Float32Array(SHADE3D_FLOATS);
+    packShade3D(out, 0, {
+      model: new Array(16).fill(0), eye: [0, 0, 0], specular: 0.4, shininess: 20, metal: 0.75, lights: [light()],
+    });
+    expect(out[23]).toBeCloseTo(0.75, 6);
+    // …and the neighbouring params are undisturbed.
+    expect(out[21]).toBeCloseTo(0.4, 6);
+    expect(out[22]).toBeCloseTo(20, 6);
   });
 
   it('filters zero-gain lights and truncates at MAX_LIGHTS3D', () => {

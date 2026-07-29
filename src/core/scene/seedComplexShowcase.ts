@@ -9,7 +9,7 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
  *
  * It builds into the default scene graph + animation engine using their real
  * public APIs — the same ones the UI drives — so it doubles as a stress test:
- * `buildComplexShowcase()` then rendering `buildSnapshot` across the timeline
+ * `buildComplexShowcase` then rendering `buildSnapshot` across the timeline
  * proves the pipeline handles a dense, fully-animated composition.
  */
 

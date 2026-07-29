@@ -9,9 +9,9 @@
  * shift by (-0.5,-0.5) so the quad's centre — not its corner — lands at (x,y).
  *
  * Known gaps vs Canvas2D (deferred to later prompts, flagged in the mapping):
- *   • shape ellipses / rounded corners  → renderer draws plain rects (Prompt 5)
+ *   • shape ellipses / rounded corners  → renderer draws plain rects
  *   • text glyphs, image/video textures → white-texel until a real provider /
- *     asset pipeline exists (Prompt 7); they render as tinted quads
+ *     asset pipeline exists; they render as tinted quads
  *   • RenderLayer.filter (a CSS string) is NOT read here — it only ever fed the
  *     deleted Canvas2D backend. Everything spatial (user effects, DOF blur,
  *     light-cast shadows) arrives as structured `layer.effects` entries, which
@@ -25,7 +25,7 @@ import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@cor
 import { isLutEffect } from '@core/effects/colorLut';
 import { getMatteMode } from '@core/effects/matte';
 import { effectNumber, effectParam, withAlpha } from '@core/effects/effects';
-import { effectsNeedCpuBake } from '@core/effects/effectBake';
+import { effectsNeedCpuBake, layerNeedsCpuBake } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
@@ -103,8 +103,62 @@ function centerModel(layer: RenderLayer): Mat3 {
   const pad = rasterPadding(layer);
   const w = (layer.width + 2 * pad) * (layer.scaleX || 1);
   const h = (layer.height + 2 * pad) * (layer.scaleY || 1);
-  // translate(x,y)·rotate·scale(w,h) · translate(-0.5,-0.5)
-  return Mat3.multiply(Mat3.compose(layer.x, layer.y, rad, w, h), Mat3.translation(-0.5, -0.5));
+  const skew = layer.skew ?? 0;
+  const base = skew === 0
+    // The un-skewed path stays on `Mat3.compose` so nothing about existing
+    // layers changes — skew is strictly additive.
+    ? Mat3.compose(layer.x, layer.y, rad, w, h)
+    : composeSkewed(layer.x, layer.y, rad, w, h, skew, layer.skewAxis ?? 0);
+  // translate(x,y)·rotate·skew·scale(w,h) · translate(-0.5,-0.5)
+  return Mat3.multiply(base, Mat3.translation(-0.5, -0.5));
+}
+
+/**
+ * `Mat3.compose` with a shear folded in: T · R(rotation) · Skew · Scale.
+ *
+ * `skewAxis` rotates the axis the shear happens along, so a skew is not locked
+ * to horizontal — the shear is conjugated by that rotation
+ * (R(axis) · Shear · R(−axis)), which is what makes a 90° axis shear vertically
+ * and everything between shear diagonally.
+ *
+ * Built by multiplying 2×2s rather than expanding a closed form: the closed
+ * form for rotate·conjugated-shear·scale is four terms of mixed sines and
+ * tangents, and getting one sign wrong there produces a layer that looks
+ * plausible at small angles and inverts at large ones.
+ */
+function composeSkewed(
+  tx: number,
+  ty: number,
+  rad: number,
+  sx: number,
+  sy: number,
+  skewDeg: number,
+  skewAxisDeg: number,
+): Mat3 {
+  // [a, b, c, d] with x' = a·x + c·y, y' = b·x + d·y
+  type M2 = [number, number, number, number];
+  const mul = (A: M2, B: M2): M2 => [
+    A[0] * B[0] + A[2] * B[1],
+    A[1] * B[0] + A[3] * B[1],
+    A[0] * B[2] + A[2] * B[3],
+    A[1] * B[2] + A[3] * B[3],
+  ];
+  const rot = (r: number): M2 => [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r)];
+  const shear = (k: number): M2 => [1, 0, k, 1];
+
+  const axis = (skewAxisDeg * Math.PI) / 180;
+  // Clamped below ±89.5° — tan explodes at 90° and the layer would collapse to
+  // an infinitely long streak.
+  const k = Math.tan((Math.max(-89.5, Math.min(89.5, skewDeg)) * Math.PI) / 180);
+  let m: M2 = rot(rad);
+  m = mul(m, mul(rot(axis), mul(shear(k), rot(-axis))));
+  m = mul(m, [sx, 0, 0, sy] as M2);
+
+  const out = Mat3.create();
+  out[0] = m[0]; out[1] = m[1]; out[2] = 0;
+  out[3] = m[2]; out[4] = m[3]; out[5] = 0;
+  out[6] = tx;   out[7] = ty;   out[8] = 1;
+  return out;
 }
 
 /**
@@ -171,6 +225,36 @@ function gradedSolidColor(layer: RenderLayer): Color {
   const cm = effectColorMatrix(layer.effects);
   const [r, g, b] = applyColorMatrix(cm, [base.r, base.g, base.b]);
   return { r, g, b, a: base.a };
+}
+
+/**
+ * Adapt a resolved Glass style to the renderer's form: hex → Color, degrees →
+ * radians.
+ *
+ * The renderer takes device px and radians and does no unit conversion of its
+ * own, so this is the one place the conversion happens. Doing it in the shader
+ * instead would put a `* PI / 180` in a per-fragment loop for no reason.
+ */
+function toRenderableGlass(
+  g: NonNullable<RenderLayer['glass']>,
+): import('@motion/renderer').RenderableGlass {
+  const rad = (deg: number): number => (deg * Math.PI) / 180;
+  return {
+    refraction: g.refraction,
+    edgeWidth: g.edgeWidth,
+    aberration: g.chromaticAberration,
+    saturation: g.saturation,
+    tint: Color.fromHex(g.tintColor),
+    tintOpacity: g.tintOpacity,
+    rim: Color.fromHex(g.rimColor),
+    rimOpacity: g.rimOpacity,
+    rimWidth: g.rimWidth,
+    rimAngle: rad(g.rimAngle),
+    specularAngle: rad(g.specularAngle),
+    specularIntensity: g.specularIntensity,
+    specularFalloff: g.specularFalloff,
+    grain: g.grain,
+  };
 }
 
 /** SDF geometry for a shape layer so the GPU renderer draws real rounded-rects /
@@ -254,11 +338,11 @@ function extractSpatialEffects(layer: RenderLayer): import('@motion/renderer').R
  * so this normalisation restores puppet/bone deformation on screen.)
  */
 function normalizeDeformedMesh(
-  mesh: { vertices: Float32Array; triangles: Uint16Array },
+  mesh: { vertices: Float32Array; triangles: Uint16Array; depth?: Float32Array },
   width: number,
   height: number,
   pad: number,
-): { vertices: Float32Array; triangles: Uint16Array } {
+): { vertices: Float32Array; triangles: Uint16Array; depth?: Float32Array } {
   const W = width + 2 * pad;
   const H = height + 2 * pad;
   const src = mesh.vertices;
@@ -269,7 +353,11 @@ function normalizeDeformedMesh(
     out[i + 2] = src[i + 2]!; // u
     out[i + 3] = src[i + 3]!; // v
   }
-  return { vertices: out, triangles: mesh.triangles };
+  // Depth is a per-vertex scalar in its own space — it is NOT a position, so it
+  // must not go through the unit-quad normalisation above.
+  return mesh.depth
+    ? { vertices: out, triangles: mesh.triangles, depth: mesh.depth }
+    : { vertices: out, triangles: mesh.triangles };
 }
 
 /**
@@ -294,7 +382,7 @@ export function needsShapeRaster(layer: RenderLayer): boolean {
   // A shape carrying a Canvas2D-only effect is CPU-baked (content + mask +
   // full effect chain) into its `path:` texture — those effects have no GPU
   // shader form and otherwise silently no-op.
-  if (effectsNeedCpuBake(layer.effects)) return true;
+  if (layerNeedsCpuBake(layer.effects, layer.fillOpacity)) return true;
   return false;
 }
 
@@ -391,6 +479,8 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
+    ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     color: textured ? Color.white() : gradedSolidColor(layer),
     // Texture-backed kinds resolve via the provider
     ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
@@ -423,6 +513,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
       out.threeD.shade = {
         specular: layer.shade3d.specular,
         shininess: layer.shade3d.shininess,
+        ...(layer.shade3d.metal ? { metal: layer.shade3d.metal } : {}),
         quadGain: layer.lighting,
       };
     } else if (out.color) {
@@ -475,6 +566,8 @@ function precompToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpaci
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
+    ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     color: Color.white(),
     textureKey: `precomp:${layer.id}`,
     ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
@@ -507,6 +600,8 @@ function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpa
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : fieldAdd ? 'add' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
+    ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     color: Color.white(),
     textureKey: `particles:${layer.id}`,
     ...(layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
@@ -718,13 +813,17 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   // Advanced blend layers need the samplable SCENE_COLOR_TARGET (they sample the
   // backdrop), same precondition as effects — force it on when any are present.
   const hasAdvancedBlend = renderables.some((r) => (r.advancedBlend ?? 0) > 0);
+  // Backdrop blur samples the scene beneath the layer — same precondition.
+  // Glass samples the backdrop too, and can legitimately run with a blur
+  // radius of 0 (clear glass), so testing backdropBlur alone would miss it.
+  const hasBackdropBlur = renderables.some((r) => (r.backdropBlur ?? 0) > 0 || !!r.glass);
   // 3D depth groups need a depth-capable colour target; the surface has no
   // guaranteed depth attachment, so any 3D frame routes through the scene
   // colour target too (it is declared with depth: true).
   const checkThreeD = (rs: ReadonlyArray<Renderable>): boolean =>
     rs.some((r) => !!r.threeD || (r.precomp ? checkThreeD(r.precomp.renderables) : false));
   const has3d = !!snapshot.camera3d && checkThreeD(renderables);
-  const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend || has3d;
+  const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend || hasBackdropBlur || has3d;
   return {
     composition: {
       id: 'composition',

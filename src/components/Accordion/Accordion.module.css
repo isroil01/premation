@@ -6,10 +6,10 @@
 .item {
   display: flex;
   flex-direction: column;
-  margin-bottom: 8px;
-  border-radius: 8px;
-  background: var(--color-surface-subtle, rgba(255, 255, 255, 0.025));
-  border: none;
+  margin-bottom: 0;
+  border-radius: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--color-border-subtle);
   overflow: hidden;
 }
 

@@ -98,3 +98,13 @@ export function clearImageCoverageCache(): void {
   inFlight.clear();
   failed.clear();
 }
+
+/**
+ * Test/debug seam: install a mask as if its bitmap had already decoded. Lets
+ * tests exercise the decoded-coverage path (which callers otherwise only reach
+ * after an async `Image` decode that jsdom cannot perform) without stubbing the
+ * DOM. Production code never calls this.
+ */
+export function primeImageCoverageCache(key: string, mask: PuppetCoverageMask): void {
+  cache.set(key, mask);
+}

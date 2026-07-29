@@ -12,10 +12,10 @@ import { Panel } from '@components/Panel';
 import { Button } from '@components/Button';
 import { HistoryPanel } from '@layout/History/HistoryPanel';
 import { ProjectPanel } from '@layout/Project/ProjectPanel';
-import { TemplateFieldsPanel } from '@layout/Templates/TemplateFieldsPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
+import { PluginsDockPanel } from '@layout/Plugins/PluginPanel';
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { Input } from '@components/Input';
@@ -30,7 +30,11 @@ import { TransformSection } from '@layout/Inspector/TransformSection';
 import { AppearanceSection } from '@layout/Inspector/AppearanceSection';
 import { AlignSection } from '@layout/Inspector/AlignSection';
 import { TextSection } from '@layout/Inspector/TextSection';
+import { StylePresetsSection } from '@layout/Inspector/StylePresetsSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
+import { SvgSection, RevertSvgRow } from '@layout/Inspector/SvgSection';
+import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
+import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { ThreeDControl } from '@layout/Inspector/ThreeDControl';
 import { AiChatPanel } from '@layout/AiChat/AiChatPanel';
 import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
@@ -38,6 +42,8 @@ import { CameraSection } from '@layout/Inspector/CameraSection';
 import { LightSection } from '@layout/Inspector/LightSection';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
+import { ActiveTemplateFields } from '@layout/Templates/TemplateFieldsPanel';
+import { useTemplateStore } from '@stores/templateStore';
 import { CompositingControls } from '@layout/Inspector/CompositingControls';
 import { PuppetControls } from '@layout/Inspector/PuppetControls';
 import { BoneControls } from '@layout/Inspector/BoneControls';
@@ -72,14 +78,13 @@ import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration,
 import { TRANSITION_ITEMS, applyTransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
 import { SFX_ITEMS, insertSfxItem, type SfxCategory } from '@core/library/sfxLibrary';
 import { LOTTIE_ITEMS, insertLottieItem, importLottieFile, type LottieCategory } from '@core/library/lottieLibrary';
+import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 import { useComponentStore } from '@stores/componentStore';
 import { MotionPresetsPanel } from '@layout/Motion/MotionPresetsPanel';
-import { FlowPanel } from '@layout/Flow/FlowPanel';
-import { MotionToolsPanel } from '@layout/MotionTools/MotionToolsPanel';
 import { useUIStore } from '@stores/uiStore';
 import type { SceneNode } from '@core/types';
 import styles from './DemoPanels.module.css';
@@ -97,6 +102,7 @@ const KIND_ICON: Record<SceneKind, IconName> = {
   text: 'type',
   image: 'image',
   video: 'video',
+  svg: 'shape',
   audio: 'audio',
   camera: 'camera',
   light: 'light',
@@ -227,6 +233,13 @@ export function ScenePanel(): JSX.Element {
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => (q ? filterTree(tree, q) : tree), [tree, q]);
   const expandIds = useMemo(() => collectIds(filtered), [filtered]);
+  // Expand only the composition roots by default, so their LAYERS are visible
+  // but groups stay shut. `collectIds` returns every descendant, so an imported
+  // SVG icon — one group of dozens of paths — unfolded into dozens of rows the
+  // moment it was added, burying the rest of the scene. The icon is one body on
+  // canvas already (see `selectionGroup`); the tree now agrees with that.
+  // Searching still expands everything, so matches stay reachable.
+  const defaultExpandIds = useMemo(() => filtered.map((n) => n.id), [filtered]);
   const itemCount = defaultSceneGraph.size;
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -285,6 +298,7 @@ export function ScenePanel(): JSX.Element {
       ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
       { id: 'precompose', label: 'Pre-compose…', onSelect: () => precomposeSelected() },
       { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
+      ...svgContextMenuItems(id),
       ...(useSelectionStore.getState().ids.length >= 2
         ? [
             { id: 'sep_merge', separator: true },
@@ -329,7 +343,7 @@ export function ScenePanel(): JSX.Element {
             nodes={filtered}
             selectedIds={selected}
             onSelect={setSelected}
-            defaultExpandedIds={expandIds}
+            defaultExpandedIds={defaultExpandIds}
             expandedIds={q ? expandIds : undefined}
             onNodeContextMenu={openNodeMenu}
             onReorder={handleReorder}
@@ -374,6 +388,26 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + (sizes[i] ?? '');
+}
+
+/**
+ * A video URL that a `<video>` element will actually show a frame for.
+ *
+ * A `<video>` with no poster paints nothing until it holds a decoded frame, and
+ * `preload="metadata"` deliberately stops before decoding one — so a plain
+ * `src` renders as a black box forever. A media fragment asks for a specific
+ * time, which makes the browser decode that frame and present it as the poster.
+ *
+ * 0.1s rather than 0: the very first frame of a clip is often black (fades,
+ * slates), and a thumbnail that is technically correct but visually black is no
+ * better than no thumbnail. Skipped for sources that already carry a fragment or
+ * a query string, where appending one could break the URL.
+ */
+const VIDEO_THUMB_TIME = 0.1;
+
+function videoThumbSrc(src: string): string {
+  if (!src || src.includes('#')) return src;
+  return `${src}#t=${VIDEO_THUMB_TIME}`;
 }
 
 
@@ -552,10 +586,11 @@ export function AssetsPanel(): JSX.Element {
       hideHeader
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'assets' })}
     >
-      <div className={styles.toolbar} style={{ paddingBottom: 4 }}>
+      <div className={styles.toolbar} style={{ paddingBottom: 4, width: '100%' }}>
         <Input
           placeholder="Search all assets…"
           size="sm"
+          fullWidth
           leftIcon="search"
           className={styles.search}
           value={searchQuery}
@@ -728,7 +763,19 @@ export function AssetsPanel(): JSX.Element {
                   {asset.type === 'image' ? (
                     <img src={asset.thumbSrc ?? asset.src} alt="" className={styles.assetThumbImg} loading="lazy" decoding="async" />
                   ) : asset.type === 'video' ? (
-                    <video src={asset.src} className={styles.assetThumbVideo} preload="metadata" muted playsInline />
+                    // The `#t=0.1` media fragment is what makes this show a
+                    // PICTURE. With a bare src and `preload="metadata"` the
+                    // browser fetches the header and no frame, so the element
+                    // paints nothing and every clip in the library looked like a
+                    // black rectangle. Asking for a time makes it decode that
+                    // frame and display it as the poster.
+                    <video
+                      src={videoThumbSrc(asset.src)}
+                      className={styles.assetThumbVideo}
+                      preload="metadata"
+                      muted
+                      playsInline
+                    />
                   ) : (
                     <Icon name="audio" size={14} />
                   )}
@@ -848,7 +895,10 @@ function renderInspector(items: AccordionItem[], query: string): JSX.Element {
     );
   }
   // Remount on query change so filtered items re-apply their defaultOpen state.
-  return <div style={{ padding: 4 }}><Accordion key={query} items={filtered} /></div>;
+  // No `key={query}`: keying on the search text REMOUNTED the whole Accordion on
+  // every keystroke, and its open/closed state lives in its own useState — so
+  // every group you expanded snapped shut as soon as you typed a character.
+  return <div style={{ padding: 4 }}><Accordion items={filtered} /></div>;
 }
 
 function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
@@ -964,6 +1014,16 @@ function StylePanelContent({ nodeId, query = '' }: { nodeId: string | null; quer
 
   const kind = readNodeKind(node);
   const items: AccordionItem[] = [];
+
+  // Composed looks first — a starting point you then refine in the sections
+  // below, rather than assembling every fill/stroke/shadow by hand.
+  items.push({
+    id: 'style-presets',
+    title: 'Styles',
+    icon: 'sparkles',
+    defaultOpen: true,
+    content: <StylePresetsSection nodeId={nodeId} />,
+  });
 
   // Text Typography styles
   if (kind === 'text') {
@@ -1148,6 +1208,9 @@ export function MiscPanel(): JSX.Element {
         </div>
       )}
       <MiscPanelContent nodeId={primary} query={query} />
+      {/* Applied-template fields — the "fill in the blanks" surface. Shown only
+          when a template is actually applied, so it costs nothing otherwise. */}
+      <TemplateFieldsSection />
       {/* Project-level, selection-independent — renders only under LOCAL_FIRST. */}
       <div style={{ padding: '0 14px' }}>
         <VersionHistorySection />
@@ -1197,6 +1260,14 @@ function MiscPanelContent({ nodeId, query = '' }: { nodeId: string | null; query
       defaultOpen: true,
       content: <ParticleSection nodeId={nodeId} />,
     });
+  } else if (kind === 'svg') {
+    items.push({
+      id: 'svg',
+      title: 'SVG Layer',
+      icon: 'shape',
+      defaultOpen: true,
+      content: <SvgSection nodeId={nodeId} />,
+    });
   } else if (kind === 'image' || kind === 'video') {
     items.push({
       id: 'media',
@@ -1215,6 +1286,9 @@ function MiscPanelContent({ nodeId, query = '' }: { nodeId: string | null; query
       content: (
         <>
           <PrecompControl nodeId={nodeId} />
+          {canRevertToSvg(nodeId) && (
+            <RevertSvgRow onRevert={() => revertSvgGroupToLayer(nodeId)} />
+          )}
           <div style={{ margin: '12px 0 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
               Children Count: {childrenCount}
@@ -1827,19 +1901,9 @@ function LottieContent(): JSX.Element {
     e.target.value = '';
     if (!file) return;
     try {
-      const { nodeIds, warnings } = await importLottieFile(file);
-      if (nodeIds.length === 0) {
-        notify({ level: 'warning', message: 'Lottie import: no layers could be created', durationMs: 3200 });
-      } else {
-        const suffix = warnings.length ? ` (${warnings.length} warning${warnings.length > 1 ? 's' : ''})` : '';
-        notify({
-          level: warnings.length ? 'warning' : 'success',
-          message: `Imported ${nodeIds.length} layer${nodeIds.length > 1 ? 's' : ''}${suffix}`,
-          durationMs: 3200,
-        });
-      }
-    } catch {
-      notify({ level: 'warning', message: 'Lottie import failed: file could not be parsed', durationMs: 3200 });
+      reportLottieImport(file.name, await importLottieFile(file));
+    } catch (err) {
+      reportLottieImportFailure(file.name, err);
     }
   };
 
@@ -1896,13 +1960,22 @@ function LottieContent(): JSX.Element {
 // ── Library Panel — ONE home for asset libraries ──────────────────
 // Motion GFX / Transitions / Sound FX / Lottie live as sections inside a single sidebar tab.
 
-type LibrarySection = 'mograph' | 'transitions' | 'sfx' | 'lottie';
+type LibrarySection = 'mograph' | 'transitions' | 'sfx' | 'lottie' | 'components' | 'shapes' | 'text';
 
 const LIBRARY_SECTIONS: ReadonlyArray<{ id: LibrarySection; label: string; icon: IconName }> = [
   { id: 'mograph',     label: 'Motion GFX',  icon: 'sparkles' },
   { id: 'transitions', label: 'Transitions', icon: 'scissors' },
   { id: 'sfx',         label: 'Sound FX',    icon: 'voice' },
   { id: 'lottie',      label: 'Lottie UI',   icon: 'video' },
+  // Components / Shapes / Text were written, exported, and then left with no way
+  // in: their only references were getAllPanelRenderers entries under panel ids
+  // that are never registered, and the Library — where they were supposedly
+  // folded — never included them. Saved Components in particular is a whole
+  // feature (it is what componentThumb renders thumbnails for) that no user
+  // could reach. Surfaced here rather than deleted.
+  { id: 'components',  label: 'Components',  icon: 'component' },
+  { id: 'shapes',      label: 'Shapes',      icon: 'shape' },
+  { id: 'text',        label: 'Text',        icon: 'type' },
 ];
 
 export function LibraryPanel(): JSX.Element {
@@ -1925,6 +1998,9 @@ export function LibraryPanel(): JSX.Element {
       {section === 'transitions' && <TransitionsContent />}
       {section === 'sfx' && <SoundFXContent />}
       {section === 'lottie' && <LottieContent />}
+      {section === 'components' && <ComponentsPanel />}
+      {section === 'shapes' && <ShapesPanel />}
+      {section === 'text' && <TextPanel />}
     </Panel>
   );
 }
@@ -1934,27 +2010,37 @@ export function LibraryPanel(): JSX.Element {
 
 // ── Render the registered panels in a region ──────────────────────
 
+/** The applied template's fields, or nothing when no template is applied. */
+function TemplateFieldsSection(): JSX.Element | null {
+  const active = useTemplateStore((s) => s.active);
+  if (!active) return null;
+  return (
+    <div style={{ padding: '0 14px' }}>
+      <ActiveTemplateFields />
+    </div>
+  );
+}
+
 export function getAllPanelRenderers(): Record<string, () => ReactNode> {
   return {
+    // `components`, `shapes` and `text` used to be listed here as standalone
+    // panels too. They were never registered in PANEL_DEFS and nothing opened
+    // them, while the SAME three components already render as sections inside
+    // LibraryPanel — so the entries were unreachable copies of live UI.
     ai: () => <AiChatPanel />,
-    templates: () => <TemplateFieldsPanel />,
     project:   () => <ProjectPanel />,
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,
-    components: () => <ComponentsPanel />,
-    shapes:     () => <ShapesPanel />,
-    text:       () => <TextPanel />,
     presets: () => <MotionPresetsPanel />,
     properties: () => <PropertiesPanel />,
     style: () => <StylePanel />,
     rig: () => <RigPanel />,
     motion: () => <MotionEditorPanel />,
-    flow: () => <FlowPanel />,
-    motiontools: () => <MotionToolsPanel />,
     effects: () => <EffectsPanel />,
     misc: () => <MiscPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
+    plugins: () => <PluginsDockPanel />,
     // ── Asset Library (one tab, sections inside) ─────────────────────────
     library: () => <LibraryPanel />,
   };

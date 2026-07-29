@@ -1,4 +1,4 @@
-import { resizeBounds, rotationDelta, isResizeHandle } from '../selection/transform';
+import { resizeBounds, resizeBoundsAboutPivot, rotationDelta, isResizeHandle } from '../selection/transform';
 import * as R from '../math/Rect';
 
 describe('resizeBounds', () => {
@@ -45,8 +45,56 @@ describe('rotationDelta', () => {
 });
 
 describe('isResizeHandle', () => {
-  it('separates resize handles from the rotate handle', () => {
-    expect(isResizeHandle('se')).toBe(true);
-    expect(isResizeHandle('rotate')).toBe(false);
+  it('is true for every handle now that the rotate grip is gone', () => {
+    for (const id of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const) {
+      expect(isResizeHandle(id)).toBe(true);
+    }
+  });
+});
+
+describe('resizeBoundsAboutPivot', () => {
+  const box = R.rect(0, 0, 100, 100);
+
+  it('holds the pivot fixed instead of the opposite corner', () => {
+    // Pivot at the centre: dragging SE to (100, 100) is a no-op at scale 1,
+    // and dragging it to (150, 150) doubles the box about the centre.
+    const pivot = { x: 50, y: 50 };
+    expect(resizeBoundsAboutPivot(box, 'se', { x: 100, y: 100 }, pivot)).toEqual(box);
+    expect(resizeBoundsAboutPivot(box, 'se', { x: 150, y: 150 }, pivot)).toEqual({
+      x: -50, y: -50, width: 200, height: 200,
+    });
+  });
+
+  it('agrees with the opposite-corner model when the pivot IS that corner', () => {
+    // The two models are the same function with a different fixed point, so
+    // they must coincide where the fixed point coincides.
+    const pivot = { x: 0, y: 0 }; // the NW corner, opposite an SE drag
+    expect(resizeBoundsAboutPivot(box, 'se', { x: 150, y: 120 }, pivot)).toEqual(
+      resizeBounds(box, 'se', { x: 150, y: 120 }),
+    );
+  });
+
+  it('leaves the untouched axis alone for an edge handle', () => {
+    const r = resizeBoundsAboutPivot(box, 'e', { x: 150, y: 999 }, { x: 50, y: 50 });
+    expect(r.height).toBe(100);
+    expect(r.y).toBe(0);
+  });
+
+  it('does not flip when dragged through the pivot', () => {
+    const r = resizeBoundsAboutPivot(box, 'se', { x: -500, y: -500 }, { x: 50, y: 50 }, 4);
+    expect(r.width).toBeGreaterThan(0);
+    expect(r.height).toBeGreaterThan(0);
+    expect(r.width).toBeCloseTo(4, 6);
+  });
+
+  it('holds at scale 1 when the dragged edge starts ON the pivot', () => {
+    // No ratio to take — the alternative is a division by zero.
+    const r = resizeBoundsAboutPivot(box, 'w', { x: 40, y: 0 }, { x: 0, y: 50 });
+    expect(r.width).toBe(100);
+  });
+
+  it('Shift locks the aspect ratio', () => {
+    const r = resizeBoundsAboutPivot(box, 'se', { x: 200, y: 110 }, { x: 50, y: 50 }, 4, true);
+    expect(r.width / r.height).toBeCloseTo(1, 6);
   });
 });

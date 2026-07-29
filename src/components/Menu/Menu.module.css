@@ -83,6 +83,20 @@
   color: transparent;
 }
 
+.checked {
+  background: color-mix(in srgb, var(--color-primary, #2988ff) 12%, transparent);
+}
+
+.itemIconActive {
+  color: var(--color-primary, #2988ff) !important;
+  font-weight: 700;
+}
+
+.itemLabelActive {
+  color: var(--color-primary, #2988ff);
+  font-weight: 600;
+}
+
 .itemLabel {
   flex: 1;
   min-width: 0;

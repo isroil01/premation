@@ -126,6 +126,13 @@ export interface PipelineDescriptor {
   depthTest?: boolean;
   /** Write depth as well as test it (defaults to `depthTest`). */
   depthWrite?: boolean;
+  /**
+   * MSAA sample count of the pass this pipeline draws into (defaults to 1).
+   *
+   * WebGPU validates this against the pass's attachments, so it belongs to the
+   * pipeline; WebGL2 ignores it entirely.
+   */
+  samples?: number;
 }
 
 export type BindGroupResource =
@@ -145,6 +152,18 @@ export interface RenderTargetDescriptor {
   height: number;
   format: TextureFormat;
   depth?: boolean;
+  /**
+   * MSAA sample count (1 = off). Backends may clamp to their device maximum, or
+   * ignore it entirely — a target is always readable as a single-sample texture,
+   * so callers never have to branch on whether multisampling actually happened.
+   *
+   * This exists because the 3D path draws each face as its own alpha-blended
+   * quad with SDF edge antialiasing. Two faces meeting along a shared edge each
+   * contribute ~50% coverage there, and the nearer one writes depth, so the
+   * farther one is rejected rather than filling in — leaving a visible seam
+   * along every join. Resolving coverage at sample level is what removes it.
+   */
+  samples?: number;
 }
 
 /** A color attachment for a render pass — either the swapchain or a render target. */

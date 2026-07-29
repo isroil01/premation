@@ -8,7 +8,7 @@
  * the next scene revision. Clearing (undefined) falls back to the layer kind's
  * default category color (KIND_COLOR / KIND_FILL in sceneDerive).
  *
- * Like Rename / Hide / Solo, this is a direct scene mutation + bumpScene() —
+ * Like Rename / Hide / Solo, this is a direct scene mutation + bumpScene —
  * intentionally not routed through the undo stack (same policy as those ops).
  */
 

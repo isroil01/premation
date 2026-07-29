@@ -24,7 +24,7 @@ import { MotionRendererBackend, type RendererBackendKind } from './MotionRendere
 export type BackendChoice = 'webgl2' | 'webgpu' | 'null' | 'auto';
 
 /** Resolve the best GPU backend available in this environment. */
-export function resolveGpuKind(): RendererBackendKind {
+function resolveGpuKind(): RendererBackendKind {
   if (typeof navigator !== 'undefined' && 'gpu' in navigator) return 'webgpu';
   if (typeof window !== 'undefined' && 'WebGL2RenderingContext' in window) return 'webgl2';
   return 'null';
@@ -37,10 +37,13 @@ export function resolveGpuKind(): RendererBackendKind {
  * Omit the argument (or pass `'auto'`) to let the factory pick the best
  * available GPU tier.
  */
-export function createRenderBackend(choice: BackendChoice = 'auto'): RenderBackend {
+export function createRenderBackend(
+  choice: BackendChoice = 'auto',
+  role: 'viewport' | 'auxiliary' = 'viewport',
+): RenderBackend {
   const kind: RendererBackendKind =
     choice === 'auto' ? resolveGpuKind() :
     choice === 'null'  ? 'null' :
     choice;
-  return new MotionRendererBackend(kind);
+  return new MotionRendererBackend(kind, role);
 }

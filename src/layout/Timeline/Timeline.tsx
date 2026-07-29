@@ -16,6 +16,7 @@
  */
 
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -28,6 +29,9 @@ import {
 } from 'react';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
+import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
+import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
+import { snapKeyframeGroup, type SnapTarget } from './keyframeSnap';
 import { ValueField } from '@components/ValueField';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
@@ -56,15 +60,56 @@ import {
 import { audioEngine } from '@core/audio/AudioEngine';
 import { waveformPath } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 
 const RULER_HEIGHT_DEFAULT = 26;
 const TRACK_HEIGHT_DEFAULT = 30;
 const TRACK_HEADER_WIDTH_DEFAULT = 460;
 
-/** A virtualized row is either a track summary row or a property sub-row. */
+/** A virtualized row is either a track summary row, a category accordion row, or a property sub-row. */
 type Row =
   | { type: 'track'; track: TimelineTrack; expanded: boolean; hasProps: boolean }
-  | { type: 'prop'; track: TimelineTrack; prop: TimelinePropertyTrack };
+  | { type: 'category'; track: TimelineTrack; categoryKey: string; label: string; icon: IconName; expanded: boolean; count: number }
+  | { type: 'prop'; track: TimelineTrack; prop: TimelinePropertyTrack; categoryKey: string };
+
+function getPropertyCategory(prop: TimelinePropertyTrack): { key: string; label: string; icon: IconName; order: number } {
+  const p = prop.prop.toLowerCase();
+  const label = (prop.label || '').toLowerCase();
+
+  if (
+    p.includes('anchor') ||
+    p.includes('position') ||
+    p === 'x' ||
+    p === 'y' ||
+    p === 'z' ||
+    p.includes('scale') ||
+    p.includes('rotation') ||
+    p.includes('orientation') ||
+    p.includes('opacity') ||
+    label.includes('anchor') ||
+    label.includes('position') ||
+    label.includes('scale') ||
+    label.includes('rotation') ||
+    label.includes('opacity')
+  ) {
+    return { key: 'transform', label: 'Transform', icon: 'sliders-h', order: 1 };
+  }
+
+  if (
+    p.includes('effect') ||
+    p.includes('blur') ||
+    p.includes('shadow') ||
+    p.includes('glow') ||
+    p.includes('filter') ||
+    label.includes('effect') ||
+    label.includes('blur') ||
+    label.includes('shadow')
+  ) {
+    return { key: 'effects', label: 'Effects', icon: 'sparkles', order: 2 };
+  }
+
+  return { key: 'styles', label: 'Contents & Styles', icon: 'shape', order: 3 };
+}
 
 export interface TimelineProps {
   model: TimelineModel;
@@ -126,9 +171,18 @@ export interface TimelineProps {
   className?: string;
   searchQuery?: string;
   globalShy?: boolean;
+  /**
+   * Playhead time in seconds, supplied SEPARATELY from `model` so playback
+   * (60 fps) does not rebuild the model and force the entire row tree to
+   * re-render. When set, the playhead visual, the per-property "at playhead"
+   * markers, the playhead-keyboard nudge, and the PropertyHeader time all
+   * read from this value; `model.currentTime` is then used only for
+   * non-realtime consumers (GraphEditor, BottomTimeline timecode).
+   */
+  playheadTime?: number;
 }
 
-export function Timeline({
+function Timeline({
   model,
   onScrub,
   onWorkAreaChange,
@@ -164,6 +218,7 @@ export function Timeline({
   searchQuery,
   globalShy,
   onDurationChange,
+  playheadTime,
 }: TimelineProps): JSX.Element {
   const rulerHeight = model.rulerHeight ?? RULER_HEIGHT_DEFAULT;
   const trackHeight = model.trackHeight ?? TRACK_HEIGHT_DEFAULT;
@@ -174,6 +229,12 @@ export function Timeline({
   const prefHeaderWidth = usePreferenceStore((s) => s.timelineHeaderWidth);
   const setPref = usePreferenceStore((s) => s.set);
   const headerWidth = model.trackHeaderWidth ?? prefHeaderWidth ?? TRACK_HEADER_WIDTH_DEFAULT;
+
+  // Playhead is the one value that changes 60×/s during playback. We accept
+  // it as a separate prop so the model can stay referentially stable and the
+  // row tree (memos below) doesn't recompute. Fall back to model.currentTime
+  // for callers that still pass the time inside the model.
+  const currentTime = playheadTime ?? model.currentTime;
 
   const lanesRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -224,6 +285,18 @@ export function Timeline({
     const lanes = lanesRef.current;
     if (!lanes) return;
     lanes.scrollTop += e.deltaY;
+  }, []);
+
+  // ── Category accordion collapse state ──
+  const [collapsedCategoryKeys, setCollapsedCategoryKeys] = useState<Set<string>>(new Set());
+  const toggleCategory = useCallback((trackId: string, categoryKey: string) => {
+    const key = `${trackId}:${categoryKey}`;
+    setCollapsedCategoryKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }, []);
 
   // ── Flatten tracks + expanded property sub-rows into a uniform row list ──
@@ -280,14 +353,47 @@ export function Timeline({
             }
           }
           
-          for (const prop of shownProps) {
-            out.push({ type: 'prop', track, prop });
+          if (shownProps.length > 0) {
+            // Group shownProps by category
+            const catMap = new Map<string, { key: string; label: string; icon: IconName; order: number; props: TimelinePropertyTrack[] }>();
+            for (const prop of shownProps) {
+              const cat = getPropertyCategory(prop);
+              if (!catMap.has(cat.key)) {
+                catMap.set(cat.key, { ...cat, props: [] });
+              }
+              catMap.get(cat.key)!.props.push(prop);
+            }
+
+            const sortedCats = Array.from(catMap.values()).sort((a, b) => a.order - b.order);
+
+            for (const cat of sortedCats) {
+              const catKey = `${track.id}:${cat.key}`;
+              const isCatExpanded = !collapsedCategoryKeys.has(catKey);
+              out.push({
+                type: 'category',
+                track,
+                categoryKey: cat.key,
+                label: cat.label,
+                icon: cat.icon,
+                expanded: isCatExpanded,
+                count: cat.props.length,
+              });
+
+              if (isCatExpanded) {
+                for (const prop of cat.props) {
+                  out.push({ type: 'prop', track, prop, categoryKey: cat.key });
+                }
+              }
+            }
           }
         }
       }
     }
     return out;
-  }, [model.tracks, expanded, revealSet, searchQuery, globalShy]);
+  }, [model.tracks, expanded, revealSet, searchQuery, globalShy, collapsedCategoryKeys]);
+
+  // Left margin offset so 0s indicator & playhead head stand clear of header border
+  const TIMELINE_LEFT_OFFSET = 8;
 
   // ── Derived geometry ───────────────────────────────────────────
   const totalSeconds = Math.max(model.duration, 1);
@@ -301,8 +407,9 @@ export function Timeline({
     }
     return max;
   }, [model.tracks, totalSeconds]);
-  const laneWidth = (contentSeconds + 1) * pps;
+  const laneWidth = TIMELINE_LEFT_OFFSET + (contentSeconds + 1) * pps;
   const totalLanesHeight = rows.length * trackHeight;
+  const effectiveLanesHeight = Math.max(totalLanesHeight, Math.max(0, size.height - rulerHeight));
 
   // ── Vertical virtualization (rows) ─────────────────────────────
   const visibleRowCount = Math.ceil(size.height / trackHeight) + 8;
@@ -334,19 +441,23 @@ export function Timeline({
     [pps, onZoom],
   );
 
-  // ── Playhead drag ──────────────────────────────────────────────
+  // ── Scrubbing / playhead drag ──────────────────────────────────
   const draggingRef = useRef(false);
   const onPlayheadDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!lanesRef.current) return;
     draggingRef.current = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const rect = lanesRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left + lanesRef.current.scrollLeft - TIMELINE_LEFT_OFFSET;
+    const time = clamp(x / pps, 0, totalSeconds);
+    onScrub?.(time);
     document.body.style.cursor = 'ew-resize';
     document.body.style.userSelect = 'none';
-  }, []);
+  }, [lanesRef, pps, totalSeconds, onScrub, TIMELINE_LEFT_OFFSET]);
   useEffect(() => {
     const onMove = (e: PointerEvent): void => {
       if (!draggingRef.current || !lanesRef.current) return;
       const rect = lanesRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left + scrollLeft;
+      const x = e.clientX - rect.left + scrollLeft - TIMELINE_LEFT_OFFSET;
       const time = clamp(x / pps, 0, totalSeconds);
       onScrub?.(time);
     };
@@ -362,7 +473,7 @@ export function Timeline({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [pps, scrollLeft, totalSeconds, onScrub]);
+  }, [pps, scrollLeft, totalSeconds, onScrub, TIMELINE_LEFT_OFFSET]);
 
   // ── Work-area band drag (edge handles resize in/out; body moves) ──
   const waDrag = useRef<null | { mode: 'in' | 'out' | 'move'; startX: number; s: number; e: number }>(null);
@@ -556,10 +667,10 @@ export function Timeline({
       let next: number | null = null;
       switch (e.key) {
         case 'ArrowLeft':
-          next = model.currentTime - (e.shiftKey ? 1 : frame);
+          next = currentTime - (e.shiftKey ? 1 : frame);
           break;
         case 'ArrowRight':
-          next = model.currentTime + (e.shiftKey ? 1 : frame);
+          next = currentTime + (e.shiftKey ? 1 : frame);
           break;
         case 'Home':
           next = 0;
@@ -573,7 +684,7 @@ export function Timeline({
       e.preventDefault();
       onScrub?.(clamp(next, 0, totalSeconds));
     },
-    [model.frameRate, model.currentTime, totalSeconds, onScrub],
+    [model.frameRate, currentTime, totalSeconds, onScrub],
   );
 
   // ── Track row reorder ──────────────────────────────────────────────────────
@@ -663,6 +774,9 @@ export function Timeline({
     setKfPreview(new Map());
   }, [selectedKfIds, kfTimeById]);
 
+  /** What the in-flight drag is snapped to — drives the indicator line. */
+  const [kfSnap, setKfSnap] = useState<SnapTarget | null>(null);
+
   useEffect(() => {
     const onMove = (e: PointerEvent): void => {
       const d = activeKf.current;
@@ -671,14 +785,28 @@ export function Timeline({
       if (!d.moved && Math.abs(dx) < 3) return;
       d.moved = true;
       const dtSec = dx / pps;
-      // Keyframes land on whole frames (hold Alt for free positioning) —
-      // without this, drags committed arbitrary sub-frame float times.
       const frameDur = 1 / (model.frameRate || 30);
-      const snap = (v: number): number =>
-        e.altKey ? v : Math.round(v / frameDur) * frameDur;
+
+      // Snap to the playhead, then to other keyframes, then to the frame grid.
+      // Alt frees the drag entirely. The dragged keys are excluded from the
+      // target list — a keyframe must not snap to itself.
+      const dragging = new Set(d.ids);
+      const others: number[] = [];
+      for (const [id, t] of kfTimeById) if (!dragging.has(id)) others.push(t);
+
+      const moved = [...d.times.values()].map((t) => t + dtSec);
+      const { delta, target } = snapKeyframeGroup(moved, {
+        pixelsPerSecond: pps,
+        frameDuration: frameDur,
+        playheadTime: model.currentTime,
+        keyframeTimes: others,
+        disabled: e.altKey,
+      });
+      setKfSnap(target);
+
       const newPreview = new Map<string, number>();
       for (const [id, origTime] of d.times) {
-        newPreview.set(id, Math.max(0, snap(origTime + dtSec)));
+        newPreview.set(id, Math.max(0, origTime + dtSec + delta));
       }
       setKfPreview(newPreview);
     };
@@ -686,6 +814,7 @@ export function Timeline({
       const d = activeKf.current;
       if (!d) return;
       activeKf.current = null;
+      setKfSnap(null);
       if (d.moved) {
         // Commit moves for all dragged keyframes
         for (const [id, origTime] of d.times) {
@@ -738,11 +867,11 @@ export function Timeline({
       if (!lanes) return null;
       const rect = lanes.getBoundingClientRect();
       return {
-        x: Math.max(0, clientX - rect.left + lanes.scrollLeft),
-        y: clamp(clientY - rect.top + lanes.scrollTop - rulerHeight, 0, totalLanesHeight),
+        x: Math.max(0, clientX - rect.left + lanes.scrollLeft - TIMELINE_LEFT_OFFSET),
+        y: clamp(clientY - rect.top + lanes.scrollTop - rulerHeight, 0, effectiveLanesHeight),
       };
     },
-    [rulerHeight, totalLanesHeight],
+    [rulerHeight, effectiveLanesHeight, TIMELINE_LEFT_OFFSET],
   );
 
   const onLanesPointerDown = useCallback(
@@ -839,8 +968,8 @@ export function Timeline({
 
   // ── Ruler ticks ────────────────────────────────────────────────
   const ticks = useMemo(
-    () => generateRulerTicks(totalSeconds, pps, model.frameRate, (model.startFrame ?? 0) / (model.frameRate || 30)),
-    [totalSeconds, pps, model.frameRate, model.startFrame],
+    () => generateRulerTicks(totalSeconds, pps, model.frameRate, (model.startFrame ?? 0) / (model.frameRate || 30), TIMELINE_LEFT_OFFSET),
+    [totalSeconds, pps, model.frameRate, model.startFrame, TIMELINE_LEFT_OFFSET],
   );
 
   // Layer number column (AE-style) — index within the track order.
@@ -849,7 +978,7 @@ export function Timeline({
     [model.tracks],
   );
 
-  const playheadX = model.currentTime * pps;
+  const playheadX = TIMELINE_LEFT_OFFSET + currentTime * pps;
 
   return (
     <div ref={containerRef} className={cn(styles.root, className)} onWheel={onWheel}>
@@ -861,7 +990,20 @@ export function Timeline({
         <div className={styles.ruler} style={{ height: rulerHeight }}>
           {/* Column heads for the switches and modes (AE layout). */}
           <div className={styles.colHeads} aria-hidden>
-            <span className={styles.colHeadLayer}>Layer Name</span>
+            <span className={styles.colHeadLayer} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>Layer Name</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
+                  window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
+                }}
+                title="Pop Out Timeline into Separate Window"
+                style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, display: 'inline-flex' }}
+              >
+                <Icon name="export" size={12} />
+              </button>
+            </span>
             <span className={styles.colHeadMode}>Mode</span>
             <span className={styles.colHeadMatte}>Track Matte</span>
             <span className={styles.colHeadParent}>Parent & Link</span>
@@ -883,7 +1025,7 @@ export function Timeline({
           className={styles.trackHeaderScroller}
           style={{ height: `calc(100% - ${rulerHeight}px)` }}
         >
-          <div style={{ height: totalLanesHeight, position: 'relative' }}>
+          <div style={{ height: effectiveLanesHeight, position: 'relative' }}>
             {visibleRows.map((row, i) => {
               const realIndex = startRow + i;
               const rowStyle: CSSProperties = {
@@ -922,13 +1064,34 @@ export function Timeline({
                   />
                 );
               }
+              if (row.type === 'category') {
+                const categoryStyle: CSSProperties = {
+                  ...rowStyle,
+                  paddingLeft: 32 + (row.track.depth ?? 0) * 16,
+                };
+                return (
+                  <TrackCategoryHeader
+                    key={`h_${row.track.id}_cat_${row.categoryKey}`}
+                    label={row.label}
+                    icon={row.icon}
+                    expanded={row.expanded}
+                    count={row.count}
+                    style={categoryStyle}
+                    onToggle={() => toggleCategory(row.track.id, row.categoryKey)}
+                  />
+                );
+              }
+              const propStyle: CSSProperties = {
+                ...rowStyle,
+                paddingLeft: 56 + (row.track.depth ?? 0) * 16,
+              };
               return (
                 <PropertyHeader
                   key={`h_${row.track.id}_${row.prop.prop}`}
                   label={row.prop.label}
-                  style={rowStyle}
+                  style={propStyle}
                   keyframes={row.prop.keyframes}
-                  currentTime={model.currentTime}
+                  currentTime={currentTime}
                   animated={row.prop.animated !== false}
                   onToggleKeyframe={
                     onPropertyKeyframeToggle
@@ -983,20 +1146,18 @@ export function Timeline({
           style={{
             width: laneWidth,
             minWidth: '100%',
-            height: rulerHeight + totalLanesHeight,
+            height: rulerHeight + effectiveLanesHeight,
             position: 'relative',
           }}
         >
-          <Ruler ticks={ticks} height={rulerHeight} width={laneWidth} />
+          <Ruler ticks={ticks} height={rulerHeight} width={laneWidth} onPointerDown={onPlayheadDown} />
 
-          {/* RAM-preview cache bar — REAL this time: each green span is a run
-              of frames the viewport frame-cache actually holds pixels for
-              (blitted on playback instead of re-rendered). */}
+          {/* RAM-preview cache bar */}
           {model.cachedRanges?.map((r, i) => (
             <div
               key={`cache_${i}`}
               className={styles.cacheBar}
-              style={{ left: r.start * pps, width: Math.max(1, (r.end - r.start) * pps), top: rulerHeight - 3 }}
+              style={{ left: TIMELINE_LEFT_OFFSET + r.start * pps, width: Math.max(1, (r.end - r.start) * pps), top: rulerHeight - 3 }}
               aria-hidden
             />
           ))}
@@ -1009,7 +1170,7 @@ export function Timeline({
               style={{
                 top: 0,
                 height: rulerHeight,
-                left: model.workArea.start * pps,
+                left: TIMELINE_LEFT_OFFSET + model.workArea.start * pps,
                 width: Math.max(2, (model.workArea.end - model.workArea.start) * pps),
               }}
               title="Work area — drag to move, drag edges to trim"
@@ -1038,8 +1199,8 @@ export function Timeline({
               style={{
                 position: 'absolute',
                 top: 0,
-                height: rulerHeight + totalLanesHeight,
-                left: model.duration * pps,
+                height: rulerHeight + effectiveLanesHeight,
+                left: TIMELINE_LEFT_OFFSET + model.duration * pps,
                 width: 8,
                 transform: 'translateX(-4px)',
                 cursor: 'ew-resize',
@@ -1077,13 +1238,32 @@ export function Timeline({
 
           <div
             className={styles.lanesInner}
-            style={{ position: 'absolute', top: rulerHeight, left: 0, right: 0, height: totalLanesHeight }}
+            style={{ position: 'absolute', top: rulerHeight, left: 0, right: 0, height: effectiveLanesHeight }}
             onPointerDown={onLanesPointerDown}
           >
+            {/* Snap indicator — a vertical line at whatever the in-flight drag
+                latched onto. Without it, snapping is a mystery force: the
+                keyframe stops where you did not put it and nothing says why. */}
+            {kfSnap && (
+              <div
+                className={cn(
+                  styles.kfSnapLine,
+                  kfSnap.kind === 'playhead' && styles.kfSnapPlayhead,
+                  kfSnap.kind === 'keyframe' && styles.kfSnapKeyframe,
+                )}
+                style={{ transform: `translateX(${8 + kfSnap.time * pps}px)` }}
+                aria-hidden
+              />
+            )}
+
             {/* Row backgrounds */}
             {visibleRows.map((row, i) => {
               const realIndex = startRow + i;
-              const key = row.type === 'track' ? `bg_${row.track.id}` : `bg_${row.track.id}_${row.prop.prop}`;
+              const key = row.type === 'track'
+                ? `bg_${row.track.id}`
+                : row.type === 'category'
+                ? `bg_${row.track.id}_cat_${row.categoryKey}`
+                : `bg_${row.track.id}_${row.prop.prop}`;
               return (
                 <div
                   key={key}
@@ -1117,6 +1297,13 @@ export function Timeline({
                   />
                 );
               }
+              if (row.type === 'category') {
+                return (
+                  <LaneRow key={`c_${row.track.id}_cat_${row.categoryKey}`} top={top} trackHeight={trackHeight}>
+                    <div />
+                  </LaneRow>
+                );
+              }
               return (
                 <LaneRow key={`c_${row.track.id}_${row.prop.prop}`} top={top} trackHeight={trackHeight}>
                   <Keyframes
@@ -1137,9 +1324,9 @@ export function Timeline({
               <div
                 className={styles.pastEndShade}
                 style={{
-                  left: totalSeconds * pps,
+                  left: TIMELINE_LEFT_OFFSET + totalSeconds * pps,
                   width: (contentSeconds + 1 - totalSeconds) * pps,
-                  height: totalLanesHeight,
+                  height: effectiveLanesHeight,
                 }}
                 aria-hidden
               />
@@ -1150,9 +1337,9 @@ export function Timeline({
               <div
                 className={styles.workAreaTint}
                 style={{
-                  left: model.workArea.start * pps,
+                  left: TIMELINE_LEFT_OFFSET + model.workArea.start * pps,
                   width: Math.max(2, (model.workArea.end - model.workArea.start) * pps),
-                  height: totalLanesHeight,
+                  height: effectiveLanesHeight,
                 }}
                 aria-hidden
               />
@@ -1163,7 +1350,7 @@ export function Timeline({
               <div
                 key={m.id}
                 className={styles.marker}
-                style={{ transform: `translateX(${m.time * pps}px)` }}
+                style={{ transform: `translateX(${TIMELINE_LEFT_OFFSET + m.time * pps}px)` }}
                 aria-hidden
               >
                 <span className={styles.markerFlag} title={m.label}>
@@ -1189,7 +1376,7 @@ export function Timeline({
             {/* Playhead */}
             <div
               className={styles.playhead}
-              style={{ transform: `translateX(${playheadX}px)`, height: totalLanesHeight }}
+              style={{ transform: `translateX(${playheadX}px)`, height: effectiveLanesHeight }}
               onPointerDown={onPlayheadDown}
               onKeyDown={onPlayheadKey}
               tabIndex={0}
@@ -1198,8 +1385,8 @@ export function Timeline({
               aria-orientation="horizontal"
               aria-valuemin={0}
               aria-valuemax={model.duration}
-              aria-valuenow={model.currentTime}
-              aria-valuetext={`${model.currentTime.toFixed(2)} seconds`}
+              aria-valuenow={currentTime}
+              aria-valuetext={`${currentTime.toFixed(2)} seconds`}
             >
               <div className={styles.playheadHead} />
             </div>
@@ -1224,6 +1411,20 @@ export function Timeline({
     </div>
   );
 }
+
+/**
+ * Memoize so that the row tree (and its many sub-memos) does not re-run
+ * whenever the host re-renders for an unrelated reason — the entire point
+ * of the `playheadTime` prop is that the model can stay referentially
+ * stable across playback frames, and a plain `React.memo` on this entry
+ * point makes that promise real.
+ *
+ * The file is consumed as `import { Timeline } from './Timeline'`; this
+ * `React.memo` wrap is what that name resolves to, so consumers get the
+ * skipped-render behavior for free.
+ */
+const MemoizedTimeline = memo(Timeline);
+export { MemoizedTimeline as Timeline };
 
 /** Vertical overview of all rows with a draggable viewport window. */
 function Minimap({
@@ -1295,13 +1496,15 @@ function Ruler({
   ticks,
   height,
   width,
+  onPointerDown,
 }: {
   ticks: { x: number; major: boolean; label: string }[];
   height: number;
   width: number;
+  onPointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
 }): JSX.Element {
   return (
-    <div className={styles.ruler} style={{ height, width }}>
+    <div className={styles.ruler} style={{ height, width }} onPointerDown={onPointerDown}>
       {ticks.map((t, i) => (
         <div
           key={i}
@@ -1315,20 +1518,12 @@ function Ruler({
   );
 }
 
-const AE_LABEL_COLORS = [
-  { name: 'Red', hex: '#f15b5b' },
-  { name: 'Yellow', hex: '#f4cc44' },
-  { name: 'Green', hex: '#5cb85c' },
-  { name: 'Blue', hex: '#428bca' },
-  { name: 'Pink', hex: '#e05d9f' },
-  { name: 'Orange', hex: '#f0ad4e' },
-  { name: 'Purple', hex: '#9b59b6' },
-  { name: 'Cyan', hex: '#5bc0de' },
-  { name: 'Grey', hex: '#95a5a6' },
-  { name: 'Peach', hex: '#ffbe76' },
-  { name: 'Seafoam', hex: '#2bcbba' },
-  { name: 'Lavender', hex: '#a55eea' },
-];
+// Label colours come from the ONE palette in `core/scene/labelColor`. This file
+// used to carry its own 12 hexes, so the same layer showed a different red in the
+// timeline than in the scene tree and the canvas menu — three palettes for one
+// property. (A fourth lived in the since-removed Motion Tools panel, which also
+// wrote `node.color` directly instead of through `setNodeLabelColor`, so its
+// choice never even saved.)
 
 function TrackHeader({
   track,
@@ -1502,16 +1697,16 @@ function TrackHeader({
                 />
               }
               items={[
-                ...AE_LABEL_COLORS.map((color) => ({
+                ...LABEL_COLORS.map((color) => ({
                   type: 'item' as const,
-                  id: `color-${color.name}`,
+                  id: `color-${color.id}`,
                   label: (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ width: '12px', height: '12px', borderRadius: '2px', backgroundColor: color.hex }} />
-                      <span>{color.name}</span>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '2px', backgroundColor: color.color }} />
+                      <span>{color.label}</span>
                     </div>
                   ),
-                  onSelect: () => onTrackColorChange?.(track.id, color.hex),
+                  onSelect: () => onTrackColorChange?.(track.id, color.color),
                 })),
                 { type: 'separator' as const },
                 {
@@ -1791,25 +1986,11 @@ export function PropertyHeader({
    * animation ON but never OFF: removing a property's animation meant crossing
    * to the inspector to find the same control.
    */
+  // The SHARED stopwatch — the same component the inspector and the effect
+  // stack render, so the control that turns animation on cannot look like a
+  // checkbox in one panel and a stopwatch in another.
   const stopwatch = onStopwatch ? (
-    <button
-      type="button"
-      className={styles.propStopwatch}
-      data-on={animated || undefined}
-      aria-pressed={animated}
-      aria-label={`${animated ? 'Disable' : 'Enable'} ${label} animation`}
-      title={
-        animated
-          ? `Disable ${label} animation (removes its keyframes)`
-          : `Enable ${label} animation (create first keyframe at playhead)`
-      }
-      onClick={(e) => {
-        e.stopPropagation();
-        onStopwatch();
-      }}
-    >
-      <Icon name="stopwatch" size={11} />
-    </button>
+    <StopwatchButton animated={animated} label={label} onToggle={onStopwatch} />
   ) : null;
 
   if (!animated) {
@@ -1829,37 +2010,15 @@ export function PropertyHeader({
       <span className={styles.propName} title={label}>{label}</span>
       {fields}
       <div className={styles.propNav}>
-        <button
-          type="button"
-          className={styles.propNavBtn}
-          disabled={!prev}
-          aria-label={`Previous ${label} keyframe`}
-          title="Previous keyframe"
-          onClick={(e) => { e.stopPropagation(); if (prev) onSeek?.(prev.time); }}
-        >
-          <Icon name="chevron-left" size={11} />
-        </button>
-        <button
-          type="button"
-          className={styles.propNavBtn}
-          data-on={at ? true : undefined}
-          aria-pressed={!!at}
-          aria-label={at ? `Remove ${label} keyframe at playhead` : `Add ${label} keyframe at playhead`}
-          title={at ? 'Remove keyframe at playhead' : 'Add keyframe at playhead'}
-          onClick={(e) => { e.stopPropagation(); onToggleKeyframe?.(); }}
-        >
-          <Icon name="keyframe" size={11} />
-        </button>
-        <button
-          type="button"
-          className={styles.propNavBtn}
-          disabled={!next}
-          aria-label={`Next ${label} keyframe`}
-          title="Next keyframe"
-          onClick={(e) => { e.stopPropagation(); if (next) onSeek?.(next.time); }}
-        >
-          <Icon name="chevron-right" size={11} />
-        </button>
+        <KeyframeNavigator
+          label={label}
+          hasPrev={!!prev}
+          hasNext={!!next}
+          atKeyframe={!!at}
+          onPrev={() => prev && onSeek?.(prev.time)}
+          onNext={() => next && onSeek?.(next.time)}
+          onToggleKeyframe={() => onToggleKeyframe?.()}
+        />
       </div>
     </div>
   );
@@ -1901,7 +2060,7 @@ function TrackContent({
             key={clip.id}
             className={styles.clip}
             style={{
-              transform: `translateX(${view.start * pps}px)`,
+              transform: `translateX(${8 + view.start * pps}px)`,
               width,
               height,
               // Category color as a subtle fill; the solid hue forms the border.
@@ -1957,7 +2116,17 @@ function TrackContent({
         );
       })}
 
-
+      {/* Layer markers — anchored to this row, on the comp axis (AE draws them
+          on the layer bar, and they move with a trimmed layer because the
+          engine stores them layer-relative). */}
+      {track.markers?.map((m) => (
+        <div
+          key={m.id}
+          className={styles.layerMarker}
+          style={{ left: `${8 + m.time * pps}px`, background: m.color ?? undefined }}
+          title={m.label}
+        />
+      ))}
     </LaneRow>
   );
 }
@@ -2004,6 +2173,11 @@ function Keyframes({
         const dragging = kfPreview.has(kf.id);
         const selected = selectedKfIds.has(kf.id);
         const time = dragging ? kfPreview.get(kf.id)! : kf.time;
+        // Roving keeps its own full-circle glyph: it is a statement about TIME
+        // (this key is auto-positioned for constant speed), not about the
+        // interpolation curve, so it must stay distinguishable from auto-bezier.
+        const shapes = keyframeShapes(kf.easeIn, kf.easeOut, { isFirst: kf.isFirst, isLast: kf.isLast });
+        const paths = keyframePaths(shapes.left, shapes.right);
         return (
           <div
             key={kf.id}
@@ -2012,19 +2186,54 @@ function Keyframes({
               dragging && styles.keyframeDragging,
               selected && styles.keyframeSelected,
               kf.roving && styles.keyframeRoving,
-              kf.isHold && styles.keyframeHold
             )}
-            style={{ left: `${time * pps}px` }}
+            style={{ left: `${8 + time * pps}px` }}
             onPointerDown={(e) => onKeyframeDown(kf, e)}
             onContextMenu={(e) => {
               e.preventDefault();
               onKeyframeContextMenu?.(kf.id, e.clientX, e.clientY);
             }}
-            title={`${time.toFixed(2)}s — drag to move, Shift+click to multi-select, right-click to delete`}
-          />
+            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options`}
+          >
+            {!kf.roving && (
+              <svg className={styles.keyframeGlyph} viewBox="0 0 12 12" aria-hidden focusable="false">
+                <path d={paths.left} />
+                <path d={paths.right} />
+              </svg>
+            )}
+          </div>
         );
       })}
     </>
+  );
+}
+
+function TrackCategoryHeader({
+  label,
+  icon,
+  expanded,
+  count,
+  style,
+  onToggle,
+}: {
+  label: string;
+  icon: IconName;
+  expanded: boolean;
+  count: number;
+  style: CSSProperties;
+  onToggle: () => void;
+}): JSX.Element {
+  return (
+    <div className={styles.categoryHeader} style={style} onClick={onToggle}>
+      <span className={styles.disclosure}>
+        <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={10} />
+      </span>
+      <span className={styles.categoryIcon}>
+        <Icon name={icon} size={11} />
+      </span>
+      <span className={styles.categoryName}>{label}</span>
+      <span className={styles.categoryBadge}>{count}</span>
+    </div>
   );
 }
 
@@ -2032,7 +2241,7 @@ function Keyframes({
 
 
 
-function generateRulerTicks(durationSec: number, pps: number, fps: number, startSec = 0): { x: number; major: boolean; label: string }[] {
+function generateRulerTicks(durationSec: number, pps: number, fps: number, startSec = 0, offset = 0): { x: number; major: boolean; label: string }[] {
   const targetPxBetweenMajor = 100;
   const candidateSec = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600];
   let majorSec = 1;
@@ -2044,10 +2253,10 @@ function generateRulerTicks(durationSec: number, pps: number, fps: number, start
   for (let t = 0; t <= durationSec + 1e-6; t += minorSec) {
     const snapped = Math.round(t / minorSec) * minorSec;
     const isMajor = Math.abs((snapped / majorSec) - Math.round(snapped / majorSec)) < 1e-6;
-    // The tick's POSITION is 0-based (pixel layout is the real time domain); its
+    // The tick's POSITION is 0-based plus left margin offset (pixel layout is the real time domain); its
     // LABEL adds the comp's start offset so the ruler reads the same timecode
     // the playhead readout does.
-    ticks.push({ x: snapped * pps, major: isMajor, label: formatTime(snapped + startSec, fps, majorSec) });
+    ticks.push({ x: offset + snapped * pps, major: isMajor, label: formatTime(snapped + startSec, fps, majorSec) });
   }
   return ticks;
 }

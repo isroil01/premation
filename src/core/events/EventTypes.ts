@@ -60,6 +60,10 @@ export const APP_EVENTS = [
   // Engine lifecycle (future)
   'EngineReady',
   'EngineError',
+
+  // Monitor detection
+  'MonitorDetected',
+  'MonitorRemoved',
 ] as const;
 
 export type AppEventName = (typeof APP_EVENTS)[number];
@@ -112,6 +116,9 @@ export interface AppEventPayloads {
   /** Emitted by the U / UU shortcut; Timeline subscribes to expand/filter tracks. */
   RevealAnimatedProps: { nodeIds: string[]; mode: 'animated' | 'modified' };
 
-  EngineReady: { engine: string };
-  EngineError: { engine: string; error: Error };
+  EngineReady: { engine: string; role?: 'viewport' | 'auxiliary' };
+  EngineError: { engine: string; error: Error; role?: 'viewport' | 'auxiliary' };
+
+  MonitorDetected: { count: number; displays: unknown[] };
+  MonitorRemoved: { count: number; displays: unknown[] };
 }

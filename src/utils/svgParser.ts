@@ -1,4 +1,5 @@
 import type { BezierPoint } from '@motion/workspace';
+import { scanSvgAnimations, buildShapeAnimation, type SvgShapeAnimation, type SvgAnimationOptions } from './svgAnimation';
 
 export interface ParsedShape {
   name: string;
@@ -15,6 +16,11 @@ export interface ParsedShape {
   centerY: number;
   textContent?: string;
   fontSize?: number;
+  /**
+   * Keyframes translated from the element's SMIL animation, if any. Present
+   * only when the SVG actually animates — see `svgAnimation.ts`.
+   */
+  animation?: SvgShapeAnimation;
 }
 
 // ---------------------------------------------------------------------------
@@ -22,11 +28,11 @@ export interface ParsedShape {
 //   x' = a*x + c*y + e
 //   y' = b*x + d*y + f
 // ---------------------------------------------------------------------------
-type Mat = readonly [number, number, number, number, number, number];
+export type Mat = readonly [number, number, number, number, number, number];
 const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
 
 /** Compose two matrices: result applies `n` first, then `m` (m * n). */
-function matMul(m: Mat, n: Mat): Mat {
+export function matMul(m: Mat, n: Mat): Mat {
   return [
     m[0] * n[0] + m[2] * n[1],
     m[1] * n[0] + m[3] * n[1],
@@ -37,14 +43,25 @@ function matMul(m: Mat, n: Mat): Mat {
   ];
 }
 
-function applyMat(m: Mat, x: number, y: number): { x: number; y: number } {
+export function applyMat(m: Mat, x: number, y: number): { x: number; y: number } {
   return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
+
+/** Inverse of a 2x3 affine matrix, or null when it is degenerate. */
+export function matInvert(m: Mat): Mat | null {
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const a = m[3] / det;
+  const b = -m[1] / det;
+  const c = -m[2] / det;
+  const d = m[0] / det;
+  return [a, b, c, d, -(a * m[4] + c * m[5]), -(b * m[4] + d * m[5])];
 }
 
 const DEG = Math.PI / 180;
 
 /** Parse an SVG `transform` attribute into a single composed matrix. */
-function parseTransform(str: string | null): Mat {
+export function parseTransform(str: string | null): Mat {
   if (!str) return IDENTITY;
   let result: Mat = IDENTITY;
   const re = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/g;
@@ -555,6 +572,10 @@ interface RawShape {
   style: StyleCtx;
   textContent?: string;
   fontSize?: number;
+  /** This element and its ancestors (root last) — SMIL on a <g> affects it too. */
+  chain: Element[];
+  /** The fully composed static matrix baked into `points`. */
+  matrix: Mat;
 }
 
 /** Extract user-space geometry for a single shape element (null if none). */
@@ -645,13 +666,120 @@ function transformPoints(points: BezierPoint[], m: Mat): BezierPoint[] {
 const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'tspan']);
 const SKIP_TAGS = new Set(['defs', 'clippath', 'mask', 'symbol', 'lineargradient', 'radialgradient', 'filter', 'metadata', 'title', 'desc', 'style', 'marker', 'pattern']);
 
+/** How deep `<use>` may chain before we call it a reference cycle. */
+const MAX_USE_DEPTH = 12;
+
+/**
+ * The element a `<use>` points at, or null.
+ *
+ * `href` is the SVG 2 spelling and `xlink:href` the SVG 1.1 one — exporters
+ * still emit both, and `getAttribute('xlink:href')` works without namespace
+ * awareness because the attribute's qualified name is literally that string.
+ */
+function useTarget(el: Element): Element | null {
+  const raw = el.getAttribute('href')
+    ?? el.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+    ?? el.getAttribute('xlink:href');
+  if (!raw) return null;
+  const id = raw.trim().startsWith('#') ? raw.trim().slice(1) : null;
+  if (!id) return null; // external file reference — not resolvable from the markup
+  const doc = el.ownerDocument;
+  // Not `getElementById`: ids inside <defs> resolve fine, but a document parsed
+  // as image/svg+xml has no DTD, so nothing is registered as an ID type in some
+  // engines. A scoped attribute query is exact and always works.
+  const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(id)
+    : id.replace(/["\\]/g, '\\$&');
+  try {
+    return doc.querySelector(`[id="${escaped}"]`);
+  } catch {
+    return null; // unquotable id — treat as unresolvable rather than throwing mid-parse
+  }
+}
+
+/**
+ * The viewport transform a nested `<svg>` (or a `<symbol>` reached through
+ * `<use>`) establishes: translate to its x/y, then map its viewBox into its
+ * width/height box the same way the root does.
+ *
+ * Without this, a nested `<svg>` was traversed as if it were a plain `<g>` — its
+ * children landed in the OUTER coordinate system at their raw viewBox numbers,
+ * which is exactly the "parts scattered to the wrong places" failure on files
+ * that compose several icons into one artboard.
+ */
+function nestedViewportMatrix(el: Element, fallbackW?: number, fallbackH?: number): Mat {
+  const x = Number.parseFloat(el.getAttribute('x') ?? '0') || 0;
+  const y = Number.parseFloat(el.getAttribute('y') ?? '0') || 0;
+  const w = absoluteLength(el.getAttribute('width')) ?? fallbackW;
+  const h = absoluteLength(el.getAttribute('height')) ?? fallbackH;
+  const translate: Mat = [1, 0, 0, 1, x, y];
+  const vb = parseViewBox(el.getAttribute('viewBox'));
+  if (!vb || w === undefined || h === undefined || w <= 0 || h <= 0) return translate;
+  const [minX, minY, vbW, vbH] = vb;
+  if (vbW <= 0 || vbH <= 0) return translate;
+  const s = Math.min(w / vbW, h / vbH); // preserveAspectRatio xMidYMid meet
+  const tx = -minX * s + (w - vbW * s) / 2;
+  const ty = -minY * s + (h - vbH * s) / 2;
+  return matMul(translate, [s, 0, 0, s, tx, ty]);
+}
+
 /** Recursively collect shapes with accumulated transform + inherited style. */
-function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[]): void {
+function traverse(
+  el: Element,
+  matrix: Mat,
+  style: StyleCtx,
+  out: RawShape[],
+  ancestors: Element[] = [],
+  useDepth = 0,
+): void {
   const tag = el.tagName.toLowerCase().replace(/^svg:/, '');
   if (SKIP_TAGS.has(tag)) return;
 
   const localMatrix = matMul(matrix, parseTransform(el.getAttribute('transform')));
   const localStyle = resolveStyle(el, style);
+  const chain = [el, ...ancestors];
+
+  // <use>: instantiate the referenced element here. Icon sets, sprite sheets and
+  // most "one artboard, many copies" exports are built entirely out of these, so
+  // dropping them silently meant whole parts of the file simply never appeared.
+  if (tag === 'use') {
+    if (useDepth >= MAX_USE_DEPTH) return;
+    const target = useTarget(el);
+    if (!target) return;
+    // A <use> may not reference itself or an ancestor — that is an infinite
+    // expansion, and a hostile or merely broken file should not hang the import.
+    if (chain.includes(target)) return;
+    const ux = Number.parseFloat(el.getAttribute('x') ?? '0') || 0;
+    const uy = Number.parseFloat(el.getAttribute('y') ?? '0') || 0;
+    const placed = ux !== 0 || uy !== 0 ? matMul(localMatrix, [1, 0, 0, 1, ux, uy]) : localMatrix;
+    const targetTag = target.tagName.toLowerCase().replace(/^svg:/, '');
+    if (targetTag === 'symbol' || targetTag === 'svg') {
+      // <symbol>/<svg> targets take their viewport from the <use>'s own
+      // width/height when they don't declare one (SVG 1.1 §5.6).
+      const vp = nestedViewportMatrix(
+        target,
+        absoluteLength(el.getAttribute('width')),
+        absoluteLength(el.getAttribute('height')),
+      );
+      const inner = matMul(placed, vp);
+      for (let i = 0; i < target.children.length; i++) {
+        traverse(target.children[i]!, inner, localStyle, out, chain, useDepth + 1);
+      }
+    } else {
+      traverse(target, placed, localStyle, out, chain, useDepth + 1);
+    }
+    return;
+  }
+
+  // A nested <svg> establishes a new viewport; the ROOT one is handled by
+  // `rootMatrixFromSvg` before traversal, so only descendants apply it here.
+  if (tag === 'svg' && ancestors.length > 0) {
+    const inner = matMul(localMatrix, nestedViewportMatrix(el));
+    for (let i = 0; i < el.children.length; i++) {
+      traverse(el.children[i]!, inner, localStyle, out, chain, useDepth);
+    }
+    return;
+  }
 
   if (SHAPE_TAGS.has(tag)) {
     const geom = elementGeometry(el);
@@ -663,32 +791,55 @@ function traverse(el: Element, matrix: Mat, style: StyleCtx, out: RawShape[]): v
         style: localStyle,
         textContent: geom.textContent,
         fontSize: geom.fontSize,
+        chain,
+        matrix: localMatrix,
       });
     }
     return;
   }
 
-  // Containers (svg, g, a, switch, ...) — recurse into children.
+  // Containers (svg, g, a, switch,...) — recurse into children.
   for (let i = 0; i < el.children.length; i++) {
-    traverse(el.children[i]!, localMatrix, localStyle, out);
+    traverse(el.children[i]!, localMatrix, localStyle, out, chain, useDepth);
   }
+}
+
+/**
+ * An SVG length attribute in user units, or undefined when it isn't one.
+ *
+ * `width="100%"` used to parse as `100`, which invented a 100×100 pixel box for
+ * a file that declares none — the whole artwork then imported at an arbitrary
+ * fraction of its viewBox scale. A percentage (or any relative unit) resolves
+ * against a containing block the importer does not have, so the honest answer is
+ * "no pixel box", which falls back to the viewBox's own units.
+ */
+function absoluteLength(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const s = raw.trim();
+  const m = /^(-?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(px|pt|pc|mm|cm|in|q)?$/i.exec(s);
+  if (!m) return undefined; // %, em, rem, vw, … — not resolvable here
+  const n = Number.parseFloat(m[1]!);
+  if (!Number.isFinite(n)) return undefined;
+  // CSS absolute units, all defined against 96dpi.
+  const perUnit: Record<string, number> = { px: 1, pt: 96 / 72, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96, q: 96 / 101.6 };
+  return n * (perUnit[(m[2] ?? 'px').toLowerCase()] ?? 1);
+}
+
+/** `viewBox` as [minX, minY, width, height], or null. */
+function parseViewBox(raw: string | null): [number, number, number, number] | null {
+  if (!raw) return null;
+  const parts = (raw.match(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) || []).map(Number);
+  return parts.length === 4 ? (parts as [number, number, number, number]) : null;
 }
 
 /** Build the root matrix that maps viewBox units into the SVG's pixel box. */
 function rootMatrixFromSvg(svg: Element): Mat {
   const vbAttr = svg.getAttribute('viewBox');
-  const wAttr = svg.getAttribute('width');
-  const hAttr = svg.getAttribute('height');
-  const parseLen = (s: string | null): number => {
-    if (!s) return NaN;
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : NaN;
-  };
-  const width = parseLen(wAttr);
-  const height = parseLen(hAttr);
+  const width = absoluteLength(svg.getAttribute('width')) ?? NaN;
+  const height = absoluteLength(svg.getAttribute('height')) ?? NaN;
 
   if (vbAttr) {
-    const parts = (vbAttr.match(/-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) || []).map(Number);
+    const parts = parseViewBox(vbAttr) ?? [];
     if (parts.length === 4) {
       const [minX, minY, vbW, vbH] = parts as [number, number, number, number];
       if (vbW > 0 && vbH > 0 && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
@@ -706,7 +857,7 @@ function rootMatrixFromSvg(svg: Element): Mat {
 }
 
 /** Parses XML string of SVG and returns list of parsed shapes with centered bounding boxes. */
-export function parseSvgToShapes(svgContent: string): ParsedShape[] {
+export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions): ParsedShape[] {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgContent, 'image/svg+xml');
   const svg = doc.documentElement;
@@ -741,6 +892,11 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
   // The <svg> element itself may carry a transform; start traversal from it.
   traverse(svg, rootMatrix, rootStyle, raw);
 
+  // Animation, read once for the whole document and attached per shape.
+  const scan = scanSvgAnimations(doc, opts);
+
+  let keyframeBudget = MAX_IMPORT_KEYFRAMES;
+
   const shapes: ParsedShape[] = [];
   for (const r of raw) {
     const points = r.points;
@@ -774,6 +930,14 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
     const strokeColor = strokeRaw && strokeRaw !== 'none' ? strokeRaw : undefined;
     const strokeWidth = r.style.strokeWidth != null && Number.isFinite(r.style.strokeWidth) ? r.style.strokeWidth : undefined;
 
+    // Budget is spent across the whole file, not per shape: one pathological
+    // artwork must not be able to generate work the app cannot absorb. Past the
+    // ceiling the remaining shapes still import — they just import static.
+    const animation = scan.anims.length > 0 && keyframeBudget > 0
+      ? buildShapeAnimation(r.chain, scan, r.matrix, { x: centerX, y: centerY }) ?? undefined
+      : undefined;
+    if (animation) keyframeBudget -= countKeyframes(animation);
+
     shapes.push({
       name: r.name,
       points: centeredPoints,
@@ -787,6 +951,7 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
       centerY,
       textContent: r.textContent,
       fontSize: r.fontSize,
+      ...(animation ? { animation } : {}),
     });
   }
 
@@ -794,12 +959,62 @@ export function parseSvgToShapes(svgContent: string): ParsedShape[] {
 }
 
 /**
- * True when an SVG can be parsed into vector shapes & text elements.
+ * Total keyframes one imported file may generate.
+ *
+ * A backstop, not a working limit: simplification keeps a real animated icon in
+ * the tens, so a file that reaches this is pathological (hundreds of separately
+ * animated parts). It exists because the failure mode without it is not a slow
+ * import, it is a frozen application — every keyframe is an insert into a
+ * sorted track and a change notification, and both are paid again by history
+ * and by every frame that samples the result.
+ */
+export const MAX_IMPORT_KEYFRAMES = 20000;
+
+function countKeyframes(a: SvgShapeAnimation): number {
+  return (a.x?.length ?? 0) + (a.y?.length ?? 0) + (a.rotation?.length ?? 0)
+    + (a.scaleX?.length ?? 0) + (a.scaleY?.length ?? 0) + (a.opacity?.length ?? 0);
+}
+
+/**
+ * Most vector shapes an SVG may explode into before it is rasterized instead.
+ *
+ * Every parsed shape becomes its own scene layer, and the per-frame cost of a
+ * layer is not free: `buildSnapshot` walks all of them every frame and each
+ * path gets its own rasterized GPU texture. A 1500-path illustration measured
+ * 132 ms per snapshot — the app stops responding, which is exactly the
+ * "dropping an SVG freezes the whole desktop app" report. Below the ceiling the
+ * user gets editable vectors; above it, one faithful image layer.
+ */
+export const MAX_VECTOR_SHAPES = 300;
+
+/**
+ * Features `parseSvgToShapes` cannot reproduce, so an SVG using any of them
+ * must be rasterized as an image rather than silently degraded.
+ *
+ * This used to be `<image|use|foreignObject>` alone, which let essentially
+ * every real-world SVG through: gradients collapsed to their first stop,
+ * filters/masks/clip-paths/patterns were dropped outright, and the result was a
+ * pile of flat shapes that did not look like the file the user imported. The
+ * insert path documented this routing all along — it just never had a predicate
+ * that implemented it.
+ */
+// `use`/`symbol` are NOT listed: `traverse` instantiates them for real now
+// (geometry, nested viewport and all), so a sprite-sheet icon is reproduced
+// rather than approximated, and calling it "unsupported" would push perfectly
+// convertible files down the raster path.
+const UNSUPPORTED_TAGS = /<(image|foreignobject|filter|mask|clippath|pattern|marker)[\s>]/;
+const UNSUPPORTED_ATTRS = /\b(filter|mask|clip-path)\s*=\s*["']?[^"'\s>]*url\(/;
+
+/**
+ * True when an SVG converts LOSSLESSLY into vector shapes & text elements.
+ * Anything else should be rasterized (see `insertMedia`).
  */
 export function isSimpleSvg(svgContent: string): boolean {
   const s = svgContent.toLowerCase();
-  if (/<(image|use|foreignobject)[\s>]/.test(s)) {
-    return false;
-  }
+  if (UNSUPPORTED_TAGS.test(s)) return false;
+  if (UNSUPPORTED_ATTRS.test(s)) return false;
+  // Gradients survive only as their first stop — a visible downgrade on any
+  // artwork that actually uses one, so hand those to the rasterizer too.
+  if (/<(lineargradient|radialgradient)[\s>]/.test(s)) return false;
   return true;
 }

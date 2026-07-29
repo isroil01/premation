@@ -38,15 +38,38 @@ const PROP_HINT =
 
 // ── Structure ─────────────────────────────────────────────────────
 
+/**
+ * A caller-supplied handle for a layer that does not exist yet.
+ *
+ * Without this, a batch of calls cannot reference what it just created: the
+ * engine assigns the real id at execution time, so `create_layer` followed by
+ * `update_layer` needs a round-trip through the model just to learn the id it is
+ * about to use. That is fatal for a library emitter, which produces its whole
+ * `ToolCall[]` up front with no model in the loop at all.
+ *
+ * An alias is local to one run. The handler records `alias → real id` and every
+ * later call resolves `nodeId` through that map before touching the scene, so
+ * the model may also use one if it finds it convenient.
+ */
+export const ALIAS_PROP = {
+  type: 'string',
+  description:
+    'Optional handle to refer to this layer in LATER calls in the same batch, before the engine ' +
+    'has assigned it a real id. Must be unique within the run.',
+} as const;
+
 export const createLayerDef: AiToolDef = {
   name: 'create_layer',
   kind: 'write',
-  description: 'Create a layer and return its id. Use that id for subsequent calls.',
+  description:
+    'Create a layer and return its id. Use that id — or the `id` handle you passed — for ' +
+    'subsequent calls.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
     required: ['kind', 'name'],
     properties: {
+      id: ALIAS_PROP,
       kind: {
         type: 'string',
         enum: ['shape', 'text', 'solid', 'null', 'group', 'camera', 'light', 'adjustment', 'particle'],
@@ -111,6 +134,23 @@ export const updateLayerDef: AiToolDef = {
       text: { type: 'string' },
       fontSize: { type: 'number', minimum: 1 },
       fontWeight: { type: 'number' },
+      fontFamily: { type: 'string' },
+      letterSpacing: {
+        type: 'number',
+        description:
+          'Tracking in px. NEGATIVE for display sizes (roughly −2 to −4% of the font size) and ' +
+          'POSITIVE for small text (+2 to +6%). A font\'s default spacing is drawn for body copy, so ' +
+          'display type at 0 looks loose and unresolved — this is the single biggest "looks typeset" ' +
+          'lever there is, and leaving it at 0 on a headline is the most common typographic tell.',
+      },
+      lineHeight: {
+        type: 'number',
+        description:
+          'Multiplier, not px. Display type sits TIGHT (0.92–1.05 — at 96px the natural gap is ' +
+          'already wider than the eye wants); body copy needs 1.4–1.6. One line-height across both ' +
+          'is why generated type reads as a single block.',
+      },
+      align: { type: 'string', enum: ['left', 'center', 'right'] },
       fill: { type: 'string', description: 'Hex colour.' },
       x: { type: 'number' },
       y: { type: 'number' },
@@ -120,6 +160,21 @@ export const updateLayerDef: AiToolDef = {
       scaleX: { type: 'number' },
       scaleY: { type: 'number' },
       opacity: { type: 'number', minimum: 0, maximum: 100 },
+      cornerRadius: {
+        type: 'number',
+        minimum: 0,
+        description:
+          'Corner radius in px, for shape/solid layers. Use a SCALE — 0 / 2 / 6 / 12 / 24 — not ' +
+          'arbitrary values; one radius everywhere is as much a tell as a random radius on each.',
+      },
+      backdropBlur: {
+        type: 'number',
+        minimum: 0,
+        description:
+          'Blur what is BEHIND this layer, in px — a frosted-glass panel. Different from the blur ' +
+          'effect, which blurs the layer itself. This is how you do a glass card, a translucent ' +
+          'sheet, or an iOS-style toolbar; pair it with a low-opacity light fill.',
+      },
       threeD: { type: 'boolean', description: 'Enable the 3D switch (required before z/rotationX/rotationY).' },
       motionBlur: { type: 'boolean', description: 'Enable/disable motion blur for smooth movement.' },
       blendMode: {
@@ -350,9 +405,38 @@ export const textAnimatorDef: AiToolDef = {
       x: { type: 'number' },
       y: { type: 'number' },
       scale: { type: 'number' },
+      scaleY: { type: 'number', description: 'Non-uniform per-glyph scale. Falls back to scale when omitted.' },
       rotation: { type: 'number' },
       opacity: { type: 'number' },
       tracking: { type: 'number' },
+      lineSpacing: { type: 'number', description: 'Extra leading between lines, px.' },
+      blur: { type: 'number', minimum: 0, description: 'Per-character blur in px — this is how you do a blur-resolve type-on.' },
+      skew: { type: 'number', description: 'Per-character skew in degrees — an italic lean that settles out.' },
+      fillOpacity: { type: 'number', description: 'Fade the glyph FILL but not its stroke — an outline-to-solid reveal.' },
+      characterOffset: {
+        type: 'number',
+        description:
+          'Shift each covered character N places through its alphabet. A staggered offset that ' +
+          'rolls back to 0 is the scramble / decode reveal, and it cannot be faked with transforms.',
+      },
+      color: { type: 'string', description: 'Hex colour the covered glyphs blend toward.' },
+      sweep: {
+        type: 'object',
+        additionalProperties: false,
+        description:
+          'Animate the range selector in THIS call instead of a follow-up set_keyframes on ' +
+          '"ta.<index>.offset". Sweeping the selector is what makes a text animator animate at ' +
+          'all — an animator with a static selector is a static style.',
+        required: ['fromSec', 'toSec'],
+        properties: {
+          fromSec: { type: 'number', minimum: 0, description: 'Composition seconds the sweep starts.' },
+          toSec: { type: 'number', minimum: 0, description: 'Composition seconds the sweep ends.' },
+          fromOffset: { type: 'number', default: -100, description: 'Selector offset at fromSec, percent.' },
+          toOffset: { type: 'number', default: 100, description: 'Selector offset at toSec, percent.' },
+          easing: { type: 'string', enum: EASING_ENUM, default: 'bezier' },
+          bezier: { type: 'array', minItems: 4, maxItems: 4, items: { type: 'number' } },
+        },
+      },
       remove: { type: 'boolean', default: false },
     },
   },
@@ -373,6 +457,7 @@ export const createMediaDef: AiToolDef = {
     additionalProperties: false,
     required: ['assetId'],
     properties: {
+      id: ALIAS_PROP,
       assetId: { type: 'string', description: 'An asset id from list_assets.' },
       x: { type: 'number', description: 'Centre X in comp px. Defaults to comp centre.' },
       y: { type: 'number', description: 'Centre Y in comp px. Defaults to comp centre.' },
@@ -463,6 +548,7 @@ export const createMediaFromAttachmentDef: AiToolDef = {
     additionalProperties: false,
     required: ['index'],
     properties: {
+      id: ALIAS_PROP,
       index: { type: 'integer', minimum: 0, description: 'Index of the image in the prompt attachments (0-based).' },
       name: { type: 'string', description: 'Descriptive name for the new layer.' },
       x: { type: 'number', description: 'Centre X in comp px. Defaults to comp centre.' },

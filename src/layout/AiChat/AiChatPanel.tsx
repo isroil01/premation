@@ -14,14 +14,14 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Icon } from '@components/Icon';
-import { useAiProviderStore, MODEL_SUGGESTIONS } from '@stores/aiProviderStore';
+import { useAiProviderStore } from '@stores/aiProviderStore';
 import type { GatewayProviderId, AiProviderId } from '@core/api/client';
 import { processImageFile, type PendingImage } from '@core/ai/imageAttachment';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAiChatContext } from './AiChatContext';
 import styles from './AiChatPanel.module.css';
 
-/** Providers offered in the picker, in display order. */
+/** BYOK providers offered in the picker, in display order. */
 const PROVIDER_OPTIONS: { id: GatewayProviderId; label: string }[] = [
   { id: 'anthropic', label: 'Claude' },
   { id: 'openai', label: 'OpenAI' },
@@ -76,22 +76,40 @@ function renderProviderIcon(provider: GatewayProviderId): JSX.Element {
   }
 }
 
+/**
+ * Model id → display name.
+ *
+ * Ordered LONGEST-PREFIX-FIRST, because these are substring tests: `claude-opus-5`
+ * must be checked before any shorter `claude-opus` prefix, and `gpt-4o-mini`
+ * before `gpt-4o`. The list had no entry at all for `claude-opus-5` — the default
+ * model — so the most common case fell through and displayed its raw id, while
+ * three retired 1.5/3.5 models it can no longer reach still had labels.
+ *
+ * The ids come from the backend's capability matrix (with `MODEL_SUGGESTIONS` as
+ * the offline fallback); a label for a model the server cannot route to is a
+ * label nobody can see.
+ */
+const MODEL_LABELS: readonly [match: string, label: string][] = [
+  ['claude-opus-5', 'Claude Opus 5'],
+  ['claude-opus-4-8', 'Claude Opus 4.8'],
+  ['claude-sonnet-5', 'Claude Sonnet 5'],
+  ['claude-haiku-4-5', 'Claude Haiku 4.5'],
+  ['gemini-3.1-pro', 'Gemini 3.1 Pro'],
+  ['gemini-3.5-flash', 'Gemini 3.5 Flash'],
+  ['gpt-4o-mini', 'GPT-4o mini'],
+  ['gpt-4o', 'GPT-4o'],
+  ['o4-mini', 'o4-mini'],
+];
+
 function getModelLabel(val: string): string {
   if (val === 'motion') return 'Motion AI';
   const [, m] = val.split(':');
   if (!m) return 'Select model';
-  if (m.includes('gemini-1.5-pro')) return 'Gemini 1.5 Pro';
-  if (m.includes('gemini-1.5-flash')) return 'Gemini 1.5 Flash';
-  if (m.includes('gemini-2.0-flash')) return 'Gemini 2.0 Flash';
-  if (m.includes('gemini-3.5-flash')) return 'Gemini 3.5 Flash';
-  if (m.includes('gemini-3.1-pro')) return 'Gemini 3.1 Pro';
-  if (m.includes('claude-3-5-sonnet')) return 'Claude 3.5 Sonnet';
-  if (m.includes('claude-3-7-sonnet')) return 'Claude 3.7 Sonnet';
-  if (m.includes('claude-sonnet-5')) return 'Claude Sonnet 5';
-  if (m.includes('claude-opus-4-8') || m.includes('opus-4-8')) return 'Claude Opus 4.8';
-  if (m.includes('claude-haiku-4-5') || m.includes('haiku-4-5')) return 'Claude Haiku 4.5';
-  if (m.includes('gpt-4o-mini')) return 'GPT-4o mini';
-  if (m.includes('gpt-4o')) return 'GPT-4o';
+  for (const [match, label] of MODEL_LABELS) {
+    if (m.includes(match)) return label;
+  }
+  // The raw id, which is at least honest — a model this app offers should have
+  // an entry above, and seeing the id is how that omission gets noticed.
   return m;
 }
 
@@ -134,9 +152,21 @@ export function AiChatPanel(): JSX.Element {
   const setAiModel = useAiProviderStore((s) => s.setModel);
   const aiStatus = useAiProviderStore((s) => s.status);
   const aiMotion = useAiProviderStore((s) => s.motion);
+  // False until a live /ai/keys answer has landed this session. Used to keep the
+  // "connect a provider" banner off the screen while the answer is still in
+  // flight — telling someone to set up a key and then withdrawing it a moment
+  // later is how the setup prompt came to feel like it never went away.
+  const aiVerified = useAiProviderStore((s) => s.verified);
+  // The backend's capability matrix when it has answered, MODEL_SUGGESTIONS
+  // until then — see the store. Never the constant directly.
+  const modelsFor = useAiProviderStore((s) => s.modelsFor);
 
   const providerReady = (id: GatewayProviderId): boolean =>
     id === 'motion' ? !!aiMotion?.present : !!aiStatus?.[id as AiProviderId]?.present;
+
+  /** Whether the account has ANY usable provider, not just the selected one. */
+  const anyProviderReady =
+    !!aiMotion?.present || PROVIDER_OPTIONS.some((p) => providerReady(p.id));
 
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
@@ -159,7 +189,7 @@ export function AiChatPanel(): JSX.Element {
   const dropdownValue =
     aiProvider === 'motion'
       ? 'motion'
-      : `${aiProvider}:${aiModels[aiProvider] || MODEL_SUGGESTIONS[aiProvider]?.[0] || ''}`;
+      : `${aiProvider}:${aiModels[aiProvider] || modelsFor(aiProvider)[0] || ''}`;
 
   const onChangeModel = (val: string): void => {
     if (val === 'motion') {
@@ -310,10 +340,19 @@ export function AiChatPanel(): JSX.Element {
       ) : (
         /* ── Thread ───────────────────────────────────────────────── */
         <div className={styles.thread} ref={threadRef}>
-          {!ready && (
+          {/* Only once the gateway has actually answered. Before that we do not
+              know, and guessing "no key" is what made this read as a setup
+              prompt that ignored the keys the user had already saved. */}
+          {!ready && aiVerified && (
             <div className={styles.keyBanner}>
-              Connect an AI provider to start.{' '}
-              <a href="#/dashboard?tab=settings">Open AI settings →</a>
+              {anyProviderReady ? (
+                <>Pick a connected provider in the model menu below to start.</>
+              ) : (
+                <>
+                  Connect an AI provider to start.{' '}
+                  <a href="#/dashboard?tab=settings">Open AI settings →</a>
+                </>
+              )}
             </div>
           )}
           {messages.length === 0 && ready && (
@@ -501,7 +540,13 @@ export function AiChatPanel(): JSX.Element {
             )}
             <textarea
               className={styles.textarea}
-              placeholder={ready ? 'Create a cinematic trailer for my brand…' : 'Connect an AI provider first'}
+              placeholder={
+                ready || !aiVerified
+                  ? 'Create a cinematic trailer for my brand…'
+                  : anyProviderReady
+                    ? 'Pick a connected provider below'
+                    : 'Connect an AI provider first'
+              }
               value={value}
               rows={2}
               disabled={busy}
@@ -550,9 +595,31 @@ export function AiChatPanel(): JSX.Element {
                   {modelDropdownOpen && (
                     <div className={styles.customPopoverMenu} onClick={(e) => e.stopPropagation()}>
                       <div className={styles.popoverHeader}>Select AI Model</div>
+                      {/* Motion AI is listed only when this account can run it.
+                          Without this the picker had no way back to it, so a
+                          user auto-selected onto Motion AI could leave but not
+                          return. */}
+                      {aiMotion?.present && (
+                        <div className={styles.popoverGroup}>
+                          <div className={styles.groupLabel}>Motion AI</div>
+                          <button
+                            type="button"
+                            className={`${styles.popoverOption} ${dropdownValue === 'motion' ? styles.popoverOptionActive : ''}`}
+                            onClick={() => {
+                              onChangeModel('motion');
+                              setModelDropdownOpen(false);
+                            }}
+                          >
+                            <span className={styles.optionLabel}>Motion AI</span>
+                            {dropdownValue === 'motion' && (
+                              <Icon name="check" size={11} className={styles.optionCheck} />
+                            )}
+                          </button>
+                        </div>
+                      )}
                       {PROVIDER_OPTIONS.map((p) => {
                         const ready = providerReady(p.id);
-                        const suggestions = MODEL_SUGGESTIONS[p.id as AiProviderId] ?? [];
+                        const suggestions = modelsFor(p.id as AiProviderId);
                         return (
                           <div key={p.id} className={styles.popoverGroup}>
                             <div className={styles.groupLabel}>

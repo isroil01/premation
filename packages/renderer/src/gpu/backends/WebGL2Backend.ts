@@ -60,10 +60,19 @@ interface NativePipeline {
   tex1Uniform: WebGLUniformLocation | null;
 }
 interface NativeRenderTarget {
+  /** Single-sample FBO wrapping `texture` — what everything SAMPLES from. */
   fbo: WebGLFramebuffer;
   texture: WebGLTexture;
   /** Depth renderbuffer, present when the target was created with depth. */
   depth?: WebGLRenderbuffer;
+  /**
+   * Multisample FBO that draws actually go into, when MSAA is active. Resolved
+   * into `fbo` by a blit at pass end, so readers keep seeing a plain texture.
+   */
+  msaaFbo?: WebGLFramebuffer;
+  msaaColor?: WebGLRenderbuffer;
+  width: number;
+  height: number;
 }
 
 function h<K extends string>(kind: K, native: unknown): ResourceHandle<K> {
@@ -99,7 +108,7 @@ export class WebGL2Backend implements RenderBackend {
   private gl!: GL;
   private vao: WebGLVertexArrayObject | null = null;
 
-  // Every GL object this backend allocates, so dispose() can release them all
+  // Every GL object this backend allocates, so dispose can release them all
   // and then explicitly lose the context. Without this, each editor
   // enter/leave leaked a live WebGL2 context (only the VAO was deleted) until
   // Chrome's per-page context cap made getContext('webgl2') return null —
@@ -110,17 +119,73 @@ export class WebGL2Backend implements RenderBackend {
   private readonly livePrograms = new Set<WebGLProgram>();
   private readonly liveFramebuffers = new Set<WebGLFramebuffer>();
   /** Depth renderbuffers (3D render targets) — tracked like every other GL
-   *  object so dispose() stays leak-free. */
+   *  object so dispose stays leak-free. */
   private readonly liveRenderbuffers = new Set<WebGLRenderbuffer>();
+
+  // Context-loss plumbing (see initialize).
+  private contextLost = false;
+  private boundCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
+  private onContextLost: ((event: Event) => void) | null = null;
+  private onContextRestored: (() => void) | null = null;
+  private readonly lossListeners = new Set<() => void>();
+  private readonly restoreListeners = new Set<() => void>();
 
   async initialize(surface?: RenderSurface): Promise<void> {
     if (!surface) throw new Error('WebGL2Backend requires a canvas surface');
-    const gl = surface.canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true }) as GL | null;
+    const canvas = surface.canvas;
+    const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true }) as GL | null;
     if (!gl) throw new Error('WebGL2 is not available');
+    // A canvas whose context was killed with WEBGL_lose_context (which dispose
+    // below does, deliberately, to free a context slot) hands back that SAME lost
+    // context object on the next getContext — not null. So the guard above passes,
+    // every subsequent GL call silently no-ops, getParameter returns null, and the
+    // caller "succeeds" onto a permanently dead canvas. That is the blank-viewport
+    // -after-remount bug (React StrictMode and Vite HMR both remount without
+    // replacing the canvas DOM node). Ask for a restore, then refuse if still lost.
+    if (gl.isContextLost()) {
+      gl.getExtension('WEBGL_lose_context')?.restoreContext();
+      if (gl.isContextLost()) {
+        throw new Error('WebGL2 context is lost and could not be restored (canvas already used)');
+      }
+    }
     this.gl = gl;
+
+    // Context loss is silent otherwise: GL calls become no-ops while the renderer
+    // happily reports ready, so the user sees a frozen viewport and no error.
+    // preventDefault is REQUIRED — without it the context can never be restored.
+    this.onContextLost = (event: Event): void => {
+      event.preventDefault();
+      this.contextLost = true;
+      this.lossListeners.forEach((fn) => fn());
+    };
+    this.onContextRestored = (): void => {
+      this.contextLost = false;
+      this.restoreListeners.forEach((fn) => fn());
+    };
+    canvas.addEventListener('webglcontextlost', this.onContextLost);
+    canvas.addEventListener('webglcontextrestored', this.onContextRestored);
+    // OffscreenCanvas is an EventTarget too, so the listeners above are valid for
+    // both; only the stored reference needs the wider type.
+    this.boundCanvas = canvas;
+
     this.capabilities.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
     this.vao = gl.createVertexArray();
     gl.enable(gl.BLEND);
+  }
+
+  /** True while the GL context is lost — draws are no-ops until restore. */
+  isLost(): boolean {
+    return this.contextLost || (!!this.gl && this.gl.isContextLost());
+  }
+
+  /** Subscribe to context loss / restore. Returns an unsubscribe function. */
+  onContextChange(onLost: () => void, onRestored: () => void): () => void {
+    this.lossListeners.add(onLost);
+    this.restoreListeners.add(onRestored);
+    return () => {
+      this.lossListeners.delete(onLost);
+      this.restoreListeners.delete(onRestored);
+    };
   }
 
   createBuffer(desc: BufferDescriptor): BufferHandle {
@@ -239,14 +304,65 @@ export class WebGL2Backend implements RenderBackend {
 
   createRenderTarget(desc: RenderTargetDescriptor): RenderTargetHandle {
     const gl = this.gl;
+    // Clamp to what the device actually supports; 1 disables MSAA entirely.
+    const wanted = Math.max(1, Math.floor(desc.samples ?? 1));
+    const samples = wanted > 1
+      ? Math.min(wanted, (gl.getParameter(gl.MAX_SAMPLES) as number) || 1)
+      : 1;
+    const msaa = samples > 1;
+
+    // The resolve side: a plain texture + FBO. Always built, so
+    // renderTargetTexture has something single-sampled to hand out whether or
+    // not multisampling is in play.
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, desc.width, desc.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     const fbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
     let depth: WebGLRenderbuffer | undefined;
-    if (desc.depth) {
+    let msaaFbo: WebGLFramebuffer | undefined;
+    let msaaColor: WebGLRenderbuffer | undefined;
+
+    if (msaa) {
+      // Draws go into multisample renderbuffers. Depth must be multisampled too
+      // — mixing sample counts across attachments is an incomplete framebuffer.
+      msaaFbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, msaaFbo);
+      msaaColor = gl.createRenderbuffer()!;
+      gl.bindRenderbuffer(gl.RENDERBUFFER, msaaColor);
+      gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA8, desc.width, desc.height);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, msaaColor);
+      if (desc.depth) {
+        depth = gl.createRenderbuffer()!;
+        gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+        gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.DEPTH_COMPONENT24, desc.width, desc.height);
+        gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+        this.liveRenderbuffers.add(depth);
+      }
+      gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+      // Fall back to the plain path if the driver refuses this combination,
+      // rather than rendering into an incomplete framebuffer.
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.deleteFramebuffer(msaaFbo);
+        gl.deleteRenderbuffer(msaaColor);
+        if (depth) {
+          this.liveRenderbuffers.delete(depth);
+          gl.deleteRenderbuffer(depth);
+          depth = undefined;
+        }
+        msaaFbo = undefined;
+        msaaColor = undefined;
+      } else {
+        this.liveRenderbuffers.add(msaaColor);
+        this.liveFramebuffers.add(msaaFbo);
+      }
+    }
+
+    if (!msaaFbo && desc.depth) {
+      // Single-sample depth, attached to the resolve FBO that draws will use.
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
       depth = gl.createRenderbuffer()!;
       gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
       gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, desc.width, desc.height);
@@ -254,10 +370,18 @@ export class WebGL2Backend implements RenderBackend {
       gl.bindRenderbuffer(gl.RENDERBUFFER, null);
       this.liveRenderbuffers.add(depth);
     }
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.liveTextures.add(texture);
     this.liveFramebuffers.add(fbo);
-    return { kind: 'render-target', id: nextId(), native: { fbo, texture, depth } satisfies NativeRenderTarget };
+    return {
+      kind: 'render-target',
+      id: nextId(),
+      native: {
+        fbo, texture, depth, msaaFbo, msaaColor,
+        width: desc.width, height: desc.height,
+      } satisfies NativeRenderTarget,
+    };
   }
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
     return { kind: 'texture', id: target.id, native: (target.native as NativeRenderTarget).texture };
@@ -271,6 +395,14 @@ export class WebGL2Backend implements RenderBackend {
     if (rt.depth) {
       this.liveRenderbuffers.delete(rt.depth);
       this.gl.deleteRenderbuffer(rt.depth);
+    }
+    if (rt.msaaFbo) {
+      this.liveFramebuffers.delete(rt.msaaFbo);
+      this.gl.deleteFramebuffer(rt.msaaFbo);
+    }
+    if (rt.msaaColor) {
+      this.liveRenderbuffers.delete(rt.msaaColor);
+      this.gl.deleteRenderbuffer(rt.msaaColor);
     }
   }
 
@@ -289,10 +421,15 @@ export class WebGL2Backend implements RenderBackend {
     // 'surface' string sentinel: a target handle whose native fbo is missing
     // binds the DEFAULT framebuffer (GL coerces null/undefined), so its draws
     // land on the canvas and must be frame-clipped like any surface pass.
-    const fbo = attach.target === 'surface'
-      ? null
-      : ((attach.target.native as NativeRenderTarget | undefined)?.fbo ?? null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    const native = attach.target === 'surface'
+      ? undefined
+      : (attach.target.native as NativeRenderTarget | undefined);
+    // Draw into the MULTISAMPLE fbo when the target has one; `end` resolves it
+    // down into the sampleable texture. `toSurface` still keys off the resolve
+    // fbo being absent, so frame-clipping behaviour is unchanged.
+    const drawFbo = native?.msaaFbo ?? native?.fbo ?? null;
+    const fbo = native?.fbo ?? null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, drawFbo);
     const toSurface = fbo === null;
     gl.bindVertexArray(this.vao);
     // Depth state is per-pipeline (applied at bind time); start every pass with
@@ -324,7 +461,7 @@ export class WebGL2Backend implements RenderBackend {
         Math.max(0, Math.round(clip.height)),
       );
     }
-    return new WebGL2PassEncoder(gl);
+    return new WebGL2PassEncoder(gl, native?.msaaFbo ? native : undefined);
   }
   endFrame(): void {
     this.gl.bindVertexArray(null);
@@ -343,7 +480,21 @@ export class WebGL2Backend implements RenderBackend {
     );
   }
   dispose(): void {
-    // May be called before initialize() succeeded (getContext returned null),
+    // Detach the loss listeners before anything else: dispose deliberately
+    // loses the context below, which fires 'webglcontextlost' on the canvas, and
+    // a still-attached handler would report that self-inflicted loss to whatever
+    // is subscribed. Runs even if we never got a context.
+    if (this.boundCanvas) {
+      if (this.onContextLost) this.boundCanvas.removeEventListener('webglcontextlost', this.onContextLost);
+      if (this.onContextRestored) this.boundCanvas.removeEventListener('webglcontextrestored', this.onContextRestored);
+      this.boundCanvas = null;
+      this.onContextLost = null;
+      this.onContextRestored = null;
+    }
+    this.lossListeners.clear();
+    this.restoreListeners.clear();
+
+    // May be called before initialize succeeded (getContext returned null),
     // or twice (Renderer.dispose is idempotent but defensive callers exist).
     const gl = this.gl as GL | undefined;
     if (!gl) return;
@@ -377,7 +528,11 @@ class WebGL2PassEncoder implements RenderPassEncoder {
   private vertexBuffer: NativeBuffer | null = null;
   private indexFormat: IndexFormat = 'uint32';
 
-  constructor(private readonly gl: GL) {}
+  /** `msaaTarget` is set only for a multisample pass — see end. */
+  constructor(
+    private readonly gl: GL,
+    private readonly msaaTarget?: NativeRenderTarget,
+  ) {}
 
   setPipeline(pipeline: PipelineHandle): void {
     this.pipeline = pipeline.native as NativePipeline;
@@ -458,7 +613,24 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     if (instanceCount > 1) gl.drawElementsInstanced(mode, indexCount, type, 0, instanceCount);
     else gl.drawElements(mode, indexCount, type, 0);
   }
-  end(): void {}
+  end(): void {
+    // Resolve multisample → single-sample so readers can sample the texture.
+    // Nothing downstream knows MSAA happened; without this blit the resolve
+    // texture would simply be empty.
+    const t = this.msaaTarget;
+    if (!t?.msaaFbo) return;
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, t.msaaFbo);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, t.fbo);
+    // Colour only: the depth buffer is per-pass scratch and nothing samples it.
+    gl.blitFramebuffer(
+      0, 0, t.width, t.height,
+      0, 0, t.width, t.height,
+      gl.COLOR_BUFFER_BIT, gl.NEAREST,
+    );
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+  }
 }
 
 function compile(gl: GL, type: number, source: string): WebGLShader {

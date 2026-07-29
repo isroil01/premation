@@ -13,6 +13,7 @@ import type { Component } from '../components/Component';
 import { deepCloneData } from '../components/Component';
 import { TransformComponent } from '../components/TransformComponent';
 import { newNodeId } from '../utils/id';
+import { bumpSceneMutationEpoch } from '../core/mutationEpoch';
 
 export type NodeChangeListener = (node: SceneNode, changed: string) => void;
 
@@ -98,9 +99,19 @@ export class SceneNode {
   get blendMode(): BlendMode { return this._blendMode; }
   set blendMode(v: BlendMode) { if (v !== this._blendMode) { this._blendMode = v; this.touch('blendMode'); } }
 
-  /** Update the modified timestamp and notify the owning scene. */
+  /**
+   * Update the modified timestamp and notify the owning scene.
+   *
+   * Also bumps the global mutation epoch. Note this covers only what routes
+   * through `touch` — the node's own fields (name/visible/locked/opacity/blend)
+   * and component add/remove. Component DATA writes do NOT reliably reach here
+   * (see `core/mutationEpoch.ts`), so `DataComponent.set` bumps the epoch
+   * itself; between the two, every mutation that can change what a node renders
+   * as is covered.
+   */
   touch(changed: string): void {
     this.updatedAt = Date.now();
+    bumpSceneMutationEpoch();
     this.onChange?.(this, changed);
   }
 

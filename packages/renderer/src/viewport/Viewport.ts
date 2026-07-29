@@ -17,8 +17,26 @@ export interface Guide {
 }
 
 export interface ViewportOverlays {
+  /** The ABSOLUTE grid (AE's standard grid): fixed-size cells in world units. */
   grid: boolean;
+  /** AE "Gridline every" — major line spacing, in world units. */
   gridSpacing: number;
+  /** AE "Subdivisions" — minor lines drawn between major gridlines. 1 = none. */
+  gridSubdivisions: number;
+  /** AE "Grid Style". `dots` marks intersections instead of drawing lines. */
+  gridStyle: 'lines' | 'dashed' | 'dots';
+  /** Grid line colour. Major lines use it as-is; minor lines are faded. */
+  gridColor: Color;
+  /**
+   * The PROPORTIONAL grid (AE's second grid): the composition divided into a
+   * fixed number of cells, so it rescales with the comp. Reference only —
+   * nothing snaps to it, matching After Effects.
+   */
+  proportionalGrid: boolean;
+  proportionalColumns: number;
+  proportionalRows: number;
+  /** Comp rect the proportional grid divides, in world units. */
+  compRect: Rect | null;
   checkerboard: boolean;
   safeArea: boolean;
   rulers: boolean;
@@ -38,6 +56,13 @@ export interface ViewportOptions {
 const DEFAULT_OVERLAYS: ViewportOverlays = {
   grid: true,
   gridSpacing: 100,
+  gridSubdivisions: 4,
+  gridStyle: 'lines',
+  gridColor: { r: 1, g: 1, b: 1, a: 0.06 },
+  proportionalGrid: false,
+  proportionalColumns: 8,
+  proportionalRows: 6,
+  compRect: null,
   checkerboard: true,
   safeArea: false,
   rulers: false,

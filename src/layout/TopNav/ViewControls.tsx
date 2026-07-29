@@ -171,7 +171,14 @@ function ZoomField(): JSX.Element {
       <button type="button" className={styles.tool} onClick={() => getWorkspaceController().zoomIn()} title="Zoom in (+)">
         <Icon name="zoom-in" size={12} />
       </button>
-      <button type="button" className={styles.tool} onClick={() => getWorkspaceController().fitComposition()} title="Fit comp in view (Shift+F)">
+      {/* No key is advertised here because none is registered — the tooltip
+          used to promise Shift+F, which did nothing. */}
+      <button
+        type="button"
+        className={styles.tool}
+        onClick={() => getWorkspaceController().fitComposition()}
+        title="Fit comp in view"
+      >
         <Icon name="fit" size={12} />
       </button>
     </span>
@@ -224,9 +231,6 @@ export function ViewControls(): JSX.Element {
       onChange: () => setMotionPathDots(id),
     });
 
-  const hasActiveGuides =
-    grid || rulers || safeArea || camera3dMode !== 'active' || channel !== 'rgb' || autoKeyframe || previewResolution !== 1 || viewLayout !== '1';
-
   return (
     <div className={styles.toolGroup}>
       <span className={styles.toolDivider} aria-hidden />
@@ -261,7 +265,7 @@ export function ViewControls(): JSX.Element {
         trigger={
           <button
             type="button"
-            className={channel !== 'rgb' ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+            className={styles.toolDropdownTrigger}
             title={`Channel View: ${CHANNEL_LABEL[channel]}`}
           >
             <span style={{ fontSize: '11px', fontWeight: 600, padding: '0 2px' }}>{CHANNEL_LABEL[channel]}</span>
@@ -289,7 +293,7 @@ export function ViewControls(): JSX.Element {
         trigger={
           <button
             type="button"
-            className={hasActiveGuides ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+            className={styles.toolDropdownTrigger}
             title="View Options"
           >
             <Icon name="sliders-h" size={16} />

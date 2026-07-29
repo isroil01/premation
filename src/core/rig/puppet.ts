@@ -1,5 +1,6 @@
 import type { SceneNode } from '../types';
 import { deformArap } from './arap';
+import { earClip, subdivide, polygonArea } from './mesh';
 
 export interface PuppetPin {
   id: string;
@@ -10,6 +11,25 @@ export interface PuppetPin {
   rotation?: number;
   /** Static stiffness ≥ 0 (sharpens this pin's influence falloff; 0 = default). */
   stiffness?: number;
+  /**
+   * Static uniform scale around the pin (1 = unchanged). AE's Advanced pin is
+   * position + rotation + SCALE; this is the third component. Absent or exactly
+   * 1 reduces bit-identically to the unscaled path.
+   */
+  scale?: number;
+  /**
+   * Overlap depth (AE's blue Overlap pin). Positive brings the region this pin
+   * governs toward the viewer, negative pushes it behind — so an arm can be made
+   * to pass in FRONT of a torso where the mesh folds over itself. Range is
+   * -100..100; absent means "no opinion" and the region composites flat.
+   */
+  overlap?: number;
+  /**
+   * How far this pin's overlap influence reaches, as a multiplier on its
+   * harmonic weight falloff (default 1). Larger = a broader region carries the
+   * pin's depth.
+   */
+  overlapExtent?: number;
 }
 
 /** The live (possibly animated) pin state fed to `deform`. */
@@ -21,6 +41,12 @@ export interface DeformPin {
   rotation?: number;
   /** ≥ 0. Exponentiates/sharpens the pin's weight column (renormalized). */
   stiffness?: number;
+  /** Uniform scale around the pin (1 = unchanged). */
+  scale?: number;
+  /** Overlap depth, -100..100. Drives per-vertex draw depth, not position. */
+  overlap?: number;
+  /** Falloff multiplier for this pin's overlap influence (default 1). */
+  overlapExtent?: number;
 }
 
 /**
@@ -59,6 +85,21 @@ export interface PuppetRig {
    * 'lbs' is the legacy Linear Blend Skinning path. Absent → 'arap'.
    */
   solver?: 'lbs' | 'arap';
+  /**
+   * Mesh Rotation Refinement (AE): the maximum rotation, in degrees, any single
+   * pin may impose on the mesh. Sparse handle sets let ARAP's local step fit
+   * large per-vertex rotations that read as twisting; clamping the magnitude
+   * suppresses that without changing where the handles sit. Absent = unlimited,
+   * and the solve is then bit-identical to the unclamped path.
+   */
+  maxRotationDeg?: number;
+  /**
+   * Meshing strategy. 'grid' (default) is the uniform grid culled against the
+   * layer's silhouette / alpha; 'silhouette' ear-clips the outline itself, which
+   * distributes triangles far better on thin diagonal artwork where a grid
+   * wastes vertices and produces slivers.
+   */
+  meshMode?: 'grid' | 'silhouette';
 }
 
 export interface DeformedMesh {
@@ -179,6 +220,13 @@ export function buildRestMesh(
   silhouette?: PuppetSilhouette,
   coverage?: PuppetCoverageMask,
 ): DeformedMesh {
+  // Silhouette mode ear-clips the outline itself rather than culling a grid.
+  // Falls back to the grid when there is no usable closed outline, so the mode
+  // is always safe to leave on.
+  if (rig.meshMode === 'silhouette' && silhouette && silhouette.points.length >= 3) {
+    const built = buildSilhouetteMesh(width, height, pad, rig, silhouette);
+    if (built) return built;
+  }
   const expansion = rig.meshExpansion ?? 8;
   const density = rig.meshDensity ?? 15; // default 15x15 subdivisions
 
@@ -349,6 +397,21 @@ export function buildRestMesh(
     }
   }
 
+  return finishRestMesh(vertices, triangles, numVertices, rig);
+}
+
+/**
+ * Shared tail of every meshing mode: anchor each pin to its nearest vertex,
+ * build adjacency, solve the harmonic (Laplacian) weight columns, normalise.
+ * Both the grid and silhouette paths end here, so pin binding and weighting can
+ * never diverge between them.
+ */
+function finishRestMesh(
+  vertices: Float32Array,
+  triangles: Uint16Array,
+  numVertices: number,
+  rig: PuppetRig,
+): DeformedMesh {
   // 3. Find closest mesh vertex for each pin
   const pinRestPositions: Record<string, { x: number; y: number }> = {};
   const pinVertexIndices: Record<string, number> = {};
@@ -451,6 +514,69 @@ export function buildRestMesh(
   };
 }
 
+/**
+ * Silhouette-conforming mesh: ear-clip the layer's own outline, then subdivide
+ * for interior resolution. On thin diagonal artwork a uniform grid spends most
+ * of its vertices on empty space and leaves slivers along the edge; triangulating
+ * the outline puts every vertex on the artwork and follows the boundary exactly.
+ *
+ * `meshDensity` maps to subdivision rounds (each round splits every triangle
+ * into four), capped so a dense setting cannot explode the vertex count past the
+ * Uint16 index limit.
+ *
+ * Returns null when the outline cannot be triangulated (self-intersecting,
+ * degenerate) so the caller falls back to the grid — never throws.
+ */
+function buildSilhouetteMesh(
+  width: number,
+  height: number,
+  pad: number,
+  rig: PuppetRig,
+  silhouette: PuppetSilhouette,
+): DeformedMesh | null {
+  const poly = silhouette.points.map((p) => ({ x: p.x, y: p.y }));
+  // Reject degenerate outlines BEFORE triangulating. `earClip` pushes the final
+  // triangle of a 3-point ring unconditionally, so three collinear points yield
+  // a zero-area "mesh" that passes a triangle-count check and then deforms
+  // nothing. Require a real fraction of the layer's area.
+  const minArea = Math.max(1, width * height * 1e-4);
+  if (Math.abs(polygonArea(poly)) < minArea) return null;
+  const tris = earClip(poly);
+  if (tris.length === 0) return null;
+
+  // density 2..50 → 0..3 subdivision rounds (4^3 = 64x triangles at the top).
+  const density = Math.max(2, Math.min(50, rig.meshDensity ?? 15));
+  const rounds = density < 8 ? 0 : density < 18 ? 1 : density < 32 ? 2 : 3;
+  let mesh = subdivide({ vertices: poly, triangles: tris }, rounds);
+
+  // Uint16 index buffer — bail to the grid rather than silently truncating.
+  if (mesh.vertices.length > 65535) {
+    mesh = subdivide({ vertices: poly, triangles: tris }, Math.max(0, rounds - 1));
+    if (mesh.vertices.length > 65535) return null;
+  }
+
+  const numVertices = mesh.vertices.length;
+  const vertices = new Float32Array(numVertices * 4);
+  const halfW = width / 2;
+  const halfH = height / 2;
+  for (let i = 0; i < numVertices; i++) {
+    const v = mesh.vertices[i]!;
+    vertices[i * 4 + 0] = v.x;
+    vertices[i * 4 + 1] = v.y;
+    // Same UV mapping as the grid path: into the padded rasterized texture.
+    vertices[i * 4 + 2] = (v.x + halfW + pad) / (width + 2 * pad);
+    vertices[i * 4 + 3] = (v.y + halfH + pad) / (height + 2 * pad);
+  }
+  const triangles = new Uint16Array(mesh.triangles.length * 3);
+  let ti = 0;
+  for (const [a, b, c] of mesh.triangles) {
+    triangles[ti++] = a;
+    triangles[ti++] = b;
+    triangles[ti++] = c;
+  }
+  return finishRestMesh(vertices, triangles, numVertices, rig);
+}
+
 const DEG_TO_RAD = Math.PI / 180;
 
 /**
@@ -467,10 +593,31 @@ export function deform(
   pins: DeformPin[],
   restMesh: DeformedMesh,
   solver: 'lbs' | 'arap' = 'arap',
+  maxRotationDeg?: number,
 ): Float32Array {
-  const lbs = deformLbs(pins, restMesh);
+  const clamped = clampPinRotations(pins, maxRotationDeg);
+  const lbs = deformLbs(clamped, restMesh);
   if (solver === 'lbs') return lbs;
-  return deformArap(pins, restMesh, lbs);
+  return deformArap(clamped, restMesh, lbs, maxRotationDeg);
+}
+
+/**
+ * Mesh Rotation Refinement, pin side: clamp each pin's authored rotation to
+ * ±`maxRotationDeg`. Returns the SAME array when there is no limit or nothing
+ * exceeds it, so the untouched path stays bit-identical (and allocation-free).
+ */
+export function clampPinRotations(pins: DeformPin[], maxRotationDeg?: number): DeformPin[] {
+  if (maxRotationDeg === undefined || !Number.isFinite(maxRotationDeg)) return pins;
+  const lim = Math.abs(maxRotationDeg);
+  let needs = false;
+  for (const p of pins) {
+    if (Math.abs(p.rotation ?? 0) > lim) { needs = true; break; }
+  }
+  if (!needs) return pins;
+  return pins.map((p) => {
+    const r = p.rotation ?? 0;
+    return Math.abs(r) <= lim ? p : { ...p, rotation: r < 0 ? -lim : lim };
+  });
 }
 
 /**
@@ -499,6 +646,7 @@ export function deformLbs(pins: DeformPin[], restMesh: DeformedMesh): Float32Arr
   const dY = new Float64Array(n);
   const cosR = new Float64Array(n);
   const sinR = new Float64Array(n);
+  /** True when the pin needs the full rigid branch (rotation and/or scale). */
   const rotated: boolean[] = new Array(n).fill(false);
   const stiffExp = new Float64Array(n);
   let hasStiffness = false;
@@ -511,10 +659,14 @@ export function deformLbs(pins: DeformPin[], restMesh: DeformedMesh): Float32Arr
     dX[p] = rest ? pin.x - rest.x : 0;
     dY[p] = rest ? pin.y - rest.y : 0;
     const rot = pin.rotation ?? 0;
-    if (rot !== 0 && rest) {
+    const scl = pin.scale ?? 1;
+    // Fold uniform scale into the rotation matrix — a similarity transform.
+    // rot 0 + scale 1 leaves `rotated` false, so the translate-only fast path
+    // (and its bit-identical output) is untouched.
+    if ((rot !== 0 || scl !== 1) && rest) {
       rotated[p] = true;
-      cosR[p] = Math.cos(rot * DEG_TO_RAD);
-      sinR[p] = Math.sin(rot * DEG_TO_RAD);
+      cosR[p] = Math.cos(rot * DEG_TO_RAD) * scl;
+      sinR[p] = Math.sin(rot * DEG_TO_RAD) * scl;
     }
     const s = Math.max(0, pin.stiffness ?? 0);
     stiffExp[p] = 1 + s;
@@ -579,6 +731,116 @@ export function deformLbs(pins: DeformPin[], restMesh: DeformedMesh): Float32Arr
   return deformedVertices;
 }
 
+/**
+ * Bounded rest-mesh cache.
+ *
+ * The key embeds every pin's static `id:x:y`, so each pin add, each pin moved
+ * in rest space, and each density / expansion change mints a NEW key. This map
+ * had no eviction, so an authoring session leaked a full mesh — vertices,
+ * triangles, and one Float32Array weight column PER PIN — for every rig state
+ * ever visited. At max density that is ~175 KB a piece.
+ *
+ * Eviction is true LRU (a hit moves its entry to the end), NOT the
+ * insertion-order policy the ARAP factor cache uses. That difference matters
+ * here: the ACTIVE mesh is fetched every frame, and under insertion-order
+ * eviction adding `CAP` pins in a row would evict the very mesh being rendered
+ * and force a full rebuild + 150-iteration weight solve on the next frame.
+ *
+ * CAP is sized to comfortably exceed the number of layers rigged at once
+ * (each rigged layer holds one live entry), while bounding worst-case memory
+ * at roughly 3 MB.
+ */
+const REST_MESH_CACHE_CAP = 16;
+/**
+ * Per-vertex OVERLAP DEPTH (AE's blue Overlap pin), diffused through the same
+ * harmonic weight columns the deformation uses:
+ *
+ *     d_i = Σ_p W_p(i)^(1/extent_p) · overlap_p   (normalised by the same weights)
+ *
+ * `overlapExtent` reaches further by flattening the pin's falloff (a root, the
+ * inverse of what `stiffness` does with a power). The result is a signed scalar
+ * per vertex: positive draws toward the viewer, so an arm can be made to pass in
+ * front of a torso where the mesh folds over itself.
+ *
+ * Returns null when no pin declares an overlap — callers then skip depth
+ * entirely and the mesh composites exactly as before.
+ */
+export function overlapDepthField(
+  pins: DeformPin[],
+  restMesh: DeformedMesh,
+): Float32Array | null {
+  let any = false;
+  for (const p of pins) {
+    if ((p.overlap ?? 0) !== 0 && restMesh.weights[p.id]) { any = true; break; }
+  }
+  if (!any) return null;
+
+  const n = restMesh.vertices.length / 4;
+  const depth = new Float32Array(n);
+  const total = new Float32Array(n);
+  for (const pin of pins) {
+    const o = pin.overlap ?? 0;
+    if (o === 0) continue;
+    const col = restMesh.weights[pin.id];
+    if (!col || col.length < n) continue;
+    const extent = Math.max(0.05, pin.overlapExtent ?? 1);
+    const exp = 1 / extent;
+    for (let i = 0; i < n; i++) {
+      const w = col[i] ?? 0;
+      if (w <= 0) continue;
+      const wf = extent === 1 ? w : Math.pow(w, exp);
+      depth[i] = depth[i]! + wf * o;
+      total[i] = total[i]! + wf;
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    if (total[i]! > 1e-12) depth[i] = depth[i]! / total[i]!;
+  }
+  return depth;
+}
+
+/**
+ * Reorder triangles back-to-front by their overlap depth — a painter's-algorithm
+ * resolve of the mesh's self-occlusion.
+ *
+ * WHY ORDERING RATHER THAN A DEPTH BUFFER: overlap is a LAYER-LOCAL question
+ * ("does this arm pass in front of this torso?"), not a scene-depth one. The
+ * mesh is a single textured draw with alpha blending, so a real depth test would
+ * both need a fifth vertex attribute (shader + pipeline change) and fight
+ * blending at the silhouette edges. Sorting the index buffer needs neither: the
+ * geometry, the shader and the blend state are untouched, and for an opaque
+ * folded mesh the result is the same picture.
+ *
+ * Deterministic: a stable sort keyed on (depth, original index), so equal depths
+ * keep their authored order and the output never depends on sort internals.
+ */
+export function sortTrianglesByDepth(
+  triangles: Uint16Array,
+  depth: Float32Array,
+): Uint16Array {
+  const triCount = triangles.length / 3;
+  const order = new Array<number>(triCount);
+  const key = new Float64Array(triCount);
+  for (let t = 0; t < triCount; t++) {
+    order[t] = t;
+    key[t] =
+      (depth[triangles[t * 3]!]! +
+        depth[triangles[t * 3 + 1]!]! +
+        depth[triangles[t * 3 + 2]!]!) / 3;
+  }
+  // Ascending: most-negative (furthest back) drawn first, so positive overlap
+  // ends up painted last and therefore on top.
+  order.sort((a, b) => (key[a]! - key[b]!) || (a - b));
+  const out = new Uint16Array(triangles.length);
+  for (let i = 0; i < triCount; i++) {
+    const t = order[i]!;
+    out[i * 3] = triangles[t * 3]!;
+    out[i * 3 + 1] = triangles[t * 3 + 1]!;
+    out[i * 3 + 2] = triangles[t * 3 + 2]!;
+  }
+  return out;
+}
+
 const restMeshCache = new Map<string, DeformedMesh>();
 
 /** Deterministic FNV-1a key for a silhouette polygon (0.1px quantization). */
@@ -607,12 +869,32 @@ export function getCachedRestMesh(
   const covKey = coverage?.key ?? 'nocov';
   const key = `${nodeId}:${width}:${height}:${pad}:${rig.meshExpansion ?? 8}:${rig.meshDensity ?? 15}:${silhouetteKey(silhouette)}:${covKey}:${pinsKey}`;
 
-  let cached = restMeshCache.get(key);
-  if (!cached) {
-    cached = buildRestMesh(width, height, pad, rig, silhouette, coverage);
+  const cached = restMeshCache.get(key);
+  if (cached) {
+    // LRU touch: re-insert so the live mesh is always the most-recent entry and
+    // can never be the one evicted.
+    restMeshCache.delete(key);
     restMeshCache.set(key, cached);
+    return cached;
   }
-  return cached;
+
+  const built = buildRestMesh(width, height, pad, rig, silhouette, coverage);
+  if (restMeshCache.size >= REST_MESH_CACHE_CAP) {
+    const oldest = restMeshCache.keys().next().value;
+    if (oldest !== undefined) restMeshCache.delete(oldest);
+  }
+  restMeshCache.set(key, built);
+  return built;
+}
+
+/** Test/debug seam: drop cached rest meshes. */
+export function clearRestMeshCache(): void {
+  restMeshCache.clear();
+}
+
+/** Test/debug seam: current cache occupancy. */
+export function restMeshCacheSize(): number {
+  return restMeshCache.size;
 }
 
 /**

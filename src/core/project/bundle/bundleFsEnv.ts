@@ -9,7 +9,7 @@
  *     already uses (`motion-editor.fs:` namespace), so a web build gets chunked
  *     bundles too. `setItem` is atomic, so `writeAtomic` needs no temp dance.
  *
- * `detectBundleFs()` picks the right one, exactly like `detectFileAdapter()`.
+ * `detectBundleFs` picks the right one, exactly like `detectFileAdapter`.
  */
 
 import type { MotionEditorApi } from '@app-types/motionEditor';

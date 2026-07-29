@@ -36,7 +36,7 @@ export interface TextStyle {
  * A styled span over `[...text]`, half-open `[start, end)`.
  *
  * Indices are into the **code-point array**, not `string.length` — the same
- * index space `unitPositions()` in textAnimators.ts uses, so a run and an
+ * index space `unitPositions` in textAnimators.ts uses, so a run and an
  * animator selector agree about what character 5 is.
  */
 export interface RichRun {
@@ -67,6 +67,17 @@ export interface PlacedGlyph {
   y: number;
   /** Width consumed, including letter spacing and animator tracking. */
   advance: number;
+  /**
+   * The glyph's own advance width, without kerning or letter-spacing.
+   *
+   * `x - inkWidth / 2` is the PEN position — where the browser's own
+   * `fillText` would start this glyph. Drawing from the pen with
+   * `textAlign: 'left'` reproduces the browser's side bearings exactly;
+   * drawing centred on the advance box does not, and the difference is a
+   * per-glyph offset that shows up as edge shimmer when a partially-animated
+   * string mixes the two draw paths.
+   */
+  inkWidth: number;
   /** Fully resolved style — base merged with whichever run covers `index`. */
   style: TextStyle;
   /** 0-based line this glyph landed on. */
@@ -101,6 +112,29 @@ export interface TextLayout {
  *  stays pure — the backends pass a canvas-backed (and cached) implementation. */
 export type MeasureGlyph = (char: string, style: TextStyle) => number;
 
+/**
+ * Measures a whole STRING under one style — the kerning-aware path.
+ *
+ * ## Why this exists
+ *
+ * Summing per-glyph widths silently discards kerning, because kerning is a
+ * property of a PAIR and there is no pair in a one-character measurement. On
+ * `JOIN THE REVOLUTION` at 129px the per-glyph sum came to 1684px against a
+ * true width of 1676px — 8px of drift, accumulating left to right.
+ *
+ * That is not a cosmetic 0.5% error. The rasterizer has two paths: static text
+ * draws as one `fillText` per line (kerned, 1676px) and text with any animator
+ * draws per glyph (unkerned, 1684px). Anything that composites both — a cached
+ * texture crossfading into a freshly drawn one — superimposes the same string at
+ * two spacings, and the result is a picket fence of 1px vertical bars densest
+ * where the drift has accumulated most. Rendered and measured: 71 ink runs
+ * against 17 for a single clean draw.
+ *
+ * Measuring cumulative prefixes and taking differences recovers the exact
+ * advances, kerning included, and makes the two paths agree to the pixel.
+ */
+export type MeasureRun = (text: string, style: TextStyle) => number;
+
 export interface LayoutOptions {
   /** Per-character style overrides. Later runs win where they overlap. */
   runs?: ReadonlyArray<RichRun>;
@@ -109,6 +143,14 @@ export interface LayoutOptions {
   transforms?: ReadonlyArray<GlyphTransform>;
   /** Layer box width — the frame `align` anchors against. */
   boxWidth: number;
+  /**
+   * Kerning-aware measurement. Strongly preferred — see `MeasureRun`.
+   *
+   * Optional so backends without real text metrics (jsdom in the unit tests,
+   * the headless rasterizers) keep working on the per-glyph fallback. They lose
+   * kerning, which for a metric-free fake measurer is meaningless anyway.
+   */
+  measureRun?: MeasureRun;
 }
 
 const DEFAULT_LINE_HEIGHT = 1.2;
@@ -149,6 +191,50 @@ export function layoutText(
   measure: MeasureGlyph,
   opts: LayoutOptions,
 ): TextLayout {
+  /**
+   * Kerned advance for each glyph, or null when the caller gave us no run
+   * measurer (headless backends with no real metrics, and the unit tests).
+   *
+   * Computed per maximal same-style span: kerning only applies between glyphs
+   * that share a font, and a prefix measured across a style boundary would be
+   * measured under the wrong font from the boundary onward.
+   */
+  const kernedAdvances = ((): (number | null)[] | null => {
+    const run = opts.measureRun;
+    if (!run) return null;
+    const cs = [...text];
+    const out: (number | null)[] = new Array(cs.length).fill(null);
+    let spanStart = 0;
+    const flush = (end: number): void => {
+      if (end <= spanStart) return;
+      const style = resolveGlyphStyle(base, opts.runs, spanStart);
+      let prev = 0;
+      for (let i = spanStart; i < end; i++) {
+        // A substituted glyph (Character Offset) changes the string being
+        // measured, so build the prefix from what will actually be DRAWN.
+        const drawnSoFar = cs
+          .slice(spanStart, i + 1)
+          .map((c, k) => opts.transforms?.[spanStart + k]?.displayChar ?? c)
+          .join('');
+        const w = run(drawnSoFar, style);
+        out[i] = w - prev;
+        prev = w;
+      }
+    };
+    for (let i = 0; i <= cs.length; i++) {
+      const atEnd = i === cs.length;
+      // A newline is a hard break for kerning as well as for layout.
+      const broken = atEnd || cs[i] === '\n';
+      const styleChanged =
+        !atEnd && i > spanStart && resolveGlyphStyle(base, opts.runs, i) !== resolveGlyphStyle(base, opts.runs, spanStart);
+      if (broken || styleChanged) {
+        flush(i);
+        spanStart = broken && !atEnd ? i + 1 : i;
+      }
+    }
+    return out;
+  })();
+
   const chars = [...text];
   const align = base.align ?? 'left';
   const lineHeightMul = base.lineHeight ?? DEFAULT_LINE_HEIGHT;
@@ -162,6 +248,21 @@ export function layoutText(
     char: string;
     index: number;
     advance: number;
+    /**
+     * The glyph's own width, ignoring kerning.
+     *
+     * Kerning belongs BETWEEN two glyphs, but a prefix-difference measurement
+     * necessarily attributes each pair's tuck to the SECOND glyph — so 'V' in
+     * 'AV' comes back 8px narrower than it draws. Centring it in that shrunken
+     * box shifts it 4px left of where the browser puts it, which is a residual
+     * mismatch that survives even after the total widths agree.
+     *
+     * So the pen steps by `advance` (kerned, and therefore correct cumulatively)
+     * while each glyph is centred on `inkWidth` (its own box). Both properties
+     * hold at once, which is what makes the two draw paths land on the same
+     * pixels rather than merely end at the same place.
+     */
+    inkWidth: number;
     style: TextStyle;
     transform?: GlyphTransform;
   }
@@ -176,9 +277,20 @@ export function layoutText(
     }
     const style = resolveGlyphStyle(base, opts.runs, i);
     const transform = opts.transforms?.[i];
+    // Character Offset can substitute a wider glyph ('l' → 'W'); measuring the
+    // original would leave the line short by the difference and the rest of it
+    // creeping left as the offset animates.
+    const drawn = transform?.displayChar ?? char;
+    // The kerned advance already includes this glyph's letter-spacing, because
+    // the run measurement is taken with the style's spacing applied. The
+    // per-glyph fallback has to add it back by hand.
+    const kerned = kernedAdvances?.[i];
     const advance =
-      measure(char, style) + (style.letterSpacing ?? 0) + (transform?.tracking ?? 0);
-    lines[lines.length - 1]!.push({ char, index: i, advance, style, transform });
+      kerned !== null && kerned !== undefined
+        ? kerned + (transform?.tracking ?? 0)
+        : measure(drawn, style) + (style.letterSpacing ?? 0) + (transform?.tracking ?? 0);
+    const inkWidth = measure(drawn, style);
+    lines[lines.length - 1]!.push({ char, index: i, advance, inkWidth, style, transform });
     // A run may raise the font size; the tallest glyph sets the leading, so a
     // mixed-size line does not overlap its neighbour.
     lineHeightPx = Math.max(lineHeightPx, style.fontSize * lineHeightMul);
@@ -214,9 +326,12 @@ export function layoutText(
       glyphs.push({
         char: g.char,
         index: g.index,
-        x: pen + g.advance / 2,
+        // Centred on the glyph's OWN box, not on its kerned advance — see
+        // `inkWidth`. The pen still steps by the kerned advance below.
+        x: pen + g.inkWidth / 2,
         y,
         advance: g.advance,
+        inkWidth: g.inkWidth,
         style: g.style,
         line: li,
         transform: g.transform,

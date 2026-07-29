@@ -7,7 +7,7 @@
  * 1. **Time.** The animation engine stores keyframes in *layer* time, while the
  *    model reasons in composition seconds. Every conversion funnels through
  *    `TimeFacade` here. The old op path converted in some places and not others
- *    — a value would land at 1.2s and its easing at 1.2s-minus-the-clip-start,
+ * — a value would land at 1.2s and its easing at 1.2s-minus-the-clip-start,
  *    i.e. nowhere — and it failed silently. One door means that can't recur.
  *
  * 2. **The undo boundary.** These facades expose *raw* mutators and no access
@@ -26,6 +26,7 @@ import type {
   ToolContext,
 } from '@motion/ai-tools';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { THREE_D_PROPS } from '@core/scene/threeD';
 import { readNodePuppet } from '@core/rig/puppet';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { resetSceneWindow } from './sceneWindow';
@@ -41,7 +42,10 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { updateUiComponentSvg } from '@core/library/uiKitLibrary';
-import { addEffect, updateEffect, removeEffect, getNodeEffects } from '@core/effects/effects';
+import { addEffect, updateEffect, updateEffectParam, removeEffect, getNodeEffects } from '@core/effects/effects';
+import { precomposeSelected } from '@core/scene/sceneInsert';
+import { setPrecomp } from '@core/scene/precomp';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
 import type { EffectType } from '@core/effects/effects';
 import { applyPresetByName, listPresets } from '@core/animation/animationPresets';
 import { bumpScene } from '@stores/sceneStore';
@@ -55,7 +59,10 @@ import type { ID, SceneNode } from '@core/types';
  * happen. This list is the real contract, and it is the single place it lives.
  */
 export const TRANSFORM_PROPS = ['x', 'y', 'rotation', 'scale', 'scaleX', 'scaleY', 'opacity'] as const;
-export const THREE_D_PROPS = ['z', 'rotationX', 'rotationY'] as const;
+// Imported from the scene layer, NOT re-declared. Two copies of the list that
+// decides whether a layer counts as 3D is two chances to disagree — and this
+// file's own docstring above insists the contract lives in ONE place.
+export { THREE_D_PROPS };
 export const SPECIAL_PROPS = ['timeRemap', 'precompTime'] as const;
 /**
  * Camera-only props. The renderer samples any keyframed prop on the camera node
@@ -280,7 +287,13 @@ export function createSceneFacade(): SceneFacade {
       // Route each prop to the component that actually owns it — writing
       // `content` onto the Transform would be silently accepted and ignored.
       const owner =
-        prop === 'content' || prop === 'fontSize' || prop === 'fontWeight' || prop === 'fontFamily' || prop === 'letterSpacing'
+        // Everything typographic belongs to the Text component. `lineHeight` and
+        // `align` used to fall through to the Transform, where buildSnapshot
+        // happens to still read them — a latent bug that would break the moment
+        // prop reading was scoped per component.
+        prop === 'content' || prop === 'fontSize' || prop === 'fontWeight' ||
+        prop === 'fontFamily' || prop === 'letterSpacing' || prop === 'lineHeight' ||
+        prop === 'align' || prop === 'paragraphSpacing'
           ? text
           : prop === 'fill'
             // Shapes/solids carry fill on their Style; a text layer has NO Style
@@ -315,7 +328,42 @@ export function createSceneFacade(): SceneFacade {
       return added?.id ?? '';
     },
     updateEffect: (nodeId, effectId, amount) => updateEffect(nodeId, effectId, amount),
+    updateEffectParam: (nodeId, effectId, key, value) => {
+      updateEffectParam(nodeId, effectId, key, value as never);
+      bumpScene();
+    },
+    listEffects: (nodeId) => getNodeEffects(nodeId).map((e) => ({ id: e.id, type: e.type })),
     removeEffect: (nodeId, effectId) => removeEffect(nodeId, effectId),
+
+    // Precompose runs off the SELECTION (it is a user command), so the facade
+    // sets the selection, invokes it, and reads the resulting node back — the
+    // same shape createSceneFacade already uses for camera/light/adjustment.
+    precompose: (nodeIds, name) => {
+      const before = new Set(flattenScene(defaultSceneGraph).map((n) => n.id));
+      useSelectionStore.getState().set([...nodeIds] as ID[]);
+      precomposeSelected();
+      const created = flattenScene(defaultSceneGraph).find(
+        (n) => !before.has(n.id) && readNodeKind(n) === 'group',
+      );
+      // `name` has a real setter on the node wrapper that writes through to the
+      // engine node (SceneGraph.ts:83). Unlike `components.push()`, this is not
+      // a discarded live-view write.
+      if (created && name) created.name = name;
+      bumpScene();
+      return created?.id ?? '';
+    },
+
+    setTimeRemapEnabled: (nodeId, enabled) => {
+      const node = defaultSceneGraph.getNode(nodeId as ID);
+      if (!node) return false;
+      // `precomp` is the flag buildSnapshot checks before it will sample
+      // timeRemap at all (buildSnapshot.ts:393). Without it the track exists and
+      // is never read — the silent-no-op class of bug this facade exists to
+      // prevent. It lives on the `fx` component, so it goes through setPrecomp
+      // rather than writeProp on the Transform.
+      setPrecomp(nodeId, enabled);
+      return true;
+    },
 
     selection: () => useSelectionStore.getState().ids,
     setPuppet: (nodeId, puppet) => {
@@ -387,6 +435,20 @@ export function createCompFacade(): CompFacade {
       const s = useProjectStore.getState();
       return s.tabs[s.activeTabId ?? '']?.time ?? 0;
     },
+    motionBlur: () => {
+      const s = useMotionBlurStore.getState();
+      return { enabled: s.enabled, shutterAngle: s.shutterAngle, shutterPhase: s.shutterPhase, samples: s.samples };
+    },
+    setMotionBlur: (patch) => {
+      // Each setter clamps and notifies autosave — going through them rather
+      // than `set()` is what keeps the shutter round-tripping into the project
+      // file and the render key changing.
+      const s = useMotionBlurStore.getState();
+      if (patch.enabled !== undefined) s.setEnabled(patch.enabled);
+      if (patch.shutterAngle !== undefined) s.setShutterAngle(patch.shutterAngle);
+      if (patch.shutterPhase !== undefined) s.setShutterPhase(patch.shutterPhase);
+      if (patch.samples !== undefined) s.setSamples(patch.samples);
+    },
   };
 }
 
@@ -418,5 +480,9 @@ export function createToolContext(
     time: createTimeFacade(),
     signal,
     images,
+    // Fresh per run. A library emitter produces its whole ToolCall[] before
+    // anything executes, so it refers to layers by handles it invented; this is
+    // where those handles get bound to real engine ids.
+    aliases: new Map<string, string>(),
   };
 }

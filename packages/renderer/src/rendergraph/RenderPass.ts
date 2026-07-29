@@ -3,10 +3,10 @@
  * dependencies. The Render Graph orders passes from these declarations, so
  * adding a pass never requires editing the others (Open/Closed).
  *
- *   - `reads`  : named resources this pass samples (creates a dependency on the
+ *   - `reads`: named resources this pass samples (creates a dependency on the
  *                pass that writes them).
- *   - `writes` : named resources this pass renders into.
- *   - `after`  : explicit ordering by pass name (for non-resource ordering).
+ *   - `writes`: named resources this pass renders into.
+ *   - `after`: explicit ordering by pass name (for non-resource ordering).
  *
  * The reserved resource name `"surface"` is the swapchain/backbuffer.
  */

@@ -1,7 +1,7 @@
 /**
  * activeComp — resolves the composition root the user is actually editing.
  *
- * Every "add a layer" path used to hardcode `getRoots()[0]`, which is always
+ * Every "add a layer" path used to hardcode `getRoots[0]`, which is always
  * the FIRST composition: with a second comp open, new layers landed in comp #1
  * and the active comp stayed permanently empty. Kept in its own tiny module so
  * stores and command modules can import it without dragging in the whole

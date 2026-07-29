@@ -57,7 +57,7 @@ export function registerCoreServices(container: ServiceContainer): CoreServiceRe
   void initLocalIndex();
 
   // Let the GPU texture loader resolve `motion-blob:<hash>` refs to bytes from
-  // the current project's content-addressed blob store (RFC §6). No-op unless a
+  // the current project's content-addressed blob store. No-op unless a
   // local-first bundle is open.
   setLocalBlobResolver(async (hash) => {
     if (!isLocalFirst()) return null;

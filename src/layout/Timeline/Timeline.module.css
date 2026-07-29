@@ -28,16 +28,31 @@
   flex-direction: column;
   min-height: 0;
   background: var(--color-surface-1);
-  border-right: 1px solid var(--color-border);
+  border-right: 2px solid var(--color-border-strong);
+  box-shadow: 3px 0 10px rgba(0, 0, 0, 0.35);
   flex: none;
-  z-index: 2;
+  z-index: 10;
 }
 
 .trackHeaderScroller {
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) var(--color-surface-0);
   /* Reserve the same height the lanes lose to their horizontal scrollbar, so
      the last row's bottom border lines up on both columns. */
   padding-bottom: var(--timeline-hscroll, 10px);
+}
+
+.trackHeaderScroller::-webkit-scrollbar {
+  height: 4px;
+}
+.trackHeaderScroller::-webkit-scrollbar-track {
+  background: var(--color-surface-0, #151516);
+}
+.trackHeaderScroller::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 2px;
 }
 
 .lanes {
@@ -275,82 +290,98 @@
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────── */
+/* The glyph is an SVG of two halves (see keyframeShape.ts), so the element
+   itself is a plain positioned box — no rotation, no border. Rotating a square
+   could only ever express one shape; interpolation needs four per side. */
 .keyframe {
   position: absolute;
   top: 50%;
   left: 0;
-  width: 8px;
-  height: 8px;
-  background: var(--color-timeline-keyframe);
-  border: 1.5px solid var(--color-timeline-keyframe-stroke);
-  border-radius: 1px;
-  transform: translate(-50%, -50%) rotate(45deg);
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
   pointer-events: auto;
-  cursor: ew-resize;
+  cursor: grab;
   z-index: 2;
-  transition: var(--motion-hover-transition);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard),
+              filter var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+.keyframeGlyph {
+  display: block;
+  width: 12px;
+  height: 12px;
+  overflow: visible;
+}
+
+.keyframeGlyph path {
+  fill: var(--color-timeline-keyframe);
+  stroke: var(--color-timeline-keyframe-stroke);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+/* Roving is a statement about TIME (auto-positioned for constant speed), not
+   about the curve, so it keeps its own full-circle glyph and must stay
+   distinguishable from auto-bezier's half-circles. */
 .keyframeRoving {
+  background: var(--color-timeline-keyframe);
+  border: 1.5px solid var(--color-timeline-keyframe-stroke);
   border-radius: 50%;
   transform: translate(-50%, -50%);
 }
 .keyframeRoving:hover {
-  transform: translate(-50%, -50%) scale(1.2);
+  transform: translate(-50%, -50%) scale(1.3);
 }
 
-.keyframeHold {
-  transform: translate(-50%, -50%) rotate(0deg); /* Square */
-  border-radius: 0;
-}
-.keyframeHold:hover {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.2);
-}
 
-/* Transparent hit padding — the diamond stays small and precise-looking,
-   but there's a forgiving target around it for grabbing. */
+/* Transparent hit padding — enlarged for comfortable grab & hold. */
 .keyframe::before {
   content: "";
   position: absolute;
-  inset: -4px;
+  inset: -6px;
+  cursor: grab;
 }
 
 .keyframe:hover {
-  background: var(--color-primary);
-  border-color: var(--color-timeline-keyframe-stroke-active);
-  transform: translate(-50%, -50%) rotate(45deg) scale(1.2);
+  transform: translate(-50%, -50%) scale(1.3);
+  cursor: grab;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-primary) 65%, transparent));
+}
+
+.keyframe:hover .keyframeGlyph path {
+  fill: var(--color-primary);
+  stroke: var(--color-timeline-keyframe-stroke-active);
 }
 
 .keyframeDragging {
-  background: var(--color-primary);
-  border-color: var(--color-timeline-keyframe-stroke-active);
-  transform: translate(-50%, -50%) rotate(45deg) scale(1.25);
+  transform: translate(-50%, -50%) scale(1.35);
+  cursor: grabbing !important;
   z-index: 4;
 }
 
+.keyframeDragging .keyframeGlyph path {
+  fill: var(--color-primary);
+  stroke: var(--color-timeline-keyframe-stroke-active);
+}
+
 .keyframeRoving.keyframeDragging {
-  transform: translate(-50%, -50%) scale(1.25);
+  transform: translate(-50%, -50%) scale(1.35);
+  cursor: grabbing !important;
 }
-
-.keyframeHold.keyframeDragging {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.25);
-}
-
 .keyframeSelected {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  transform: translate(-50%, -50%) rotate(45deg) scale(1.15);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 35%, transparent);
+  transform: translate(-50%, -50%) scale(1.2);
+  cursor: grab;
+}
+
+.keyframeSelected .keyframeGlyph path {
+  fill: var(--color-primary);
+  stroke: var(--color-primary);
 }
 
 .keyframeRoving.keyframeSelected {
-  transform: translate(-50%, -50%) scale(1.15);
+  transform: translate(-50%, -50%) scale(1.2);
 }
-
-.keyframeHold.keyframeSelected {
-  transform: translate(-50%, -50%) rotate(0deg) scale(1.15);
-}
-
 /* ── Markers ───────────────────────────────────────────────────── */
 .marker {
   position: absolute;
@@ -372,6 +403,23 @@
   place-items: center;
   pointer-events: auto;
   cursor: default;
+}
+
+/* A LAYER marker — a small pennant sitting on its own layer's row, distinct
+   from the full-height comp markers above. */
+.layerMarker {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--color-temporal);
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  border-radius: 1px;
+  pointer-events: auto;
+  cursor: default;
+  z-index: 2;
 }
 
 /* ── Playhead ──────────────────────────────────────────────────── */
@@ -433,6 +481,8 @@
   cursor: pointer;
   background: transparent;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  min-width: max-content;
+  box-sizing: border-box;
 }
 
 /* The category hue is carried by the track's icon chip (Icon-Paired Rule);
@@ -558,6 +608,8 @@
   display: flex;
   align-items: center;
   padding: 0 var(--space-2);
+  min-width: max-content;
+  box-sizing: border-box;
 }
 
 .colHeadLayer {
@@ -838,16 +890,87 @@
   pointer-events: none;
 }
 
-/* ── Property sub-row header ────────────────────────────────────── */
-.propHeader {
+/* ── Category Accordion sub-row header (Level 1 Indent) ─────────────── */
+.categoryHeader {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding-right: var(--space-2);
-  /* Indent past index + chevron + icon chip so it reads as a child row. */
-  padding-left: calc(var(--space-3) + 16px + var(--space-2) + 16px + var(--space-2) + 18px + var(--space-2));
+  padding-left: 32px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
+  min-width: max-content;
+  box-sizing: border-box;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.categoryHeader::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border-subtle);
+}
+
+.categoryHeader:hover {
+  background: var(--color-surface-3);
+}
+
+.categoryIcon {
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  opacity: 0.9;
+}
+
+.categoryName {
+  font-family: var(--font-family-sans);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.categoryBadge {
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: var(--color-surface-3);
+  color: var(--color-text-tertiary);
+  margin-left: 4px;
+}
+
+/* ── Property sub-row header (Level 2 Indent) ───────────────────── */
+.propHeader {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+  /* Indent inside its parent category accordion. */
+  padding-left: 56px;
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-surface-0);
+  min-width: max-content;
+  box-sizing: border-box;
+}
+
+.propHeader::before {
+  content: "";
+  position: absolute;
+  left: 42px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-border-subtle);
+  opacity: 0.7;
 }
 
 .propName {
@@ -1056,4 +1179,28 @@
   background: color-mix(in srgb, var(--color-black, #000) 22%, transparent);
   border-left: 1px solid var(--color-border-strong);
   box-sizing: border-box;
+}
+
+/* ── Keyframe snap indicator ─────────────────────────────────────── */
+/* Only drawn during a drag, and only when the drag actually latched onto
+   something. The frame grid gets no line — it is the fallback quantization,
+   not an alignment the user was aiming for, and a line on every drag would be
+   noise rather than feedback. */
+.kfSnapLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.kfSnapPlayhead {
+  background: var(--color-timeline-playhead, #ff3b30);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-timeline-playhead, #ff3b30) 70%, transparent);
+}
+
+.kfSnapKeyframe {
+  background: var(--color-primary);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-primary) 70%, transparent);
 }

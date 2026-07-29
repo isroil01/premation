@@ -1,5 +1,5 @@
 /**
- * CommandPalette — the universal, mode-aware launcher (spec §Command Palette).
+ * CommandPalette — the universal, mode-aware launcher.
  *
  * Cmd/Ctrl+Shift+P opens it from anywhere (including while a field is focused).
  * Cmd/Ctrl+K belongs to Composition Settings, per AE. One
@@ -24,9 +24,9 @@ import { Icon, type IconName } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { useCommandPaletteStore } from '@stores/commandPaletteStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { framesToTimecode, displayFramesToDomainSeconds } from '@core/time/timecode';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSceneRevision } from '@stores/sceneStore';
 import { getCommandRegistry } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
@@ -63,6 +63,7 @@ const KIND_ICON: Record<SceneKind, IconName> = {
   text: 'type',
   image: 'image',
   video: 'video',
+  svg: 'shape',
   audio: 'audio',
   camera: 'camera',
   light: 'light',
@@ -177,7 +178,10 @@ function buildItems(query: string, closePalette: () => void): Item[] {
         icon: 'skip-forward',
         run: () => {
           closePalette();
-          useWorkspaceStore.getState().actions.setTime(sec, Math.round(sec * fps));
+          // Seek through the timeline, not straight into the store: a direct
+          // setTime leaves the engine playhead where it was, so the next
+          // play/step jumps back.
+          getTimelineController().seekSeconds(sec);
         },
       });
     }

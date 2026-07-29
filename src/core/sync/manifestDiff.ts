@@ -1,11 +1,11 @@
 /**
- * manifestDiff — the sync reconciliation core (RFC §10.4).
+ * manifestDiff — the sync reconciliation core.
  *
  * A bundle's manifest maps each logical chunk name → content hash. Sync compares
  * three manifests:
- *   - base   : the last state both sides agreed on (common ancestor)
- *   - local  : what this device has now
- *   - remote : what the server has now
+ *   - base: the last state both sides agreed on (common ancestor)
+ *   - local: what this device has now
+ *   - remote: what the server has now
  *
  * Because chunks are content-addressed and independent (scene / animation /
  * timeline / meta), most divergence is a clean fast-forward — the two sides

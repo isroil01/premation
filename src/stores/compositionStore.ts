@@ -4,7 +4,7 @@
  * to a near-black constant in buildSnapshot; it's now a real, persisted property.
  *
  * Mirrors the `motionBlurStore` pattern: a small Zustand store the render hooks
- * read and thread into `buildSnapshot`, with a `key()` the hooks add to their
+ * read and thread into `buildSnapshot`, with a `key` the hooks add to their
  * re-render deps (and the render cache) so edits repaint immediately.
  *
  * Persistence rides on the existing SettingsManager (like createRenderBackend).
@@ -12,7 +12,8 @@
  * until the user edits the comp.
  */
 
-import { useProjectStore, type CompositionSettings } from './projectStore';
+import { useMemo } from 'react';
+import { useProjectStore, DEFAULT_GLOBAL_LIGHT, type CompositionSettings } from './projectStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
 
 export type { CompositionSettings };
@@ -29,7 +30,11 @@ function paintColor(p: FillPaint): string {
  *  edit (a flat `background` string alone would miss gradient changes). */
 function compKeyFor(c: CompositionSettings): string {
   const paint = c.backgroundPaint ? JSON.stringify(c.backgroundPaint) : '';
-  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}`;
+  // The global light MUST be in this key: it is the only thing that makes a
+  // style-bound shadow move, and a key without it means dragging the light
+  // changes the snapshot but never triggers the repaint that shows it.
+  const light = `${c.globalLightAngle ?? ''}/${c.globalLightAltitude ?? ''}`;
+  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}:${light}`;
 }
 
 export const DEFAULT_COMPOSITION: CompositionSettings = {
@@ -42,6 +47,8 @@ export const DEFAULT_COMPOSITION: CompositionSettings = {
   background: '#101014',
   transparent: false,
   startFrame: 0,
+  globalLightAngle: 90,
+  globalLightAltitude: 45,
 };
 
 interface CompositionStore extends CompositionSettings {
@@ -70,6 +77,17 @@ function sanitize(patch: Partial<CompositionSettings>): Partial<CompositionSetti
       : DEFAULT_COMPOSITION.durationSeconds;
   }
   if (patch.startFrame !== undefined) out.startFrame = clampInt(patch.startFrame, 0, 24 * 3600 * 240, 0);
+  // The light angle is deliberately NOT wrapped to 0-360: it is authored with
+  // the same unbounded dial as layer rotation, and wrapping would break a
+  // sweep that crosses 0.
+  if (patch.globalLightAngle !== undefined) {
+    out.globalLightAngle = Number.isFinite(patch.globalLightAngle)
+      ? patch.globalLightAngle
+      : DEFAULT_GLOBAL_LIGHT.angle;
+  }
+  if (patch.globalLightAltitude !== undefined) {
+    out.globalLightAltitude = clampInt(patch.globalLightAltitude, 0, 90, DEFAULT_GLOBAL_LIGHT.altitude);
+  }
   return out;
 }
 
@@ -83,12 +101,23 @@ export interface CompositionStoreFn {
 export const useCompositionStore = function <T>(selector?: (state: CompositionStore) => T): T | CompositionStore {
   // Hooks must be unconditional — a null↔set transition of activeTabId while
   // consumers stay mounted would otherwise change the hook count and crash.
-  const tab = useProjectStore(s => (s.activeTabId ? s.tabs[s.activeTabId] : undefined)) ?? null;
-  const compId = tab?.compositionId;
+  //
+  // Subscribe to the tab's compositionId (a STRING), never to the tab object.
+  // The tab is re-created by immer on every `setTime`, i.e. 60×/s during playback,
+  // and because this is a plain hook rather than a real zustand store the selector
+  // runs AFTER the subscription — so `useCompositionStore(s => s.fps)` gave zero
+  // granularity and re-rendered all ~39 call sites across 17 components on every
+  // playback frame (TitleBar, ViewportHeader, inspector sections, ExportDialog…),
+  // none of which care about time. A scalar id is stable across those writes.
+  const compId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
   const compData = useProjectStore(s => (compId ? s.comps[compId] : undefined)) ?? DEFAULT_COMPOSITION;
   const updateComp = useProjectStore(s => s.actions.updateComp);
 
-  const state: CompositionStore = {
+  // Memoized so the returned identity is stable between renders. Without this
+  // every consumer that selects an object/function off this store (`comp`, `key`,
+  // `update`) saw a fresh reference each render, defeating downstream memo and
+  // putting unstable values into effect dependency arrays.
+  const state = useMemo<CompositionStore>(() => ({
     ...compData,
     update: (patch) => { if (compId) updateComp(compId, sanitize(patch)); },
     setBackground: (hex) => { if (compId) updateComp(compId, { background: hex, backgroundPaint: undefined }); },
@@ -100,7 +129,7 @@ export const useCompositionStore = function <T>(selector?: (state: CompositionSt
     setTransparent: (v) => { if (compId) updateComp(compId, { transparent: v }); },
     comp: () => compData,
     key: () => compKeyFor(compData),
-  };
+  }), [compData, compId, updateComp]);
 
   return selector ? selector(state) : state;
 } as CompositionStoreFn;

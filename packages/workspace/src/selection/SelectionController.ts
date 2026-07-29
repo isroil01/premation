@@ -16,6 +16,7 @@ import type { Modifiers } from '../input/events';
 import type { NodeId, SceneGraphPort, SelectionPort } from '../ports';
 import type { HitTester } from '../hit/HitTester';
 import { Marquee, type MarqueeMode } from './Marquee';
+import type { Corners } from '../math/OrientedBox';
 import { computeHandles, type Handle } from './handles';
 
 export class SelectionController {
@@ -116,7 +117,13 @@ export class SelectionController {
   }
 
   // ── Overlay geometry (world space) ───────────────────────────────
-  /** Union of selected nodes' world bounds, or null when empty. */
+  /**
+   * Union AABB of the selected nodes, or null when empty.
+   *
+   * This is the TOOL's box — resize math, move snapping and fit-to-selection
+   * all need one axis-aligned rectangle to work in. It is deliberately NOT what
+   * gets drawn: see `selectionBoxes`.
+   */
   selectionBounds(): Rect | null {
     const rects: Rect[] = [];
     for (const id of this.selection.get()) {
@@ -126,11 +133,44 @@ export class SelectionController {
     return R.bounds(rects);
   }
 
-  /** Resize/rotate handles in world space, or [] when nothing is selected. */
-  handles(rotateOffsetWorld = 24): Handle[] {
+  /**
+   * One ORIENTED box per selected layer — what the overlay draws.
+   *
+   * Two separate fixes in one list. Each box is the layer's own rotated
+   * rectangle rather than its axis-aligned bounds, and selecting three layers
+   * yields three boxes rather than one merged rectangle that belongs to none of
+   * them and encloses whatever happens to lie between them.
+   */
+  selectionBoxes(): Corners[] {
+    const out: Corners[] = [];
+    for (const id of this.selection.get()) {
+      const n = this.scene.getNode(id);
+      if (n) out.push(n.worldCorners ?? (R.corners(n.worldBounds) as Corners));
+    }
+    return out;
+  }
+
+  /**
+   * Resize/rotate handles in world space, or [] when nothing is selected.
+   *
+   * Also [] for a single 3D layer: its transform belongs to the 3D gizmo, and
+   * these handles work in axis-aligned world bounds, which do not describe a
+   * projected 3D layer. Returning none here means the tool cannot grab them
+   * either — hiding them in the painter alone would leave invisible hit targets.
+   *
+   * Always all eight. Which of them are SHOWN (and therefore grabbable) at the
+   * current zoom is the tool's call, since only it knows the on-screen size —
+   * see `visibleHandleIds`.
+   */
+  handles(): Handle[] {
     const bounds = this.selectionBounds();
     if (!bounds) return [];
-    return computeHandles(bounds, { rotateOffset: rotateOffsetWorld });
+    const ids = this.selection.get();
+    if (ids.length === 1) {
+      const only = this.scene.getNode(ids[0]!);
+      if (only?.is3D) return [];
+    }
+    return computeHandles(bounds);
   }
 
   get marqueeRect(): Rect | null {

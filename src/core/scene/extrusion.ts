@@ -36,6 +36,9 @@ export const EXTRUSION_WALL_FALLBACK_FILL = '#2a2a2a';
 /** Number of planar strips approximating an ellipse's side wall. */
 export const ELLIPSE_WALL_SEGMENTS = 20;
 
+/** Quads per 90° corner arc on a rounded-rect extrusion. */
+export const ROUNDED_CORNER_SEGMENTS = 6;
+
 export interface ExtrusionFace {
   /** Face-local centered px → layer-local centered px (column-major mat4). */
   m: Matrix4;
@@ -59,6 +62,44 @@ export interface ExtrusionOptions {
   bevel?: number;
   /** Bevel profile (see {@link BevelStyle}). */
   bevelStyle?: BevelStyle;
+  /**
+   * The layer's corner radius, so the extruded BODY follows the rounded
+   * outline instead of the bounding box.
+   *
+   * Without this the walls were four full-width planes on the raw w×h box while
+   * the front cap drew rounded — a rounded face stuck on a square block, with
+   * the box corners poking out past the curve. Corner radius simply had no
+   * effect on anything 3D.
+   */
+  cornerRadius?: number;
+}
+
+/** Points around a rounded-rect outline, centred on the origin. */
+function roundedRectOutline(w: number, h: number, r: number, arcSegments: number): Array<{ x: number; y: number }> {
+  const a = w / 2;
+  const b = h / 2;
+  const rr = Math.max(0, Math.min(r, Math.min(a, b)));
+  const pts: Array<{ x: number; y: number }> = [];
+  const n = Math.max(1, Math.floor(arcSegments));
+  // Four corner centres, walked in order with the straight runs between them.
+  // Angles use screen orientation (y down), matching the ellipse branch.
+  const corners: Array<{ cx: number; cy: number; from: number }> = [
+    { cx: a - rr, cy: b - rr, from: 0 },       // bottom-right: 0° → 90°
+    { cx: -(a - rr), cy: b - rr, from: 90 },   // bottom-left
+    { cx: -(a - rr), cy: -(b - rr), from: 180 }, // top-left
+    { cx: a - rr, cy: -(b - rr), from: 270 },  // top-right
+  ];
+  for (const c of corners) {
+    if (rr <= 0) {
+      pts.push({ x: c.cx, y: c.cy });
+      continue;
+    }
+    for (let i = 0; i <= n; i++) {
+      const ang = (c.from + (90 * i) / n) * DEG;
+      pts.push({ x: c.cx + rr * Math.cos(ang), y: c.cy + rr * Math.sin(ang) });
+    }
+  }
+  return pts;
 }
 
 /**
@@ -96,11 +137,11 @@ function face(
  * back cap + a segmented wall ring for `shape === 'ellipse'`.
  *
  * Rect face math (layer w×h, depth d; all in the layer's centered frame):
- *   back   = T(0, 0, d)                        — w×h plane at z = d
- *   right  = T(+w/2, 0, d/2) · Ry(90°)         — d×h plane; face-x → −z, so
+ *   back   = T(0, 0, d) — w×h plane at z = d
+ *   right  = T(+w/2, 0, d/2) · Ry(90°) — d×h plane; face-x → −z, so
  *                                                 x_f ∈ [−d/2, d/2] spans z ∈ [0, d]
  *   left   = T(−w/2, 0, d/2) · Ry(90°)
- *   top    = T(0, −h/2, d/2) · Rx(90°)         — w×d plane; face-y → +z
+ *   top    = T(0, −h/2, d/2) · Rx(90°) — w×d plane; face-y → +z
  *   bottom = T(0, +h/2, d/2) · Rx(90°)
  *
  * Ellipse walls: N chord strips. Strip i spans the perimeter chord from angle
@@ -151,6 +192,27 @@ export function extrusionFaces(
       if (len < 1e-6) continue;
       const phi = Math.atan2(dy, dx) / DEG;
       faces.push(face((x0 + x1) / 2, (y0 + y1) / 2, d / 2, 90, 0, phi, len, d, 'wall', `w${i}`));
+    }
+    return faces;
+  }
+
+  // Rounded rect: extrude the OUTLINE. Emitted before the bevel path because a
+  // bevel on a rounded corner is a torus section, which this flat-quad wall
+  // model cannot express — a rounded layer therefore takes the un-bevelled
+  // rounded body rather than silently drawing square corners.
+  const cr = Math.max(0, Math.min(opts.cornerRadius ?? 0, Math.min(w, h) / 2));
+  if (cr > 0) {
+    const faces: ExtrusionFace[] = [face(0, 0, d, 0, 0, 0, w, h, 'back', 'back')];
+    const outline = roundedRectOutline(w, h, cr, ROUNDED_CORNER_SEGMENTS);
+    for (let i = 0; i < outline.length; i++) {
+      const p0 = outline[i]!;
+      const p1 = outline[(i + 1) % outline.length]!;
+      const dx = p1.x - p0.x;
+      const dy = p1.y - p0.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-6) continue;
+      const phi = Math.atan2(dy, dx) / DEG;
+      faces.push(face((p0.x + p1.x) / 2, (p0.y + p1.y) / 2, d / 2, 90, 0, phi, len, d, 'wall', `w${i}`));
     }
     return faces;
   }

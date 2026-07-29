@@ -74,13 +74,52 @@ export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
   /** Per-property expressions that override the sampled value each frame. */
   private expressions = new Map<string, Map<PropPath, CompiledExpression>>();
-  /** Change sink — no-op until the host binds one via setChangeListener(). */
-  private notifyChange: AnimationChangeListener = () => {};
+  /** Change sink — no-op until the host binds one via setChangeListener. */
+  private changeListener: AnimationChangeListener = () => {};
+  /** >0 while inside batch; notifications are held until the batch closes. */
+  private batchDepth = 0;
+  /** True when any mutation happened inside the current batch. */
+  private batchDirty = false;
+
+  /**
+   * Route every mutation's change signal through here.
+   *
+   * The app's listener chain is EXPENSIVE — a scene bump, a hit-test rebuild,
+   * autosave scheduling — and it runs synchronously. That is the right trade
+   * for one interactive edit, and exactly wrong for a bulk write: importing an
+   * animated SVG fired it once per track and froze the app for the sum.
+   */
+  private notifyChange(nodeId: string): void {
+    if (this.batchDepth > 0) {
+      this.batchDirty = true;
+      return;
+    }
+    this.changeListener(nodeId);
+  }
+
+  /**
+   * Run `fn` with change notifications held, then emit ONE `'*'` (all nodes)
+   * notification if anything changed. Nests; only the outermost batch flushes.
+   * The flush fires even when `fn` throws — listeners must not be left stale
+   * about mutations that happened before the error.
+   */
+  batch<T>(fn: () => T): T {
+    this.batchDepth++;
+    try {
+      return fn();
+    } finally {
+      this.batchDepth--;
+      if (this.batchDepth === 0 && this.batchDirty) {
+        this.batchDirty = false;
+        this.changeListener('*');
+      }
+    }
+  }
   /** Audio amplitude source — 0 until the host binds the AudioEngine. */
   private audioLevel: AudioLevelProvider = () => 0;
   /** Slider-control source — 0 until the host binds the scene rig lookup. */
   private controlProvider: ControlProvider = () => 0;
-  /** Layer name → nodeId lookup for `layer()` — unknown until the host binds. */
+  /** Layer name → nodeId lookup for `layer` — unknown until the host binds. */
   private layerResolver: LayerResolver = () => null;
   /** Base (un-keyframed) value source for cross-layer reads — none by default. */
   private baseValueProvider: BaseValueProvider = () => undefined;
@@ -104,7 +143,7 @@ export class AnimationEngine {
    * so the render cache, timeline, inspector and history stay in sync).
    */
   setChangeListener(listener: AnimationChangeListener): void {
-    this.notifyChange = listener;
+    this.changeListener = listener;
   }
 
   /** Bind the audio-amplitude source used by the `audio` expression accessor. */
@@ -117,12 +156,12 @@ export class AnimationEngine {
     this.controlProvider = provider;
   }
 
-  /** Bind the layer-name → nodeId lookup used by `layer()`/`layerAt()`. */
+  /** Bind the layer-name → nodeId lookup used by `layer`/`layerAt`. */
   setLayerResolver(resolver: LayerResolver): void {
     this.layerResolver = resolver;
   }
 
-  /** Bind the base-value fallback used by `layer()`/`layerAt()` when the
+  /** Bind the base-value fallback used by `layer`/`layerAt` when the
    *  referenced layer has no keyframe track for the prop (the host reads the
    *  node's static Transform/component props). */
   setBaseValueProvider(provider: BaseValueProvider): void {
@@ -147,6 +186,38 @@ export class AnimationEngine {
 
   hasAnimation(nodeId: string): boolean {
     return (this.tracks.get(nodeId)?.size ?? 0) > 0;
+  }
+
+  /**
+   * Replace a whole track in one shot.
+   *
+   * `setKeyframe` is built for interactive authoring: it re-scans and re-sorts
+   * the track and fires a change notification PER CALL. That is right for one
+   * keyframe from one drag and quadratic for a generated track — importing an
+   * animated SVG drove it with hundreds of keyframes per track and thousands of
+   * notifications, which froze the app for as long as the import took. Bulk
+   * writes sort once and notify once.
+   *
+   * Existing keyframes on the track are discarded; callers building a track
+   * from scratch are the only intended users.
+   */
+  setKeyframes(nodeId: string, prop: PropPath, keyframes: readonly Keyframe[]): void {
+    if (keyframes.length === 0) {
+      this.tracks.get(nodeId)?.delete(prop);
+      this.notifyChange(nodeId);
+      return;
+    }
+    let byProp = this.tracks.get(nodeId);
+    if (!byProp) {
+      byProp = new Map();
+      this.tracks.set(nodeId, byProp);
+    }
+    // De-duplicate by time (last wins), then sort — one pass, not one per key.
+    const byTime = new Map<number, Keyframe>();
+    for (const kf of keyframes) byTime.set(kf.t, { ...kf });
+    const sorted = Array.from(byTime.values()).sort((a, b) => a.t - b.t);
+    byProp.set(prop, { nodeId, prop, keyframes: sorted });
+    this.notifyChange(nodeId);
   }
 
   /**
@@ -435,7 +506,7 @@ export class AnimationEngine {
       layerAt: (name, p, tt) => this.crossLayerValue(name, p, tt, visited, depth),
       comp: this.compInfoProvider(),
       layerInfo: this.layerInfoProvider(nodeId),
-      // Per-(node, prop) noise phase so `wiggle()` on x and y move
+      // Per-(node, prop) noise phase so `wiggle` on x and y move
       // independently (AE) — still deterministic run to run.
       propSeed: stringSeed(`${nodeId}:${prop}`),
     };
@@ -460,7 +531,7 @@ export class AnimationEngine {
 
   /**
    * Evaluate an arbitrary expression source against (nodeId, prop) at time
-   * `t` with the SAME context sample() uses — so editor previews see
+   * `t` with the SAME context sample uses — so editor previews see
    * valueAtTime/layer/loopOut and cycle errors exactly as playback will.
    */
   previewExpression(nodeId: string, prop: PropPath, src: string, t: number): ExprResult {
@@ -528,16 +599,48 @@ export class AnimationEngine {
 
   private dataTracksMap = new Map<string, Map<PropPath, DataTrack>>();
 
-  /** Add/replace a data keyframe at `t` (deep-copies the value in). */
-  setDataKeyframe(nodeId: string, prop: PropPath, kind: DataKind, t: number, value: DataValue): void {
+  /**
+   * Add/replace a data keyframe at `t` (deep-copies the value in).
+   *
+   * `easing` is optional and, when omitted on an EXISTING keyframe, leaves the
+   * curve alone — mirroring `setKeyframe`, so re-keying a gradient's colour
+   * does not silently flatten the ease it was travelling along.
+   */
+  setDataKeyframe(
+    nodeId: string,
+    prop: PropPath,
+    kind: DataKind,
+    t: number,
+    value: DataValue,
+    easing?: EasingKind,
+  ): void {
     let byProp = this.dataTracksMap.get(nodeId);
     if (!byProp) {
       byProp = new Map();
       this.dataTracksMap.set(nodeId, byProp);
     }
     const track = byProp.get(prop) ?? { nodeId, prop, kind, keyframes: [] as DataKeyframe[] };
-    track.keyframes = upsertDataKeyframe(track.keyframes, { t, value: cloneDataValue(value) });
+    track.keyframes = upsertDataKeyframe(track.keyframes, {
+      t,
+      value: cloneDataValue(value),
+      ...(easing ? { easing } : {}),
+    });
     byProp.set(prop, track);
+    this.notifyChange(nodeId);
+  }
+
+  /**
+   * Set the easing on the data-track segment that starts at `t`.
+   *
+   * The counterpart of `setEasing` for non-scalar tracks — animated gradients,
+   * mask outlines and baked paths. Seeds default handles when switching to a
+   * custom bezier, exactly as the scalar path does.
+   */
+  setDataEasing(nodeId: string, prop: PropPath, t: number, easing: EasingKind, bezier?: BezierHandles): void {
+    const kf = this.dataTracksMap.get(nodeId)?.get(prop)?.keyframes.find((k) => k.t === t);
+    if (!kf) return;
+    kf.easing = easing;
+    if (easing === 'bezier') kf.bezier = bezier ? ([...bezier] as BezierHandles) : (kf.bezier ?? [0.25, 0.1, 0.25, 1]);
     this.notifyChange(nodeId);
   }
 
@@ -588,7 +691,7 @@ export class AnimationEngine {
     if (!track) return null;
     return {
       ...track,
-      keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+      keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
     };
   }
 
@@ -609,7 +712,7 @@ export class AnimationEngine {
       nodeId,
       prop,
       kind: track.kind,
-      keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+      keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
     });
     this.notifyChange(nodeId);
   }
@@ -701,7 +804,7 @@ export class AnimationEngine {
           nodeId,
           prop,
           kind: track.kind,
-          keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+          keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
         };
         hasData = true;
       }
@@ -728,7 +831,7 @@ export class AnimationEngine {
               nodeId,
               prop,
               kind: track.kind,
-              keyframes: track.keyframes.map((k) => ({ t: k.t, value: cloneDataValue(k.value) })),
+              keyframes: track.keyframes.map((k) => ({ ...k, value: cloneDataValue(k.value) })),
             });
           }
         }
