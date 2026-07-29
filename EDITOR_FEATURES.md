@@ -418,6 +418,12 @@ rather than assigned per frame, so it slides smoothly instead of stepping, and *
 share one curve builder** so the rendered file matches what you heard. Mute is instant and not
 keyframable. **Solo covers audio too**, on both layer kinds.
 
+**The clip bar draws its waveform**, for audio and video layers alike, and it shows the *audible
+window* — trim or slip the bar and the drawn shape follows, because it slices the envelope to the
+clip's own source range rather than squeezing the whole file into the bar. A **speaker glyph** on the
+bar shows and toggles that layer's audio mute, independently of the visibility eye (which hides the
+picture).
+
 **A video layer plays its own audio.** Import an `.mp4`/`.webm` and the file's audio track is decoded
 alongside the picture and scheduled off the same clip bar — trim, split or move the bar and the sound
 follows, in preview and in the exported file alike. Per-layer **Level** and **Mute** live in the Media

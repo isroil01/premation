@@ -58,7 +58,7 @@ import {
   type MarqueeRow,
 } from './marqueeSelection';
 import { audioEngine } from '@core/audio/AudioEngine';
-import { waveformPath } from '@core/audio/waveform';
+import { waveformPath, peaksInRange } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 
@@ -135,6 +135,9 @@ export interface TimelineProps {
   onTrackToggleExpand?: (trackId: string) => void;
   /** Double-click a track — enter it (precomp) or isolate it (Focus Mode). */
   onTrackActivate?: (trackId: string) => void;
+  /** Toggle a layer's AUDIO mute from its clip bar's speaker glyph. Distinct
+   *  from the track's visibility eye, which mutes the picture. */
+  onClipMuteToggle?: (nodeId: string) => void;
   onTrackToggleVisible?: (trackId: string) => void;
   onTrackToggleLock?: (trackId: string) => void;
   onTrackToggleSolo?: (trackId: string) => void;
@@ -197,6 +200,7 @@ function Timeline({
   revealProps,
   onTrackToggleExpand,
   onTrackActivate,
+  onClipMuteToggle,
   onTrackToggleVisible,
   onTrackToggleLock,
   onTrackToggleSolo,
@@ -1294,6 +1298,8 @@ function Timeline({
                     onClipDown={onClipDown}
                     onClipContextMenu={onClipContextMenu}
                     onActivate={() => onTrackActivate?.(row.track.id)}
+                    clipMuted={row.track.audioMuted}
+                    onClipMuteToggle={onClipMuteToggle}
                   />
                 );
               }
@@ -2035,6 +2041,8 @@ function TrackContent({
   onClipDown,
   onClipContextMenu,
   onActivate,
+  clipMuted,
+  onClipMuteToggle,
 }: {
   track: TimelineTrack;
   ghosted: boolean;
@@ -2045,6 +2053,10 @@ function TrackContent({
   onClipDown?: (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>) => void;
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
   onActivate?: () => void;
+  /** Whether this layer's audio is muted, for the speaker glyph. */
+  clipMuted?: boolean;
+  /** Toggle this layer's audio mute. Absent = no speaker button. */
+  onClipMuteToggle?: (nodeId: string) => void;
 }): JSX.Element {
   return (
     <LaneRow top={top} trackHeight={trackHeight} ghosted={ghosted}>
@@ -2054,7 +2066,16 @@ function TrackContent({
         const wave = clip.assetId ? audioEngine.getWaveform(clip.assetId) : undefined;
         const width = Math.max(2, view.duration * pps);
         const height = trackHeight - 6;
-        const pathD = wave ? waveformPath(wave.peaks, width, height) : '';
+        // Slice to the bar's own window onto the source. Drawing `wave.peaks`
+        // whole — which this did — squeezed the entire file into the bar, so
+        // the peaks under the playhead were not the audio you would hear there
+        // and trimming or slipping changed nothing on screen.
+        const slice =
+          wave && clip.sourceInSec !== undefined && clip.sourceOutSec !== undefined
+            ? peaksInRange(wave, clip.sourceInSec, clip.sourceOutSec)
+            : wave?.peaks;
+        const pathD = slice ? waveformPath(slice, width, height) : '';
+        const audible = clip.assetId !== undefined && wave !== undefined;
         return (
           <div
             key={clip.id}
@@ -2111,6 +2132,24 @@ function TrackContent({
                 />
               </>
             ) : null}
+            {audible && onClipMuteToggle && (
+              <button
+                type="button"
+                className={styles.clipMute}
+                title={clipMuted ? 'Unmute this layer’s audio' : 'Mute this layer’s audio'}
+                aria-label={clipMuted ? 'Unmute audio' : 'Mute audio'}
+                aria-pressed={clipMuted}
+                // The bar is a drag handle; without stopping propagation the
+                // pointerdown would start a move and the click never lands.
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClipMuteToggle(clip.nodeId);
+                }}
+              >
+                <Icon name={clipMuted ? 'audio-off' : 'audio'} size={11} />
+              </button>
+            )}
             <span className={styles.clipLabel}>{clip.label ?? clip.id}</span>
           </div>
         );

@@ -187,6 +187,40 @@
   pointer-events: none;
 }
 
+/* Audio mute toggle on a clip bar.
+   Sits above the trim handles in z-order but inside their inset, so it never
+   steals a trim drag from the clip's leading edge. Muted state is the loud
+   one — an un-muted clip is the default and should stay quiet visually. */
+.clipMute {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 3px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.clipMute:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-bg-elevated, #000) 55%, transparent);
+}
+
+.clipMute[aria-pressed='true'] {
+  opacity: 1;
+  color: var(--color-danger, #e2564d);
+}
+
 /* Clip trim handles — the leftmost/rightmost strip of a clip. */
 .clipHandle {
   position: absolute;
