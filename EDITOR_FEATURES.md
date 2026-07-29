@@ -272,6 +272,15 @@ dolly) write to the camera layer itself, and keyframe it when Auto-Keyframe is o
 or custom view they move *the view only* and leave every scene node untouched. A composition with no 3D
 layer has nothing for a camera to move, so the tools say so rather than doing nothing silently.
 
+**Cameras and lights can also be dragged directly.** In an orthographic or custom view each one shows a
+grab dot at its position, and a second dot on its Point of Interest when it has one — drag either
+independently to move the device or re-aim it. Drags honour Auto-Keyframe and land as a single undo
+step, and a device on a parent rig stays under the cursor rather than snapping back. The camera you are
+currently looking *through* has no handle: its wireframe is hidden in its own view, and there is no
+meaningful way to drag the eye you are seeing from. Switch to a Left or Top view to move it, as in
+After Effects. Spot lights get the same pair; an ambient light gets none, having no position that
+changes anything.
+
 **Also:** extrusion with bevel depth, per-face materials, face picking/selection, per-character 3D for
 text, 3D view presets (`1` active camera, `2` last custom view), and a 3D gizmo overlay. In the
 orthographic and custom views the composition frame is drawn as a dashed outline over the plain
@@ -649,7 +658,9 @@ Shortcuts are **remappable** in Customize…
 
 ## 21. What it can't do
 
-Stated plainly so you don't plan around something that isn't there.
+Stated plainly so you don't plan around something that isn't there. Every entry below was
+re-confirmed against the code on 2026-07-29 — a limitation is removed the moment it stops
+reproducing, and nothing is carried forward on faith.
 
 1. **No corner pin / perspective warp.** There is no way to drag four corners onto a phone or laptop
    screen in a photo. You can approximate it by making the layer 3D and orienting it under a camera,
@@ -670,16 +681,11 @@ Stated plainly so you don't plan around something that isn't there.
 5. **No NLE editing model.** No ripple delete/insert, no clip-to-clip transitions on a timeline (you
    cross-fade with opacity keyframes), no speed-ramp UI (time remap covers it), no stabilization or
    motion tracking, no captions/subtitles, and every export re-encodes every frame.
-6. **Cameras and lights can't be dragged in the viewport.** Their wireframes — the frustum cone, the
-   spot cone, the falloff sphere, the Point of Interest crosshair — are drawn accurately in every view
-   but are not clickable. Move a camera or light with the camera tools, the 3D transform gizmo while
-   the layer is selected, or the inspector fields. In particular there is no drag handle for the Point
-   of Interest yet, so aiming a two-node camera or a spot means typing its Target values.
-7. **The camera wireframe is sized in composition pixels, not screen pixels.** It therefore shrinks as
+6. **The camera wireframe is sized in composition pixels, not screen pixels.** It therefore shrinks as
    you zoom out, and at low zoom on a large composition the body and lens stub get small enough that
    which way the camera is pointing is hard to read. The geometry is correct and does turn with the
    camera — it is only the on-screen size that doesn't hold.
-8. **A 3D layer whose origin passes behind the camera disappears completely.** That matches After
+7. **A 3D layer whose origin passes behind the camera disappears completely.** That matches After
    Effects — a layer is a flat plane and there is no per-fragment near-plane clipping — but the whole
    layer pops out at once rather than being clipped progressively, and its wireframe box goes with it,
    so there is no on-screen cue that it is still in the scene just behind you.
