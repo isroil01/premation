@@ -232,6 +232,32 @@ export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
   depth: { test: true, write: true },
 };
 
+/**
+ * 3D textured quad that depth-TESTS but does not depth-WRITE.
+ *
+ * For a layer whose effect chain was resolved into a texture: that texture is
+ * WIDER than the layer, because a drop shadow or glow has to have somewhere to
+ * spread (see CompositionPass.resolveEffect3DTexture). The extra margin is
+ * transparent, and a transparent fragment still writes depth — so with the
+ * ordinary material an extruded object's own front face punched a rectangular
+ * hole through its side walls wherever that margin covered them.
+ *
+ * Not writing depth is also the honest description of what the quad is: a
+ * composited RESULT on the layer's plane, not new occluding geometry. It is
+ * still occluded by anything already in the depth buffer, and the group draws
+ * back-to-front, so the ordering that matters is preserved.
+ */
+export const TEXTURED3D_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
+  shader: 'textured3d',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+  depth: { test: true, write: false },
+};
+
 /** 3D masked textured quad with depth test+write. */
 export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured3d',

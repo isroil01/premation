@@ -9,7 +9,7 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
 import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
 
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
@@ -87,10 +87,13 @@ export function emitTextured3D(
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
   shade?: Shade3D,
+  /** False for a quad whose transparent margin must not occlude what is behind
+   *  it — see TEXTURED3D_NO_DEPTH_WRITE_MATERIAL. */
+  depthWrite = true,
 ): void {
   cmds.add({
-    batchKey: `tex3d|${texture.id}|${blend}`,
-    material: TEXTURED3D_MATERIAL,
+    batchKey: `tex3d|${texture.id}|${blend}|${depthWrite ? 'dw' : 'nodw'}`,
+    material: depthWrite ? TEXTURED3D_MATERIAL : TEXTURED3D_NO_DEPTH_WRITE_MATERIAL,
     blend,
     uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade),
     texture,

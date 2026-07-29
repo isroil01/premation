@@ -8,7 +8,7 @@ import { renderComponentsOf, renderTransformOf } from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
 import { flattenComposition, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeRenderEffects, effectsToFilter, resolveEffectParams, type Effect } from '@core/effects/effects';
-import { readNodeLayerStyles, layerStylesToEffects } from '@core/effects/layerStyles';
+import { readNodeLayerStyles, layerStylesToEffects, styledSurfaceFill } from '@core/effects/layerStyles';
 import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
@@ -2019,7 +2019,14 @@ export function buildSnapshot(
         // layer fill × the kind's original hardcoded gain.
         const faceMats = readNodeFaceMaterials(node);
         const extLit = extMat.acceptsLights && sceneLights.length > 0;
-        const wallFill = typeof layer.fill === 'string' ? layer.fill : EXTRUSION_WALL_FALLBACK_FILL;
+        // Derived from the layer's STYLED surface colour, not its raw fill: a
+        // Colour/Gradient Overlay repaints the front face, and taking the raw
+        // fill here left every other face the old colour — one object in two
+        // colours, split exactly along the front edge. See styledSurfaceFill.
+        const wallFill = styledSurfaceFill(
+          readNodeLayerStyles(node),
+          typeof layer.fill === 'string' ? layer.fill : EXTRUSION_WALL_FALLBACK_FILL,
+        );
 
         if (isComplexContent) {
           // Contour Volume Extrusion: For text and complex shapes, slice the
