@@ -2,6 +2,14 @@ module.exports = {
   projects: ['<rootDir>', '<rootDir>/packages/*'],
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
+  // Git worktrees created INSIDE the repo (agent tooling puts them under
+  // .claude/worktrees) contain a second copy of every workspace package, so
+  // jest-haste-map finds two providers for `@motion/scene` and refuses to
+  // resolve it — every suite that touches the scene graph then fails to run.
+  // It also silently doubled the suite count, which reads as new coverage
+  // rather than as the same tests running twice.
+  modulePathIgnorePatterns: ['<rootDir>/\\.claude/worktrees/'],
+  haste: { retainAllFiles: false },
   testMatch: [
     '**/__tests__/**/*.[jt]s?(x)',
     '**/?(*.)+(test).[jt]s?(x)'
