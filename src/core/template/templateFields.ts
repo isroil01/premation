@@ -10,6 +10,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
+import { fillSlot } from './mediaSlots';
 import type { TemplateField } from './templateTypes';
 
 /** The concrete component id of `componentType` on `nodeId`, or null. */
@@ -35,7 +36,21 @@ export function readTemplateFieldValue(field: TemplateField): unknown {
 export function writeTemplateField(field: TemplateField, value: string | number): boolean {
   const componentId = componentIdFor(field.target.nodeId, field.target.componentType);
   if (!componentId) return false;
+  // A media field is a SLOT fill, not a prop write: it repoints the asset and
+  // reframes the layer against the slot rect. Routed here so every surface that
+  // fills a template — panel, AI, a future drag-and-drop — gets the framing,
+  // rather than each one remembering to call it.
+  if (isMediaField(field) && typeof value === 'string') {
+    const filled = fillSlot(field.target.nodeId, value);
+    return filled !== null;
+  }
+
   const ok = defaultSceneGraph.writeProp(field.target.nodeId, componentId, field.target.prop, value);
   if (ok) bumpScene();
   return ok;
+}
+
+/** True for fields that swap a layer's SOURCE (as opposed to text or colour). */
+export function isMediaField(field: TemplateField): boolean {
+  return (field.kind === 'image' || field.kind === 'media') && field.target.prop === 'src';
 }
