@@ -605,7 +605,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var c = vec4<f32>(0.0);
   var total = 0.0;
 
-  // CSS blur() semantics: the radius IS the Gaussian sigma (what Canvas2D's
+  // CSS blur semantics: the radius IS the Gaussian sigma (what Canvas2D's
   // filter uses, so both backends match). Taps span ±2.5σ; when that exceeds
   // the loop cap, taps spread out and linear filtering fills the gaps. The
   // old kernel used σ = r/2 truncated at ±r — visibly tighter than Canvas2D
@@ -649,7 +649,7 @@ void main() {
   vec4 c = vec4(0.0);
   float total = 0.0;
 
-  // CSS blur() semantics: radius IS sigma (matches Canvas2D). ±2.5σ extent,
+  // CSS blur semantics: radius IS sigma (matches Canvas2D). ±2.5σ extent,
   // spaced taps under the loop cap — see the WGSL twin above.
   float sigma = r;
   const int steps = 30;

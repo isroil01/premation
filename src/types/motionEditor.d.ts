@@ -78,15 +78,36 @@ export interface MotionEditorApi {
     list?(root: string): Promise<string[]>;
   };
   /**
-   * Offline mp4 muxing (RFC §12). The renderer stages locally-rasterized frames
-   * (and optional audio) to a per-job temp dir, then muxes with a bundled ffmpeg
-   * — so mp4 export needs no network.
+   * Offline video encoding. The renderer stages locally-rasterized frames (and
+   * optional audio) to a per-job temp dir one at a time, then ffmpeg encodes them
+   * in a CHILD PROCESS — no network, no renderer-heap copy of the whole render,
+   * and no competition with the editor's UI thread.
+   *
+   * @see electron/main.ts registerRenderIpc
+   * @see src/core/export/videoSink.ts (the renderer-side consumer)
    */
   render?: {
     beginJob?(): Promise<string>;
-    stageFrame?(jobId: string, index: number, bytes: Uint8Array): Promise<void>;
+    stageFrame?(jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png'): Promise<void>;
     stageAudio?(jobId: string, bytes: Uint8Array): Promise<void>;
-    muxMp4?(jobId: string, opts: { fps: number; hasAudio?: boolean }): Promise<{ path: string }>;
+    encode?(
+      jobId: string,
+      opts: {
+        format: 'mp4' | 'webm' | 'gif' | 'mov';
+        fps: number;
+        hasAudio?: boolean;
+        quality?: 'high' | 'medium' | 'draft';
+      },
+    ): Promise<{ path: string; frames: number }>;
+    /** Kill an in-flight encode (Cancel / queue Pause). */
+    cancel?(jobId: string): Promise<void>;
+    /** Native save dialog, then move the encoded file there. Null if cancelled. */
+    save?(jobId: string, defaultName: string): Promise<{ path: string } | null>;
+    /** Move the encoded file into an already-chosen folder, no dialog. Never
+     *  overwrites — a clashing name is suffixed ` (2)`. */
+    saveTo?(jobId: string, dir: string, filename: string): Promise<{ path: string }>;
+    /** Directory picker for the render queue's output folder. */
+    chooseOutputDir?(): Promise<string | null>;
     cleanJob?(jobId: string): Promise<void>;
   };
   /**
@@ -115,7 +136,6 @@ export interface MotionEditorApi {
     sendStateUpdate?(data: unknown): void;
     onStateSync?(handler: (data: unknown) => void): () => void;
   };
-  getMonitors?(): Promise<Array<{ id: string; label: string; bounds: { x: number; y: number; width: number; height: number }; isPrimary: boolean; scaleFactor: number }>>;
   app?: {
     quit?(): Promise<void>;
     version?(): Promise<string>;

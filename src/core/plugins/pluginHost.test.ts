@@ -17,66 +17,23 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { insertPrimitive } from '@core/scene/sceneInsert';
-import type { HostMessage, WorkerMessage } from './protocol';
+import { FakeWorker, useFakeWorkers, testPackage, bootPlugin } from './fakeWorker.testkit';
 import type { PluginPackage } from './pluginPackage';
-import type { PluginPermission } from './manifest';
 
-/** A worker that records what the host sent and lets a test talk back. */
-class FakeWorker {
-  static last: FakeWorker | null = null;
-  readonly sent: HostMessage[] = [];
-  onmessage: ((ev: MessageEvent<WorkerMessage>) => void) | null = null;
-  onerror: ((ev: ErrorEvent) => void) | null = null;
-  terminated = false;
+/** Records the show/hide calls the host makes into the dock. */
+const panelCalls: Array<{ op: 'show' | 'hide'; id: string }> = [];
 
-  constructor() { FakeWorker.last = this; }
-
-  postMessage(msg: HostMessage): void { this.sent.push(msg); }
-  terminate(): void { this.terminated = true; }
-
-  /** Simulate the plugin sending something to the host. */
-  emit(msg: WorkerMessage): void {
-    this.onmessage?.({ data: msg } as MessageEvent<WorkerMessage>);
-  }
-
-  /** Reply to the last `call` and return the host's answer. */
-  callAndWait(method: string, ...args: unknown[]): Extract<HostMessage, { k: 'result' }> {
-    const id = Math.floor(Math.random() * 1e6);
-    this.emit({ k: 'call', id, method, args });
-    const reply = [...this.sent].reverse().find((m) => m.k === 'result' && m.id === id);
-    if (!reply) throw new Error(`host never answered ${method}`);
-    return reply as Extract<HostMessage, { k: 'result' }>;
-  }
-}
-
-function pkg(permissions: PluginPermission[], id = 'com.test.plugin'): PluginPackage {
-  return {
-    manifest: {
-      id,
-      name: 'Test Plugin',
-      version: '1.0.0',
-      description: 'A plugin used by the host tests.',
-      apiVersion: 1,
-      main: 'main.js',
-      permissions,
-    },
-    files: { 'main.js': 'export function activate() {}', 'plugin.json': '{}' },
-  };
-}
-
-/** Install, boot to `running`, and hand back the fake worker driving it. */
-function boot(p: PluginPackage): FakeWorker {
-  expect(pluginHost.install(p, p.manifest.permissions)).toBeNull();
-  const w = FakeWorker.last!;
-  w.emit({ k: 'ready' });
-  w.emit({ k: 'activated' });
-  return w;
-}
+const pkg = testPackage;
+const boot = (p: PluginPackage): FakeWorker => bootPlugin(p);
 
 beforeAll(() => {
   seedDefaultScene();
-  pluginHost.setWorkerFactory(() => new FakeWorker() as unknown as Worker);
-  pluginHost.configure({ getSelection: () => useSelectionStore.getState().ids });
+  useFakeWorkers();
+  pluginHost.configure({
+    getSelection: () => useSelectionStore.getState().ids,
+    showPanel: (id) => { panelCalls.push({ op: 'show', id }); },
+    hidePanel: (id) => { panelCalls.push({ op: 'hide', id }); },
+  });
 });
 
 afterAll(() => { pluginHost.setWorkerFactory(null); });
@@ -84,6 +41,7 @@ afterAll(() => { pluginHost.setWorkerFactory(null); });
 beforeEach(() => {
   for (const p of [...usePluginStore.getState().plugins]) pluginHost.uninstall(p.manifest.id);
   FakeWorker.last = null;
+  panelCalls.length = 0;
 });
 
 describe('install and lifecycle', () => {
@@ -254,5 +212,124 @@ describe('contributed commands', () => {
     w.callAndWait('commands.register', { id: 'apply', label: 'Apply' });
     pluginHost.uninstall('com.vendor.a');
     expect(getCommandRegistry().get('plugin.com.vendor.a.apply' as never)).toBeUndefined();
+  });
+});
+
+describe('logs', () => {
+  it('keeps the plugin s console output for the manager', () => {
+    const w = boot(pkg([]));
+    w.emit({ k: 'log', level: 'log', text: 'hello from the plugin' });
+    expect(pluginHost.log('com.test.plugin').map((l) => l.text)).toContain('hello from the plugin');
+  });
+
+  it('records a refused call — the plugin may swallow the rejection', () => {
+    const w = boot(pkg(['scene:read']));
+    w.callAndWait('animation.setKeyframe', 'x', 'y', 0, 1);
+    const lines = pluginHost.log('com.test.plugin');
+    expect(lines.some((l) => l.level === 'warn' && l.text.includes('animation:write'))).toBe(true);
+  });
+
+  it('keeps the log after the plugin dies — that is when it is read', () => {
+    const w = boot(pkg([]));
+    w.emit({ k: 'log', level: 'log', text: 'before the crash' });
+    w.emit({ k: 'fatal', error: 'boom' });
+    const lines = pluginHost.log('com.test.plugin');
+    expect(lines.map((l) => l.text)).toEqual(expect.arrayContaining(['before the crash', 'boom']));
+  });
+
+  it('bounds the buffer so a logging loop cannot grow the host without limit', () => {
+    const w = boot(pkg([]));
+    for (let i = 0; i < 500; i += 1) w.emit({ k: 'log', level: 'log', text: `line ${i}` });
+    const lines = pluginHost.log('com.test.plugin');
+    expect(lines.length).toBeLessThanOrEqual(200);
+    // The tail is what matters — a plugin's last words, not its first.
+    expect(lines.at(-1)?.text).toBe('line 499');
+  });
+
+  it('drops the log when the plugin is uninstalled', () => {
+    const w = boot(pkg([]));
+    w.emit({ k: 'log', level: 'log', text: 'x' });
+    pluginHost.uninstall('com.test.plugin');
+    expect(pluginHost.log('com.test.plugin')).toEqual([]);
+  });
+});
+
+describe('changing permissions after install', () => {
+  it('narrows what the plugin may do, and the gate follows immediately', () => {
+    const w = boot(pkg(['scene:read', 'animation:write']));
+    expect(w.callAndWait('scene.getSelection').ok).toBe(true);
+
+    pluginHost.setGranted('com.test.plugin', ['scene:read']);
+    expect(usePluginStore.getState().get('com.test.plugin')?.granted).toEqual(['scene:read']);
+
+    // Restarted with the new set: the fresh worker is the one now gated.
+    const fresh = FakeWorker.last!;
+    fresh.emit({ k: 'activated' });
+    const r = fresh.callAndWait('animation.setKeyframe', 'x', 'y', 0, 1);
+    expect(r.ok === false && r.error).toContain('animation:write');
+  });
+
+  it('cannot grant something the manifest never asked for', () => {
+    boot(pkg(['scene:read']));
+    pluginHost.setGranted('com.test.plugin', ['scene:read', 'scene:write', 'timeline']);
+    expect(usePluginStore.getState().get('com.test.plugin')?.granted).toEqual(['scene:read']);
+  });
+
+  it('the boot message carries the narrowed set, not the manifest s', () => {
+    boot(pkg(['scene:read', 'timeline']));
+    pluginHost.setGranted('com.test.plugin', ['timeline']);
+    const boot0 = FakeWorker.last!.sent.find((m) => m.k === 'boot');
+    expect(boot0 && boot0.k === 'boot' && boot0.permissions).toEqual(['timeline']);
+  });
+});
+
+/**
+ * `ui.openPanel` used to flip a flag nobody read, so a plugin could not put its
+ * own interface on screen — the one documented API that did nothing. These pin
+ * the plumbing that replaced it.
+ */
+describe('panels', () => {
+  it('opens the dock panel when the plugin asks for it', () => {
+    const w = boot(pkg([], 'com.test.plugin', { panel: 'panel.html' }));
+    expect(w.callAndWait('ui.openPanel').ok).toBe(true);
+    expect(panelCalls).toContainEqual({ op: 'show', id: 'com.test.plugin' });
+  });
+
+  it('refuses openPanel from a plugin whose manifest declares no panel', () => {
+    const w = boot(pkg([]));
+    const r = w.callAndWait('ui.openPanel');
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toContain('panel');
+    expect(panelCalls).toHaveLength(0);
+  });
+
+  it('closes the panel when the plugin stops, so no frame outlives its worker', () => {
+    boot(pkg([], 'com.test.plugin', { panel: 'panel.html' }));
+    panelCalls.length = 0;
+    pluginHost.setEnabled('com.test.plugin', false);
+    expect(panelCalls).toContainEqual({ op: 'hide', id: 'com.test.plugin' });
+  });
+
+  it('gives a plugin with a panel an Open Panel command, and takes it away again', () => {
+    boot(pkg([], 'com.vendor.p', { panel: 'panel.html' }));
+    const cmd = getCommandRegistry().get('plugin.com.vendor.p.panel' as never);
+    expect(cmd).toBeDefined();
+
+    void cmd!.execute({} as never);
+    expect(panelCalls).toContainEqual({ op: 'show', id: 'com.vendor.p' });
+
+    pluginHost.uninstall('com.vendor.p');
+    expect(getCommandRegistry().get('plugin.com.vendor.p.panel' as never)).toBeUndefined();
+  });
+
+  it('does not invent a panel command for a plugin without a panel', () => {
+    boot(pkg([], 'com.vendor.n'));
+    expect(getCommandRegistry().get('plugin.com.vendor.n.panel' as never)).toBeUndefined();
+  });
+
+  it('counts only the plugin s OWN commands, not the host s panel command', () => {
+    const w = boot(pkg([], 'com.vendor.c', { panel: 'panel.html' }));
+    w.callAndWait('commands.register', { id: 'apply', label: 'Apply' });
+    expect(pluginHost.info('com.vendor.c').commands).toHaveLength(1);
   });
 });

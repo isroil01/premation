@@ -1,6 +1,6 @@
 import { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol, net, type MenuItemConstructorOptions } from 'electron';
 import path from 'node:path';
-import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { startBackend, stopBackend } from './backend';
@@ -229,13 +229,29 @@ function registerBlobIpc(): void {
 }
 
 /**
- * Offline mp4 export (RFC §12 / principle 7). The renderer rasterizes frames
- * locally (deterministic — offlineRenderer) and streams them here; the main
- * process muxes with a bundled/resolved ffmpeg so mp4 export needs no network.
- * Frames are staged to a per-job temp dir, then muxed on demand.
+ * Offline video export. The renderer rasterizes frames deterministically
+ * (src/core/export/offlineRenderer.ts) and streams them here one at a time;
+ * this process encodes them with ffmpeg and hands back a path on disk.
+ *
+ * Why the encode lives in the main process and not the renderer:
+ *
+ *  - ffmpeg runs as a CHILD PROCESS, so the encode never competes with the
+ *    editor's UI thread or its GPU context. A long export leaves the app fully
+ *    usable, which in-renderer encoding (MediaRecorder, a WASM encoder) cannot
+ *    promise.
+ *  - Frames are written to disk as they arrive, so peak memory is one frame
+ *    rather than the whole render. A 4K/30s export used to hold ~2 GB of JPEG
+ *    byte arrays in the renderer heap before encoding started.
+ *  - The finished file is moved to the user's chosen path with `render:save` —
+ *    it is never read back through the renderer, so a 2 GB output costs nothing.
+ *
+ * Frames are staged to a per-job temp dir; `render:encode` muxes on demand and
+ * `render:cleanJob` removes the dir.
  */
 function registerRenderIpc(): void {
   const jobs = new Map<string, string>();
+  /** Running ffmpeg children per job, so `render:cancel` can kill them. */
+  const running = new Map<string, ReturnType<typeof spawn>>();
 
   const resolveFfmpeg = (): string => {
     if (process.env.FFMPEG_PATH && existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
@@ -245,31 +261,69 @@ function registerRenderIpc(): void {
     return 'ffmpeg'; // fall back to PATH
   };
 
-  const runFfmpeg = (args: string[]): Promise<void> =>
+  const runFfmpeg = (jobId: string, args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
       const proc = spawn(resolveFfmpeg(), args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      running.set(jobId, proc);
       let stderr = '';
       proc.stderr?.on('data', (d) => (stderr += String(d)));
-      proc.on('error', reject);
-      proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-400)}`))));
+      proc.on('error', (err: NodeJS.ErrnoException) => {
+        running.delete(jobId);
+        // ENOENT is the one failure worth explaining: nothing is wrong with the
+        // render, ffmpeg simply is not installed. The generic message sent users
+        // hunting for a bug in their composition.
+        reject(
+          err.code === 'ENOENT'
+            ? new Error(
+                'ffmpeg was not found. Install it and make sure it is on your PATH, ' +
+                  'or set the FFMPEG_PATH environment variable to the executable.',
+              )
+            : err,
+        );
+      });
+      proc.on('close', (code) => {
+        running.delete(jobId);
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-600)}`));
+      });
     });
+
+  /**
+   * What is actually staged for a job: how many frames, and in which format.
+   *
+   * ffmpeg writes a valid, playable container with NO video stream and exits 0
+   * when its input pattern matches nothing — which is precisely the "exported
+   * file is a black screen" bug. Every encode checks this first and fails loudly
+   * instead of producing an empty file that looks like a successful export.
+   */
+  const stagedFrames = async (dir: string): Promise<{ count: number; ext: 'jpg' | 'png' }> => {
+    const files = await readdir(dir);
+    const png = files.filter((f) => /^frame_\d+\.png$/i.test(f)).length;
+    const jpg = files.filter((f) => /^frame_\d+\.jpg$/i.test(f)).length;
+    return png > jpg ? { count: png, ext: 'png' } : { count: jpg, ext: 'jpg' };
+  };
 
   ipcMain.handle('render:beginJob', async () => {
     const jobId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-    const dir = path.join(app.getPath('temp'), `motion-mux-${jobId}`);
+    const dir = path.join(app.getPath('temp'), `motion-render-${jobId}`);
     await mkdir(dir, { recursive: true });
     jobs.set(jobId, dir);
     return jobId;
   });
 
-  ipcMain.handle('render:stageFrame', async (_e, jobId: string, index: number, bytes: Uint8Array) => {
-    const dir = jobs.get(jobId);
-    if (!dir) throw new Error('unknown render job');
-    // Frame naming must match the producer (exportManager.ts frameFileName):
-    // 4-digit zero-padding, JPEG extension. This is a cross-repo contract —
-    // FRAME_SEQUENCE_PAD=4 and the .jpg extension are the authoritative spec.
-    await writeFile(path.join(dir, `frame_${String(index).padStart(4, '0')}.jpg`), Buffer.from(bytes));
-  });
+  ipcMain.handle(
+    'render:stageFrame',
+    async (_e, jobId: string, index: number, bytes: Uint8Array, ext: 'jpg' | 'png' = 'jpg') => {
+      const dir = jobs.get(jobId);
+      if (!dir) throw new Error('unknown render job');
+      // Frame naming is a contract shared with the renderer (exportManager's
+      // frameFileName) and with motion-back's render worker: 4-digit zero padding.
+      // `%04d` is a MINIMUM width in ffmpeg, so renders longer than 9999 frames
+      // still match. PNG is used only when the export needs an alpha channel.
+      const name = `frame_${String(index).padStart(4, '0')}.${ext === 'png' ? 'png' : 'jpg'}`;
+      await writeFile(path.join(dir, name), Buffer.from(bytes));
+    },
+  );
 
   ipcMain.handle('render:stageAudio', async (_e, jobId: string, bytes: Uint8Array) => {
     const dir = jobs.get(jobId);
@@ -277,41 +331,171 @@ function registerRenderIpc(): void {
     await writeFile(path.join(dir, 'audio.wav'), Buffer.from(bytes));
   });
 
-  ipcMain.handle('render:muxMp4', async (_e, jobId: string, opts: { fps: number; hasAudio?: boolean }) => {
+  /**
+   * Encode the staged frames into one file. `format` picks the codec/container;
+   * everything else is derived so the renderer never has to know ffmpeg flags.
+   */
+  ipcMain.handle(
+    'render:encode',
+    async (
+      _e,
+      jobId: string,
+      opts: { format: 'mp4' | 'webm' | 'gif' | 'mov'; fps: number; hasAudio?: boolean; quality?: 'high' | 'medium' | 'draft' },
+    ) => {
+      const dir = jobs.get(jobId);
+      if (!dir) throw new Error('unknown render job');
+
+      const staged = await stagedFrames(dir);
+      const frames = staged.count;
+      if (frames === 0) {
+        throw new Error('No frames were staged — refusing to write an empty file.');
+      }
+
+      const input = path.join(dir, `frame_%04d.${staged.ext}`);
+      const audio = opts.hasAudio ? path.join(dir, 'audio.wav') : null;
+      const hasAudio = !!(audio && existsSync(audio));
+      const out = path.join(dir, `out.${opts.format}`);
+      // Even dimensions are required by yuv420p; odd-sized comps otherwise fail
+      // the encode outright.
+      const evenScale = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+      const crf = opts.quality === 'draft' ? '28' : opts.quality === 'medium' ? '23' : '18';
+
+      const base = ['-y', '-framerate', String(opts.fps), '-i', input, ...(hasAudio ? ['-i', audio!] : [])];
+      let args: string[];
+
+      switch (opts.format) {
+        case 'webm':
+          args = [
+            ...base,
+            '-c:v', 'libvpx-vp9',
+            '-crf', crf, '-b:v', '0',
+            // VP9 encodes far faster with row-based threading, and an export is
+            // the one place where using every core is exactly what the user wants.
+            '-row-mt', '1', '-threads', '0',
+            // VP9 is the only mainstream video codec with an alpha channel, so a
+            // transparent comp (staged as PNG) keeps its transparency here.
+            // alt-ref frames must be off for alpha, or the channel is discarded.
+            ...(staged.ext === 'png' ? ['-pix_fmt', 'yuva420p', '-auto-alt-ref', '0'] : ['-pix_fmt', 'yuv420p']),
+            '-vf', evenScale,
+            ...(hasAudio ? ['-c:a', 'libopus', '-b:a', '160k', '-shortest'] : []),
+            out,
+          ];
+          break;
+        case 'gif':
+          // Two passes in one graph: palettegen builds an optimal 256-colour
+          // palette for the whole animation, paletteuse dithers against it. A
+          // single-pass GIF quantises per frame and visibly bands and flickers.
+          args = [
+            '-y', '-framerate', String(opts.fps), '-i', input,
+            '-filter_complex',
+            `[0:v] ${evenScale},split [a][b];[a] palettegen=stats_mode=diff [p];[b][p] paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle`,
+            '-loop', '0',
+            out,
+          ];
+          break;
+        case 'mov':
+          // ProRes 4444 keeps the alpha channel, which is the reason to pick a
+          //.mov over mp4 at all (transparent comps for compositing elsewhere).
+          args = [
+            ...base,
+            '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le',
+            '-vf', evenScale,
+            ...(hasAudio ? ['-c:a', 'pcm_s16le', '-shortest'] : []),
+            out,
+          ];
+          break;
+        case 'mp4':
+        default:
+          args = [
+            ...base,
+            '-c:v', 'libx264',
+            '-preset', opts.quality === 'draft' ? 'veryfast' : 'medium',
+            '-crf', crf,
+            '-pix_fmt', 'yuv420p',
+            // Streaming-friendly: without faststart the moov atom lands at the
+            // end and browsers refuse to play the file until it fully downloads.
+            '-movflags', '+faststart',
+            '-vf', evenScale,
+            ...(hasAudio ? ['-c:a', 'aac', '-b:a', '192k', '-shortest'] : []),
+            out,
+          ];
+      }
+
+      await runFfmpeg(jobId, args);
+      return { path: out, frames };
+    },
+  );
+
+  /** Kill a running encode (the queue's Pause / the dialog's Cancel). */
+  ipcMain.handle('render:cancel', async (_e, jobId: string) => {
+    running.get(jobId)?.kill();
+    running.delete(jobId);
+  });
+
+  /**
+   * Move a finished render to a path the user picks.
+   *
+   * The alternative — reading the file back into the renderer as a Blob and
+   * triggering a browser download — copies the entire output through the
+   * renderer heap and drops it in the default download folder. For a desktop app
+   * exporting multi-gigabyte video, both halves of that are wrong.
+   */
+  /** Move a job's encoded file to `target`, across volumes if need be. */
+  const moveOutput = async (jobId: string, ext: string, target: string): Promise<void> => {
     const dir = jobs.get(jobId);
     if (!dir) throw new Error('unknown render job');
-    const out = path.join(dir, 'out.mp4');
-    const audio = opts.hasAudio ? path.join(dir, 'audio.wav') : null;
-
-    // Validate that at least one frame was staged before invoking FFmpeg.
-    // FFmpeg will write a valid, playable container with no video stream and
-    // exit code 0 when given an empty glob — producing exactly the reported
-    // "blank MP4" symptom. Fail loudly instead.
-    const stagedFiles = await readdir(dir);
-    const frameCount = stagedFiles.filter((f) => /^frame_\d+\.jpg$/i.test(f)).length;
-    if (frameCount === 0) {
-      throw new Error('render:muxMp4: no frames were staged — aborting to avoid a silent blank output');
+    const produced = path.join(dir, `out.${ext}`);
+    if (!existsSync(produced)) throw new Error(`nothing encoded for this job (${ext})`);
+    try {
+      await rename(produced, target);
+    } catch {
+      // rename fails across volumes (temp on C:, target on D:) — copy instead.
+      await copyFile(produced, target);
+      await unlink(produced).catch(() => undefined);
     }
+  };
 
-    const args = [
-      '-y',
-      '-framerate', String(opts.fps),
-      // Pattern matches the 4-digit JPEG frames written by render:stageFrame.
-      '-i', path.join(dir, 'frame_%04d.jpg'),
-      ...(audio ? ['-i', audio] : []),
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', // even dims required by yuv420p
-      ...(audio ? ['-c:a', 'aac', '-shortest'] : []),
-      out,
-    ];
-    await runFfmpeg(args);
-    return { path: out };
+  ipcMain.handle('render:save', async (_e, jobId: string, defaultName: string) => {
+    const ext = path.extname(defaultName).replace('.', '') || 'mp4';
+    const res = await dialog.showSaveDialog({
+      defaultPath: defaultName,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }, { name: 'All Files', extensions: ['*'] }],
+    });
+    if (res.canceled || !res.filePath) return null;
+    await moveOutput(jobId, ext, res.filePath);
+    return { path: res.filePath };
+  });
+
+  /**
+   * Save into a folder the user picked earlier, with no dialog.
+   *
+   * This is what makes the render queue worth using: a queue that opens a save
+   * dialog per job stops dead on the first one and waits for someone to come
+   * back, which is the opposite of queueing work up and walking away.
+   *
+   * Never overwrites — an existing name gets ` (2)`, ` (3)` and so on, because
+   * silently replacing a previous render is not recoverable.
+   */
+  ipcMain.handle('render:saveTo', async (_e, jobId: string, dir: string, filename: string) => {
+    const ext = path.extname(filename).replace('.', '') || 'mp4';
+    const stem = path.basename(filename, `.${ext}`);
+    let target = path.join(dir, filename);
+    for (let n = 2; existsSync(target); n++) target = path.join(dir, `${stem} (${n}).${ext}`);
+    await moveOutput(jobId, ext, target);
+    return { path: target };
+  });
+
+  /** Directory picker for the render queue's output folder. */
+  ipcMain.handle('render:chooseOutputDir', async () => {
+    const res = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+    return res.canceled ? null : (res.filePaths[0] ?? null);
   });
 
   ipcMain.handle('render:cleanJob', async (_e, jobId: string) => {
     const dir = jobs.get(jobId);
     if (!dir) return;
+    running.get(jobId)?.kill();
+    running.delete(jobId);
     jobs.delete(jobId);
     try {
       await rm(dir, { recursive: true, force: true });
@@ -364,6 +548,17 @@ function buildApplicationMenu(win: BrowserWindow): void {
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
+      ],
+    },
+    {
+      // The native menubar is normally hidden (`autoHideMenuBar`), so the
+      // in-app menu is the real one — that is where a plugin's own commands and
+      // panel appear, assembled from what is installed. This entry exists so
+      // the two menus do not disagree about whether the app HAS plugins for a
+      // user who reaches for Alt.
+      label: 'Plugins',
+      submenu: [
+        { label: 'Manage Plugins…', click: cmd('view.plugins') },
       ],
     },
     { role: 'windowMenu' },
@@ -476,16 +671,6 @@ function registerPopoutIpc(): void {
     popoutWin.once('ready-to-show', () => popoutWin.show());
   });
 
-  ipcMain.handle('monitors:get', () => {
-    const { screen } = require('electron');
-    return screen.getAllDisplays().map((d: any) => ({
-      id: String(d.id),
-      label: d.label || `Display ${d.id}`,
-      bounds: d.bounds,
-      isPrimary: d.bounds.x === 0 && d.bounds.y === 0,
-      scaleFactor: d.scaleFactor,
-    }));
-  });
 }
 
 app.whenReady().then(() => {

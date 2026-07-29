@@ -42,7 +42,7 @@ export interface SessionTokens {
 /**
  * The access token, in memory.
  *
- * A module-level variable rather than a store: `request()` needs it
+ * A module-level variable rather than a store: `request` needs it
  * synchronously on every call, and a subscription would be ceremony around a
  * value that has exactly one writer.
  */
@@ -194,7 +194,7 @@ export function refreshSession(): Promise<boolean> {
   const presented = refreshToken;
   refreshInFlight = (async () => {
     try {
-      // A bare fetch, not `request()`: that helper retries through *this*
+      // A bare fetch, not `request`: that helper retries through *this*
       // function on a 401, and a refresh that refreshes is an infinite loop.
       const { API_URL } = await import('./env');
       const res = await fetch(`${API_URL || 'http://localhost:4000/api'}/auth/refresh`, {

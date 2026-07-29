@@ -36,3 +36,7 @@ Thumbs.db
 !.vscode/extensions.json
 .idea/
 *.swp
+
+# Claude Code skill lockfile (local tooling, not part of the app)
+skills-lock.json
+.claude/

@@ -48,8 +48,8 @@ export interface SceneMeta {
   oracle?: 'canvas2d' | 'gpu';
   /**
    * GPU parity expectation vs the Canvas2D reference:
-   *   'expect-pass'      — GPU must match the reference (gates the build).
-   *   'known-divergent'  — a documented gap the later phases will close; the
+   *   'expect-pass' — GPU must match the reference (gates the build).
+   *   'known-divergent' — a documented gap the later phases will close; the
    *                        parity diff is reported but not gated. If it turns
    *                        green, the runner flags it so we can re-classify.
    * Defaults to 'expect-pass'.

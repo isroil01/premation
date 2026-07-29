@@ -149,7 +149,7 @@ function effectToMatrix(effect: Effect): ColorMatrix {
         return [d * LR, d * LG, d * LB];
       };
       const tint: M3 = [...row(0), ...row(1), ...row(2)] as M3;
-      // final = (1−a)·I + a·tint ; offset = a·mapBlack
+      // final = (1−a)·I + a·tint; offset = a·mapBlack
       const m = I3.map((v, i) => v * (1 - a) + tint[i]! * a) as M3;
       return { m, offset: [b[0] * a, b[1] * a, b[2] * a] };
     }

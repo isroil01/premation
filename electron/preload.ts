@@ -40,11 +40,15 @@ const bridge = {
 
   render: {
     beginJob: () => ipcRenderer.invoke('render:beginJob'),
-    stageFrame: (jobId: string, index: number, bytes: Uint8Array) =>
-      ipcRenderer.invoke('render:stageFrame', jobId, index, bytes),
+    stageFrame: (jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png') =>
+      ipcRenderer.invoke('render:stageFrame', jobId, index, bytes, ext),
     stageAudio: (jobId: string, bytes: Uint8Array) => ipcRenderer.invoke('render:stageAudio', jobId, bytes),
-    muxMp4: (jobId: string, opts: { fps: number; hasAudio?: boolean }) =>
-      ipcRenderer.invoke('render:muxMp4', jobId, opts),
+    encode: (jobId: string, opts: unknown) => ipcRenderer.invoke('render:encode', jobId, opts),
+    cancel: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),
+    save: (jobId: string, defaultName: string) => ipcRenderer.invoke('render:save', jobId, defaultName),
+    saveTo: (jobId: string, dir: string, filename: string) =>
+      ipcRenderer.invoke('render:saveTo', jobId, dir, filename),
+    chooseOutputDir: () => ipcRenderer.invoke('render:chooseOutputDir'),
     cleanJob: (jobId: string) => ipcRenderer.invoke('render:cleanJob', jobId),
   },
 
@@ -63,8 +67,6 @@ const bridge = {
   popout: {
     spawnWindow: (panelId: string) => ipcRenderer.invoke('popout:spawnWindow', panelId),
   },
-
-  getMonitors: () => ipcRenderer.invoke('monitors:get'),
 
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

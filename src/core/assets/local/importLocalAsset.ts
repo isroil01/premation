@@ -1,6 +1,6 @@
 /**
  * importLocalAsset — bring a dropped/picked File into the current project bundle
- * as a content-addressed local asset (RFC §6, principles 2 & 3: local ownership,
+ * as a content-addressed local asset (the local-first design, principles 2 & 3: local ownership,
  * zero automatic upload).
  *
  * Writes the bytes to the bundle blob store (dedup by hash), returns the record

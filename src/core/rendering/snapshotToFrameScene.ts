@@ -9,9 +9,9 @@
  * shift by (-0.5,-0.5) so the quad's centre — not its corner — lands at (x,y).
  *
  * Known gaps vs Canvas2D (deferred to later prompts, flagged in the mapping):
- *   • shape ellipses / rounded corners  → renderer draws plain rects (Prompt 5)
+ *   • shape ellipses / rounded corners  → renderer draws plain rects
  *   • text glyphs, image/video textures → white-texel until a real provider /
- *     asset pipeline exists (Prompt 7); they render as tinted quads
+ *     asset pipeline exists; they render as tinted quads
  *   • RenderLayer.filter (a CSS string) is NOT read here — it only ever fed the
  *     deleted Canvas2D backend. Everything spatial (user effects, DOF blur,
  *     light-cast shadows) arrives as structured `layer.effects` entries, which

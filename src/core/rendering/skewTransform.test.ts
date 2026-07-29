@@ -37,7 +37,7 @@ describe('skew', () => {
     const bottom = apply(m, 0.5, 1);
     // The two edges of the quad slide apart horizontally...
     expect(Math.abs(bottom.x - top.x)).toBeGreaterThan(1);
-    // ...and the vertical extent is unchanged.
+    //...and the vertical extent is unchanged.
     expect(bottom.y - top.y).toBeCloseTo(100, 6);
   });
 

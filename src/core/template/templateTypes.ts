@@ -17,7 +17,7 @@ export type TemplateFieldKind = 'text' | 'color' | 'number' | 'image';
 /** Which prop on which node a field edits. Resolved to a concrete componentId
  *  at write time (by componentType), so authors don't hand-track component ids. */
 export interface TemplateFieldTarget {
-  /** Stable node id authored by the template's build(). */
+  /** Stable node id authored by the template's build. */
   nodeId: string;
   /** Component type carrying the prop — e.g. 'Text', 'Style', 'Transform'. */
   componentType: string;
@@ -53,13 +53,13 @@ export interface TemplateDefinition {
    *  target) into the given graph. Pure structure — no animation, no store
    *  writes — so it can render into a throwaway graph for a thumbnail. */
   layout: (graph: import('@core/scene/SceneGraph').default) => void;
-  /** Clears the live scene graph, runs layout() into it, applies the animation,
+  /** Clears the live scene graph, runs layout into it, applies the animation,
    *  sets the composition and bumps the scene. */
   build: () => void;
   /** The template's motion, defined ONCE against an abstract keyframe setter so
    *  the SAME choreography drives the live apply (build → liveKf) AND the
    *  isolated gallery-card animation (a throwaway preview engine). Node ids match
-   *  those authored by `layout()`. Omit for a static template. */
+   *  those authored by `layout`. Omit for a static template. */
   animate?: (set: import('./templates/builders').SetKf) => void;
   /** Representative time (seconds) for the still poster frame on the card. */
   previewTime?: number;

@@ -1,5 +1,5 @@
 /**
- * Precomps (Prompt 10) — nested compositions. A group flagged as a precomp has
+ * Precomps — nested compositions. A group flagged as a precomp has
  * its whole subtree rendered to an offscreen texture, which is then composited
  * as ONE layer: the group's opacity, blend mode, effects and mask apply to the
  * nested animation as a unit (overlapping semi-transparent children composite

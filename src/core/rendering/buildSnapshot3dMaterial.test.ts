@@ -1,5 +1,5 @@
 /**
- * Renderer wiring for the AE-parity 3D additions (docs/3d-diagnosis.md, Phase 4):
+ * Renderer wiring for the AE-parity 3D additions:
  * Auto-Orient → Towards Camera, the `Only` shadow modes, and Zoom ↔ Angle of
  * View staying two views of one value.
  */

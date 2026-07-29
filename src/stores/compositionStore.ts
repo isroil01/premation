@@ -4,7 +4,7 @@
  * to a near-black constant in buildSnapshot; it's now a real, persisted property.
  *
  * Mirrors the `motionBlurStore` pattern: a small Zustand store the render hooks
- * read and thread into `buildSnapshot`, with a `key()` the hooks add to their
+ * read and thread into `buildSnapshot`, with a `key` the hooks add to their
  * re-render deps (and the render cache) so edits repaint immediately.
  *
  * Persistence rides on the existing SettingsManager (like createRenderBackend).

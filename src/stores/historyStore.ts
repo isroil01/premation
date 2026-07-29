@@ -1,5 +1,5 @@
 /**
- * History store (spec §Trust Infrastructure — Photoshop-style visual history).
+ * History store.
  *
  * Holds an ordered list of fully non-destructive snapshots of the editable
  * state (scene graph + animation). Jumping to an entry restores that state;
@@ -127,7 +127,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     // record a real change.
     //
     // Both guards used to block the baseline: `record('Open')` runs right after
-    // `reset()`, whose `clear()` emits UndoStackChanged, whose listener sets
+    // `reset`, whose `clear` emits UndoStackChanged, whose listener sets
     // `lastState` to the current state. So `statesEqual` was true and nothing
     // was pushed — the document's opening state had no row to jump back to.
     if (!named) {
@@ -203,7 +203,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 /**
  * Re-baseline history onto a freshly LOADED document.
  *
- * The "Open" baseline is captured during boot, right after `seedDefaultScene()`
+ * The "Open" baseline is captured during boot, right after `seedDefaultScene`
  * — but a project loads AFTERWARDS and asynchronously. Without this, history's
  * `lastState` still described the seeded demo scene, so the load itself became
  * an undoable entry whose "before" was that demo scene: **one Ctrl+Z after

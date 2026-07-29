@@ -134,9 +134,9 @@ export function EditorLayout({
       direction="horizontal"
       primary={inspectorLast ? 'last' : 'first'}
       defaultSize={right.size}
-      minSize={right.collapsed ? 36 : right.minSize}
+      minSize={right.collapsed ? 44 : right.minSize}
       maxSize={Math.min(right.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : right.maxSize)}
-      size={right.collapsed ? 36 : right.size}
+      size={right.collapsed ? 44 : right.size}
       collapsed={right.collapsed}
       storageKey="rightInspector"
       onResizeEnd={(s) => setRightSize('rightInspector', s)}
@@ -200,9 +200,9 @@ export function EditorLayout({
           direction="horizontal"
           primary={sidebarFirst ? 'first' : 'last'}
           defaultSize={left.size}
-          minSize={left.collapsed ? 36 : left.minSize}
+          minSize={left.collapsed ? 44 : left.minSize}
           maxSize={Math.min(left.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : left.maxSize)}
-          size={left.collapsed ? 36 : left.size}
+          size={left.collapsed ? 44 : left.size}
           collapsed={left.collapsed}
           storageKey="leftSidebar"
           onResizeEnd={(s) => setLeftSize('leftSidebar', s)}

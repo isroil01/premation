@@ -16,18 +16,18 @@ import { EffectPass } from './EffectPass';
  * Written down here because it was never stated anywhere and is not what most
  * people assume. For ONE layer, in this order:
  *
- *   1. content          — the layer's own pixels (solid SDF, or its texture)
- *   2. mask             — baked into the texture (CPU) or applied as a mask
+ *   1. content — the layer's own pixels (solid SDF, or its texture)
+ *   2. mask — baked into the texture (CPU) or applied as a mask
  *                         sample during the content draw
- *   3. TRANSFORM        — `renderableCmds` draws through `r.modelMatrix`, so
+ *   3. TRANSFORM — `renderableCmds` draws through `r.modelMatrix`, so
  *                         the layer lands in SCREEN space here
- *   4. motion blur      — sub-frame samples accumulate additively, each with
+ *   4. motion blur — sub-frame samples accumulate additively, each with
  *                         its own transform
- *   5. effects          — `applyLayerEffects` → `runEffectsChain`, operating on
+ *   5. effects — `applyLayerEffects` → `runEffectsChain`, operating on
  *                         the SCREEN-SPACE texture from step 3
- *   6. layer styles     — appended to the same effects list by buildSnapshot,
+ *   6. layer styles — appended to the same effects list by buildSnapshot,
  *                         so they run at the end of step 5
- *   7. matte / blend    — composited against the layers beneath
+ *   7. matte / blend — composited against the layers beneath
  *
  * The consequence worth knowing: EFFECTS RUN AFTER TRANSFORM, not before. A
  * blur radius, a glow size and a drop-shadow distance are all in SCREEN pixels
@@ -851,7 +851,7 @@ export class CompositionPass extends RenderPass {
         // describes exactly the frames this renderer never draws.
         //
         // The viewport is invalidation-driven, not a loop: WorkspaceController
-        // .scheduleRender() queues ONE coalesced rAF and only when markDirty
+        //.scheduleRender queues ONE coalesced rAF and only when markDirty
         // fires, so with nothing changing and the playhead parked, zero frames
         // are rendered and there is nothing for a cache to serve. While
         // PLAYING, usePlaybackClock advances the playhead every frame — which

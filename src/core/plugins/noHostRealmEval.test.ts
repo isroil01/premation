@@ -88,8 +88,31 @@ describe('no host-realm evaluation of plugin code', () => {
   it('a plugin panel frame is sandboxed without allow-same-origin', () => {
     // `allow-same-origin` would hand the frame this document's origin, and with
     // it localStorage — the exact thing the whole sandbox exists to prevent.
+    // Note this holds for the URL-loaded shell too: the sandbox flag decides the
+    // frame's origin, not where the document came from.
     const src = read('layout/Plugins/PluginPanel.tsx');
     expect(/sandbox="allow-scripts"/.test(src)).toBe(true);
     expect(/allow-same-origin/.test(code(src))).toBe(false);
+  });
+
+  it('the panel is NOT delivered by srcdoc', () => {
+    // Regression guard with a specific history. `srcdoc` looks like the obvious
+    // way to render panel markup, and it silently makes the entire panel
+    // feature inert: a srcdoc document inherits the embedder's CSP, this app
+    // ships `script-src 'self'` with no `'unsafe-inline'`, and a panel IS
+    // inline script. Panels rendered and did nothing — no error, no clue.
+    const src = code(read('layout/Plugins/PluginPanel.tsx'));
+    expect(/srcDoc/i.test(src)).toBe(false);
+  });
+
+  it('the panel shell keeps its own policy tighter than the app for everything but inline script', () => {
+    const shell = readFileSync(join(SRC, '..', 'public', 'plugin-panel.html'), 'utf8');
+    const meta = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(shell)?.[1] ?? '';
+    expect(meta).toContain("default-src 'none'");
+    // The point of the shell is inline script. Everything a panel could use to
+    // reach the network must still be off — otherwise loading it from a real
+    // URL would have bought scripting at the price of exfiltration.
+    expect(meta).toContain("connect-src 'none'");
+    expect(meta).not.toMatch(/script-src[^;]*https?:/);
   });
 });

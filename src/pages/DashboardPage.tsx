@@ -177,7 +177,7 @@ export function DashboardPage(): JSX.Element {
   const [setupTransparent, setSetupTransparent] = useState(false);
 
   // NOTE: this page deliberately reads no editor preferences any more. It used
-  // to subscribe to the WHOLE preference store — `usePreferenceStore()` with no
+  // to subscribe to the WHOLE preference store — `usePreferenceStore` with no
   // selector, which re-renders the entire dashboard on any preference change —
   // in order to render controls that Customize already owned. Both the
   // duplication and the subscription are gone.

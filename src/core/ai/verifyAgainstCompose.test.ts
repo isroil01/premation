@@ -2,7 +2,7 @@
  * The verifier, run against output from the REAL compose tools.
  *
  * This is the test that would have caught the five false positives in
- * docs/ai-audit.md. `verify.test.ts` checks the checks against hand-built
+ * an earlier audit. `verify.test.ts` checks the checks against hand-built
  * fixtures — useful, but a fixture only proves the verifier does what I assumed
  * the compose tools do. This drives the actual registry against the actual
  * scene graph and asserts the verifier stays quiet, so the two cannot drift

@@ -8,7 +8,7 @@
  * snapshotToFrameScene) and drives the camera from the snapshot's view.
  *
  * Async seam: the renderer/backend initialise asynchronously (WebGPU especially)
- * while the port's attach()/renderFrame() are synchronous. We init in the
+ * while the port's attach/renderFrame are synchronous. We init in the
  * background; frames requested before the device is ready are coalesced into a
  * single pending snapshot and flushed on ready.
  */
@@ -47,7 +47,7 @@ interface GpuCanvasLike {
 const VOID: Color = { r: 0, g: 0, b: 0, a: 0 };
 
 /**
- * Ceiling on a single init attempt. `adapter.requestDevice()` has no timeout of
+ * Ceiling on a single init attempt. `adapter.requestDevice` has no timeout of
  * its own and can hang indefinitely on a wedged driver; without this the whole
  * ladder stalls, readyPromise never settles and the viewport spins forever.
  */
@@ -119,8 +119,8 @@ export class MotionRendererBackend implements RenderBackend {
 
   attach(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
-    // init() resolves readyPromise in a finally block and records initFailed, so
-    // it should never reject — but attach() is sync and an escaped rejection here
+    // init resolves readyPromise in a finally block and records initFailed, so
+    // it should never reject — but attach is sync and an escaped rejection here
     // would be an unhandled promise rejection with the spinner left spinning.
     this.init(canvas).catch((err) => {
       // eslint-disable-next-line no-console
@@ -134,9 +134,9 @@ export class MotionRendererBackend implements RenderBackend {
   /**
    * Can this document create AND configure a WebGPU context at all?
    *
-   * Probed once per page on a THROWAWAY canvas. `getContext()` permanently binds
+   * Probed once per page on a THROWAWAY canvas. `getContext` permanently binds
    * a canvas element to one context type: if we asked the real viewport canvas
-   * for 'webgpu' and `configure()` then threw (device lost, format mismatch — the
+   * for 'webgpu' and `configure` then threw (device lost, format mismatch — the
    * classic intermittent on Windows hybrid graphics), that canvas could never
    * afterwards be given a 'webgl2' context. Both WebGL2 rungs of the ladder would
    * then see `getContext('webgl2') === null` and a recoverable WebGPU hiccup
@@ -182,7 +182,7 @@ export class MotionRendererBackend implements RenderBackend {
   /**
    * The context type a canvas ELEMENT has already been bound to.
    *
-   * `getContext()` binds a canvas to one context type permanently — asking the
+   * `getContext` binds a canvas to one context type permanently — asking the
    * same element for a different type afterwards returns null forever. The
    * throwaway-canvas probe protects the FIRST attempt from that, but nothing
    * protected the ladder itself: once the real WebGPU attempt called
@@ -215,7 +215,7 @@ export class MotionRendererBackend implements RenderBackend {
    *
    * Two reasons a delayed same-tier retry beats stepping straight down:
    *  - A failed getContext usually means the page hit the browser's live-context
-   *    cap; `dispose()` explicitly loses its context, so a slot frees almost
+   *    cap; `dispose` explicitly loses its context, so a slot frees almost
    *    immediately and a short-delay retry succeeds where the first raced it.
    *  - Once a tier has bound the canvas (see `boundKind`), it is the ONLY tier
    *    that can ever succeed on that element. Retrying it is not optimism, it is
@@ -250,7 +250,7 @@ export class MotionRendererBackend implements RenderBackend {
     try {
       await this.initLadder(canvas);
     } finally {
-      // Unconditional: several statements below the initialize() try/catch (the
+      // Unconditional: several statements below the initialize try/catch (the
       // Renderer constructor, createViewport, resize, the EngineReady emit) can
       // throw, and if resolveReady were only called on the success and
       // exhausted-ladder paths, readyPromise would stay pending forever and the
@@ -342,7 +342,7 @@ export class MotionRendererBackend implements RenderBackend {
       // Corrects the tier badge after a successful fallback/retry (an earlier
       // EngineError may have flipped it to 'software' prematurely).
       getEventBus().emit('EngineReady', { engine: `motion-${attempt.kind}`, role: this.role });
-      // readyPromise is resolved by init()'s finally — do not resolve here, or a
+      // readyPromise is resolved by init's finally — do not resolve here, or a
       // throw in the flush below would skip nothing but still split the contract
       // across two places.
       if (this.pending) {
@@ -565,7 +565,7 @@ export class MotionRendererBackend implements RenderBackend {
     vp.camera.setState(cam);
 
     // Clip surface draws to the comp rect (AE comp-panel behaviour — Canvas2D
-    // has always done this with ctx.clip()). Without it, a layer dragged off
+    // has always done this with ctx.clip). Without it, a layer dragged off
     // the composition kept rendering on the pasteboard. Camera mapping:
     // screenCss = (world − center)·zoom + css/2, then × dpr for surface px.
     //

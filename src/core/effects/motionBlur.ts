@@ -1,5 +1,5 @@
 /**
- * Motion blur (Prompt 6).
+ * Motion blur.
  *
  * Multi-sample accumulation: for a frame at time `t` we sample the animation at
  * several sub-frame times spread across the shutter interval and composite the

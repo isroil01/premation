@@ -3,17 +3,17 @@
  * only through the `ToolContext`. They cover the core editor verbs; a future AI
  * tool registers the same way with zero engine changes.
  *
- *   SelectTool     — click-select, shift-toggle, marquee, drag-to-move (+snap)
- *   MoveTool       — drag the current selection (no marquee)
- *   RotateTool     — drag to spin the selection about its anchor
- *   PanBehindTool  — drag to place the anchor without moving the layer
- *   HandTool       — pan the camera
- *   ZoomTool       — click to zoom (alt = out), drag a region to frame it
- *   RectangleTool  — drag to create a rectangle
- *   EllipseTool    — drag to create an ellipse
- *   PenTool        — click to place path points, double-click to finish
- *   TextTool       — click to place a text box
- *   CameraTool     — navigate (drag-pan) without touching the scene
+ *   SelectTool — click-select, shift-toggle, marquee, drag-to-move (+snap)
+ *   MoveTool — drag the current selection (no marquee)
+ *   RotateTool — drag to spin the selection about its anchor
+ *   PanBehindTool — drag to place the anchor without moving the layer
+ *   HandTool — pan the camera
+ *   ZoomTool — click to zoom (alt = out), drag a region to frame it
+ *   RectangleTool — drag to create a rectangle
+ *   EllipseTool — drag to create an ellipse
+ *   PenTool — click to place path points, double-click to finish
+ *   TextTool — click to place a text box
+ *   CameraTool — navigate (drag-pan) without touching the scene
  */
 
 import type { Rect } from '../math/Rect';
@@ -517,7 +517,7 @@ export class PenTool implements Tool {
 
   deactivate(ctx: ToolContext): void {
     // Switching tools mid-draw should KEEP the path, not silently discard it —
-    // commit whatever has been drawn so far (finish() no-ops for < 2 points).
+    // commit whatever has been drawn so far (finish no-ops for < 2 points).
     this.finish(ctx);
     this.mouse = null;
     this.draggingHandle = false;

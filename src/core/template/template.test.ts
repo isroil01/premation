@@ -1,6 +1,6 @@
 /**
  * Template fields — the fill-in-the-blanks contract:
- *  • every exposed field targets a node that actually exists after build();
+ *  • every exposed field targets a node that actually exists after build;
  *  • editing a field writes through the scene graph and reads back changed;
  *  • only the exposed props change — structure/animation are untouched.
  */

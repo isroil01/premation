@@ -1,6 +1,6 @@
 /**
  * ExpressionEditor — attach a formula that drives a property each frame
- * (spec §Expression Editor). VS-Code flavored: JetBrains Mono, quick-insert
+ *. VS-Code flavored: JetBrains Mono, quick-insert
  * autocomplete for the API, inline plain-language errors, a live value that
  * updates as you scrub, and AI-assist that turns intent into an editable
  * expression (never a locked result).
@@ -59,7 +59,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
   const enabled = defaultAnimation.hasExpression(nodeId, prop);
 
   // Live evaluation of the current draft at the playhead — through the engine
-  // so valueAtTime / layer() / loopOut() preview exactly as playback resolves.
+  // so valueAtTime / layer / loopOut preview exactly as playback resolves.
   const preview = useMemo(
     () => defaultAnimation.previewExpression(nodeId, prop, draft, time),
     [draft, nodeId, prop, time],

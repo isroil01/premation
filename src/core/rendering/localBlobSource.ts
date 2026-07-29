@@ -1,6 +1,6 @@
 /**
  * localBlobSource — resolve a local-first asset reference to bytes for the GPU
- * texture loader (RFC §6 / render integration).
+ * texture loader.
  *
  * Locally-imported assets are content-addressed in the bundle blob store; a node
  * references one as `motion-blob:<sha256>`. `buildSnapshot` passes that string

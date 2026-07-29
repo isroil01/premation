@@ -20,7 +20,7 @@
  *    next launch and silently signs the user out.
  *
  * When the OS keystore is unavailable — a Linux box with no secret service is
- * the realistic case — `safeStorage.isEncryptionAvailable()` is false. We store
+ * the realistic case — `safeStorage.isEncryptionAvailable` is false. We store
  * nothing rather than writing plaintext and calling it a credential store: the
  * user signs in again each launch, which is honest, where a plaintext fallback
  * would look identical while offering no protection at all.

@@ -158,7 +158,7 @@ describe('expression API v2 (engine)', () => {
     a.setKeyframe('follower', 'y', 0, 0); // needs a track so sample() runs
     a.setExpression('follower', 'y', "layer('Title', 'x') / 2");
     expect(a.sample('follower', 'y', 1)).toBeCloseTo(50); // title.x@1 = 100
-    // layerAt() reads at an explicit time, independent of the playhead.
+    // layerAt reads at an explicit time, independent of the playhead.
     a.setExpression('follower', 'y', "layerAt('Title', 'x', 2)");
     expect(a.sample('follower', 'y', 0)).toBeCloseTo(200);
   });
@@ -358,7 +358,7 @@ describe('spatial tangents (engine)', () => {
 describe('batch()', () => {
   // The app's change listener runs a synchronous scene bump + hit-test
   // invalidation + autosave scheduling. One interactive edit affords that; a
-  // bulk import firing it per track froze the app. batch() holds notifications
+  // bulk import firing it per track froze the app. batch holds notifications
   // and flushes ONE '*' at the end.
 
   test('coalesces every notification inside into one final "*"', () => {

@@ -8,7 +8,7 @@ import { getRemappedTime } from '@core/timeline/TimelineController';
  * everything else: camera, tools, selection, hit-testing, snapping. This hook
  * (1) renders scene content through the Canvas2D backend using the engine's
  * camera view, (2) paints the interaction overlay (selection, handles, marquee,
- * snap lines, hover) from `ws.overlay()`, and (3) feeds normalized input in.
+ * snap lines, hover) from `ws.overlay`, and (3) feeds normalized input in.
  *
  * It supersedes the old `useViewportRenderer` (content-only, fixed fit) — one
  * render loop now drives both content and interaction (consolidated).
@@ -303,7 +303,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // drag, a hover) can happen mid-gesture without bumping any revision, so
       // caching those would blit half-dragged pixels back later. That is the
       // contract `frameCache` was written for; nothing had ever called it, so
-      // the cache stayed empty, `ranges()` always returned [] and the timeline's
+      // the cache stayed empty, `ranges` always returned [] and the timeline's
       // cache bar could never draw.
       const ws = useWorkspaceStore.getState();
       const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : null;
@@ -573,7 +573,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // and NOTHING rendered until the pointer stopped. That froze the viewport
     // while scrubbing any numeric inspector field (ValueField / AngleDial both
     // set isDragging) and made Alt+drag orbit on a real Camera layer dead
-    // mid-gesture, since camera nav signals only through bumpScene().
+    // mid-gesture, since camera nav signals only through bumpScene.
     // Rendering on the leading edge, coalesced to one frame, keeps the preview
     // live at exactly the cadence the display can show.
     let raf: number | null = requestAnimationFrame(() => {

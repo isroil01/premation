@@ -64,7 +64,12 @@
       "@motion/timeline": ["./packages/timeline/src/index.ts"],
       "@motion/animation": ["./packages/animation/src/index.ts"],
       "@motion/renderer": ["./packages/renderer/src/index.ts"],
-      "@motion/ai-tools": ["./packages/ai-tools/src/index.ts"]
+      "@motion/ai-tools": ["./packages/ai-tools/src/index.ts"],
+      "@motion/design-system": ["./packages/design-system/src/index.ts"],
+      "@motion/technique-library": ["./packages/technique-library/src/index.ts"],
+      "@motion/product-motion": ["./packages/product-motion/src/index.ts"],
+      "@motion/caster": ["./packages/caster/src/index.ts"],
+      "@motion/audio": ["./packages/audio/src/index.ts"]
     }
   },
   "include": ["src", "src/**/*.ts", "src/**/*.tsx"],

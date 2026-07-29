@@ -108,7 +108,7 @@ export class WebGL2Backend implements RenderBackend {
   private gl!: GL;
   private vao: WebGLVertexArrayObject | null = null;
 
-  // Every GL object this backend allocates, so dispose() can release them all
+  // Every GL object this backend allocates, so dispose can release them all
   // and then explicitly lose the context. Without this, each editor
   // enter/leave leaked a live WebGL2 context (only the VAO was deleted) until
   // Chrome's per-page context cap made getContext('webgl2') return null —
@@ -119,10 +119,10 @@ export class WebGL2Backend implements RenderBackend {
   private readonly livePrograms = new Set<WebGLProgram>();
   private readonly liveFramebuffers = new Set<WebGLFramebuffer>();
   /** Depth renderbuffers (3D render targets) — tracked like every other GL
-   *  object so dispose() stays leak-free. */
+   *  object so dispose stays leak-free. */
   private readonly liveRenderbuffers = new Set<WebGLRenderbuffer>();
 
-  // Context-loss plumbing (see initialize()).
+  // Context-loss plumbing (see initialize).
   private contextLost = false;
   private boundCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
   private onContextLost: ((event: Event) => void) | null = null;
@@ -135,7 +135,7 @@ export class WebGL2Backend implements RenderBackend {
     const canvas = surface.canvas;
     const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, alpha: true }) as GL | null;
     if (!gl) throw new Error('WebGL2 is not available');
-    // A canvas whose context was killed with WEBGL_lose_context (which dispose()
+    // A canvas whose context was killed with WEBGL_lose_context (which dispose
     // below does, deliberately, to free a context slot) hands back that SAME lost
     // context object on the next getContext — not null. So the guard above passes,
     // every subsequent GL call silently no-ops, getParameter returns null, and the
@@ -152,7 +152,7 @@ export class WebGL2Backend implements RenderBackend {
 
     // Context loss is silent otherwise: GL calls become no-ops while the renderer
     // happily reports ready, so the user sees a frozen viewport and no error.
-    // preventDefault() is REQUIRED — without it the context can never be restored.
+    // preventDefault is REQUIRED — without it the context can never be restored.
     this.onContextLost = (event: Event): void => {
       event.preventDefault();
       this.contextLost = true;
@@ -312,7 +312,7 @@ export class WebGL2Backend implements RenderBackend {
     const msaa = samples > 1;
 
     // The resolve side: a plain texture + FBO. Always built, so
-    // renderTargetTexture() has something single-sampled to hand out whether or
+    // renderTargetTexture has something single-sampled to hand out whether or
     // not multisampling is in play.
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -424,7 +424,7 @@ export class WebGL2Backend implements RenderBackend {
     const native = attach.target === 'surface'
       ? undefined
       : (attach.target.native as NativeRenderTarget | undefined);
-    // Draw into the MULTISAMPLE fbo when the target has one; `end()` resolves it
+    // Draw into the MULTISAMPLE fbo when the target has one; `end` resolves it
     // down into the sampleable texture. `toSurface` still keys off the resolve
     // fbo being absent, so frame-clipping behaviour is unchanged.
     const drawFbo = native?.msaaFbo ?? native?.fbo ?? null;
@@ -480,7 +480,7 @@ export class WebGL2Backend implements RenderBackend {
     );
   }
   dispose(): void {
-    // Detach the loss listeners before anything else: dispose() deliberately
+    // Detach the loss listeners before anything else: dispose deliberately
     // loses the context below, which fires 'webglcontextlost' on the canvas, and
     // a still-attached handler would report that self-inflicted loss to whatever
     // is subscribed. Runs even if we never got a context.
@@ -494,7 +494,7 @@ export class WebGL2Backend implements RenderBackend {
     this.lossListeners.clear();
     this.restoreListeners.clear();
 
-    // May be called before initialize() succeeded (getContext returned null),
+    // May be called before initialize succeeded (getContext returned null),
     // or twice (Renderer.dispose is idempotent but defensive callers exist).
     const gl = this.gl as GL | undefined;
     if (!gl) return;
@@ -528,7 +528,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
   private vertexBuffer: NativeBuffer | null = null;
   private indexFormat: IndexFormat = 'uint32';
 
-  /** `msaaTarget` is set only for a multisample pass — see end(). */
+  /** `msaaTarget` is set only for a multisample pass — see end. */
   constructor(
     private readonly gl: GL,
     private readonly msaaTarget?: NativeRenderTarget,

@@ -6,7 +6,7 @@
  * designer exported from a web tool — carry a `<style>` block instead:
  *
  *     @keyframes spin { to { transform: rotate(360deg) } }
- *     .ring { animation: spin 1s linear infinite; transform-origin: center }
+ *.ring { animation: spin 1s linear infinite; transform-origin: center }
  *
  * That markup animates in an `<img>` (which is why an asset thumbnail moves),
  * but the SMIL scanner sees nothing in it, so the same file imported into the
@@ -48,7 +48,7 @@ export interface CssAnimation {
   reverse: boolean;
   /** `animation-iteration-count: infinite` — `active` is only the unroll span. */
   infinite: boolean;
-  /** `steps()` timing — step between values instead of gliding. */
+  /** `steps` timing — step between values instead of gliding. */
   discrete: boolean;
   /** `animation-fill-mode: forwards | both` — hold the final value. */
   freeze: boolean;
@@ -608,7 +608,7 @@ export function readCssAnimations(doc: Document, unrollSeconds = MAX_UNROLL_SECO
   // Resolve the cascade RULE-first, and only for rules that could matter.
   //
   // Asking every element whether it matches every rule is the obvious shape and
-  // the wrong one: it is one scripted `matches()` call per pair, so a 200-path
+  // the wrong one: it is one scripted `matches` call per pair, so a 200-path
   // icon with 200 class rules was 40,000 of them. Running each selector once
   // through `querySelectorAll` pushes the same work into the DOM's own matcher
   // and visits only elements a rule actually reached. Source order is preserved

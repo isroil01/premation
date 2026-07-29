@@ -77,7 +77,7 @@ export class EventBus {
   }
 }
 
-/** Process-wide singleton. Tests can replace via setInstance(). */
+/** Process-wide singleton. Tests can replace via setInstance. */
 let instance: EventBus | null = null;
 
 export function getEventBus(): EventBus {

@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  The plugin panel host document.
+
+  WHY THIS FILE EXISTS AT ALL. The panel used to be delivered with `srcdoc`,
+  and that silently made the whole panel feature decoration: a `srcdoc`
+  document INHERITS the embedder's Content-Security-Policy, this app ships
+  `script-src 'self'` with no `'unsafe-inline'`, and a panel is by definition
+  inline script. So every panel loaded as static markup — buttons that did
+  nothing, `motionPanel` undefined, not one message ever reaching the plugin.
+  A document's own meta policy can only ADD restrictions, so the frame could
+  not opt back in; the only way to give a panel a policy of its own is to load
+  it from a real URL, which is this file.
+
+  WHAT IT DOES NOT GIVE UP. The frame is still embedded with
+  `sandbox="allow-scripts"` and WITHOUT `allow-same-origin`, so it has an
+  opaque origin no matter which URL it came from: it cannot read this app's
+  document, cookies or localStorage. And the policy below is tighter than the
+  app's for everything except inline script — `default-src 'none'` with
+  `connect-src 'none'` means a panel cannot fetch, cannot open a socket, and
+  cannot pull a remote script or image. Panels have no network, exactly as the
+  worker sandbox has none.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 12px; font: 13px/1.45 system-ui, sans-serif; color: #e8e8ea; background: #17171a; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #3a3a40; background: #232329; color: inherit; cursor: pointer; }
+  button:hover { background: #2c2c33; }
+  input, select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid #3a3a40; background: #101014; color: inherit; }
+</style>
+<script>
+(function () {
+  // The two-call API panel authors write against. Fixed message SHAPE, so the
+  // host's forwarder has exactly one thing to expect.
+  var listeners = [];
+  window.motionPanel = {
+    send: function (data) { parent.postMessage({ data: data }, '*'); },
+    onMessage: function (fn) { listeners.push(fn); }
+  };
+
+  var loaded = false;
+
+  window.addEventListener('message', function (e) {
+    if (e.source !== parent || !e.data || typeof e.data !== 'object') return;
+
+    // The editor hands us the plugin's panel markup once, after load. It is
+    // NOT a plugin message and must never reach a panel's own listener.
+    if (typeof e.data.__panelHtml === 'string') {
+      if (loaded) return;
+      loaded = true;
+      render(e.data.__panelHtml);
+      return;
+    }
+
+    if (!('data' in e.data)) return;
+    for (var i = 0; i < listeners.length; i++) {
+      try { listeners[i](e.data.data); } catch (err) { /* one bad listener must not stop the rest */ }
+    }
+  });
+
+  /**
+   * Put the plugin's markup on screen and run its scripts.
+   *
+   * `innerHTML` deliberately does not execute scripts, so they are re-created
+   * as real elements. That is not a hole being opened: this document exists to
+   * run the plugin's UI code, in a frame with an opaque origin and no network.
+   * The alternative is what we had — a panel that renders and does nothing.
+   */
+  function render(html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var scripts = [];
+    var found = doc.querySelectorAll('script');
+    for (var i = 0; i < found.length; i++) {
+      scripts.push(found[i].textContent || '');
+      found[i].parentNode.removeChild(found[i]);
+    }
+    document.body.innerHTML = doc.body.innerHTML;
+    for (var j = 0; j < scripts.length; j++) {
+      var el = document.createElement('script');
+      el.textContent = scripts[j];
+      document.body.appendChild(el);
+    }
+    parent.postMessage({ __panelReady: true }, '*');
+  }
+})();
+</script>
+</head>
+<body></body>
+</html>

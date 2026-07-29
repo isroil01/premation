@@ -21,7 +21,7 @@ import { create } from 'zustand';
 import { getEventBus } from '@core/events/EventBus';
 
 /** The active rendering tier, resolved at init and after EngineError fallbacks.
- *  'pending' = attach() has not reported an EngineReady/EngineError yet. */
+ *  'pending' = attach has not reported an EngineReady/EngineError yet. */
 export type ActiveRenderTier = 'pending' | 'webgpu' | 'webgl2' | 'null' | 'software';
 
 interface RenderBackendStore {

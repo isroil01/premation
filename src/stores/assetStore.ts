@@ -194,7 +194,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     folders: loadFolders(),
 
     addAsset: async (file: File, folderId: string | null = null) => {
-      // Local-first (principles 2 & 3): content-address the bytes into the open
+      // Local-first: content-address the bytes into the open
       // project bundle and render from disk — never upload. Falls through to the
       // in-memory object-URL path (still upload-free) if no bundle is open.
       if (isLocalFirst()) {
@@ -487,7 +487,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         // This used to createObjectURL for every asset in IndexedDB and only then
         // drop the ones already loaded — but a discarded URL stays registered and
         // pins its entire Blob (the whole video/PSD/image) in renderer memory
-        // until the page reloads. `initialize()` runs on every boot, twice under
+        // until the page reloads. `initialize` runs on every boot, twice under
         // StrictMode, and again on each editor re-entry, so a project with 2 GB of
         // footage leaked roughly that much every time.
         const existingIds = new Set(get().assets.map((a) => a.id));

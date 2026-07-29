@@ -2,7 +2,7 @@
  * Playhead — the current time cursor. Holds the current frame (fractional during
  * smooth playback, snapped on frame-stepping) and clamps to [0, duration]. It
  * knows nothing about clocks or rendering; something external advances it. All
- * moves funnel through `set()` which fires the `onChange` hook the Timeline wires
+ * moves funnel through `set` which fires the `onChange` hook the Timeline wires
  * to its event bus.
  */
 

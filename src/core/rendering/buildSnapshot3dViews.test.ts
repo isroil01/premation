@@ -1,6 +1,6 @@
 /**
  * 3D views + near-plane clipping — the acceptance criteria from the 3D camera /
- * lights / views brief (see docs/3d-diagnosis.md).
+ * lights / views brief.
  *
  * Two things are pinned here:
  *

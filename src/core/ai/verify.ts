@@ -8,7 +8,7 @@
  *
  * ## Read the false positives before changing anything here
  *
- * A first attempt at this verifier (docs/ai-audit.md) flagged five issues
+ * A first attempt at this verifier flagged five issues
  * against known-good output. **All five were wrong**, and each one is now a
  * structural constraint rather than a comment:
  *

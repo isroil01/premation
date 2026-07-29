@@ -6,7 +6,7 @@
  * subscribe to the stream. Engines create scoped child loggers so every line
  * is attributable to a subsystem without extra ceremony.
  *
- *   const log = getLogger().scope('render');
+ *   const log = getLogger.scope('render');
  *   log.info('attached', { fps: 60 });
  */
 

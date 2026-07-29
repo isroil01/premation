@@ -4,6 +4,7 @@
  */
 
 import type SceneGraph from '@core/scene/SceneGraph';
+import { renderComponentsOf, renderTransformOf } from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
 import { flattenComposition, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeRenderEffects, effectsToFilter, resolveEffectParams, type Effect } from '@core/effects/effects';
@@ -270,12 +271,16 @@ function materializeForFrame(n: SceneNode): SceneNode {
     name: n.name,
     parent: n.parent,
     children: n.children,
-    transform: n.transform,
+    // Memoized on the scene's mutation epoch, so across frames where nothing
+    // changed these cost a counter compare instead of a full rebuild. Safe
+    // ONLY because the snapshot below treats them as read-only — see
+    // `SceneGraph.renderComponents`.
+    transform: renderTransformOf(n),
     visible: n.visible,
     locked: n.locked,
     solo: n.solo,
     color: n.color,
-    components: n.components,
+    components: renderComponentsOf(n),
   } as SceneNode;
 }
 
@@ -377,7 +382,7 @@ export function buildSnapshot(
     const own: (tt: number) => number = cfg
       ? (tt) => remapTime(posterized(tt), cfg, anim.timeSpan(id) ?? { start: 0, end: 1 })
       : (tt) => posterized(tt);
-    // Precomp time remap (Prompt 10): a layer inside a precomp whose group has a
+    // Precomp time remap: a layer inside a precomp whose group has a
     // keyframed `precompTime` is sampled at that remapped internal time. The
     // group's own animation stays on comp time — only its nested content remaps.
     //
@@ -435,7 +440,7 @@ export function buildSnapshot(
     // every other reader of these tracks (`ports.ts:127`, `nodeMatrix.ts:80`,
     // the motion-blur sampler below). This used to read `scale` alone, so a
     // keyframed `scaleX`/`scaleY` — which is what the scale gizmo autokeys, what
-    // the SVG importer writes for a CSS `scale()` animation, and what the seeded
+    // the SVG importer writes for a CSS `scale` animation, and what the seeded
     // showcases use — moved the selection box and left the pixels at 1.
     return {
       x: av.get('x') ?? b.x,
@@ -479,7 +484,7 @@ export function buildSnapshot(
       parent3dCache,
     );
 
-  // Precomp routing (Prompt 10): a layer whose node sits inside a precomp group
+  // Precomp routing: a layer whose node sits inside a precomp group
   // is collected into that group's texture instead of the top-level comp. The
   // precomp container layer is emitted (once) at the first descendant's position
   // and itself routed, so nested precomps nest correctly.
@@ -758,7 +763,7 @@ export function buildSnapshot(
 
     // AE-style layer in/out points: when the timeline has clip bars for this
     // node and NONE is active at the current frame, the layer sits outside its
-    // trimmed range and must not draw. Safe now that remapOf() maps sampling
+    // trimmed range and must not draw. Safe now that remapOf maps sampling
     // through clip.sourceFrameAt for active clips — gating and retime agree.
     // The gate frame clamps to the last comp frame so a full-length layer
     // doesn't blink out at the exactly-end playhead (clip spans are
@@ -1368,7 +1373,7 @@ export function buildSnapshot(
             py = pt.y;
           }
           // Rotation / stiffness: scalar keyframe tracks (puppet.<pinId>.rotation
-          // and .stiffness), falling back to the pin's static values.
+          // and.stiffness), falling back to the pin's static values.
           const liveRot = anim.sample(node.id, `puppet.${pin.id}.rotation`, rigT);
           const liveStiff = anim.sample(node.id, `puppet.${pin.id}.stiffness`, rigT);
           const liveScale = anim.sample(node.id, `puppet.${pin.id}.scale`, rigT);
@@ -2066,7 +2071,7 @@ export function buildSnapshot(
       // render groups.
       //
       // They used to be sorted alongside the 3D ones, using a `depth` that
-      // `project()` produces for every layer including flat ones. That made the
+      // `project` produces for every layer including flat ones. That made the
       // camera leak into 2D stacking: with an orbited camera the projected depth
       // varies with a 2D layer's x/y, so 2D layers REORDERED AMONG THEMSELVES as
       // you orbited; in a Top view they sorted by their Y position. Their

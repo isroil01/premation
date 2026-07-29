@@ -14,7 +14,7 @@ import { getEventBus } from '@core/events/EventBus';
 
 export interface Preferences {
   theme: ThemeId;
-  /** Whole-UI zoom, 0.75 .. 1.5 (applied as document zoom). */
+  /** Whole-UI zoom, 0.75.. 1.5 (applied as document zoom). */
   uiScale: number;
   buttonSize: 'sm' | 'md' | 'lg';
   iconSize: 'sm' | 'md' | 'lg';
@@ -41,6 +41,19 @@ export interface Preferences {
    * The cost is negligible next to any raster asset.
    */
   retainOriginalSvg: boolean;
+  /**
+   * Draw the thin bounding box around every layer in the 3D reference overlay.
+   *
+   * A PREFERENCE, not view state, and the distinction is the whole reason this
+   * lives here rather than next to `groundGridVisible` in the guides store.
+   * Whether you want an outline around every layer is a settled personal
+   * working style — someone who turns it off wants it off tomorrow too, and a
+   * session-scoped toggle would make them turn it off on every launch.
+   *
+   * On by default: it is the existing behaviour, and the complaint was that the
+   * boxes could not be turned OFF, not that they were on.
+   */
+  showLayerBounds: boolean;
 }
 
 interface PreferenceActions {
@@ -62,6 +75,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   confirmOnClose: true,
   timelineHeaderWidth: 460,
   retainOriginalSvg: true,
+  showLayerBounds: true,
 };
 
 /** Pluggable persistence backend. */

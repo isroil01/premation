@@ -1,6 +1,6 @@
 /**
  * Material system. A material binds a shader to fixed pipeline state (blend,
- * topology, bind-group layout). `MaterialSystem.pipeline()` compiles the shader
+ * topology, bind-group layout). `MaterialSystem.pipeline` compiles the shader
  * (cached) and builds the pipeline (deduped via ResourceManager) — so N objects
  * sharing a material share one pipeline. Custom materials register new shaders
  * and pass their own layout.

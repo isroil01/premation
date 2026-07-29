@@ -1,16 +1,15 @@
 /**
- * Vector masks (Prompt 5 — GPU compositing, feature 2).
+ * Vector masks.
  *
  * A layer carries a set of closed bezier paths (stored on its `fx` component)
  * that clip what the layer draws. Points live in the layer's LOCAL space, the
  * same centred space Canvas2DBackend draws its primitives in ([-w/2..w/2]), so a
  * mask composes cleanly with the layer transform.
  *
- * This slice implements the data model + presets + geometry (points → cubic
- * segments) + read/write on the scene graph. Rendering (Canvas2D clip) and the
- * inspector consume it. Deferred to later sub-commits: on-canvas pen editing,
- * keyframeable point coordinates (they'll route through the Prompt 2 command
- * system), feather blur, per-mask opacity compositing, and the GPU MaskPass.
+ * This module owns the data model, the presets, the geometry (points → cubic
+ * segments) and the scene-graph read/write. The rasterizer and the inspector
+ * consume it. Not yet supported: on-canvas pen editing of mask points, feather
+ * blur, and per-mask opacity compositing.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';

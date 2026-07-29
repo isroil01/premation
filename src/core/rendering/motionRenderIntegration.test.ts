@@ -4,12 +4,12 @@
  * headless NullBackend and asserts the recorded draw calls — proving the backend
  * actually rasterizes a scene, not just that snapshotToFrameScene converts it.
  *
- * NullBackend records every enc.draw() into backend.draws[] with:
+ * NullBackend records every enc.draw into backend.draws[] with:
  *   { pass: string (render-pass label), pipeline, vertexCount, … }
  * The render-pass labels are set in CompositionPass → 'composition',
  * BackgroundPass → 'background', etc.
  *
- * QuadRenderer emits exactly one draw() per renderable (no instancing collapse),
+ * QuadRenderer emits exactly one draw per renderable (no instancing collapse),
  * so N visible drawables in the composition pass ⇒ N 'composition' draws.
  */
 

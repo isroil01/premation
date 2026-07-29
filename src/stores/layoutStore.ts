@@ -354,18 +354,14 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     },
 
     /**
-     * In-window floating panels are GONE — this docks instead.
+     * There are no in-window floating panels — this docks instead.
      *
-     * `FloatingPanelHost` (the only component that could render a floating
-     * panel) was never mounted, and nothing could reach `floatPanel` anyway:
-     * there was no menu item or button, `aiLayoutAPI` has zero importers, and no
-     * built-in workspace defines `floatingPanels`. Meanwhile "detach a panel"
-     * is fully served by pop-out windows, which are live-synced to the editor —
-     * a strictly better answer for the multi-monitor case this was for.
+     * "Detach a panel" is served by pop-out windows, which are live-synced to the
+     * editor and work across monitors. Nothing renders `placement: 'floating'`.
      *
-     * It still must not be a no-op: `placement: 'floating'` can arrive from an
-     * old persisted layout or an imported workspace, and with no host that panel
-     * would render NOWHERE. Docking is the safe landing.
+     * This must not be a no-op, though: `floating` can still arrive from an old
+     * persisted layout or an imported workspace, and with no host to render it
+     * that panel would appear NOWHERE. Docking is the safe landing.
      */
     floatPanel: (panelId) =>
       set((s) => {

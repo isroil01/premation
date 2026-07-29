@@ -37,7 +37,7 @@ const registry = (): ToolRegistry => {
 };
 
 /**
- * Reset to an empty composition — a bare `clear()` leaves the graph with no
+ * Reset to an empty composition — a bare `clear` leaves the graph with no
  * root, and new layers parented to a root that doesn't exist are unreachable
  * from `flattenScene` even though `getNode` still finds them.
  */

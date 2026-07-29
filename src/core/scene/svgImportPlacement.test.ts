@@ -11,7 +11,7 @@
  *      placeholder (160, 120). On a 1920×1080 comp the icon appeared jammed in
  *      the top-left with its parts straddling the canvas edge.
  *   2. buildSnapshot's `localOf` read the uniform `scale` track only, so a
- *      keyframed `scaleX`/`scaleY` — what a CSS `scale()` animation imports as,
+ *      keyframed `scaleX`/`scaleY` — what a CSS `scale` animation imports as,
  *      and what the scale gizmo autokeys — never reached the rendered layer.
  *
  * Both are asserted through `buildSnapshot`, because that is the only place

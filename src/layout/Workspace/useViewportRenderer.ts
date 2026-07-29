@@ -10,7 +10,7 @@
  * Presentation Mode, where there is no camera or interaction.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
 import type { RenderBackend, RenderView } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotFocus } from '@core/rendering/buildSnapshot';
@@ -25,6 +25,11 @@ import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useProjectStore } from '@stores/projectStore';
 
 
+
+export interface ViewportRendererState {
+  /** Why this surface is blank, or null when the renderer is healthy. */
+  initError: string | null;
+}
 
 export function useViewportRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
@@ -51,8 +56,18 @@ export function useViewportRenderer(
    * never render one frame behind its own camera.
    */
   getRenderView?: () => RenderView | undefined,
-): void {
+): ViewportRendererState {
   const backendRef = useRef<RenderBackend | null>(null);
+  /**
+   * Why this surface is not painting, when it is not painting.
+   *
+   * A failed GPU init used to be a `console.warn` and nothing else, so the host
+   * showed a permanently black stage with no explanation — indistinguishable
+   * from "the composition is empty". These panes are the LAST GPU contexts a
+   * page creates, so they are the first to fail when the browser's live-context
+   * cap is reached, which makes this the likeliest thing to go wrong here.
+   */
+  const [initError, setInitError] = useState<string | null>(null);
   const getRenderViewRef = useRef(getRenderView);
   getRenderViewRef.current = getRenderView;
   const timeRef = useRef(time);
@@ -133,7 +148,21 @@ export function useViewportRenderer(
   // stuck, the RAF deduplication guard would silently halt all future renders.
   const renderImmediate = useCallback(() => {
     const b = backendRef.current;
-    if (!b) return;
+    if (!b) {
+      // Clearing the guard here is load-bearing, not tidiness. `render()` refuses
+      // to schedule while `rafIdRef.current` is non-null, so returning without
+      // clearing it wedges this surface's render loop PERMANENTLY.
+      //
+      // Presentation Mode hits this every time: while it is closed its hook is
+      // mounted with no canvas and no backend, the re-render effect still calls
+      // render(), and that one no-backend pass left the guard armed forever. When
+      // the user finally opened the preview the backend attached and sized the
+      // canvas correctly — and then every render request was dropped, so the
+      // stage stayed blank. The try/finally below already protected the
+      // throw path; this is the same wedge one line earlier.
+      rafIdRef.current = null;
+      return;
+    }
     try {
       b.renderFrame({
         ...buildSnapshot(
@@ -155,7 +184,7 @@ export function useViewportRenderer(
       // eslint-disable-next-line no-console
       console.error('[useViewportRenderer] renderImmediate failed:', err);
     } finally {
-      // Always clear the guard so future render() calls can schedule a new RAF.
+      // Always clear the guard so future render calls can schedule a new RAF.
       rafIdRef.current = null;
     }
   }, []);
@@ -179,7 +208,7 @@ export function useViewportRenderer(
    * comp is PLAYING.
    *
    * Every pane owns its own backend, its own rAF loop and its own
-   * `buildSnapshot()` — nothing is shared, because the camera is baked into the
+   * `buildSnapshot` — nothing is shared, because the camera is baked into the
    * snapshot at build time. So a 2×2 layout cost 4 full scene walks (puppet
    * deform, skinning, IK, particles, content hashing) and 4 GPU frames every
    * single playback frame, at full device resolution, with no throttle anywhere.
@@ -199,19 +228,38 @@ export function useViewportRenderer(
 
   // Attach the backend + observe size.
   //
-  // NOTE: The dep array is intentionally [] (not [canvasRef.current, ...]).
-  // Ref `.current` values are NOT reactive — React won't re-run the effect
-  // when they change, so listing them as deps is incorrect and the backend
-  // never re-attached when PresentationMode opened a new canvas (blank stage).
-  // Instead we rely on:
-  //   a) Reading current DOM nodes at effect run-time (set before paint).
-  //   b) The `attachedRef.current === canvas` identity guard to skip
-  //      redundant re-attaches (idempotent).
-  //   c) The hook being mounted inside components that re-mount when the
-  //      portal opens/closes (PresentationMode, SecondaryViewPane), so the
-  //      [] effect re-runs naturally whenever a fresh canvas is mounted.
+  // NOTE: The dep array is intentionally [] (not [canvasRef.current,...]).
+  // Ref `.current` values are NOT reactive, so listing them as deps does nothing.
+  // The effect instead depends on `canvasEl` — the ref's value promoted to state
+  // below — and stays idempotent via the `attachedRef.current === canvas` guard.
+  //
+  // It used to depend on `[]` plus an assumption that every host re-mounts when it
+  // opens. Presentation Mode does not (it returns null and stays mounted), so its
+  // canvas arrived after the only run of this effect and was never attached.
   const attachedRef = useRef<HTMLCanvasElement | null>(null);
   const teardownRef = useRef<(() => void) | null>(null);
+
+  /**
+   * The canvas element, as REACTIVE state.
+   *
+   * Refs are not reactive, and a host may render its canvas on a later pass than
+   * the one this hook first ran on. Presentation Mode is the case that broke:
+   * `if (!active) return null` sits after its hooks, so on mount `canvasRef.current`
+   * is null, the attach effect below took its early return, and — with `[]` deps —
+   * never ran again once the portal finally rendered a canvas. The result was a
+   * never-attached, never-resized canvas sitting at its default 300×150 with no
+   * backend behind it: a small dark rectangle in the middle of the stage that
+   * never painted, while playback happily advanced the timecode.
+   *
+   * Comparing the ref each render (cheap) and storing the element gives the attach
+   * effect something it can legitimately depend on. The effect is idempotent — it
+   * early-outs when the same canvas is already attached — so re-running is free.
+   */
+  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    if (canvasRef.current !== canvasEl) setCanvasEl(canvasRef.current);
+  });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -272,8 +320,13 @@ export function useViewportRenderer(
       if (backend.initFailed) {
         // eslint-disable-next-line no-console
         console.warn('[useViewportRenderer] GPU init failed for this pane:', backend.initErrorMessage);
+        setInitError(
+          backend.initErrorMessage ??
+            'This preview could not get a GPU context. Closing other previews, windows or GPU-heavy tabs usually frees one.',
+        );
         return;
       }
+      setInitError(null);
       doResize();
     });
 
@@ -293,8 +346,9 @@ export function useViewportRenderer(
       attachedRef.current = null;
       teardownRef.current = null;
     };
+  // Re-runs when the host swaps (or first supplies) its canvas — see `canvasEl`.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canvasEl]);
 
   // Final unmount teardown.
   useEffect(() => {
@@ -325,4 +379,6 @@ export function useViewportRenderer(
     backend.resize(r.width, r.height, dpr / previewResolution);
     render();
   }, [previewResolution, containerRef, render]);
+
+  return { initError };
 }

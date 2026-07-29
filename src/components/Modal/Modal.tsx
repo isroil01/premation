@@ -4,7 +4,7 @@
  * ModalHost and every `openModal(...)` caller keep working:
  *
  *   <Modal open onClose={...} title="Settings" size="md" footer={...}>
- *     ...content...
+ *...content...
  *   </Modal>
  */
 

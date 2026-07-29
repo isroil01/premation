@@ -1,5 +1,5 @@
 /**
- * Lights (Prompt 12) — lights for the 2.5D compositor. A light layer brightens
+ * Lights — lights for the 2.5D compositor. A light layer brightens
  * the layers beneath it with a screen blend: point (radial glow), ambient
  * (whole-frame lift), spot (cone), or parallel (directional wash, like sun).
  * Position and intensity/radius are ordinary keyframeable props, so lights

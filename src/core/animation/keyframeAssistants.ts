@@ -3,11 +3,11 @@
  * layer's existing keyframes (or builds new ones) and applies as ONE undoable
  * command through the Prompt-2 command path.
  *
- *   • Easy Ease All        — easy-ease every keyframe on the layer
- *   • Time-Reverse         — mirror all keyframes within their span
- *   • Stretch              — scale keyframe timing by a factor
- *   • Sequence Layers      — stagger selected layers' animations in time
- *   • Typewriter (text)    — builds a text animator + keyframes so characters
+ *   • Easy Ease All — easy-ease every keyframe on the layer
+ *   • Time-Reverse — mirror all keyframes within their span
+ *   • Stretch — scale keyframe timing by a factor
+ *   • Sequence Layers — stagger selected layers' animations in time
+ *   • Typewriter (text) — builds a text animator + keyframes so characters
  *                            appear one-by-one (a whole rig from one click)
  *
  * The track transforms are pure functions (tested); the exported actions wrap

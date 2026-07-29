@@ -31,7 +31,7 @@ const MANIFEST = {
 const MAIN_JS = `/**
  * Hello Motion — starter plugin.
  *
- * The host calls activate() once, in a sandboxed Worker, with the plugin API.
+ * The host calls activate once, in a sandboxed Worker, with the plugin API.
  * Everything on \`motion\` is async: it is a message to the editor, not a
  * function call into it.
  */
@@ -88,7 +88,20 @@ const README = `# Hello Motion — plugin starter
 - \`panel.html\`  — optional UI, shown in a sandboxed frame.
 
 ## Install it
-Plugins ▸ **Choose folder…** (pick this folder) or zip it and use **Choose package…**.
+Plugins ▸ **Manage Plugins…** ▸ **Choose folder…** (pick this folder), or zip it
+and use **Choose package…**.
+
+## Iterate on it
+Edit \`main.js\`, then hit **Reload** on this plugin's row — it re-reads the
+folder and reinstalls without the consent screen (you only see that again if
+you add a permission). Your \`console.log\` goes to the row's **Log**, together
+with any call the permission gate refused.
+
+## Where it shows up
+Your commands appear in the **Plugins** menu under this plugin's name, and in the
+command palette (⌘⇧P). \`panel.html\` becomes the **Plugins** panel in the
+right-hand dock — \`motion.ui.openPanel()\` reveals it, and it stays usable while
+you drag on the canvas. Inline \`<script>\` in the panel runs; \`fetch\` does not.
 
 ## What plugins can and cannot do
 Your code runs in a Worker: no DOM, no \`localStorage\`, no \`fetch\`. Everything

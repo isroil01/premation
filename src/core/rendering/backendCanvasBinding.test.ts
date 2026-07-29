@@ -1,7 +1,7 @@
 /**
  * Regression: a transient WebGPU failure must not take the whole ladder down.
  *
- * `getContext()` binds a canvas ELEMENT to one context type permanently. The
+ * `getContext` binds a canvas ELEMENT to one context type permanently. The
  * throwaway-canvas probe (`probeWebGpu`) protects the first attempt from a bad
  * WebGPU configure, but nothing protected the ladder itself: the real WebGPU
  * attempt calls `getContext('webgpu')` on the REAL canvas, and if that attempt

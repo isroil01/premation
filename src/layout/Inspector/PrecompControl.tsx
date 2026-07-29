@@ -1,6 +1,6 @@
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
- * PrecompControl (Prompt 10) — the "Precompose" switch + Time Remap, shown for
+ * PrecompControl — the "Precompose" switch + Time Remap, shown for
  * group layers. Precompose: the group's subtree renders to a texture and
  * composites as one unit (group opacity / blend / effects apply to the nested
  * animation). Time Remap: keyframe the nested content's internal time (hold,

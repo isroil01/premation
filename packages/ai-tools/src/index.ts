@@ -29,8 +29,21 @@ export type {
   AiRequest,
 } from './types';
 
-export { mutates } from './types';
+export { mutates, bindAlias, resolveAlias } from './types';
 export { ToolRegistry } from './registry';
+export {
+  SPRING_PRESETS,
+  bakeSpring,
+  dampingRatio,
+  resolveSpring,
+  sampleSpring,
+  thinSamples,
+  type BakeOptions,
+  type BakedSpring,
+  type SpringParams,
+  type SpringPresetName,
+  type SpringSample,
+} from './spring';
 export {
   ADAPTERS,
   getAdapter,

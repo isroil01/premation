@@ -414,7 +414,7 @@ export function buildRenderedGizmo3D(
  * REVERSE of the paint order, the handle drawn on top was always the one tested
  * last:
  *   • the centre uniform-scale dot (drawn topmost) could never be clicked at all
- *     — `pos_x` claimed the origin first;
+ * — `pos_x` claimed the origin first;
  *   • the planar handles share two edges with the axes, so only their far corner
  *     was reachable;
  *   • an edge-on rotation ring collapses onto an axis, and the axis won — so half

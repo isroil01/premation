@@ -1,5 +1,5 @@
 /**
- * CommandPalette — the universal, mode-aware launcher (spec §Command Palette).
+ * CommandPalette — the universal, mode-aware launcher.
  *
  * Cmd/Ctrl+Shift+P opens it from anywhere (including while a field is focused).
  * Cmd/Ctrl+K belongs to Composition Settings, per AE. One

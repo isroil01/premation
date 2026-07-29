@@ -2,7 +2,7 @@
  * Template preview path — the gallery thumbnail renders each template's layout
  * through the real snapshot pipeline in ISOLATION. jsdom has no canvas 2d, so we
  * can't rasterize here; instead we verify the two properties that matter:
- *  • layout() into a throwaway graph yields real render layers (not empty), and
+ *  • layout into a throwaway graph yields real render layers (not empty), and
  *  • it never mutates the live singleton scene (no wiping the user's work).
  */
 

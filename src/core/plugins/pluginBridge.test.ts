@@ -100,6 +100,18 @@ describe('plugin panel postMessage bridge', () => {
     offOwner();
   });
 
+  it('does not forward the shell s own lifecycle messages to the plugin', () => {
+    // The panel host document reports when it has rendered the plugin's markup.
+    // That is OUR message, not the panel's: forwarding it would wake the
+    // plugin's onPanelMessage handler with `undefined` on every mount.
+    const offFrame = pluginHost.registerFrame(frameA, 'null');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');
+    send(frameA, 'null', { __panelReady: true });
+    expect(spy.calls).toEqual([]);
+    offOwner();
+    offFrame();
+  });
+
   it('cannot address a plugin other than the one that owns the frame', () => {
     const offFrame = pluginHost.registerFrame(frameA, 'null');
     const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');

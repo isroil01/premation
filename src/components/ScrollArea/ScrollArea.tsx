@@ -1,6 +1,6 @@
 /**
  * ScrollArea — a scrollable container with consistent themed scrollbars.
- * Wraps native overflow with our token-driven ::-webkit-scrollbar styles.
+ * Wraps native overflow with our token-driven::-webkit-scrollbar styles.
  * Optionally allows both axes to be locked.
  */
 

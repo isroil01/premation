@@ -15,11 +15,12 @@
 
 import { unzipSync, strFromU8 } from 'fflate';
 import { planLottieImport, type LottieJson } from '@core/lottie/lottieImport';
-import { applyImportPlan } from '@core/lottie/lottieImportApply';
+import { applyImportPlan, type AppliedTiming } from '@core/lottie/lottieImportApply';
 import { createToolContext } from '@core/ai/toolContext';
+import { beginDocumentTransaction } from '@core/ai/aiTransaction';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { bumpScene } from '@stores/sceneStore';
+import { bumpScene, batchScene } from '@stores/sceneStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 
 export type LottieCategory = 'micro-ui' | 'widgets' | 'controls';
@@ -410,6 +411,37 @@ export function getLottieItem(id: string): LottieLibItem | null {
  * (x, y) — comp centre when omitted — without resizing the user's comp.
  * Returns the created node ids (empty on failure).
  */
+/**
+ * Turn each imported layer's Lottie `ip`/`op` window into its timeline clip
+ * bar, so a layer that starts two seconds in actually starts two seconds in.
+ *
+ * Runs after `syncFromScene` (which seeds every new node a full-length bar).
+ * Times are composition seconds; `trimClipTo` takes absolute comp time for the
+ * edge, and the head must move before the tail so the clip is never
+ * momentarily inverted.
+ */
+function applyClipTimings(timings: readonly AppliedTiming[]): void {
+  if (timings.length === 0) return;
+  const c = getTimelineController();
+  for (const t of timings) {
+    const clip = c.getLayersForNode(t.nodeId)[0];
+    if (!clip) continue;
+    if (t.outSec <= t.inSec) {
+      // Never visible in this comp — leave the bar alone rather than creating a
+      // zero-length clip the user can't grab; the layer is simply off-screen.
+      continue;
+    }
+    c.trimClipTo(clip.id, 'end', t.outSec);
+    c.trimClipTo(clip.id, 'start', t.inSec);
+  }
+  c.invalidateLayerIndex();
+}
+
+/**
+ * Insert a bundled item through the REAL Lottie import pipeline, centred at
+ * (x, y) — comp centre when omitted — without resizing the user's comp.
+ * Returns the created node ids (empty on failure). One undo step.
+ */
 export function insertLottieItem(lottieId: string, x?: number, y?: number): string[] {
   const item = getLottieItem(lottieId);
   if (!item) return [];
@@ -417,15 +449,29 @@ export function insertLottieItem(lottieId: string, x?: number, y?: number): stri
   const px = x ?? comp.width / 2;
   const py = y ?? comp.height / 2;
   const plan = planLottieImport(item.doc);
-  const { nodeIds } = applyImportPlan(plan, createToolContext(new AbortController().signal), {
-    updateComp: false,
-    offset: { x: px - LOTTIE_DESIGN_CENTER, y: py - LOTTIE_DESIGN_CENTER },
-  });
-  if (nodeIds.length > 0) {
-    useSelectionStore.getState().set(nodeIds);
-    getTimelineController().syncFromScene();
-    bumpScene();
+  const tx = beginDocumentTransaction(`Insert ${item.name}`);
+  let nodeIds: string[] = [];
+  try {
+    // One scene notification for the build, not one per node — the listener
+    // walks the whole scene to resync the timeline (see batchScene).
+    const res = batchScene(() =>
+      applyImportPlan(plan, createToolContext(new AbortController().signal), {
+        updateComp: false,
+        offset: { x: px - LOTTIE_DESIGN_CENTER, y: py - LOTTIE_DESIGN_CENTER },
+      }),
+    );
+    nodeIds = res.nodeIds;
+    if (nodeIds.length > 0) {
+      useSelectionStore.getState().set(nodeIds);
+      getTimelineController().syncFromScene();
+      applyClipTimings(res.timings);
+      bumpScene();
+    }
+  } catch (err) {
+    tx.rollback();
+    throw err;
   }
+  tx.commit();
   return nodeIds;
 }
 
@@ -435,8 +481,8 @@ export interface LottieFileImportResult {
 }
 
 /**
- * Import a user's .json or .lottie file — shared entry point for file imports
- * (TopNav menu and the Lottie panel both call this). Unpacks .lottie ZIP archives.
+ * Import a user's.json or.lottie file — shared entry point for file imports
+ * (TopNav menu and the Lottie panel both call this). Unpacks.lottie ZIP archives.
  */
 export async function importLottieFile(file: File): Promise<LottieFileImportResult> {
   let json: LottieJson;
@@ -488,15 +534,40 @@ export async function importLottieFile(file: File): Promise<LottieFileImportResu
   const comp = useCompositionStore.getState();
   const designCx = plan.comp.width / 2;
   const designCy = plan.comp.height / 2;
-  const { nodeIds, warnings } = applyImportPlan(plan, createToolContext(new AbortController().signal), {
-    updateComp: false,
-    offset: { x: comp.width / 2 - designCx, y: comp.height / 2 - designCy },
-  });
-  if (nodeIds.length > 0) {
-    // Select the freshly imported layers so the user sees what landed (and where).
-    useSelectionStore.getState().set(nodeIds);
-    getTimelineController().syncFromScene();
-    bumpScene();
+
+  // ONE undo step for the whole import. Without this the timeline resync below
+  // pushed a command per created clip, and Ctrl+Z peeled the import apart a
+  // layer at a time instead of removing it.
+  const tx = beginDocumentTransaction(`Import ${file.name}`);
+  let nodeIds: string[] = [];
+  try {
+    // One scene notification for the build, not one per node (see batchScene).
+    const res = batchScene(() =>
+      applyImportPlan(plan, createToolContext(new AbortController().signal), {
+        updateComp: false,
+        offset: { x: comp.width / 2 - designCx, y: comp.height / 2 - designCy },
+      }),
+    );
+    nodeIds = res.nodeIds;
+    if (nodeIds.length > 0) {
+      // Select the freshly imported layers so the user sees what landed (and where).
+      useSelectionStore.getState().set(nodeIds);
+      getTimelineController().syncFromScene();
+      applyClipTimings(res.timings);
+      bumpScene();
+    }
+  } catch (err) {
+    tx.rollback();
+    throw err;
   }
-  return { nodeIds, warnings };
+  tx.commit();
+
+  // A file longer than the comp would be silently truncated at playback, so say
+  // so rather than letting the user wonder where the ending went.
+  if (plan.comp.durationSeconds > comp.durationSeconds + 1e-3) {
+    plan.warnings.push(
+      `The file is ${plan.comp.durationSeconds.toFixed(1)}s but this composition is ${comp.durationSeconds.toFixed(1)}s — the tail will not play until you lengthen the comp.`,
+    );
+  }
+  return { nodeIds, warnings: plan.warnings };
 }

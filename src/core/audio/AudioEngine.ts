@@ -1,5 +1,5 @@
 /**
- * AudioEngine (Prompt 8) — the app's single Web Audio authority.
+ * AudioEngine — the app's single Web Audio authority.
  *
  * Owns one AudioContext, decodes imported audio assets into buffers +
  * {@link WaveformPeaks} envelopes, and keeps live playback in sync with the
@@ -18,6 +18,13 @@ import { rmsPeak, type Levels } from './audioLevels';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
 export interface AudioLayerState {
+  /**
+   * Voice identity. One audio NODE can own several audible spans — splitting
+   * its timeline bar makes two clips of the same asset at different times — so
+   * voices are keyed by clip, not by node. Defaults to `nodeId` when the caller
+   * doesn't distinguish (a node with no clip bars has exactly one voice).
+   */
+  id?: string;
   nodeId: string;
   assetId: string;
   src: string;
@@ -79,6 +86,9 @@ class AudioEngine {
   private readonly assets = new Map<string, LoadedAsset>();
   private readonly loading = new Map<string, Promise<LoadedAsset | null>>();
   private readonly voices = new Map<string, ActiveVoice>();
+  /** The layer set from the most recent {@link sync} — what `currentLevel`
+   *  samples, so it reflects the scene rather than the decode cache. */
+  private layers: readonly AudioLayerState[] = [];
   private timeSec = 0;
   private readonly listeners = new Set<() => void>();
 
@@ -190,13 +200,29 @@ class AudioEngine {
     return p;
   }
 
-  /** Peak amplitude (0..1) across decoded layers at the current playhead. Read
-   *  from the envelope (not live analysis) so it works while paused/scrubbing —
-   *  which is what drives audio-reactive expressions. */
+  /**
+   * Peak amplitude (0..1) across the scene's audible layers at the current
+   * playhead. Read from the envelope (not live analysis) so it works while
+   * paused/scrubbing — which is what drives audio-reactive expressions.
+   *
+   * Sampled at each layer's CLIP-LOCAL time (`inSec + (t − startSec)`) and only
+   * inside its audible span. Sampling every decoded asset at raw comp time —
+   * as this used to — reported loudness from clips the playhead wasn't over,
+   * from muted layers, and from assets whose layer had been deleted (the decode
+   * cache outlives the scene), so expressions reacted to sound nobody heard.
+   */
   currentLevel(): number {
     let max = 0;
-    for (const asset of this.assets.values()) {
-      const a = amplitudeAt(asset.wave, this.timeSec);
+    for (const l of this.layers) {
+      if (l.muted) continue;
+      const asset = this.assets.get(l.assetId);
+      if (!asset) continue;
+      const localT = this.timeSec - l.startSec;
+      if (localT < 0) continue;
+      const offset = l.inSec + localT;
+      const outSec = l.outSec > 0 ? l.outSec : asset.wave.duration;
+      if (offset >= outSec) continue;
+      const a = amplitudeAt(asset.wave, offset);
       if (a > max) max = a;
     }
     return max;
@@ -206,6 +232,11 @@ class AudioEngine {
     return `${l.assetId}|${l.level}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}`;
   }
 
+  /** Stable per-voice identity — the clip id when the caller supplies one. */
+  private voiceId(l: AudioLayerState): string {
+    return l.id ?? l.nodeId;
+  }
+
   /**
    * Reconcile live playback with the transport. Called on every play/pause,
    * seek, or scene edit. Starts voices for audible layers when playing (seeking
@@ -213,6 +244,7 @@ class AudioEngine {
    */
   sync(playing: boolean, timeSec: number, layers: readonly AudioLayerState[]): void {
     this.timeSec = timeSec;
+    this.layers = layers;
     const ctx = this.context();
     if (!ctx) return;
 
@@ -225,32 +257,42 @@ class AudioEngine {
     }
     if (ctx.state === 'suspended') void ctx.resume();
 
-    const wanted = new Map(layers.filter((l) => !l.muted).map((l) => [l.nodeId, l] as const));
+    const wanted = new Map(layers.filter((l) => !l.muted).map((l) => [this.voiceId(l), l] as const));
 
     // Stop voices whose layer vanished, changed materially, or drifted out of
     // sync with the playhead (a seek or loop-wrap).
-    for (const [nodeId, voice] of [...this.voices]) {
-      const l = wanted.get(nodeId);
+    for (const [voiceId, voice] of [...this.voices]) {
+      const l = wanted.get(voiceId);
       if (!l || this.voiceKey(l) !== voice.key) {
-        this.stopVoice(nodeId);
+        this.stopVoice(voiceId);
+        continue;
+      }
+      // Past the clip's out-point the voice must stop even though its layer is
+      // unchanged. `source.start(…, duration)` already bounds it, but only for
+      // the span it was scheduled with; a bar trimmed shorter mid-playback (or
+      // a playhead that jumped past the tail) has to be caught here or the
+      // clip keeps sounding after its bar ends.
+      const localT = timeSec - l.startSec;
+      const wanted0 = l.inSec + localT;
+      if (localT < 0 || wanted0 >= (l.outSec > 0 ? l.outSec : Infinity)) {
+        this.stopVoice(voiceId);
         continue;
       }
       const predicted = voice.startOffset + (ctx.currentTime - voice.startCtxTime);
-      const wanted0 = l.inSec + (timeSec - l.startSec);
-      if (Math.abs(wanted0 - predicted) > SEEK_TOLERANCE) this.stopVoice(nodeId);
+      if (Math.abs(wanted0 - predicted) > SEEK_TOLERANCE) this.stopVoice(voiceId);
     }
 
     // (Re)start voices. A large seek while playing lands here after the stop
     // above and restarts at the new offset.
-    for (const [nodeId, l] of wanted) {
-      if (this.voices.has(nodeId)) continue;
+    for (const [voiceId, l] of wanted) {
+      if (this.voices.has(voiceId)) continue;
       const asset = this.assets.get(l.assetId);
       if (!asset) continue; // not decoded yet; a later sync will start it
       const localT = timeSec - l.startSec;
       const offset = l.inSec + localT;
       const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
       if (localT < 0 || offset >= outSec) continue; // playhead outside the clip
-      this.startVoice(nodeId, l, asset, offset);
+      this.startVoice(voiceId, l, asset, offset);
     }
   }
 
@@ -260,7 +302,7 @@ class AudioEngine {
     return this.assets.get(assetId)?.buffer;
   }
 
-  private startVoice(nodeId: string, l: AudioLayerState, asset: LoadedAsset, offset: number): void {
+  private startVoice(voiceId: string, l: AudioLayerState, asset: LoadedAsset, offset: number): void {
     const ctx = this.ctx!;
     const source = ctx.createBufferSource();
     source.buffer = asset.buffer;
@@ -275,7 +317,7 @@ class AudioEngine {
     } catch {
       return;
     }
-    this.voices.set(nodeId, {
+    this.voices.set(voiceId, {
       source,
       gain,
       key: this.voiceKey(l),
@@ -284,8 +326,8 @@ class AudioEngine {
     });
   }
 
-  private stopVoice(nodeId: string): void {
-    const v = this.voices.get(nodeId);
+  private stopVoice(voiceId: string): void {
+    const v = this.voices.get(voiceId);
     if (!v) return;
     try {
       v.source.stop();
@@ -294,11 +336,11 @@ class AudioEngine {
     }
     v.source.disconnect();
     v.gain.disconnect();
-    this.voices.delete(nodeId);
+    this.voices.delete(voiceId);
   }
 
   private stopAll(): void {
-    for (const nodeId of [...this.voices.keys()]) this.stopVoice(nodeId);
+    for (const voiceId of [...this.voices.keys()]) this.stopVoice(voiceId);
   }
 }
 

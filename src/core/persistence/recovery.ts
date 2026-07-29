@@ -1,5 +1,5 @@
 /**
- * Crash recovery (spec §Trust Infrastructure).
+ * Crash recovery.
  *
  * A recovery snapshot is a non-destructive copy of the editable state (scene +
  * animation + playhead) written to persistent settings by the autosave loop.

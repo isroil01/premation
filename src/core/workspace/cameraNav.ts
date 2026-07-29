@@ -169,7 +169,7 @@ export type NavTarget =
  * meaningless (no camera+3D in 'active'; no 3D layer at all in the views).
  *
  * The six axis views resolve to their OWN target, not to the scene camera.
- * They used to fall through to `findCameraNav()`, so Alt+drag in Top view wrote
+ * They used to fall through to `findCameraNav`, so Alt+drag in Top view wrote
  * orbitYaw / orbitPitch / x / y / z to the shot camera — invisibly, because an
  * orthographic view ignores the scene camera entirely and so showed no sign of
  * the change. Switching views must never modify the scene.

@@ -5,10 +5,10 @@
  * tables (Canvas2D vs GPU) and backend-picking logic are gone.
  *
  * What remains:
- *   - `DocumentNeeds`  — a set of boolean flags for which features the document
+ *   - `DocumentNeeds` — a set of boolean flags for which features the document
  *     uses.  Still consumed by AI toolHandlers (list_capabilities) and
  *     analytics.
- *   - `analyzeDocument()` — scans the scene graph and populates DocumentNeeds.
+ *   - `analyzeDocument` — scans the scene graph and populates DocumentNeeds.
  */
 
 import type { SceneGraph } from '@core/scene/SceneGraph';

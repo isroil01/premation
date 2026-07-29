@@ -1,5 +1,5 @@
 /**
- * OnboardingOverlay — the first-run tour (spec §Onboarding & Migration).
+ * OnboardingOverlay — the first-run tour.
  * A centered card sequence over a dim scrim; Back / Next / Skip. The first
  * step offers the "Coming from After Effects?" shortcut import.
  */

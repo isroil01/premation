@@ -29,6 +29,9 @@ export type HostMessage =
   | { k: 'panelMessage'; data: unknown }
   | { k: 'ping'; id: number };
 
+/** A line in a plugin's log, as shown in the manager. */
+export type PluginLogLevel = 'log' | 'warn' | 'error';
+
 /** Worker → host. */
 export type WorkerMessage =
   | { k: 'ready' }
@@ -36,6 +39,7 @@ export type WorkerMessage =
   | { k: 'call'; id: number; method: string; args: unknown[] }
   | { k: 'pong'; id: number }
   | { k: 'toPanel'; data: unknown }
+  | { k: 'log'; level: PluginLogLevel; text: string }
   | { k: 'fatal'; error: string };
 
 /** Every RPC method the host implements, with the permission it requires.

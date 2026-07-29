@@ -52,77 +52,96 @@ function pruneImageTurns(history: AiMessage[]): AiMessage[] {
     .reverse();
 }
 
+/**
+ * Tool name → the label shown while it runs.
+ *
+ * A table rather than a switch, so the mapped names are ENUMERABLE. The switch
+ * form drifted in both directions without anything noticing: branches for tools
+ * that no longer existed, and no branch at all for tools that did — which showed
+ * the user "Working" through the most interesting part of a run.
+ * `activityFor.test.ts` now checks both directions against the live registry.
+ */
+const TOOL_ACTIVITY: Record<string, string> = {
+  // ── Read ──
+  describe_scene: 'Reading the scene',
+  read_tracks: 'Reading the scene',
+  evaluate_at: 'Reading the scene',
+  get_selection: 'Reading the scene',
+  list_capabilities: 'Reading the scene',
+  list_presets: 'Reading the scene',
+  analyse_audio: 'Reading the scene',
+
+  // ── Structure ──
+  create_layer: 'Creating layers',
+  delete_layer: 'Removing layers',
+  update_layer: 'Editing layers',
+  reparent_layer: 'Editing layers',
+  update_composition: 'Editing layers',
+  create_precomp: 'Nesting a precomp',
+
+  // ── Animation ──
+  set_keyframes: 'Animating',
+  set_easing: 'Animating',
+  remove_keyframes: 'Animating',
+  apply_preset: 'Animating',
+  text_animator: 'Animating type',
+  set_spring: 'Solving spring physics',
+  set_time_remap: 'Retiming',
+  set_expression: 'Writing expressions',
+  set_motion_blur: 'Setting the shutter',
+
+  // ── Look ──
+  add_effect: 'Applying effects',
+  update_effect: 'Applying effects',
+  update_effect_param: 'Tuning effects',
+  set_shadow_stack: 'Building depth',
+  add_surface_treatment: 'Adding grain and vignette',
+  create_gradient: 'Painting the backdrop',
+  set_light: 'Lighting the scene',
+  apply_layer_style: 'Styling layers',
+  recolor_lottie_vector: 'Recolouring vectors',
+
+  // ── Media and masks ──
+  create_media: 'Placing media',
+  // Named, and named honestly: this one takes seconds and costs credits, so
+  // "Working" would leave the user watching a spinner with no idea why.
+  generate_image: 'Generating imagery',
+  import_svg: 'Drawing vectors',
+  create_media_from_attachment: 'Placing media',
+  create_mask: 'Masking',
+
+  // ── Shapes and rigs ──
+  merge_paths: 'Merging paths',
+  set_trim_path: 'Revealing trim-path outlines',
+  add_repeater: 'Adding shape repeater burst',
+  add_path_operator: 'Morphing vector path distortion',
+  set_text_on_path: 'Setting text on a path',
+  create_puppet_rig: 'Rigging puppet pins',
+  set_puppet_pin_keyframes: 'Animating the rig',
+  create_skeleton_rig: 'Building a skeleton',
+  pose_skeleton: 'Posing the skeleton',
+
+  // ── Compose recipes ──
+  add_scene: 'Setting up a scene',
+  add_transition: 'Adding a transition',
+  add_background: 'Painting the background',
+  add_title: 'Adding a title',
+  add_kinetic_title: 'Animating kinetic type',
+  add_emblem: 'Building the emblem',
+  add_cards: 'Laying out cards',
+  add_lower_third: 'Adding a lower third',
+  add_ambient_orbs: 'Adding ambient depth',
+  add_light_sweep: 'Adding a light sweep',
+  add_camera_move: 'Adding a camera move',
+  add_logo_reveal: 'Revealing the logo',
+  add_radial_burst: 'Adding shape repeater burst',
+  add_path_morph: 'Morphing vector path distortion',
+  stagger_in: 'Staggering entrances',
+};
+
 /** A human label for the tool the model is running, shown while it works. */
 function activityFor(toolName: string): string {
-  switch (toolName) {
-    case 'describe_scene':
-    case 'read_tracks':
-    case 'evaluate_at':
-    case 'get_selection':
-    case 'list_capabilities':
-    case 'list_presets':
-      return 'Reading the scene';
-    case 'create_layer':
-      return 'Creating layers';
-    case 'delete_layer':
-      return 'Removing layers';
-    case 'set_keyframes':
-    case 'set_easing':
-    case 'remove_keyframes':
-    case 'apply_preset':
-    case 'text_animator':
-      return 'Animating';
-    case 'add_effect':
-    case 'update_effect':
-      return 'Applying effects';
-    case 'set_expression':
-      return 'Writing expressions';
-    case 'update_layer':
-    case 'reparent_layer':
-    case 'update_composition':
-      return 'Editing layers';
-    // High-level composition steps — describe what's being built, not "Working".
-    case 'add_scene':
-      return 'Setting up a scene';
-    case 'add_transition':
-      return 'Adding a transition';
-    case 'add_background':
-      return 'Painting the background';
-    case 'add_title':
-      return 'Adding a title';
-    case 'add_kinetic_title':
-      return 'Animating kinetic type';
-    case 'add_emblem':
-      return 'Building the emblem';
-    case 'add_cards':
-      return 'Laying out cards';
-    case 'add_lower_third':
-      return 'Adding a lower third';
-    case 'add_ambient_orbs':
-      return 'Adding ambient depth';
-    case 'add_light_sweep':
-      return 'Adding a light sweep';
-    case 'add_camera_move':
-      return 'Adding a camera move';
-    case 'add_logo_reveal':
-    case 'set_trim_path':
-      return 'Revealing trim-path outlines';
-    case 'add_radial_burst':
-    case 'add_repeater':
-      return 'Adding shape repeater burst';
-    case 'add_path_morph':
-    case 'add_path_operator':
-      return 'Morphing vector path distortion';
-    case 'stagger_in':
-      return 'Staggering entrances';
-    case 'create_media':
-    case 'create_media_from_attachment':
-      return 'Placing media';
-    case 'create_mask':
-      return 'Masking';
-    default:
-      return 'Working';
-  }
+  return TOOL_ACTIVITY[toolName] ?? 'Working';
 }
 
 /** Maps a cloud project to its most recent AI thread, for the initial load. */
@@ -153,17 +172,33 @@ const writeLocal = (key: string, value: string | null): void => {
   }
 };
 
+/**
+ * Failures that say our picture of the account's key state is out of date, as
+ * opposed to a transient provider problem. Anything here triggers a re-read of
+ * `/ai/keys`; a rate limit or an overload does not, because nothing about the
+ * account changed.
+ */
+const KEY_STATE_CODES: ReadonlySet<string> = new Set([
+  'no_key',
+  'auth',
+  'coming_soon',
+  'upgrade_required',
+  'no_credits',
+]);
+
 function describeError(err: unknown): string {
   if (err instanceof AiError) {
     switch (err.code) {
       case 'no_key':
-        return 'No API key yet — add one in Customize → AI.';
+        // Dashboard → Settings → Assistant. It is deliberately not a dialog —
+        // see the note in CustomizeDialog.tsx — so name the page it is on.
+        return 'No API key for this provider yet — add one in Settings → Assistant.';
       case 'auth':
-        return 'Sign in and check your API key in Customize → AI.';
+        return 'That provider rejected the stored key. Re-enter it in Settings → Assistant.';
       case 'coming_soon':
-        return 'Connect your own API key in Settings → AI to use the assistant.';
+        return 'Connect your own API key in Settings → Assistant to use the assistant.';
       case 'upgrade_required':
-        return 'Connect your own API key in Settings → AI to use the assistant.';
+        return 'Connect your own API key in Settings → Assistant to use the assistant.';
       case 'no_credits':
         return err.message; // the server explains the credit balance
       case 'rate_limit':
@@ -195,35 +230,36 @@ export interface PlanItem {
   status: 'active' | 'done' | 'error';
 }
 
-/** Ordered pipeline stage labels — must match PipelineOrchestrator onActivity calls. */
+/**
+ * Ordered stage labels for the generative run's progress checklist.
+ *
+ * These MUST match the `onActivity` strings the run actually emits, and for a
+ * long time they did not: the list still described the ten-stage client
+ * PipelineOrchestrator (intent → creative → spec → storyboard → …) that Phase
+ * 3.4 deleted. Every `matchStageIndex` lookup returned -1, so the checklist
+ * never appeared — a dead panel the user was told existed.
+ *
+ * The caster's run is shorter because most of what those stages produced is now
+ * emitted by code rather than asked of a model.
+ *
+ * Source of truth: `core/ai/CasterRunner.ts` — keep the two in step.
+ */
 export const PIPELINE_STAGE_LABELS = [
-  'Optimizing prompt',
-  'Analyzing intent',
-  'Directing creative visual',
-  'Generating motion spec',
-  'Storyboarding scene',
-  'Planning scenes in parallel',
-  'Planning cameras & animations',
-  'Merging global timeline',
-  'Authoring tool plan steps',
-  'Reviewing production plan',
-  'Executing planned production steps',
+  'Writing the creative brief',
+  'Casting layouts',
+  'Casting motion',
+  'Building the composition',
+  'Reviewing the result',
 ] as const;
 
-/** Map an onActivity label to its canonical stage index (-1 if not a pipeline stage). */
+/** Map an onActivity label to its canonical stage index (-1 if not a stage). */
 function matchStageIndex(label: string): number {
   const l = label.toLowerCase();
-  if (l.includes('optimizing prompt')) return 0;
-  if (l.includes('analyzing intent')) return 1;
-  if (l.includes('directing creative')) return 2;
-  if (l.includes('generating motion')) return 3;
-  if (l.includes('storyboard')) return 4;
-  if (l.includes('planning') && l.includes('scene')) return 5;
-  if (l.includes('cameras') || l.includes('animations')) return 6;
-  if (l.includes('timeline')) return 7;
-  if (l.includes('tool plan') || l.includes('authoring')) return 8;
-  if (l.includes('reviewing') || l.includes('critique')) return 9;
-  if (l.includes('executing')) return 10;
+  if (l.includes('creative brief')) return 0;
+  if (l.includes('casting layout')) return 1;
+  if (l.includes('casting motion')) return 2;
+  if (l.includes('building the composition')) return 3;
+  if (l.includes('reviewing the result')) return 4;
   return -1;
 }
 
@@ -310,7 +346,7 @@ export function useAiChat(): UseAiChat {
   /** The persisted thread; null when nothing has been said yet. */
   const conversationId = useRef<string | null>(null);
 
-  // Subscribe to the raw state, not the ready() getter — zustand only
+  // Subscribe to the raw state, not the ready getter — zustand only
   // re-renders on state identity, so a computed selector would go stale.
   const provider = useAiProviderStore((s) => s.provider);
   const status = useAiProviderStore((s) => s.status);
@@ -320,6 +356,14 @@ export function useAiChat(): UseAiChat {
 
   const projectId = useCloudProjectStore((s) => s.projectId);
 
+  /**
+   * Ask the gateway which providers this account can run.
+   *
+   * Cheap and idempotent (the store single-flights it), and it has to happen
+   * here as well as after sign-in: the editor can be reached with a session
+   * restored before this panel ever mounted, or with a key added on another
+   * device since.
+   */
   useEffect(() => { void refreshStatus(); }, [refreshStatus]);
 
   // Abandon an in-flight run if the panel unmounts.
@@ -464,8 +508,21 @@ export function useAiChat(): UseAiChat {
     setPendingChanges([]);
     pendingProseRef.current = null;
 
-    // Revert visually by clipping messages list back to omit user query and rejected text
-    setMessages((m) => m.slice(0, -2));
+    // F16: clip by IDENTITY, not by count.
+    //
+    // `slice(0, -2)` assumed the last two entries were exactly this turn's user
+    // message and its rejected answer. They are not, reliably: a turn that
+    // errored before answering leaves one, and a turn that attached images or
+    // emitted a notice leaves three — so discarding ate an unrelated earlier
+    // message, or left the rejected one on screen.
+    //
+    // The turn is bounded by the LAST user message, which is unambiguous.
+    setMessages((m) => {
+      for (let i = m.length - 1; i >= 0; i--) {
+        if (m[i]!.role === 'user') return m.slice(0, i);
+      }
+      return m;
+    });
   }, []);
 
   const cancel = useCallback(() => abort.current?.abort(), []);
@@ -517,6 +574,41 @@ export function useAiChat(): UseAiChat {
       acceptPending();
     }
 
+    /**
+     * Confirm the gate before spending a turn on it.
+     *
+     * `ready` can be optimistic — it is seeded from the cross-launch cache so
+     * the composer is live on the first frame — so a stale "no key" must not
+     * block a working setup, and a stale "has key" must not produce a confusing
+     * provider error. One forced refresh settles it. If a provider IS connected
+     * but not the selected one, `refreshStatus` re-points the selection, which
+     * is the case that used to strand people who had a key the whole time.
+     */
+    if (!useAiProviderStore.getState().ready()) {
+      // Held busy across the round trip, or a second Enter during it starts a
+      // second run — the `busy` guard above is the only thing stopping that.
+      setBusy(true);
+      try {
+        await useAiProviderStore.getState().refreshStatus({ force: true });
+      } finally {
+        setBusy(false);
+      }
+      if (!useAiProviderStore.getState().ready()) {
+        setMessages((m) => [
+          ...m,
+          { role: 'user', text, images: images?.map((i) => i.dataUrl) },
+          {
+            role: 'assistant',
+            text: useAiProviderStore.getState().anyReady()
+              ? 'That provider is not connected on this account. Pick another one in the model menu below.'
+              : 'Connect an AI provider first — Dashboard → Settings → Assistant.',
+            error: true,
+          },
+        ]);
+        return;
+      }
+    }
+
     const attachments = (images ?? []).map((i) => ({ mediaType: i.mediaType, dataBase64: i.dataBase64 }));
     const storedText = attachments.length
       ? `[${attachments.length} reference image${attachments.length > 1 ? 's' : ''} attached]\n${text}`
@@ -539,9 +631,19 @@ export function useAiChat(): UseAiChat {
         dialect: ai.dialect(),
         model: ai.model(),
         signal: controller.signal,
-        preview: true, // Always run in preview transaction mode so Apply/Discard works
+        // F7: this was hardcoded `true` while `isManualMode` sat in the effect
+        // dependency array and was never read — the toggle was UI with nothing
+        // behind it. Manual mode holds the transaction open for Apply/Discard;
+        // auto mode commits when the run finishes.
+        preview: isManualMode,
         history: history.current.slice(-HISTORY_TURNS),
         images: attachments.length ? attachments : undefined,
+        // Both ids were already live in this hook and neither was ever passed
+        // on, so the backend's project and conversation memory keyed on
+        // `undefined` and every run started from nothing. This is what lets run
+        // #10 be better than run #1.
+        ...(projectId ? { projectId } : {}),
+        ...(conversationId.current ? { conversationId: conversationId.current } : {}),
         events: {
           // Stream the answer as it arrives, so the panel isn't dead air while
           // the model plans and works.
@@ -590,6 +692,13 @@ export function useAiChat(): UseAiChat {
     } catch (err) {
       const reason = describeError(err);
       setMessages((m) => [...m, { role: 'assistant', text: reason, error: true }]);
+      // The gateway just contradicted what we believe about this account's keys
+      // — a key removed on another device, a plan that changed, credits spent.
+      // Re-read it, which also re-points the selection at a provider that still
+      // works, so the NEXT prompt succeeds instead of failing the same way.
+      if (err instanceof AiError && KEY_STATE_CODES.has(err.code)) {
+        void useAiProviderStore.getState().refreshStatus({ force: true });
+      }
       void persist([
         { role: 'user', content: storedText },
         { role: 'assistant', content: reason, isError: true },
@@ -632,3 +741,10 @@ export function useAiChat(): UseAiChat {
     discardPending,
   };
 }
+
+/** Internals exposed so the registry-drift test can read the mapping. */
+export const __testables = {
+  activityFor,
+  MAPPED_TOOL_NAMES: Object.keys(TOOL_ACTIVITY),
+  matchStageIndex,
+};

@@ -4,7 +4,7 @@
  * `syncChannel` already provided the transport (BroadcastChannel in the browser,
  * Electron IPC on the desktop) but nothing ever called `publish`, and
  * PopoutRoute's two subscribers had empty bodies. A pop-out window therefore
- * booted its own realm, ran `seedDefaultScene()` into its OWN scene graph, and
+ * booted its own realm, ran `seedDefaultScene` into its OWN scene graph, and
  * showed a completely different composition from the one you detached it from —
  * which makes the whole second-monitor workflow useless.
  *

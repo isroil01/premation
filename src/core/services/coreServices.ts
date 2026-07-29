@@ -4,7 +4,7 @@
  * Services are registered in the DI `ServiceContainer` under these string
  * tokens (so plugins/tests can resolve them generically) and are also exposed
  * through typed getters for ergonomic call sites — mirroring the existing
- * getEventBus()/getCommandSystem() singleton pattern.
+ * getEventBus/getCommandSystem singleton pattern.
  */
 
 import type { LoggerService } from '@core/logging/Logger';
@@ -53,7 +53,7 @@ export function coreServices(): CoreServiceRefs {
 /**
  * Non-throwing peek, for UI that can mount *outside* the Providers boot gate —
  * the global title bar renders on /login and /dashboard, where nothing has
- * booted the core yet. Prefer coreServices() anywhere boot is guaranteed.
+ * booted the core yet. Prefer coreServices anywhere boot is guaranteed.
  */
 export function tryCoreServices(): CoreServiceRefs | null {
   return refs;

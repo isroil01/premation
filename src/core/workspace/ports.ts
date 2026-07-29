@@ -96,7 +96,7 @@ function pointInPolygon(pt: { x: number; y: number }, poly: ReadonlyArray<{ x: n
  * It must be shared by the caller, not defaulted here: every child asks
  * `worldMatrixOf(parent)`, and resolving a parent means reading its geometry —
  * for a group that walks ALL its children. With a per-call cache that walk
- * repeated per sibling, so one imported 158-shape icon cost getNodes() O(N²)
+ * repeated per sibling, so one imported 158-shape icon cost getNodes O(N²)
  * (measured 3.4 s of a 3.8 s import, re-run on every scene bump). One shared
  * map turns the pass back into O(N).
  */

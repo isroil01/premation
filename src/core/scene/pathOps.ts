@@ -1,5 +1,5 @@
 /**
- * Path operations (Prompt 11 / MG Phase C) — procedural shape deformation. A
+ * Path operations — procedural shape deformation. A
  * shape's outline (or drawn path) is transformed into a new polyline before
  * rendering: Zig-Zag ruffles the edges, Round Corners softens the vertices.
  * The amount/detail are keyframeable, so an animated zig-zag amplitude gives a

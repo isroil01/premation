@@ -44,7 +44,13 @@ export function OAuthCallbackPage(): JSX.Element {
       .then(async (result) => {
         await setSession(result);
         if (!alive) return;
-        useAuthStore.setState({ status: 'authenticated', user: result.user, error: null });
+        // Through the store, NOT `setState`: adopting a session is more than
+        // flipping a status flag — it loads the account's assets and its AI key
+        // status. Setting the field directly skipped both, which is why a
+        // Google/GitHub sign-in left the assistant asking for an API key that
+        // was already stored. Not awaited: those are best-effort background
+        // loads, and the dashboard should not wait on them.
+        void useAuthStore.getState().adoptSession(result.user);
         // `replace`, so Back does not return to a URL holding a spent code.
         navigate('/dashboard', { replace: true });
       })

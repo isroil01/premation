@@ -32,11 +32,34 @@ import { useUIStore } from '@stores/uiStore';
 import { usePluginStore, type InstalledPlugin } from '@stores/pluginStore';
 import { createHostApi } from './hostApi';
 import { spawnPluginWorker } from './spawnPluginWorker';
-import { METHOD_PERMISSIONS, type HostMessage, type WorkerMessage, type PluginCommandSpec } from './protocol';
+import {
+  METHOD_PERMISSIONS,
+  type HostMessage,
+  type WorkerMessage,
+  type PluginCommandSpec,
+  type PluginLogLevel,
+} from './protocol';
 import type { PluginPackage } from './pluginPackage';
 import type { PluginPermission } from './manifest';
 
 export type PluginStatus = 'stopped' | 'starting' | 'running' | 'error';
+
+/** One line of a plugin's own output, kept for the manager's log view. */
+export interface PluginLogLine {
+  level: PluginLogLevel;
+  text: string;
+  /** ms since the plugin started, so a reader can see what followed what. */
+  at: number;
+}
+
+/**
+ * How much of a plugin's output to keep.
+ *
+ * Bounded on purpose: a plugin logging in a loop must not be able to grow the
+ * host's memory without limit — the sandbox exists to stop a plugin taking the
+ * editor down, and an unbounded array would be a way around it.
+ */
+const MAX_LOG_LINES = 200;
 
 export interface PluginRuntimeInfo {
   status: PluginStatus;
@@ -71,6 +94,10 @@ class PluginHost {
   private readonly runtimes = new Map<string, Runtime>();
   private listeners: Array<() => void> = [];
   private selectionProvider: () => ReadonlyArray<string> = () => [];
+  /** Show / hide a plugin's panel in the dock. Injected — this file must not
+   *  import React, and the host is booted in tests where there is no dock. */
+  private showPanelHook: ((pluginId: string) => void) | null = null;
+  private hidePanelHook: ((pluginId: string) => void) | null = null;
   /** Plugin frames allowed on the postMessage bridge → their expected origin. */
   private readonly frames = new Map<MessageEventSource, string>();
   private workerFactory: WorkerFactory | null = null;
@@ -87,8 +114,17 @@ class PluginHost {
    * plugin's name, and the host's own errors need a level, neither of which a
    * bare `notify(string)` can express. Both go through the UI store directly.
    */
-  configure(opts: { getSelection: () => ReadonlyArray<string> }): void {
+  configure(opts: {
+    getSelection: () => ReadonlyArray<string>;
+    /** Reveal `pluginId`'s panel in the dock. Absent in tests and pop-outs. */
+    showPanel?: (pluginId: string) => void;
+    /** Hide it again — also called when a plugin stops, so a panel cannot
+     *  outlive the worker that was answering it. */
+    hidePanel?: (pluginId: string) => void;
+  }): void {
     this.selectionProvider = opts.getSelection;
+    this.showPanelHook = opts.showPanel ?? null;
+    this.hidePanelHook = opts.hidePanel ?? null;
     this.startEnabled();
   }
 
@@ -117,7 +153,11 @@ class PluginHost {
    * `granted` is intersected with what the manifest asks for, so a UI bug can
    * only ever grant LESS than was disclosed, never more.
    */
-  install(pkg: PluginPackage, granted: readonly PluginPermission[]): string | null {
+  install(
+    pkg: PluginPackage,
+    granted: readonly PluginPermission[],
+    origin: { source?: 'folder' | 'file' | 'registry'; publisherKey?: string } = {},
+  ): string | null {
     const id = pkg.manifest.id;
     const existing = usePluginStore.getState().get(id);
     if (existing) this.stop(id);
@@ -129,7 +169,17 @@ class PluginHost {
       enabled: true,
       installedAt: existing?.installedAt ?? Date.now(),
       updatedAt: Date.now(),
+      ...(origin.source ? { source: origin.source } : existing?.source ? { source: existing.source } : {}),
+      // Carried forward on update: the pin belongs to the plugin, not to one
+      // download of it, and losing it on reinstall would silently downgrade
+      // every later update to unverified.
+      ...(origin.publisherKey
+        ? { publisherKey: origin.publisherKey }
+        : existing?.publisherKey
+          ? { publisherKey: existing.publisherKey }
+          : {}),
     };
+    this.logs.delete(id);
     if (!usePluginStore.getState().put(entry)) {
       return 'Could not save the plugin — the browser storage quota is full.';
     }
@@ -141,6 +191,28 @@ class PluginHost {
   uninstall(id: string): void {
     this.stop(id);
     usePluginStore.getState().remove(id);
+    this.logs.delete(id);
+    this.errors.delete(id);
+    this.emit();
+  }
+
+  /**
+   * Change what a plugin is allowed to do, after it was installed.
+   *
+   * Consent at install time is a single yes/no over the whole list, which is
+   * the wrong granularity for the one question users actually ask later —
+   * "why does this thing need my keyframes?". `granted` is intersected with the
+   * manifest, so this can only ever narrow what was disclosed; and it restarts
+   * the plugin, because a live worker was booted with the old set and told what
+   * it had.
+   */
+  setGranted(id: string, permissions: readonly PluginPermission[]): void {
+    const entry = usePluginStore.getState().get(id);
+    if (!entry) return;
+    const next = entry.manifest.permissions.filter((p) => permissions.includes(p));
+    usePluginStore.getState().setGranted(id, next);
+    this.appendLog(id, 'warn', `permissions changed to: ${next.join(', ') || 'none'}`);
+    if (entry.enabled) this.restart(id);
     this.emit();
   }
 
@@ -183,6 +255,7 @@ class PluginHost {
       return;
     }
 
+    this.logStartedAt.set(id, Date.now());
     const rt: Runtime = {
       worker,
       info: { status: 'starting', commands: [], panelOpen: false },
@@ -233,6 +306,10 @@ class PluginHost {
   stop(id: string): void {
     const rt = this.runtimes.get(id);
     if (!rt) return;
+    // Take the panel down with the worker. A frame left on screen after its
+    // plugin is disabled, uninstalled or killed still accepts clicks and
+    // answers nothing — it reads as the editor being broken.
+    this.hidePanelHook?.(id);
     if (rt.pingTimer) clearInterval(rt.pingTimer);
     if (rt.bootTimer) clearTimeout(rt.bootTimer);
     for (const cid of rt.commandIds) getCommandRegistry().unregister(cid);
@@ -253,6 +330,7 @@ class PluginHost {
     // Keep the error visible after the runtime is gone: "it just isn't running"
     // with no reason is the report we are trying to make impossible.
     this.errors.set(id, error);
+    this.appendLog(id, 'error', error);
     if (rt || entry) {
       useUIStore.getState().notify({
         level: 'error',
@@ -283,6 +361,11 @@ class PluginHost {
         this.errors.delete(id);
         rt.info = { ...rt.info, status: 'running', error: undefined };
         rt.pingTimer = setInterval(() => this.beat(id), PING_INTERVAL_MS);
+        // A plugin with a panel gets one command for free, so its UI is
+        // reachable from the palette and the Plugins menu without the user
+        // going through the manager. Registered on activation, not on install:
+        // a panel whose plugin is not running has nothing to talk to.
+        if (entry.manifest.panel) this.registerPanelCommand(entry, rt);
         this.emit();
         break;
       }
@@ -299,6 +382,10 @@ class PluginHost {
         rt.postToPanel?.(msg.data);
         break;
 
+      case 'log':
+        this.appendLog(id, msg.level, msg.text);
+        break;
+
       case 'call': {
         const required = METHOD_PERMISSIONS[msg.method];
         const reply = (m: HostMessage): void => { try { rt.worker.postMessage(m); } catch { /* terminated */ } };
@@ -310,6 +397,9 @@ class PluginHost {
         if (required !== null && !entry.granted.includes(required)) {
           // Refused, loudly. A plugin silently doing nothing because a
           // permission is missing is indistinguishable from a broken plugin.
+          // Also logged: the plugin may swallow the rejection, and then the
+          // refusal is invisible to everyone including its author.
+          this.appendLog(id, 'warn', `${msg.method} refused — permission "${required}" not granted`);
           reply({
             k: 'result',
             id: msg.id,
@@ -379,13 +469,48 @@ class PluginHost {
     this.emit();
   }
 
+  /**
+   * The implicit "open my panel" command.
+   *
+   * Kept OUT of `info.commands`: that list is what the plugin itself
+   * contributed, and the manager counts it ("3 commands"). Counting a command
+   * the host invented would misreport the plugin.
+   */
+  private registerPanelCommand(entry: InstalledPlugin, rt: Runtime): void {
+    const pid = entry.manifest.id;
+    const cid = asCommandId(`plugin.${pid}.panel`);
+    getCommandRegistry().register({
+      id: cid,
+      label: `${entry.manifest.name}: Open Panel`,
+      icon: 'plugin',
+      enabled: () => this.isRunning(pid),
+      execute: () => this.showPanel(pid),
+    });
+    rt.commandIds.push(cid);
+  }
+
   // ── Panels ─────────────────────────────────────────────────────────────
 
+  /**
+   * Show or hide a plugin's panel.
+   *
+   * This used to flip a flag nobody read, which made the documented
+   * `motion.ui.openPanel()` a no-op: a plugin could not put its own interface
+   * on screen, and the user had to find it in the manager. The flag is still
+   * kept — the manager reads it — but the hook is what actually opens the dock.
+   */
   private setPanelOpen(id: string, open: boolean): void {
+    if (open) this.showPanelHook?.(id);
+    else this.hidePanelHook?.(id);
     const rt = this.runtimes.get(id);
     if (!rt) return;
     rt.info = { ...rt.info, panelOpen: open };
     this.emit();
+  }
+
+  /** Public entry for the manager's "Open" button and the Plugins menu. */
+  showPanel(id: string): void {
+    this.setPanelOpen(id, true);
   }
 
   /** Called by the panel component while its iframe is mounted. */
@@ -400,6 +525,32 @@ class PluginHost {
   deliverPanelMessage(id: string, data: unknown): void {
     const rt = this.runtimes.get(id);
     rt?.worker.postMessage({ k: 'panelMessage', data } satisfies HostMessage);
+  }
+
+  // ── Logs ───────────────────────────────────────────────────────────────
+
+  /** Kept OUTSIDE the runtime map: the most interesting log is the one from a
+   *  plugin that has just died, and its runtime is gone by the time anyone
+   *  looks. Cleared on uninstall, not on stop. */
+  private readonly logs = new Map<string, PluginLogLine[]>();
+  private readonly logStartedAt = new Map<string, number>();
+
+  private appendLog(id: string, level: PluginLogLevel, text: string): void {
+    const lines = this.logs.get(id) ?? [];
+    const started = this.logStartedAt.get(id) ?? Date.now();
+    lines.push({ level, text, at: Date.now() - started });
+    if (lines.length > MAX_LOG_LINES) lines.splice(0, lines.length - MAX_LOG_LINES);
+    this.logs.set(id, lines);
+    this.emit();
+  }
+
+  log(id: string): readonly PluginLogLine[] {
+    return this.logs.get(id) ?? [];
+  }
+
+  clearLog(id: string): void {
+    this.logs.delete(id);
+    this.emit();
   }
 
   // ── Reads for the UI ───────────────────────────────────────────────────
@@ -460,6 +611,10 @@ class PluginHost {
 
       const data = event.data;
       if (!data || typeof data !== 'object') return;
+      // The panel shell also reports its own lifecycle (`__panelReady`). Those
+      // are ours, not the panel's — forwarding one would wake the plugin's
+      // `onPanelMessage` handler with `undefined`.
+      if (!('data' in data)) return;
       // A panel talks to its OWN plugin's worker and nothing else. It cannot
       // name a method, a node or a plugin — routing is by which frame sent it.
       const pluginId = this.panelOwners.get(event.source!);

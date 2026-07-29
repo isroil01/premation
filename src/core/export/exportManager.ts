@@ -1,12 +1,16 @@
 /**
- * Export pipeline (spec §Export). One-click presets that render the current
- * composition to real, downloadable files. Everything runs off-screen so it
- * never blocks the editor, and reports progress.
+ * Export pipeline — renders the current composition to real files.
  *
- *  - JSON   — the editable project (scene + animation), re-openable.
- *  - PNG    — the current frame at full resolution.
- *  - WebM   — a real video, encoded frame-by-frame via MediaRecorder.
- *  - Lottie — a JSON animation (transform keyframes) for web/mobile players.
+ * Every format shares one deterministic frame loop (offlineRenderer: frame time
+ * is exactly `index / fps`, never wall-clock), so an export is reproducible and
+ * matches the viewport. What differs is where the frames go:
+ *
+ *  - MP4 / WebM / MOV / GIF — a {@link VideoSink}: ffmpeg in a child process on
+ *    the desktop, WebCodecs in the browser. See videoSink.ts.
+ *  - PNG / JPEG sequence — image bytes packed into a zip by a worker.
+ *  - PNG — one frame, snapped to the frame grid.
+ *  - Lottie — the scene's shapes and transform tracks as bodymovin JSON.
+ *  - JSON — the editable project document, re-openable with File ▸ Open.
  */
 
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
@@ -19,16 +23,24 @@ import { captureDocument } from '@core/api/cloudDocument';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
-import { renderOffline, exportView, type OfflineRenderParams } from './offlineRenderer';
+import { renderOffline, exportView, resolveRange, type OfflineRenderParams } from './offlineRenderer';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { type ZipEntry } from './zip';
 import { encodeGifBytes, encodeZipBytes } from './encodeClient';
-import { mixdownAudio, mixdownBuffer } from '@core/audio/audioMixdown';
+import { mixdownAudio } from '@core/audio/audioMixdown';
 import { type GifFrame } from './gifEncoder';
+import {
+  canEncodeLocally,
+  canvasBytes,
+  createVideoSink,
+  type ExportQuality,
+  type VideoFormat,
+  type VideoSinkResult,
+} from './videoSink';
 
 import { useUIStore } from '@stores/uiStore';
 
-export type ExportFormat = 'webm' | 'png' | 'png-sequence' | 'jpg-sequence' | 'json' | 'lottie' | 'mp4' | 'gif';
+export type ExportFormat = VideoFormat | 'png' | 'png-sequence' | 'jpg-sequence' | 'json' | 'lottie';
 
 export interface ExportOptions {
   format: ExportFormat;
@@ -39,11 +51,13 @@ export interface ExportOptions {
   /** Current playhead time (for the single-frame PNG). */
   time: number;
   /** Comp size + background (defaults to 1920×1080 near-black when omitted).
-   *  `transparent` yields real alpha in the exported PNG/WebM. */
+   *  `transparent` yields real alpha in PNG, WebM and MOV output. */
   comp?: SnapshotComp;
+  /** Encoder quality tier. Draft trades visible quality for speed. */
+  quality?: ExportQuality;
   onProgress?: (fraction: number) => void;
-  /** Cooperative cancellation for the whole export (frame loop, encoders, the
-   *  backend MP4 job). Aborting rejects with a DOMException 'AbortError'. */
+  /** Cooperative cancellation for the whole export (frame loop and encoder).
+   *  Aborting rejects with a DOMException 'AbortError'. */
   signal?: AbortSignal;
 }
 
@@ -144,8 +158,6 @@ function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; backend:
   return { canvas, backend };
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
 function offlineParams(opts: ExportOptions): OfflineRenderParams {
   const wa = getTimelineController().getWorkArea();
   return {
@@ -159,16 +171,10 @@ function offlineParams(opts: ExportOptions): OfflineRenderParams {
   };
 }
 
-/** Encode a canvas frame to raw bytes (png/jpeg). */
-async function frameBytes(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Uint8Array> {
-  const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, type, quality));
-  if (!blob) return new Uint8Array(0);
-  return new Uint8Array(await blob.arrayBuffer());
-}
-
 /**
- * Zero-padding width for frame filenames. THIS IS A CROSS-REPO CONTRACT: the
- * motion-back render worker globs `frame_%04d.jpg`, so this must stay 4.
+ * Zero-padding width for frame filenames. THIS IS A SHARED CONTRACT: both the
+ * desktop shell (electron/main.ts) and motion-back's render worker glob
+ * `frame_%04d.jpg`, so this must stay 4.
  *
  * It used to be `String(total).length`, which produced `frame_000.jpg` for any
  * render under 1000 frames — ffmpeg then matched nothing and every MP4 export
@@ -193,7 +199,7 @@ export async function renderSequenceZip(
   ext: 'png' | 'jpg',
   onProgress?: (f: number) => void,
   signal?: AbortSignal,
-  /** Extra files to pack alongside the frames (the MP4 path adds audio.wav). */
+  /** Extra files to pack alongside the frames (e.g. the mixed audio.wav). */
   extraEntries: ReadonlyArray<ZipEntry> = [],
 ): Promise<Blob> {
   const type = ext === 'png' ? 'image/png' : 'image/jpeg';
@@ -201,11 +207,15 @@ export async function renderSequenceZip(
   await renderOffline(
     offlineParams(opts),
     async (canvas, frame, count) => {
-      entries.push({ name: frameFileName(frame, ext), data: await frameBytes(canvas, type, 0.92) });
+      entries.push({
+        name: frameFileName(frame, ext),
+        data: await canvasBytes(canvas, type, ext === 'jpg' ? 0.92 : undefined),
+      });
       onProgress?.((frame + 1) / count);
     },
     signal,
   );
+  if (entries.length === 0) throw new Error('No frames were rendered.');
   // Assemble the archive off the main thread (falls back to sync if no worker).
   const bytes = await encodeZipBytes([...entries, ...extraEntries]);
   return new Blob([bytes as BlobPart], { type: 'application/zip' });
@@ -250,136 +260,176 @@ function exportJSON(opts: ExportOptions): void {
   download(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }), 'motion-project.json');
 }
 
+// ── Video / GIF export ───────────────────────────────────────────────
+
 /**
- * Encode a WebM by feeding the DETERMINISTICALLY rendered frames into a
- * captured stream. The content is fixed-timestep (frame time = i/fps), so the
- * frames are reproducible; the MediaRecorder container is paced by wall-clock.
- * Returns the encoded blob.
+ * Render every frame into a video sink and produce one file.
+ *
+ * On the desktop this stages frames to a temp dir and encodes them with ffmpeg
+ * in a child process; in the browser it encodes with WebCodecs. Either way the
+ * loop is the deterministic one (frame time = index / fps), so two exports of the
+ * same project are identical, and the sink reports how many frames it actually
+ * received — a zero-frame encode throws instead of writing a black file.
+ *
+ * @see videoSink.ts for why MediaRecorder is no longer used.
  */
-export async function renderWebMBlob(
+export async function renderVideo(
   opts: ExportOptions,
+  format: VideoFormat,
   onProgress?: (f: number) => void,
   signal?: AbortSignal,
-): Promise<Blob> {
-  // The captured canvas must persist for the whole recording, so drive
-  // MediaRecorder on a dedicated canvas that we render each offline frame onto.
-  // Mix the comp audio (deterministic, offline) and play it as a live track on
-  // the recorder's stream — MediaRecorder muxes video + audio by capture
-  // timestamp, and the frame loop below is paced at ~real time, so they align.
-  // Null (silent comp / no Web Audio) → video-only, exactly as before.
-  const { startSec, endSec } = exportRange(opts);
-  const mixedAudio = await mixdownBuffer(startSec, endSec).catch(() => null);
-
-  const rec: { canvas: HTMLCanvasElement; track: CanvasCaptureMediaStreamTrack; recorder: MediaRecorder; chunks: Blob[]; audio?: { ctx: AudioContext; source: AudioBufferSourceNode } } =
-    (() => {
-      const canvas = document.createElement('canvas');
-      canvas.width = opts.width;
-      canvas.height = opts.height;
-      const stream = canvas.captureStream(0);
-      const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-
-      let audio: { ctx: AudioContext; source: AudioBufferSourceNode } | undefined;
-      if (mixedAudio) {
-        const actx = new AudioContext();
-        const dest = actx.createMediaStreamDestination();
-        const source = actx.createBufferSource();
-        source.buffer = mixedAudio;
-        source.connect(dest);
-        for (const t of dest.stream.getAudioTracks()) stream.addTrack(t);
-        audio = { ctx: actx, source };
-      }
-
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
-      const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
-      const chunks: Blob[] = [];
-      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-      return { canvas, track, recorder, chunks, audio };
-    })();
-  const ctx = rec.canvas.getContext('2d')!;
-  const stopped = new Promise<void>((res) => { rec.recorder.onstop = () => res(); });
-  rec.recorder.start();
-  // Start audio in lock-step with the recorder so track 0 of both aligns.
-  rec.audio?.source.start();
+): Promise<VideoSinkResult> {
+  const audio = await exportAudioBytes(opts);
+  const sink = createVideoSink({
+    format,
+    width: opts.width,
+    height: opts.height,
+    fps: opts.fps,
+    quality: opts.quality ?? 'high',
+    transparent: !!opts.comp?.transparent,
+    ...(audio ? { audioWav: audio } : {}),
+  });
+  if (!sink) throw new Error(unsupportedFormatMessage(format));
 
   try {
     await renderOffline(
       offlineParams(opts),
-      async (frameCanvas, frame, count) => {
-        ctx.clearRect(0, 0, opts.width, opts.height);
-        ctx.drawImage(frameCanvas, 0, 0);
-        rec.track.requestFrame();
-        onProgress?.((frame + 1) / count);
-        await sleep(Math.max(16, 1000 / opts.fps));
+      async (canvas, frame, count) => {
+        await sink.addFrame(canvas, frame);
+        // Encoding is the bulk of the work for a video, so hold the reported
+        // progress just short of done until the encode itself finishes.
+        onProgress?.(((frame + 1) / count) * 0.95);
       },
       signal,
     );
-  } finally {
-    // Runs on abort too — a cancelled export must not leave the recorder,
-    // audio graph or capture stream running (partial-state cleanup).
-    rec.recorder.stop();
-    await stopped;
-    try { rec.audio?.source.stop(); } catch { /* never started / already stopped */ }
-    void rec.audio?.ctx.close();
+    throwIfAborted(signal);
+    const result = await sink.finish();
+    onProgress?.(1);
+    return result;
+  } catch (err) {
+    await sink.dispose();
+    throw err;
   }
-  return new Blob(rec.chunks, { type: 'video/webm' });
 }
 
-async function exportWebM(opts: ExportOptions): Promise<void> {
-  const blob = await renderWebMBlob(opts, opts.onProgress, opts.signal);
-  opts.onProgress?.(1);
-  download(blob, 'motion-export.webm');
+/** Why a format can't be produced here, in terms the user can act on. */
+function unsupportedFormatMessage(format: VideoFormat): string {
+  if (format === 'webm') {
+    return 'This browser cannot encode video. Use the desktop app, or export a PNG sequence.';
+  }
+  return `${format.toUpperCase()} export needs the desktop app (it encodes with ffmpeg). In the browser, export WebM or a PNG sequence instead.`;
 }
 
-export async function renderGIFBlob(
+/**
+ * Deliver a finished encode: a native save dialog on the desktop, a download in
+ * the browser. Returns false when the user cancelled the save dialog.
+ */
+async function deliver(result: VideoSinkResult, filenameBase: string): Promise<boolean> {
+  const filename = `${filenameBase}.${result.ext}`;
+  if (result.kind === 'file') {
+    // The bytes stay on disk and are MOVED to the chosen path — a multi-gigabyte
+    // export never passes through the renderer heap.
+    return (await result.save(filename)) !== null;
+  }
+  download(result.blob, filename);
+  return true;
+}
+
+/** True when this build hands finished renders to the OS rather than the browser. */
+export { canEncodeLocally };
+
+/** A timestamped default filename, so repeat exports don't collide. */
+function defaultBaseName(): string {
+  return `motion-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
+}
+
+async function exportVideoFormat(opts: ExportOptions, format: VideoFormat): Promise<void> {
+  // GIF has a dedicated encoder in the browser (no browser will mux one), so it
+  // only routes through the video sink where ffmpeg is available.
+  if (format === 'gif' && !canEncodeLocally()) {
+    const blob = await renderGifBlob(opts, opts.onProgress, opts.signal);
+    download(blob, `${defaultBaseName()}.gif`);
+    return;
+  }
+  const result = await renderVideo(opts, format, opts.onProgress, opts.signal);
+  const delivered = await deliver(result, defaultBaseName());
+  if (!delivered) {
+    useUIStore.getState().notify({ level: 'info', message: 'Export discarded — no file was saved.', durationMs: 2600 });
+  }
+}
+
+/**
+ * Peak renderer memory a browser GIF encode would need. The encoder quantises
+ * the whole animation at once, so every frame's RGBA is resident.
+ *
+ * Without a guard, a 1080p 10-second GIF asks for ~2.5 GB and takes the tab down
+ * with it — an out-of-memory crash mid-export, with no explanation.
+ */
+const GIF_MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
+
+/**
+ * Encode an animated GIF in the browser. Desktop builds use ffmpeg instead (via
+ * the video sink), which palettises across the whole animation and streams
+ * frames through disk rather than RAM.
+ */
+export async function renderGifBlob(
   opts: ExportOptions,
   onProgress?: (f: number) => void,
   signal?: AbortSignal,
 ): Promise<Blob> {
+  const { start, end } = resolveRange(offlineParams(opts));
+  const estimate = opts.width * opts.height * 4 * (end - start + 1);
+  if (estimate > GIF_MEMORY_BUDGET_BYTES) {
+    throw new Error(
+      `A ${opts.width}×${opts.height} GIF of this length needs about ${Math.round(estimate / 1e6)} MB of memory to encode in the browser. ` +
+        'Lower the resolution, shorten the range, or export from the desktop app.',
+    );
+  }
+
   const frames: GifFrame[] = [];
-  // Read pixels through a 2D scratch canvas rather than off the render surface.
-  // `getContext('2d')` returns NULL on a canvas the GPU backend has claimed for
-  // WebGL, and the old code just skipped the frame — so a GIF exported with the
-  // GPU renderer came out empty, with no error.
+  // Read pixels through a 2D scratch canvas rather than off the render surface:
+  // `getContext('2d')` returns null on a canvas the GPU backend has claimed, and
+  // the old code silently skipped such frames — so a GIF came out empty with no
+  // error at all.
   const scratch = document.createElement('canvas');
   scratch.width = opts.width;
   scratch.height = opts.height;
   const sctx = scratch.getContext('2d', { willReadFrequently: true });
+  if (!sctx) throw new Error('GIF export needs a 2D canvas, which this browser did not provide.');
 
   await renderOffline(
     offlineParams(opts),
     async (canvas, frame, count) => {
-      if (sctx) {
-        sctx.clearRect(0, 0, opts.width, opts.height);
-        sctx.drawImage(canvas, 0, 0, opts.width, opts.height);
-        frames.push({
-          width: opts.width,
-          height: opts.height,
-          pixels: sctx.getImageData(0, 0, opts.width, opts.height).data,
-        });
-      }
-      onProgress?.((frame + 1) / count);
+      sctx.clearRect(0, 0, opts.width, opts.height);
+      sctx.drawImage(canvas, 0, 0, opts.width, opts.height);
+      frames.push({
+        width: opts.width,
+        height: opts.height,
+        pixels: sctx.getImageData(0, 0, opts.width, opts.height).data,
+      });
+      onProgress?.(((frame + 1) / count) * 0.9);
     },
     signal,
   );
   if (frames.length === 0) throw new Error('No frames were rendered.');
-  // LZW-encode the GIF off the main thread so the app stays responsive during
-  // the (previously blocking) encode pass. Falls back to sync if no worker.
-  const bytes = await encodeGifBytes(frames, opts.fps);
-  return bytes.length === 0
-    ? new Blob([], { type: 'image/gif' })
-    : new Blob([bytes as BlobPart], { type: 'image/gif' });
-}
 
-async function exportGIF(opts: ExportOptions): Promise<void> {
-  const blob = await renderGIFBlob(opts, opts.onProgress, opts.signal);
-  opts.onProgress?.(1);
-  download(blob, 'motion-export.gif');
+  // LZW-encode off the main thread so the app stays responsive (this pass used
+  // to freeze the whole window, cursor included). Falls back to sync if the
+  // worker is unavailable.
+  const bytes = await encodeGifBytes(frames, opts.fps);
+  if (bytes.length === 0) throw new Error('GIF encoding produced no data.');
+  onProgress?.(1);
+  return new Blob([bytes as BlobPart], { type: 'image/gif' });
 }
 
 async function exportSequence(opts: ExportOptions, ext: 'png' | 'jpg'): Promise<void> {
-  const blob = await renderSequenceZip(opts, ext, opts.onProgress, opts.signal);
+  // The mixed audio rides along in the archive: a frame sequence is normally
+  // headed for another editor, and shipping the picture without the sound means
+  // re-exporting just to get it.
+  const audio = await exportAudioEntries(opts);
+  const blob = await renderSequenceZip(opts, ext, opts.onProgress, opts.signal, audio);
   opts.onProgress?.(1);
-  download(blob, `motion-${ext}-sequence.zip`);
+  download(blob, `${defaultBaseName()}-${ext}-sequence.zip`);
 }
 
 /** "#ff8800" → Lottie's normalized [r, g, b] triple. */
@@ -597,206 +647,23 @@ function exportRange(opts: ExportOptions): { startSec: number; endSec: number } 
 }
 
 /**
- * The mixed comp audio as a zip entry (`audio.wav`), or [] when the comp is
- * silent. Shared by the video export paths so audio and frames cover the
- * exact same window.
+ * The comp's mixed audio as WAV bytes, or undefined when the comp is silent.
+ *
+ * Mixed over the same window the frames cover ({@link exportRange}), so picture
+ * and sound can never drift apart. A failure here is never fatal: a silent video
+ * beats a failed export.
  */
-async function exportAudioEntries(opts: ExportOptions): Promise<ZipEntry[]> {
+async function exportAudioBytes(opts: ExportOptions): Promise<Uint8Array | undefined> {
   const { startSec, endSec } = exportRange(opts);
   const mix = await mixdownAudio(startSec, endSec).catch(() => null);
-  if (!mix) return [];
-  return [{ name: 'audio.wav', data: new Uint8Array(await mix.wav.arrayBuffer()) }];
+  if (!mix) return undefined;
+  return new Uint8Array(await mix.wav.arrayBuffer());
 }
 
-/**
- * Encode an MP4 by feeding the DETERMINISTICALLY rendered frames into a
- * captured canvas stream and recording it. If the browser/platform does not
- * support native video/mp4 recording, it falls back to video/webm recording.
- */
-export async function renderMP4Blob(
-  opts: ExportOptions,
-  onProgress?: (f: number) => void,
-  signal?: AbortSignal,
-): Promise<Blob> {
-  const { startSec, endSec } = exportRange(opts);
-  const mixedAudio = await mixdownBuffer(startSec, endSec).catch(() => null);
-
-  const rec: {
-    canvas: HTMLCanvasElement;
-    track: CanvasCaptureMediaStreamTrack;
-    recorder: MediaRecorder;
-    chunks: Blob[];
-    audio?: { ctx: AudioContext; source: AudioBufferSourceNode };
-  } = (() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = opts.width;
-    canvas.height = opts.height;
-    const stream = canvas.captureStream(0);
-    const track = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-
-    let audio: { ctx: AudioContext; source: AudioBufferSourceNode } | undefined;
-    if (mixedAudio) {
-      const actx = new AudioContext();
-      const dest = actx.createMediaStreamDestination();
-      const source = actx.createBufferSource();
-      source.buffer = mixedAudio;
-      source.connect(dest);
-      for (const t of dest.stream.getAudioTracks()) stream.addTrack(t);
-      audio = { ctx: actx, source };
-    }
-
-    let mime = 'video/mp4;codecs=h264';
-    if (!MediaRecorder.isTypeSupported(mime)) {
-      mime = 'video/mp4;codecs=avc1';
-    }
-    if (!MediaRecorder.isTypeSupported(mime)) {
-      mime = 'video/mp4';
-    }
-    if (!MediaRecorder.isTypeSupported(mime)) {
-      mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
-    }
-
-    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10_000_000 });
-    const chunks: Blob[] = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size) chunks.push(e.data);
-    };
-    return { canvas, track, recorder, chunks, audio };
-  })();
-
-  const ctx = rec.canvas.getContext('2d')!;
-  const stopped = new Promise<void>((res) => {
-    rec.recorder.onstop = () => res();
-  });
-  rec.recorder.start();
-  rec.audio?.source.start();
-
-  try {
-    await renderOffline(
-      offlineParams(opts),
-      async (frameCanvas, frame, count) => {
-        ctx.clearRect(0, 0, opts.width, opts.height);
-        ctx.drawImage(frameCanvas, 0, 0);
-        rec.track.requestFrame();
-        onProgress?.(frame / count);
-        await sleep(Math.max(16, 1000 / opts.fps));
-      },
-      signal,
-    );
-  } finally {
-    // Runs on abort too — never leave the recorder / audio graph running.
-    rec.recorder.stop();
-    await stopped;
-    try { rec.audio?.source.stop(); } catch { /* never started / already stopped */ }
-    void rec.audio?.ctx.close();
-  }
-  // The blob's type is whatever the recorder ACTUALLY produced — the caller
-  // must read it to name the file honestly (mp4 vs the webm fallback).
-  return new Blob(rec.chunks, { type: rec.recorder.mimeType });
-}
-
-/** Download a locally-recorded video blob under its HONEST extension: the
- *  MediaRecorder falls back to WebM where MP4 recording isn't supported, and
- *  shipping that file as `.mp4` produced a video many players refuse to open. */
-function downloadRecordedVideo(blob: Blob): void {
-  const isMp4 = /mp4/i.test(blob.type);
-  if (!isMp4) {
-    useUIStore.getState().notify({
-      level: 'warning',
-      message: 'This browser cannot record MP4 locally — exported as WebM instead (motion-export.webm).',
-      durationMs: 6000,
-    });
-  }
-  download(blob, `motion-export-${Date.now()}.${isMp4 ? 'mp4' : 'webm'}`);
-}
-
-import { canMuxMp4Local, muxMp4Local } from './muxMp4Local';
-
-async function exportMP4(opts: ExportOptions): Promise<void> {
-  const signal = opts.signal;
-
-  // ── Desktop path: deterministic offline render → local FFmpeg mux ─────────
-  // This is the primary path on Electron. `canMuxMp4Local` is true when the
-  // preload bridge exposes render:beginJob / render:stageFrame / render:muxMp4.
-  if (canMuxMp4Local()) {
-    let jobId: string | null = null;
-    try {
-      // Collect frames as JPEG byte arrays.
-      const frameArrays: Uint8Array[] = [];
-      const audioEntries = await exportAudioEntries(opts);
-      const audioEntry = audioEntries.find((e) => e.name === 'audio.wav');
-
-      await renderOffline(
-        offlineParams(opts),
-        async (canvas, frame, count) => {
-          frameArrays.push(await frameBytes(canvas, 'image/jpeg', 0.92));
-          opts.onProgress?.(0.1 + (frame / count) * 0.8);
-        },
-        signal,
-      );
-      throwIfAborted(signal);
-
-      if (frameArrays.length === 0) {
-        throw new Error('MP4 export: no frames were rendered.');
-      }
-
-      opts.onProgress?.(0.9);
-      const muxResult = await muxMp4Local({
-        frames: frameArrays,
-        fps: opts.fps,
-        audio: audioEntry ? (audioEntry.data as Uint8Array) : undefined,
-      });
-      if (!muxResult) throw new Error('Local mux returned no output path.');
-      jobId = muxResult.jobId;
-
-      // Read the muxed file back via fetch(file://…). Robust normalization for Windows.
-      opts.onProgress?.(0.95);
-      const normalizedPath = muxResult.path.replace(/\\/g, '/');
-      const fileUrl = normalizedPath.startsWith('/')
-        ? `file://${encodeURI(normalizedPath)}`
-        : `file:///${encodeURI(normalizedPath)}`;
-      const res = await fetch(fileUrl, signal ? { signal } : undefined);
-      if (!res.ok) throw new Error(`Could not read muxed MP4 (${res.status})`);
-      const blob = await res.blob();
-      opts.onProgress?.(1.0);
-      download(blob, `motion-export-${Date.now()}.mp4`);
-      return;
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      const reason = (err as Error)?.message ?? String(err);
-      useUIStore.getState().notify({
-        level: 'error',
-        message: `MP4 export failed: ${reason}`,
-        durationMs: 5000,
-      });
-      throw err;
-    } finally {
-      // Clean up the temporary staging directory on disk so temp files don't accumulate.
-      if (jobId && window.motionEditor?.render?.cleanJob) {
-        void window.motionEditor.render.cleanJob(jobId).catch(() => undefined);
-      }
-    }
-  }
-
-  // ── Browser fallback: MediaRecorder (non-Electron) ────────────────────────
-  // MediaRecorder cannot reliably produce mp4 in most browsers/Electron builds;
-  // downloadRecordedVideo names the file honestly (.webm if the recorder fell
-  // back) and notifies the user.
-  try {
-    const blob = await renderMP4Blob(opts, opts.onProgress, signal);
-    opts.onProgress?.(1.0);
-    downloadRecordedVideo(blob);
-  } catch (err) {
-    if (isAbortError(err)) throw err;
-    useUIStore.getState().notify({
-      level: 'error',
-      message: `MP4 export failed: ${(err as Error)?.message || err}`,
-      durationMs: 5000,
-    });
-    throw err;
-  }
+/** The mixed comp audio as a zip entry, for sequence exports. */
+export async function exportAudioEntries(opts: ExportOptions): Promise<ZipEntry[]> {
+  const bytes = await exportAudioBytes(opts);
+  return bytes ? [{ name: 'audio.wav', data: bytes }] : [];
 }
 
 export async function runExport(opts: ExportOptions): Promise<void> {
@@ -806,20 +673,46 @@ export async function runExport(opts: ExportOptions): Promise<void> {
     case 'jpg-sequence': return exportSequence(opts, 'jpg');
     case 'json': return exportJSON(opts);
     case 'lottie': return exportLottie(opts);
-    case 'webm': return exportWebM(opts);
-    case 'mp4': return exportMP4(opts);
-    case 'gif': return exportGIF(opts);
+    case 'webm':
+    case 'mp4':
+    case 'gif':
+    case 'mov':
+      return exportVideoFormat(opts, opts.format);
   }
 }
 
-export const EXPORT_PRESETS: { format: ExportFormat; label: string; ext: string; hint: string }[] = [
-  { format: 'mp4', label: 'MP4 Video', ext: 'mp4', hint: 'MP4 video (requires backend online)' },
-  { format: 'gif', label: 'GIF Animation', ext: 'gif', hint: 'GIF animation (local render)' },
-  { format: 'webm', label: 'Video', ext: 'webm', hint: 'WebM video, deterministic frame-by-frame render' },
-  { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames in a zip (deterministic)' },
-  { format: 'png', label: 'Still frame', ext: 'png', hint: 'Current frame as a PNG image' },
-  { format: 'lottie', label: 'Lottie', ext: 'json', hint: 'Editable Lottie animation for web/mobile' },
-  { format: 'json', label: 'Project', ext: 'json', hint: 'Re-openable Motion project file' },
+export interface ExportPreset {
+  format: ExportFormat;
+  label: string;
+  ext: string;
+  hint: string;
+  /** True when only the desktop build can produce this format. */
+  desktopOnly?: boolean;
+}
+
+/**
+ * The export menu. Hints say what each format is actually for and what it costs,
+ * because the choice is otherwise opaque — and because an earlier version of this
+ * list advertised things that were not true ("requires backend online" for a
+ * format that renders locally, "Re-openable Motion project file" for a shape
+ * nothing could open).
+ */
+export const EXPORT_PRESETS: ExportPreset[] = [
+  { format: 'mp4', label: 'MP4 · H.264', ext: 'mp4', hint: 'Plays everywhere. Best default for sharing.', desktopOnly: true },
+  { format: 'webm', label: 'WebM · VP9', ext: 'webm', hint: 'Smaller than MP4, keeps transparency, ideal for the web.' },
+  { format: 'mov', label: 'MOV · ProRes 4444', ext: 'mov', hint: 'Lossless with alpha, for editing in another app. Large files.', desktopOnly: true },
+  { format: 'gif', label: 'Animated GIF', ext: 'gif', hint: 'No audio, 256 colours. Keep it short and small.' },
+  { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames with alpha, zipped. The archival option.' },
+  { format: 'jpg-sequence', label: 'JPEG sequence', ext: 'zip', hint: 'Smaller frames, no alpha.' },
+  { format: 'png', label: 'Still frame', ext: 'png', hint: 'The current frame as one PNG.' },
+  { format: 'lottie', label: 'Lottie', ext: 'json', hint: 'Vector animation for web/mobile players. Shapes only.' },
+  { format: 'json', label: 'Project file', ext: 'json', hint: 'The editable document, re-openable with File ▸ Open.' },
 ];
+
+/** Presets this build can actually produce. */
+export function availableExportPresets(): ExportPreset[] {
+  const local = canEncodeLocally();
+  return EXPORT_PRESETS.filter((p) => local || !p.desktopOnly);
+}
 
 export const DEFAULT_COMP = { width: COMP_WIDTH, height: COMP_HEIGHT };

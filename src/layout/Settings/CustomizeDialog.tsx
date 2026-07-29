@@ -1,15 +1,17 @@
 /**
  * CustomizeDialog (Prompt E10) — workspace & UI customization in one place:
- *   • Shortcuts  — rebind / disable / reset command keys, with conflict warnings
+ *   • Shortcuts — rebind / disable / reset command keys, with conflict warnings
  *   • Workspaces — apply a layout preset, save the current one, delete user ones
  *   • Appearance — accent colour + theme
- *   • AI         — connect your own OpenAI / Claude / Gemini account
+ *
+ * There is deliberately no AI tab — see the note above the import list, and the
+ * assistant's own error copy, which sends people to Dashboard → Settings →
+ * Assistant. This docstring used to advertise one, which is why messages
+ * elsewhere in the app told users to look for it here.
  *
  * Shortcut rebinds persist via shortcutOverrides and re-apply through the
  * ShortcutManager; layout presets drive the layout store; accent overrides the
- * primary CSS token. Those all ride the existing SettingsManager — the AI tab
- * is the exception: API keys go to the OS keychain instead, because
- * SettingsManager is synchronous localStorage and secrets don't belong there.
+ * primary CSS token. Those all ride the existing SettingsManager.
  */
 
 import { useState } from 'react';

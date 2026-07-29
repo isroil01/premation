@@ -157,20 +157,46 @@ describe('emitters', () => {
 
 describe('the tool surface itself', () => {
   // Models degrade past ~30 tools, so this count is a budget, not trivia.
-  it('exposes 45 tools: 7 read, 25 write, 13 compose', () => {
-    expect(ALL_TOOL_DEFS).toHaveLength(45);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(7);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(25);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'compose')).toHaveLength(13);
+  it('exposes 62 tools: 8 read, 38 write, 16 compose', () => {
+    // 54 → 59 when five tools that were registered INLINE in `buildAiTools()`
+    // moved into this list. They had always been reachable at runtime and had
+    // never appeared here, so the backend's tool catalogue, the provider
+    // emitters and every drift check read the list and silently missed them.
+    // 59 → 62 over two passes. Each addition earns its slot by doing something
+    // no other tool can: `generate_image` produces imagery that was never
+    // imported, `import_svg` makes a real vector layer instead of a pile of
+    // rectangles, and `analyse_audio` is the only way anything in the surface can
+    // learn where the beats are.
+    expect(ALL_TOOL_DEFS).toHaveLength(62);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(8);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(38);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'compose')).toHaveLength(16);
+  });
+
+  it('classifies every craft primitive as `write`, never `compose`', () => {
+    // `compose` is reserved for the generic recipe layer the technique library
+    // replaces. Counting a primitive as compose would inflate the very
+    // compose-ratio metric that is being retired for measuring homogeneity
+    // rather than quality — see docs/ai/PRIMITIVE_AUDIT.md.
+    for (const name of [
+      'set_spring', 'set_motion_blur', 'create_precomp', 'set_time_remap',
+      'update_effect_param', 'set_light', 'set_shadow_stack',
+      'add_surface_treatment', 'create_gradient',
+    ]) {
+      const tool = ALL_TOOL_DEFS.find((t) => t.name === name);
+      expect(tool?.name).toBe(name); // registered at all
+      expect(tool?.kind).toBe('write');
+    }
   });
 
   it('counts every mutating tool as mutating, whatever its kind', () => {
-    // The reason `mutates()` exists. Anything that reaches for the literal
+    // The reason `mutates` exists. Anything that reaches for the literal
     // 'write' silently drops the compose tools — and it was a literal 'write'
     // test that decided which calls appear in the user's pending-changes list.
     const mutating = ALL_TOOL_DEFS.filter((t) => mutates(t.kind));
-    expect(mutating).toHaveLength(38);
+    expect(mutating).toHaveLength(54);
     expect(mutating.map((t) => t.name)).toContain('add_title');
+    expect(mutating.map((t) => t.name)).toContain('set_spring');
   });
 
   it('has unique names', () => {

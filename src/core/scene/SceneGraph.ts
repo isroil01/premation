@@ -7,6 +7,7 @@ import {
   type Matrix2D,
   type SceneNode as EngineNode,
   type NodeId,
+  sceneMutationEpoch,
 } from '@motion/scene';
 import { worldMatrixOf, localUnderParent } from './worldTransform';
 
@@ -139,6 +140,70 @@ class AppNodeView implements SceneNode {
   get components(): Component[] {
     return buildComponents(this.e);
   }
+
+  // ── Render-path fast path ────────────────────────────────────────
+  private renderComps: Component[] | undefined;
+  private renderCompsEpoch = -1;
+  private renderTf: Transform | undefined;
+  private renderTfEpoch = -1;
+
+  /**
+   * The same data as {@link components}, memoized until the next scene mutation.
+   *
+   * `components` rebuilds the whole array — a fresh object per component with
+   * all its props spread — on EVERY read, and it is deliberately a copy so that
+   * `node.components.find(...).props.x = …` writes land in a throwaway and are
+   * discarded (callers all over the app do this; see `buildSnapshot.ts`). That
+   * contract is why the getter itself must never memoize.
+   *
+   * The render path has no such problem: it only ever READS. Profiling a
+   * 1000-node scene in a real V8 runtime put `buildComponents` + `appComponents`
+   * + this getter at 22% of `buildSnapshot`, rebuilding identical arrays 4× per
+   * node per frame. This accessor gives the render path one build per mutation
+   * instead — and none at all across frames where nothing changed.
+   *
+   * Callers MUST treat the result, and every `props` object in it, as read-only:
+   * it is shared, so a write would be seen by every later reader in the frame.
+   * Anything that intends to mutate wants {@link components}.
+   */
+  renderComponents(): Component[] {
+    const ep = sceneMutationEpoch();
+    if (this.renderCompsEpoch !== ep || !this.renderComps) {
+      this.renderComps = buildComponents(this.e);
+      this.renderCompsEpoch = ep;
+    }
+    return this.renderComps;
+  }
+
+  /** {@link transform}, memoized on the mutation epoch. Read-only — see
+   *  {@link renderComponents}. */
+  renderTransform(): Transform {
+    const ep = sceneMutationEpoch();
+    if (this.renderTfEpoch !== ep || !this.renderTf) {
+      this.renderTf = this.transform;
+      this.renderTfEpoch = ep;
+    }
+    return this.renderTf;
+  }
+}
+
+/**
+ * Render-path accessor for a node's components — memoized when the node is a
+ * live {@link AppNodeView}, plain `.components` otherwise.
+ *
+ * The fallback matters: tests and a few builders pass plain object literals that
+ * satisfy `SceneNode` but are not views. Duck-typing rather than `instanceof`
+ * keeps those working, and an unrecognized node simply gets today's behavior.
+ */
+export function renderComponentsOf(n: SceneNode): Component[] {
+  const v = n as { renderComponents?: () => Component[] };
+  return typeof v.renderComponents === 'function' ? v.renderComponents() : n.components;
+}
+
+/** {@link renderComponentsOf} for the node's transform. */
+export function renderTransformOf(n: SceneNode): Transform {
+  const v = n as { renderTransform?: () => Transform };
+  return typeof v.renderTransform === 'function' ? v.renderTransform() : n.transform;
 }
 
 export class SceneGraph {

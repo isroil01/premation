@@ -22,7 +22,7 @@ import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 
 /**
- * Opens the :projectId project into the already-booted editor, once, through
+ * Opens the:projectId project into the already-booted editor, once, through
  * the ProjectManager (not a raw restore) so it also becomes the *current*
  * project — meaning autosave and Save write back to THIS project id.
  */

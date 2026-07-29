@@ -1,5 +1,5 @@
 /**
- * Focus Mode / precomp navigation (spec §Focus Mode & Precomposition).
+ * Focus Mode / precomp navigation.
  *
  * Two related ideas share one navigation stack:
  *   - Enter a precomp/group "in place": push it onto `path`. The parent

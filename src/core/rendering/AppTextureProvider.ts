@@ -5,8 +5,8 @@
  *
  * The renderer's passes call `get(key)` synchronously mid-frame, but image decode
  * is async, so the flow is:
- *   1. Each frame, MotionRendererBackend feeds current sources via `setImage()`.
- *   2. `get()` returns the decoded texture once ready, else a shared 1×1 white
+ *   1. Each frame, MotionRendererBackend feeds current sources via `setImage`.
+ *   2. `get` returns the decoded texture once ready, else a shared 1×1 white
  *      placeholder (so a box still shows while loading — matching Canvas2D — and
  *      no textured layer ever silently vanishes).
  *   3. When a decode completes we flip the entry to ready and fire `onChange`,
@@ -163,7 +163,7 @@ function isSvgBlob(blob: Blob, src: string): boolean {
 const defaultLoader: ImageLoader = async (src, fillColor) => {
   // Local-first asset (`motion-blob:<hash>`): resolve bytes from the bundle blob
   // store to a temporary object URL, decode it, then revoke. No network — the
-  // bytes are already on disk (RFC §6).
+  // bytes are already on disk.
   if (isLocalBlobRef(src)) {
     const url = await loadLocalBlobObjectUrl(src);
     if (!url) return rasterizeViaImage(src); // resolver missing → let <img> try (and fail visibly)
@@ -334,6 +334,14 @@ interface VideoEntry {
   texture: TextureHandle | null;
   w: number;
   h: number;
+  /**
+   * True once this element has completed (or at least requested) one seek.
+   *
+   * A loaded-but-never-seeked `<video>` presents a black surface, so the first
+   * upload must always be preceded by a seek even when the requested time already
+   * equals `currentTime`. See setVideo.
+   */
+  hasSeeked: boolean;
   /** Kept so `releaseVideoEntry` can detach it — an anonymous handler could not
    *  be removed, and it drives renders via `onChange`. */
   onSeeked?: (() => void) | undefined;
@@ -364,6 +372,15 @@ const PARTICLE_TEX_MAX = 4096;
 const HAVE_CURRENT_DATA = 2;
 /** Only re-seek a video when the playhead drifts past this (seconds). */
 const SEEK_EPSILON = 0.05;
+/**
+ * How far past the target the FIRST seek of a video goes, in seconds.
+ *
+ * Assigning `currentTime` a value it already holds is a no-op that fires no
+ * `seeked` event, so a video sitting at 0 asked to show 0 would never decode.
+ * 0.5 ms is orders of magnitude inside a single frame at any frame rate, so the
+ * decoded frame is still the correct one.
+ */
+const FIRST_DECODE_NUDGE = 0.0005;
 
 export class AppTextureProvider implements TextureProvider {
   /** Fired when an async decode finishes and a texture becomes ready. */
@@ -420,7 +437,7 @@ export class AppTextureProvider implements TextureProvider {
     this.rasterScale = scale > 0 && Number.isFinite(scale) ? scale : 1;
   }
 
-  /** Vector-raster cache hit/miss counters. A hit = a set*() call whose content
+  /** Vector-raster cache hit/miss counters. A hit = a set* call whose content
    *  signature was unchanged (no re-rasterization) — the transform-only-animation
    *  fast path. Exposed so the hot path can be asserted (Phase 1 cache gate). */
   private readonly rasterizer: Canvas2DVectorRasterizer;
@@ -635,7 +652,7 @@ export class AppTextureProvider implements TextureProvider {
    * `timeSec`. Reuses one HTMLVideoElement per source, seeks it toward the
    * playhead, and re-uploads the current frame each call (video content changes
    * every frame, so there is no signature cache). Returns the placeholder via
-   * get() until the element has decoded a frame.
+   * get until the element has decoded a frame.
    */
   setVideo(key: string, src: string, timeSec: number): void {
     let entry = this.videoEntries.get(key);
@@ -646,7 +663,7 @@ export class AppTextureProvider implements TextureProvider {
       if (entry) this.releaseVideoEntry(entry);
       const video = this.videoFactory(src);
       const onSeeked = (): void => this.onChange?.();
-      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null };
+      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null, hasSeeked: false };
       this.videoEntries.set(key, entry);
       video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
       video.addEventListener('seeked', onSeeked);
@@ -664,12 +681,30 @@ export class AppTextureProvider implements TextureProvider {
     // long-GOP sources the decoder often cannot land within the deadband — so
     // re-requesting the same time on every pass was a self-sustaining full-render
     // loop at rAF rate even with playback paused.
+    //
+    // `hasSeeked` is what makes time 0 work. A `<video>` that has loaded but never
+    // seeked presents a BLACK surface even at readyState 4 (measured: drawImage of
+    // a fully-loaded element at currentTime 0 yields all-zero pixels; the same
+    // element after seeking to 0.1s yields the real frame). At comp time 0 the
+    // target and `currentTime` are both 0, so the deadband check alone declined to
+    // seek and this uploaded that black surface — which is why a video layer read
+    // as a black rectangle at the start of every composition, exactly where the
+    // playhead sits when a preview opens.
+    const needsFirstDecode = !entry.hasSeeked;
     const wantsSeek =
-      Math.abs(v.currentTime - timeSec) > deadband &&
-      (entry.requestedTime === null || Math.abs(entry.requestedTime - timeSec) > deadband);
+      needsFirstDecode ||
+      (Math.abs(v.currentTime - timeSec) > deadband &&
+        (entry.requestedTime === null || Math.abs(entry.requestedTime - timeSec) > deadband));
     if (wantsSeek) {
+      entry.hasSeeked = true;
       entry.requestedTime = timeSec;
-      v.currentTime = timeSec;
+      // Seeking to exactly the current position is a no-op that fires no `seeked`
+      // event, so nudge the first decode a hair forward. A sub-millisecond offset
+      // is far inside one frame at any frame rate, so the frame shown is still the
+      // right one.
+      v.currentTime = needsFirstDecode && Math.abs(v.currentTime - timeSec) <= deadband
+        ? timeSec + FIRST_DECODE_NUDGE
+        : timeSec;
       if (this.exactMediaTiming) {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'seeked'));
       }
@@ -827,7 +862,7 @@ export class AppTextureProvider implements TextureProvider {
 
   /**
    * Tear a video entry all the way down. `src = ''` alone does not reliably stop
-   * Chromium's decoder; pause + removeAttribute + load() does, and the `seeked`
+   * Chromium's decoder; pause + removeAttribute + load does, and the `seeked`
    * listener must go with it — it calls `onChange`, which requests a render, so a
    * stranded element could still drive the render loop after its layer was gone.
    */
@@ -855,7 +890,7 @@ export class AppTextureProvider implements TextureProvider {
     } catch {
       return; // broken source — leave the placeholder in place
     }
-    // A newer setImage() for this key (different src) supersedes this decode.
+    // A newer setImage for this key (different src) supersedes this decode.
     if (this.entries.get(key) !== entry) return;
     entry.width = bitmap.width || 1;
     entry.height = bitmap.height || 1;

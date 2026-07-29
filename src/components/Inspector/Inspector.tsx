@@ -2,7 +2,7 @@
  * Inspector — property editor panel layout.
  *
  * The Inspector is a list of Accordion sections, each describing a property
- * group (Transform, Material, Color, ...). The contents are designed to be
+ * group (Transform, Material, Color,...). The contents are designed to be
  * supplied by future engines via the `groups` prop, so this component
  * itself contains zero property-rendering logic.
  *

@@ -5,9 +5,9 @@
  * typed values with per-kind interpolation and live beside the number tracks
  * in the AnimationEngine. Kinds:
  *
- *   • `text`          — strings. HOLD interpolation, exactly like AE's Source
+ *   • `text` — strings. HOLD interpolation, exactly like AE's Source
  *                       Text keyframes (a string cannot tween).
- *   • `points`        — vector outlines (mask/shape paths): arrays of anchor
+ *   • `points` — vector outlines (mask/shape paths): arrays of anchor
  *                       points with optional bezier handles. Pairwise-lerped;
  *                       a vertex-count mismatch snaps (holds) — morphing
  *                       mismatched outlines needs correspondence we don't have.
@@ -40,7 +40,7 @@ export interface DataPoint {
 export interface GradientStop {
   /** 0..1 position along the gradient axis. */
   pos: number;
-  /** CSS color (#rgb, #rrggbb, #rrggbbaa or rgba()). */
+  /** CSS color (#rgb, #rrggbb, #rrggbbaa or rgba). */
   color: string;
 }
 

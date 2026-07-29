@@ -30,6 +30,7 @@ import type { Camera3dMode } from '@stores/guidesStore';
 import type { Camera3D, OrthoView } from '@motion/scene';
 import type { SceneGizmo } from '@motion/workspace';
 import type { SceneNode } from '@core/types';
+import { usePreferenceStore } from '@stores/preferenceStore';
 
 export interface SceneRefGeometry {
   /** The projection camera for this view (a view camera, or the scene's). */
@@ -52,6 +53,7 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   const selectedIds = useSelectionStore((s) => s.ids);
   const customViews = useGuidesStore((s) => s.customViews);
   const groundGridSetting = useGuidesStore((s) => s.groundGridVisible);
+  const layerBoxesVisible = usePreferenceStore((s) => s.showLayerBounds);
   const draft3d = useGuidesStore((s) => s.draft3d);
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
@@ -120,14 +122,17 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
             // The camera this view looks THROUGH is excluded: its own frustum
             // wraps the viewer and draws a full-screen X across the comp.
             viewingThroughCameraId: mode === 'active' ? activeCameraId : null,
-            includeLayerBoxes: true,
+            // Was unconditional. On a comp with many small layers the boxes
+            // pack together into a picket fence of vertical lines that reads as
+            // banding on the artwork itself — chrome mistaken for output.
+            includeLayerBoxes: layerBoxesVisible,
           })
         : [],
     // `sceneRev` is not read inside the callback — it is the dependency that
     // matters most. The collector walks the MUTABLE scene graph, so nothing
     // else here changes when a layer moves; the revision counter is the only
     // signal that the graph is different and the gizmos must be rebuilt.
-    [scene3d, time, compWidth, compHeight, selectedIds, mode, activeCameraId, sceneRev],
+    [scene3d, time, compWidth, compHeight, selectedIds, mode, activeCameraId, sceneRev, layerBoxesVisible],
   );
 
   return { camera, orthoView, activeCameraId, scene3d, groundGridVisible, sceneGizmos, compWidth, compHeight };

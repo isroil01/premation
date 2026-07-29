@@ -236,7 +236,7 @@ export function templateThumbnail(t: TemplateDefinition): string | null {
 /**
  * Play a template's animation live into `canvas`, looping continuously. Builds
  * an isolated throwaway graph + preview engine (never touches the live scene)
- * and replays the template's own `animate()` choreography.
+ * and replays the template's own `animate` choreography.
  */
 export function createTemplatePlayer(canvas: HTMLCanvasElement, template: TemplateDefinition): { stop: () => void } {
   return mountPreview(canvas, {

@@ -65,9 +65,9 @@ export function weightPaintMatches(
  * `falloff` is the brush's soft edge as a fraction of the radius (0 = hard,
  * 1 = fully feathered). `strength` scales the per-stroke delta.
  *
- *   add      — push the vertex's weight for `boneId` toward 1
+ *   add — push the vertex's weight for `boneId` toward 1
  *   subtract — push it toward 0
- *   smooth   — pull it toward the average of the values already in the brush,
+ *   smooth — pull it toward the average of the values already in the brush,
  *              which is what removes the crunchy boundary auto-weighting leaves
  */
 export function paintWeights(

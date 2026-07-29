@@ -1,5 +1,5 @@
 /**
- * Per-layer blend modes (Prompt 5 — compositing).
+ * Per-layer blend modes.
  *
  * The blend mode lives on the node's `fx` component (sibling to the effect
  * stack), so History / autosave / export capture it for free.

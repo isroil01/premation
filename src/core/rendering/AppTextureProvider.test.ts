@@ -247,6 +247,37 @@ describe('AppTextureProvider', () => {
       expect(video.currentTime).toBe(3);
     });
 
+    it('seeks before the first upload even when the time already matches', () => {
+      // THE BLACK-VIDEO-AT-TIME-ZERO BUG. A loaded but never-seeked <video>
+      // presents an all-black surface even at readyState 4 (measured in Chromium:
+      // drawImage at currentTime 0 yields zeroed pixels; the same element after a
+      // seek yields the real frame). At comp time 0 the target and currentTime are
+      // both 0, so a drift-only check declined to seek and uploaded that black
+      // surface — every video layer read as a black rectangle at the start of a
+      // composition, which is exactly where the playhead sits when a preview opens.
+      const video = fakeVideo({ currentTime: 0 });
+      const { provider } = setup(undefined, () => video);
+      provider.setVideo('asset:v', 'blob:clip', 0);
+      expect(video.currentTime).toBeGreaterThan(0);
+      // ...and still within the same frame, so the picture is the right one.
+      expect(video.currentTime).toBeLessThan(0.001);
+    });
+
+    it('does not re-seek on later renders of the same time', () => {
+      // The first-decode seek must fire ONCE. `seeked` triggers onChange →
+      // re-render → setVideo, so a seek that re-arms itself is a render loop at
+      // rAF rate with playback paused.
+      const video = fakeVideo({ currentTime: 0 });
+      const { provider } = setup(undefined, () => video);
+      provider.setVideo('asset:v', 'blob:clip', 0);
+      const afterFirst = video.currentTime;
+      // Simulate the decoder landing exactly on target, as it does for short GOPs.
+      (video as { currentTime: number }).currentTime = 0;
+      provider.setVideo('asset:v', 'blob:clip', 0);
+      expect(video.currentTime).toBe(0);
+      expect(afterFirst).toBeGreaterThan(0);
+    });
+
     it('reuses one element per source, swapping only when the src changes', () => {
       const made: string[] = [];
       const factory: VideoFactory = (src) => {

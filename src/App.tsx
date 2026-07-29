@@ -7,7 +7,7 @@
  *   3. We render the editor: toolbar, layout, status bar.
  *
  * Engine integration points:
- *   - Register additional panels: `useLayoutStore.getState().registerPanel(...)`
+ *   - Register additional panels: `useLayoutStore.getState.registerPanel(...)`
  *   - Mount a rendering engine: call `useLayoutStore.setState` or use the
  *     layout-registered WorkspaceViewport selector `[data-workspace-viewport]`.
  *   - Push timeline data: pass a `model` prop to <BottomTimeline />.
@@ -91,7 +91,7 @@ import { usePreferenceStore } from '@stores/preferenceStore';
  * One definition on purpose. The stopwatch, the add-keyframe command and the
  * timeline's value fields all need this answer, and three copies of the rule is
  * three chances to key a different number than the one on screen — which is
- * exactly how "Enable animation" on Position once wrote y := x.
+ * exactly how "Enable animation" on Position once wrote y:= x.
  *
  * `layerT` must be the LAYER's time (`getRemappedTime`), not raw comp time.
  */
@@ -144,7 +144,7 @@ function EditorShellInner(): JSX.Element {
   const setSelected = useSelectionStore((s) => s.set);
   const addSelected = useSelectionStore((s) => s.add);
   const sceneRev = useSceneRevision((s) => s.rev);
-  // Scalar selectors, NOT `useActiveWorkspace()`.
+  // Scalar selectors, NOT `useActiveWorkspace`.
   //
   // `useActiveWorkspace` returns the whole tab OBJECT, which immer replaces on
   // every `setTime` — 60×/s during playback. That subscription sat right next to

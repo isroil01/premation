@@ -1,6 +1,6 @@
 /**
  * Scene reference geometry — the wireframes that make a 3D scene legible from
- * outside it (see docs/3d-diagnosis.md, Phase 2).
+ * outside it.
  *
  * The properties worth pinning are the ones that make the geometry USEFUL, not
  * its exact vertex count: the frustum has to match the pinhole relation the

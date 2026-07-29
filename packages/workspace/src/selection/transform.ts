@@ -5,7 +5,7 @@
  *
  * Two resize models live here, and the difference is not cosmetic:
  *
- *   • `resizeBounds`           — holds the edge/corner OPPOSITE the grabbed
+ *   • `resizeBounds` — holds the edge/corner OPPOSITE the grabbed
  *                                handle fixed (the design-tool convention).
  *   • `resizeBoundsAboutPivot` — holds an arbitrary point fixed, which is what
  *                                this editor uses with the layer's ANCHOR.

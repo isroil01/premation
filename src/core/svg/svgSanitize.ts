@@ -123,7 +123,7 @@ export function scopeSvgIds(root: Element, scope: string): void {
   };
 
   for (const el of elementsOf(root)) {
-    // <style> bodies carry both selectors and url() references.
+    // <style> bodies carry both selectors and url references.
     if (el.localName === 'style') {
       el.textContent = rewriteText(el.textContent ?? '');
       continue;

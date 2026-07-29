@@ -112,7 +112,15 @@ export function createHostApi(
       });
       return true;
     },
-    'ui.openPanel': () => { hooks.openPanel(); return true; },
+    'ui.openPanel': () => {
+      // Refuse rather than open an empty frame: a plugin that forgot to declare
+      // `panel` in its manifest has a bug, and it should read as one.
+      if (!manifest.panel) {
+        return fail('This plugin declares no "panel" in its manifest, so there is no panel to open.');
+      }
+      hooks.openPanel();
+      return true;
+    },
     'ui.closePanel': () => { hooks.closePanel(); return true; },
 
     'commands.register': (spec) => {

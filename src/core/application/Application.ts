@@ -1,7 +1,7 @@
 /**
  * Application — top-level façade that owns the lifecycle of all core systems.
  *
- * Boot order (in `boot()`):
+ * Boot order (in `boot`):
  *   1. Service container
  *   2. EventBus
  *   3. CommandRegistry + CommandSystem

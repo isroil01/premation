@@ -1,5 +1,5 @@
 /**
- * Canvas guides (spec §Canvas — "Guides, rulers, smart snapping, Safe areas").
+ * Canvas guides.
  * Toggle rulers, a grid, and broadcast/action safe-area overlays. The renderer
  * reads these and draws them over the composition.
  */
@@ -18,9 +18,9 @@ export type ViewChannel = 'rgb' | 'alpha' | 'red' | 'green' | 'blue';
 
 /**
  * Which camera the viewport renders through.
- *   'active'                          — the scene's Camera layer (perspective).
- *   front/back/left/right/top/bottom  — orthographic axis views (no perspective).
- *   custom1/custom2/custom3           — navigable perspective views built from
+ *   'active' — the scene's Camera layer (perspective).
+ *   front/back/left/right/top/bottom — orthographic axis views (no perspective).
+ *   custom1/custom2/custom3 — navigable perspective views built from
  *                                       STORED params (see `customViews`); the
  *                                       scene's Camera layer is ignored, so you
  *                                       inspect the scene from anywhere without
@@ -37,9 +37,9 @@ export type ViewLayout = '1' | '2' | '4';
 
 /**
  * The four view modes of the 2×2 "4 Views" layout, in cell order:
- *   [0] top-left     — the interactive stage (AE's active viewport)
- *   [1] top-right    — view-only inspection pane
- *   [2] bottom-left  — view-only inspection pane
+ *   [0] top-left — the interactive stage (AE's active viewport)
+ *   [1] top-right — view-only inspection pane
+ *   [2] bottom-left — view-only inspection pane
  *   [3] bottom-right — view-only inspection pane
  * Index 0 is what the interactive stage renders through; only cells 1–3 are
  * driven by SecondaryViewPanes. Session view state (not project data), matching

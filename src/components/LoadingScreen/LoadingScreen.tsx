@@ -14,15 +14,12 @@ export function LoadingScreen({ message = 'Loading editor…', fullScreen = fals
       role="status"
       aria-label={message}
     >
-      <div className={styles.ambientGlow} />
-      <div className={styles.card}>
-        <Logo variant="lockup" size={30} className={styles.brand} />
-        <div className={styles.spinnerWrapper}>
-          <div className={styles.spinnerTrack} />
-          <div className={styles.spinnerHead} />
+      <div className={styles.wrapper}>
+        <div className={styles.inner}>
+          <Logo variant="lockup" size={48} className={styles.logo} />
         </div>
-        <span className={styles.label}>{message}</span>
       </div>
+      {message && <div className={styles.message}>{message}</div>}
     </div>
   );
 }

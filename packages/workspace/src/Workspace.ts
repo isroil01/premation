@@ -448,7 +448,7 @@ export class Workspace implements InputSink {
     // Deferred, not rebuilt: this listener fires on every scene bump AND every
     // playhead tick (onChanged also subscribes to time), and an eager rebuild
     // enumerated the whole scene each time — the index is only consumed on
-    // pointer interaction, where HitTester.ensureFresh() rebuilds once.
+    // pointer interaction, where HitTester.ensureFresh rebuilds once.
     this.disposers.push(
       this.scene.onChanged(() => {
         this.hitTester.markDirty();

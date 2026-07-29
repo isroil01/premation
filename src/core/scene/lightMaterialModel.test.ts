@@ -1,5 +1,5 @@
 /**
- * AE-parity light + material property models (docs/3d-diagnosis.md, Phase 4).
+ * AE-parity light + material property models.
  *
  * The single most important property of this whole batch: every addition
  * DEFAULTS TO A NO-OP. Existing projects carry none of these props, so they

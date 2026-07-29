@@ -49,7 +49,7 @@ export interface AnimPreset {
    *  offsets to the target comp. Per-glyph presets keyframe the `ta.0.*` path. */
   animate: (set: SetKf, id: string, x: number, y: number, t0: number, u: number) => void;
   /** Per-glyph (kinetic-typography) presets: write the static text-animator data
-   *  onto the built text node before animate() keyframes its selector. */
+   *  onto the built text node before animate keyframes its selector. */
   applyAnimators?: (g: SceneGraph, id: string) => void;
   /** Representative frame (seconds) for the still card preview. */
   previewTime: number;
@@ -267,7 +267,7 @@ export function animPresetThumbnail(preset: AnimPreset): string | null {
 /**
  * Play a preset's animation live into `canvas`, looping continuously via the
  * shared gallery ticker. Isolated throwaway graph + preview engine, so it never
- * touches the live scene. Returns a stop() that unmounts it.
+ * touches the live scene. Returns a stop that unmounts it.
  */
 export function createAnimPresetPlayer(canvas: HTMLCanvasElement, preset: AnimPreset): { stop: () => void } {
   const spec = previewSpec(preset);

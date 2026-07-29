@@ -1,5 +1,5 @@
 /**
- * Property expressions (spec §Expression Editor).
+ * Property expressions.
  *
  * An expression is a small JavaScript formula attached to a numeric property
  * that computes its value each frame from `time`, the property's own `value`,
@@ -36,7 +36,7 @@ export interface ExprContext {
   /** Samples the CURRENT property's KEYFRAMED value at an arbitrary time —
    *  keyframes only, never the expression-adjusted value (so `valueAtTime`
    *  cannot recurse through the expression itself). Backs `valueAtTime` and
-   *  the `loopOut`/`loopIn` remapping. Default: `() => value`. */
+   *  the `loopOut`/`loopIn` remapping. Default: ` => value`. */
   selfAt?: (t: number) => number;
   /** First→last keyframe span of the current property's own track, or null
    *  when it has fewer than one keyframe. Backs `loopOut`/`loopIn`. */

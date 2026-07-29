@@ -58,6 +58,44 @@ function lockdown(): void {
   try {
     Object.defineProperty(self.navigator, 'sendBeacon', { value: denied('navigator.sendBeacon') });
   } catch { /* not present in every engine */ }
+
+  forwardConsole();
+}
+
+/**
+ * Send the plugin's own `console` output to the host.
+ *
+ * A worker's console lands in DevTools, which a user of the packaged app does
+ * not have — so a plugin author debugging their own plugin had nowhere to look,
+ * and a user reporting "it does nothing" had nothing to send. The host keeps the
+ * last lines per plugin and the manager shows them.
+ *
+ * Console is NOT removed: the plugin keeps its own output where an author with
+ * DevTools open expects it.
+ */
+function forwardConsole(): void {
+  const MAX_LINE = 400;
+  const levels: Array<['log' | 'warn' | 'error', keyof Console]> = [
+    ['log', 'log'], ['log', 'info'], ['log', 'debug'], ['warn', 'warn'], ['error', 'error'],
+  ];
+  for (const [level, method] of levels) {
+    const original = (console as unknown as Record<string, unknown>)[method as string];
+    (console as unknown as Record<string, unknown>)[method as string] = (...args: unknown[]): void => {
+      try {
+        const text = args
+          .map((a) => {
+            if (typeof a === 'string') return a;
+            // A plugin can log a cyclic object; a throwing logger would be a
+            // worse bug than the one being debugged.
+            try { return JSON.stringify(a); } catch { return String(a); }
+          })
+          .join(' ')
+          .slice(0, MAX_LINE);
+        post({ k: 'log', level, text });
+      } catch { /* never let logging break the plugin */ }
+      if (typeof original === 'function') (original as (...a: unknown[]) => void).apply(console, args);
+    };
+  }
 }
 
 // ── RPC ──────────────────────────────────────────────────────────────────

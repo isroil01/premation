@@ -32,7 +32,7 @@ export function useFocusContext(): FocusContext {
   const isolatedId = useFocusStore((s) => s.isolatedId);
 
   // Memoised so the Set identity is stable between sceneRev bumps. Previously
-  // useFocusContext subscribed to sceneRev, causing focusActiveSet() to return
+  // useFocusContext subscribed to sceneRev, causing focusActiveSet to return
   // a new Set on every scene edit — even when focus state hadn't changed — which
   // invalidated the focusTracks memo and cascaded into a full timelineModel
   // rebuild on every property drag tick.

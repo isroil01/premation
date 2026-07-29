@@ -115,7 +115,7 @@ export function maxExactMeshDensity(hasStiffness: boolean): number {
  *   density  verts   first call   warm/frame   ~fps
  *   15        256       27 ms       3.1 ms      319   ← default
  *   25        676      122 ms      10.2 ms       98
- *   33       1156      673 ms      36.5 ms       27   ← maxExactMeshDensity()
+ *   33       1156      673 ms      36.5 ms       27   ← maxExactMeshDensity
  *   40       1681      110 ms      34.1 ms       29
  *   50       2601       68 ms      43.4 ms       23
  *

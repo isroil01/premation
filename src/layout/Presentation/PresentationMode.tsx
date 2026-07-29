@@ -65,8 +65,8 @@ export function PresentationMode(): JSX.Element | null {
   // canvas was blank with no feedback while the GPU backend initialised).
   const [backendReady, setBackendReady] = useState(false);
 
-  useViewportRenderer(canvasRef, stageRef, sceneRev, time);
-  // NOTE: no usePlaybackClock() here — App.tsx runs the single shared clock; a
+  const { initError } = useViewportRenderer(canvasRef, stageRef, sceneRev, time);
+  // NOTE: no usePlaybackClock here — App.tsx runs the single shared clock; a
   // second instance would double-tick the controller (2× playback speed).
 
   const [looping, setLoopingState] = useState(() => getTimelineController().isLooping());
@@ -79,7 +79,7 @@ export function PresentationMode(): JSX.Element | null {
   // Previously setPlaying(true) fired synchronously the moment `active` turned
   // true — before the canvas had been mounted in the DOM, before the GPU backend
   // had initialised, and before the ResizeObserver had sized the surface. The
-  // playback clock then hammered renderImmediate() against a null backend
+  // playback clock then hammered renderImmediate against a null backend
   // (no-ops), and when the backend came up the render queue was already backed
   // up. On complex 3D/2D scenes one buildSnapshot call can take >50 ms, causing
   // the event loop to stall and making Esc/close completely unresponsive.
@@ -146,7 +146,7 @@ export function PresentationMode(): JSX.Element | null {
 
   // Download the current frame. Rendered through the deterministic offline
   // path rather than read off the live preview canvas: a WebGL/WebGPU canvas
-  // returns a BLANK toBlob() (the drawing buffer is cleared after composite
+  // returns a BLANK toBlob (the drawing buffer is cleared after composite
   // unless preserveDrawingBuffer is set), so reading the surface only worked on
   // Canvas2D. The offline renderer produces a correct frame on any backend.
   const downloadFrame = useCallback(() => {
@@ -280,9 +280,22 @@ export function PresentationMode(): JSX.Element | null {
         <canvas ref={canvasRef} className={styles.canvas} />
         {/* Loading spinner — shown until the first rAF fires (backend mounting).
             Prevents the user from seeing a blank stage and assuming it's broken. */}
-        {!backendReady && (
+        {!backendReady && !initError && (
           <div className={styles.stageLoader} aria-label="Loading preview…">
             <div className={styles.stageSpinner} />
+          </div>
+        )}
+        {/* The renderer could not start. Presentation Mode is the LAST GPU
+            context the page creates, so it is the first to be refused when the
+            browser's live-context cap is reached — and a silent black stage here
+            reads as "my composition is broken" rather than "this window could
+            not get a GPU". */}
+        {initError && (
+          <div className={styles.stageLoader} role="alert">
+            <div className={styles.stageError}>
+              <strong>Preview unavailable</strong>
+              <span>{initError}</span>
+            </div>
           </div>
         )}
       </div>

@@ -304,8 +304,8 @@ export function cameraViewMatrix(cam: Camera3D): Matrix4 {
   const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
   const cx = Math.cos(-pitch), sx = Math.sin(-pitch);
   // R = Rx(−pitch) · Ry(−yaw), row-major rows:
-  //   projectPoint applies Ry(−yaw) first: x1 = cy·vx + sy·vz ; z1 = −sy·vx + cy·vz
-  //   then Rx(−pitch):                     y2 = cx·vy − sx·z1 ; z2 = sx·vy + cx·z1
+  //   projectPoint applies Ry(−yaw) first: x1 = cy·vx + sy·vz; z1 = −sy·vx + cy·vz
+  //   then Rx(−pitch):                     y2 = cx·vy − sx·z1; z2 = sx·vy + cx·z1
   let r00 = cy,        r01 = 0,  r02 = sy;
   let r10 = -sx * -sy, r11 = cx, r12 = -sx * cy;
   const r20 = cx * -sy, r21 = sx, r22 = cx * cy;

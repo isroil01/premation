@@ -56,7 +56,7 @@ describe('data-track easing', () => {
     };
     // A symmetric ease still passes through the midpoint...
     expect(sampleDataTrack(track, 0.5)).toBeCloseTo(50, 1);
-    // ...but lags a linear ramp early on.
+    //...but lags a linear ramp early on.
     expect(sampleDataTrack(track, 0.25)!).toBeLessThan(25);
   });
 

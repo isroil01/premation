@@ -6,7 +6,7 @@
  * intentionally dependency-free so it can be used from stores, adapters, and the
  * assistant alike.
  *
- * Reads that repeat go through `cachedGet` (see ./cache): deduped, served
+ * Reads that repeat go through `cachedGet` (see./cache): deduped, served
  * stale-then-revalidated, and revalidated conditionally so an unchanged
  * response costs a 304 and no re-render. Writes declare the cache tags they
  * dirty — that declaration, not a timeout, is what keeps the UI honest.
@@ -49,7 +49,7 @@ export * as apiCache from './cache';
  * Locally stored backend files are served behind expiring HMAC signatures
  * (`?exp=…&sig=…`). Project documents persist asset `src` strings, so a
  * reloaded document holds yesterday's signature — dead on arrival. Every asset
- * list/upload response registers its fresh URL here, and `assetUrl()` swaps a
+ * list/upload response registers its fresh URL here, and `assetUrl` swaps a
  * stale persisted URL for the fresh one by path. The library is loaded at
  * sign-in (assetStore.loadFromCloud), so the map is warm before any document
  * renders.
@@ -305,6 +305,25 @@ export interface AiMotionStatus {
 
 export type AiKeysResponse = Record<AiProviderId, AiKeyStatus> & { motion: AiMotionStatus };
 
+/**
+ * One row of the backend's capability matrix — the models it can actually route
+ * to.
+ *
+ * Loose on the tail because the matrix carries routing metadata the picker does
+ * not need, and pinning fields the editor never reads would make every backend
+ * addition a breaking change here.
+ */
+export interface AiModelCapability {
+  provider: AiProviderId;
+  model: string;
+  contextWindowTokens?: number;
+  reasoningDepthScore?: number;
+}
+
+export interface AiModelsResponse {
+  models: AiModelCapability[];
+}
+
 export interface AiConversationRecord extends AiConversationSummary {
   messages: AiMessageRecord[];
 }
@@ -525,6 +544,16 @@ export const api = {
   // only {present, hint} ever comes back) and model calls stream through
   // POST /ai/stream (see core/ai/AgentLoop, which does its own fetch because
   // it needs the raw byte stream, not JSON).
+  /**
+   * The models the backend can actually route to.
+   *
+   * F13/F15: this endpoint has existed since the gateway shipped and had no
+   * client, so the editor's picker was driven by `MODEL_SUGGESTIONS` — a
+   * hand-maintained duplicate of `ModelRouter.CAPABILITY_MATRIX`. Two lists of
+   * model ids maintained by hand is two lists that go stale independently, and
+   * the one the user picks from was the one nobody validated against a live key.
+   */
+  getAiModels: () => request<AiModelsResponse>('/ai/models'),
   getAiKeys: () => request<AiKeysResponse>('/ai/keys'),
   saveAiKey: (provider: AiProviderId, key: string) =>
     request<{ ok: boolean; reason?: 'invalid' | 'unavailable' }>(`/ai/keys/${provider}`, {
@@ -533,6 +562,18 @@ export const api = {
     }),
   clearAiKey: (provider: AiProviderId) =>
     request<{ ok: boolean }>(`/ai/keys/${provider}`, { method: 'DELETE' }),
+  /**
+   * Generate one image. Returns base64 bytes, never a provider URL.
+   *
+   * The server holds the key and does the call — the same custody boundary as
+   * `/ai/stream`. Bytes rather than a signed URL so the asset outlives the
+   * provider's expiry and the user's IP never reaches the provider.
+   */
+  generateImage: (body: { provider: string; prompt: string; width?: number; height?: number }) =>
+    request<{ ok: boolean; base64: string; mime: string; creditsUsed: number }>('/ai/image', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   listConversations: (projectId?: string, params: PageQuery = {}) =>
     cachedGet<Paginated<AiConversationSummary>>(

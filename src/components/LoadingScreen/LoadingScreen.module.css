@@ -12,73 +12,65 @@
   overflow: hidden;
 }
 
-.ambientGlow {
-  position: absolute;
-  width: 320px;
-  height: 320px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.08) 50%, transparent 70%);
-  filter: blur(40px);
-  pointer-events: none;
-  animation: pulseGlow 4s ease-in-out infinite alternate;
-}
-
-.card {
+.wrapper {
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: 32px 48px;
-  border-radius: 16px;
+  padding: 2px; /* Border thickness */
+  border-radius: 20px;
+  overflow: hidden;
   background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.36);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-/* Brand lockup above the spinner; the card's 18px gap handles the rest. */
-.brand {
-  margin-bottom: 2px;
+/* Conic gradient rotating element simulating Google-like gradient border */
+.wrapper::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(
+    from 0deg,
+    #4285f4 0%,
+    #9b72cb 20%,
+    #d96570 40%,
+    #fbbc05 60%,
+    #34a853 80%,
+    #4285f4 100%
+  );
+  animation: rotateBorder 4s linear infinite;
+  z-index: 1;
 }
 
-.spinnerWrapper {
+.inner {
   position: relative;
-  width: 44px;
-  height: 44px;
+  z-index: 2;
+  background-color: var(--color-surface-0, #0a0a0e);
+  padding: 24px 36px; /* Padding inside the border */
+  border-radius: 18px; /* nested border-radius logic: outer - border thickness = inner */
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.spinnerTrack {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 3px solid rgba(255, 255, 255, 0.08);
+.logo {
+  animation: pulseLogo 1.8s ease-in-out infinite alternate;
 }
 
-.spinnerHead {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: #818cf8;
-  border-right-color: #c084fc;
-  animation: spin 0.9s cubic-bezier(0.55, 0.15, 0.45, 0.85) infinite;
-}
-
-.label {
-  font-family: var(--font-family-base, system-ui, -apple-system, sans-serif);
+.message {
+  margin-top: 24px;
   font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.03em;
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.75));
-  animation: fadeIn 0.3s ease-out;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.6));
+  letter-spacing: 0.02em;
+  font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+  animation: pulseMessage 2s ease-in-out infinite alternate;
 }
 
-@keyframes spin {
+@keyframes rotateBorder {
   0% {
     transform: rotate(0deg);
   }
@@ -87,24 +79,34 @@
   }
 }
 
-@keyframes pulseGlow {
+@keyframes pulseLogo {
   0% {
-    transform: scale(0.85);
-    opacity: 0.6;
+    opacity: 0.8;
+    transform: scale(0.98);
   }
   100% {
-    transform: scale(1.15);
     opacity: 1;
+    transform: scale(1.02);
   }
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
+@keyframes pulseMessage {
+  0% {
+    opacity: 0.4;
   }
-  to {
+  100% {
+    opacity: 0.85;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wrapper::before {
+    animation: none;
+    transform: rotate(45deg); /* static beautiful angle */
+  }
+  .logo, .message {
+    animation: none;
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }

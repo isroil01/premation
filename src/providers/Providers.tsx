@@ -33,6 +33,7 @@ import { getAutosaveController } from '@core/persistence/AutosaveController';
 import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
 import pluginHost from '@core/plugins/PluginHost';
 import { openPluginsModal } from '@layout/Plugins/PluginsModal';
+import { showPluginPanel, hidePluginPanel } from '@layout/Plugins/PluginPanel';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useGuidesStore } from '@stores/guidesStore';
@@ -418,7 +419,7 @@ function hasCutCopyTarget(): boolean {
  * the menu items were simply never registered, so both items rendered enabled
  * and did nothing.
  *
- * Each REPLACES the current scene (they call defaultSceneGraph.clear()), so
+ * Each REPLACES the current scene (they call defaultSceneGraph.clear), so
  * they confirm first — silently discarding the user's work would be worse than
  * the no-op they replace.
  */
@@ -821,11 +822,11 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
      * The EventBus and the ThemeManager are process-wide singletons that outlive
      * this component, but `Providers` is mounted PER ROUTE (EditorPage and
      * PopoutRoute) and React StrictMode double-invokes effects. The disposers
-     * returned by `getEventBus().on(...)` and `theme.subscribe(...)` were all
+     * returned by `getEventBus.on(...)` and `theme.subscribe(...)` were all
      * discarded, so every Dashboard → Editor navigation stacked another full set
      * of eight bus listeners on top of the previous ones.
      *
-     * The cost compounds: on the Nth entry, one AnimationChanged fires bumpScene()
+     * The cost compounds: on the Nth entry, one AnimationChanged fires bumpScene
      * N times, and bumpScene itself emits SceneGraphChanged — which then fires
      * scheduleRecord and markDirty N times each, plus N full syncFromScene walks.
      * That is O(N²) work per keyframe edit, which reads as "the editor gets slower
@@ -932,7 +933,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // ctrl('name') expressions read slider-control rigs from the scene.
         defaultAnimation.setControlProvider((name, t) => controlValue(name, t));
         // The remaining four providers had NO callers, so the engine kept its
-        // placeholder defaults and the expression API quietly lied: layer()
+        // placeholder defaults and the expression API quietly lied: layer
         // always returned 0, thisComp.width was a hardcoded 1920 regardless of
         // the real comp, and thisLayer.name was the string 'Layer'. A plausible
         // wrong number is worse than an error — it fails silently on exactly
@@ -989,6 +990,11 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // across reloads, so this is what makes them come back.
           pluginHost.configure({
             getSelection: () => useSelectionStore.getState().ids,
+            // What makes `motion.ui.openPanel()` real. The host cannot import
+            // the dock itself (it must stay React-free and testable), so the
+            // shell hands it the two calls it needs.
+            showPanel: (id) => showPluginPanel(id),
+            hidePanel: (id) => hidePluginPanel(id),
           });
           const registry = getCommandRegistry();
           registry.register({
@@ -1022,7 +1028,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true, execute: () => usePresentationStore.getState().enter(),
           });
           registry.register({
-            id: asCommandId('view.plugins'), label: 'Plugins…', icon: 'plugin',
+            id: asCommandId('view.plugins'), label: 'Manage Plugins…', icon: 'plugin',
             enabled: () => true, execute: () => openPluginsModal(),
           });
           registry.register({
@@ -1183,7 +1189,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // The KEY tells history what is being edited, so a burst on one
           // target coalesces into a single undo step while a move to a
           // different layer/property commits the previous one first. A bare
-          // `schedule()` merged anything that happened to land inside the same
+          // `schedule` merged anything that happened to land inside the same
           // 700 ms — two unrelated edits, one Ctrl+Z, both gone.
           const h = (): ReturnType<typeof useHistoryStore.getState> => useHistoryStore.getState();
           track(getEventBus().on('AnimationChanged', () => h().schedule('anim')));
@@ -1271,7 +1277,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
       // selection and playhead, and its own edits come back the other way.
       //
       // MUST be started here, INSIDE the boot IIFE, not beside it: `Application
-      // .boot()` calls `setEventBus(new EventBus())`, so anything that subscribes
+      //.boot` calls `setEventBus(new EventBus)`, so anything that subscribes
       // before boot resolves is attached to a bus that is then thrown away. That
       // is why the scene-change subscription silently never fired while the
       // selection one (a plain zustand store, never replaced) worked fine.

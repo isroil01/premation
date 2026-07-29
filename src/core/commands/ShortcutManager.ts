@@ -31,7 +31,7 @@ export class ShortcutManager {
   private attached = false;
 
   constructor() {
-    // Auto-attach on first instantiation. In tests, call attach() manually.
+    // Auto-attach on first instantiation. In tests, call attach manually.
     this.attach();
   }
 
@@ -149,7 +149,7 @@ export class ShortcutManager {
       if (!cmd) return false;
       return cmd.enabled ? cmd.enabled() !== false : true;
     } catch {
-      // A throwing enabled() must not kill the dispatcher — treat as enabled.
+      // A throwing enabled must not kill the dispatcher — treat as enabled.
       return true;
     }
   }

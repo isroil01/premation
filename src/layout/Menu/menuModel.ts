@@ -166,7 +166,9 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.graphEditor', label: 'Graph Editor' },
       { separator: true },
       { commandId: 'view.customize', label: 'Customize…' },
-      { commandId: 'view.plugins', label: 'Plugins…' },
+      // No Plugins entry here: the Plugins GROUP (built dynamically in
+      // pluginMenu.ts) owns it, and a second door labelled the same thing is
+      // how a user ends up thinking there are two features.
     ],
   },
 

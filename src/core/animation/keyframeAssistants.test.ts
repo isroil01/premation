@@ -21,7 +21,7 @@ describe('trackSpan', () => {
 describe('reverseTracks', () => {
   it('mirrors times within the overall span and re-sorts', () => {
     const r = reverseTracks(tracks);
-    // span [1,3]: t'=1+3-t → x: 1→3, 2→2 ; opacity: 1.5→2.5, 3→1
+    // span [1,3]: t'=1+3-t → x: 1→3, 2→2; opacity: 1.5→2.5, 3→1
     expect(r[0]!.keyframes.map((k) => k.t)).toEqual([2, 3]);
     expect(r[0]!.keyframes.map((k) => k.value)).toEqual([100, 0]); // order flipped
     expect(r[1]!.keyframes.map((k) => k.t)).toEqual([1, 2.5]);
@@ -48,7 +48,7 @@ describe('easeTracks', () => {
 describe('stretchTracks', () => {
   it('scales timing around the span start', () => {
     const s = stretchTracks(tracks, 2);
-    // span starts at 1: t'=1+(t-1)*2 → x: 1,3 ; opacity: 2,5
+    // span starts at 1: t'=1+(t-1)*2 → x: 1,3; opacity: 2,5
     expect(s[0]!.keyframes.map((k) => k.t)).toEqual([1, 3]);
     expect(s[1]!.keyframes.map((k) => k.t)).toEqual([2, 5]);
   });

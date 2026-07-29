@@ -2,8 +2,8 @@
  * Auto-orient — a layer's rotation is DERIVED rather than authored.
  *
  * After Effects offers three modes:
- *   • Off                   — the layer keeps its own rotation.
- *   • Orient Along Path     — face the direction of travel on the motion path
+ *   • Off — the layer keeps its own rotation.
+ *   • Orient Along Path — face the direction of travel on the motion path
  *                             (see motionPath.autoOrientAngleDeg).
  *   • Orient Towards Camera — a 3D layer always faces the active camera. This
  *                             is AE's per-layer, OPT-IN billboard. A renderer

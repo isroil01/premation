@@ -44,7 +44,7 @@ describe('every kind can be created and removed', () => {
     const name = addControl('a', kind);
     expect(name).toBeTruthy();
     expect(controlKind('a', name!)).toBe(kind);
-    // Every component it owns resolves as a number through ctrl().
+    // Every component it owns resolves as a number through ctrl.
     for (const suffix of CONTROL_COMPONENTS[kind]) {
       expect(typeof controlValue(name! + suffix, 0)).toBe('number');
     }

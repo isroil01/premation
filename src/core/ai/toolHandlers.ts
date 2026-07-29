@@ -16,7 +16,7 @@
  */
 
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
-import { ALL_TOOL_DEFS } from '@motion/ai-tools';
+import { ALL_TOOL_DEFS, bindAlias } from '@motion/ai-tools';
 import { EFFECT_DEFS } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
 import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/textAnimators';
@@ -31,10 +31,13 @@ import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
 import { rectangleMask, ellipseMask, addMaskPath, type MaskMode } from '@core/effects/mask';
 import { bumpScene } from '@stores/sceneStore';
 import { useAssetStore } from '@stores/assetStore';
+import { useAiProviderStore } from '@stores/aiProviderStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { insertMedia } from '@core/scene/sceneInsert';
+import { insertMedia, insertSvgLayer } from '@core/scene/sceneInsert';
+import { analyseAudio } from '@motion/audio';
+import { api } from '@core/api/client';
 import { resolveStyle, buildCustomStyle, setRuntimeStyle, type CustomStyleInput } from './design';
 import type { EntranceArchetype } from './archetypes';
 import {
@@ -59,6 +62,7 @@ import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, isAnimatableProp } from 
 import { setNodeBlend } from '@core/effects/blendMode';
 import { setNodeMatte } from '@core/effects/matte';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
+import { CRAFT_HANDLERS } from './craftHandlers';
 
 const def = (name: string) => {
   const d = ALL_TOOL_DEFS.find((t) => t.name === name);
@@ -83,7 +87,7 @@ const describeScene: AiTool['handler'] = (input, ctx) => {
   let nodes = all;
   if (subtreeOf) {
     const keep = new Set<string>([subtreeOf]);
-    // `all()` is parents-before-children, so one pass collects the subtree.
+    // `all` is parents-before-children, so one pass collects the subtree.
     for (const n of all) if (n.parent && keep.has(n.parent)) keep.add(n.id);
     nodes = all.filter((n) => keep.has(n.id));
   }
@@ -236,7 +240,7 @@ const listPresetsHandler: AiTool['handler'] = (_input, ctx) => {
 // ── Write: structure ──────────────────────────────────────────────
 
 const createLayer: AiTool['handler'] = (input, ctx) => {
-  const i = input as { kind: string; name: string; x?: number; y?: number; width?: number; height?: number; text?: string; shape?: string; fill?: string; parent?: string };
+  const i = input as { id?: string; kind: string; name: string; x?: number; y?: number; width?: number; height?: number; text?: string; shape?: string; fill?: string; parent?: string };
   if (i.parent && !ctx.scene.has(i.parent)) return fail(unknownNode(ctx, i.parent));
   // Accept x-only or y-only (the old code discarded BOTH if either was missing,
   // silently centring the layer). Only when NEITHER is given do we hand the
@@ -247,6 +251,9 @@ const createLayer: AiTool['handler'] = (input, ctx) => {
       ? { x: i.x ?? comp.width / 2, y: i.y ?? comp.height / 2 }
       : undefined;
   const id = ctx.scene.create(i.kind, i.name, at);
+  // Bind the caller's handle BEFORE anything else, so a later call in the same
+  // batch can address this layer without a round-trip through the model.
+  bindAlias(ctx, i.id, id);
   if (i.text !== undefined) ctx.scene.setProp(id, 'content', i.text);
   if (i.fill) ctx.scene.setProp(id, 'fill', i.fill);
   if (i.shape) ctx.scene.setProp(id, 'shapeType', i.shape);
@@ -350,7 +357,18 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
 
   // 'text' is the tool's word for the Text component's `content` prop.
   const map: Record<string, string> = { text: 'content' };
-  for (const key of ['text', 'fontSize', 'fontWeight', 'fill', 'x', 'y', 'width', 'height', 'rotation', 'scaleX', 'scaleY', 'opacity']) {
+  for (const key of [
+    'text', 'fontSize', 'fontWeight', 'fill', 'x', 'y', 'width', 'height',
+    'rotation', 'scaleX', 'scaleY', 'opacity',
+    // Typesetting. All three are read by buildSnapshot and none was reachable —
+    // so every AI-authored headline shipped at the font's default tracking and a
+    // body line-height, which is most of why generated type reads as untypeset.
+    'fontFamily', 'letterSpacing', 'lineHeight', 'align',
+    // Both are read by buildSnapshot (cornerRadius:189, backdropBlur:190) and
+    // were unreachable from any tool. `backdropBlur` in particular is the whole
+    // glass-surface vocabulary and it was already fully wired and tested.
+    'cornerRadius', 'backdropBlur',
+  ]) {
     if (i[key] === undefined) continue;
     if (ctx.scene.setProp(i.nodeId, map[key] ?? key, i[key])) applied.push(key);
   }
@@ -532,13 +550,51 @@ const textAnimator: AiTool['handler'] = (input, ctx) => {
   }
 
   const patch: Record<string, unknown> = {};
-  for (const key of ['basedOn', 'shape', 'start', 'end', 'offset', 'x', 'y', 'scale', 'rotation', 'opacity', 'tracking']) {
+  // The animator model carries far more than transforms: blur, skew, fillOpacity
+  // and characterOffset are what make a type-on read as designed rather than as
+  // "the letters moved". They existed in the engine and were unreachable.
+  for (const key of [
+    'basedOn', 'shape', 'start', 'end', 'offset',
+    'x', 'y', 'scale', 'scaleY', 'rotation', 'opacity', 'tracking',
+    'lineSpacing', 'blur', 'skew', 'fillOpacity', 'characterOffset', 'color',
+  ]) {
     if (i[key] !== undefined) patch[key] = i[key];
   }
   if (Object.keys(patch).length) updateAnimator(i.nodeId, index, patch);
 
+  // ── Animate the selector in the same call ────────────────────────────────
+  // An animator whose selector never moves is a static style, not an animation.
+  // Making the sweep a second round-trip meant the model routinely forgot it —
+  // so `sweep` folds it in here.
+  const sweep = i.sweep as
+    | { fromSec: number; toSec: number; fromOffset?: number; toOffset?: number; easing?: string; bezier?: number[] }
+    | undefined;
+  let swept = '';
+  if (sweep) {
+    if (sweep.toSec <= sweep.fromSec) {
+      return fail(
+        `sweep.toSec (${sweep.toSec}) must be after sweep.fromSec (${sweep.fromSec}) — a zero-length ` +
+        `sweep writes two keyframes at one time and animates nothing.`,
+      );
+    }
+    const prop = `ta.${index}.offset`;
+    const a = ctx.time.toLayerTime(i.nodeId, sweep.fromSec);
+    const b = ctx.time.toLayerTime(i.nodeId, sweep.toSec);
+    const easing = sweep.easing ?? 'bezier';
+    ctx.anim.setKeyframe(i.nodeId, prop, a, sweep.fromOffset ?? -100, easing);
+    ctx.anim.setKeyframe(i.nodeId, prop, b, sweep.toOffset ?? 100, 'linear');
+    if (easing === 'bezier') {
+      // A default that is not linear: a linear selector sweep gives every
+      // character exactly the same timing, which is the flat machine-gun type-on.
+      ctx.anim.setBezier(i.nodeId, prop, a, (sweep.bezier as [number, number, number, number]) ?? [0.22, 0.61, 0.36, 1]);
+    }
+    swept = ` Selector sweeps ${sweep.fromOffset ?? -100}% → ${sweep.toOffset ?? 100}% between ${sweep.fromSec}s and ${sweep.toSec}s.`;
+  }
+
+  bumpScene();
   return ok(
-    `Text animator ${index} on ${i.nodeId} is ready. Animate the sweep by keyframing prop "ta.${index}.offset".`,
+    `Text animator ${index} on ${i.nodeId} is ready.${swept}` +
+    (sweep ? '' : ` It has a STATIC selector, so it currently applies a constant style rather than an animation — pass \`sweep\`, or keyframe "ta.${index}.offset".`),
     { index },
   );
 };
@@ -567,7 +623,7 @@ const listAssets: AiTool['handler'] = () => {
 };
 
 const createMedia: AiTool['handler'] = async (input, ctx) => {
-  const { assetId, x, y } = input as { assetId: string; x?: number; y?: number };
+  const { id: alias, assetId, x, y } = input as { id?: string; assetId: string; x?: number; y?: number };
   const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
   if (!asset) {
     const avail = useAssetStore.getState().assets.map((a) => a.id).join(', ') || '(none imported)';
@@ -579,6 +635,7 @@ const createMedia: AiTool['handler'] = async (input, ctx) => {
   // the new node's id (the inserter doesn't return it).
   const id = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
   if (!id) return fail(`Placed "${asset.name}" but could not resolve the new layer id.`);
+  bindAlias(ctx, alias, id);
 
   if (x !== undefined || y !== undefined) {
     const node = defaultSceneGraph.getNode(id);
@@ -591,6 +648,181 @@ const createMedia: AiTool['handler'] = async (input, ctx) => {
   bumpScene();
   return ok(`Added ${asset.type} layer "${asset.name}" with id '${id}'. Animate it like any other layer.`, { id });
 };
+
+
+/**
+ * Generate an image and place it as a layer.
+ *
+ * Three things this must get right, all of them learned from the surrounding
+ * code rather than invented here:
+ *
+ *  • **The key never comes near this process.** The request carries a provider
+ *    id and a prompt; the server holds the key and makes the call. Same boundary
+ *    as `/ai/stream`.
+ *  • **The result becomes a real asset.** Bytes go through `addAsset`, so the
+ *    image lands in the user's library, survives a reload, saves with the
+ *    project, and can be reused — rather than living as a blob URL that dies
+ *    with the tab.
+ *  • **Failures are reported, never swallowed.** An image that did not arrive
+ *    has to say why, because it cost the user credits and several seconds.
+ */
+const generateImage: AiTool['handler'] = async (input, ctx) => {
+  const { id: alias, prompt, aspect, x, y } = input as {
+    id?: string; prompt: string; aspect?: string; x?: number; y?: number;
+  };
+
+  const comp = ctx.comp.get();
+  // Aspect is advisory — the gateway maps it onto a size the provider accepts.
+  // Sending the comp's own dimensions lets a square comp get a square image
+  // without the model having to reason about it.
+  const dims =
+    aspect === 'square' ? { width: 1024, height: 1024 }
+    : aspect === 'portrait' ? { width: 1024, height: 1536 }
+    : aspect === 'landscape' ? { width: 1536, height: 1024 }
+    : { width: comp.width, height: comp.height };
+
+  const provider = useAiProviderStore.getState().provider;
+
+  let res: { ok: boolean; base64: string; mime: string; creditsUsed: number };
+  try {
+    res = await api.generateImage({ provider, prompt, ...dims });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return fail(
+      `Image generation failed: ${message}. The scene is unchanged and no layer was added. ` +
+      `Carry on with the rest of the piece rather than retrying — a second attempt costs again.`,
+    );
+  }
+  if (!res.ok || !res.base64) return fail('The image provider returned nothing. Try rewording the prompt.');
+
+  // base64 → File, so this takes exactly the same path as a user drag-and-drop.
+  const bytes = Uint8Array.from(atob(res.base64), (ch) => ch.charCodeAt(0));
+  const ext = res.mime === 'image/jpeg' ? 'jpg' : 'png';
+  const name = `${prompt.slice(0, 40).replace(/[^\w -]/g, '').trim() || 'generated'}.${ext}`;
+  const file = new File([bytes as BlobPart], name, { type: res.mime });
+
+  const asset = await useAssetStore.getState().addAsset(file);
+  await insertMedia(asset);
+
+  const id = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
+  if (!id) return fail(`Generated "${name}" and added it to the library, but could not resolve the new layer id.`);
+  bindAlias(ctx, alias, id);
+
+  if (x !== undefined || y !== undefined) {
+    const node = defaultSceneGraph.getNode(id);
+    const t = node?.components.find((c) => c.type === 'Transform');
+    if (t) {
+      if (x !== undefined) defaultSceneGraph.writeProp(id, t.id, 'x', x);
+      if (y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', y);
+    }
+  }
+  bumpScene();
+  return ok(
+    `Generated an image and placed it as layer '${id}'` +
+      (res.creditsUsed ? ` (${res.creditsUsed} credits).` : '.') +
+      ` It is in the asset library as "${name}" — reuse it rather than generating again.`,
+    { id, assetId: asset.id, creditsUsed: res.creditsUsed },
+  );
+};
+
+
+/**
+ * Build a layer from SVG markup the model wrote.
+ *
+ * This capability already existed for user imports; the AI simply could not
+ * reach it. Everything about the path is unchanged — the same sanitizer, the
+ * same scoping, the same layer shape — because the interesting risk here is
+ * markup, and markup from a model deserves exactly the same treatment as markup
+ * from a file the user dragged in. `insertSvgLayer` returning null IS the
+ * sanitizer's refusal, and it is reported rather than retried.
+ */
+const importSvg: AiTool['handler'] = async (input, ctx) => {
+  const { id: alias, markup, name, x, y } = input as {
+    id?: string; markup: string; name: string; x?: number; y?: number;
+  };
+  if (!/<svg[\s>]/i.test(markup)) {
+    return fail('That is not SVG markup — it must contain an <svg> element with a viewBox.');
+  }
+
+  const nodeId = insertSvgLayer(markup, name, {
+    ...(x !== undefined ? { x } : {}),
+    ...(y !== undefined ? { y } : {}),
+  });
+  if (!nodeId) {
+    return fail(
+      `The SVG could not be used: sanitizing rejected it. Write self-contained markup — inline ` +
+      `geometry only, no <script>, no <image href>, no external references.`,
+    );
+  }
+  bindAlias(ctx, alias, nodeId);
+  bumpScene();
+  return ok(`Added SVG layer "${name}" with id '${nodeId}'. Animate it like any other layer.`, { id: nodeId });
+};
+
+/**
+ * Tempo, beat grid and onsets for an audio layer.
+ *
+ * Decoding happens HERE rather than in `@motion/audio`, and that split is the
+ * point: the browser has `decodeAudioData` and Node does not, so keeping it out
+ * of the package is what lets the analysis be tested against synthesised signals
+ * whose answer is known exactly.
+ */
+const analyseAudioTool: AiTool['handler'] = async (input) => {
+  const { nodeId, maxBeats } = input as { nodeId: string; maxBeats?: number };
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return fail(`No layer with id '${nodeId}'.`);
+
+  const src = useAssetStore.getState().assets.find((a) => a.id === readAudioAssetId(node))?.src;
+  if (!src) {
+    return fail(
+      `Layer '${nodeId}' has no audio asset to analyse. Call describe_scene and pick a layer of ` +
+      `kind 'audio'.`,
+    );
+  }
+
+  try {
+    const buf = await fetch(src).then((r) => r.arrayBuffer());
+    const AudioCtor = (globalThis as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
+      .AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return fail('This environment cannot decode audio.');
+    const actx = new AudioCtor();
+    const decoded = await actx.decodeAudioData(buf);
+    const channels: Float32Array[] = [];
+    for (let c = 0; c < decoded.numberOfChannels; c++) channels.push(decoded.getChannelData(c));
+    const a = analyseAudio(channels, decoded.sampleRate);
+    void actx.close();
+
+    const cap = Math.max(1, Math.min(512, maxBeats ?? 128));
+    const beats = a.beats.slice(0, cap).map((t) => Number(t.toFixed(3)));
+    const onsets = a.onsets.slice(0, cap).map((t) => Number(t.toFixed(3)));
+
+    // Say plainly when there is no usable tempo. A grid at the wrong tempo puts
+    // every cut in the wrong place for the whole piece, which is worse than
+    // timing from the brief.
+    const verdict =
+      a.tempoConfidence < 0.25
+        ? `No reliable tempo (confidence ${a.tempoConfidence}). Time this from the brief, not from a grid.`
+        : `${a.bpm} BPM, confidence ${a.tempoConfidence}.`;
+
+    return ok(
+      `${verdict} ${a.durationSec.toFixed(1)}s of audio, ${a.beats.length} beats and ` +
+      `${a.onsets.length} onsets detected` +
+      (beats.length < a.beats.length ? ` (first ${beats.length} returned).` : '.'),
+      { bpm: a.bpm, tempoConfidence: a.tempoConfidence, beats, onsets, durationSec: a.durationSec },
+    );
+  } catch (err) {
+    return fail(`Could not analyse that audio: ${err instanceof Error ? err.message : String(err)}`);
+  }
+};
+
+/** The asset id an audio layer points at, whatever component carries it. */
+function readAudioAssetId(node: { components: { props: Record<string, unknown> }[] }): string | undefined {
+  for (const c of node.components) {
+    const v = c.props.assetId ?? c.props.src;
+    if (typeof v === 'string' && v) return v;
+  }
+  return undefined;
+}
 
 const createMediaFromAttachment: AiTool['handler'] = async (input, ctx) => {
   const { index, name, x, y } = input as { index: number; name?: string; x?: number; y?: number };
@@ -875,7 +1107,7 @@ const createPuppetRig: AiTool['handler'] = (input, ctx) => {
         `Rasterize it first (the "Rig Logo for Animation" command flattens a group/precomp to a single riggable image).`,
     );
   }
-  // Ordinal ids, not timestamps: `pin_${Date.now()}_${idx}` collided whenever
+  // Ordinal ids, not timestamps: `pin_${Date.now}_${idx}` collided whenever
   // two rigs were authored inside the same millisecond, and colliding pins
   // share one set of animation tracks.
   const pinIds = nextRigIds(
@@ -1134,10 +1366,42 @@ const recolorLottieVectorHandler: AiTool['handler'] = (input, ctx) => {
   return ok(`Recolored ${count} vector shapes inside Lottie/group '${nodeId}' to ${color}.`);
 };
 
+// ── Recipe handlers whose defs live in craft.ts ────────────────────
+
+const addLogoReveal: AiTool['handler'] = (input, ctx) => {
+  const i = input as { text: string; shape?: 'ellipse' | 'star' | 'rect'; style?: string };
+  const s = resolveStyle(i.style);
+  const ids = recipeLogoReveal(ctx, s, { text: i.text, shape: i.shape });
+  bumpScene();
+  return ok(`Built trim-path logo reveal sequence for "${i.text}".`, { ids });
+};
+
+const addRadialBurst: AiTool['handler'] = (input, ctx) => {
+  const i = input as { count?: number; x?: number; y?: number; style?: string };
+  const s = resolveStyle(i.style);
+  const id = recipeRadialBurst(ctx, s, { count: i.count, x: i.x, y: i.y });
+  bumpScene();
+  return ok(`Added radial repeater burst accent '${id}'.`, { id });
+};
+
+const addPathMorph: AiTool['handler'] = (input, ctx) => {
+  const i = input as { op?: 'puckerBloat' | 'zigzag'; amount?: number; style?: string };
+  const s = resolveStyle(i.style);
+  const id = recipePathMorph(ctx, s, { op: i.op, amount: i.amount });
+  bumpScene();
+  return ok(`Added organic shape path morph '${id}'.`, { id });
+};
+
 // ── Registry wiring ───────────────────────────────────────────────
 
 const HANDLERS: Record<string, AiTool['handler']> = {
+  // The craft primitives (spring, precomp, time remap, shadow stack, surface
+  // treatment, …) live in their own file — this one is already 1300 lines.
+  ...CRAFT_HANDLERS,
   apply_layer_style: applyLayerStyleHandler,
+  add_logo_reveal: addLogoReveal,
+  add_radial_burst: addRadialBurst,
+  add_path_morph: addPathMorph,
   recolor_lottie_vector: recolorLottieVectorHandler,
   describe_scene: describeScene,
 
@@ -1168,6 +1432,9 @@ const HANDLERS: Record<string, AiTool['handler']> = {
   update_effect: updateEffectHandler,
   text_animator: textAnimator,
   create_media: createMedia,
+  generate_image: generateImage,
+  import_svg: importSvg,
+  analyse_audio: analyseAudioTool,
   create_media_from_attachment: createMediaFromAttachment,
   create_mask: createMask,
   update_composition: updateComposition,
@@ -1187,7 +1454,16 @@ const HANDLERS: Record<string, AiTool['handler']> = {
   add_transition: addTransition,
 };
 
-/** Every tool definition bound to its handler. */
+/**
+ * Every tool definition bound to its handler.
+ *
+ * `ALL_TOOL_DEFS` is the ONLY source. Five tools used to be defined inline here
+ * and pushed onto the result, which meant the registry and the static list
+ * disagreed — the backend's tool catalogue, the provider emitters and every
+ * drift check read the list and never saw them. The throw below is what keeps
+ * the two halves in step: a def with no handler fails at boot rather than deep
+ * inside a run.
+ */
 export function buildAiTools(): AiTool[] {
   const tools = ALL_TOOL_DEFS.map((d) => {
     const handler = HANDLERS[d.name];
@@ -1195,113 +1471,6 @@ export function buildAiTools(): AiTool[] {
     return { ...def(d.name), handler };
   });
 
-  const applyLayerStyleTool: AiTool = {
-    name: 'apply_layer_style',
-    description: 'Apply outer glow or drop shadow layer styling to add visual depth.',
-    kind: 'write',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        nodeId: { type: 'string', description: 'The layer to style.' },
-        styleType: { type: 'string', enum: ['drop_shadow', 'outer_glow'], description: 'Style type to apply.' },
-        color: { type: 'string', description: 'Color hex code.' },
-        opacity: { type: 'number', description: 'Opacity from 0.0 to 1.0.' },
-        size: { type: 'number', description: 'Blur radius or glow size in pixels.' },
-        distance: { type: 'number', description: 'Shadow offset distance in pixels (shadow only).' },
-        angle: { type: 'number', description: 'Shadow offset angle in degrees (shadow only).' },
-      },
-      required: ['nodeId', 'styleType', 'color'],
-    },
-    handler: applyLayerStyleHandler,
-  };
-
-  const recolorLottieVectorTool: AiTool = {
-    name: 'recolor_lottie_vector',
-    description: 'Recursively recolors all shape outline vector layers inside a Lottie/group hierarchy to match brand colors.',
-    kind: 'write',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        nodeId: { type: 'string', description: 'The root Lottie or group layer ID.' },
-        color: { type: 'string', description: 'The color hex code to apply (e.g. #ff00ff).' },
-      },
-      required: ['nodeId', 'color'],
-    },
-    handler: recolorLottieVectorHandler,
-  };
-
-const addLogoReveal: AiTool['handler'] = (input, ctx) => {
-  const i = input as { text: string; shape?: 'ellipse' | 'star' | 'rect'; style?: string };
-  const s = resolveStyle(i.style);
-  const ids = recipeLogoReveal(ctx, s, { text: i.text, shape: i.shape });
-  bumpScene();
-  return ok(`Built trim-path logo reveal sequence for "${i.text}".`, { ids });
-};
-
-const addRadialBurst: AiTool['handler'] = (input, ctx) => {
-  const i = input as { count?: number; x?: number; y?: number; style?: string };
-  const s = resolveStyle(i.style);
-  const id = recipeRadialBurst(ctx, s, { count: i.count, x: i.x, y: i.y });
-  bumpScene();
-  return ok(`Added radial repeater burst accent '${id}'.`, { id });
-};
-
-const addPathMorph: AiTool['handler'] = (input, ctx) => {
-  const i = input as { op?: 'puckerBloat' | 'zigzag'; amount?: number; style?: string };
-  const s = resolveStyle(i.style);
-  const id = recipePathMorph(ctx, s, { op: i.op, amount: i.amount });
-  bumpScene();
-  return ok(`Added organic shape path morph '${id}'.`, { id });
-};
-
-  tools.push(
-    applyLayerStyleTool,
-    recolorLottieVectorTool,
-    {
-      name: 'add_logo_reveal',
-      description: 'Builds an After Effects-style trim-path stroke outline logo reveal sequence with glowing emblem pop and title entrance.',
-      kind: 'compose',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          text: { type: 'string', description: 'Brand or product title text.' },
-          shape: { type: 'string', enum: ['ellipse', 'star', 'rect'], description: 'Outline shape style.' },
-          style: { type: 'string', description: 'Motion style name (e.g. premium, cyberpunk, saas, apple).' },
-        },
-        required: ['text'],
-      },
-      handler: addLogoReveal,
-    },
-    {
-      name: 'add_radial_burst',
-      description: 'Adds a radial shape repeater burst accent (HUD / particle ring) for high-impact motion graphics.',
-      kind: 'compose',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          count: { type: 'number', description: 'Number of repeater copies (4 to 16).' },
-          x: { type: 'number', description: 'Center X coordinate.' },
-          y: { type: 'number', description: 'Center Y coordinate.' },
-          style: { type: 'string', description: 'Motion style name.' },
-        },
-      },
-      handler: addRadialBurst,
-    },
-    {
-      name: 'add_path_morph',
-      description: 'Creates a fluid organic morphing shape (pucker/bloat or zigzag distortion).',
-      kind: 'compose',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          op: { type: 'string', enum: ['puckerBloat', 'zigzag'], description: 'Path distortion operator.' },
-          amount: { type: 'number', description: 'Distortion intensity.' },
-          style: { type: 'string', description: 'Motion style name.' },
-        },
-      },
-      handler: addPathMorph,
-    },
-  );
   return tools;
 }
 

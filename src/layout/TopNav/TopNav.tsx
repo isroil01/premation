@@ -13,9 +13,11 @@ import { IconButton } from '@components/IconButton';
 import { Icon, type IconName } from '@components/Icon';
 import { ToolOptionsBar } from './ToolOptionsBar';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
-import { insertPrimitive, insertSolid, insertCamera, insertLight, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
+import { insertPrimitive, insertSolid, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
+import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { useGuidesStore } from '@stores/guidesStore';
 import { importLottieFile } from '@core/library/lottieLibrary';
+import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
@@ -47,6 +49,7 @@ import { isRiggableLeafNode } from '@core/scene/rigLogo';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { useLayoutStore } from '@stores/layoutStore';
 import styles from './TopNav.module.css';
+import { usePreferenceStore } from '@stores/preferenceStore';
 
 interface ToolDef {
   id: Tool;
@@ -169,7 +172,7 @@ const WORKSPACE_ICONS: Record<string, IconName> = {
  * list.
  *
  * "Save Current Workspace…" persisted a layout that no UI could ever offer back:
- * the menu listed only the eight builtins, and `listWorkspaces()` had no caller
+ * the menu listed only the eight builtins, and `listWorkspaces` had no caller
  * outside the manager itself. Reading the registry makes saved layouts appear
  * (and deletable), which is the difference between the command doing something
  * and quietly writing to a store nobody reads.
@@ -252,10 +255,11 @@ export function TopNav(): JSX.Element {
   const snap = useUIStore((s) => s.snap);
   const toggleSnap = useUIStore((s) => s.toggleSnap);
   // Mirrored into the narrow-screen overflow menu, so subscribe rather than
-  // reading getState() at render time (a getState() read never re-renders, so
+  // reading getState at render time (a getState read never re-renders, so
   // the overflow checkmarks would go stale the moment the value changed).
   const draft3d = useGuidesStore((s) => s.draft3d);
   const groundGridVisible = useGuidesStore((s) => s.groundGridVisible);
+  const layerBoxesVisible = usePreferenceStore((s) => s.showLayerBounds);
 
   const [canUndo, setCanUndo] = useState(() => getCommandSystem().getHistory().canUndo());
   const [canRedo, setCanRedo] = useState(() => getCommandSystem().getHistory().canRedo());
@@ -289,20 +293,10 @@ export function TopNav(): JSX.Element {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-picking the same file
     if (!file) return;
-    const toast = (message: string, level: 'success' | 'warning'): void => {
-      useUIStore.getState().notify({ level, message, durationMs: 3200 });
-    };
     try {
-      const { nodeIds, warnings } = await importLottieFile(file);
-      if (nodeIds.length === 0) {
-        toast('Lottie import: no layers could be created', 'warning');
-      } else {
-        const n = nodeIds.length;
-        const suffix = warnings.length ? ` (${warnings.length} warning${warnings.length > 1 ? 's' : ''})` : '';
-        toast(`Imported ${n} layer${n > 1 ? 's' : ''}${suffix}`, warnings.length ? 'warning' : 'success');
-      }
-    } catch {
-      toast('Lottie import failed: file could not be parsed', 'warning');
+      reportLottieImport(file.name, await importLottieFile(file));
+    } catch (err) {
+      reportLottieImportFailure(file.name, err);
     }
   };
   
@@ -386,6 +380,7 @@ export function TopNav(): JSX.Element {
         // is always visible, so a copy would be a second switch for one state.
         { type: 'checkbox', id: 'draft-3d', label: 'Draft 3D', checked: draft3d, onChange: () => useGuidesStore.getState().toggleDraft3d() },
         { type: 'checkbox', id: 'ground-grid', label: '3D Ground Plane', checked: groundGridVisible, onChange: () => useGuidesStore.getState().toggleGroundGridVisible() },
+        { type: 'checkbox', id: 'layer-boxes', label: 'Layer Bounding Boxes', checked: layerBoxesVisible, onChange: () => usePreferenceStore.getState().set('showLayerBounds', !usePreferenceStore.getState().showLayerBounds) },
       ]
     });
     // "Insert 3D Object" is NOT mirrored here: the New-layer dropdown that owns
@@ -501,9 +496,9 @@ export function TopNav(): JSX.Element {
         <div className={styles.inner}>
           <IconButton
             aria-label="Back to Dashboard"
-            size="sm"
+            size="lg"
             className={styles.back}
-            style={{ marginRight: 8, marginLeft: -4 }}
+            style={{ marginRight: 8, marginLeft: 4 }}
             onClick={() => navigate('/')}
           >
             <Icon name="arrow-left" size={18} />
@@ -673,8 +668,11 @@ export function TopNav(): JSX.Element {
                     }] satisfies DropdownItem[])
                   : []),
                 { type: 'separator' },
-                { type: 'item', id: 'new-camera', label: 'Camera', icon: 'camera', onSelect: () => insertCamera() },
-                { type: 'item', id: 'new-light', label: 'Light', icon: 'light', onSelect: () => insertLight() },
+                // The AE-style options dialogs. These existed, fully built, with
+                // no importer — so both menu items silently inserted a hardcoded
+                // seed and every camera and light in the app was identical.
+                { type: 'item', id: 'new-camera', label: 'Camera…', icon: 'camera', onSelect: () => openCameraDialog() },
+                { type: 'item', id: 'new-light', label: 'Light…', icon: 'light', onSelect: () => openLightDialog() },
                 { type: 'item', id: 'new-particle', label: 'Particle System', icon: 'sparkles', onSelect: () => insertParticle() },
                 { type: 'separator' },
                 { type: 'item', id: 'new-3d-text', label: '3D Extruded Text', icon: 'text-3d', onSelect: () => insert3DText('3D TEXT') },

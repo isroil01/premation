@@ -968,7 +968,7 @@ function parseRgbTriplet(hex: string): [number, number, number] {
 
 // ── Directional Blur ───────────────────────────────────────────────
 //
-// Blur along ONE axis. CSS `blur()` is isotropic and there is no directional
+// Blur along ONE axis. CSS `blur` is isotropic and there is no directional
 // form, so this accumulates offset copies along the axis — a box blur, which is
 // what a directional blur is. Weighted by a triangular kernel so the falloff is
 // smooth rather than a visible stack of ghosts, and normalized so the layer

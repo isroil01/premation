@@ -94,7 +94,7 @@ export function Tabs({
             onKeyDown={(e) => onKeyDown(e, i)}
           >
             {item.icon ? <span className={styles.icon}>{item.icon}</span> : null}
-            <span className={styles.label}>{item.label}</span>
+            {item.label ? <span className={styles.label}>{item.label}</span> : null}
             {item.closable ? (
               <span
                 role="button"

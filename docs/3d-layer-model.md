@@ -1,8 +1,7 @@
 # The 3D layer model — what this editor does, and where it differs from AE
 
-Companion to [3d-diagnosis.md](./3d-diagnosis.md). That document is the audit;
-this one is the standing description of the model, for anyone wondering why a
-3D scene behaves the way it does.
+The standing description of the 3D model, for anyone wondering why a 3D scene
+behaves the way it does.
 
 Target: **After Effects' Classic 3D renderer**. Flat planes in 3D space, lit and
 shadowed, with a working camera. Extrusion and bevels exist here as an extension

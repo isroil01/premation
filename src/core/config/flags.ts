@@ -22,3 +22,25 @@ export function isLocalFirst(): boolean {
 export function setLocalFirst(on: boolean): void {
   localFirst = on;
 }
+
+/**
+ * Route generative prompts through the caster pipeline.
+ *
+ * ON by default. The caster's quality floor is deterministic — every keyframe
+ * comes from a hand-authored library that the timing, design and UI-motion
+ * linters verify on 100% of output, including when the model exercises no
+ * judgement at all — so it is not the experimental path here; the director is.
+ *
+ * The flag exists so a bad interaction with a real provider can be turned off
+ * without a deploy, and so a run can be A/B'd against the director. Turning it
+ * off falls back to the director, which still works.
+ */
+let caster = true;
+
+export function casterEnabled(): boolean {
+  return caster;
+}
+
+export function setCasterEnabled(on: boolean): void {
+  caster = on;
+}

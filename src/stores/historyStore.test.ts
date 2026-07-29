@@ -63,7 +63,7 @@ beforeEach(() => {
 
 describe('baseline entry', () => {
   it('records "Open" so the original state is reachable', () => {
-    // record() used to push nothing when there was no previous state, leaving
+    // record used to push nothing when there was no previous state, leaving
     // the document's opening state with no row to jump back to.
     const entries = getCommandSystem().getHistory().getEntries();
     expect(entries).toHaveLength(1);

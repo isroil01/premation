@@ -13,7 +13,7 @@
  * different scenes therefore cannot be compared to each other. Only "identical
  * pixels in, cap on vs cap off" isolates the working buffer.
  *
- * Uses `filter: blur()` (faithful on the Skia backing, unlike node-canvas) and
+ * Uses `filter: blur` (faithful on the Skia backing, unlike node-canvas) and
  * composites only at globalAlpha 1, avoiding the alpha-algebra deviation
  * documented in __testHelpers__/canvasFidelity.ts.
  */

@@ -3,7 +3,7 @@
  *
  * The old backend-capability tables (Canvas2D vs GPU) and backend-picking
  * functions have been removed. This file tests the remaining public API:
- *   - analyzeDocument() correctly detects which features a document uses.
+ *   - analyzeDocument correctly detects which features a document uses.
  */
 
 import { analyzeDocument } from './capabilities';

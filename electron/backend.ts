@@ -1,15 +1,15 @@
 /**
  * Backend lifecycle manager — the desktop app owns its server (the After Effects
  * model: launch the app, the server comes up behind it; quit the app, it goes
- * down). The renderer always talks to a local motion-back on :4000; this module
+ * down). The renderer always talks to a local motion-back on:4000; this module
  * makes sure one is running without the user starting it by hand.
  *
  * Resolution order for the server entry (`motion-back/dist/main.js`):
  *   1. MOTION_BACKEND_ENTRY env override (explicit path)
  *   2. packaged build: <resources>/backend/dist/main.js  (bundled sidecar)
- *   3. dev checkout: ../motion-back/dist/main.js          (sibling repo)
+ *   3. dev checkout:../motion-back/dist/main.js          (sibling repo)
  * If none is found, or a server is already listening, we just use whatever is
- * on :4000 (so an externally-run backend still works).
+ * on:4000 (so an externally-run backend still works).
  */
 
 import { app, net } from 'electron';
@@ -55,7 +55,7 @@ async function waitForHealth(timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * Ensure a backend is running. Returns true once :4000 is healthy. Reuses an
+ * Ensure a backend is running. Returns true once:4000 is healthy. Reuses an
  * already-running server; otherwise forks the bundled/sibling one in Electron's
  * Node runtime (no system Node needed) with its own directory as cwd so it loads
  * its `.env`, `uploads/`, and Prisma client correctly.
@@ -76,7 +76,7 @@ export async function startBackend(): Promise<boolean> {
   console.log('[backend] launching server:', entry);
   // Run the server with Electron's bundled Node (ELECTRON_RUN_AS_NODE) so no
   // system Node install is required in a packaged app. cwd = motion-back so it
-  // loads its own .env / uploads / Prisma engine.
+  // loads its own.env / uploads / Prisma engine.
   child = spawn(process.execPath, [entry], {
     cwd,
     env: {

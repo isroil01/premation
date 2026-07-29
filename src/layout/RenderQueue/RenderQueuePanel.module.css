@@ -197,10 +197,33 @@
   line-height: 1.2;
 }
 
+/* The render parameters, so two jobs on the same comp are distinguishable. */
+.jobSpec {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .statusProgressRow {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Why a job failed. Wraps rather than truncates: these messages are the only
+   thing the user has to act on (ffmpeg missing, nothing rendered, out of memory). */
+.jobError {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-soft, rgba(200, 60, 60, 0.12));
+  border: 1px solid var(--color-danger, rgba(200, 60, 60, 0.35));
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 /* ── Status chip ─────────────────────────────────────────────────── */

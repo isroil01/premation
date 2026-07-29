@@ -21,7 +21,7 @@ export const SKELETON_EDIT_COMMAND = asCommandId('skeleton.edit');
 export interface IKTarget {
   boneId: string;
   /** Target position in LAYER-LOCAL space (the mesh/bone coordinate space).
-   *  Keyframeable via the ikTarget.<boneId>.x / .y scalar tracks; these static
+   *  Keyframeable via the ikTarget.<boneId>.x /.y scalar tracks; these static
    *  values are the fallback when no track exists. */
   x: number;
   y: number;

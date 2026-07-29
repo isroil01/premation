@@ -44,7 +44,7 @@ export type CacheTag =
  *
  * `satisfies` makes the compiler check this against the union above, so adding
  * a `CacheTag` without adding it here is a build error rather than a subtle
- * gap in `clear()`.
+ * gap in `clear`.
  */
 const ALL_TAGS = [
   'account',

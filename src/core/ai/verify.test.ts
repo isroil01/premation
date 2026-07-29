@@ -1,5 +1,5 @@
 /**
- * The false-positive table from docs/ai-audit.md, as tests.
+ * The false-positive table from an earlier audit, as tests.
  *
  * A first attempt at this verifier flagged five issues against known-good
  * compose-tool output and all five were wrong. Those three shapes ("does not

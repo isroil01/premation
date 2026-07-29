@@ -3,7 +3,7 @@
  *
  * Everything crossing the transport is ciphertext: chunk contents and the
  * manifest are sealed by the `ProjectCipher` before upload and opened after
- * download, so the server (RFC §6/§10.1) stores opaque bytes it cannot read.
+ * download, so the server stores opaque bytes it cannot read.
  * The engine itself is pure orchestration over the `SyncTransport` and
  * `ProjectCipher` ports — the real HTTP transport + backend are thin adapters.
  *

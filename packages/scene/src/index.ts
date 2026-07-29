@@ -65,6 +65,7 @@ export {
 // ── Core ──────────────────────────────────────────────────────────
 export { Scene, type NodePredicate } from './core/Scene';
 export { SelectionModel } from './core/SelectionModel';
+export { sceneMutationEpoch } from './core/mutationEpoch';
 export {
   SceneValidationError,
   type ValidationCode,
@@ -102,7 +103,7 @@ export {
   migrate,
 } from './serialization/Serializer';
 
-// ── Graft serialize()/toJSON() onto Scene (no import cycle) ────────
+// ── Graft serialize/toJSON onto Scene (no import cycle) ────────
 // Loading is done with the exported `deserializeScene(doc)`.
 import { Scene as SceneClass } from './core/Scene';
 import { serializeScene as _ser } from './serialization/Serializer';

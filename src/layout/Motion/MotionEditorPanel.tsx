@@ -1,5 +1,5 @@
 /**
- * MotionEditorPanel — the large, direct-manipulation curve editor (spec §Motion
+ * MotionEditorPanel — the large, direct-manipulation curve editor (the spec
  * Editor). Sequencing lives in the Timeline; this panel owns *how* a value
  * moves: the interpolation curve, keyframe values/timing, and easing — shown
  * big and directly manipulable instead of a cramped graph editor.

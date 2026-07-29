@@ -428,7 +428,7 @@ export class WebGPUBackend implements RenderBackend {
   }
   dispose(): void {
     // Drop any half-built frame, detach from the canvas, then destroy the
-    // device. destroy() releases every resource created from it (buffers,
+    // device. destroy releases every resource created from it (buffers,
     // textures, pipelines — WebGPU's ownership model), so per-resource
     // teardown is unnecessary; unconfigure frees the canvas' swap chain so a
     // fresh backend can reconfigure the same canvas on re-entry.

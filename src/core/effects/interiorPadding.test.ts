@@ -12,7 +12,7 @@
  * stronger, because a wider blur reaches further into a region that does not
  * exist. That monotonicity is what this pins.
  *
- * Only `filter: blur()` and globalAlpha-1 compositing are involved, both faithful
+ * Only `filter: blur` and globalAlpha-1 compositing are involved, both faithful
  * on the Skia backing — see __testHelpers__/canvasFidelity.ts.
  */
 

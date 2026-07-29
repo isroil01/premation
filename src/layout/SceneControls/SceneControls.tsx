@@ -18,6 +18,7 @@
 import { useGuidesStore, type CameraTool, type Gizmo3dState } from '@stores/guidesStore';
 import { Icon, type IconName } from '@components/Icon';
 import styles from './SceneControls.module.css';
+import { usePreferenceStore } from '@stores/preferenceStore';
 
 const CAMERA_TOOLS: ReadonlyArray<{ id: CameraTool; icon: IconName; label: string }> = [
   { id: 'orbit', icon: 'orbit', label: 'Orbit Around Cursor' },
@@ -41,6 +42,10 @@ export function SceneControls(): JSX.Element {
   const toggleDraft3d = useGuidesStore((s) => s.toggleDraft3d);
   const groundGridVisible = useGuidesStore((s) => s.groundGridVisible);
   const toggleGroundGridVisible = useGuidesStore((s) => s.toggleGroundGridVisible);
+  // A preference, not view state — see `Preferences.showLayerBounds`.
+  const layerBoxesVisible = usePreferenceStore((s) => s.showLayerBounds);
+  const setPreference = usePreferenceStore((s) => s.set);
+  const toggleLayerBoxesVisible = (): void => setPreference('showLayerBounds', !layerBoxesVisible);
 
   return (
     <div className={styles.sceneControls}>
@@ -98,6 +103,22 @@ export function SceneControls(): JSX.Element {
         title={groundGridVisible ? 'Hide 3D ground plane' : 'Show 3D ground plane'}
       >
         <Icon name="ground-grid" size={16} />
+      </button>
+
+      {/*
+        Layer bounding boxes. Next to the ground plane because they are the same
+        kind of thing — reference geometry that never renders — but a separate
+        control because wanting to know which way is up is not the same as
+        wanting an outline around every layer.
+      */}
+      <button
+        type="button"
+        className={`${styles.button} ${layerBoxesVisible ? styles.buttonActive : ''}`}
+        onClick={toggleLayerBoxesVisible}
+        aria-pressed={layerBoxesVisible}
+        title={layerBoxesVisible ? 'Hide layer bounding boxes' : 'Show layer bounding boxes'}
+      >
+        <Icon name="frame" size={16} />
       </button>
     </div>
   );

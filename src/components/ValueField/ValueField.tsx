@@ -3,10 +3,10 @@
  *
  * Every numeric property in the app is edited through this one control, which
  * is simultaneously:
- *   • a scrubbable slider  — click-drag horizontally to adjust (AE/Blender)
- *   • a text input         — click (without dragging) to type an exact value
- *   • modifier-aware       — Shift = 10× step, Alt = 0.1× step; ↑/↓ nudge
- *   • a calculator         — accepts math: `960/2`, `+15`, `*1.5`, `(3+4)*2`
+ *   • a scrubbable slider — click-drag horizontally to adjust (AE/Blender)
+ *   • a text input — click (without dragging) to type an exact value
+ *   • modifier-aware — Shift = 10× step, Alt = 0.1× step; ↑/↓ nudge
+ *   • a calculator — accepts math: `960/2`, `+15`, `*1.5`, `(3+4)*2`
  *
  * The spec calls this the make-or-break interaction: "If this one interaction
  * feels perfect, the entire application feels professional."

@@ -43,7 +43,7 @@ export class BundleRepository {
     for (const name of removed) {
       await this.fs.remove(root, name);
     }
-    // ...manifest last (see file header — this is the crash-safety invariant).
+    //...manifest last (see file header — this is the crash-safety invariant).
     await this.fs.writeAtomic(root, CHUNK.manifest, bundle.files[CHUNK.manifest]!);
 
     return bundle.manifest;

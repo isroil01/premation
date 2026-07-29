@@ -1,8 +1,6 @@
 # Plugins: architecture and authoring guide
 
-**Status:** shipped. Supersedes the "rebuild from zero" verdict in
-[`plugin-audit.md`](./plugin-audit.md) — that audit described the prototype this
-replaced, and its §0B inventory is now historical.
+**Status:** shipped.
 
 ---
 
@@ -76,12 +74,27 @@ indexedDB:DENIED localStorage:ABSENT document:ABSENT window:ABSENT`, and a
 the heartbeat.
 
 **Panels** get the same treatment on the UI side: `sandbox="allow-scripts"`
-**without** `allow-same-origin`, delivered by `srcdoc` so the frame never
-navigates. Its only exit is `postMessage`, which the host accepts solely from
-frames it registered, on the origin it registered them with, and forwards **only
-to the worker that owns that frame** — routing comes from the registration, not
-from anything the message says. A panel cannot name an API method, a layer, or
-another plugin.
+**without** `allow-same-origin`, so the frame has an opaque origin and cannot
+read this document, our cookies or our `localStorage`. Its only exit is
+`postMessage`, which the host accepts solely from frames it registered, on the
+origin it registered them with, and forwards **only to the worker that owns that
+frame** — routing comes from the registration, not from anything the message
+says. A panel cannot name an API method, a layer, or another plugin.
+
+The panel document is loaded from `public/plugin-panel.html` and receives the
+plugin's markup by `postMessage` after load. It used to be delivered with
+`srcdoc`, and that quietly made the entire panel feature decoration: a `srcdoc`
+document **inherits the embedder's CSP**, the app ships `script-src 'self'` with
+no `'unsafe-inline'`, and a panel is by definition inline script — so panels
+rendered as static markup, `motionPanel` was never defined, and not one message
+ever reached a plugin. No error, no clue. A document's own `<meta>` policy can
+only *add* restrictions, so the frame could not opt back in; loading it from a
+real URL is the only way to give it a policy of its own.
+
+That policy (in the shell) is **tighter** than the app's for everything except
+inline script: `default-src 'none'`, `connect-src 'none'`. Verified live — a
+panel's `fetch` fails and a remote `<img>` is refused. Panels have no network,
+exactly as the worker has none.
 
 ---
 
@@ -98,7 +111,9 @@ another plugin.
 | Install / supervise / permission gate / panels bridge | `src/core/plugins/PluginHost.ts` |
 | Persistence | `src/stores/pluginStore.ts` |
 | Manager UI + consent screen | `src/layout/Plugins/PluginsModal.tsx` |
-| Panel host (sandboxed iframe) | `src/layout/Plugins/PluginPanel.tsx` |
+| Docked panel + sandboxed frame | `src/layout/Plugins/PluginPanel.tsx` |
+| Panel host document (its own CSP) | `public/plugin-panel.html` |
+| Plugins menu, built from what is installed | `src/layout/Menu/pluginMenu.ts` |
 | Starter template generator | `src/layout/Plugins/starterPlugin.ts` |
 
 **Tests:** `pluginPackage.test.ts` (format), `pluginHost.test.ts` (lifecycle,
@@ -160,12 +175,29 @@ Ask for the fewest you need: the list is the install screen. A refused call
 returns an error naming the missing permission rather than silently doing
 nothing, so a plugin can degrade deliberately (`motion.has('scene:write')`).
 
+Consent is **per permission**, not one yes over the list: the install screen
+ticks everything the manifest asks for, and the user may untick any of it.
+They can also change their mind later — Plugins ▸ Manage Plugins… ▸
+**Permissions** on the row, which restarts the plugin with the new set (the
+worker was told what it had at boot). A grant is always intersected with the
+manifest, so nothing can hand a plugin more than it disclosed.
+
+Write for this: check `motion.has(p)` rather than assuming, and let a refusal
+disable a feature instead of throwing.
+
 ---
 
 ## 5. Writing a plugin
 
-Plugins ▸ **Download starter template** produces a working package. The entry
-module exports `activate`:
+Plugins ▸ **Download starter template** produces a working package. Install it
+with **Choose folder…**, and from then on iterate with the row's **Reload**:
+it re-reads the folder and reinstalls without asking for consent again, unless
+the manifest has started asking for something new. (The picker still opens —
+a browser cannot re-read a directory without a gesture, and a stored handle
+needs its permission re-granted after a restart anyway. What Reload removes is
+the consent screen on every edit.)
+
+The entry module exports `activate`:
 
 ```js
 export function activate(motion) {
@@ -231,7 +263,26 @@ motionPanel.send(data);        // → your plugin's onPanelMessage
 motionPanel.onMessage(fn);     // ← your plugin's sendToPanel
 ```
 
-The panel talks to **your plugin only**. It has no access to the editor.
+The panel talks to **your plugin only**. It has no access to the editor, and no
+access to the network — inline `<script>` runs, `fetch` does not.
+
+It appears as the **Plugins** panel in the right-hand dock, so it tabs alongside
+Effects and Graph and can be floated or popped out like any other panel. Several
+plugins with panels share it as tabs. `motion.ui.openPanel()` reveals yours; the
+user can also reach it from **Plugins ▸ *Your plugin*: Panel** or the manager's
+**Open Panel** button.
+
+### Where your plugin shows up
+
+| Contribution | Where the user finds it |
+|---|---|
+| `commands.register(...)` | The **Plugins** menu, under your plugin's name, and ⌘⇧P |
+| `panel` in the manifest | The **Plugins** dock panel + a `Your plugin: Open Panel` command |
+| `ui.notify(...)` | A toast, always prefixed with your plugin's name |
+| The package itself | **Plugins ▸ Manage Plugins…** — status, permissions, enable/disable, uninstall |
+
+A plugin that is installed but not running still appears in the menu, disabled,
+saying why. Nothing an installed plugin does is invisible.
 
 ---
 
@@ -243,15 +294,80 @@ The panel talks to **your plugin only**. It has no access to the editor.
   is in another thread.
 - **Errors are surfaced, not swallowed** — a fatal shows in the manager row with
   a **Restart** button and as a toast prefixed with the plugin's name.
+- **Log** — each row has one. It carries the plugin's own `console.*` output
+  (forwarded from the worker, where DevTools is not something a user of the
+  packaged app has), every call the permission gate refused, and the crash that
+  stopped it. Kept after the plugin dies — that is when it gets read — and
+  bounded at 200 lines so a logging loop cannot grow the host.
 - **Enable / disable** is distinct from uninstall: disabling terminates the
   worker and unregisters its commands but keeps the package.
+- **A panel never outlives its worker.** Stopping a plugin — disabled, crashed,
+  uninstalled — closes its panel. A frame still on screen with nothing answering
+  it reads as the editor being broken.
 
 ---
 
-## 7. Deliberately out of scope for v1
+## 7. The registry
 
-- **A registry / marketplace.** No network path, no update check, no signing.
-  Distribution is a file, which is honest about what the trust model is.
+Plugins ▸ Manage Plugins… ▸ **Browse** installs from the registry that lives in
+motion-back (`src/plugins/`). A registry install is not a shortcut past the
+permission screen — the download is verified, then parsed by the same package
+reader a local file goes through, then shown on the same consent screen.
+
+### What is actually guaranteed
+
+**Trust on first use.** A publisher generates a keypair; the registry records the
+public key the first time a plugin id is published, and every later version must
+carry a signature that verifies against that same key. The editor re-checks the
+signature **on the user's machine**, against the key stored with the installed
+copy — not the key the download claims. So:
+
+| Attack | Result |
+|---|---|
+| Package modified in transit or on a CDN | Fails verification locally, not installed |
+| Someone else publishes under your plugin id | Refused: id is owned by the first publisher |
+| Your registry account is stolen | Refused: the thief has no signing key |
+| Registry itself is compromised and serves a new key | Refused on update: the client pins the stored key |
+| A publisher ships something malicious under their own key | **Not covered.** Signing says who, never whether they meant well — which is why the permission screen still exists. |
+
+ECDSA P-256 / SHA-256, signature as IEEE-P1363, key as SPKI. Both verifiers are
+written down (`src/plugins/plugin-signature.ts` on the server,
+`core/plugins/registry.ts` in the editor) and a test signs with Node and verifies
+with WebCrypto, because that seam breaking silently would mean nothing installs.
+
+### Publishing
+
+```bash
+node scripts/sign-plugin.mjs keygen --out ./my-plugin.key.json
+node scripts/sign-plugin.mjs publish my-plugin.zip --key ./my-plugin.key.json --token <access token>
+```
+
+The private key never leaves the machine — publish sends the package, the
+signature and the public key. **Keep the key file.** It is the only thing that
+can ship an update; losing it means republishing under a new id, which is the
+cost of the guarantee rather than an oversight.
+
+Published versions are immutable: re-publishing an existing version is refused,
+because two different sets of bytes claiming to be `1.2.0` would make the
+signature guarantee unusable.
+
+### Updates
+
+Checked **only when the manager is opened** — never on a timer, never in the
+background. Plugins themselves still have no network path at all; this is the
+editor asking, on the screen where the answer is the point. A failed check is
+silent, so working offline does not produce errors.
+
+An update that asks for **more permissions than were granted** goes back through
+the consent screen rather than installing quietly. A plugin withdrawn by an
+operator is reported to anyone running it, and their copy keeps working — the
+package is blocked, not deleted, because breaking someone's project is usually a
+bigger harm than the one a takedown addresses.
+
+## 8. Deliberately out of scope
+
+- **Rating, comments, curation.** The registry lists what was published; it does
+  not editorialise, and there is no ranking signal beyond install count.
 - **Render-path (shader / WASM) plugins.** A plugin cannot draw pixels. The
   previous `registerEffect` claimed to and never did — see the audit §0A. When
   this arrives it will be a *separate* class with a synchronous, deterministic

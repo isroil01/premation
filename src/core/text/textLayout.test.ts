@@ -46,8 +46,15 @@ describe('layoutText', () => {
   it('advances the pen by measured width plus letter spacing', () => {
     const l = layoutText('ab', { ...base, letterSpacing: 2 }, measure, { boxWidth: 100 });
     expect(l.glyphs.map((g) => g.advance)).toEqual([12, 12]);
-    // Centres sit half an advance in from each glyph's left edge.
-    expect(l.glyphs.map((g) => g.x)).toEqual([-44, -32]);
+    // Centres sit half the glyph's OWN width in from its left edge — 5, not 6.
+    //
+    // Letter-spacing is added AFTER a glyph, so 'a' occupies [pen, pen+10] and
+    // the 2px of spacing is [pen+10, pen+12]. Centring on the spaced advance put
+    // every glyph half its letter-spacing to the right of where the browser's
+    // own `fillText` draws it — invisible on its own, but it made the per-glyph
+    // path and the whole-string path disagree, and a frame compositing both
+    // showed the string twice. See kerningAgreement.test.ts.
+    expect(l.glyphs.map((g) => g.x)).toEqual([-45, -33]);
   });
 
   it('measures each glyph under its own run style', () => {
@@ -165,7 +172,7 @@ describe('layoutText', () => {
   });
 
   it('splits by code point, not UTF-16 unit', () => {
-    // '𝐀' is a surrogate pair — a .length-based split would emit two glyphs and
+    // '𝐀' is a surrogate pair — a.length-based split would emit two glyphs and
     // desynchronise every run index after it.
     const l = layoutText('𝐀b', base, measure, { boxWidth: 100 });
     expect(l.glyphs.map((g) => g.char)).toEqual(['𝐀', 'b']);

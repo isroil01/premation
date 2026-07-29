@@ -24,6 +24,24 @@ export interface InstalledPlugin {
   enabled: boolean;
   installedAt: number;
   updatedAt: number;
+  /**
+   * How the package arrived.
+   *
+   * Only used to decide whether to offer **Reload** — re-reading a folder is
+   * the plugin author's edit/run loop, and re-picking a `.zip` is not the same
+   * gesture. The browser cannot re-read a directory without a fresh user
+   * gesture (a stored FileSystemHandle still needs its permission re-granted
+   * after a restart), so Reload opens the picker; what it saves is the second
+   * consent screen, which is the part that made iterating tedious.
+   */
+  source?: 'folder' | 'file' | 'registry';
+  /**
+   * The publisher key this copy was verified against, when it came from the
+   * registry. This is the PIN: an update is only accepted if it is signed by
+   * this same key, checked on this machine. Absent for a plugin installed from
+   * a local file — there was no signature to check and nothing to promise.
+   */
+  publisherKey?: string;
 }
 
 const STORE_KEY = 'motion-editor.plugins';
@@ -69,6 +87,9 @@ interface PluginStore {
   put(entry: InstalledPlugin): boolean;
   remove(id: string): void;
   setEnabled(id: string, enabled: boolean): void;
+  /** Narrow (or restore) what the user allows. Always a subset of the manifest
+   *  — `PluginHost.setGranted` intersects before calling this. */
+  setGranted(id: string, granted: PluginPermission[]): void;
   get(id: string): InstalledPlugin | undefined;
 }
 
@@ -90,6 +111,14 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
 
   setEnabled: (id, enabled) => {
     const next = get().plugins.map((p) => (p.manifest.id === id ? { ...p, enabled } : p));
+    save(next);
+    set({ plugins: next });
+  },
+
+  setGranted: (id, granted) => {
+    const next = get().plugins.map((p) =>
+      p.manifest.id === id ? { ...p, granted: [...granted], updatedAt: Date.now() } : p,
+    );
     save(next);
     set({ plugins: next });
   },

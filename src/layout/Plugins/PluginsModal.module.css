@@ -379,11 +379,234 @@
   color: var(--color-text-muted);
 }
 
+/* ── docked plugin panel ──────────────────────────────────────────
+   The frame used to be sized for a modal (fixed 380px, 420px min-width).
+   Docked, it has to FILL its region instead: the user sets the size by
+   dragging the dock edge, exactly as for every other panel. */
+
+.dockPanel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.dockTabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  flex: 0 0 auto;
+}
+
+.dockTab {
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dockTab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.dockTabActive,
+.dockTabActive:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
 .panelFrame {
+  flex: 1 1 auto;
   width: 100%;
-  min-width: 420px;
-  height: 380px;
-  border: 1px solid var(--color-border);
+  min-height: 240px;
+  border: none;
+  background: var(--color-surface-1);
+}
+
+/* ── Installed / Browse ───────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-3);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.tab:hover { color: var(--color-text-primary); }
+
+.tabActive,
+.tabActive:hover {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.tabBadge {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.registry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.registrySearch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-control);
   background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.registrySearch input {
+  flex: 1 1 auto;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  outline: none;
+}
+
+.rowUpdate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+}
+
+.metaNarrowed {
+  color: var(--color-warning, #e0a33e);
+}
+
+/* ── per-row: log drawer, permission editor, reload ───────────────── */
+
+.rowLinks {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}
+
+.logBox {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  max-height: 180px;
+  overflow-y: auto;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-0, #0d0d10);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+}
+
+.logEmpty {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-family: inherit;
+}
+
+.logLine {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  color: var(--color-text-secondary);
+  word-break: break-word;
+}
+
+.logTime {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.log_warn { color: var(--color-warning, #e0a33e); }
+.log_error { color: var(--color-danger, #e06c6c); }
+
+.permEdit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+}
+
+.permEditActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.permCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.permCheck input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+  accent-color: var(--color-primary);
+}
+
+.permWarn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-warning, #e0a33e);
+}
+
+.consentHomepage {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: calc(var(--space-2) * -1) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.consentHomepage a {
+  color: var(--color-text-secondary);
 }

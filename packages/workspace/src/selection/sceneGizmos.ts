@@ -259,9 +259,9 @@ const cross = (a: Vec3, b: Vec3): Vec3 => ({
  * Light gizmos, per type — the shapes that tell you what a light will actually
  * reach without having to render and look.
  *
- *   ambient  — icon only; an ambient light has no position meaning
- *   point    — icon + a wireframe sphere at the falloff radius
- *   spot     — icon + the cone at its cone angle, with the feather edge shown
+ *   ambient — icon only; an ambient light has no position meaning
+ *   point — icon + a wireframe sphere at the falloff radius
+ *   spot — icon + the cone at its cone angle, with the feather edge shown
  *   parallel — icon + direction rays and the POI line
  */
 export function buildLightGizmo(input: LightGizmoInput): SceneGizmo {

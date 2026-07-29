@@ -6,7 +6,7 @@
  * each frame to the Electron main process via the preload bridge.
  *
  * This is the ONLY new render-driving code in the suite, and it deliberately
- * mirrors renderOffline() so references and actuals share one definition of
+ * mirrors renderOffline so references and actuals share one definition of
  * "document → pixels".
  */
 

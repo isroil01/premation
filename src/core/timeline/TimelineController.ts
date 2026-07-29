@@ -319,7 +319,7 @@ export class TimelineController {
   /**
    * Memoized per-track sourceId → layers indexes. `getLayersForNode` is called
    * PER NODE by the renderer (remapOf), the workspace ports and the timeline
-   * model — a full `layers.filter()` per call made every frame O(n²) in layer
+   * model — a full `layers.filter` per call made every frame O(n²) in layer
    * count. Membership only changes when clips are added/removed/split, which
    * shows up as an array/length change (and syncFromScene clears the indexes
    * explicitly); per-clip start edits don't affect membership, and the tiny

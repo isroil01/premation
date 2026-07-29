@@ -3,7 +3,7 @@
  *
  * jsdom's canvas reports no text metrics at all, so these run against a FAKE 2D
  * context that models a real font's metrics — including the one property that
- * matters here: `measureText()` reports ascent/descent relative to the
+ * matters here: `measureText` reports ascent/descent relative to the
  * MEASURING context's `textBaseline`. That is the contract the old code got
  * wrong, so the fake enforces it rather than papering over it.
  *

@@ -1,7 +1,7 @@
 /**
  * Undo must never step BEHIND the document you opened.
  *
- * The "Open" baseline is captured during boot, right after `seedDefaultScene()`.
+ * The "Open" baseline is captured during boot, right after `seedDefaultScene`.
  * A project loads afterwards and asynchronously, so history's `lastState` still
  * described the STARTER scene — which made the load itself an undoable entry
  * whose "before" was that starter content. One Ctrl+Z after opening a project

@@ -1,19 +1,19 @@
 /**
- * Fill paints (Prompt E2 — solids, fills, gradients, strokes).
+ * Fill paints — solids, gradients and strokes.
  *
  * A layer's fill is a paint: a solid colour, a linear gradient, or a radial
  * gradient (multi-stop). It lives on the node's `fx` component (key 'fill'),
- * sibling to blend/mask/matte, so History / autosave / export capture it for
- * free — the same pattern as [[project-motion-editor]] Prompt 5's compositing.
+ * sibling to blend/mask/matte, so History, autosave and export capture it for
+ * free without any extra wiring.
  *
  * Coordinates are LAYER-LOCAL and relative: gradient geometry is expressed in
  * the centred [-0.5..0.5] box, so it composes with any layer size/transform.
  * Both solid and gradient fills render through the Canvas2DVectorRasterizer in
- * the unified GPU engine — no fallback to first-stop approximation.
+ * the GPU engine — no fallback to a first-stop approximation.
  *
- * Deferred (like Prompt 5's keyframeable mask points): per-stop colour / angle
- * KEYFRAME animation — the AnimationEngine is scalar-only in v1, so animatable
- * gradients wait on colour/vector tracks. Static editing + undo work now.
+ * Not yet supported: KEYFRAMING per-stop colour or gradient angle. The
+ * AnimationEngine holds scalar tracks only, so animatable gradients wait on
+ * colour/vector track support. Static editing and undo work today.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';

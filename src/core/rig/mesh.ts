@@ -1,10 +1,10 @@
 /**
  * Mesh — turn a vector outline into a deformable triangle mesh.
  *
- *   flattenOutline : bezier path (absolute handles) → boundary polygon
- *   earClip        : simple polygon → triangle indices (ear clipping)
- *   buildMesh      : polygon → { vertices, triangles }
- *   subdivide      : midpoint 1→4 split to add interior resolution so the mesh
+ *   flattenOutline: bezier path (absolute handles) → boundary polygon
+ *   earClip: simple polygon → triangle indices (ear clipping)
+ *   buildMesh: polygon → { vertices, triangles }
+ *   subdivide: midpoint 1→4 split to add interior resolution so the mesh
  *                    bends smoothly, not just at the hull
  *
  * Pure and framework-free. The skinning layer deforms `vertices`; `triangles`

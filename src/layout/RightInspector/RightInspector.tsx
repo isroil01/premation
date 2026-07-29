@@ -17,10 +17,11 @@ export interface RightInspectorProps {
 }
 
 export function RightInspector({ renderers, headerExtras, header, className }: RightInspectorProps): JSX.Element {
+  const isCollapsed = className?.includes('collapsed-view') || false;
   return (
     <aside className={cn(styles.root, className)}>
-      {header ? <div className={styles.header}>{header}</div> : null}
-      <DockPanel region="rightInspector" renderers={renderers} headerExtras={headerExtras} />
+      {!isCollapsed && header ? <div className={styles.header}>{header}</div> : null}
+      <DockPanel region="rightInspector" renderers={renderers} headerExtras={headerExtras} className={className} />
     </aside>
   );
 }

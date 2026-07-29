@@ -15,6 +15,7 @@ import { ProjectPanel } from '@layout/Project/ProjectPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
+import { PluginsDockPanel } from '@layout/Plugins/PluginPanel';
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { Input } from '@components/Input';
@@ -77,6 +78,7 @@ import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration,
 import { TRANSITION_ITEMS, applyTransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
 import { SFX_ITEMS, insertSfxItem, type SfxCategory } from '@core/library/sfxLibrary';
 import { LOTTIE_ITEMS, insertLottieItem, importLottieFile, type LottieCategory } from '@core/library/lottieLibrary';
+import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
@@ -386,6 +388,26 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + (sizes[i] ?? '');
+}
+
+/**
+ * A video URL that a `<video>` element will actually show a frame for.
+ *
+ * A `<video>` with no poster paints nothing until it holds a decoded frame, and
+ * `preload="metadata"` deliberately stops before decoding one — so a plain
+ * `src` renders as a black box forever. A media fragment asks for a specific
+ * time, which makes the browser decode that frame and present it as the poster.
+ *
+ * 0.1s rather than 0: the very first frame of a clip is often black (fades,
+ * slates), and a thumbnail that is technically correct but visually black is no
+ * better than no thumbnail. Skipped for sources that already carry a fragment or
+ * a query string, where appending one could break the URL.
+ */
+const VIDEO_THUMB_TIME = 0.1;
+
+function videoThumbSrc(src: string): string {
+  if (!src || src.includes('#')) return src;
+  return `${src}#t=${VIDEO_THUMB_TIME}`;
 }
 
 
@@ -741,7 +763,19 @@ export function AssetsPanel(): JSX.Element {
                   {asset.type === 'image' ? (
                     <img src={asset.thumbSrc ?? asset.src} alt="" className={styles.assetThumbImg} loading="lazy" decoding="async" />
                   ) : asset.type === 'video' ? (
-                    <video src={asset.src} className={styles.assetThumbVideo} preload="metadata" muted playsInline />
+                    // The `#t=0.1` media fragment is what makes this show a
+                    // PICTURE. With a bare src and `preload="metadata"` the
+                    // browser fetches the header and no frame, so the element
+                    // paints nothing and every clip in the library looked like a
+                    // black rectangle. Asking for a time makes it decode that
+                    // frame and display it as the poster.
+                    <video
+                      src={videoThumbSrc(asset.src)}
+                      className={styles.assetThumbVideo}
+                      preload="metadata"
+                      muted
+                      playsInline
+                    />
                   ) : (
                     <Icon name="audio" size={14} />
                   )}
@@ -1867,19 +1901,9 @@ function LottieContent(): JSX.Element {
     e.target.value = '';
     if (!file) return;
     try {
-      const { nodeIds, warnings } = await importLottieFile(file);
-      if (nodeIds.length === 0) {
-        notify({ level: 'warning', message: 'Lottie import: no layers could be created', durationMs: 3200 });
-      } else {
-        const suffix = warnings.length ? ` (${warnings.length} warning${warnings.length > 1 ? 's' : ''})` : '';
-        notify({
-          level: warnings.length ? 'warning' : 'success',
-          message: `Imported ${nodeIds.length} layer${nodeIds.length > 1 ? 's' : ''}${suffix}`,
-          durationMs: 3200,
-        });
-      }
-    } catch {
-      notify({ level: 'warning', message: 'Lottie import failed: file could not be parsed', durationMs: 3200 });
+      reportLottieImport(file.name, await importLottieFile(file));
+    } catch (err) {
+      reportLottieImportFailure(file.name, err);
     }
   };
 
@@ -2016,6 +2040,7 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     misc: () => <MiscPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
+    plugins: () => <PluginsDockPanel />,
     // ── Asset Library (one tab, sections inside) ─────────────────────────
     library: () => <LibraryPanel />,
   };

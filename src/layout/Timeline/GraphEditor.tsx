@@ -11,7 +11,7 @@
  *  - Interactive keyframe diamonds: drag horizontally to retime; vertically to
  *    change the value (value mode) or the speed (speed mode).
  *  - Bézier handle tangents: when a keyframe is selected, two circular handles appear;
- *    dragging them updates the easing via `defaultAnimation.setBezier()`.
+ *    dragging them updates the easing via `defaultAnimation.setBezier`.
  *  - Playhead scrubbing by clicking the graph background.
  *  - Property legend with color dots.
  *

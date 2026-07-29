@@ -163,7 +163,7 @@ export interface PropertyRowProps {
 /**
  * One animatable property, laid out as:
  *
- *     [stopwatch] [◀ ◆ ▶] Name ............ [value] [value] [reset]
+ *     [stopwatch] [◀ ◆ ▶] Name............ [value] [value] [reset]
  *
  * The navigator only renders once the property is animated, but its COLUMN is
  * always reserved — otherwise enabling animation shifts the name and value

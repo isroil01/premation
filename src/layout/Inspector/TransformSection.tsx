@@ -250,7 +250,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
 
   // Render a stopwatch icon button directly on a grid cell (outside popover).
   // Each prop carries ITS OWN current value — keying every prop to a single
-  // shared value made "Enable animation" on Position write y := x (the layer
+  // shared value made "Enable animation" on Position write y:= x (the layer
   // visibly jumped the moment the stopwatch was clicked).
   const renderStopwatchBtn = (props: Array<{ prop: string; value: number }>) => {
     const animated = props.some(({ prop }) => defaultAnimation.isAnimated(nodeId, prop));

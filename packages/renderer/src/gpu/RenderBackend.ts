@@ -65,7 +65,7 @@ export interface RenderBackend {
    *  clip +Y lands on texture V=1), so full-screen samples of an offscreen
    *  target must flip V. WebGL2 = true; WebGPU writes top-down (clip +Y → V=0,
    *  matching how sampling reads it) = false. Pass code must consult this via
-   *  `targetSampleUv()` instead of hardcoding a flip — hardcoding the WebGL
+   *  `targetSampleUv` instead of hardcoding a flip — hardcoding the WebGL
    *  convention vertically mirrors every FBO round-trip on WebGPU. */
   readonly renderTargetFlipV: boolean;
 
@@ -107,7 +107,7 @@ export interface RenderBackend {
    * TOP-LEFT origin), or null to clear. Surface clears stay full-canvas — the
    * area outside the rect keeps the clear (pasteboard) colour, so composition
    * content cannot draw past the comp bounds (AE's comp-panel behaviour, and
-   * what Canvas2D's `ctx.clip()` has always done). Intermediate render targets
+   * what Canvas2D's `ctx.clip` has always done). Intermediate render targets
    * are never clipped: blur/matte buffers legitimately hold full content.
    */
   setFrameClip?(rect: { x: number; y: number; width: number; height: number } | null): void;

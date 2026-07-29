@@ -43,7 +43,7 @@ export interface TreeViewProps<T> {
   defaultExpandedIds?: ReadonlyArray<string>;
   expandedIds?: ReadonlyArray<string>;
   onToggleExpand?: (id: string, expanded: boolean) => void;
-  /** Render extra UI on the right of a row (badges, drag handles, ...). */
+  /** Render extra UI on the right of a row (badges, drag handles,...). */
   renderActions?: (node: TreeNode<T>) => ReactNode;
   /** Right-click a row. Receives the node id and the mouse event. */
   onNodeContextMenu?: (id: string, e: React.MouseEvent) => void;

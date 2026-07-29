@@ -192,7 +192,7 @@ function localSize(node: SceneNode): { w: number; h: number } {
  * top-center, so the user can immediately drag to wave the logo and add more.
  *
  * Ids come from the shared ordinal allocator (`rigIds`), so this is now fully
- * deterministic — it used to embed `Date.now()`, which made the same call
+ * deterministic — it used to embed `Date.now`, which made the same call
  * return different ids on every invocation and could collide with a pin added
  * in the same millisecond. `existingIds` lets a caller rig a layer that already
  * carries pins without reissuing one of them.

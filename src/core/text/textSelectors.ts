@@ -16,8 +16,8 @@
  * the storage/commands and calls into this.
  *
  * Three selector kinds, matching AE:
- *   • range      — a window over the string with a falloff shape. The workhorse.
- *   • wiggly     — auto-animated per-unit noise, no keyframes needed.
+ *   • range — a window over the string with a falloff shape. The workhorse.
+ *   • wiggly — auto-animated per-unit noise, no keyframes needed.
  *   • expression — an arbitrary per-character function returning an amount.
  *
  * Multiple selectors on one animator combine by each selector's `mode`

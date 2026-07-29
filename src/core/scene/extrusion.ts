@@ -137,11 +137,11 @@ function face(
  * back cap + a segmented wall ring for `shape === 'ellipse'`.
  *
  * Rect face math (layer w×h, depth d; all in the layer's centered frame):
- *   back   = T(0, 0, d)                        — w×h plane at z = d
- *   right  = T(+w/2, 0, d/2) · Ry(90°)         — d×h plane; face-x → −z, so
+ *   back   = T(0, 0, d) — w×h plane at z = d
+ *   right  = T(+w/2, 0, d/2) · Ry(90°) — d×h plane; face-x → −z, so
  *                                                 x_f ∈ [−d/2, d/2] spans z ∈ [0, d]
  *   left   = T(−w/2, 0, d/2) · Ry(90°)
- *   top    = T(0, −h/2, d/2) · Rx(90°)         — w×d plane; face-y → +z
+ *   top    = T(0, −h/2, d/2) · Rx(90°) — w×d plane; face-y → +z
  *   bottom = T(0, +h/2, d/2) · Rx(90°)
  *
  * Ellipse walls: N chord strips. Strip i spans the perimeter chord from angle

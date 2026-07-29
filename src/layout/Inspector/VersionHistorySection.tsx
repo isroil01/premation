@@ -1,5 +1,5 @@
 /**
- * VersionHistorySection — local-first version history (RFC §4).
+ * VersionHistorySection — local-first version history.
  *
  * A self-contained inspector section that lists the `.motion` bundle's version
  * snapshots and lets the user save a named version or restore an older one. All

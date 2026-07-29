@@ -74,9 +74,9 @@ export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
   /** Per-property expressions that override the sampled value each frame. */
   private expressions = new Map<string, Map<PropPath, CompiledExpression>>();
-  /** Change sink — no-op until the host binds one via setChangeListener(). */
+  /** Change sink — no-op until the host binds one via setChangeListener. */
   private changeListener: AnimationChangeListener = () => {};
-  /** >0 while inside batch(); notifications are held until the batch closes. */
+  /** >0 while inside batch; notifications are held until the batch closes. */
   private batchDepth = 0;
   /** True when any mutation happened inside the current batch. */
   private batchDirty = false;
@@ -119,7 +119,7 @@ export class AnimationEngine {
   private audioLevel: AudioLevelProvider = () => 0;
   /** Slider-control source — 0 until the host binds the scene rig lookup. */
   private controlProvider: ControlProvider = () => 0;
-  /** Layer name → nodeId lookup for `layer()` — unknown until the host binds. */
+  /** Layer name → nodeId lookup for `layer` — unknown until the host binds. */
   private layerResolver: LayerResolver = () => null;
   /** Base (un-keyframed) value source for cross-layer reads — none by default. */
   private baseValueProvider: BaseValueProvider = () => undefined;
@@ -156,12 +156,12 @@ export class AnimationEngine {
     this.controlProvider = provider;
   }
 
-  /** Bind the layer-name → nodeId lookup used by `layer()`/`layerAt()`. */
+  /** Bind the layer-name → nodeId lookup used by `layer`/`layerAt`. */
   setLayerResolver(resolver: LayerResolver): void {
     this.layerResolver = resolver;
   }
 
-  /** Bind the base-value fallback used by `layer()`/`layerAt()` when the
+  /** Bind the base-value fallback used by `layer`/`layerAt` when the
    *  referenced layer has no keyframe track for the prop (the host reads the
    *  node's static Transform/component props). */
   setBaseValueProvider(provider: BaseValueProvider): void {
@@ -506,7 +506,7 @@ export class AnimationEngine {
       layerAt: (name, p, tt) => this.crossLayerValue(name, p, tt, visited, depth),
       comp: this.compInfoProvider(),
       layerInfo: this.layerInfoProvider(nodeId),
-      // Per-(node, prop) noise phase so `wiggle()` on x and y move
+      // Per-(node, prop) noise phase so `wiggle` on x and y move
       // independently (AE) — still deterministic run to run.
       propSeed: stringSeed(`${nodeId}:${prop}`),
     };
@@ -531,7 +531,7 @@ export class AnimationEngine {
 
   /**
    * Evaluate an arbitrary expression source against (nodeId, prop) at time
-   * `t` with the SAME context sample() uses — so editor previews see
+   * `t` with the SAME context sample uses — so editor previews see
    * valueAtTime/layer/loopOut and cycle errors exactly as playback will.
    */
   previewExpression(nodeId: string, prop: PropPath, src: string, t: number): ExprResult {

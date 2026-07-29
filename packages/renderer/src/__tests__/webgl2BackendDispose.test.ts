@@ -1,10 +1,10 @@
 /**
- * WebGL2Backend.dispose() — the context-leak regression suite.
+ * WebGL2Backend.dispose — the context-leak regression suite.
  *
- * Each editor enter/leave creates a fresh backend on a fresh canvas; dispose()
+ * Each editor enter/leave creates a fresh backend on a fresh canvas; dispose
  * used to delete ONLY the VAO, leaking the WebGL2 context until Chrome's
  * per-page cap (~16) made getContext('webgl2') return null → blank canvas on
- * re-entry. dispose() must now release every GL object the backend allocated
+ * re-entry. dispose must now release every GL object the backend allocated
  * AND explicitly lose the context so the slot frees immediately.
  */
 
@@ -19,7 +19,7 @@ interface GlStub {
 function makeGl(opts: { lost?: boolean; restorable?: boolean } = {}): GlStub {
   const loseContext = jest.fn();
   // A canvas hands back the SAME (still-lost) context object after
-  // loseContext(), so `initialize` must probe isContextLost() rather than trust a
+  // loseContext, so `initialize` must probe isContextLost rather than trust a
   // non-null getContext. `lost` models that state.
   let lost = opts.lost ?? false;
   const restoreContext = jest.fn(() => {
@@ -177,7 +177,7 @@ describe('WebGL2Backend.dispose', () => {
     expect(() => backend.dispose()).not.toThrow();
   });
 
-  // Re-attaching to a canvas whose context was killed by a previous dispose().
+  // Re-attaching to a canvas whose context was killed by a previous dispose.
   // getContext returns the same LOST context rather than null, so the plain
   // null-check passes and every later GL call silently no-ops — the blank
   // viewport after a StrictMode/HMR remount.
@@ -203,7 +203,7 @@ describe('WebGL2Backend.dispose', () => {
     expect(surface.canvas.addEventListener).toHaveBeenCalledWith('webglcontextlost', expect.any(Function));
     expect(surface.canvas.addEventListener).toHaveBeenCalledWith('webglcontextrestored', expect.any(Function));
     backend.dispose();
-    // Must come off BEFORE dispose's own loseContext() fires, or the backend
+    // Must come off BEFORE dispose's own loseContext fires, or the backend
     // reports its own teardown as an unexpected context loss.
     expect(surface.canvas.removeEventListener).toHaveBeenCalledWith('webglcontextlost', expect.any(Function));
     expect(surface.canvas.removeEventListener).toHaveBeenCalledWith('webglcontextrestored', expect.any(Function));

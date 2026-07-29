@@ -1,6 +1,6 @@
 /**
  * History — a bounded undo/redo stack of reversible commands. The Timeline
- * routes every structural mutation through `run()`, which executes the change
+ * routes every structural mutation through `run`, which executes the change
  * and records its inverse. This is intentionally a *local* history so the engine
  * is self-contained; an app can still mirror commands into a global command
  * system via the event bus. Enabled by default; can be paused for bulk edits.
@@ -48,7 +48,7 @@ export class History {
   }
 
   /**
-   * Execute a command's `do()` now and record it for undo. When history is
+   * Execute a command's `do` now and record it for undo. When history is
    * disabled (or we're mid-undo/redo) the change still runs but isn't recorded.
    */
   run(command: Command): void {

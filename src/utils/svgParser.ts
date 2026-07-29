@@ -798,7 +798,7 @@ function traverse(
     return;
   }
 
-  // Containers (svg, g, a, switch, ...) — recurse into children.
+  // Containers (svg, g, a, switch,...) — recurse into children.
   for (let i = 0; i < el.children.length; i++) {
     traverse(el.children[i]!, localMatrix, localStyle, out, chain, useDepth);
   }

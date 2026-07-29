@@ -114,7 +114,7 @@ describe('captureDocument → restoreDocument', () => {
     const actions = useProjectStore.getState().actions;
     actions.updateComp('comp_root', { name: 'Main', width: 1080, height: 1920, fps: 24 });
     // A second comp exists only in the comps table — the bug was that capture
-    // saved `comp()` (the active tab's) and every other comp reverted.
+    // saved `comp` (the active tab's) and every other comp reverted.
     actions.updateComp('comp_second', { name: 'Lower Third', width: 800, height: 200, fps: 60 });
 
     const doc = structuredClone(captureDocument());

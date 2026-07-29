@@ -1,5 +1,5 @@
 /**
- * Waveform math (Prompt 8) — reduce decoded PCM audio to a compact per-bucket
+ * Waveform math — reduce decoded PCM audio to a compact per-bucket
  * peak envelope for drawing, and sample the envelope at a point in time so
  * properties can be audio-driven.
  *

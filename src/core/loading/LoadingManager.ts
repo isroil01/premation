@@ -8,7 +8,7 @@
  *
  *   const task = loading.begin('project-open', 'Opening project…');
  *   task.progress(0.5);
- *   task.end();
+ *   task.end;
  */
 
 export interface LoadingTask {

@@ -219,7 +219,7 @@ function stopLoopIfIdle(): void {
   }
 }
 
-/** Mount a looping preview onto a card canvas. Returns a stop() to unmount. */
+/** Mount a looping preview onto a card canvas. Returns a stop to unmount. */
 export function mountPreview(canvas: HTMLCanvasElement, spec: PreviewSpec): { stop: () => void } {
   const rootId = spec.rootId ?? 'tpl_root';
   const observer = ensureObserver();

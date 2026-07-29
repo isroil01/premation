@@ -13,7 +13,7 @@
  *
  * Pure module — no scene/engine/DOM dependencies, fully unit-testable. The
  * importer's scene-wiring layer feeds these `DataKeyframe[]` straight into
- * `AnimationEngine.setDataTrack(nodeId, prop, { kind: 'points', ... })`.
+ * `AnimationEngine.setDataTrack(nodeId, prop, { kind: 'points',... })`.
  */
 
 import type { DataKeyframe, DataPoint } from './dataTracks';

@@ -2,7 +2,7 @@
  * Point vs paragraph text (#23).
  *
  * The distinction is which of box and content is the INPUT:
- *   • point text     — box derived from content; a handle drag scales the type
+ *   • point text — box derived from content; a handle drag scales the type
  *   • paragraph text — box authored; the content wraps inside it and a handle
  *                      drag REFLOWS at the same font size
  *

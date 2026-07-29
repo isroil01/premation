@@ -13,7 +13,7 @@
  * the normal keyframe path.
  *
  * Undo caveat: applying a preset is a handful of separate prop writes ending in
- * one `bumpScene()`, and history records a debounced whole-document snapshot —
+ * one `bumpScene`, and history records a debounced whole-document snapshot —
  * so it *usually* undoes in one step because those writes land inside the same
  * debounce window, NOT because it is a single command. An edit made immediately
  * before or after can be swallowed into the same step.

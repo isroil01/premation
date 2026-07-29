@@ -131,7 +131,7 @@ describe('C3 — scale pivots on the anchor, matching the keyframed property', (
 
     // Scale doubled...
     expect(next.width / bounds.width).toBeCloseTo(2, 6);
-    // ...and the box is still centred on the anchor, i.e. Position did not move.
+    //...and the box is still centred on the anchor, i.e. Position did not move.
     expect(R.center(next)).toEqual({ x: 200, y: 200 });
   });
 
@@ -167,7 +167,7 @@ describe('C3 — scale pivots on the anchor, matching the keyframed property', (
     // The anchor corner stays put...
     expect(dragged.x).toBeCloseTo(150, 6);
     expect(dragged.y).toBeCloseTo(150, 6);
-    // ...and the render formula agrees about both corners.
+    //...and the render formula agrees about both corners.
     const tl = renderPoint({ x: -50, y: -50 }, position, anchor, s);
     const br = renderPoint({ x: 50, y: 50 }, position, anchor, s);
     expect(tl.x).toBeCloseTo(dragged.x, 6);

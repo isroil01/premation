@@ -1,5 +1,5 @@
 /**
- * Trim Paths (Prompt 11 / MG Phase C) — reveal only a portion of a shape's
+ * Trim Paths — reveal only a portion of a shape's
  * outline, animatable to draw the stroke on/off. Start/End/Offset are percents
  * of the path length; Offset rotates the visible window around the path (and
  * wraps). Keyframe Offset for a snake-around-the-shape; keyframe End 0→100 to

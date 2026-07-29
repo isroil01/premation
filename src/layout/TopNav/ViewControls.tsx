@@ -171,7 +171,14 @@ function ZoomField(): JSX.Element {
       <button type="button" className={styles.tool} onClick={() => getWorkspaceController().zoomIn()} title="Zoom in (+)">
         <Icon name="zoom-in" size={12} />
       </button>
-      <button type="button" className={styles.tool} onClick={() => getWorkspaceController().fitComposition()} title="Fit comp in view (Shift+F)">
+      {/* No key is advertised here because none is registered — the tooltip
+          used to promise Shift+F, which did nothing. */}
+      <button
+        type="button"
+        className={styles.tool}
+        onClick={() => getWorkspaceController().fitComposition()}
+        title="Fit comp in view"
+      >
         <Icon name="fit" size={12} />
       </button>
     </span>

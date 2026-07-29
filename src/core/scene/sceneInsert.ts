@@ -422,7 +422,7 @@ export function insertSvgShapeGroup(
  *
  * These writes go straight to the animation engine, which emits nothing on its
  * own, so they are only captured by history because the caller finishes with
- * `bumpScene()` (history snapshots the animation engine alongside the scene).
+ * `bumpScene` (history snapshots the animation engine alongside the scene).
  * A future caller that skips that bump would write keyframes undo cannot reach.
  */
 function writeSvgAnimation(
@@ -660,7 +660,7 @@ export function insertShape(shape: ShapeKind, name: string, pos?: { x: number; y
 
   if (shape === 'line') {
     // A line encloses no area, so a fill is invisible — give it a stroke.
-    // The stroke must live on the `fx` component: readNodeStroke() reads only
+    // The stroke must live on the `fx` component: readNodeStroke reads only
     // fx, so a stroke stashed in Style props would never render.
     const style = node.components.find((c) => c.type === 'Style');
     if (style) style.props.fill = 'rgba(0,0,0,0)';
@@ -1024,7 +1024,7 @@ export function precomposeSelected(): void {
   if (selectedIds.length === 0) return;
 
   // Put the precomp where the layers already are — AE replaces them in place.
-  // This used to hardcode `getRoots()[0]`, which yanked nested layers up to the
+  // This used to hardcode `getRoots[0]`, which yanked nested layers up to the
   // root, and now that comps are separate roots would also drop them into
   // whichever composition happens to be first rather than the active one.
   const first = defaultSceneGraph.getNode(selectedIds[0]!);
@@ -1051,7 +1051,7 @@ export function precomposeSelected(): void {
 }
 
 /**
- * Insert an audio layer (Prompt 8). Audio doesn't draw on the canvas — it
+ * Insert an audio layer. Audio doesn't draw on the canvas — it
  * carries an `Audio` component (asset ref + level/trim), shows a waveform in the
  * inspector, and plays in sync with the transport via the AudioEngine.
  */

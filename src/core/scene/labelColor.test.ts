@@ -56,7 +56,7 @@ describe('label color read/write through the scene graph', () => {
   it('round-trips a set color through fresh getNode reads', () => {
     defaultSceneGraph.addNode(makeNode('a'));
     setNodeLabelColor('a', '#d5493d');
-    // Read through the same path the timeline uses: node.color on getNode().
+    // Read through the same path the timeline uses: node.color on getNode.
     expect(defaultSceneGraph.getNode('a')!.color).toBe('#d5493d');
     expect(getNodeLabelColor('a')).toBe('#d5493d');
   });

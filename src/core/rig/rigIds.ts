@@ -1,9 +1,9 @@
 /**
  * Collision-free authoring ids for puppet pins and skeleton bones.
  *
- * WHY: ids used to come from `Date.now()` — `pin_${Date.now()}` in the puppet
+ * WHY: ids used to come from `Date.now` — `pin_${Date.now}` in the puppet
  * overlay, `pin_${now}_${i}` in the AI tool and the starter rig, and
- * `bone_${Date.now().toString(36).slice(2, 8)}` in the bone overlay. Two pins
+ * `bone_${Date.now.toString(36).slice(2, 8)}` in the bone overlay. Two pins
  * added inside the same millisecond got the SAME id, and the bone form was
  * worse: a 6-character slice of a base-36 timestamp, where the leading digits
  * barely move between calls.

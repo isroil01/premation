@@ -5,7 +5,7 @@
  *   items={items}            // up to ~1M elements
  *   itemHeight={28}          // px; fixed height for fast math
  *   overscan={6}
- *   renderItem={(item, i) => <Row ... />}
+ *   renderItem={(item, i) => <Row... />}
  * />
  *
  * For variable heights use the `estimatedItemHeight` and let users override

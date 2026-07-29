@@ -68,7 +68,7 @@ export type {
   TimelineEventForwarder,
 } from './ports';
 
-// ── Graft serialize()/deserialize() onto Timeline (documented API) ──
+// ── Graft serialize/deserialize onto Timeline (documented API) ──
 import { Timeline as TimelineClass } from './core/Timeline';
 import { serializeTimeline as _ser, deserializeTimeline as _deser } from './serialization/Serializer';
 import type { SerializedTimeline as _ST } from './serialization/Serializer';

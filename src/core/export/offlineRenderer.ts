@@ -1,5 +1,5 @@
 /**
- * Deterministic offline renderer (Prompt 9). Replaces realtime MediaRecorder
+ * Deterministic offline renderer. Replaces realtime MediaRecorder
  * sampling (which drops frames and is non-reproducible) with a fixed-timestep
  * loop: every frame's time is `index / fps` exactly, so the same project always
  * renders byte-identical frames regardless of machine speed.
@@ -87,6 +87,20 @@ export type FrameSink = (
 ) => void | Promise<void>;
 
 /**
+ * Hand the main thread back between frames.
+ *
+ * `scheduler.yield` resumes this loop at a lower priority than user input and
+ * rendering, which is exactly what an export wants: the editor stays interactive
+ * and repaints while frames are being rasterised. `setTimeout(0)` is the fallback
+ * — it also yields, just with a clamp and no priority ordering.
+ */
+const yieldToUi: () => Promise<void> = (() => {
+  const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  if (typeof sched?.yield === 'function') return () => sched.yield!();
+  return () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+})();
+
+/**
  * Render each frame deterministically into an offscreen canvas and pass it to
  * `onFrame`. Returns the number of frames rendered. Aborts cleanly if the
  * signal fires (throws AbortError).
@@ -109,6 +123,18 @@ export async function renderOffline(
 
     if (backend.readyPromise) {
       await backend.readyPromise;
+    }
+
+    // A backend that failed to initialise still accepts renderFrame — it just
+    // stores the snapshot and draws nothing. Every frame then reads back as an
+    // untouched canvas, and the export completes "successfully" with a file that
+    // is uniformly black. That is the single worst failure this pipeline can
+    // have, because nothing anywhere reports it, so it is checked here.
+    if (backend.initFailed) {
+      throw new Error(
+        backend.initErrorMessage ??
+          'The renderer could not be initialized, so there is nothing to export. Restarting the app usually clears this.',
+      );
     }
 
     const { start, end } = resolveRange(params);
@@ -138,8 +164,9 @@ export async function renderOffline(
         backend.renderFrame(snap);
       }
       await onFrame(canvas, i - start, total);
-      // Yield so progress paints and cancellation can interrupt.
-      await new Promise<void>((r) => setTimeout(r, 0));
+      // Yield so progress paints, the editor stays usable, and cancellation can
+      // interrupt between frames.
+      await yieldToUi();
     }
     return total;
   } finally {

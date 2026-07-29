@@ -28,7 +28,7 @@ export interface RasterStats {
 }
 
 /** Pool key under which a cache entry's texture is registered. Must match the
- *  string handed to `resources.texture()` — freeing by anything else is a
+ *  string handed to `resources.texture` — freeing by anything else is a
  *  silent no-op (see the note in `releaseEntry`). */
 function poolKeyFor(cacheKey: string): string {
   return `raster:${cacheKey}`;
@@ -55,9 +55,9 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
   /**
    * Drop a cache entry and actually release its GPU texture.
    *
-   * Both eviction paths used to call `freeTexture(entry.texture.id.toString())`.
+   * Both eviction paths used to call `freeTexture(entry.texture.id.toString)`.
    * `TextureHandle.id` is a plain allocation counter, but the ResourceManager
-   * pool is keyed by the STRING passed to `texture()` — here `raster:<cacheKey>`.
+   * pool is keyed by the STRING passed to `texture` — here `raster:<cacheKey>`.
    * So `freeTexture("137")` missed the pool and returned silently: `currentBytes`
    * dropped below the 512 MB cap (so eviction stopped) while not one WebGL
    * texture was ever deleted. Combined with `pinned: true`, which excludes the
@@ -262,7 +262,30 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         paragraphSpacing: spec.paragraphSpacing,
       },
       measure,
-      { runs: spec.runs, transforms: spec.glyphs, boxWidth: spec.width },
+      {
+        runs: spec.runs,
+        transforms: spec.glyphs,
+        boxWidth: spec.width,
+        // Kerned measurement, so this per-glyph path lands on exactly the same
+        // pixels as the whole-string fast path above. Without it the two
+        // disagreed by 8px over a 19-character headline, and any frame that
+        // composited both showed the string twice at two spacings — a picket
+        // fence of 1px vertical bars through the letterforms.
+        measureRun: (run: string, style: any) => {
+          const font = textCssFont(style);
+          const key = `run|${font}|${style.letterSpacing ?? 0}|${run}`;
+          const hit = measureCache.get(key);
+          if (hit !== undefined) return hit;
+          // Spacing ON for this measurement: the advance it returns is what the
+          // fast path would actually produce.
+          ctx.letterSpacing = style.letterSpacing ? `${style.letterSpacing}px` : '0px';
+          ctx.font = font;
+          const w = ctx.measureText(run).width;
+          ctx.letterSpacing = '0px';
+          measureCache.set(key, w);
+          return w;
+        },
+      },
     );
 
     const placed = spec.textPath
@@ -289,6 +312,12 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
       if (plain) {
         ctx.font = textCssFont(g.style);
         ctx.fillStyle = g.style.fill ?? spec.color;
+        // Centred on the glyph's own advance box (`PlacedGlyph.x` is that
+        // centre). Drawing left-aligned from `x - inkWidth / 2` was tried and is
+        // the identical span, so it changed nothing — measured, both give 42 ink
+        // runs. The residual difference against the whole-string path is font
+        // SHAPING (ligatures, contextual alternates), which no amount of
+        // positioning reproduces glyph-by-glyph.
         ctx.fillText(ch, cx + g.x, cy + g.y);
         continue;
       }

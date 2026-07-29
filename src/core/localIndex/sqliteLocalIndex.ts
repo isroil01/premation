@@ -1,6 +1,6 @@
 /**
  * SqliteLocalIndex — the desktop `LocalIndex`, forwarding to the main-process
- * SQLite backend over the `index:*` IPC. `initLocalIndex()` installs it at boot
+ * SQLite backend over the `index:*` IPC. `initLocalIndex` installs it at boot
  * IFF the native driver is available; otherwise the in-memory index stays.
  */
 

@@ -5,11 +5,11 @@
  * caused the selection outline to sit below the capitals it was supposed to
  * enclose, so they are named and returned separately:
  *
- *   • FONT box   — from `fontBoundingBoxAscent/Descent`. Stable for ANY string
+ *   • FONT box — from `fontBoundingBoxAscent/Descent`. Stable for ANY string
  *                  in this font at this size. This is the SELECTION box. AE
  *                  does the same: `HELLO` and `Hello` get identical heights, so
  *                  the outline does not twitch while you type.
- *   • INK box    — from `actualBoundingBox*`. Tight to these specific glyphs,
+ *   • INK box — from `actualBoundingBox*`. Tight to these specific glyphs,
  *                  changes on every keystroke. What an auto-sizing plate behind
  *                  the text needs; wrong for a selection outline.
  *   • RENDER box — the texture the rasterizer allocates. The typographic line
@@ -25,7 +25,7 @@
  * to have.
  *
  * ── Why the measuring context sets textBaseline ─────────────────────
- * `measureText()` reports ascent/descent relative to the MEASURING context's
+ * `measureText` reports ascent/descent relative to the MEASURING context's
  * `textBaseline`, not the drawing one. This context used to leave it at the
  * default `'alphabetic'` while the rasterizer drew with `'middle'`, and a
  * comment here asserted the opposite. Measured in Chromium, Inter 48px/600,
