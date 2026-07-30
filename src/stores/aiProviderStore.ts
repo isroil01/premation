@@ -30,6 +30,7 @@ import { create } from 'zustand';
 import { deletePersisted, readPersisted, writePersisted } from '@core/settings/persistedValue';
 import { ADAPTERS, type ProviderId } from '@motion/ai-tools';
 import { onSessionChange } from '@core/api/session';
+import { aiEnabled } from '@core/config/edition';
 import {
   api,
   isAuthenticated,
@@ -287,16 +288,22 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
   },
 
   ready: () => {
+    // Nothing is runnable in the local edition — the gateway that holds the key
+    // does not exist. Answering false here is what puts every AI affordance in
+    // its disabled "coming soon" state, since they all already ask this.
+    if (!aiEnabled()) return false;
     const { provider, status, motion } = get();
     return isUsable(provider, status, motion);
   },
 
   anyReady: () => {
+    if (!aiEnabled()) return false;
     const { status, motion } = get();
     return FALLBACK_ORDER.some((p) => isUsable(p, status, motion));
   },
 
   refreshModels: async () => {
+    if (!aiEnabled()) return;
     if (!isAuthenticated()) return;
     try {
       const { models } = await api.getAiModels();
@@ -335,6 +342,8 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
   },
 
   refreshStatus: async (opts) => {
+    // No gateway to ask, and nothing to show even if there were.
+    if (!aiEnabled()) return;
     if (!isAuthenticated()) {
       // Do NOT wipe what we have. This is reached during boot, before
       // `loadSession()` has read the keystore — clearing here is what made the

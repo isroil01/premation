@@ -5,6 +5,7 @@
 
 import { Icon } from '@components/Icon';
 import { useAuthStore } from '@stores/authStore';
+import { cloudAccountsEnabled } from '@core/config/edition';
 import { openAuthModal } from './AuthPanel';
 import { openModal } from '@stores/modalStore';
 
@@ -56,9 +57,14 @@ function openAccountMenu(email: string): void {
   });
 }
 
-export function AccountButton(): JSX.Element {
+export function AccountButton(): JSX.Element | null {
   const user = useAuthStore((s) => s.user);
   const authed = useAuthStore((s) => s.status === 'authenticated');
+
+  // No accounts in the local edition — and "Sign in to sync to the cloud" is
+  // exactly the kind of dead-end this edition exists to avoid, since the modal
+  // it opens has no server to authenticate against.
+  if (!cloudAccountsEnabled()) return null;
 
   if (authed && user) {
     const label = user.name || user.email.split('@')[0];

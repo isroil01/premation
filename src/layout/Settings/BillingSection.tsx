@@ -12,11 +12,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { api, isAuthenticated, type BillingSummary, type PlanDto } from '@core/api/client';
+import { billingEnabled } from '@core/config/edition';
 import styles from './BillingSection.module.css';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 
 
-export function BillingSection(): JSX.Element {
+export function BillingSection(): JSX.Element | null {
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [plans, setPlans] = useState<PlanDto[]>([]);
   // Motion AI's real status — credits, entitlement, and whether it is on at all.
@@ -26,6 +27,7 @@ export function BillingSection(): JSX.Element {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
+    if (!billingEnabled()) return;
     if (!isAuthenticated()) return;
     try {
       const [me, catalog] = await Promise.all([api.getBilling(), api.listPlans()]);
@@ -40,6 +42,11 @@ export function BillingSection(): JSX.Element {
   // The credit balance is what this page now states, so it must be current when
   // the page opens rather than whatever the assistant panel last fetched.
   useEffect(() => { void refreshAiStatus(); }, [refreshAiStatus]);
+
+  // There are no plans to be on in the local edition. Renders nothing at all —
+  // after the hooks above, so hook order is identical in both editions — which
+  // makes this safe to mount unconditionally from wherever settings are shown.
+  if (!billingEnabled()) return null;
 
   if (!isAuthenticated()) {
     return (

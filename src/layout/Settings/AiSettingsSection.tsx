@@ -28,6 +28,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { isAuthenticated, type AiKeyStatus, type AiProviderId } from '@core/api/client';
+import { aiEnabled } from '@core/config/edition';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import styles from './AiSettingsSection.module.css';
 
@@ -91,6 +92,7 @@ export function AiSettingsSection(): JSX.Element {
   const clearKey = useAiProviderStore((s) => s.clearKey);
 
   const reload = useCallback(async () => {
+    if (!aiEnabled()) return;
     if (!isAuthenticated()) return;
     // The server is the ONLY source of key state. This used to also read a
     // plaintext `localStorage` mirror and re-upload from it — see
@@ -99,6 +101,19 @@ export function AiSettingsSection(): JSX.Element {
   }, [refresh]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  // Keys are held by the gateway, which the local edition does not have. Say
+  // what the state actually is rather than offering a key field that would have
+  // nowhere to store what the user typed.
+  if (!aiEnabled()) {
+    return (
+      <div className={styles.section}>
+        <p className={styles.intro}>
+          The AI assistant is coming soon in this edition. Everything else works offline.
+        </p>
+      </div>
+    );
+  }
 
   if (!isAuthenticated()) {
     return (

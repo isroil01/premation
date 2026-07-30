@@ -23,6 +23,7 @@ import { runBackendDirector } from './DirectorRunner';
 import { runCasterPipeline } from './CasterRunner';
 import type { Direction as CasterDirection } from '@motion/caster';
 import { casterEnabled } from '@core/config/flags';
+import { aiEnabled } from '@core/config/edition';
 import { deriveStyleFromBrief, setRuntimeStyle } from './design';
 import { buildExemplarBlock } from './exemplars';
 
@@ -216,6 +217,15 @@ export async function* streamTurn(
   req: AiRequest,
   signal: AbortSignal,
 ): AsyncGenerator<AiEvent> {
+  // The local edition has no gateway to stream through, so the assistant is not
+  // available at all. Refuse here rather than below on the missing token: "sign
+  // in" is an instruction nobody in this edition can follow, and an error that
+  // tells the user to do something impossible is worse than one that says the
+  // feature isn't ready.
+  if (!aiEnabled()) {
+    throw new AiError('coming_soon', 'The AI assistant is coming soon in the local edition.');
+  }
+
   const token = getToken();
   if (!token) throw new AiError('auth', 'Sign in to use the assistant — AI runs through your Motion account.');
 

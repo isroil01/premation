@@ -2,7 +2,7 @@
 # Build with:  npm run dist   (installer)   |   npm run pack   (unpacked, fast)
 appId: com.motioneditor.app
 productName: Motion Editor
-copyright: © Motion Editor
+copyright: © Motion Editor contributors — licensed under the GNU AGPL v3.0
 
 directories:
   output: release
