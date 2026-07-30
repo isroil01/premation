@@ -34,6 +34,7 @@ import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake, applyEffectChain } from '@core/effects/effectBake';
 import { scaleEffectLengths, type Effect } from '@core/effects/effects';
+import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
 import { isLocalBlobRef, loadLocalBlobObjectUrl } from './localBlobSource';
@@ -257,6 +258,9 @@ export interface ImageBakeSpec {
   width: number;
   height: number;
   fillOpacity?: number;
+  /** Baked BEFORE the chain, so interior styles shape themselves from the
+   *  masked silhouette rather than the bitmap's rectangle. */
+  mask?: LayerMask;
 }
 
 interface ImageEntry {
@@ -1044,6 +1048,27 @@ export class AppTextureProvider implements TextureProvider {
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(bitmap, 0, 0);
       const k = bake.width > 0 ? w / bake.width : 1;
+      // MASK FIRST, matching the vector path. An interior style is generated
+      // from the layer's silhouette, and for a masked layer that silhouette is
+      // the masked one — run the chain first and an inner shadow hangs off the
+      // bitmap's rectangle instead of the mask's contour. The matte is drawn in
+      // the layer's centred space scaled to the bitmap's resolution, since the
+      // two are rarely the same size.
+      if (bake.mask && bake.mask.paths.length > 0) {
+        const matte = document.createElement('canvas');
+        matte.width = w;
+        matte.height = h;
+        const mc = matte.getContext('2d');
+        if (mc) {
+          const ky = bake.height > 0 ? h / bake.height : 1;
+          mc.setTransform(k, 0, 0, ky, w / 2, h / 2);
+          paintMaskMatte(mc, bake.mask, bake.width, bake.height);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalCompositeOperation = 'destination-in';
+          ctx.drawImage(matte, 0, 0);
+          ctx.globalCompositeOperation = 'source-over';
+        }
+      }
       applyEffectChain(
         ctx,
         w,

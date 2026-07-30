@@ -62,17 +62,18 @@ export function layerNeedsCpuBake(
  * 3D alike. They are not GPU-expressible, so the only way to render them is to
  * take the same canvas round-trip the vector path takes.
  *
- * Excluded, deliberately:
- *   · VIDEO — a per-frame canvas round-trip through the whole chain, forever.
- *     The vector path can cache on a content signature; a video frame changes
- *     every frame by definition.
- *   · A layer carrying a MASK. Interior styles shape themselves from the
- *     layer's silhouette, and for a masked layer that silhouette is the MASKED
- *     one — the vector path gets this right by baking the mask before the
- *     chain. The image path applies its mask on the GPU afterwards, so baking
- *     here would shape the styles from the unmasked rectangle and hang the
- *     shadow off the wrong contour. Better to keep today's behaviour than to
- *     render a confidently wrong one.
+ * VIDEO is excluded, deliberately: a per-frame canvas round-trip through the
+ * whole chain, forever. The vector path can cache on a content signature; a
+ * video frame changes every frame by definition.
+ *
+ * A MASK is baked first, exactly as the vector path bakes it — interior styles
+ * shape themselves from the layer's silhouette, and for a masked layer that
+ * silhouette is the MASKED one, so the order is load-bearing rather than
+ * incidental. This used to be an exclusion: masked image layers silently got no
+ * interior styles at all, which is the one shape of limitation this codebase
+ * keeps deleting, because the control accepts the value and quietly does
+ * nothing. The GPU mask is dropped for a baked layer so the mask is applied
+ * once, not twice.
  *
  * Both the renderer backend (which requests the bake) and the snapshot adapter
  * (which then must NOT also hand the effects to the GPU) gate on THIS, so the
@@ -81,9 +82,8 @@ export function layerNeedsCpuBake(
 export function imageNeedsCpuBake(
   kind: string,
   effects: ReadonlyArray<Effect> | undefined,
-  hasMask: boolean,
 ): boolean {
-  return kind === 'image' && !hasMask && effectsNeedCpuBake(effects);
+  return kind === 'image' && effectsNeedCpuBake(effects);
 }
 
 /**

@@ -469,12 +469,16 @@ export class MotionRendererBackend implements RenderBackend {
               // into the bitmap or they render nothing at all on a photo. Gated
               // by the SAME predicate the snapshot adapter uses to withhold
               // them from the GPU, so they cannot both apply.
-              const bakeImg = imageNeedsCpuBake(
-                layer.kind,
-                layer.effects,
-                !!(layer.mask && layer.mask.paths.length > 0),
-              )
-                ? { effects: layer.effects!, width: layer.width, height: layer.height, fillOpacity: layer.fillOpacity }
+              const bakeImg = imageNeedsCpuBake(layer.kind, layer.effects)
+                ? {
+                    effects: layer.effects!,
+                    width: layer.width,
+                    height: layer.height,
+                    fillOpacity: layer.fillOpacity,
+                    // Baked into the bitmap, so the GPU must not mask it again
+                    // — the adapter drops maskTextureKey for a baked image.
+                    ...(layer.mask && layer.mask.paths.length > 0 ? { mask: layer.mask } : {}),
+                  }
                 : undefined;
               this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource, bakeImg);
             } else if (layer.kind === 'video' && layer.src) {

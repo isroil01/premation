@@ -472,10 +472,10 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // dynamic/large content; those still route to Canvas2D.)
   const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text') && effectsNeedCpuBake(layer.effects);
   // An IMAGE bakes too, when its stack contains something the GPU cannot draw.
-  // Its mask stays on the GPU (a masked layer is excluded from baking outright),
-  // but the chain has already applied the colour grade and any LUT, so those
-  // must not run again here.
-  const imgBaked = imageNeedsCpuBake(layer.kind, layer.effects, !!(layer.mask && layer.mask.paths.length > 0));
+  // The bake has already applied the colour grade, any LUT, AND the mask — the
+  // mask first, so interior styles shape themselves from the masked silhouette
+  // — so none of the three may run again here.
+  const imgBaked = imageNeedsCpuBake(layer.kind, layer.effects);
   const baked = cpuBaked || imgBaked;
   // Per-quad Lambert gain (Accepts Lights): folded into the draw tint on the
   // affine fallback. Renderables that take the depth-tested group path get the
@@ -503,7 +503,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     // Premultiplied footage: routes the draw to the shader twin that divides
     // the premultiplication out before grading.
     ...(kind === 'text' ? { textureKey: `text:${layer.id}` } : {}),
-    ...(!cpuBaked && layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
+    ...(!baked && layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
     // Colour LUT (Levels/Curves/Posterize) on a textured layer: the provider
     // uploads `lut:<id>` and the LUT shader remaps through it after the grade.
     ...(!baked && textured && hasLutEffect(layer) ? { lutTextureKey: `lut:${layer.id}` } : {}),
