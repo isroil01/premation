@@ -69,7 +69,16 @@ export type RenderableEffect =
   | { type: 'blur'; radiusPx: number }
   | { type: 'glow'; radiusPx: number; color?: Color }
   | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number }
-  | { type: 'gradient-ramp'; blend: number; colorA?: Color; colorB?: Color }
+  | {
+      type: 'gradient-ramp';
+      blend: number;
+      colorA?: Color;
+      colorB?: Color;
+      /** Ramp direction in degrees, 0 = left→right, 90 = top→bottom (the same
+       *  convention as a gradient FILL). Absent → 90, the previous hardcoded
+       *  diagonal's nearest sane default. */
+      angle?: number;
+    }
   | { type: 'fractal-noise'; scale: number }
   | {
       type: 'displacement-map';

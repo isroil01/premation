@@ -14,6 +14,7 @@ import { AnimationEngine } from '@motion/animation';
 import { Color, depthEligible3D } from '@motion/renderer';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { parseHex, sampleFillAt } from '@core/paint/fill';
 import {
   DEFAULT_DROP_SHADOW, DEFAULT_COLOR_OVERLAY, DEFAULT_GRADIENT_OVERLAY,
   defaultGlassStyle, styledSurfaceFill, type LayerStyles,
@@ -112,6 +113,103 @@ describe('drop shadow / outer glow survive the 3D switch', () => {
     const r = scene({ dropShadow: { ...DEFAULT_DROP_SHADOW } }).renderables.find((x) => x.id === 'n')!;
     expect(r.effects?.some((e) => e.type === 'drop-shadow')).toBe(true);
     expect(depthEligible3D(r)).toBe(true);
+  });
+});
+
+describe('an extruded solid keeps ONE surface across every face', () => {
+  // The walls are synthesized flat strips that used to take `layer.fill` — the
+  // layer's BASE colour, which a gradient fill never writes to. So a
+  // blue→orange box drew gradient caps and four flat BLUE walls.
+  const GRADIENT = {
+    type: 'linear', angle: 90, // 0°=→, 90°=↓ : blue at the top, orange at the bottom
+    stops: [
+      { id: 'a', offset: 0, color: '#0000ff' },
+      { id: 'b', offset: 1, color: '#ff0000' },
+    ],
+  };
+
+  function extruded(fill: unknown, shapeType = 'rect'): SceneNode {
+    return {
+      id: 'n', name: 'n', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 400, y: 300 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        {
+          id: 'n_t', type: 'Transform',
+          props: {
+            [SCENE_KIND_PROP]: 'shape', x: 400, y: 300, rotation: 0, width: 200, height: 140,
+            shapeType, z: 0, rotationX: 0, rotationY: 0, extrusionDepth: 60,
+          },
+        },
+        { id: 'n_s', type: 'Style', props: { opacity: 100, fill: '#0000ff' } },
+        { id: 'n_f', type: 'fx', props: { fill } },
+      ],
+    } as unknown as SceneNode;
+  }
+
+  const facesOf = (n: SceneNode) => {
+    const g = new SceneGraph();
+    g.addNode(n);
+    const snap = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
+    return snap.layers.filter((l) => l.id.startsWith('n::ext-'));
+  };
+
+  it('a vertical ramp puts its TOP colour on the top wall and its BOTTOM on the bottom', () => {
+    const faces = facesOf(extruded(GRADIENT));
+    const rgb = (id: string) => {
+      const f = faces.find((l) => l.id === `n::ext-${id}`)!;
+      const c = parseHex(String(f.fill));
+      return [c.r, c.g, c.b];
+    };
+    // Walls are split into strips; strip 0 of the top wall sits at the top edge.
+    const [tr, , tb] = rgb('t0');
+    expect(tb).toBeGreaterThan(200); // blue
+    expect(tr).toBeLessThan(60);
+    const bottom = faces.filter((l) => /^n::ext-b\d+$/.test(l.id)).pop()!;
+    const cb = parseHex(String(bottom.fill));
+    expect(cb.r).toBeGreaterThan(200); // red
+    expect(cb.b).toBeLessThan(60);
+  });
+
+  it('the side walls RAMP down their length instead of taking one flat colour', () => {
+    const faces = facesOf(extruded(GRADIENT));
+    const right = faces
+      .filter((l) => /^n::ext-r\d+$/.test(l.id))
+      .sort((a, b) => Number(a.id.slice(9)) - Number(b.id.slice(9)))
+      .map((l) => parseHex(String(l.fill)).r);
+    expect(right.length).toBeGreaterThan(1);
+    // Red rises monotonically from the top of the wall to the bottom.
+    expect(right[right.length - 1]!).toBeGreaterThan(right[0]! + 100);
+    for (let i = 1; i < right.length; i++) expect(right[i]!).toBeGreaterThanOrEqual(right[i - 1]!);
+  });
+
+  it('a SOLID fill leaves the geometry exactly as it was — 4 walls, not 4×N strips', () => {
+    // Splitting only buys something for a gradient; paying for it always would
+    // change every existing extrusion's face count for no visible gain.
+    const ids = facesOf(extruded({ type: 'solid', color: '#0000ff' })).map((l) => l.id).sort();
+    expect(ids).toEqual(['n::ext-b', 'n::ext-back', 'n::ext-l', 'n::ext-r', 'n::ext-t']);
+  });
+
+  it('sampleFillAt agrees with the gradient the front face is painted with', () => {
+    // Same geometry as makeCanvasGradient: 0°=→, 90°=↓, centred local space.
+    const g = GRADIENT as never;
+    expect(parseHex(sampleFillAt(g, 200, 140, 0, -70)!).b).toBeGreaterThan(200); // top → blue
+    expect(parseHex(sampleFillAt(g, 200, 140, 0, +70)!).r).toBeGreaterThan(200); // bottom → red
+    const mid = parseHex(sampleFillAt(g, 200, 140, 0, 0)!);
+    expect(mid.r).toBeGreaterThan(100);
+    expect(mid.b).toBeGreaterThan(100);
+    expect(sampleFillAt(undefined, 200, 140, 0, 0)).toBeUndefined();
+  });
+});
+
+describe('parseHex accepts the rgba() form this module itself emits', () => {
+  // sampleGradientColor returns `rgba(r, g, b, a)`. Feeding that back in — a
+  // gradient sample with an overlay composited over it — used to come back
+  // opaque BLACK.
+  it('round-trips its own output', () => {
+    expect(parseHex('rgba(255, 106, 0, 1.000)')).toEqual({ r: 255, g: 106, b: 0, a: 255 });
+    expect(parseHex('rgb(0, 128, 255)')).toEqual({ r: 0, g: 128, b: 255, a: 255 });
+    expect(parseHex('#ff6a00')).toEqual({ r: 255, g: 106, b: 0, a: 255 });
+    expect(parseHex('nonsense')).toEqual({ r: 0, g: 0, b: 0, a: 255 });
   });
 });
 

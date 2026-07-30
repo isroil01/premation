@@ -16,7 +16,7 @@ import { readNodeMaskAt } from '@core/effects/mask';
 import { readNodeMatte, getMatteSourceId } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readNodeMotionBlur, motionBlurSampleTimes, type MotionBlurConfig } from '@core/effects/motionBlur';
-import { readNodeFill, readNodeFills, type FillPaint } from '@core/paint/fill';
+import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core/paint/fill';
 import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
 import { localMatrix, worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
@@ -37,7 +37,7 @@ import { readEchoConfig } from '@core/effects/echo';
 import { readPosterizeTimeFps } from '@core/effects/posterizeTime';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { readNodeMaterial } from '@core/scene/material';
-import { extrusionFaces, clampBevel, EXTRUSION_WALL_FALLBACK_FILL } from '@core/scene/extrusion';
+import { extrusionFaces, clampBevel, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS } from '@core/scene/extrusion';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
@@ -2047,10 +2047,56 @@ export function buildSnapshot(
         // Colour/Gradient Overlay repaints the front face, and taking the raw
         // fill here left every other face the old colour — one object in two
         // colours, split exactly along the front edge. See styledSurfaceFill.
+        const extStyles = readNodeLayerStyles(node);
         const wallFill = styledSurfaceFill(
-          readNodeLayerStyles(node),
+          extStyles,
           typeof layer.fill === 'string' ? layer.fill : EXTRUSION_WALL_FALLBACK_FILL,
         );
+        /**
+         * The wall colour AT one face's own position on the object.
+         *
+         * A synthesized wall is a flat strip, so it gets exactly one colour —
+         * but `layer.fill` is the layer's BASE colour, which a gradient fill
+         * never writes to (only a SOLID paint updates it). So a gradient-filled
+         * box drew its caps as the gradient and all four walls as the base
+         * blue. Every face already carries its centre in the layer's centred
+         * frame — the same space the gradient is built in — as the translation
+         * of its own matrix, so sampling the paint there needs no per-face
+         * special-casing and works for box walls, rounded-rect and cylinder
+         * segments, and the bevel chamfer rings alike.
+         */
+        // EXPERIMENT: the interior styles, for the synthesized faces. Exterior
+        // ones (drop shadow, outer glow) belong to the object's silhouette and
+        // would stack N times; the overlays already reached the faces via
+        // wallFill and would double-apply.
+        const FACE_SURFACE_IDS = new Set([
+          'layerstyle:innerShadow', 'layerstyle:innerGlow',
+          'layerstyle:satin', 'layerstyle:bevel', 'layerstyle:stroke',
+        ]);
+        const faceSurfaceFx = layerStylesToEffects(extStyles, globalLight.angle, globalLight.altitude)
+          .filter((e) => FACE_SURFACE_IDS.has(e.id));
+        const faceStyles = faceSurfaceFx.length > 0 ? faceSurfaceFx : undefined;
+        /**
+         * Interior styles belong on a face that is a whole SURFACE of the
+         * object — the four walls of a box — and not on a facet that only
+         * exists to approximate a curve.
+         *
+         * An inner shadow hugs the contour of whatever it is applied to. On a
+         * box wall that contour is a real edge of the object and the result
+         * reads as one softly-shaded solid. On a cylinder it is the edge of a
+         * chord strip, so each of the twenty facets drew its own dark band and
+         * you saw the tessellation instead of the cylinder. Same for the strips
+         * a wall is split into for a gradient, and for the narrow chamfer rings
+         * of a bevel.
+         *
+         * Suffixes: `r`/`l`/`t`/`b` are the undivided box walls, `back` the
+         * back cap; `w0…wN` are curve facets, `r0…`/`l0…` gradient
+         * subdivisions, and `cf*`/`cb*` chamfer rings.
+         */
+        const faceFxFor = (suffix: string): typeof faceStyles =>
+          (/^[rltb]$/.test(suffix) || suffix === 'back') ? faceStyles : undefined;
+        const wallFillAt = (m: import('@motion/scene').Matrix4): string =>
+          styledSurfaceFill(extStyles, sampleFillAt(layer.fillPaint, layerW, layerH, m[12]!, m[13]!) ?? wallFill);
 
         if (isComplexContent) {
           // Contour Volume Extrusion: For text and complex shapes, slice the
@@ -2152,7 +2198,12 @@ export function buildSnapshot(
           // Corner radius drives the extruded OUTLINE too, so a rounded card
           // is a rounded solid rather than a rounded face on a square block.
           const extCorner = extShape === 'rect' ? (layer.cornerRadius ?? 0) : 0;
-          for (const f of extrusionFaces(layerW, layerH, extrusionDepth, extShape, undefined, { bevel: bevelRequested, bevelStyle: d3.bevelStyle, cornerRadius: extCorner })) {
+          // A gradient varies ALONG a wall, and a wall is one flat colour — so
+          // split the straight walls into strips that can each sample their own
+          // position. Only for a gradient: a solid fill is already exact at one
+          // strip per side, and leaving it at 1 keeps that geometry untouched.
+          const wallSegments = layer.fillPaint && layer.fillPaint.type !== 'solid' ? GRADIENT_WALL_SEGMENTS : 1;
+          for (const f of extrusionFaces(layerW, layerH, extrusionDepth, extShape, undefined, { bevel: bevelRequested, bevelStyle: d3.bevelStyle, cornerRadius: extCorner, wallSegments })) {
             const M = Matrix4Math.multiply(
               world3d as import('@motion/scene').Matrix4,
               f.m,
@@ -2200,7 +2251,7 @@ export function buildSnapshot(
               shade3d: undefined as RenderLayer['shade3d'],
             };
             const faceLayer: RenderLayer = f.role === 'back'
-              ? { ...layer, ...common, fill: resolveFaceMaterial(faceMats, 'back', wallFill).fill }
+              ? { ...layer, ...common, effects: faceFxFor(f.suffix), fill: resolveFaceMaterial(faceMats, 'back', wallFill).fill }
               : {
                   id: common.id,
                   kind: 'shape',
@@ -2216,12 +2267,20 @@ export function buildSnapshot(
                   opacity: layer.opacity,
                   width: f.w,
                   height: f.h,
-                  fill: resolveFaceMaterial(faceMats, faceKindOf(f.role, f.suffix), wallFill).fill,
+                  // Sampled at THIS wall's own position on the object, so a
+                  // gradient-filled solid keeps one continuous surface instead
+                  // of gradient caps bolted onto flat base-coloured walls.
+                  fill: resolveFaceMaterial(faceMats, faceKindOf(f.role, f.suffix), wallFillAt(f.m)).fill,
                   visible: layer.visible,
                   // Flat strips along the outline — no corner radius of their
                   // own. (The back cap takes the branch above, which spreads
                   // `layer` and so already carries the layer's radius.)
                   primitive: 'rect',
+                  effects: faceFxFor(f.suffix),
+                  // Facets of one body: they tile against each other, so SDF
+                  // edge coverage would draw a dark hairline at every join —
+                  // twenty of them around a cylinder. See RenderLayer.flatFacet.
+                  flatFacet: true,
                 };
             if (extLit) {
               const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);

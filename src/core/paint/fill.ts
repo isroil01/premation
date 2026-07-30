@@ -112,7 +112,29 @@ interface RGBA { r: number; g: number; b: number; a: number }
 
 /** Parse #rgb / #rrggbb / #rrggbbaa into 0..255 rgba. Falls back to opaque black. */
 export function parseHex(hex: string): RGBA {
-  let h = hex.trim().replace(/^#/, '');
+  const raw = hex.trim();
+  // `rgb()` / `rgba()` as well as hex, because this module PRODUCES that form:
+  // `sampleGradientColor` and `toRgbaString` both return `rgba(r, g, b, a)`.
+  // Feeding one of those back in — sampling a gradient and then compositing an
+  // overlay over the result, say — used to fall through to the failure return
+  // and come back opaque BLACK, silently. Accepting it is purely additive: no
+  // caller ever wanted black for a colour this file just wrote.
+  const fn = /^rgba?\(([^)]+)\)$/i.exec(raw);
+  if (fn) {
+    const parts = fn[1]!.split(/[,\s/]+/).filter((s) => s.length > 0).map(Number);
+    if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
+      const clamp255 = (n: number): number => Math.max(0, Math.min(255, Math.round(n)));
+      const alpha = parts.length > 3 && Number.isFinite(parts[3]!) ? parts[3]! : 1;
+      return {
+        r: clamp255(parts[0]!),
+        g: clamp255(parts[1]!),
+        b: clamp255(parts[2]!),
+        a: clamp255(Math.max(0, Math.min(1, alpha)) * 255),
+      };
+    }
+    return { r: 0, g: 0, b: 0, a: 255 };
+  }
+  let h = raw.replace(/^#/, '');
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
   if (h.length === 6) h += 'ff';
   if (h.length !== 8 || /[^0-9a-fA-F]/.test(h)) return { r: 0, g: 0, b: 0, a: 255 };
@@ -316,6 +338,63 @@ export function sampleGradientOpacity(stops: ReadonlyArray<OpacityStop>, t: numb
     }
   }
   return last.opacity;
+}
+
+/**
+ * The colour this paint resolves to at ONE point of the box, in the same
+ * centred local space `makeCanvasGradient` builds in (origin at the box
+ * centre, x ∈ [−w/2, w/2], y ∈ [−h/2, h/2]).
+ *
+ * Deliberately adjacent to `makeCanvasGradient`, and duplicating its geometry
+ * line for line, because the two MUST agree: this is how a surface that can
+ * only be one flat colour finds out which colour it should be, and if it
+ * disagreed with the gradient the renderer actually draws, the two would meet
+ * along a visible seam.
+ *
+ * The caller is an extruded solid's side walls. Each wall is a flat strip the
+ * renderer synthesizes, and it used to take `layer.fill` — the layer's BASE
+ * colour, which a gradient fill never updates. So a blue→orange gradient box
+ * rendered its front and back caps as the gradient and all four walls as flat
+ * blue: one object in two unrelated colours, split along the front edge. A
+ * cylinder did the same across all twenty of its wall segments. Sampling each
+ * face at its own centre makes the walls belong to the object — the top wall
+ * takes the colour at the top edge, the bottom wall the colour at the bottom,
+ * and a cylinder's segments wrap smoothly around the ramp.
+ *
+ * Returns undefined for a paint with no resolvable colour, so callers keep
+ * whatever fallback they already had.
+ */
+export function sampleFillAt(
+  paint: FillPaint | undefined,
+  w: number,
+  h: number,
+  x: number,
+  y: number,
+): string | undefined {
+  if (!paint) return undefined;
+  if (paint.type === 'solid') return typeof paint.color === 'string' ? paint.color : undefined;
+
+  let t: number;
+  if (paint.type === 'linear') {
+    // Endpoints span the box along the angle (0°=→, 90°=↓) — makeCanvasGradient.
+    const a = (paint.angle * Math.PI) / 180;
+    const dx = Math.cos(a);
+    const dy = Math.sin(a);
+    const half = (Math.abs(dx) * w + Math.abs(dy) * h) / 2;
+    // Project onto the axis and renormalise from [−half, half] to [0, 1].
+    t = half <= 0 ? 0 : clamp01((x * dx + y * dy + half) / (2 * half));
+  } else {
+    const cx = (paint.cx - 0.5) * w;
+    const cy = (paint.cy - 0.5) * h;
+    const r = (Math.max(0.01, paint.radius) * Math.hypot(w, h)) / 2;
+    t = r <= 0 ? 0 : clamp01(Math.hypot(x - cx, y - cy) / r);
+  }
+
+  const colors = sortedStops(paint.stops);
+  if (colors.length === 0) return undefined;
+  const color = sampleGradientColor(colors, t);
+  const alphas = sortedOpacityStops(paint.opacityStops);
+  return alphas.length === 0 ? color : applyAlpha(color, sampleGradientOpacity(alphas, t));
 }
 
 /** Multiply a hex colour's alpha by `opacity`, returning 8-digit hex. */

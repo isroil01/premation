@@ -25,7 +25,7 @@ import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@cor
 import { isLutEffect } from '@core/effects/colorLut';
 import { getMatteMode } from '@core/effects/matte';
 import { effectNumber, effectParam, withAlpha } from '@core/effects/effects';
-import { effectsNeedCpuBake, layerNeedsCpuBake } from '@core/effects/effectBake';
+import { effectsNeedCpuBake, layerNeedsCpuBake, imageNeedsCpuBake } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
@@ -263,6 +263,9 @@ function toRenderableGlass(
  *  are deferred (rendered as a plain quad for now). */
 function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   if (layer.kind !== 'shape') return undefined;
+  // A facet of a larger body tiles against its neighbours; SDF edge coverage
+  // would make every join a dark hairline. See RenderLayer.flatFacet.
+  if (layer.flatFacet) return undefined;
   if (layer.primitive === 'path') return undefined;
   if (layer.primitive === 'ellipse') {
     return { shape: 'ellipse', radiusPx: 0, width: layer.width, height: layer.height };
@@ -297,7 +300,10 @@ function extractSpatialEffects(layer: RenderLayer): import('@motion/renderer').R
       });
     }
     if (e.type === 'gradient-ramp') {
-      spatial.push({ type: 'gradient-ramp', blend: n('blend') / 100, colorA: c('colorA'), colorB: c('colorB') });
+      // The angle used to stop here: the pass hardcoded the ramp's endpoints to
+      // the box diagonal, so the Gradient Ramp effect's Angle control — and the
+      // Gradient Overlay layer style's, which compiles to it — moved nothing.
+      spatial.push({ type: 'gradient-ramp', blend: n('blend') / 100, colorA: c('colorA'), colorB: c('colorB'), angle: n('angle') });
     }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {
@@ -465,6 +471,12 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // relationship, not baked, so it survives. (Image/video are not baked:
   // dynamic/large content; those still route to Canvas2D.)
   const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text') && effectsNeedCpuBake(layer.effects);
+  // An IMAGE bakes too, when its stack contains something the GPU cannot draw.
+  // Its mask stays on the GPU (a masked layer is excluded from baking outright),
+  // but the chain has already applied the colour grade and any LUT, so those
+  // must not run again here.
+  const imgBaked = imageNeedsCpuBake(layer.kind, layer.effects, !!(layer.mask && layer.mask.paths.length > 0));
+  const baked = cpuBaked || imgBaked;
   // Per-quad Lambert gain (Accepts Lights): folded into the draw tint on the
   // affine fallback. Renderables that take the depth-tested group path get the
   // gain UNfolded and carry per-fragment shade data instead (decided after
@@ -494,11 +506,11 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(!cpuBaked && layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
     // Colour LUT (Levels/Curves/Posterize) on a textured layer: the provider
     // uploads `lut:<id>` and the LUT shader remaps through it after the grade.
-    ...(!cpuBaked && textured && hasLutEffect(layer) ? { lutTextureKey: `lut:${layer.id}` } : {}),
+    ...(!baked && textured && hasLutEffect(layer) ? { lutTextureKey: `lut:${layer.id}` } : {}),
     ...(matteOf(layer) ? { matte: matteOf(layer)! } : {}),
-    ...(textured ? { colorMatrix: cpuBaked ? undefined : texturedColorMatrix(layer) } : { sdf: sdfFor(layer) }),
+    ...(textured ? { colorMatrix: baked ? undefined : texturedColorMatrix(layer) } : { sdf: sdfFor(layer) }),
     ...(motionSamples ? { motionSamples } : {}),
-    effects: cpuBaked ? undefined : extractSpatialEffects(layer),
+    effects: baked ? undefined : extractSpatialEffects(layer),
     ...(layer.deformedMesh ? { deformedMesh: normalizeDeformedMesh(layer.deformedMesh, layer.width, layer.height, pad) } : {}),
     // True-3D placement for the depth-tested GPU path. Only meaningful for a
     // layer whose 2D model came from the projected affine (`layer.matrix`) —

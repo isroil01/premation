@@ -36,6 +36,27 @@ export const EXTRUSION_WALL_FALLBACK_FILL = '#2a2a2a';
 /** Number of planar strips approximating an ellipse's side wall. */
 export const ELLIPSE_WALL_SEGMENTS = 20;
 
+/** Strips per straight wall when the fill is a gradient — see
+ *  {@link ExtrusionOptions.wallSegments}. Matched to the ellipse ring so a box
+ *  and a cylinder resolve a ramp at the same fineness. */
+export const GRADIENT_WALL_SEGMENTS = 20;
+
+/**
+ * How far a wall strip runs past its neighbour, as a fraction of a strip.
+ *
+ * A solid quad's edge is antialiased to transparent. Two strips butted exactly
+ * edge to edge therefore each blend half the BACKGROUND in along the join, and
+ * the wall reads as a body ruled with dark hairlines. Overlapping hides the
+ * join under the neighbour's opaque interior.
+ *
+ * Straight walls ONLY. The ellipse and rounded-outline rings have the same
+ * seam, but their strips are chords at differing angles, so lengthening one
+ * lifts its corners off the outline — which extrusion.test.ts rightly pins,
+ * since those corners ARE the object's silhouette. Their seam needs a
+ * different fix (one mesh, or unantialiased interior edges), not this one.
+ */
+export const SEAM_OVERLAP = 0.25;
+
 /** Quads per 90° corner arc on a rounded-rect extrusion. */
 export const ROUNDED_CORNER_SEGMENTS = 6;
 
@@ -72,6 +93,25 @@ export interface ExtrusionOptions {
    * effect on anything 3D.
    */
   cornerRadius?: number;
+  /**
+   * Split each straight wall of a RECT extrusion into this many strips along
+   * its length (default 1 = one strip per side, the original geometry).
+   *
+   * A wall is drawn as one flat colour, sampled at its own centre. That is
+   * exact for a solid fill and for a wall the gradient does not vary along —
+   * but the left and right walls of a vertically-ranked box span the WHOLE
+   * ramp, so a single sample renders them a flat mid-colour butted against a
+   * front face that ramps: the object reads as painted panels rather than one
+   * surface. Splitting the wall lets each strip sample its own position, so the
+   * ramp runs down the side continuously. It is the same reason the ellipse
+   * path already emits a segmented ring, and why a cylinder wrapped smoothly
+   * while a box did not.
+   *
+   * Strips are flat solid quads — no rasters, no textures — so this costs a few
+   * more draws in the same depth pass and nothing else. Only worth paying for a
+   * gradient; callers leave it at 1 for a solid fill.
+   */
+  wallSegments?: number;
 }
 
 /** Points around a rounded-rect outline, centred on the origin. */
@@ -217,16 +257,63 @@ export function extrusionFaces(
     return faces;
   }
 
+  const segs = Math.max(1, Math.floor(opts.wallSegments ?? 1));
+  /**
+   * The four straight walls of a box, each split into `segs` strips along its
+   * length. `wd` is how deep the walls run (the full depth, or the shorter
+   * span left between two chamfer rings when bevelled).
+   *
+   * At segs = 1 this returns exactly the four faces the unsplit code did —
+   * same order, same suffixes, same matrices — so a solid-filled extrusion is
+   * untouched.
+   */
+  const walls = (wd: number): ExtrusionFace[] => {
+    if (segs <= 1) {
+      return [
+        face(+w / 2, 0, d / 2, 0, 90, 0, wd, h, 'wall', 'r'),
+        face(-w / 2, 0, d / 2, 0, 90, 0, wd, h, 'wall', 'l'),
+        face(0, -h / 2, d / 2, 90, 0, 0, w, wd, 'wall', 't'),
+        face(0, +h / 2, d / 2, 90, 0, 0, w, wd, 'wall', 'b'),
+      ];
+    }
+    const out: ExtrusionFace[] = [];
+    /**
+     * Strip `i` of `segs` across a span of `total`, as [centre, size].
+     *
+     * Every strip but the last runs LONG, into its successor. Butted exactly
+     * edge to edge they left a dark hairline at each join: a solid quad's edge
+     * is antialiased to transparent, so two neighbouring edges each blended
+     * half the BACKGROUND in rather than blending into each other. Overlapping
+     * puts the seam inside the next strip's opaque body, and since the strips
+     * are drawn in order and are coplanar (depth test LEQUAL), the later one
+     * simply covers the extension. The final strip is left exact so the wall
+     * still ends on the box's corner instead of poking past it.
+     */
+    const strip = (total: number, i: number): [number, number] => {
+      const s = total / segs;
+      const lo = -total / 2 + i * s;
+      const hi = lo + s + (i === segs - 1 ? 0 : s * SEAM_OVERLAP);
+      return [(lo + hi) / 2, hi - lo];
+    };
+    // Left / right walls run along the box's HEIGHT, so they split along y.
+    for (let i = 0; i < segs; i++) {
+      const [cy, sh] = strip(h, i);
+      out.push(face(+w / 2, cy, d / 2, 0, 90, 0, wd, sh, 'wall', `r${i}`));
+      out.push(face(-w / 2, cy, d / 2, 0, 90, 0, wd, sh, 'wall', `l${i}`));
+    }
+    // Top / bottom walls run along the box's WIDTH, so they split along x.
+    for (let i = 0; i < segs; i++) {
+      const [cx, sw] = strip(w, i);
+      out.push(face(cx, -h / 2, d / 2, 90, 0, 0, sw, wd, 'wall', `t${i}`));
+      out.push(face(cx, +h / 2, d / 2, 90, 0, 0, sw, wd, 'wall', `b${i}`));
+    }
+    return out;
+  };
+
   const b = clampBevel(w, h, d, opts.bevel ?? 0);
   if (b <= 0) {
-    // Unbevelled box: back cap + 4 full-depth walls (unchanged, byte-identical).
-    return [
-      face(0, 0, d, 0, 0, 0, w, h, 'back', 'back'),
-      face(+w / 2, 0, d / 2, 0, 90, 0, d, h, 'wall', 'r'),
-      face(-w / 2, 0, d / 2, 0, 90, 0, d, h, 'wall', 'l'),
-      face(0, -h / 2, d / 2, 90, 0, 0, w, d, 'wall', 't'),
-      face(0, +h / 2, d / 2, 90, 0, 0, w, d, 'wall', 'b'),
-    ];
+    // Unbevelled box: back cap + 4 full-depth walls.
+    return [face(0, 0, d, 0, 0, 0, w, h, 'back', 'back'), ...walls(d)];
   }
 
   // Bevelled rect. Inset caps (w−2b × h−2b), walls span z ∈ [b, d−b] (depth wd),
@@ -240,10 +327,7 @@ export function extrusionFaces(
   // Side walls, now spanning only z ∈ [b, d−b] (centred at d/2).
   if (wd > 0) {
     faces.push(
-      face(+w / 2, 0, d / 2, 0, 90, 0, wd, h, 'wall', 'r'),
-      face(-w / 2, 0, d / 2, 0, 90, 0, wd, h, 'wall', 'l'),
-      face(0, -h / 2, d / 2, 90, 0, 0, w, wd, 'wall', 't'),
-      face(0, +h / 2, d / 2, 90, 0, 0, w, wd, 'wall', 'b'),
+      ...walls(wd),
     );
   }
   // Front chamfer ring: shrunk-front edge (z = 0) → wall front edge (z = b).
