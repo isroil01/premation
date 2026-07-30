@@ -83,6 +83,20 @@ function effectScene(spec: EffectSpec): Scene {
     fps: 30,
     frames: [0],
     gpuParity: isDivergent ? 'known-divergent' : 'expect-pass',
+    ...(isDivergent ? { divergence: {
+      why:
+        'Posterize quantises to flat bands, so the picture is large flat areas meeting at hard '
+        + 'steps, and the two engines put those step boundaries on marginally different pixels. '
+        + 'analyze-gap.mjs measures 2204 of 2288 differing pixels as coverage on those boundaries; '
+        + 'the 84 that are not sit where a value lands exactly on a quantisation threshold and the '
+        + 'two rounding rules disagree about which band it belongs to. Blur and glow are here for '
+        + 'the kernel reason: the GPU treats the radius as a Gaussian sigma sampled to 2.5 sigma, '
+        + 'the deleted Canvas2D reference inherited the CSS filter kernel.',
+      wouldMatchWhen:
+        'The references are re-blessed from the GPU engine, or the quantisation rounding is made '
+        + 'to match a reference engine that no longer ships.',
+      proof: 'packages/render-tests/scripts/analyze-gap.mjs — reports the coverage/colour split per scene',
+    } } : {}),
     ...(spec.tolerance ? { tolerance: spec.tolerance } : {}),
     // gpuOnly (Canvas2D no-op) and gpuOracle (Canvas2D implements it with a
     // different, unmatchable algorithm — eyeballed) both make the GPU the oracle.
@@ -124,6 +138,17 @@ const displacementMapLayerScene: Scene = defineScene({
   fps: 30,
   frames: [0],
   gpuParity: 'known-divergent',
+  divergence: {
+    why:
+      'GPU-only by construction: the displacement-map shader has no Canvas2D form, so the deleted '
+      + 'reference engine drew the subject undisplaced. The scene is its own oracle (oracle: gpu) '
+      + 'and the committed reference is GPU output; the parity number compares against a Canvas2D '
+      + 'baseline that never implemented the effect.',
+    wouldMatchWhen:
+      'Never against Canvas2D — the comparison is meaningless for a GPU-only effect. This entry '
+      + 'should be removed when the parity dashboard stops comparing oracle:gpu scenes against the '
+      + 'Canvas2D baseline at all.',
+  },
   oracle: 'gpu',
   build(graph) {
     // The map: a full-comp horizontal gradient (dark → bright), drawn behind.

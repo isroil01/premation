@@ -10,8 +10,15 @@ import { rectangleMask, ellipseMask } from '@core/effects/mask';
 const COMP = { width: 320, height: 220, background: '#0c0c12' };
 const SIZE = { w: 320, h: 220 };
 
-function scene(id: string, description: string, build: Scene['build'], frames: number[] = [0], gpuParity: Scene['gpuParity'] = 'expect-pass'): Scene {
-  return defineScene({ id, description, size: SIZE, comp: COMP, fps: 30, frames, gpuParity, build });
+function scene(
+  id: string,
+  description: string,
+  build: Scene['build'],
+  frames: number[] = [0],
+  gpuParity: Scene['gpuParity'] = 'expect-pass',
+  divergence?: Scene['divergence'],
+): Scene {
+  return defineScene({ id, description, size: SIZE, comp: COMP, fps: 30, frames, gpuParity, divergence, build });
 }
 
 /** Comp-filling gradient content node (the thing being matted/masked). */
@@ -78,7 +85,20 @@ export const compositedScenes: Scene[] = [
   scene('mask-feather', 'Feathered ellipse mask.', (graph) => {
     gradientContent(graph, 'm');
     graph.setMask('m', { paths: [{ ...ellipseMask(200, 150), mode: 'add', feather: 28 }] });
-  }, [0], 'known-divergent'),
+  }, [0], 'known-divergent', {
+    why:
+      'The reference is frozen output of the DELETED Canvas2D backend. Both of these are built '
+      + 'from soft alpha over a large area — a feathered mask edge, and layer styles whose shadows '
+      + 'and glows are broad gradients — so the two engines differ across the whole soft region '
+      + 'rather than along a contour, and analyze-gap.mjs classes the bulk as colour rather than '
+      + 'coverage. NOT YET ESTABLISHED: which blur kernel each side used. The GPU treats a blur '
+      + 'radius as a Gaussian sigma sampled to 2.5 sigma (shaders/builtin.ts) whereas Canvas2D '
+      + 'inherited the CSS filter kernel, and until those are compared directly it is unproven '
+      + 'whether the GPU result is merely different or actually wrong.',
+    wouldMatchWhen:
+      'The two blur kernels are compared on a single hard edge — one variable, no compositing — '
+      + 'and either reconciled or the GPU confirmed correct and the reference re-blessed.',
+  }),
   scene('mask-animated', 'Animated mask, sampled mid-interpolation (t=0.5).', (graph) => {
     gradientContent(graph, 'm');
     graph.setMaskAnim('m', [
@@ -106,5 +126,18 @@ export const compositedScenes: Scene[] = [
       dropShadow: { enabled: true, color: '#000000', opacity: 0.6, distance: 12, angle: 90, blur: 10 },
       outerGlow: { enabled: true, color: '#78b4ff', opacity: 0.9, size: 18 },
     });
-  }, [0], 'known-divergent'),
+  }, [0], 'known-divergent', {
+    why:
+      'The reference is frozen output of the DELETED Canvas2D backend. Both of these are built '
+      + 'from soft alpha over a large area — a feathered mask edge, and layer styles whose shadows '
+      + 'and glows are broad gradients — so the two engines differ across the whole soft region '
+      + 'rather than along a contour, and analyze-gap.mjs classes the bulk as colour rather than '
+      + 'coverage. NOT YET ESTABLISHED: which blur kernel each side used. The GPU treats a blur '
+      + 'radius as a Gaussian sigma sampled to 2.5 sigma (shaders/builtin.ts) whereas Canvas2D '
+      + 'inherited the CSS filter kernel, and until those are compared directly it is unproven '
+      + 'whether the GPU result is merely different or actually wrong.',
+    wouldMatchWhen:
+      'The two blur kernels are compared on a single hard edge — one variable, no compositing — '
+      + 'and either reconciled or the GPU confirmed correct and the reference re-blessed.',
+  }),
 ];

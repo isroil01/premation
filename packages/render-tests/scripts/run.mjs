@@ -378,7 +378,18 @@ async function compareAll(scenes) {
     // Oracle-only scenes exist to be some other scene's twin; they have no
     // reference of their own by design.
     if (s.fidelityOnly) continue;
-    const isExpectPass = s.oracle === 'gpu' || (s.gpuParity ?? 'expect-pass') === 'expect-pass';
+    // An accepted gap must carry a MECHANISM and an exit condition. A bare
+    // label is indistinguishable from "nobody looked", which is exactly how
+    // effect-gradient-ramp sat in this bucket while rendering solid black.
+    // Suppression that costs nothing gets used for anything; making it fail
+    // closed means the only way to widen the gap is to write down a cause,
+    // and a false mechanical cause is far harder to produce than a flag.
+    const d = s.divergence;
+    const undocumented =
+      (s.gpuParity === 'known-divergent') &&
+      !(d && typeof d.why === 'string' && d.why.trim().length > 0
+          && typeof d.wouldMatchWhen === 'string' && d.wouldMatchWhen.trim().length > 0);
+    const isExpectPass = s.oracle === 'gpu' || (s.gpuParity ?? 'expect-pass') === 'expect-pass' || undocumented;
     for (const frame of s.frames) {
       const ref = path.join(REFERENCES, s.id, `${frame}.png`);
       const actual = await readPngSafe(path.join(ACTUAL, GATE_BACKEND, s.id, `${frame}.png`));
@@ -414,8 +425,12 @@ async function compareAll(scenes) {
         frame,
         pass: result.pass,
         ratio: result.ratio,
-        gpuParity: s.gpuParity ?? 'expect-pass',
-        mismatchReason: result.mismatchReason,
+        gpuParity: undocumented ? 'expect-pass' : (s.gpuParity ?? 'expect-pass'),
+        divergence: s.divergence,
+        undocumented,
+        mismatchReason: undocumented
+          ? 'known-divergent without a stated cause — add `divergence: { why, wouldMatchWhen }`'
+          : result.mismatchReason,
         isGpuOracle: s.oracle === 'gpu',
       });
     }

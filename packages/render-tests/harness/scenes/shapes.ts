@@ -9,8 +9,14 @@ const COMP = { width: 360, height: 280, background: '#101014' };
 const SIZE = { w: 360, h: 280 };
 const CENTER = { x: 180, y: 140 };
 
-function scene(id: string, description: string, build: Scene['build'], gpuParity: Scene['gpuParity'] = 'expect-pass'): Scene {
-  return defineScene({ id, description, size: SIZE, comp: COMP, fps: 30, frames: [0], gpuParity, build });
+function scene(
+  id: string,
+  description: string,
+  build: Scene['build'],
+  gpuParity: Scene['gpuParity'] = 'expect-pass',
+  divergence?: Scene['divergence'],
+): Scene {
+  return defineScene({ id, description, size: SIZE, comp: COMP, fps: 30, frames: [0], gpuParity, divergence, build });
 }
 
 export const shapeScenes: Scene[] = [
@@ -64,5 +70,18 @@ export const shapeScenes: Scene[] = [
     graph.addNode(shapeNode('z', { x: 180, y: 140, rotation: 0, fill: '#22344f' }));
     graph.setStroke('z', { enabled: true, color: '#ffd166', width: 8, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
     graph.setPathOp('z', { type: 'zigzag', amount: 16, detail: 5 });
-  }, 'known-divergent'),
+  }, 'known-divergent', {
+    why:
+      'A zigzagged rect is a many-cornered outline carrying a centre-aligned mitred stroke, so '
+      + 'almost every inked pixel is on a contour. analyze-gap.mjs reports coverage-only with 0 '
+      + 'flat-region pixels: the two engines agree on where the outline is and disagree only on '
+      + 'sub-pixel coverage along it. This scene ALSO hid a real defect until 2026-07-30 — the '
+      + 'raster was sized from the stroke alone, so the geometry the path operator pushed outside '
+      + 'the layer box was clipped and 22% of the stroke was missing (extent 238px vs 262px). That '
+      + 'is fixed; what remains is coverage.',
+    wouldMatchWhen:
+      'The reference is re-blessed from the GPU engine — Canvas2D is deleted and its coverage rule '
+      + 'cannot be reproduced.',
+    proof: 'src/core/rendering/raster/pathEscapePadding.test.ts — pins the padding the extent depends on',
+  }),
 ];

@@ -114,6 +114,19 @@ function glassScene(id: string, description: string, glass: Partial<GlassStyle>)
     // bless is eyeballed.
     oracle: 'gpu',
     gpuParity: 'known-divergent',
+    divergence: {
+      why:
+        'Glass is a function of what is composited BENEATH the layer, and the deleted Canvas2D '
+        + 'reference had no way to sample that — it drew layers in isolation, so it rendered the '
+        + 'panel as a plain white card. That is the same constraint that forces After Effects to '
+        + 'fake refraction with displacement maps. The scene is its own oracle (oracle: gpu) and '
+        + 'its committed reference is GPU output; the parity number compares against a baseline '
+        + 'that structurally cannot express the feature.',
+      wouldMatchWhen:
+        'Never against Canvas2D — the comparison is meaningless for a backdrop-sampling effect. '
+        + 'This entry should be removed when the parity dashboard stops comparing oracle:gpu '
+        + 'scenes against the Canvas2D baseline at all.',
+    },
     build(graph) {
       backdrop(graph);
       panel(graph, glass);

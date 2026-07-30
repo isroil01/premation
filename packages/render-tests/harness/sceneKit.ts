@@ -56,6 +56,39 @@ export interface SceneMeta {
    */
   gpuParity?: 'expect-pass' | 'known-divergent';
   /**
+   * Why this scene is allowed to diverge — REQUIRED for 'known-divergent'.
+   *
+   * A label with no stated cause is indistinguishable from "nobody looked", and
+   * that is not hypothetical here: `effect-gradient-ramp` sat in this bucket
+   * while the effect rendered SOLID BLACK, in 2D and 3D, because the
+   * suppression is what stopped anyone asking. `effect-stroke` sat in the
+   * failure column for months over a stale reference. Two of twenty-three.
+   *
+   * The runner rejects a 'known-divergent' scene that omits this, so the gap
+   * cannot be widened by adding a label — only by writing down a mechanism,
+   * which is much harder to do falsely than it is to leave a flag.
+   */
+  divergence?: {
+    /**
+     * The MECHANISM, specifically. Not "antialiasing differs" but which two
+     * things compute what differently. If you cannot name it, you have not
+     * finished diagnosing and the scene is not ready to be suppressed.
+     */
+    why: string;
+    /**
+     * What would make this scene match — the condition under which this entry
+     * should be deleted. An accepted gap with no exit is a permanent one.
+     */
+    wouldMatchWhen: string;
+    /**
+     * Where the divergence is ASSERTED rather than merely tolerated: a test
+     * that pins the property the pixels cannot. Optional, because some gaps are
+     * genuinely "two rasterizers, same shape"; when it is present the claim is
+     * checked somewhere instead of only described.
+     */
+    proof?: string;
+  };
+  /**
    * Scene id whose rendered output is this scene's FIDELITY ORACLE.
    *
    * A committed reference PNG is blessed from our own output, so it can only
