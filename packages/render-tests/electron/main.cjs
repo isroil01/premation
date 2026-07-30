@@ -49,6 +49,30 @@ const WANT_WEBGPU = (process.env.HARNESS_BACKENDS || '').includes('webgpu');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('disable-gpu-sandbox');
+// The FULL sandbox off, not just the GPU process's.
+//
+// `--disable-gpu-sandbox` above covers the GPU process only. The zygote still
+// uses Chromium's SUID sandbox helper, and on any Linux box where
+// `node_modules/electron/dist/chrome-sandbox` is not root-owned mode 4755 that
+// helper refuses to run *and aborts the process*:
+//
+//   FATAL:setuid_sandbox_host.cc(163) The SUID sandbox helper binary was found,
+//   but is not configured correctly. Rather than run without sandboxing I'm
+//   aborting now.
+//
+// A GitHub Actions runner installs node_modules as a non-root user, so it can
+// never satisfy that without `sudo chown root` — which is why CI died at
+// "render harness exited 1 on [webgl2] — no pixels produced" while local runs
+// were fine.
+//
+// Turned off UNCONDITIONALLY rather than only under CI, deliberately. This is a
+// golden-frame harness: its whole contract is that the same scenes produce the
+// same bytes, and switch sets that differ between a developer's machine and CI
+// are exactly how that contract rots. The sandbox buys nothing here either — the
+// harness loads one local, repo-controlled HTML file, has no network access and
+// never navigates. Keeping the flags identical everywhere is worth more than a
+// sandbox around content we authored.
+app.commandLine.appendSwitch('no-sandbox');
 if (WANT_WEBGPU) {
   app.commandLine.appendSwitch('enable-unsafe-webgpu');
   // NOTE: the WebGPU run uses the machine's REAL adapter, and is therefore only

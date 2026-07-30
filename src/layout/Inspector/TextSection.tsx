@@ -46,9 +46,9 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
   const layerT = getRemappedTime(nodeId, time);
   const node = defaultSceneGraph.getNode(nodeId);
 
-  if (!node) return null;
-
-  const tComp = useMemo(() => node.components.find((c) => c.type === 'Text'), [node]);
+  // No early return above this line: every hook below has to run on every
+  // render, including the ones for a node that has just been deleted.
+  const tComp = useMemo(() => node?.components.find((c) => c.type === 'Text'), [node]);
 
   const [content, setContent] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'content');
   const [fontSize, setFontSize] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fontSize');
@@ -78,7 +78,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
   const selection = editingNodeId === nodeId ? rawSelection : null;
   const ranged = hasRange(selection);
 
-  if (!tComp) return null;
+  if (!node || !tComp) return null;
 
   const contentStrRaw = String(content ?? '');
   const textLen = [...contentStrRaw].length;

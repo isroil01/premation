@@ -112,7 +112,18 @@ function runElectron(backends) {
       HARNESS_HTML: HARNESS_HTML,
       HARNESS_TIMEOUT_MS: process.env.HARNESS_TIMEOUT_MS || '180000',
     };
-    const child = spawn(electronPath, [path.join(PKG, 'electron', 'main.cjs')], {
+    // `--no-sandbox` is passed on the ACTUAL command line, not only via
+    // app.commandLine.appendSwitch in main.cjs, because Chromium reads the
+    // sandbox configuration during early browser startup — a switch appended
+    // from the main script is not guaranteed to be seen in time. Belt and
+    // braces: main.cjs sets it too, and either alone is enough on most builds.
+    //
+    // Without it, CI aborts before producing a single pixel — a Linux runner
+    // installs node_modules as a non-root user, so chrome-sandbox can never be
+    // the root-owned mode-4755 binary the SUID helper insists on. See the long
+    // note in electron/main.cjs for why this is unconditional rather than
+    // CI-only.
+    const child = spawn(electronPath, ['--no-sandbox', path.join(PKG, 'electron', 'main.cjs')], {
       env,
       stdio: ['ignore', 'inherit', 'inherit'],
     });
@@ -131,12 +142,42 @@ function runElectron(backends) {
  * first. Process isolation is what makes a per-backend comparison mean anything.
  */
 async function renderBackendsIsolated(backends) {
+  const skipped = [];
   for (const backend of backends) {
     process.stdout.write(dim(`· rendering [${backend}] in its own offscreen Electron…\n`));
     const code = await runElectron([backend]);
-    if (code !== 0) return { ok: false, backend, code };
+    if (code === 0) continue;
+
+    // A NON-GATING backend that cannot run on this machine is a skip, not a
+    // failure.
+    //
+    // `GATE_BACKEND` (webgl2 over ANGLE/SwiftShader) is the oracle: it needs no
+    // GPU, it is what references are blessed from, and if it fails the suite is
+    // meaningless — so that stays fatal. WebGPU is explicitly "measured, NOT
+    // gated" (see the parity dashboard below), and on a box with no WebGPU
+    // adapter `renderEntry`'s resolvedKind assertion fires by design, to stop
+    // WebGL2 pixels being filed under `webgpu/`. That assertion is correct;
+    // treating it as a build failure was not — it made the whole suite
+    // unrunnable anywhere without a real adapter, which is every hosted CI
+    // runner. The downstream semantic gate already degrades the same way
+    // ("gate SKIPPED, webgpu rendered no frames on this machine").
+    //
+    // The cost, stated: on a machine with no adapter this also downgrades a
+    // genuine WebGPU regression to a warning. The gate that protects output is
+    // GATE_BACKEND, and it is unaffected; a WebGPU regression still fails
+    // loudly on any developer machine that HAS an adapter, which is where the
+    // WebGPU path is actually developed.
+    if (backend === GATE_BACKEND) return { ok: false, backend, code };
+    process.stdout.write(
+      yellow(
+        `  ! [${backend}] exited ${code} — SKIPPED, not gated. ` +
+          `Usually means this machine has no ${backend} adapter; ` +
+          `the ${GATE_BACKEND} oracle still gates.\n`,
+      ),
+    );
+    skipped.push(backend);
   }
-  return { ok: true };
+  return { ok: true, skipped };
 }
 
 async function loadManifest() {
