@@ -51,7 +51,11 @@ export function buildDefaultGraph(): RenderGraph {
     label: SCENE_COLOR_TARGET,
     width: vp.pixelSize.width,
     height: vp.pixelSize.height,
-    format: 'rgba8unorm',
+    // rgba16float: the main compositing/scene target. Higher precision means
+    // stacked effects don't band and add/screen don't clip to 1.0 between
+    // passes; resolveTargets downgrades it to the surface format where float
+    // rendering is unsupported (or the HDR kill switch is off).
+    format: 'rgba16float',
     // 3D render groups depth-test into the scene target (the adapter routes
     // any frame containing 3D layers through it via hasEffects).
     depth: true,
@@ -66,19 +70,19 @@ export function buildDefaultGraph(): RenderGraph {
     label: LAYER_TARGET,
     width: vp.pixelSize.width,
     height: vp.pixelSize.height,
-    format: 'rgba8unorm',
+    format: 'rgba16float',
   }));
   graph.declareTarget(BLUR_TARGET1, (vp) => ({
     label: BLUR_TARGET1,
     width: vp.pixelSize.width,
     height: vp.pixelSize.height,
-    format: 'rgba8unorm',
+    format: 'rgba16float',
   }));
   graph.declareTarget(BLUR_TARGET2, (vp) => ({
     label: BLUR_TARGET2,
     width: vp.pixelSize.width,
     height: vp.pixelSize.height,
-    format: 'rgba8unorm',
+    format: 'rgba16float',
   }));
   graph.declareTarget(MATTE_TARGET, (vp) => ({
     label: MATTE_TARGET,
@@ -94,7 +98,7 @@ export function buildDefaultGraph(): RenderGraph {
       label: name,
       width: Math.max(1, Math.floor(vp.pixelSize.width / BACKDROP_DOWNSCALE)),
       height: Math.max(1, Math.floor(vp.pixelSize.height / BACKDROP_DOWNSCALE)),
-      format: 'rgba8unorm',
+      format: 'rgba16float',
     }));
   }
 
@@ -105,7 +109,7 @@ export function buildDefaultGraph(): RenderGraph {
       label: name,
       width: vp.pixelSize.width,
       height: vp.pixelSize.height,
-      format: 'rgba8unorm',
+      format: 'rgba16float',
       depth: true,
       // A 3D group inside an isolated precomp needs the same treatment.
       samples: MSAA_SAMPLES,

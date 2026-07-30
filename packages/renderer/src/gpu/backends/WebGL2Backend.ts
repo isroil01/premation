@@ -29,6 +29,7 @@ import type {
   ShaderModuleDescriptor,
   ShaderModuleHandle,
   TextureDescriptor,
+  TextureFormat,
   TextureHandle,
   TextureSource,
   VertexBufferLayout,
@@ -64,6 +65,8 @@ interface NativeRenderTarget {
   /** Single-sample FBO wrapping `texture` — what everything SAMPLES from. */
   fbo: WebGLFramebuffer;
   texture: WebGLTexture;
+  /** Colour format of this target, so a pass can tell its pipelines what it is. */
+  format: TextureFormat;
   /** Depth renderbuffer, present when the target was created with depth. */
   depth?: WebGLRenderbuffer;
   /**
@@ -172,6 +175,14 @@ export class WebGL2Backend implements RenderBackend {
     this.capabilities.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
     this.vao = gl.createVertexArray();
     gl.enable(gl.BLEND);
+
+    // Float render targets (the rgba16float compositing intermediates) need this
+    // extension to be colour-renderable AND multisample-renderable on WebGL2.
+    // Half-float LINEAR filtering is already core in WebGL2, so no separate
+    // texture-filter extension is required. Reflect the REAL capability: when it
+    // is absent, resolveTargets falls the intermediates back to 8-bit rather than
+    // creating an incomplete framebuffer.
+    this.capabilities.float16Textures = !!gl.getExtension('EXT_color_buffer_float');
   }
 
   /** True while the GL context is lost — draws are no-ops until restore. */
@@ -334,9 +345,15 @@ export class WebGL2Backend implements RenderBackend {
     // The resolve side: a plain texture + FBO. Always built, so
     // renderTargetTexture has something single-sampled to hand out whether or
     // not multisampling is in play.
+    // Honour the requested colour format. rgba16float only reaches here when the
+    // backend advertised float support (EXT_color_buffer_float); every other
+    // format is the 8-bit path exactly as before.
+    const float = desc.format === 'rgba16float';
+    const internalFormat = float ? gl.RGBA16F : gl.RGBA8;
+    const texType = float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, desc.width, desc.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, desc.width, desc.height, 0, gl.RGBA, texType, null);
     const fbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
@@ -352,7 +369,7 @@ export class WebGL2Backend implements RenderBackend {
       gl.bindFramebuffer(gl.FRAMEBUFFER, msaaFbo);
       msaaColor = gl.createRenderbuffer()!;
       gl.bindRenderbuffer(gl.RENDERBUFFER, msaaColor);
-      gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA8, desc.width, desc.height);
+      gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, internalFormat, desc.width, desc.height);
       gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, msaaColor);
       if (desc.depth) {
         depth = gl.createRenderbuffer()!;
@@ -400,6 +417,7 @@ export class WebGL2Backend implements RenderBackend {
       native: {
         fbo, texture, depth, msaaFbo, msaaColor,
         width: desc.width, height: desc.height,
+        format: desc.format,
       } satisfies NativeRenderTarget,
     };
   }
@@ -481,7 +499,11 @@ export class WebGL2Backend implements RenderBackend {
         Math.max(0, Math.round(clip.height)),
       );
     }
-    return new WebGL2PassEncoder(gl, native?.msaaFbo ? native : undefined);
+    // Tell the encoder the target's colour format so QuadRenderer builds
+    // matching pipelines. WebGL2 doesn't validate pipeline format, but keeping
+    // it correct means the shared pipeline cache key is right across backends.
+    const format: TextureFormat = native?.format ?? 'rgba8unorm';
+    return new WebGL2PassEncoder(gl, native?.msaaFbo ? native : undefined, format);
   }
   endFrame(): void {
     this.gl.bindVertexArray(null);
@@ -552,6 +574,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
   constructor(
     private readonly gl: GL,
     private readonly msaaTarget?: NativeRenderTarget,
+    readonly format?: TextureFormat,
   ) {}
 
   setPipeline(pipeline: PipelineHandle): void {

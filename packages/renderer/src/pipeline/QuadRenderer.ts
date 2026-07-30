@@ -40,9 +40,13 @@ export class QuadRenderer {
     let draws = 0;
     let binds = 0;
 
+    // The pass knows its own target format + sample count; the pipeline must
+    // agree with both (WebGPU validates them against the attachment). Falls back
+    // to the surface format for the direct-to-surface passes, which do not set it.
+    const colorFormat = encoder.format ?? this.colorFormat;
+
     for (const batch of batches) {
-      // The pass knows its own sample count; the pipeline must agree with it.
-      const pipeline = this.materials.pipeline(batch.material, batch.blend, this.colorFormat, encoder.samples ?? 1);
+      const pipeline = this.materials.pipeline(batch.material, batch.blend, colorFormat, encoder.samples ?? 1);
       encoder.setPipeline(pipeline);
       binds += 1;
 
