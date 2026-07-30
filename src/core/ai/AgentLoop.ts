@@ -17,13 +17,13 @@ import { buildAiTools } from './toolHandlers';
 import { createToolContext } from './toolContext';
 import { beginAiTransaction, type AiTransaction } from './aiTransaction';
 import { SYSTEM_PROMPT, buildContextPreamble } from './buildContext';
-import { apiBaseUrl, getToken, type GatewayProviderId } from '@core/api/client';
+import type { GatewayProviderId } from '@core/api/client';
 import { classifyPrompt } from './pipeline';
 import { runBackendDirector } from './DirectorRunner';
 import { runCasterPipeline } from './CasterRunner';
 import type { Direction as CasterDirection } from '@motion/caster';
 import { casterEnabled } from '@core/config/flags';
-import { aiEnabled } from '@core/config/edition';
+import { streamProviderBytes, AiTransportError } from './aiTransport';
 import { deriveStyleFromBrief, setRuntimeStyle } from './design';
 import { buildExemplarBlock } from './exemplars';
 
@@ -217,82 +217,50 @@ export async function* streamTurn(
   req: AiRequest,
   signal: AbortSignal,
 ): AsyncGenerator<AiEvent> {
-  // The local edition has no gateway to stream through, so the assistant is not
-  // available at all. Refuse here rather than below on the missing token: "sign
-  // in" is an instruction nobody in this edition can follow, and an error that
-  // tells the user to do something impossible is worse than one that says the
-  // feature isn't ready.
-  if (!aiEnabled()) {
-    throw new AiError('coming_soon', 'The AI assistant is coming soon in the local edition.');
-  }
-
-  const token = getToken();
-  if (!token) throw new AiError('auth', 'Sign in to use the assistant — AI runs through your Motion account.');
-
-  // `provider` names WHOSE key the gateway should use; `dialect` is the wire
-  // format that key speaks. They differ only for Motion AI, where the gateway
-  // holds our own key for whichever provider we buy capacity from.
+  // `provider` names WHOSE key to use; `dialect` is the wire format that key
+  // speaks. They were only ever different for Motion AI — the gateway held our
+  // key for whichever provider we bought capacity from — so with hosted AI gone
+  // they are always the same value. Both parameters stay because the caller-facing
+  // distinction is still meaningful, and collapsing them would be a rename across
+  // every call site for no behaviour change.
   const adapter = getAdapter(dialect);
 
-  let res: Response;
-  try {
-    const isPipeline = req.responseSchema !== undefined;
-    res = await fetch(`${apiBaseUrl()}/ai/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        provider,
-        model,
-        isPipeline,
-        body: adapter.buildBody(req),
-      }),
-      signal,
-    });
-  } catch (err) {
-    if (signal.aborted) throw new AiError('cancelled', 'Cancelled.');
-    throw new AiError('network', err instanceof Error ? err.message : 'Could not reach the AI gateway.');
-  }
-
-  if (!res.ok) {
-    // The gateway answers failures with typed JSON: { code, message, retryAfterMs }.
-    let body: { code?: string; message?: string; retryAfterMs?: number } = {};
-    try {
-      body = (await res.json()) as typeof body;
-    } catch {
-      /* non-JSON error body — fall through to the status-based default */
-    }
-    throw new AiError(
-      body.code ?? (res.status === 401 ? 'auth' : 'network'),
-      body.message ?? `AI gateway returned ${res.status}.`,
-      body.retryAfterMs,
-    );
-  }
-  if (!res.body) throw new AiError('bad_response', 'The AI gateway returned an empty body.');
+  // Where the bytes come from is the transport's problem: motion-back's gateway in
+  // the server edition, the Electron main process in the local one. Either way the
+  // renderer holds no provider key and the parsing below is identical.
+  const chunks = streamProviderBytes(
+    {
+      provider,
+      model,
+      body: adapter.buildBody(req),
+      isPipeline: req.responseSchema !== undefined,
+    },
+    signal,
+  );
 
   const parser = adapter.createParser();
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
+
+  const emit = function* (events: readonly AiEvent[]): Generator<AiEvent> {
+    for (const ev of events) {
+      if (ev.type === 'error') throw new AiError(ev.code, ev.message, ev.retryAfterMs);
+      yield ev;
+    }
+  };
 
   try {
-    for (;;) {
-      let chunk: ReadableStreamReadResult<Uint8Array>;
-      try {
-        chunk = await reader.read();
-      } catch (err) {
-        if (signal.aborted) throw new AiError('cancelled', 'Cancelled.');
-        throw new AiError('network', err instanceof Error ? err.message : 'The stream failed.');
-      }
-      const events = chunk.done
-        ? parser.end()
-        : parser.push(decoder.decode(chunk.value, { stream: true }));
-      for (const ev of events) {
-        if (ev.type === 'error') throw new AiError(ev.code, ev.message, ev.retryAfterMs);
-        yield ev;
-      }
-      if (chunk.done) break;
+    for await (const text of chunks) {
+      yield* emit(parser.push(text));
     }
-  } finally {
-    void reader.cancel().catch(() => undefined);
+    yield* emit(parser.end());
+  } catch (err) {
+    // One translation point. The transports throw AiTransportError with the same
+    // codes AiError uses, so this preserves them rather than flattening every
+    // failure to 'network' — which is what would hide an auth error behind
+    // "check your connection".
+    if (err instanceof AiTransportError) throw new AiError(err.code, err.message, err.retryAfterMs);
+    if (err instanceof AiError) throw err;
+    if (signal.aborted) throw new AiError('cancelled', 'Cancelled.');
+    throw new AiError('network', err instanceof Error ? err.message : 'The stream failed.');
   }
 }
 

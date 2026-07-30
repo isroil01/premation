@@ -1,0 +1,37 @@
+# Self-hosted packaging: bundles the motion-back server INSIDE the app, so a
+# single install needs no deployment. Everything else comes from the base config.
+#
+#   npm run dist:selfhosted     (installer)
+#   npm run pack:selfhosted     (unpacked, fast)
+#
+# Requires a sibling `../motion-back` checkout that has ALREADY been built:
+#   cd ../motion-back && npm run build && npx prisma generate
+# Without it the copy step fails — which is why this is a separate config and
+# not the default: the plain `npm run dist` must never depend on a second repo.
+#
+# The bundled server still needs a reachable Postgres. It is NOT configured here:
+# no `.env` is copied, because an installer that carries one hands its database
+# credentials and secrets to every user who unzips it. electron/backend.ts reads
+# <userData>/backend.env at launch instead — write that file on the target
+# machine (the path is logged on first run).
+#
+# The sidecar only starts when MOTION_LOCAL_BACKEND=1 (electron/main.ts). Set it
+# for a self-hosted build, or the app will look for a server that never boots.
+extends: ./electron-builder.yml
+
+extraResources:
+  # `extends` REPLACES the base config's extraResources array rather than merging
+  # it, so the runtime app icon (electron/main.ts resolveAppIcon) must be repeated
+  # here or a self-hosted build boots with Electron's default icon.
+  - from: build/icon.png
+    to: build/icon.png
+  - from: ../motion-back/dist
+    to: backend/dist
+  - from: ../motion-back/node_modules
+    to: backend/node_modules
+  - from: ../motion-back/prisma
+    to: backend/prisma
+  # Shipped as a TEMPLATE only — it holds no real values. It is what the
+  # operator copies to <userData>/backend.env and fills in.
+  - from: ../motion-back/.env.example
+    to: backend/.env.example

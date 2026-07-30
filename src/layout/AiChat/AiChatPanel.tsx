@@ -377,6 +377,14 @@ export function AiChatPanel(): JSX.Element {
           )}
           {messages.length === 0 && ready && (
             <div>
+              <div className={styles.betaNotice}>
+                <Icon name="sparkles" size={14} />
+                <span>
+                  <strong>The AI assistant is still experimental.</strong> Right now it can
+                  handle simple actions reliably, but not complex, multi-step scenes yet. Feel
+                  free to try it — just expect the occasional miss while it improves.
+                </span>
+              </div>
               <div className={styles.emptyNote}>
                 Describe the motion video you want — I plan it, build it, review it, and show you a
                 preview to apply or decline.
@@ -769,28 +777,11 @@ export function AiChatPanel(): JSX.Element {
                   {modelDropdownOpen && (
                     <div className={styles.customPopoverMenu} onClick={(e) => e.stopPropagation()}>
                       <div className={styles.popoverHeader}>Select AI Model</div>
-                      {/* Motion AI is listed only when this account can run it.
-                          Without this the picker had no way back to it, so a
-                          user auto-selected onto Motion AI could leave but not
-                          return. */}
-                      {aiMotion?.present && (
-                        <div className={styles.popoverGroup}>
-                          <div className={styles.groupLabel}>Motion AI</div>
-                          <button
-                            type="button"
-                            className={`${styles.popoverOption} ${dropdownValue === 'motion' ? styles.popoverOptionActive : ''}`}
-                            onClick={() => {
-                              onChangeModel('motion');
-                              setModelDropdownOpen(false);
-                            }}
-                          >
-                            <span className={styles.optionLabel}>Motion AI</span>
-                            {dropdownValue === 'motion' && (
-                              <Icon name="check" size={11} className={styles.optionCheck} />
-                            )}
-                          </button>
-                        </div>
-                      )}
+                      {/* A "Motion AI" group stood here, gated on
+                          `aiMotion?.present`. Hosted AI is gone — the assistant is
+                          BYOK in both editions — so that flag is permanently false
+                          and the group could never render. Deleted rather than left
+                          as an option that looks selectable and 400s. */}
                       {PROVIDER_OPTIONS.map((p) => {
                         const ready = providerReady(p.id);
                         const suggestions = modelsFor(p.id as AiProviderId);

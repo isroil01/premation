@@ -1,14 +1,83 @@
-import { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol, net, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol, net, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import path from 'node:path';
 import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { startBackend, stopBackend } from './backend';
+import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerCredentialIpc } from './credentialStore';
+import { registerAiKeyIpc } from './aiKeyVault';
+import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
+import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
 
 const isDev = process.env.NODE_ENV === 'development';
+
+/** The main window, tracked so the OAuth deep-link handler can reach it. */
+let mainWindow: BrowserWindow | null = null;
+
+// ── OAuth deep link (premation://oauth?code=…) ──────────────────────────────
+//
+// Google refuses to run its consent screen inside an Electron window (embedded
+// webview), so provider sign-in opens in the SYSTEM browser. The backend hands
+// the one-time code back by redirecting to this custom scheme, which the OS
+// routes to us: on Windows/Linux as an argument to a second launch (caught by
+// `second-instance`), on macOS via `open-url`. See src/pages/OAuthCallbackPage.
+const OAUTH_SCHEME = 'premation';
+
+/** Register this app as the handler for premation:// links. */
+function registerProtocolClient(): void {
+  // In dev the "app" is the electron binary run against a script path, so the
+  // launch command the OS records has to include that path or the deep link
+  // would relaunch electron with nothing to run.
+  if (isDev && process.platform === 'win32' && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(OAUTH_SCHEME, process.execPath, [path.resolve(process.argv[1]!)]);
+  } else {
+    app.setAsDefaultProtocolClient(OAUTH_SCHEME);
+  }
+}
+
+/** The first premation:// argument in a launch argv, if any. */
+function findDeepLink(argv: string[]): string | undefined {
+  return argv.find((a) => a.startsWith(`${OAUTH_SCHEME}://`));
+}
+
+/** Parse a premation://oauth deep link and forward its code/error to the renderer. */
+function handleDeepLink(url: string | undefined): void {
+  if (!url || !url.startsWith(`${OAUTH_SCHEME}://`)) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.host !== 'oauth') return;
+  const code = parsed.searchParams.get('code') ?? undefined;
+  const error = parsed.searchParams.get('error') ?? undefined;
+  if (!code && !error) return;
+
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.focus();
+  win.webContents.send('oauth:result', { code, error });
+}
+
+// Only one instance may run: on Windows a premation:// link launches a SECOND
+// copy whose argv carries the URL, and `second-instance` relays it to the
+// original (which holds the lock). Without the lock the link would spawn a
+// duplicate app instead of returning to the signed-in one.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => handleDeepLink(findDeepLink(argv)));
+  // macOS delivers the deep link to the running app through this event.
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
+  });
+}
 
 // ── GPU acceleration & WebGPU ────────────────────────────────────────
 // Bypass Chromium's GPU driver blocklist so WebGPU/WebGL2 can init on
@@ -697,9 +766,11 @@ function buildApplicationMenu(win: BrowserWindow): void {
         { type: 'separator' },
         { label: 'Reset Layout', click: cmd('layout.reset') },
         { label: 'Switch Theme', click: cmd('theme.switch') },
-        { type: 'separator' },
-        { role: 'reload' },
-        { role: 'toggleDevTools' },
+        // Reload + DevTools are developer affordances only — omitted from shipped
+        // builds so end users get no inspector and no accidental hard reload.
+        ...(isDev
+          ? ([{ type: 'separator' }, { role: 'reload' }, { role: 'toggleDevTools' }] as MenuItemConstructorOptions[])
+          : []),
       ],
     },
     {
@@ -714,6 +785,16 @@ function buildApplicationMenu(win: BrowserWindow): void {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        // Not a command forwarded to the renderer: updating is the shell's job,
+        // and the renderer is what gets replaced.
+        { label: 'Check for Updates…', click: () => checkForUpdatesInteractive(win) },
+        { type: 'separator' },
+        { label: `Version ${app.getVersion()}`, enabled: false },
+      ],
+    },
   ];
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -739,7 +820,7 @@ function createMainWindow(): BrowserWindow {
     height: 1000,
     minWidth: 1024,
     minHeight: 700,
-    title: 'Motion Editor',
+    title: 'Premation',
     ...(appIcon ? { icon: appIcon } : {}),
     backgroundColor: '#0a0a0b',
     show: false,
@@ -753,10 +834,19 @@ function createMainWindow(): BrowserWindow {
       // Security is maintained by contextIsolation + nodeIntegration: false.
       sandbox: false,
       webgl: true,
+      // DevTools only in development. A shipped build has no inspector, so no
+      // "Inspect", no console, and no "allow pasting" prompt for end users.
+      devTools: isDev,
     },
   });
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    win.show();
+    // After the window is up, not before: an update dialog in front of a blank
+    // screen looks like a crash, and a check during startup competes with the
+    // renderer for the network.
+    initAutoUpdate(win);
+  });
 
   // External links open in default browser; pop-out window links spawn internal Electron desktop windows.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -773,6 +863,7 @@ function createMainWindow(): BrowserWindow {
             nodeIntegration: false,
             sandbox: false,
             webgl: true,
+            devTools: isDev,
           },
         },
       };
@@ -789,7 +880,35 @@ function createMainWindow(): BrowserWindow {
     void win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   return win;
+}
+
+/**
+ * Open a provider sign-in URL in the SYSTEM browser.
+ *
+ * The renderer passes the backend's `/auth/oauth/<provider>/start?client=desktop`
+ * URL; we refuse anything that is not http(s) so a compromised renderer cannot
+ * use this to launch arbitrary local schemes (file:, and — the one that would
+ * bite — premation: itself, re-entering our own deep-link handler).
+ */
+function registerOAuthIpc(): void {
+  ipcMain.handle('oauth:openExternal', async (_event, url: string) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error('oauth:openExternal invalid url');
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new Error('oauth:openExternal refused non-http url');
+    }
+    await shell.openExternal(url);
+  });
 }
 
 function registerPopoutIpc(): void {
@@ -800,7 +919,7 @@ function registerPopoutIpc(): void {
       height: 700,
       minWidth: 400,
       minHeight: 300,
-      title: `${panelId} — Motion Editor`,
+      title: `${panelId} — Premation`,
       backgroundColor: '#0a0a0b',
       autoHideMenuBar: true,
       frame: false,
@@ -825,7 +944,84 @@ function registerPopoutIpc(): void {
 
 }
 
+/**
+ * Production hardening. `devTools: false` in webPreferences is the real gate;
+ * this is defence in depth for every webContents (main + pop-outs): swallow the
+ * DevTools shortcuts (F12, Ctrl/Cmd+Shift+I/J/C), suppress the native right-click
+ * "Inspect" menu, and slam DevTools shut if anything still manages to open it.
+ * No-op in development, where the inspector stays fully available.
+ */
+function hardenWebContents(contents: WebContents): void {
+  if (isDev) return;
+  contents.on('context-menu', (e) => e.preventDefault());
+  contents.on('before-input-event', (event, input) => {
+    const key = (input.key || '').toLowerCase();
+    const mod = input.control || input.meta;
+    if (key === 'f12' || (mod && input.shift && (key === 'i' || key === 'j' || key === 'c'))) {
+      event.preventDefault();
+    }
+  });
+  contents.on('devtools-opened', () => contents.closeDevTools());
+}
+
+app.on('web-contents-created', (_event, contents) => hardenWebContents(contents));
+
+// The renderer's ground-truth WebGPU probe result (adapter/device/configure +
+// any error), appended to the same log the main process writes. This is what
+// actually answers "is WebGPU working" on a packaged build with no DevTools.
+ipcMain.on('diag:gpuReport', (_event, report: unknown) => {
+  try {
+    const line = `${new Date().toISOString()} [renderer] ${JSON.stringify(report)}\n`;
+    const logPath = path.join(app.getPath('userData'), 'gpu-diagnostics.log');
+    void writeFile(logPath, line, { flag: 'a' });
+    console.log('[gpu:renderer]', report);
+  } catch (e) {
+    console.warn('[gpu] renderer report failed', e);
+  }
+});
+
+/**
+ * One-shot GPU report to the main-process console AND
+ * <userData>/gpu-diagnostics.log. Because a shipped build has no DevTools, this
+ * file is how we tell whether Chromium reports WebGPU 'enabled' vs
+ * 'disabled_software'/'disabled_off', and which adapter/driver it picked — the
+ * difference between "your GPU can't" and "the app's probe is misfiring".
+ */
+async function logGpuDiagnostics(): Promise<void> {
+  try {
+    const status = app.getGPUFeatureStatus();
+    let info: unknown = null;
+    try {
+      info = await app.getGPUInfo('basic');
+    } catch {
+      /* getGPUInfo rejects on some drivers; the feature status is the key part */
+    }
+    console.log('[gpu] featureStatus', status);
+    console.log('[gpu] info', info);
+    const line = `${new Date().toISOString()} v${app.getVersion()} featureStatus=${JSON.stringify(status)} info=${JSON.stringify(info)}\n`;
+    const logPath = path.join(app.getPath('userData'), 'gpu-diagnostics.log');
+    await writeFile(logPath, line, { flag: 'a' });
+    console.log('[gpu] wrote diagnostics to', logPath);
+  } catch (e) {
+    console.warn('[gpu] diagnostics failed', e);
+  }
+}
+
 app.whenReady().then(() => {
+  // A second instance already relayed its deep link and quit; this one should not
+  // have reached whenReady, but guard anyway rather than open a duplicate window.
+  if (!hasSingleInstanceLock) return;
+
+  // Kick the GPU process awake NOW, during boot, so it is ready before the first
+  // viewport mounts. Without this the renderer can win the race to first-init and
+  // fail every rung (WebGPU + WebGL2) against a GPU that is milliseconds from
+  // ready — the packaged-build "GPU unavailable on first entry" symptom. Fire and
+  // forget; the renderer has its own cold-start retry as the real safety net.
+  void app.getGPUInfo('complete').catch(() => { /* GPU info is best-effort */ });
+
+  // Claim the premation:// scheme so the OAuth callback can hand the code back.
+  registerProtocolClient();
+
   // Protocol handler to resolve local files under the local-file:// scheme
   protocol.handle('local-file', (request) => {
     let filePath = request.url.replace(/^local-file:\/\//, '');
@@ -843,22 +1039,48 @@ app.whenReady().then(() => {
   registerIndexIpc(ipcMain, app);
   registerRenderIpc();
   registerPopoutIpc();
+  registerOAuthIpc();
   // The session's refresh token, encrypted with the OS keystore and held in
   // this process — never in renderer localStorage, where DevTools can read and
   // edit it. See credentialStore.ts.
   registerCredentialIpc();
-  // NOTE: no AI IPC any more. AI runs through the backend gateway
-  // (POST /ai/stream) with the user's keys stored server-side — this process
-  // holds no AI privileges at all.
 
-  // The app connects to the backend at localhost:4000 (the renderer's default
-  // API origin — see src/core/api/env.ts). You run motion-back yourself,
-  // separately, so the app does NOT start its own server by default.
-  // Opt in with MOTION_LOCAL_BACKEND=1 to have the app spawn/stop the server for
-  // you (it reuses one already running rather than duplicating it).
-  if (process.env.MOTION_LOCAL_BACKEND === '1') void startBackend();
+  // The assistant, for the local edition. There is no backend to hold provider
+  // keys, so this process does — encrypted with the OS keystore, and with NO way
+  // for the renderer to read one back (aiKeyVault.ts). The calls themselves also
+  // happen here rather than in the renderer, which is what lets the vault stay
+  // write-only and keeps the provider hosts out of the page CSP (aiProxy.ts).
+  //
+  // Registered unconditionally: the server edition simply never invokes these —
+  // it posts to the backend gateway instead — and a build-time branch here would
+  // mean the two editions had different IPC surfaces to reason about.
+  registerAiKeyIpc();
+  registerAiProxyIpc();
 
-  createMainWindow();
+  // A normal build is a CLIENT: it talks to a deployed motion-back at the origin
+  // baked in by VITE_BACKEND_ORIGIN, or to one you run yourself on localhost:4000
+  // (see src/core/api/env.ts). It starts no server of its own.
+  //
+  // The app manages a server only when one was bundled into the build
+  // (electron-builder.selfhosted.yml) or when MOTION_LOCAL_BACKEND=1 asks for it.
+  // Either way it reuses a server already listening rather than duplicating it.
+  if (shouldStartBackend()) void startBackend();
+
+  const win = createMainWindow();
+
+  // Report GPU status AFTER the renderer has loaded and touched the GPU. Reading
+  // in whenReady catches Chromium's GPU process before it initializes (every
+  // adapter inactive, initializationTime:0) — a premature, misleading snapshot.
+  win.webContents.once('did-finish-load', () => {
+    setTimeout(() => void logGpuDiagnostics(), 6000);
+  });
+
+  // Cold start via a premation:// link (Windows/Linux put it in argv). Wait for
+  // the renderer to be ready to receive before forwarding the code.
+  const coldLink = findDeepLink(process.argv);
+  if (coldLink) {
+    win.webContents.once('did-finish-load', () => handleDeepLink(coldLink));
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
@@ -871,4 +1093,9 @@ app.on('window-all-closed', () => {
 });
 
 // Ensure the managed server is torn down on every exit path.
-app.on('before-quit', () => stopBackend());
+app.on('before-quit', () => {
+  stopBackend();
+  // Otherwise a fetch to a provider can outlive the window that asked for it and
+  // hold the process open after every window is gone.
+  abortAllStreams();
+});

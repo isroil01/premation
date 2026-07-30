@@ -1,0 +1,141 @@
+# Cut a release: build installers for Windows, macOS and Linux, and attach them
+# to a GitHub release that users download from — and that installed apps read to
+# discover updates.
+#
+# How to use it:
+#
+#   npm run release:patch        # bumps package.json, commits, tags v0.1.1
+#   git push --follow-tags       # <- this is what starts the workflow
+#
+# Then in GitHub ▸ Releases: a DRAFT release is waiting with the installers
+# attached. Write the notes, press Publish. No installed app sees the update
+# until you do — that is the point of the draft (electron-builder.yml:
+# `releaseType: draft`).
+#
+# The tag is the trigger, but package.json is the source of truth: electron-builder
+# reads the version from there and writes it into latest.yml. If the two disagree,
+# the release is called v1.2.3 while the update metadata says 1.2.2 and every
+# client either misses the update or installs it forever. The `verify` job below
+# refuses to build in that case.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual runs are for rehearsing the build. They produce no release, so a dry
+  # run can never publish something half-finished.
+  workflow_dispatch:
+
+# The release job needs to create a release and upload assets to it.
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify tag, types and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG."
+            echo "::error::Auto-update reads the version from package.json — bump it with 'npm run release:patch' rather than tagging by hand."
+            exit 1
+          fi
+
+      # Shipping a build that does not typecheck or whose tests fail is more
+      # expensive than shipping late: every user who installs it has to be
+      # updated again.
+      - run: npm run typecheck
+      - run: npx tsc -p electron/tsconfig.json --noEmit
+      - run: npm test -- --ci
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not cancel installers that are already built.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            # NSIS installer → MotionEditor-Setup-Windows.exe
+            args: --win
+          - os: macos-latest
+            name: macOS
+            # BOTH architectures in ONE job, deliberately: two separate jobs would
+            # each publish their own latest-mac.yml and the second would overwrite
+            # the first, leaving one architecture unable to update.
+            args: --mac --x64 --arm64
+          - os: ubuntu-latest
+            name: Linux
+            args: --linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build renderer and main process
+        # VITE_BACKEND_ORIGIN is what makes this a client of your deployed server:
+        # it becomes the API base URL AND the shell's CSP connect-src. Set it in
+        # GitHub ▸ Settings ▸ Secrets and variables ▸ Actions ▸ Variables.
+        # Left empty, the build targets http://localhost:4000 — correct for a
+        # self-hosted install, useless for everyone else.
+        env:
+          VITE_BACKEND_ORIGIN: ${{ vars.VITE_BACKEND_ORIGIN }}
+          VITE_MEDIA_ORIGINS: ${{ vars.VITE_MEDIA_ORIGINS }}
+        run: npm run electron:build
+
+      - name: Warn if no backend origin was configured
+        if: ${{ vars.VITE_BACKEND_ORIGIN == '' }}
+        shell: bash
+        run: echo "::warning::VITE_BACKEND_ORIGIN is not set — these installers point at http://localhost:4000."
+
+      - name: Package and publish
+        # `--publish always` on a tag uploads to the draft release; on a manual
+        # run there is no tag, so we package without publishing instead.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing is not configured. See the note at the end of
+          # electron-builder.yml for what that costs on each platform.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npx electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+
+      - name: Upload installers as workflow artifacts
+        # So a manual (untagged) run still gives you something to test, and so a
+        # tagged run keeps a copy independent of the release.
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.name }}
+          # Output lands in a versioned subfolder (electron-builder.yml:
+          # directories.output = release/${version}), so the globs must recurse.
+          path: |
+            release/**/*.exe
+            release/**/*.dmg
+            release/**/*.AppImage
+            release/**/*.yml
+            release/**/*.blockmap
+          if-no-files-found: error
+          retention-days: 14

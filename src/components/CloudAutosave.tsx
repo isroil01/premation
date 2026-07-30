@@ -3,6 +3,7 @@ import { api } from '@core/api/client';
 import { captureDocument } from '@core/api/cloudDocument';
 import { clearRecovery } from '@core/persistence/recovery';
 import { useWorkspaceStore } from '@stores/index';
+import { useEntitlementStore, canWriteCloud } from '@stores/entitlementStore';
 import { getEventBus } from '@core/events/EventBus';
 
 /**
@@ -30,6 +31,13 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
     }, AUTOSAVE_DEBOUNCE_MS);
 
     const flush = async () => {
+      // A read-only account cannot autosave, and trying is actively harmful: the
+      // server answers 403 and this loop would treat it as a transient failure and
+      // retry forever with backoff. Skip the round trip — but leave the tab marked
+      // dirty, because it honestly IS unsaved. The read-only banner explains why
+      // and offers export; the local recovery snapshot (elsewhere) still protects
+      // the work. The server write guard is the real enforcement.
+      if (!canWriteCloud(useEntitlementStore.getState().access)) return;
       if (inFlightRef.current) {
         schedule();
         return;

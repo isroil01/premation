@@ -28,7 +28,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { isAuthenticated, type AiKeyStatus, type AiProviderId } from '@core/api/client';
-import { aiEnabled } from '@core/config/edition';
+import { keyStorageRequiresAccount, keyStorageIsPersistent } from '@core/ai/aiKeyStore';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import styles from './AiSettingsSection.module.css';
 
@@ -91,31 +91,35 @@ export function AiSettingsSection(): JSX.Element {
   const saveKey = useAiProviderStore((s) => s.saveKey);
   const clearKey = useAiProviderStore((s) => s.clearKey);
 
+  /**
+   * Whether a key saved here survives a restart.
+   *
+   * Always true when the backend holds it. In the local edition it depends on the
+   * OS having a keystore — a Linux box with no secret service has none, and the
+   * vault deliberately stores nothing rather than writing a plaintext file that
+   * would look identical and protect nothing. The assistant still works for the
+   * session; saying so beats letting the user wonder why they retype it every
+   * morning.
+   */
+  const [persistent, setPersistent] = useState(true);
+
   const reload = useCallback(async () => {
-    if (!aiEnabled()) return;
-    if (!isAuthenticated()) return;
-    // The server is the ONLY source of key state. This used to also read a
-    // plaintext `localStorage` mirror and re-upload from it — see
+    // No `isAuthenticated()` gate: only the SERVER edition needs a session to
+    // answer this. Gating the local edition on one would mean its key status could
+    // never load — there is no account to be authenticated against — so the panel
+    // would sit at "not connected" with a key already in the keystore.
+    if (keyStorageRequiresAccount() && !isAuthenticated()) return;
+    // Whichever store this build uses is the ONLY source of key state. This used
+    // to also read a plaintext `localStorage` mirror and re-upload from it — see
     // core/api/purgeLocalKeys.ts for why that is gone.
     await refresh({ force: true });
+    setPersistent(await keyStorageIsPersistent());
   }, [refresh]);
 
   useEffect(() => { void reload(); }, [reload]);
 
-  // Keys are held by the gateway, which the local edition does not have. Say
-  // what the state actually is rather than offering a key field that would have
-  // nowhere to store what the user typed.
-  if (!aiEnabled()) {
-    return (
-      <div className={styles.section}>
-        <p className={styles.intro}>
-          The AI assistant is coming soon in this edition. Everything else works offline.
-        </p>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated()) {
+  // Only the server edition can be signed out of.
+  if (keyStorageRequiresAccount() && !isAuthenticated()) {
     return (
       <div className={styles.section}>
         <p className={styles.intro}>
@@ -151,10 +155,14 @@ export function AiSettingsSection(): JSX.Element {
       if (!res.ok) {
         setError(
           res.reason === 'unavailable'
-            ? 'The server cannot store keys right now (encryption is not configured). It has NOT been saved.'
+            ? 'Keys can’t be stored right now (encryption is not configured). It has NOT been saved.'
             : res.reason === 'network'
               ? 'Could not reach the server to save the key.'
-              : 'Could not save that key.',
+              : res.reason === 'unsupported'
+                ? // The desktop vault holds keys for the three chat providers only;
+                  // the media providers need the cloud edition. Say which, not "no".
+                  'This provider needs the cloud edition — it can’t be connected in the local build yet.'
+                : 'Could not save that key.',
         );
         return;
       }
@@ -178,11 +186,38 @@ export function AiSettingsSection(): JSX.Element {
     }
   };
 
+  const runsLocally = !keyStorageRequiresAccount();
+
   return (
     <div className={styles.section}>
       <p className={styles.intro}>
         Connect your own AI API keys (Anthropic, OpenAI, or Gemini). Your prompts go straight to your provider account with no added fees.
       </p>
+
+      {/*
+        How the key is protected, said plainly, because the two editions protect
+        it in genuinely different places and a security-minded user will want to
+        know which. The claim is the same in both — the key never lives in the
+        renderer where a page bug or DevTools could read it.
+      */}
+      <p className={styles.subtle}>
+        {runsLocally
+          ? 'Your key is encrypted with your operating system’s keystore and never leaves this device.'
+          : 'Your key is encrypted on our server and never sent back to any app.'}
+      </p>
+
+      {/*
+        The honest local-edition caveat: no OS keystore means no persistence. The
+        assistant works this session; the key is forgotten on quit. Only shown
+        when it is actually true, so it does not nag the vast majority for whom it
+        is not.
+      */}
+      {runsLocally && !persistent && (
+        <p className={styles.warning}>
+          This device has no secure keystore, so a key you add will work now but be
+          forgotten when you quit. You’ll re-enter it next launch.
+        </p>
+      )}
 
       {error ? <p className={styles.error}>{error}</p> : null}
 

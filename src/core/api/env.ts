@@ -18,20 +18,43 @@ export const IS_ELECTRON =
   Boolean((window as unknown as { electronAPI?: unknown }).electronAPI ||
     (window as unknown as { motionEditor?: unknown }).motionEditor);
 
-/**
- * Absolute origin of the motion-back backend, used ONLY in Electron (where
- * there is no dev proxy). Overridable at build time via VITE_BACKEND_ORIGIN so
- * a packaged build can point at a deployed backend instead of localhost.
- */
-export const BACKEND_ORIGIN: string = IS_ELECTRON
-  ? ((import.meta as unknown as { env?: { VITE_BACKEND_ORIGIN?: string } }).env?.VITE_BACKEND_ORIGIN ||
-      'http://localhost:4000')
-  : '';
+interface BuildEnv {
+  VITE_BACKEND_ORIGIN?: string;
+  VITE_MOTION_API_URL?: string;
+}
+
+const buildEnv: BuildEnv = (import.meta as unknown as { env?: BuildEnv }).env ?? {};
+
+/** Configured backend origin, trailing slash removed. Empty when unset. */
+const configuredOrigin = (buildEnv.VITE_BACKEND_ORIGIN ?? '').trim().replace(/\/+$/, '');
 
 /**
- * Base URL for API requests. Electron → absolute `${origin}/api`; browser →
- * the proxied relative path from env (`/api`).
+ * Absolute origin of the motion-back backend. Set at build time via
+ * VITE_BACKEND_ORIGIN so a production build targets a deployed server; defaults
+ * to localhost:4000, the port a locally-run or bundled server listens on.
+ *
+ * The same value feeds the shell's CSP `connect-src` at build time (see
+ * csp.ts) — an origin the client uses but the policy does not name is blocked by
+ * the browser before a request is ever sent.
+ *
+ * Empty in the browser unless configured: there the default is a same-origin
+ * relative path that the dev server (or a reverse proxy) forwards.
+ */
+export const BACKEND_ORIGIN: string = IS_ELECTRON
+  ? configuredOrigin || 'http://localhost:4000'
+  : configuredOrigin;
+
+/**
+ * Base URL for API requests.
+ *
+ *  • Electron → always absolute: there is no proxy behind a file:// renderer.
+ *  • Browser → VITE_MOTION_API_URL when set (`/api` in dev, proxied by Vite),
+ *    else the configured backend origin, else the same-origin `/api`.
+ *
+ * A web build served from a different host than the API needs the backend's
+ * CORS_ORIGINS to include the page's origin; a same-origin reverse proxy in
+ * front of both avoids the question entirely.
  */
 export const API_URL: string = IS_ELECTRON
   ? `${BACKEND_ORIGIN}/api`
-  : ((import.meta as unknown as { env?: { VITE_MOTION_API_URL?: string } }).env?.VITE_MOTION_API_URL || '/api');
+  : buildEnv.VITE_MOTION_API_URL || (configuredOrigin ? `${configuredOrigin}/api` : '/api');

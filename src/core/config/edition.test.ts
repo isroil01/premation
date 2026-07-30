@@ -13,6 +13,7 @@
 
 import {
   aiEnabled,
+  aiRunsThroughBackend,
   billingEnabled,
   cloudAccountsEnabled,
   cloudProjectsEnabled,
@@ -25,13 +26,22 @@ import {
   setEdition,
 } from './edition';
 
-const CAPABILITIES = {
+/**
+ * Capabilities that need a backend, and are therefore off in the local edition.
+ *
+ * `aiEnabled` used to be in this list and deliberately is not any more. The
+ * assistant needs a KEY, not a backend, and the local edition now holds one in the
+ * OS keystore and calls the provider from the Electron main process. What still
+ * differs is *where* the key lives, which is `aiRunsThroughBackend` — asserted
+ * separately below.
+ */
+const CLOUD_CAPABILITIES = {
   cloudAccountsEnabled,
   cloudProjectsEnabled,
   billingEnabled,
   cloudSyncEnabled,
-  aiEnabled,
   pluginRegistryEnabled,
+  aiRunsThroughBackend,
 };
 
 describe('edition', () => {
@@ -46,15 +56,36 @@ describe('edition', () => {
   it('leaves every capability on in the server edition', () => {
     setEdition('server');
     // Mapped to names so a failure says WHICH capability regressed.
-    const on = Object.fromEntries(Object.entries(CAPABILITIES).map(([n, can]) => [n, can()]));
-    expect(on).toEqual(Object.fromEntries(Object.keys(CAPABILITIES).map((n) => [n, true])));
+    const on = Object.fromEntries(Object.entries(CLOUD_CAPABILITIES).map(([n, can]) => [n, can()]));
+    expect(on).toEqual(Object.fromEntries(Object.keys(CLOUD_CAPABILITIES).map((n) => [n, true])));
   });
 
   it('turns every cloud capability off in the local edition', () => {
     setEdition('local');
     expect(isLocalEdition()).toBe(true);
-    const off = Object.fromEntries(Object.entries(CAPABILITIES).map(([n, can]) => [n, can()]));
-    expect(off).toEqual(Object.fromEntries(Object.keys(CAPABILITIES).map((n) => [n, false])));
+    const off = Object.fromEntries(Object.entries(CLOUD_CAPABILITIES).map(([n, can]) => [n, can()]));
+    expect(off).toEqual(Object.fromEntries(Object.keys(CLOUD_CAPABILITIES).map((n) => [n, false])));
+  });
+
+  it('keeps the assistant on in BOTH editions', () => {
+    // The free tier of this product IS the local edition, and its headline is
+    // "the full editor, with your own API key". An assistant that reads "coming
+    // soon" there made that headline a false statement — which is exactly what
+    // this used to assert. Both editions are BYOK now.
+    setEdition('server');
+    expect(aiEnabled()).toBe(true);
+    setEdition('local');
+    expect(aiEnabled()).toBe(true);
+  });
+
+  it('routes the assistant through the backend only in the server edition', () => {
+    // The real difference: who holds the key. Server → motion-back, encrypted with
+    // AI_KEY_SECRET. Local → the OS keystore, via the Electron main process. The
+    // renderer holds no key in either case.
+    setEdition('server');
+    expect(aiRunsThroughBackend()).toBe(true);
+    setEdition('local');
+    expect(aiRunsThroughBackend()).toBe(false);
   });
 
   describe('parseEdition', () => {

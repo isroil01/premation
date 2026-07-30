@@ -207,6 +207,26 @@
   100% { transform: scale(0.9); opacity: 0.6; }
 }
 
+/* How the key is protected — quieter than the intro, it is reassurance not instruction. */
+.subtle {
+  font-size: 0.7rem;
+  color: var(--color-text-tertiary, #7e7e7e);
+  line-height: 1.4;
+  margin: -6px 0 0;
+}
+
+/* The no-keystore caveat. Warm, not red — it is a limitation of the machine, not an error. */
+.warning {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-surface);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #f5a524) 40%, transparent);
+  background: color-mix(in srgb, var(--color-warning, #f5a524) 10%, transparent);
+  color: var(--color-text-primary, #fff);
+}
+
 .error {
   font-size: 0.74rem;
   color: var(--color-danger, #f87171);

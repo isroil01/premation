@@ -184,15 +184,25 @@ describe('aiProviderStore', () => {
       expect(store.getState().anyReady()).toBe(false);
     });
 
-    it('falls back to Motion AI when it is the only thing that can run', async () => {
+    it('never falls back to hosted AI, even if the server claims it is available', async () => {
+      // This test used to assert the opposite: that the store WOULD select
+      // 'motion' when it was the only runnable option. Hosted AI has been deleted
+      // server-side, so selecting it now would point the composer at a provider
+      // whose every request fails — and it would do that precisely when the user
+      // has no working key and is least equipped to work out why.
+      //
+      // The gateway response is faked as still offering it, because a stale
+      // deployment or a cached status blob genuinely can say that, and the store
+      // must not act on it.
       const { store, setToken } = loadStore();
       setToken('token');
       mockGateway({}, { ...MOTION_OFF, present: true, hint: '400 credits left' });
 
       await store.getState().refreshStatus();
 
-      expect(store.getState().provider).toBe('motion');
-      expect(store.getState().ready()).toBe(true);
+      expect(store.getState().provider).not.toBe('motion');
+      expect(store.getState().ready()).toBe(false);
+      expect(store.getState().anyReady()).toBe(false);
     });
   });
 

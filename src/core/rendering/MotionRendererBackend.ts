@@ -29,6 +29,7 @@ import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { imageNeedsCpuBake } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
+import { markGpuOwned } from './canvasOwnership';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
@@ -93,6 +94,8 @@ export class MotionRendererBackend implements RenderBackend {
   initFailed = false;
   /** Human-readable reason for the failure when initFailed is true. */
   initErrorMessage: string | null = null;
+  /** Raw error text of the most recent failed init attempt (diagnostics only). */
+  private lastInitErrorText: string | null = null;
   private resolveReady!: () => void;
   private readonly preferred: RendererBackendKind;
 
@@ -136,6 +139,13 @@ export class MotionRendererBackend implements RenderBackend {
 
   attach(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
+    // Claim the element BEFORE the async init ladder runs. Init's first real
+    // getContext is hundreds of ms away on a cold start (the WebGPU probe runs
+    // first), and any 2d read that lands in that gap — the mousemove pixel
+    // sampler was the one that did — binds the element to 2d and makes every
+    // GPU rung return null forever. Marking is synchronous, so no event
+    // handler can observe this canvas unclaimed.
+    markGpuOwned(canvas);
     // init resolves readyPromise in a finally block and records initFailed, so
     // it should never reject — but attach is sync and an escaped rejection here
     // would be an unhandled promise rejection with the spinner left spinning.
@@ -166,25 +176,50 @@ export class MotionRendererBackend implements RenderBackend {
 
   private static probeWebGpu(): Promise<boolean> {
     MotionRendererBackend.webgpuProbe ??= (async (): Promise<boolean> => {
+      // Every step is recorded and forwarded to the main-process GPU log so a
+      // packaged build (no DevTools) can still report exactly where WebGPU fails.
+      const report: Record<string, unknown> = { where: 'probeWebGpu' };
       let device: { destroy?: () => void } | null = null;
       try {
         const gpu = (navigator as unknown as { gpu?: GpuLike }).gpu;
-        if (!gpu || typeof document === 'undefined') return false;
+        report.hasNavigatorGpu = !!gpu;
+        report.isSecureContext = typeof isSecureContext !== 'undefined' ? isSecureContext : null;
+        report.origin = typeof location !== 'undefined' ? location.origin : null;
+        if (!gpu || typeof document === 'undefined') { report.result = 'no-navigator-gpu'; return false; }
         const adapter = await withTimeout(gpu.requestAdapter(), INIT_TIMEOUT_MS, 'requestAdapter');
-        if (!adapter) return false;
+        report.gotAdapter = !!adapter;
+        const adapterInfo = (adapter as unknown as { info?: unknown } | null)?.info;
+        if (adapterInfo) report.adapterInfo = adapterInfo;
+        // The one field that answers hardware-vs-software: true means Dawn gave a
+        // software fallback (WARP), i.e. WebGPU "works" but on the CPU.
+        report.isFallbackAdapter = (adapter as unknown as { isFallbackAdapter?: boolean } | null)?.isFallbackAdapter ?? null;
+        try {
+          const reqInfo = (adapter as unknown as { requestAdapterInfo?: () => Promise<unknown> } | null)?.requestAdapterInfo;
+          if (reqInfo) report.requestedAdapterInfo = await reqInfo.call(adapter);
+        } catch { /* older/newer API surface — ignore */ }
+        if (!adapter) { report.result = 'no-adapter'; return false; }
         device = await withTimeout(adapter.requestDevice(), INIT_TIMEOUT_MS, 'requestDevice');
-        if (!device) return false;
+        report.gotDevice = !!device;
+        if (!device) { report.result = 'no-device'; return false; }
         const ctx = document.createElement('canvas').getContext('webgpu') as GpuCanvasLike | null;
-        if (!ctx) return false;
+        report.gotContext = !!ctx;
+        if (!ctx) { report.result = 'no-context'; return false; }
         ctx.configure({ device, format: gpu.getPreferredCanvasFormat() });
         ctx.unconfigure?.();
+        report.result = 'ok';
         return true;
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[MotionRendererBackend] WebGPU probe failed, using WebGL2:', err);
+        report.result = 'threw';
+        report.error = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         return false;
       } finally {
         device?.destroy?.();
+        try {
+          (globalThis as unknown as { motionEditor?: { diag?: { gpuReport?: (r: unknown) => void } } })
+            .motionEditor?.diag?.gpuReport?.(report);
+        } catch { /* diagnostics must never break the probe */ }
       }
     })();
     return MotionRendererBackend.webgpuProbe;
@@ -266,6 +301,22 @@ export class MotionRendererBackend implements RenderBackend {
   private async init(canvas: HTMLCanvasElement): Promise<void> {
     try {
       await this.initLadder(canvas);
+      // Cold-start GPU race recovery. On a freshly launched process the GPU
+      // process can still be warming up when the first viewport mounts, so every
+      // rung — WebGPU AND WebGL2 — fails and resolvedKind stays null even though
+      // the hardware is fully capable (the throwaway-canvas probe already passed
+      // and reported a non-fallback adapter). That is a transient race, not a
+      // real inability, and previously surfaced as a permanent "GPU unavailable"
+      // error on the first editor entry of a packaged build. Retry with backoff
+      // before giving up. Bails the instant the backend is disposed (the caller
+      // re-created it) so this never fights a newer instance for the canvas.
+      for (let retry = 0; retry < 4 && this.resolvedKind === null && !this.disposed; retry++) {
+        await new Promise((r) => setTimeout(r, 400 + retry * 600));
+        if (this.disposed || this.resolvedKind !== null) break;
+        this.initFailed = false;
+        this.initErrorMessage = null;
+        await this.initLadder(canvas);
+      }
     } finally {
       // Unconditional: several statements below the initialize try/catch (the
       // Renderer constructor, createViewport, resize, the EngineReady emit) can
@@ -273,6 +324,12 @@ export class MotionRendererBackend implements RenderBackend {
       // exhausted-ladder paths, readyPromise would stay pending forever and the
       // viewport would spin with no error to show.
       this.resolveReady();
+      // The ground-truth of what the viewport actually renders with: 'webgpu'
+      // means the real backend won, 'webgl2' means it fell back despite the probe.
+      try {
+        (globalThis as unknown as { motionEditor?: { diag?: { gpuReport?: (r: unknown) => void } } })
+          .motionEditor?.diag?.gpuReport?.({ where: 'init', role: this.role, preferred: this.preferred, resolvedKind: this.resolvedKind, initFailed: this.initFailed, lastError: this.lastInitErrorText });
+      } catch { /* diagnostics must never break init */ }
     }
   }
 
@@ -322,6 +379,7 @@ export class MotionRendererBackend implements RenderBackend {
         // below must know that before they try.
         MotionRendererBackend.noteBinding(canvas, attempt.kind);
         lastError = err;
+        this.lastInitErrorText = err instanceof Error ? `${attempt.kind}: ${err.name}: ${err.message}` : `${attempt.kind}: ${String(err)}`;
         // eslint-disable-next-line no-console
         console.warn(`[MotionRendererBackend] init failed for ${attempt.kind}:`, err);
         try {

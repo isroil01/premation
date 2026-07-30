@@ -46,6 +46,31 @@ export interface StoredCredentials {
   userId?: string;
 }
 
+/** Providers the desktop key vault will hold a key for. */
+export type AiVaultProvider = 'openai' | 'anthropic' | 'gemini';
+
+export interface AiKeyStatus {
+  present: boolean;
+  /** e.g. "sk-…4f2a". Enough to tell two keys apart, useless as a credential. */
+  hint: string;
+}
+
+export interface AiStreamRequest {
+  provider: AiVaultProvider;
+  model?: string;
+  /** The provider's own request body, passed through untouched. */
+  body: unknown;
+}
+
+export type AiStreamStart =
+  | { ok: true; requestId: string }
+  | { ok: false; code: string; message: string };
+
+export type AiStreamEvent =
+  | { requestId: string; type: 'chunk'; text: string }
+  | { requestId: string; type: 'done' }
+  | { requestId: string; type: 'error'; code: string; message: string };
+
 export interface MotionEditorApi {
   readonly platform: string;
   readonly version: string;
@@ -63,6 +88,32 @@ export interface MotionEditorApi {
     clear?(): Promise<void>;
     /** False when the OS has no keystore — sessions then last only as long as the app runs. */
     available?(): Promise<boolean>;
+  };
+  /**
+   * The assistant, for the local edition — the shell holds the provider keys and
+   * makes the calls (electron/aiKeyVault.ts, electron/aiProxy.ts).
+   *
+   * There is deliberately no way to read a key back. `set` and `clear` write;
+   * `status` returns presence and a masked tail. That asymmetry with
+   * `credentials` above — which DOES expose `get`, because the renderer has to
+   * put the refresh token in a request to our own API — is the point: nothing in
+   * the renderer needs a provider key, because nothing in the renderer talks to a
+   * provider.
+   */
+  ai?: {
+    keys?: {
+      status?(): Promise<Record<AiVaultProvider, AiKeyStatus>>;
+      set?(provider: AiVaultProvider, key: string): Promise<{ persisted: boolean; hint: string }>;
+      /** Omit `provider` to forget every key at once. */
+      clear?(provider?: AiVaultProvider): Promise<void>;
+      /** False when the OS has no keystore — the app then never persists a key. */
+      available?(): Promise<boolean>;
+    };
+    /** Begin a completion. Resolves once the provider's response headers are in. */
+    stream?(request: AiStreamRequest): Promise<AiStreamStart>;
+    cancel?(requestId: string): Promise<boolean>;
+    /** Returns an unsubscribe function. Filter events by `requestId`. */
+    onStreamEvent?(handler: (event: AiStreamEvent) => void): () => void;
   };
   project?: {
     /** Native open dialog → the chosen project file (or null if cancelled). */
@@ -156,6 +207,12 @@ export interface MotionEditorApi {
     chooseOutputDir?(): Promise<string | null>;
     cleanJob?(jobId: string): Promise<void>;
   };
+
+  /** Diagnostics forwarded to the main-process log (DevTools-less builds). */
+  diag?: {
+    /** Fire-and-forget GPU/WebGPU probe report → <userData>/gpu-diagnostics.log. */
+    gpuReport?(report: unknown): void;
+  };
   /**
    * Local project index (SQLite in the main process). Every method mirrors the
    * `LocalIndex` port; `available` is false when the native driver is not
@@ -185,6 +242,15 @@ export interface MotionEditorApi {
   app?: {
     quit?(): Promise<void>;
     version?(): Promise<string>;
+  };
+  /**
+   * Provider sign-in for the desktop app. `openExternal` opens the backend OAuth
+   * start URL in the system browser (Google refuses embedded webviews);
+   * `onResult` delivers the one-time code / error from the premation:// deep link.
+   */
+  oauth?: {
+    openExternal(url: string): Promise<void>;
+    onResult(handler: (result: { code?: string; error?: string }) => void): () => void;
   };
   /** Subscribe to native menu command ids. Returns an unsubscribe fn. */
   onMenuCommand?(handler: (commandId: string) => void): () => void;

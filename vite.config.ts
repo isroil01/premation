@@ -1,9 +1,42 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import * as path from 'node:path';
+import { buildAppCsp } from './src/core/api/csp';
 
-export default defineConfig({
-  plugins: [react()],
+/**
+ * Fills `%MOTION_CSP%` in index.html with a policy that names the backend this
+ * build talks to. Without it the shipped policy could only ever reach localhost,
+ * so a packaged build pointed at a deployed server was blocked from its own API
+ * and from Cloudinary-served assets. See src/core/api/csp.ts.
+ *
+ * The resolved origin is printed because getting it wrong produces a working
+ * build that fails only once installed — the most expensive kind of typo.
+ */
+function motionCsp(mode: string): Plugin {
+  return {
+    name: 'motion-csp',
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        // `''` prefix = load every var, not just VITE_-prefixed ones, so the
+        // same file can hold non-client build settings later.
+        const env = loadEnv(mode, __dirname, '');
+        const backendOrigin = env.VITE_BACKEND_ORIGIN ?? '';
+        const csp = buildAppCsp({
+          backendOrigin,
+          mediaOrigins: env.VITE_MEDIA_ORIGINS,
+        });
+        if (backendOrigin) {
+          console.log(`[motion-csp] backend origin: ${backendOrigin}`);
+        }
+        return html.replace('%MOTION_CSP%', csp);
+      },
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), motionCsp(mode)],
   base: './',
   resolve: {
     alias: {
@@ -50,6 +83,14 @@ export default defineConfig({
       },
     },
   },
+  // Every worker is spawned as `new Worker(new URL(...), { type: 'module' })`
+  // (thumbnail, encode, plugin). Vite's default worker format is 'iife', which
+  // cannot be code-split — and the thumbnail worker pulls in the renderer graph,
+  // which contains dynamic imports, so an iife build fails outright. 'es' matches
+  // the module workers we already declare and is supported by Electron's Chromium.
+  worker: {
+    format: 'es',
+  },
   server: {
     port: 5173,
     strictPort: true,
@@ -70,4 +111,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

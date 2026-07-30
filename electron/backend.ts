@@ -15,18 +15,22 @@
 import { app, net } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const BACKEND_PORT = Number(process.env.MOTION_BACKEND_PORT || 4000);
 const HEALTH_URL = `http://localhost:${BACKEND_PORT}/api/health`;
 
 let child: ChildProcess | null = null;
 
+function packagedEntry(): string {
+  return path.join(process.resourcesPath ?? '', 'backend', 'dist', 'main.js');
+}
+
 function resolveEntry(): string | null {
   const override = process.env.MOTION_BACKEND_ENTRY;
   if (override && existsSync(override)) return override;
 
-  const packaged = path.join(process.resourcesPath ?? '', 'backend', 'dist', 'main.js');
+  const packaged = packagedEntry();
   if (existsSync(packaged)) return packaged;
 
   // dev: dist-electron/ is two levels under motion-editor/, motion-back is a sibling.
@@ -34,6 +38,66 @@ function resolveEntry(): string | null {
   if (existsSync(sibling)) return sibling;
 
   return null;
+}
+
+/**
+ * Where the operator of a self-hosted install puts the server's configuration.
+ *
+ * The installer deliberately carries no `.env`: one that did would hand its
+ * DATABASE_URL, JWT_SECRET and AI_KEY_SECRET to everybody who ran the installer.
+ * This file lives in the user's own app-data directory instead, is written once
+ * on the target machine, and is never part of a distributable.
+ */
+export function backendEnvPath(): string {
+  return path.join(app.getPath('userData'), 'backend.env');
+}
+
+/**
+ * Minimal KEY=VALUE reader for <userData>/backend.env.
+ *
+ * Not dotenv: this runs in the Electron main process, which must not depend on
+ * the server's node_modules. Handles comments, blank lines, `export` prefixes
+ * and quoted values — enough for a file of connection strings and secrets.
+ */
+export function parseEnvFile(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).replace(/^export\s+/, '').trim();
+    if (!key) continue;
+    let value = line.slice(eq + 1).trim();
+    const quoted = /^(['"])(.*)\1$/.exec(value);
+    if (quoted) value = quoted[2];
+    out[key] = value;
+  }
+  return out;
+}
+
+function loadBackendEnv(): Record<string, string> {
+  const file = backendEnvPath();
+  if (!existsSync(file)) return {};
+  try {
+    return parseEnvFile(readFileSync(file, 'utf-8'));
+  } catch (err) {
+    console.error('[backend] could not read', file, err);
+    return {};
+  }
+}
+
+/**
+ * Should this app manage its own server?
+ *
+ * Yes when explicitly asked (MOTION_LOCAL_BACKEND=1), and yes when a server was
+ * bundled into this build — packaging the sidecar IS the intent to run it, and a
+ * packaged user has no shell in which to set an env var. A plain client build
+ * has no bundled server and so answers no, unchanged.
+ */
+export function shouldStartBackend(): boolean {
+  if (process.env.MOTION_LOCAL_BACKEND === '1') return true;
+  return app.isPackaged && existsSync(packagedEntry());
 }
 
 async function isHealthy(): Promise<boolean> {
@@ -74,13 +138,31 @@ export async function startBackend(): Promise<boolean> {
 
   const cwd = path.dirname(path.dirname(entry)); // …/motion-back
   console.log('[backend] launching server:', entry);
+
+  // Configuration for a packaged sidecar comes from the user's own app-data
+  // directory, because the installer ships no .env. The server's dotenv call
+  // does not override variables that already exist in the environment, so these
+  // win over any .env that happens to sit next to a dev checkout — and a dev
+  // checkout with no backend.env keeps behaving exactly as before.
+  const fileEnv = loadBackendEnv();
+  if (Object.keys(fileEnv).length) {
+    console.log(`[backend] configuration loaded from ${backendEnvPath()}`);
+  } else if (app.isPackaged) {
+    console.warn(
+      `[backend] no configuration found. Create ${backendEnvPath()} ` +
+        '(start from resources/backend/.env.example) — the server needs at least ' +
+        'DATABASE_URL, JWT_SECRET and AI_KEY_SECRET, and refuses to start without them.',
+    );
+  }
+
   // Run the server with Electron's bundled Node (ELECTRON_RUN_AS_NODE) so no
   // system Node install is required in a packaged app. cwd = motion-back so it
-  // loads its own.env / uploads / Prisma engine.
+  // loads its own uploads/ and Prisma engine.
   child = spawn(process.execPath, [entry], {
     cwd,
     env: {
       ...process.env,
+      ...fileEnv,
       ELECTRON_RUN_AS_NODE: '1',
       PORT: String(BACKEND_PORT),
       NODE_ENV: app.isPackaged ? 'production' : (process.env.NODE_ENV || 'development'),
