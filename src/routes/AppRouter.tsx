@@ -22,6 +22,7 @@ import { TitleBar } from '@layout/TitleBar/TitleBar';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
 import { applyPasteboardColor } from '@core/theme/pasteboard';
 import { applyAccentColor } from '@core/theme/accent';
+import { useOAuthDeepLink } from '@hooks/useOAuthDeepLink';
 
 import { LoadingScreen } from '@components/LoadingScreen';
 
@@ -37,6 +38,9 @@ const AuthPage = lazy(() => import('../pages/AuthPage').then(m => ({ default: m.
 const DashboardPage = lazy(() => import('../pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const EditorPage = lazy(() => import('../pages/EditorPage').then(m => ({ default: m.EditorPage })));
 const PopoutRoute = lazy(() => import('../pages/PopoutRoute').then(m => ({ default: m.PopoutRoute })));
+const VerifyEmailPage = lazy(() =>
+  import('../pages/VerifyEmailPage').then(m => ({ default: m.VerifyEmailPage })),
+);
 const OAuthCallbackPage = lazy(() =>
   import('../pages/OAuthCallbackPage').then(m => ({ default: m.OAuthCallbackPage })),
 );
@@ -44,6 +48,10 @@ const OAuthCallbackPage = lazy(() =>
 function AppLayout(): JSX.Element {
   const location = useLocation();
   const isEditor = location.pathname.startsWith('/editor') || location.pathname.startsWith('/popout');
+
+  // Desktop: catch the OAuth one-time code the system browser hands back through
+  // the premation:// deep link and route it to /oauth. No-op on the web.
+  useOAuthDeepLink();
 
   useEffect(() => {
     if (isEditor) {
@@ -81,6 +89,11 @@ function AppLayout(): JSX.Element {
               {/* Where the backend's OAuth callback drops the browser, carrying a
                   one-time code to exchange for a session. */}
               <Route path="/oauth" element={<OAuthCallbackPage />} />
+              {/* The email-confirmation gate. A signed-in but unverified account
+                  is sent here by RequireAuth and can reach nothing else until it
+                  types the 6-digit code (the page itself requires a session and
+                  bounces a verified user on to the dashboard). */}
+              <Route path="/verify-email" element={<VerifyEmailPage />} />
             </>
           )}
           <Route path="/popout/:panelId" element={<PopoutRoute />} />

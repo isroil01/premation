@@ -126,6 +126,45 @@ function header(res: Response, name: string): string | undefined {
   return res.headers?.get?.(name) ?? undefined;
 }
 
+/**
+ * Notified whenever the server refuses a write with `code: 'read_only'`.
+ *
+ * A callback rather than a direct call to the entitlement store, so transport
+ * stays dependency-free — the store imports the API client, which imports this,
+ * and a direct import here would close that cycle. The store registers itself
+ * once at startup.
+ */
+type WriteDeniedListener = (detail: { reason?: string; message?: string }) => void;
+let writeDeniedListener: WriteDeniedListener | null = null;
+
+export function onWriteDenied(listener: WriteDeniedListener | null): void {
+  writeDeniedListener = listener;
+}
+
+/**
+ * The server's typed 403 body, whether the code sits at the top or nested.
+ *
+ * Exported for tests: NestJS is inconsistent about where a thrown `{ code, … }`
+ * lands — flat on the body, or wrapped under `message` — and this is the exact
+ * shape-handling that decides whether the read-only signal fires at all. A
+ * regression here is silent: the paywall still works (the guard returns 403), but
+ * the editor stops noticing, so the read-only bar never appears and autosave
+ * hammers 403s forever.
+ */
+export function readOnlyDetail(status: number, body: unknown): { reason?: string; message?: string } | null {
+  if (status !== 403 || !body || typeof body !== 'object') return null;
+  // NestJS wraps a thrown `{ code, ... }` under `message` on some paths and
+  // leaves it flat on others; accept either so the signal is not lost to shape.
+  const flat = body as { code?: string; reason?: string; message?: string };
+  const nested = (flat.message ?? null) as { code?: string; reason?: string; message?: string } | string | null;
+  const code = flat.code ?? (typeof nested === 'object' ? nested?.code : undefined);
+  if (code !== 'read_only') return null;
+  const reason = flat.reason ?? (typeof nested === 'object' ? nested?.reason : undefined);
+  const message =
+    typeof nested === 'object' ? nested?.message : typeof flat.message === 'string' ? flat.message : undefined;
+  return { reason, message };
+}
+
 async function toError(res: Response): Promise<ApiError> {
   let body: unknown;
   try {
@@ -139,6 +178,14 @@ async function toError(res: Response): Promise<ApiError> {
   err.status = res.status;
   err.body = body;
   err.requestId = header(res, 'X-Request-Id');
+
+  // A write the server refused because this account may no longer make one. The
+  // client's cached entitlement has gone stale mid-session — a trial that lapsed
+  // while the editor was open — so tell the store immediately rather than waiting
+  // for the next poll to notice.
+  const denied = readOnlyDetail(res.status, body);
+  if (denied) writeDeniedListener?.(denied);
+
   return err;
 }
 

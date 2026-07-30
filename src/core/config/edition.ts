@@ -85,13 +85,33 @@ export const cloudSyncEnabled = (): boolean => isServerEdition();
 /**
  * The assistant.
  *
- * Off in the local edition: every model call goes through the backend gateway,
- * which holds the key. Rather than let the UI fail with "sign in to use the
- * assistant" — an instruction nobody in this edition can follow — the panel
- * says "coming soon" and the composer is disabled. Local BYOK is the intended
- * successor; until it exists, saying so is the honest state.
+ * On in BOTH editions now, which is a change worth explaining. This used to be
+ * `isServerEdition()`, because every model call went through the backend gateway
+ * and the gateway held the key — so the local edition had no way to make one, and
+ * the panel honestly said "coming soon".
+ *
+ * That was fine as an engineering state and fatal as a product one: the free tier
+ * of this product IS the local edition, and its headline is "the full editor, with
+ * your own API key". An assistant that reads "coming soon" made that headline a
+ * false statement.
+ *
+ * So the local edition grew its own path — the shell holds the key in the OS
+ * keystore and makes the call from the main process (electron/aiKeyVault.ts,
+ * electron/aiProxy.ts). Both editions are BYOK; they differ only in who holds the
+ * key, which is what `aiTransport` selects between. There are no credits and no
+ * plan gate on the assistant in either one.
  */
-export const aiEnabled = (): boolean => isServerEdition();
+export const aiEnabled = (): boolean => true;
+
+/**
+ * Does the assistant run through the backend, or through the desktop shell?
+ *
+ * Read this rather than the edition when the question is "where does the key
+ * live", because that is the only thing that actually differs. The server edition
+ * proxies through motion-back (which encrypts keys at rest with AI_KEY_SECRET);
+ * the local edition uses the OS keystore and the main process.
+ */
+export const aiRunsThroughBackend = (): boolean => isServerEdition();
 
 /**
  * The hosted plugin registry (browse / download / update checks).

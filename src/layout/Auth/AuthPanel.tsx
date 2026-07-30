@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent, type CSSProperties } from 'react';
 import { openModal } from '@stores/modalStore';
 import { useAuthStore } from '@stores/authStore';
 import { api } from '@core/api/client';
+import { startSocialAuth } from '@core/auth/startSocialAuth';
 import { Icon } from '@components/Icon/Icon';
 
 type Mode = 'login' | 'register';
@@ -75,11 +76,6 @@ function AuthForm({ onDone }: { onDone: () => void }): JSX.Element {
     return () => { alive = false; };
   }, []);
 
-  const startSocialAuth = (provider: 'google' | 'github'): void => {
-    // A full navigation: the consent screen is a page, and it refuses framing.
-    window.location.href = api.oauthStartUrl(provider);
-  };
-
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
@@ -102,10 +98,9 @@ function AuthForm({ onDone }: { onDone: () => void }): JSX.Element {
           : 'Create an account to get started with Motion Studio.'}
       </p>
 
-      {/* Social login — only what the server can actually do. */}
-      {providers.length > 0 && (
+      {/* Social login — Google only for now. Full-width single button. */}
+      {providers.some((p) => p.id === 'google') && (
       <div style={{ display: 'flex', gap: '8px' }}>
-        {providers.some((p) => p.id === 'google') && (
         <button
           type="button"
           style={socialBtnStyle}
@@ -118,27 +113,13 @@ function AuthForm({ onDone }: { onDone: () => void }): JSX.Element {
             <path d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z" fill="#FBBC05"/>
             <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
           </svg>
-          Google
+          Continue with Google
         </button>
-        )}
-        {providers.some((p) => p.id === 'github') && (
-        <button
-          type="button"
-          style={socialBtnStyle}
-          disabled={busy}
-          onClick={() => startSocialAuth('github')}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
-          </svg>
-          GitHub
-        </button>
-        )}
       </div>
       )}
 
       {/* The divider only means something when there is something above it. */}
-      {providers.length > 0 && (
+      {providers.some((p) => p.id === 'google') && (
       <div style={{ display: 'flex', alignItems: 'center', margin: '2px 0', color: 'var(--color-text-tertiary, #7e7e7e)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
         <div style={{ flex: 1, borderBottom: '1px solid var(--color-divider, #1a1a1a)' }} />
         <span style={{ padding: '0 8px' }}>OR</span>

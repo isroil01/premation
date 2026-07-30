@@ -744,7 +744,7 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
 
   const provider = useAiProviderStore.getState().provider;
 
-  let res: { ok: boolean; base64: string; mime: string; creditsUsed: number };
+  let res: { ok: boolean; base64: string; mime: string };
   try {
     res = await api.generateImage({ provider, prompt, ...dims });
   } catch (err) {
@@ -756,13 +756,15 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
   }
   if (!res.ok || !res.base64) return fail('The image provider returned nothing. Try rewording the prompt.');
 
-  // base64 → File, so this takes exactly the same path as a user drag-and-drop.
+  // base64 → File. Tagged `source: 'ai'` so it uploads to the cloud (small,
+  // generated, worth syncing) rather than taking the local-disk path that user
+  // library imports now use.
   const bytes = Uint8Array.from(atob(res.base64), (ch) => ch.charCodeAt(0));
   const ext = res.mime === 'image/jpeg' ? 'jpg' : 'png';
   const name = `${prompt.slice(0, 40).replace(/[^\w -]/g, '').trim() || 'generated'}.${ext}`;
   const file = new File([bytes as BlobPart], name, { type: res.mime });
 
-  const asset = await useAssetStore.getState().addAsset(file);
+  const asset = await useAssetStore.getState().addAsset(file, null, { source: 'ai' });
   await insertMedia(asset);
 
   const id = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
@@ -778,11 +780,12 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
     }
   }
   bumpScene();
+  // No credits any more — image generation runs on the user's own key and their
+  // provider bills them directly, so there is nothing of ours to report.
   return ok(
-    `Generated an image and placed it as layer '${id}'` +
-      (res.creditsUsed ? ` (${res.creditsUsed} credits).` : '.') +
+    `Generated an image and placed it as layer '${id}'.` +
       ` It is in the asset library as "${name}" — reuse it rather than generating again.`,
-    { id, assetId: asset.id, creditsUsed: res.creditsUsed },
+    { id, assetId: asset.id },
   );
 };
 
@@ -909,7 +912,10 @@ const createMediaFromAttachment: AiTool['handler'] = async (input, ctx) => {
 
   let asset;
   try {
-    asset = await useAssetStore.getState().addAsset(file);
+    // A reference image the user attached to the AI prompt: small (already
+    // re-encoded JPEG) and part of an AI flow, so it uploads to the cloud rather
+    // than the local-disk path user library imports take.
+    asset = await useAssetStore.getState().addAsset(file, null, { source: 'ai' });
   } catch (err) {
     return fail(`Failed to upload reference image: ${err instanceof Error ? err.message : err}`);
   }

@@ -14,6 +14,7 @@ import { Providers } from '@providers/Providers';
 import { CloudThumbnailWorker } from '../components/CloudThumbnailWorker';
 import { getProjectManager, getFileManager } from '@core/services/coreServices';
 import { CloudAutosave } from '../components/CloudAutosave';
+import { ReadOnlyBanner } from '../components/ReadOnlyBanner';
 import { ApiFileAdapter } from '@core/files/ApiFileAdapter';
 import { useUIStore } from '@stores/uiStore';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
@@ -109,7 +110,19 @@ export function EditorPage(): JSX.Element {
         {projectId ? <ProjectLoader projectId={projectId} /> : null}
         {projectId ? <CloudAutosave projectId={projectId} /> : null}
         {projectId ? <CloudThumbnailWorker projectId={projectId} /> : null}
-        <LazyEditorShell />
+        {/*
+          The read-only bar sits ABOVE the shell in a flex column so it pushes the
+          editor down rather than floating over the canvas — a locked document is
+          still a document the user needs to see all of. It renders nothing when
+          the account can write (and always in the local edition), so this column
+          is a plain full-height editor in the common case.
+        */}
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+          <ReadOnlyBanner />
+          <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+            <LazyEditorShell />
+          </div>
+        </div>
       </Suspense>
     </Providers>
   );

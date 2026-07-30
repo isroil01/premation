@@ -1285,9 +1285,9 @@ export function DashboardPage(): JSX.Element {
               <AiSettingsSection />
             </div>
 
-            {/* Plan & credits */}
+            {/* Plan & trial — no credits any more; the assistant is BYOK. */}
             <div className={styles.settingsCard} id="billing">
-              <h3 className={styles.settingsLabel}>Plan & Credits</h3>
+              <h3 className={styles.settingsLabel}>Plan</h3>
               <BillingSection />
             </div>
 

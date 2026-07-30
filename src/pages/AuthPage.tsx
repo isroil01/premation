@@ -7,6 +7,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@stores/authStore';
 import { api } from '@core/api/client';
+import { startSocialAuth } from '@core/auth/startSocialAuth';
 import { setSession } from '@core/api/session';
 import { Icon } from '@components/Icon/Icon';
 import { Logo } from '@components/Logo';
@@ -17,6 +18,7 @@ export type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
 export function AuthPage({ mode }: { mode: AuthMode }): JSX.Element {
   const status = useAuthStore((s) => s.status);
   const storeError = useAuthStore((s) => s.error);
+  const user = useAuthStore((s) => s.user);
   const login = useAuthStore((s) => s.login);
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
@@ -58,7 +60,11 @@ export function AuthPage({ mode }: { mode: AuthMode }): JSX.Element {
   const submitting = status === 'loading' || localBusy;
   const error = localError || (isForgot || isReset ? '' : storeError);
 
-  if (status === 'authenticated' && !isReset) return <Navigate to={from} replace />;
+  // An unverified account can only go to the confirm-code page, wherever it tried
+  // to land — the same gate RequireAuth enforces, applied here so a signed-in
+  // visit to /login or /register doesn't flash the dashboard on its way there.
+  const authedDest = user && !user.emailVerified ? '/verify-email' : from;
+  if (status === 'authenticated' && !isReset) return <Navigate to={authedDest} replace />;
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -85,7 +91,7 @@ export function AuthPage({ mode }: { mode: AuthMode }): JSX.Element {
         // one new session it just issued.
         await setSession(result);
         useAuthStore.setState({ status: 'authenticated', user: result.user, error: null });
-        navigate('/dashboard', { replace: true });
+        navigate(result.user.emailVerified ? '/dashboard' : '/verify-email', { replace: true });
       } catch (err) {
         setLocalError(err instanceof Error ? err.message : 'Could not reset password.');
       } finally {
@@ -97,21 +103,13 @@ export function AuthPage({ mode }: { mode: AuthMode }): JSX.Element {
     try {
       if (isLogin) await login(email, password);
       else await register(email, password, name || undefined);
-      navigate(from, { replace: true });
+      // A fresh sign-up is unverified, so it goes to the confirm-code page; a
+      // login lands wherever it was headed (or the same gate if unverified).
+      const u = useAuthStore.getState().user;
+      navigate(u && !u.emailVerified ? '/verify-email' : from, { replace: true });
     } catch {
       /* error handled via store */
     }
-  };
-
-  /**
-   * Hand the browser to the provider.
-   *
-   * A full navigation, not a fetch: the provider's consent screen is a page the
-   * user has to see and interact with, and it refuses to be framed. We come
-   * back at `#/oauth` with a one-time code (see OAuthCallbackPage).
-   */
-  const startSocialAuth = (provider: 'google' | 'github'): void => {
-    window.location.href = api.oauthStartUrl(provider);
   };
 
   const title = isLogin ? 'Sign in to Motion'
@@ -151,13 +149,11 @@ export function AuthPage({ mode }: { mode: AuthMode }): JSX.Element {
           </div>
         ) : (
           <form className={styles.form} onSubmit={onSubmit}>
-            {/* Only providers this server is actually configured for. When
-                none are, the buttons and the "OR" divider are absent entirely
-                rather than present and inert. */}
-            {(isLogin || isRegister) && providers.length > 0 && (
+            {/* Google is the only social provider for now. Gated on the server
+                actually advertising it, so it's never a button that can't work. */}
+            {(isLogin || isRegister) && providers.some((p) => p.id === 'google') && (
               <>
                 <div className={styles.socialGrid}>
-                  {providers.some((p) => p.id === 'google') && (
                   <button
                     type="button"
                     className={styles.socialBtn}
@@ -170,23 +166,8 @@ export function AuthPage({ mode }: { mode: AuthMode }): JSX.Element {
                       <path d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.62z" fill="#71717a"/>
                       <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#e4e4e7"/>
                     </svg>
-                    <span>Google</span>
+                    <span>Continue with Google</span>
                   </button>
-                  )}
-
-                  {providers.some((p) => p.id === 'github') && (
-                  <button
-                    type="button"
-                    className={styles.socialBtn}
-                    disabled={submitting}
-                    onClick={() => startSocialAuth('github')}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                      <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
-                    </svg>
-                    <span>GitHub</span>
-                  </button>
-                  )}
                 </div>
 
                 <div className={styles.divider}>

@@ -32,6 +32,12 @@ import { ADAPTERS, type ProviderId } from '@motion/ai-tools';
 import { onSessionChange } from '@core/api/session';
 import { aiEnabled } from '@core/config/edition';
 import {
+  fetchKeyStatuses,
+  forgetKey,
+  keyStorageRequiresAccount,
+  persistKey,
+} from '@core/ai/aiKeyStore';
+import {
   api,
   isAuthenticated,
   type AiKeyStatus,
@@ -69,10 +75,13 @@ export const PROVIDER_IDS: readonly AiProviderId[] = ['anthropic', 'openai', 'ge
 /**
  * Where the selection falls back when the chosen provider cannot run.
  *
- * BYOK first: it is the user's own account (no credits, no plan gate), and the
- * Director pipeline is BYOK-only server-side. Motion AI is the last resort.
+ * BYOK only, because BYOK is all there is now. `'motion'` — our hosted, metered
+ * provider — used to be the last resort here and is gone: hosted AI was deleted
+ * server-side, so leaving it in this list would mean the store could auto-select a
+ * provider whose every request 400s, and it would do it precisely when the user
+ * has no working key and is least able to diagnose it.
  */
-const FALLBACK_ORDER: readonly GatewayProviderId[] = [...PROVIDER_IDS, 'motion'];
+const FALLBACK_ORDER: readonly GatewayProviderId[] = [...PROVIDER_IDS];
 
 const SETTINGS_KEY = 'aiProvider';
 /** The cached gateway answer. Non-secret by construction — see `StatusCache`. */
@@ -210,14 +219,22 @@ interface AiProviderState {
   /** Forget everything account-scoped. Called on sign-out and on session loss. */
   reset: () => void;
   /**
-   * Save a key through the gateway and make its provider the active one — that
-   * is why the user just connected it. Updates `status` without waiting for the
-   * round trip so the composer unlocks immediately, then confirms with a fetch.
+   * Save a key and make its provider the active one — that is why the user just
+   * connected it. Updates `status` without waiting for the round trip so the
+   * composer unlocks immediately, then confirms with a fetch.
+   *
+   * Goes to the backend gateway or the OS keystore depending on the edition; the
+   * caller does not need to know which (see core/ai/aiKeyStore).
+   *
+   * `'unsupported'` means this build cannot hold a key for that provider at all —
+   * the desktop vault covers the three chat providers, not the media ones. The UI
+   * has to say that rather than show a generic failure, or the user retypes a
+   * correct key wondering what is wrong with it.
    */
   saveKey: (
     p: AiProviderId,
     key: string,
-  ) => Promise<{ ok: boolean; reason?: 'invalid' | 'unavailable' | 'network' }>;
+  ) => Promise<{ ok: boolean; reason?: 'invalid' | 'unavailable' | 'network' | 'unsupported' }>;
   /** Remove a key, and move off it if it was the active provider. */
   clearKey: (p: AiProviderId) => Promise<{ ok: boolean }>;
   /**
@@ -342,9 +359,12 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
   },
 
   refreshStatus: async (opts) => {
-    // No gateway to ask, and nothing to show even if there were.
     if (!aiEnabled()) return;
-    if (!isAuthenticated()) {
+    // Only the SERVER edition needs a session to answer this. Gating the local
+    // edition on `isAuthenticated()` would mean its key status could never load
+    // at all — there is no account to be authenticated against — so the panel
+    // would sit at "connect a provider" with a key already in the keystore.
+    if (keyStorageRequiresAccount() && !isAuthenticated()) {
       // Do NOT wipe what we have. This is reached during boot, before
       // `loadSession()` has read the keystore — clearing here is what made the
       // panel say "connect a provider" for the first second of every launch.
@@ -356,9 +376,12 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
     const id = ++inFlightId;
     const mine = (async () => {
       try {
-        const { motion, ...keys } = await api.getAiKeys();
-        const status = keys as Record<AiProviderId, AiKeyStatus>;
-        set({ status, motion, verified: true });
+        const status = (await fetchKeyStatuses()) as Record<AiProviderId, AiKeyStatus>;
+        // `motion` is gone — there is no hosted, metered provider any more, in
+        // either edition. It stays in the state shape as `null` only because a
+        // persisted status cache written by an older build may still contain one,
+        // and `isUsable` has to keep answering false for it rather than crash.
+        set({ status, motion: null, verified: true });
         get().applyStatus();
         // Same trip: a picker that knew which keys were connected but not which
         // models the server can route to would still be driven by the stale list.
@@ -383,15 +406,18 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
     const trimmed = key.trim();
     if (!trimmed) return { ok: false, reason: 'invalid' };
     try {
-      const res = await api.saveAiKey(p, trimmed);
+      // Backend in the server edition, OS keystore in the local one — see
+      // core/ai/aiKeyStore. Either way the key leaves this function and is never
+      // held in renderer state.
+      const res = await persistKey(p, trimmed);
       if (!res.ok) return { ok: false, ...(res.reason ? { reason: res.reason } : {}) };
     } catch {
       return { ok: false, reason: 'network' };
     }
-    // The gateway accepted it. Reflect that immediately — a user who just
-    // connected a provider should not watch a second round trip before the
-    // composer unlocks. `hint` is the same masked tail the server computes and
-    // is all that is ever displayed; the key itself is not kept.
+    // Accepted. Reflect that immediately — a user who just connected a provider
+    // should not watch a second round trip before the composer unlocks. `hint` is
+    // the same masked tail both stores compute and is all that is ever displayed;
+    // the key itself is not kept.
     const status = {
       ...(get().status ?? ({} as Record<AiProviderId, AiKeyStatus>)),
       [p]: { present: true, hint: maskKey(trimmed) },
@@ -407,7 +433,7 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
 
   clearKey: async (p) => {
     try {
-      await api.clearAiKey(p);
+      await forgetKey(p);
     } catch {
       // Leave the status alone: we do not know whether the delete landed, and
       // showing "not configured" for a key that is still there is a lie the

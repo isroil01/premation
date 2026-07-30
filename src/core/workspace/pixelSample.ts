@@ -4,6 +4,8 @@
  * is pure/testable; `samplePixelRgba` does the DOM read (guarded).
  */
 
+import { isGpuOwned } from '@core/rendering/canvasOwnership';
+
 /** CSS-space point (relative to the canvas top-left) → integer device pixel, or
  *  null if it falls outside the canvas backing store. `rect` is the canvas's
  *  CSS box, `w`/`h` its backing-store (device) dimensions. */
@@ -31,6 +33,13 @@ export function samplePixelRgba(
     const rect = canvas.getBoundingClientRect();
     const dp = cssToDevicePixel(local, rect, canvas.width, canvas.height);
     if (!dp) return null;
+    // A GPU backend's canvas must never be touched with getContext('2d'):
+    // before the backend's async init has bound the element, this call would
+    // WIN the binding and burn the canvas to 2d — after which every WebGPU/
+    // WebGL2 getContext returns null and the viewport reports "GPU
+    // unavailable" (the packaged-build first-entry bug). After init it merely
+    // returns null; either way there is nothing to read.
+    if (isGpuOwned(canvas)) return null;
     // getContext('2d') returns the existing 2D context, or null if the canvas
     // is already bound to a different context type (WebGL) — never a throw.
     const ctx = canvas.getContext('2d');

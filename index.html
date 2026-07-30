@@ -4,14 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      connect/img/media-src include the local backend origin (localhost:*) so the
-      Electron renderer can reach motion-back directly (no dev proxy there) and
-      load /files assets; the browser build still works same-origin via 'self'.
-      blob:/data: cover in-memory asset previews. A packaged build pointing at a
-      deployed backend must add that origin here (or set it via Electron session).
+      The policy is composed at build time from the configured backend and media
+      origins — see src/core/api/csp.ts and the `motion-csp` plugin in
+      vite.config.ts. It always allows 'self' + localhost (dev server, Vite
+      proxy, bundled sidecar); VITE_BACKEND_ORIGIN and VITE_MEDIA_ORIGINS add
+      the deployed backend and its asset host for a server-mode build.
+
+      This placeholder is substituted by Vite. Opening this file without Vite
+      leaves it literal — as it does the /src/main.tsx script tag below.
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:* ws://localhost:* blob:; img-src 'self' http://localhost:* blob: data:; media-src 'self' http://localhost:* blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'" />
-    <title>Motion Editor</title>
+    <meta http-equiv="Content-Security-Policy" content="%MOTION_CSP%" />
+    <title>Premation</title>
     <link rel="icon" type="image/png" href="./favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

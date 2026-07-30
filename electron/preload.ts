@@ -64,6 +64,13 @@ const bridge = {
     cleanJob: (jobId: string) => ipcRenderer.invoke('render:cleanJob', jobId),
   },
 
+  diag: {
+    /** One-off GPU/WebGPU report from the renderer, appended to
+     *  <userData>/gpu-diagnostics.log so a packaged build with DevTools disabled
+     *  can still be diagnosed. Fire-and-forget. */
+    gpuReport: (report: unknown) => ipcRenderer.send('diag:gpuReport', report),
+  },
+
   index: {
     available: () => ipcRenderer.invoke('index:available'),
     upsertProject: (row: unknown) => ipcRenderer.invoke('index:upsertProject', row),
@@ -107,15 +114,65 @@ const bridge = {
     available: () => ipcRenderer.invoke('credentials:available'),
   },
 
+  /**
+   * The assistant, for the local edition — no backend, so the shell holds the
+   * keys and makes the calls (electron/aiKeyVault.ts, electron/aiProxy.ts).
+   *
+   * Note what is NOT here: any way to read a key back. `keys.set` and
+   * `keys.clear` write; `keys.status` returns presence and a masked tail. The
+   * renderer never holds a provider key, which is why a compromised renderer can
+   * spend one but cannot steal one.
+   *
+   * The server edition ignores all of this and posts to the backend gateway
+   * instead — see `aiTransport` on the renderer side, which picks by capability.
+   */
+  ai: {
+    keys: {
+      status: () => ipcRenderer.invoke('aiKeys:status'),
+      set: (provider: string, key: string) => ipcRenderer.invoke('aiKeys:set', provider, key),
+      /** Omit `provider` to forget every key at once. */
+      clear: (provider?: string) => ipcRenderer.invoke('aiKeys:clear', provider ?? null),
+      /** False when the OS has no keystore — the app then never persists a key. */
+      available: () => ipcRenderer.invoke('aiKeys:available'),
+    },
+    /** Begin a completion. Resolves once the provider's headers are in. */
+    stream: (request: unknown) => ipcRenderer.invoke('ai:stream', request),
+    cancel: (requestId: string) => ipcRenderer.invoke('ai:cancel', requestId),
+    /**
+     * Body chunks, in order, for every in-flight stream. Callers filter by
+     * `requestId` — one channel rather than one per request, so a stream that
+     * ends without a `done` cannot leak a listener.
+     */
+    onStreamEvent: (handler: (event: unknown) => void) => {
+      const listener = (_event: unknown, payload: unknown): void => handler(payload);
+      ipcRenderer.on('ai:stream:event', listener);
+      return () => ipcRenderer.removeListener('ai:stream:event', listener);
+    },
+  },
+
+  /**
+   * Provider sign-in (Google/GitHub) for the desktop app.
+   *
+   * `openExternal` opens the backend's OAuth start URL in the SYSTEM browser —
+   * Google refuses to run its consent screen inside an Electron window.
+   * `onResult` delivers the one-time code (or an error) once the backend bounces
+   * it back through the premation:// deep link. See src/pages/OAuthCallbackPage.
+   */
+  oauth: {
+    openExternal: (url: string) => ipcRenderer.invoke('oauth:openExternal', url),
+    onResult: (handler: (result: { code?: string; error?: string }) => void) => {
+      const listener = (_event: unknown, payload: { code?: string; error?: string }): void =>
+        handler(payload);
+      ipcRenderer.on('oauth:result', listener);
+      return () => ipcRenderer.removeListener('oauth:result', listener);
+    },
+  },
+
   onMenuCommand: (handler: (commandId: string) => void) => {
     const listener = (_event: unknown, commandId: string): void => handler(commandId);
     ipcRenderer.on('menu:command', listener);
     return () => ipcRenderer.removeListener('menu:command', listener);
   },
-
-  // NOTE: there is deliberately no `ai` surface here any more. AI runs through
-  // the backend gateway (POST /ai/stream) with keys stored server-side — the
-  // desktop shell holds no AI privileges at all.
 };
 
 contextBridge.exposeInMainWorld('motionEditor', bridge);

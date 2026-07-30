@@ -113,7 +113,7 @@ export interface AuthResult {
   /** Seconds until `token` expires. Drives the silent refresh schedule. */
   expiresIn: number;
   refreshExpiresAt: string;
-  user: { id: string; email: string; name: string | null; role: UserRole };
+  user: { id: string; email: string; name: string | null; role: UserRole; emailVerified: boolean };
 }
 
 /** One device holding a live session, for "where am I signed in?". */
@@ -145,8 +145,15 @@ export interface AccountRecord {
    */
   role: UserRole;
   plan: 'free' | 'pro';
-  aiCredits: number;
-  aiCreditsUsed: number;
+  /**
+   * What this account may do with the cloud, decided server-side by the same
+   * function the write guards use. The renderer renders it; it never recomputes
+   * it. Replaced `aiCredits`/`aiCreditsUsed`, which are gone: the assistant is
+   * BYOK in both editions, so there is nothing metered to report.
+   */
+  access: CloudAccess;
+  emailVerified: boolean;
+  trialEndsAt: string | null;
   storageBytes: number;
   assetCount: number;
   projectCount: number;
@@ -239,15 +246,54 @@ export interface PlanDto {
   priceCents: number;
   priceLabel: string;
   currency: 'usd';
-  monthlyCredits: number;
   features: string[];
+}
+
+/** Why the server says this account may or may not write. See backend entitlement.ts. */
+export type EntitlementReason =
+  /** Payments aren't open yet — the cloud is free for everyone (write: true). */
+  | 'beta'
+  | 'active'
+  | 'grace'
+  | 'trial'
+  | 'unverified'
+  | 'trial_not_started'
+  | 'trial_expired'
+  | 'lapsed'
+  | 'staff';
+
+/**
+ * What this account may do with the cloud, decided server-side.
+ *
+ * The client renders this; it never computes it. A second implementation of
+ * "am I inside my trial?" in the renderer would disagree with the guard the first
+ * time either was edited, and the disagreement would either lock out a paying
+ * customer or give the product away.
+ */
+export interface CloudAccess {
+  /** Open, list and export. True for any live account, in every state. */
+  read: boolean;
+  /** Save, sync, hosted render, upload. The thing being sold. */
+  write: boolean;
+  reason: EntitlementReason;
+  /** Whole days until write access ends. Null when not on a clock. */
+  daysRemaining: number | null;
+  writeEndsAt: string | null;
 }
 
 export interface BillingSummary {
   plan: PlanDto;
-  credits: number;
-  creditsUsedAllTime: number;
-  creditsUsedLast30Days: number;
+  access: CloudAccess;
+  /** The sentence to show. Server-authored so every surface agrees. */
+  statusMessage: string;
+  emailVerified: boolean;
+  trialEndsAt: string | null;
+  trialDays: number;
+  /** Raw Lemon Squeezy status: active | past_due | cancelled | … */
+  subscriptionStatus: string | null;
+  currentPeriodEnd: string | null;
+  /** Whether there is a subscription to manage — gates the portal button. */
+  hasSubscription: boolean;
   memberSince: string;
   /** False until a payment provider is configured — gates the upgrade CTA. */
   paymentsEnabled: boolean;
@@ -374,8 +420,15 @@ export const api = {
       // Deployment config: it cannot change without a restart.
       ttlMs: 3_600_000,
     }),
-  /** Where to send the browser to begin a provider sign-in. */
-  oauthStartUrl: (provider: 'google' | 'github') => `${apiBaseUrl()}/auth/oauth/${provider}/start`,
+  /**
+   * Where to send the browser to begin a provider sign-in.
+   *
+   * `client=desktop` tells the backend to return the one-time code via the
+   * premation:// deep link instead of the web app — used when the Electron shell
+   * opens this URL in the system browser.
+   */
+  oauthStartUrl: (provider: 'google' | 'github', client: 'web' | 'desktop' = 'web') =>
+    `${apiBaseUrl()}/auth/oauth/${provider}/start${client === 'desktop' ? '?client=desktop' : ''}`,
   /** Swap the one-time code from the OAuth redirect for a real session. */
   oauthExchange: (code: string) =>
     request<AuthResult>('/auth/oauth/exchange', {
@@ -538,8 +591,10 @@ export const api = {
       tap(['assets', 'account']),
     ),
 
-  // billing — plans and credits. There is deliberately no "set my plan" call:
-  // entitlement is decided server-side, by a payment webhook or an operator.
+  // billing — plans and entitlement. There is deliberately no "set my plan" call,
+  // no "start my trial" call and no "mark me verified" call: each would be a free
+  // Pro button. Entitlement is decided server-side, by the payment webhook, the
+  // verification link, or an operator.
   /** The catalog changes only on a deploy — an hour of staleness is nothing. */
   listPlans: () => cachedGet<PlanDto[]>('/billing/plans', { tags: ['billing'], ttlMs: 3_600_000 }),
   getBilling: () => cachedGet<BillingSummary>('/billing/me', { tags: ['billing', 'account'] }),
@@ -548,6 +603,36 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ plan }),
     }),
+  /**
+   * A fresh link to Lemon Squeezy's customer portal.
+   *
+   * Not cached, deliberately: the URL is signed and expires in about a day, so a
+   * cached one is a support ticket waiting to happen.
+   */
+  openBillingPortal: () => request<{ url: string }>('/billing/portal', { method: 'POST' }),
+  /**
+   * Re-read this account's subscription from the payment provider.
+   *
+   * The user-facing repair path for a webhook that never arrived: someone who has
+   * paid and still sees "Trial" can fix it themselves instead of waiting for
+   * support. Invalidates the billing cache so the panel redraws from the truth.
+   */
+  resyncBilling: () =>
+    request<{ resynced: boolean }>('/billing/resync', { method: 'POST' }).then(
+      tap(['billing', 'account']),
+    ),
+
+  // auth — email confirmation. `confirmEmail` is AUTHENTICATED: the user types a
+  // short code inside the desktop app they signed up in, and the code is only
+  // safe because it can only be tested against the caller's own account. Tapping
+  // 'account' refreshes the cached /auth/me so the app leaves the gated state.
+  confirmEmail: (code: string) =>
+    request<{ verified: true; trialEndsAt: string | null; alreadyVerified: boolean }>(
+      '/auth/verify-email',
+      { method: 'POST', body: JSON.stringify({ code }) },
+    ).then(tap(['billing', 'account'])),
+  resendVerification: () =>
+    request<{ sent: true }>('/auth/verify-email/resend', { method: 'POST' }),
 
   // ai — the backend is the gateway. Keys are stored server-side (encrypted;
   // only {present, hint} ever comes back) and model calls stream through
@@ -579,7 +664,7 @@ export const api = {
    * provider's expiry and the user's IP never reaches the provider.
    */
   generateImage: (body: { provider: string; prompt: string; width?: number; height?: number }) =>
-    request<{ ok: boolean; base64: string; mime: string; creditsUsed: number }>('/ai/image', {
+    request<{ ok: boolean; base64: string; mime: string }>('/ai/image', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

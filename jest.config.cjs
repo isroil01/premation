@@ -14,6 +14,11 @@ module.exports = {
     '**/__tests__/**/*.[jt]s?(x)',
     '**/?(*.)+(test).[jt]s?(x)'
   ],
+  // dist-electron/ is `tsc` output for electron/, so every electron test was
+  // discovered twice — once as .ts source, once as compiled .js. Same doubling
+  // as the worktree case above, same misreading as extra coverage, plus the
+  // compiled copy can be stale and pass while the source fails.
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/dist/', '<rootDir>/dist-electron/'],
   transform: {
     '^.+\\.tsx?$': 'ts-jest',
   },

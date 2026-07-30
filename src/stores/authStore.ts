@@ -17,6 +17,7 @@ import {
 } from '@core/api/session';
 import { useAssetStore } from './assetStore';
 import { useAiProviderStore } from './aiProviderStore';
+import { useEntitlementStore } from './entitlementStore';
 
 export interface AuthUser {
   id: string;
@@ -30,6 +31,13 @@ export interface AuthUser {
    * re-checks the role against the database on every /api/admin call regardless.
    */
   role: UserRole;
+  /**
+   * Whether the account's email is confirmed. Email/password sign-ups start
+   * `false` and are gated to the confirm-code page until they enter it (see
+   * RequireAuth); OAuth accounts arrive already `true`. The write guards on the
+   * server are the real enforcement — this only drives routing.
+   */
+  emailVerified: boolean;
 }
 
 interface AuthState {
@@ -54,6 +62,8 @@ interface AuthActions {
    * them to set up an API key they had already saved, for the whole session.
    */
   adoptSession: (user: AuthUser) => Promise<void>;
+  /** Flip the local user to verified after the confirm-code step succeeds. */
+  markEmailVerified: () => void;
   clearError: () => void;
 }
 
@@ -67,6 +77,12 @@ async function afterAuth(userId: string): Promise<void> {
   // Pull the encrypted-at-rest key status ({present, hint} only — no key ever
   // leaves the server) so the assistant knows which providers can run.
   await useAiProviderStore.getState().refreshStatus().catch(() => undefined);
+  // Whether this account may WRITE to the cloud, so the editor knows to enter
+  // read-only mode before the user hits a 403 rather than after. Best-effort:
+  // the write guards are the real enforcement, this is only the friendly warning.
+  // Not forced: hydrate() has just populated the `account` cache from the same
+  // /auth/me, so this reads it rather than making a second identical round trip.
+  await useEntitlementStore.getState().refresh().catch(() => undefined);
 }
 
 export const useAuthStore = create<AuthState & AuthActions>((set) => ({
@@ -120,6 +136,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
     // across launches, so it has to be dropped explicitly rather than just
     // forgotten in memory.
     useAiProviderStore.getState().reset();
+    // And the entitlement decision — the next person to sign in on this machine
+    // must not briefly inherit the previous account's read-only banner.
+    useEntitlementStore.getState().reset();
     set({ user: null, status: 'idle', error: null });
   },
 
@@ -151,6 +170,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
     set({ user, status: 'authenticated', error: null });
     await afterAuth(user.id);
   },
+
+  markEmailVerified: () =>
+    set((s) => (s.user ? { user: { ...s.user, emailVerified: true } } : {})),
 
   clearError: () => set({ error: null }),
 }));

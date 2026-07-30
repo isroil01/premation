@@ -152,9 +152,27 @@ interface AssetStoreState {
   folders: AssetFolder[];
 }
 
+/**
+ * Where an imported file came from, which decides where its bytes live.
+ *
+ *  - `'user'` (default) — a library import (drag-drop, file picker). These can be
+ *    large (multi-GB video) and are stored ON THE USER'S DISK (IndexedDB), never
+ *    uploaded to Cloudinary. The tradeoff is deliberate: the library does not
+ *    follow the account across devices, and we don't pay to warehouse everyone's
+ *    raw footage. Server-side mp4 render is unaffected — the editor uploads
+ *    rasterized frames, not source assets.
+ *  - `'ai'` — a small, generated artifact (an AI image). Small enough to be worth
+ *    keeping in the cloud so it persists and syncs; uploaded when signed in.
+ */
+export type AssetSource = 'user' | 'ai';
+
+interface AddAssetOptions {
+  source?: AssetSource;
+}
+
 interface AssetStoreActions {
   /** Import a file, optionally into a folder, and add it to the library. */
-  addAsset: (file: File, folderId?: string | null) => Promise<ImportedAsset>;
+  addAsset: (file: File, folderId?: string | null, opts?: AddAssetOptions) => Promise<ImportedAsset>;
   /** High-performance batch import for multiple files/folders. */
   addAssetsBatch: (items: Array<{ file: File; folderId?: string | null }>) => Promise<ImportedAsset[]>;
   removeAsset: (id: string) => void;
@@ -376,7 +394,8 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     assets: [],
     folders: loadFolders(),
 
-    addAsset: async (file: File, folderId: string | null = null) => {
+    addAsset: async (file: File, folderId: string | null = null, opts: AddAssetOptions = {}) => {
+      const source: AssetSource = opts.source ?? 'user';
       // Local-first: content-address the bytes into the open
       // project bundle and render from disk — never upload. Falls through to the
       // in-memory object-URL path (still upload-free) if no bundle is open.
@@ -404,10 +423,12 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         }
       }
 
-      // Signed in → upload to the backend and use the served URL (persists,
-      // fetchable by the render service). Otherwise fall back to a local blob.
+      // Cloud upload is now reserved for AI-generated artifacts: they are small
+      // and worth persisting/syncing server-side. USER library imports never take
+      // this branch — they can be gigabytes of raw footage, so they are stored on
+      // the user's own disk (the IndexedDB path below) instead of our Cloudinary.
       // Skipped entirely under local-first, which never auto-uploads.
-      if (isAuthenticated() && !isLocalFirst()) {
+      if (source === 'ai' && isAuthenticated() && !isLocalFirst()) {
         try {
           const uploaded = await api.uploadAsset(file);
           const withFolder = { ...uploaded, folderId };
@@ -728,8 +749,17 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             `[assets] loaded ${all.length} of ${total} cloud assets (page cap reached)`,
           );
         }
+        // MERGE, don't replace. The cloud list now only holds AI-generated
+        // artifacts and legacy uploads — user library imports live on this
+        // device's disk (IndexedDB) and are absent from it. A full replace would
+        // wipe those local assets whenever this ran after IndexedDB hydration.
         set((s) => {
-          s.assets = applyAssignments(all, s.folders);
+          const present = new Set(s.assets.map((a) => a.id));
+          const incoming = applyAssignments(
+            all.filter((a) => !present.has(a.id)),
+            s.folders,
+          );
+          for (const a of incoming) s.assets.push(a);
         });
       } catch {
         /* offline — keep local list */

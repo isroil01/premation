@@ -38,12 +38,17 @@ export function OAuthCallbackPage(): JSX.Element {
     if (!code || claimed.current) return;
     claimed.current = true;
 
-    let alive = true;
+    // NOTE: no `alive`/unmount guard here, on purpose. `claimed` already makes
+    // the exchange run exactly once across StrictMode's mount→unmount→remount in
+    // dev. A previous version bailed the success branch when the FIRST mount's
+    // cleanup had flipped an `alive` flag — so the code exchanged, the session
+    // was set, and then navigation was skipped, leaving the page stuck forever on
+    // "Completing sign-in…". The session and redirect must happen regardless of
+    // that transient unmount; the Router at the app root is still mounted.
     api
       .oauthExchange(code)
       .then(async (result) => {
         await setSession(result);
-        if (!alive) return;
         // Through the store, NOT `setState`: adopting a session is more than
         // flipping a status flag — it loads the account's assets and its AI key
         // status. Setting the field directly skipped both, which is why a
@@ -55,10 +60,11 @@ export function OAuthCallbackPage(): JSX.Element {
         navigate('/dashboard', { replace: true });
       })
       .catch((err: Error) => {
-        if (alive) setError(err.message || 'Could not complete sign-in.');
+        // Re-arm so "Back to sign in" → try again can spend a fresh code; the
+        // one that just failed is single-use and already dead.
+        claimed.current = false;
+        setError(err.message || 'Could not complete sign-in.');
       });
-
-    return () => { alive = false; };
   }, [code, navigate]);
 
   // Already signed in and nothing to do — e.g. a refresh of this URL.

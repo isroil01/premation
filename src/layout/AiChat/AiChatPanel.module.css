@@ -124,6 +124,30 @@
   text-decoration: none;
 }
 
+/* First-run heads-up: the assistant is early and only does simple actions. */
+.betaNotice {
+  display: flex;
+  gap: 8px;
+  padding: 9px 11px;
+  margin-bottom: 4px;
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  border-radius: var(--radius-dialog);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.betaNotice svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--color-warning);
+}
+
+.betaNotice strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
 .emptyNote {
   color: var(--color-text-tertiary);
   line-height: 1.55;

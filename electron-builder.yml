@@ -1,56 +1,103 @@
 # electron-builder packaging config → produces installable desktop binaries.
 # Build with:  npm run dist   (installer)   |   npm run pack   (unpacked, fast)
-appId: com.motioneditor.app
-productName: Motion Editor
-copyright: © Motion Editor contributors — licensed under the GNU AGPL v3.0
+appId: com.premation.app
+productName: Premation
+copyright: © Premation contributors — licensed under the GNU AGPL v3.0
+
+# Custom URL scheme for the desktop OAuth return. The backend redirects the
+# one-time sign-in code to premation://oauth?code=…; this registers the app as
+# the handler at install time (macOS Info.plist CFBundleURLTypes + Windows
+# registry). electron/main.ts also claims it at runtime via
+# setAsDefaultProtocolClient for dev. Inherited by electron-builder.selfhosted.yml.
+protocols:
+  - name: Premation OAuth
+    schemes:
+      - premation
 
 directories:
-  output: release
+  # Each build lands in its OWN versioned subfolder — release/0.1.0/, release/0.2.0/…
+  # The ${version} macro reads package.json. Keeps installers, latest.yml and the
+  # win-unpacked tree for one version from overwriting the previous one.
+  output: release/${version}
   buildResources: build
 
 # App/installer icon — build/icon.png (512×512 Premation mark). electron-builder
-# derives the .ico / .icns / Linux icon set from it.
+# derives the .ico / .icns / Linux icon set from it and embeds it in the .exe.
 icon: build/icon.png
 
+# The .exe carries the embedded icon, but the RUNNING window/taskbar icon is set
+# in electron/main.ts (resolveAppIcon), which reads build/icon.png at
+# <resources>/build/icon.png. It is NOT in `files` (that's app.asar), so ship it
+# here or the packaged app falls back to Electron's default icon at runtime.
+extraResources:
+  - from: build/icon.png
+    to: build/icon.png
+
 # The renderer bundle + compiled main/preload + manifest are all that ship.
+#
+# node_modules needs no entry here and adding one changes nothing: electron-builder
+# walks package.json and copies PRODUCTION dependencies in regardless of these
+# patterns, while excluding devDependencies (vite, typescript, jest, electron).
+# Verified by building both ways — 146 packages land in app.asar either way,
+# electron-updater and better-sqlite3 among them. Worth stating because the list
+# reads as exhaustive and is not.
 files:
   - dist/**
   - dist-electron/**
   - package.json
+  # Compiled test files are build output of electron/*.test.ts and were shipping
+  # inside app.asar. Nothing loads them, but a released app should not contain its
+  # own test suite.
+  - '!dist-electron/**/*.test.js'
+  - '!dist-electron/**/*.test.js.map'
 
-# ── Optional server sidecar ───────────────────────────────────────────────────
-# Bundles the companion `motion-back` server so the packaged app can launch it
-# itself (electron/backend.ts resolves <resources>/backend/dist/main.js).
+# ── No server sidecar here, deliberately ──────────────────────────────────────
+# This config builds a CLIENT: the app talks to a motion-back over the network,
+# at the origin baked in by VITE_BACKEND_ORIGIN (.env.production). Deploy the
+# server once; ship this to everyone.
 #
-# READ BEFORE BUILDING A RELEASE:
+# It used to bundle the server via `extraResources`, which made every release
+# build require a pre-built sibling `../motion-back` checkout — and copied that
+# checkout's `.env`, i.e. the database URL, JWT_SECRET and AI_KEY_SECRET, into
+# every installer handed to a user.
 #
-#  1. This requires a sibling `../motion-back` checkout that has already been
-#     built (`npm run build` there). Without it, `npm run dist` fails. If you
-#     only need the editor, delete this whole `extraResources` block — everything
-#     except sign-in, cloud projects and AI works fully offline.
-#  2. It copies `../motion-back/.env` into the installer. That file holds
-#     database credentials and API keys, so ANY build you distribute leaks them.
-#     Remove that entry and provide configuration at first run instead.
-#  3. The bundled server still needs a reachable database. For a portable
-#     installer, point motion-back at SQLite first.
+# To bundle the server anyway (a single-machine install with no deployment),
+# use the config that extends this one:
+#   npm run dist:selfhosted
+# It ships the server WITHOUT any .env; the app reads configuration from
+# <userData>/backend.env at first run instead. See electron-builder.selfhosted.yml.
 #
-# To bundle ffmpeg (so MP4/WebM/GIF export works without a system install), add:
-#   - from: <path-to>/ffmpeg           # containing ffmpeg[.exe]
-#     to: ffmpeg
+# To bundle ffmpeg (so MP4 export works without a system install), add:
+#   extraResources:
+#     - from: <path-to>/ffmpeg           # directory containing ffmpeg[.exe]
+#       to: ffmpeg
 # electron/main.ts checks <resources>/ffmpeg before falling back to PATH.
-extraResources:
-  - from: ../motion-back/dist
-    to: backend/dist
-  - from: ../motion-back/node_modules
-    to: backend/node_modules
-  - from: ../motion-back/prisma
-    to: backend/prisma
-  - from: ../motion-back/.env
-    to: backend/.env
+
+# ── Where updates come from ───────────────────────────────────────────────────
+# Publishing writes the installers AND the update metadata (latest.yml,
+# latest-mac.yml, latest-linux.yml) to a GitHub release. electron-updater reads
+# that metadata to decide whether a newer version exists — see electron/updater.ts.
+#
+# Both halves have to agree: an installer published somewhere the updater does
+# not look produces an app that can never update itself, silently.
+#
+# `releaseType: draft` means a release is staged, not announced: the assets
+# upload, nobody is notified, and no installed app sees the update until you
+# press Publish in the GitHub UI. That is the review step between "the build
+# finished" and "everyone gets it".
+publish:
+  provider: github
+  owner: isroil01
+  repo: motion-editor
+  releaseType: draft
 
 win:
   target: nsis
-  artifactName: ${productName}-${version}-setup.${ext}
+  # One obvious file per platform, stable across versions — the version lives in
+  # the release tag and in latest.yml. Trade-off worth knowing: a downloaded file
+  # named without its version cannot be identified once it is in someone's
+  # Downloads folder.
+  artifactName: Premation-Setup-Windows.${ext}
 
 nsis:
   oneClick: false
@@ -59,7 +106,24 @@ nsis:
 mac:
   target: dmg
   category: public.app-category.graphics-design
+  # Per-arch, unlike the other two: an arm64 build does not run on an Intel Mac
+  # at all, and a user who downloads the wrong one sees "the application is
+  # damaged" — which reads as a corrupt download, not a wrong architecture.
+  artifactName: Premation-macOS-${arch}.${ext}
 
 linux:
   target: AppImage
   category: Graphics
+  artifactName: Premation.${ext}
+
+# ── Signing ───────────────────────────────────────────────────────────────────
+# Unset, and that has consequences worth stating plainly:
+#
+#  • Windows: SmartScreen warns on an unsigned installer ("unrecognised app").
+#    It still installs, and auto-update still works. Fixed by an EV/OV code
+#    signing certificate (CSC_LINK + CSC_KEY_PASSWORD).
+#  • macOS: unsigned is worse than a warning. Gatekeeper blocks the app, and
+#    Squirrel.Mac REFUSES to apply an update it cannot verify — which is why
+#    electron/updater.ts keeps macOS auto-update behind a flag. Fixed by an
+#    Apple Developer ID plus notarization.
+#  • Linux: AppImage needs neither.
