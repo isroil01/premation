@@ -191,3 +191,30 @@ export function resolveMediaSrc(asset: ProxyResolvable, useProxies: boolean): st
 export function isProxyInUse(asset: ProxyResolvable, useProxies: boolean): boolean {
   return useProxies && asset.proxy?.status === 'ready' && !!asset.proxy.src;
 }
+
+/**
+ * Whether a proxy record can be PERSISTED and restored across a reload.
+ *
+ * Both generated and user-attached proxies point `src` at a `blob:` URL from
+ * `URL.createObjectURL`, and those URLs are document-scoped — they die the
+ * instant the page reloads. A persisted 'ready' record pointing at one restores
+ * as a DEAD url, and `resolveMediaSrc` would then hand that dead url to the
+ * decoder (a black frame) instead of falling back to full resolution. So a
+ * 'ready' record is persistable only when its `src` is durable (e.g. a backend
+ * URL in cloud mode), never a blob:/data: URL.
+ *
+ * 'generating' is never persistable — its ffmpeg child dies with the app, so a
+ * restored job would spin forever with nothing to cancel (the pre-existing rule
+ * this generalises). 'failed' carries only an error and is safe to keep.
+ *
+ * Pure and DOM-free so it can gate both the save and the load side and be tested
+ * directly.
+ */
+export function isPersistableProxy(p: ProxyRecord | undefined | null): boolean {
+  if (!p) return false;
+  if (p.status === 'generating') return false;
+  if (p.status === 'ready') {
+    return !!p.src && !p.src.startsWith('blob:') && !p.src.startsWith('data:');
+  }
+  return true; // 'failed'
+}
