@@ -18,6 +18,10 @@ engine that exports, so what you see in the viewport is what lands in the file.
 
 **License:** [GNU AGPL v3.0](LICENSE) · **Status:** pre-1.0, in active development
 
+We're live on Product Hunt — an upvote helps more people find the project:
+
+<a href="https://www.producthunt.com/products/premation?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-premation" target="_blank" rel="noopener noreferrer"><img alt="Premation - An open-source AI alternative to After Effects | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1210281&theme=dark&t=1785426501859"></a>
+
 ---
 
 ## Contents
