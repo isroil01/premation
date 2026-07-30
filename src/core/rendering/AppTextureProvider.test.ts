@@ -86,14 +86,41 @@ describe('AppTextureProvider', () => {
   });
 
   it('re-decodes when the src changes for a key', async () => {
-    const loader = jest.fn<Promise<ImageBitmap>, [string, string?]>(async () => fakeBitmap());
+    const loader = jest.fn<Promise<ImageBitmap>, [string, string?, boolean?]>(async () => fakeBitmap());
     const { provider } = setup(loader);
     provider.setImage('asset:a', 'blob:one');
     await flush();
     provider.setImage('asset:a', 'blob:two');
     await flush();
     expect(loader).toHaveBeenCalledTimes(2);
-    expect(loader).toHaveBeenLastCalledWith('blob:two', undefined);
+    expect(loader).toHaveBeenLastCalledWith('blob:two', undefined, undefined);
+  });
+
+  it('re-decodes when the FILE’s alpha mode changes, and tells the loader', async () => {
+    // The alpha mode is baked into the texture by the decode (see `decodeOptions`
+    // — a straight file is multiplied, a premultiplied one is passed through), so
+    // it has to be part of the cache identity. Without that, toggling Interpret
+    // Footage ▸ Alpha would keep serving the bitmap decoded under the old setting
+    // and the inspector would appear to do nothing.
+    const loader = jest.fn<Promise<ImageBitmap>, [string, string?, boolean?]>(async () => fakeBitmap());
+    const { provider } = setup(loader);
+    provider.setImage('asset:a', 'blob:clip');
+    await flush();
+    expect(loader).toHaveBeenLastCalledWith('blob:clip', undefined, undefined);
+    provider.setImage('asset:a', 'blob:clip', undefined, true);
+    await flush();
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenLastCalledWith('blob:clip', undefined, true);
+  });
+
+  it('does NOT re-decode when the alpha mode is unchanged', async () => {
+    const loader = jest.fn<Promise<ImageBitmap>, [string, string?, boolean?]>(async () => fakeBitmap());
+    const { provider } = setup(loader);
+    provider.setImage('asset:a', 'blob:clip', undefined, true);
+    await flush();
+    provider.setImage('asset:a', 'blob:clip', undefined, true);
+    await flush();
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it('keeps showing the placeholder if a decode throws (broken source)', async () => {

@@ -126,6 +126,22 @@ check('baseline: subject rendered at all', base.a > 250 && lum(base) > 20,
     `lum full ${lum(full).toFixed(1)} → half ${lum(half).toFixed(1)} → zero ${lum(zero).toFixed(1)}`);
   check('fill opacity 0 erases the contents', Math.abs(lum(zero) - lum(foZero.px(...OUTSIDE[0]))) < 2,
     `centre lum ${lum(zero).toFixed(1)} vs bg ${lum(foZero.px(...OUTSIDE[0])).toFixed(1)}`);
+
+  // Fill opacity 0.5 must land HALFWAY between full and zero, not merely
+  // somewhere between them.
+  //
+  // This is the check that caught the alpha invariant being wired up with the
+  // wrong polarity. `UNPACK_PREMULTIPLY_ALPHA_WEBGL` and WebGPU's dest
+  // `premultipliedAlpha` mean "the DESTINATION shall be premultiplied", not
+  // "multiply the source"; read the second way, the upload un-premultiplied every
+  // canvas raster and the shader then divided a straight texture as though it
+  // were premultiplied, cancelling the alpha attenuation. The layer still faded —
+  // so the ordering assertion above still passed — but it faded to 97.3% of full
+  // instead of 50%. A ratio catches that; an inequality does not.
+  const fraction = (lum(half) - lum(zero)) / (lum(full) - lum(zero));
+  check('fill opacity 0.5 lands at the MIDPOINT of full and zero',
+    Math.abs(fraction - 0.5) < 0.03,
+    `half sits ${(fraction * 100).toFixed(1)}% of the way from zero to full (want 50%)`);
   const mk = foZero.px(...MARKER);
   check('fill opacity 0 frame is not simply blank (marker drew)', lum(mk) > 40,
     `marker lum ${lum(mk).toFixed(1)}`);

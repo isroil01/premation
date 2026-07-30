@@ -204,13 +204,13 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, r.premultipliedSource);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, opacity, blend, toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix, r.premultipliedSource);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix);
       else if (tex) emitLayerTexture(ctx, r, { texture: tex.texture, sampler: smp(), uv }, opacity, cmds, modelOverride, blendOverride);
     }
     return cmds;
@@ -613,14 +613,14 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, r.premultipliedSource);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, 1, 'normal', toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix, r.premultipliedSource);
-      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix, r.premultipliedSource);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix);
+      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix);
     }
     return cmds;
   }
@@ -804,7 +804,7 @@ export class CompositionPass extends RenderPass {
         let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
         if (isSolid && !tex) tex = services.textures.get('texture:white');
         if (maskTex && tex) {
-          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade, r.premultipliedSource);
+          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade);
         }
       } else if (isSolid && r.color) {
         emitSolid3D(cmds, mvp, tint, r.opacity, r.blend, toSolidShape(r.sdf), shade);
@@ -813,7 +813,7 @@ export class CompositionPass extends RenderPass {
         // Known limitation: no LUT variant in the 3D material set — a 3D layer
         // carrying a colour LUT keeps its affine grade rows but skips the LUT
         // remap inside a depth group (rare combination).
-        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade, undefined, r.premultipliedSource);
+        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade);
       }
     }
     flush();

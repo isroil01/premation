@@ -455,7 +455,11 @@ export class MotionRendererBackend implements RenderBackend {
             } else if (layer.kind === 'image' && layer.src) {
               const key = `asset:${layer.id}`;
               activeKeys.add(key);
-              this.textures!.setImage(key, layer.src, layer.fill);
+              // The FILE's alpha mode goes to the UPLOAD, not the draw: it
+              // decides whether the browser multiplies, which is the only place
+              // the question can be settled once per file. See the alpha
+              // invariant on TextureSource.
+              this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource);
             } else if (layer.kind === 'video' && layer.src) {
               if (layer.frameBlend) {
                 // Frame Mix: feed both bracket frames. Cache hits upload the

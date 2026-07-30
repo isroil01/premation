@@ -34,6 +34,7 @@ import type {
   BufferUsage,
   ShaderStage,
 } from '../types';
+import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
 // WebGPU bit-flag constants (not in the ambient surface).
@@ -177,18 +178,20 @@ export class WebGPUBackend implements RenderBackend {
         width = source.canvas.width;
         height = source.canvas.height;
       }
-      // THE ALPHA INVARIANT (see TextureSource in ../types.ts): straight alpha,
-      // every source kind, both backends.
+      // THE ALPHA INVARIANT (see TextureSource in ../types.ts): premultiplied
+      // alpha, every source kind, both backends.
       //
-      // `premultipliedAlpha` here describes the DESTINATION, and false makes
-      // the browser un-premultiply any source that arrives premultiplied — the
-      // step WebGL2 cannot perform, and the reason WebGPU was accidentally
-      // correct before anyone stated the rule. Spelled out rather than left to
-      // the spec default so a future default flip cannot silently start
-      // double-multiplying every alpha image on the primary backend.
+      // `premultipliedAlpha` describes the DESTINATION, and the browser converts
+      // from whatever the source's own state is. So `true` is the right request
+      // for a straight source — multiply it — and `false` is right for a source
+      // whose bytes are already multiplied, because then there is nothing to do
+      // and asking for a conversion would multiply a second time.
+      //
+      // Spelled out rather than left to the spec default so a future default flip
+      // cannot silently change the alpha space on the primary backend.
       this.device.queue.copyExternalImageToTexture(
         { source: src },
-        { texture: tex, premultipliedAlpha: false },
+        { texture: tex, premultipliedAlpha: !sourcePassesThrough(source) },
         { width, height },
       );
     }

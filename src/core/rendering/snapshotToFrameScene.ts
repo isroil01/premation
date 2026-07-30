@@ -490,7 +490,6 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(layer.uvRect ? { uvRect: layer.uvRect } : {}),
     // Premultiplied footage: routes the draw to the shader twin that divides
     // the premultiplication out before grading.
-    ...(layer.premultipliedSource ? { premultipliedSource: true } : {}),
     ...(kind === 'text' ? { textureKey: `text:${layer.id}` } : {}),
     ...(!cpuBaked && layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
     // Colour LUT (Levels/Curves/Posterize) on a textured layer: the provider
