@@ -582,6 +582,12 @@ export class SceneGraph {
     this.setFx(nodeId, 'layerStyles', styles);
   }
 
+  /** Store the layer's Corner Pin (flat 8-number [TL,TR,BR,BL] quad, or
+   *  undefined to clear) on its `fx` component. */
+  setCornerPin(nodeId: ID, pin: unknown): void {
+    this.setFx(nodeId, 'cornerPin', pin);
+  }
+
   /** Store the layer's particle-emitter config on its `fx` component. */
   setParticle(nodeId: ID, config: unknown): void {
     this.setFx(nodeId, 'particle', config);

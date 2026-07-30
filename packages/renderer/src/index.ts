@@ -96,6 +96,15 @@ export { buildFrameScene, toRenderable, type SceneItemInput } from './integratio
 
 // ── Math + utils ──────────────────────────────────────────────────
 export { Mat3 } from './core/math/Mat3';
+export {
+  squareToQuad,
+  project as projectHomography,
+  invertProjective,
+  isConvexQuad,
+  isIdentityQuad,
+  UNIT_QUAD,
+  type Quad,
+} from './core/math/Homography';
 export { Vec2 } from './core/math/Vec2';
 export { Color } from './core/math/Color';
 export { Rect, type Size } from './core/math/geometry';

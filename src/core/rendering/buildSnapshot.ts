@@ -54,6 +54,7 @@ import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
+import { readNodeCornerPin } from '@core/scene/cornerPin';
 import type { PropPath } from '@motion/animation';
 import { Project3D, Matrix4Math, type Matrix2D, type Matrix4 } from '@motion/scene';
 import type { LayerMask } from '@core/effects/mask';
@@ -1544,6 +1545,11 @@ export function buildSnapshot(
       ...(readContinuousRaster(node) && supportsContinuousRaster(node)
         ? { continuousRaster: true }
         : {}),
+      // Corner Pin. Read here (identity/degenerate pins already collapse to
+      // undefined) and warped onto the render mvp in snapshotToFrameScene; export
+      // and preview share this path, so a pinned layer is perspective-correct in
+      // both. Absent = affine, snapshot unchanged from before the feature.
+      ...(readNodeCornerPin(node) ? { cornerPin: readNodeCornerPin(node) } : {}),
       x: isSolid && !is3D ? comp.width / 2 : px,
       y: isSolid && !is3D ? comp.height / 2 : py,
       rotation: isSolid && !is3D ? 0 : rot,

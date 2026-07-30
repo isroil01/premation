@@ -88,6 +88,11 @@ export interface RenderLayer {
   /** Sub-frame transform samples for motion blur (accumulated by the backend).
    *  Present only when motion blur is on and the layer actually moves. */
   motionSamples?: ReadonlyArray<MotionSample>;
+  /** Corner Pin: four normalised [0,1] corners (TL,TR,BR,BL) the source
+   *  rectangle is mapped onto via a perspective homography. Present only for a
+   *  non-identity, convex pin — the affine path is unchanged otherwise. Applied
+   *  as a separate render stage on the mvp; `matrix` stays affine. */
+  cornerPin?: readonly [number, number, number, number, number, number, number, number];
   /** Center position in composition space. */
   x: number;
   y: number;

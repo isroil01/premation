@@ -18,7 +18,7 @@
  *     extractSpatialEffects routes through the GPU effect passes.
  */
 
-import { Mat3, Color, depthEligible3D, type BlendMode, type FrameScene, type Renderable, type RenderableKind, type RenderableSdf } from '@motion/renderer';
+import { Mat3, Color, depthEligible3D, squareToQuad, isConvexQuad, isIdentityQuad, type BlendMode, type FrameScene, type Renderable, type RenderableKind, type RenderableSdf, type Quad } from '@motion/renderer';
 import { Matrix4Math } from '@motion/scene';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
@@ -191,6 +191,45 @@ function isIdentityMat3(m: Mat3): boolean {
 }
 
 /** World-space AABB of the transformed unit quad, for the renderer's culling. */
+/**
+ * Corner Pin, resolved for the render.
+ *
+ * The pin is stored as four normalised [0,1] corners. `squareToQuad` turns them
+ * into a projective homography; composing it AFTER the affine layer model
+ * (`model · pin`) gives a projective render matrix that maps the unit quad onto
+ * the pinned quad in world space. The shaders emit p.z as w, so the hardware
+ * does the perspective divide and interpolates UVs correctly.
+ *
+ * Only the RENDER matrix becomes projective — the app-level affine `layer.matrix`
+ * (what hit-test, gizmo, masks and snapping read) is untouched, honouring the
+ * "separate stage" design. Returns null for no/degenerate pin so callers stay on
+ * the affine path. `bounds` are the AABB of the pinned world corners (the affine
+ * model applied to the corner points), so culling stays correct.
+ */
+function resolveCornerPin(
+  cornerPin: RenderLayer['cornerPin'],
+  model: Mat3,
+): { pin: Mat3; renderModel: Mat3; bounds: { x: number; y: number; width: number; height: number } } | null {
+  if (!cornerPin || cornerPin.length !== 8) return null;
+  const quad: Quad = [
+    { x: cornerPin[0], y: cornerPin[1] },
+    { x: cornerPin[2], y: cornerPin[3] },
+    { x: cornerPin[4], y: cornerPin[5] },
+    { x: cornerPin[6], y: cornerPin[7] },
+  ];
+  if (isIdentityQuad(quad) || !isConvexQuad(quad)) return null;
+  const pin = squareToQuad(quad);
+  if (!pin) return null;
+  const renderModel = Mat3.multiply(model, pin);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of quad) {
+    const w = Mat3.transformPoint(model, c); // affine: exact pinned world corner
+    minX = Math.min(minX, w.x); minY = Math.min(minY, w.y);
+    maxX = Math.max(maxX, w.x); maxY = Math.max(maxY, w.y);
+  }
+  return { pin, renderModel, bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY } };
+}
+
 function boundsOf(m: Mat3): { x: number; y: number; width: number; height: number } {
   const pts = [
     { x: m[6]!, y: m[7]! }, // (0,0)
@@ -460,6 +499,17 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     });
   }
 
+  // Corner Pin: compose the projective homography onto the RENDER model (and each
+  // motion-blur sub-frame), so a keyframed, motion-blurred pin foreshortens on
+  // every sample. The affine `layer.matrix` is untouched — this is a render-only
+  // stage. Degenerate/identity pins resolve to null and leave the affine path.
+  const pinned = resolveCornerPin(layer.cornerPin, model);
+  const renderModel = pinned ? pinned.renderModel : model;
+  const renderBounds = pinned ? pinned.bounds : boundsOf(model);
+  if (pinned && motionSamples) {
+    motionSamples = motionSamples.map((s) => ({ modelMatrix: Mat3.multiply(s.modelMatrix, pinned.pin), opacity: s.opacity }));
+  }
+
   // Textured kinds sample a texture that already carries their colour (photo, or
   // text rasterized in its own fill), so they must not be multiplied by a fill.
   // Only shapes use their solid/representative colour.
@@ -486,8 +536,9 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   const out: Renderable = {
     id: layer.id,
     kind,
-    modelMatrix: model,
-    bounds: boundsOf(model),
+    modelMatrix: renderModel,
+    bounds: renderBounds,
+    ...(pinned ? { cornerPin: layer.cornerPin } : {}),
     opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
@@ -517,7 +568,11 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     // an inline-collapsed precomp child folds an extra parent transform into
     // the mat3 that the mat4 world doesn't know about, so it must keep the
     // affine path (the top-level flatten passes an identity parent).
-    ...(layer.world3d && layer.matrix && (!parentMatrix || isIdentityMat3(parentMatrix))
+    // A corner-pinned layer stays on the 2D pinned path: the 3D path uses its own
+    // mat4 (model3dFor) which does not carry the 2D homography, so taking it would
+    // silently drop the pin. Combining corner pin with a true-3D camera is a
+    // documented follow-up (lift the 3x3 pin into the mat4 in front of mvp3dFor).
+    ...(layer.world3d && layer.matrix && !pinned && (!parentMatrix || isIdentityMat3(parentMatrix))
       ? { threeD: { model: model3dFor(layer.world3d, layer) } }
       : {}),
   };

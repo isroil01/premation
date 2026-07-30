@@ -148,6 +148,15 @@ export interface Renderable {
    * fully-composed model matrix for that sub-frame plus its sampled opacity.
    */
   motionSamples?: ReadonlyArray<{ modelMatrix: Mat3; opacity: number }>;
+  /**
+   * Corner Pin homography as four normalised [0,1] corners (TL,TR,BR,BL). When
+   * present, the draw composes `modelMatrix · squareToQuad(cornerPin)` into a
+   * PROJECTIVE mvp so the layer is perspective-warped onto the quad; the shaders
+   * emit p.z as w so the hardware divides and interpolates UVs correctly.
+   * `modelMatrix` itself stays AFFINE (bounds, 3D and hit paths depend on that);
+   * the pin is a pure render stage. Absent = no pin, fully affine.
+   */
+  cornerPin?: readonly [number, number, number, number, number, number, number, number];
   /** Id of a renderable used as an alpha mask. */
   maskId?: string;
   /** Texture key for a pre-rasterized alpha mask. */
