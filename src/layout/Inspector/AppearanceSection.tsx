@@ -291,10 +291,12 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
   useSceneRevision((s: any) => s.rev);
   const node = defaultSceneGraph.getNode(nodeId);
 
-  if (!node) return null;
-
-  const styleComp = useMemo(() => node.components.find((c) => c.type === 'Style'), [node]);
-  const textComp = useMemo(() => node.components.find((c) => c.type === 'Text'), [node]);
+  // No early return above this line: every hook below has to run on every
+  // render, including the ones for a node that has just been deleted. Returning
+  // before them made React render fewer hooks than the previous pass and throw
+  // — deleting a selected layer with this panel open took the editor down.
+  const styleComp = useMemo(() => node?.components.find((c) => c.type === 'Style'), [node]);
+  const textComp = useMemo(() => node?.components.find((c) => c.type === 'Text'), [node]);
   const sComp = styleComp ?? textComp;
 
   const [cornerRadiusRaw, setCornerRadius] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadius');
@@ -306,6 +308,10 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
   const strokes = getNodeStrokes(nodeId);
 
   const [, setSavedFill] = useState<FillPaint | null>(null);
+
+  // Hoisted above the `!node || !sComp` guard with the other hooks — it used to
+  // sit below it, which is what made the hook count vary between renders.
+  const selectedIds = useSelectionStore((s) => s.ids);
 
   const handleFillTypeChange = (type: FillType | 'none') => {
     if (type === 'none') {
@@ -361,14 +367,13 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
     });
   };
 
-  if (!sComp) return null;
+  if (!node || !sComp) return null;
 
   const isFillAnimated = defaultAnimation.isAnimated(nodeId, 'fill') || defaultAnimation.isAnimated(nodeId, 'fill_r') || defaultAnimation.isAnimated(nodeId, 'fill_g') || defaultAnimation.isAnimated(nodeId, 'fill_b');
   const isStrokeAnimated = defaultAnimation.isAnimated(nodeId, 'stroke') || defaultAnimation.isAnimated(nodeId, 'stroke_r') || defaultAnimation.isAnimated(nodeId, 'stroke_g') || defaultAnimation.isAnimated(nodeId, 'stroke_b');
   const isCornerAnimated = defaultAnimation.isAnimated(nodeId, 'cornerRadius');
 
-  const selectedIds = useSelectionStore((s) => s.ids);
-  const isGroupNode = node ? defaultSceneGraph.getChildren(node.id).length > 0 || (node.components.some(c => c.type === 'group')) : false;
+  const isGroupNode = defaultSceneGraph.getChildren(node.id).length > 0 || node.components.some((c) => c.type === 'group');
 
   return (
     <div className={styles.section}>
