@@ -1720,46 +1720,139 @@ void main() {
   },
 };
 
-// ── Premultiplied-source variants ───────────────────────────────────────────
+// ── Silhouette fill ─────────────────────────────────────────────────────────
 //
-// Every textured shader assumes STRAIGHT input: it grades `c.rgb`, then returns
-// `graded * c.a` to premultiply on the way out. Footage whose RGB is already
-// multiplied by its alpha — After Effects-rendered elements, TGA, some TIFF/EXR
-// — is therefore multiplied TWICE, and every soft edge darkens into a fringe.
+// Takes a texture's ALPHA and fills it with a solid colour, discarding the
+// texture's RGB entirely. This is what an outward layer style is: Photoshop's
+// Outer Glow and Drop Shadow are a blurred silhouette FILLED with the style's
+// colour, not a blurred copy of the artwork.
 //
-// The fix is to divide the premultiplication back out at the SAMPLE, so the
-// grade sees straight colour and the existing output line becomes correct
-// rather than doubled.
+// ## The bug this exists to fix
 //
-// ## Why divide here and not un-premultiply the texture on the CPU
+// Both styles used to composite the blurred layer through `TEXTURED` with the
+// style colour as the TINT — and a tint MULTIPLIES. So the output was
+// `layerRGB × styleRGB`, which is the style's colour only when the layer is
+// white:
 //
-// Correctness, before throughput. A straight-alpha texture is the WRONG space
-// to filter in: bilinear and mipmap sampling average transparent texels whose
-// RGB is arbitrary, which is the classic source of dark or bright halos on soft
-// edges. Premultiplied is the correct space to filter in. Sampling premultiplied
-// and dividing immediately after keeps filtering correct and converts only for
-// the grade. (It is also far cheaper — the CPU route would mean a full-frame
-// readback per video frame, measured at ~230 ms at 1080p and ~900 ms at 4K.)
+//   white glow, blue layer     white × blue   = BLUE   (the layer's colour)
+//   green glow, blue layer     green × blue   = BLACK  (no shared channel)
+//   red shadow, blue layer     red × blue     = BLACK
+//   black shadow, ANY layer    anything × 0   = BLACK  ← correct, by accident
 //
-// ## Why derived rather than six hand-written twins
+// The last line is why drop shadow appeared to work and outer glow did not:
+// black is the absorbing element of a multiply, so the DEFAULT shadow colour is
+// a fixed point and every non-black shadow colour was broken in exactly the same
+// way. Measured before the fix on a blue layer: a green glow moved the pixel
+// 7,7,125 → 3,3,60 (darker blue, no green anywhere) and a red shadow moved it
+// 3,3,196 → 2,2,117 (darker blue, no red).
 //
-// Six shaders sample identically, so the substitution is one line applied
-// twelve times. Writing them out would be twelve copies of one idea, and the
-// day someone edits a sample site the copies rot silently.
+// Note that INNER glow and inner shadow were never affected: they run through
+// `applyInterior` on the Canvas2D path, which does `source-in` with a
+// `fillStyle` — already a replace-RGB-keep-alpha fill, i.e. the correct
+// operation spelled in Canvas terms.
 //
-// ## WHEN TO DELETE THIS AND USE A UNIFORM INSTEAD
+// ## Why a shader variant rather than a uniform
 //
-// These variants exist because ONE flag needs to reach the fragment stage, and
-// one flag is cheaper as a variant than as an extension to the fixed std140
-// `Object` block that the textured, masked and 3D shaders all share.
+// Same reasoning as the premultiplied variants below: one behaviour switch is
+// cheaper as a variant than as an extension to the shared std140 `Object` block,
+// and this one needs no new uniform at all — it reinterprets `tint` that is
+// already there. It is also alpha-only, so it is INVARIANT-AGNOSTIC: it never
+// reads the texture's RGB, and alpha is identical in straight and premultiplied
+// space, so unlike the textured shaders it needs no premultiplied twin.
 //
-// **The SECOND such flag is the trigger to stop.** Variant count multiplies per
-// family: a matte colour, or Ignore / Invert Alpha, would each double this set
-// again. At two flags, extend the uniform block and delete everything in this
-// section — `premulOf`, the derived shaders, `premulMaterial` in Material.ts and
-// the `premultiplied` arguments on the emit helpers. Nothing here encodes logic
-// that would have to be re-derived; it is a string substitution and a set of
-// registrations.
+// Proven by: packages/render-tests/scripts/verify-3d-styles.mjs
+// (`outer glow is the GLOW's colour, not the layer's` and the red-shadow twin).
+const SILHOUETTE_SUFFIX = '-silhouette';
+
+/**
+ * Derive the silhouette-fill twin of a textured shader.
+ *
+ * Substitutes the sample line so `c` becomes `(tint.rgb, texel.a × tint.a)`
+ * instead of `texel × tint`. Everything downstream — the colour matrix, the
+ * `graded * c.a` premultiply on the way out — is untouched, so the fill
+ * composites exactly like any other draw.
+ *
+ * Throws at module load if a site is missing, for the same reason `premulOf`
+ * does: a silent no-op would yield a variant identical to its base, which is a
+ * wrong-colour bug that renders plausible pixels and trips no type or test.
+ */
+function silhouetteOf(base: ShaderSource): ShaderSource {
+  const sub = (code: string, from: string, to: string, where: string): string => {
+    if (!code.includes(from)) {
+      throw new Error(`silhouetteOf(${base.name}): no ${where} site matching ${JSON.stringify(from)}`);
+    }
+    return code.split(from).join(to);
+  };
+  const wgsl = sub(
+    base.wgsl,
+    'textureSample(tex, smp, uv) * obj.tint',
+    'vec4<f32>(obj.tint.rgb, textureSample(tex, smp, uv).a * obj.tint.a)',
+    'wgsl sample',
+  );
+  const fragment = sub(
+    base.glsl.fragment,
+    'texture(uTex, vUv) * tint',
+    'vec4(tint.rgb, texture(uTex, vUv).a * tint.a)',
+    'glsl sample',
+  );
+  return { name: `${base.name}${SILHOUETTE_SUFFIX}`, wgsl, glsl: { ...base.glsl, fragment } };
+}
+
+// ── Un-premultiply at the sample: the BASE, not a variant ───────────────────
+//
+// THE ALPHA INVARIANT (stated in full on `TextureSource`, ../gpu/types.ts):
+// every texture this renderer samples holds PREMULTIPLIED alpha. Uploaded
+// footage, canvas rasters, video frames and intermediate render targets alike.
+//
+// So every textured shader divides the premultiplication back out at the
+// sample, grades straight colour, and re-multiplies on the way out. There is no
+// straight-input path any more, and no per-draw flag selecting between them.
+//
+// ## Why premultiplied, and not straight
+//
+// Straight is the wrong space to FILTER in: bilinear and mipmap sampling average
+// transparent texels whose RGB is arbitrary — or zero, for anything that came
+// off a canvas — so soft edges pick up a halo toward that arbitrary colour.
+// Premultiplied is the correct space to filter in, because the weighting the
+// filter applies is exactly the weighting the compositor wants.
+//
+// Measured, on the magnified hard alpha edge in `alpha-filter-hard-edge`: under
+// the straight invariant the half-covered column read red 181 where correct
+// filtering predicts 243.8 — a 63-of-255-level dark halo. That number is the
+// reason this flipped.
+//
+// ## Why the divide is here and not on the CPU
+//
+// Dividing at the sample keeps FILTERING in premultiplied space and converts
+// only for the grade, which is the whole point — un-premultiplying at upload
+// would put a straight texture back in the sampler and reintroduce the halo. It
+// is also far cheaper: the CPU route needs a full-frame readback per video frame
+// (~230 ms at 1080p, ~900 ms at 4K on this machine) and the `<video>` element
+// uploads straight to the GPU with no pixel buffer in the path at all.
+//
+// ## Where the FILE's alpha mode is handled instead
+//
+// `FootageInterpretation.alpha` used to select a shader variant. It no longer
+// reaches the fragment stage at all: it decides whether the UPLOAD multiplies,
+// which is the only place the question can be answered once per file rather than
+// once per draw. A straight file gets multiplied on upload; a file that is
+// already premultiplied is passed through untouched. Both arrive premultiplied,
+// which is what makes one shader path sufficient.
+//
+// That also removes the asymmetry that made the previous arrangement fragile:
+// WebGL2's `UNPACK_PREMULTIPLY_ALPHA_WEBGL` can only MULTIPLY, never divide, so
+// under a straight invariant it was necessary but not sufficient and the real
+// work had to happen at decode. Under this invariant multiplying is the only
+// direction anyone needs, so the flag alone does the job on both backends.
+//
+// ## Why derived rather than six hand-written copies
+//
+// The six families sample identically, so this is one substitution applied
+// twelve times. Written out it would be twelve copies of one idea, and the day
+// someone edits a sample site the copies rot silently. The derivation throws at
+// module load if a site goes missing, because a silent no-op would leave a
+// shader that double-multiplies — plausible pixels, no type error, no test
+// signature to catch it.
 
 /** Below one 8-bit alpha quantum a texel is indistinguishable from empty. */
 const ALPHA_FLOOR = '0.00392156862745098'; // 1.0 / 255.0
@@ -1793,22 +1886,23 @@ const UNPREMUL_GLSL = `vec4 unpremul(vec4 t) {
 
 `;
 
-/** Suffix appended to a base shader's name to form its premultiplied twin. */
-export const PREMUL_SUFFIX = '-premul';
-
 /**
- * Derive the premultiplied-source twin of a textured shader.
+ * Rewrite a textured shader to un-premultiply at the sample.
  *
- * Throws at module load if a substitution site is missing. That is deliberate:
- * a silent no-op would produce a variant identical to its base, which renders
- * plausible-looking but doubly-multiplied pixels — a wrong-output bug that no
- * type or test signature would catch. Failing at import turns it into a boot
- * failure, which `editorBoot.smoke.test` already guards.
+ * Keeps the base NAME — the result IS the shader, not an alternative to it. That
+ * is the whole change: there is no `-premul` suffix any more, because there is
+ * nothing to distinguish it from.
+ *
+ * Throws at module load if a substitution site is missing. A silent no-op would
+ * leave a shader that double-multiplies every premultiplied texture, which is
+ * plausible-looking wrong output that no type or test signature would catch.
+ * Failing at import turns it into a boot failure, which `editorBoot.smoke.test`
+ * already guards.
  */
-function premulOf(base: ShaderSource): ShaderSource {
+function unpremultiplyingSample(base: ShaderSource): ShaderSource {
   const sub = (code: string, from: string, to: string, where: string): string => {
     if (!code.includes(from)) {
-      throw new Error(`premulOf(${base.name}): no ${where} site matching ${JSON.stringify(from)}`);
+      throw new Error(`unpremultiplyingSample(${base.name}): no ${where} site matching ${JSON.stringify(from)}`);
     }
     return code.split(from).join(to);
   };
@@ -1824,21 +1918,26 @@ function premulOf(base: ShaderSource): ShaderSource {
     'unpremul(texture(uTex, vUv)) * tint',
     'glsl sample',
   );
-  return { name: `${base.name}${PREMUL_SUFFIX}`, wgsl, glsl: { ...base.glsl, fragment } };
+  return { name: base.name, wgsl, glsl: { ...base.glsl, fragment } };
 }
 
-const TEXTURED_PREMUL = premulOf(TEXTURED);
-const MASKED_TEXTURED_PREMUL = premulOf(MASKED_TEXTURED);
-const LUT_TEXTURED_PREMUL = premulOf(LUT_TEXTURED);
-const DEFORMED_MESH_PREMUL = premulOf(DEFORMED_MESH);
-const TEXTURED3D_PREMUL = premulOf(TEXTURED3D);
-const MASKED_TEXTURED3D_PREMUL = premulOf(MASKED_TEXTURED3D);
+// The silhouette fill is derived from the STRAIGHT-sampling source on purpose:
+// it discards the texture's RGB and reads only alpha, which is the same value in
+// either alpha space, so an un-premultiply in front of it would be dead code
+// operating on a channel it never uses.
+const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
-  SOLID, TEXTURED, MASKED_TEXTURED, LUT_TEXTURED, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
-  FILL, STROKE, SHARPEN, NOISE, DEFORMED_MESH,
-  SOLID3D, TEXTURED3D, MASKED_TEXTURED3D,
-  TEXTURED_PREMUL, MASKED_TEXTURED_PREMUL, LUT_TEXTURED_PREMUL, DEFORMED_MESH_PREMUL,
-  TEXTURED3D_PREMUL, MASKED_TEXTURED3D_PREMUL,
+  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
+  FILL, STROKE, SHARPEN, NOISE,
+  SOLID3D,
+  // The six families that sample a layer texture. Every one un-premultiplies.
+  unpremultiplyingSample(TEXTURED),
+  unpremultiplyingSample(MASKED_TEXTURED),
+  unpremultiplyingSample(LUT_TEXTURED),
+  unpremultiplyingSample(DEFORMED_MESH),
+  unpremultiplyingSample(TEXTURED3D),
+  unpremultiplyingSample(MASKED_TEXTURED3D),
+  TEXTURED_SILHOUETTE,
   GLASS_COMPOSITE,
 ];

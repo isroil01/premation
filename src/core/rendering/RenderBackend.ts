@@ -247,6 +247,12 @@ export interface RenderLayer {
    * The layer's footage is interpreted as PREMULTIPLIED (see
    * `FootageInterpretation.alpha`). Nothing in a file records this, so it is
    * always a user setting; absent = straight, the default.
+   *
+   * Consumed by the TEXTURE FEED, not by any draw: MotionRendererBackend passes
+   * it to `setImage`, which carries it to the upload where it decides whether
+   * the browser multiplies. It used to select one of six `-premul` shader
+   * variants; under the alpha invariant (see `TextureSource`) every texture is
+   * premultiplied by the time it is sampled, so there is nothing left to select.
    */
   premultipliedSource?: boolean;
   /** Digest of the fields that determine this layer's OWN rasterized pixels

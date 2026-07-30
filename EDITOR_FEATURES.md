@@ -325,6 +325,13 @@ Drop Shadow · Inner Shadow · Outer Glow · Inner Glow · Bevel & Emboss (angle
 direction, highlight/shadow colour + opacity) · Satin · Colour Overlay · Gradient Overlay · Stroke —
 all with a **Use Global Light** option and a global light angle.
 
+Outer Glow and Drop Shadow honour their **colour** as of 2026-07-30. Before that they composited a
+blurred copy of the artwork tinted by the style colour, so the result was `layer × style`: a white
+glow came out in the layer's colour, and a glow or shadow whose colour shared no channel with the
+layer came out black. Black drop shadows were unaffected — black is the absorbing element of a
+multiply — which is why the default looked right. Inner Shadow and Inner Glow were never affected;
+they take a different code path that already filled correctly.
+
 ### Glass / material treatment
 
 A dedicated glass system: blur, refraction, chromatic aberration, grain, saturation, tint + tint

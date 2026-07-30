@@ -28,7 +28,17 @@ interface EffectSpec {
 
 const EFFECTS: EffectSpec[] = [
   { type: 'blur', params: { amount: 6 } },
-  { type: 'glow', params: { radius: 16, color: '#78b4ff', intensity: 90 } },
+  // PROMOTED from known-divergent to a gated scene.
+  //
+  // Its reference was blessed from the Canvas2D oracle, which fills the blurred
+  // silhouette with the glow colour — the correct semantics. The GPU path was
+  // tinting instead, so it sat 25.314% away from that golden and nobody saw it,
+  // because 'glow' was on the known-divergent list and therefore never gated.
+  // With the silhouette fill the GPU agrees with the Canvas2D golden to 0.744%,
+  // so the gap was the defect, not a backend difference. The remaining 0.744% is
+  // blur-kernel AA on the ellipse's soft edge, hence the same headroom the
+  // drop-shadow scene below documents.
+  { type: 'glow', params: { radius: 16, color: '#78b4ff', intensity: 90 }, tolerance: 0.009 },
   // tolerance: the GPU shadow penumbra sits at 0.501% vs the 0.5% default gate —
   // visually identical (soft-edge AA rounding), so give the blurred edge headroom.
   { type: 'drop-shadow', params: { distance: 6, angle: 135, softness: 12, color: '#000000', opacity: 55 }, tolerance: 0.008 },
@@ -61,7 +71,10 @@ const EFFECTS: EffectSpec[] = [
 ];
 
 function effectScene(spec: EffectSpec): Scene {
-  const isDivergent = ['blur', 'glow', 'posterize', 'gradient-ramp'].includes(spec.type);
+  // 'glow' left this list when the silhouette fill landed — see the note on the
+  // glow spec above. Removing an entry here is a real promotion: the scene stops
+  // being allowed to differ and starts being able to fail.
+  const isDivergent = ['blur', 'posterize', 'gradient-ramp'].includes(spec.type);
   return defineScene({
     id: `effect-${spec.type}`,
     description: `Effect "${spec.type}"${spec.gpuOnly ? ' (gpuOnly — Canvas2D no-op)' : ''} on a gradient ellipse.`,

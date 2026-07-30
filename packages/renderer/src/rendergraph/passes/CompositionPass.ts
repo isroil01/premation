@@ -5,7 +5,7 @@ import { depthEligible3D, type Renderable, type RenderableEffect, type Renderabl
 import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
+import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
 import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
 import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
@@ -204,13 +204,13 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, r.premultipliedSource);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, opacity, blend, toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix, r.premultipliedSource);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix);
       else if (tex) emitLayerTexture(ctx, r, { texture: tex.texture, sampler: smp(), uv }, opacity, cmds, modelOverride, blendOverride);
     }
     return cmds;
@@ -319,7 +319,10 @@ export class CompositionPass extends RenderPass {
         if (effect.type === 'blur') {
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), targetUv);
         } else if (effect.type === 'glow') {
-          emitTextured(compCmds, mvp, effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), 1, 'screen', blurredTex, clampSampler(), targetUv);
+          // emitSilhouette, not emitTextured: the glow is the blurred ALPHA
+          // filled with the glow colour. Tinting instead returned
+          // layerRGB × glowRGB — see silhouetteOf in shaders/builtin.ts.
+          emitSilhouette(compCmds, mvp, effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), 1, 'screen', blurredTex, clampSampler(), targetUv);
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
         } else {
           // The shadow copy is the whole buffer shifted. In screen space that
@@ -339,7 +342,11 @@ export class CompositionPass extends RenderPass {
                 width: viewport.visibleWorldRect.width,
                 height: viewport.visibleWorldRect.height,
               }));
-          emitTextured(compCmds, shadowMvp, effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
+          // Silhouette fill, for the same reason as the glow above. This one
+          // LOOKED correct because the default shadow colour is black and black
+          // is the absorbing element of a multiply — every non-black shadow
+          // colour was returning layerRGB × shadowRGB.
+          emitSilhouette(compCmds, shadowMvp, effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
         }
         const encC = beginViewportPass(ctx, 'fx-comp', writeAttachment(ctx, f1, Color.transparent()));
@@ -606,14 +613,14 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, r.premultipliedSource);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, 1, 'normal', toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix, r.premultipliedSource);
-      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix, r.premultipliedSource);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix);
+      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix);
     }
     return cmds;
   }
@@ -797,7 +804,7 @@ export class CompositionPass extends RenderPass {
         let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
         if (isSolid && !tex) tex = services.textures.get('texture:white');
         if (maskTex && tex) {
-          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade, r.premultipliedSource);
+          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade);
         }
       } else if (isSolid && r.color) {
         emitSolid3D(cmds, mvp, tint, r.opacity, r.blend, toSolidShape(r.sdf), shade);
@@ -806,7 +813,7 @@ export class CompositionPass extends RenderPass {
         // Known limitation: no LUT variant in the 3D material set — a 3D layer
         // carrying a colour LUT keeps its affine grade rows but skips the LUT
         // remap inside a depth group (rare combination).
-        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade, undefined, r.premultipliedSource);
+        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade);
       }
     }
     flush();
@@ -1315,8 +1322,9 @@ export class CompositionPass extends RenderPass {
             targetUv
           );
         } else if (effect.type === 'glow') {
-          // Add glow
-          emitTextured(
+          // Add glow — the blurred ALPHA filled with the glow colour (see
+          // emitSilhouette; a tint would return layerRGB × glowRGB).
+          emitSilhouette(
             mainCmds,
             screenMvp(),
             effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), r.opacity, 'screen', blur2Tex,
@@ -1341,7 +1349,10 @@ export class CompositionPass extends RenderPass {
             width: viewport.visibleWorldRect.width,
             height: viewport.visibleWorldRect.height,
           };
-          emitTextured(
+          // Silhouette fill — black shadows were a fixed point of the old
+          // multiply, so this changes nothing for the default and fixes every
+          // other colour.
+          emitSilhouette(
             mainCmds,
             mvpFor(viewport, modelFromRect(rect)),
             effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), r.opacity, 'normal', blur2Tex,
