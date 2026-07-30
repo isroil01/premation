@@ -57,39 +57,89 @@ export interface BufferDescriptor {
 /**
  * ## THE ALPHA INVARIANT
  *
- * **Every texture uploaded through `writeTexture` holds STRAIGHT
- * (non-premultiplied) alpha, on every backend, from every source kind.**
+ * **Every texture this renderer samples holds PREMULTIPLIED alpha** — uploaded
+ * footage, canvas rasters, video frames and intermediate render targets alike,
+ * on every backend, from every source kind.
  *
- * This is not a description of what the browser happens to do — it is a
- * requirement each backend enforces at its upload call, because the browsers'
- * defaults disagree. Before this was written down, WebGPU converted every
- * source to straight (so it was accidentally correct) while WebGL2 left
- * `createImageBitmap` output premultiplied and un-premultiplied canvases, so
- * the same project rendered different pixels on different backends.
+ * It is a requirement each backend enforces at its upload call, not a
+ * description of what a browser happens to do: the defaults disagree across
+ * source kinds and across backends, and leaving it undefined is how the same
+ * project came to render different pixels on WebGPU and WebGL2.
  *
- * Straight is the invariant because it is what every textured shader already
- * assumes: each one grades `c.rgb` and returns `graded * c.a`, premultiplying
- * on the way OUT. A premultiplied texture entering that shader is multiplied
- * twice, which is the dark fringe `FootageInterpretation.alpha` exists to undo.
+ * ### Why premultiplied
  *
- * ### What it costs
+ * Because it is the correct space to FILTER in. Bilinear and mipmap sampling
+ * average neighbouring texels, and in straight space that averages the RGB of
+ * transparent texels — arbitrary values, or zero for anything that came off a
+ * canvas — so soft and magnified edges pick up a halo toward that colour.
  *
- * Straight is the wrong space to FILTER in: bilinear and mipmap sampling
- * average transparent texels whose RGB is arbitrary, so soft edges can halo.
- * Measured on the alpha soft-edge scene, that cost is reported by
- * `scripts/verify-alpha.mjs`, which fits the composited ramp against the linear
- * prediction — a filtering halo shows up as departure from the line at low
- * alpha, and the number it prints is what the choice actually costs.
+ * Measured on `alpha-filter-hard-edge`, a hard alpha edge magnified 30×: under
+ * the previous STRAIGHT invariant the half-covered column read red 181 where
+ * correct filtering predicts 243.8 — a 63-of-255-level dark halo, matching the
+ * straight-space prediction to within one level. That measurement is why this
+ * flipped.
  *
- * Proven by: packages/render-tests/scripts/verify-alpha.mjs
- * (`a straight source composites LINEARLY in alpha` — the upload is the only
- * thing that can make a straight source read as quadratic).
+ * It also removes an asymmetry rather than adding one. WebGL2's
+ * `UNPACK_PREMULTIPLY_ALPHA_WEBGL` can only MULTIPLY, never divide, so under a
+ * straight invariant it was necessary but never sufficient and the real
+ * conversion had to happen at decode. Multiplying is the only direction this
+ * invariant ever needs.
+ *
+ * ### Where a FILE's own alpha mode is handled
+ *
+ * Here, via `alreadyPremultiplied` — not in the shader. `FootageInterpretation
+ * .alpha` used to select one of six `-premul` shader variants; those are gone.
+ * A straight file is multiplied on upload, a file that is already premultiplied
+ * is passed through untouched, and both arrive premultiplied, which is what lets
+ * one shader path serve every draw.
+ *
+ * Proven by: packages/render-tests/scripts/verify-alpha.mjs — `a straight source
+ * composites LINEARLY in alpha` (the upload is the only thing that can make a
+ * straight source read as quadratic) and the filtering-cost measurement on
+ * `alpha-filter-hard-edge`.
  */
-export type TextureSource =
+export type TextureSource = (
   | { type: 'bitmap'; bitmap: ImageBitmap }
   | { type: 'video'; video: HTMLVideoElement }
   | { type: 'buffer'; data: ArrayBufferView; width: number; height: number }
-  | { type: 'canvas'; canvas: HTMLCanvasElement | OffscreenCanvas };
+  | { type: 'canvas'; canvas: HTMLCanvasElement | OffscreenCanvas }
+) & {
+  /**
+   * True when this source's bytes are ALREADY premultiplied but the source does
+   * not DECLARE it, so the upload must pass them through untouched.
+   *
+   * The distinction is about the source's self-declaration, not about its
+   * content, because that is what the upload APIs act on. Both
+   * `UNPACK_PREMULTIPLY_ALPHA_WEBGL` and WebGPU's
+   * `GPUCopyExternalImageDestInfo.premultipliedAlpha` mean *"the DESTINATION
+   * shall be premultiplied"* — the browser converts from whatever the source
+   * says it is. So under this invariant the honest answer is `true` almost
+   * everywhere, and the flag exists only for the one case where the source lies:
+   *
+   *   a premultiplied FILE decoded with `premultiplyAlpha: 'none'` carries
+   *   premultiplied bytes while reporting itself straight. Asking for a
+   *   premultiplied destination would multiply it a second time.
+   *
+   * A 2D canvas needs nothing here: its store is premultiplied AND the browser
+   * knows it, so a premultiplied destination is a no-op. Special-casing canvas
+   * was tried and was wrong — it made the upload UN-premultiply the canvas,
+   * handing the shader a straight texture it then divided as though premultiplied
+   * (measured: 50% fill opacity rendered at 97.3% of full instead of 50%).
+   */
+  alreadyPremultiplied?: boolean;
+};
+
+/**
+ * Should the upload leave this source's bytes exactly as they are?
+ *
+ * The single place the question is answered, so both backends agree. See the
+ * alpha invariant on `TextureSource` — the answer is "no, convert" for every
+ * honest source, and "yes, pass through" only for the one that misdeclares
+ * itself.
+ */
+export function sourcePassesThrough(source: TextureSource): boolean {
+  return source.alreadyPremultiplied === true;
+}
 
 export interface TextureDescriptor {
   label?: string;

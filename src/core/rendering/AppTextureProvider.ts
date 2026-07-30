@@ -29,7 +29,7 @@ import type {
 import type { RenderLayer } from './RenderBackend';
 import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
 import { rasterPadding } from './raster/vectorDraw';
-import { resolutionTier, paddingClass } from '@motion/renderer';
+import { resolutionTier, paddingClass, continuousResolutionTier, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
 import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake } from '@core/effects/effectBake';
@@ -50,7 +50,7 @@ interface MaskEntry {
 }
 
 /** Decodes a source URL to something the GPU can upload. Injectable for tests. */
-export type ImageLoader = (src: string, fillColor?: string) => Promise<ImageBitmap>;
+export type ImageLoader = (src: string, fillColor?: string, premultipliedFile?: boolean) => Promise<ImageBitmap>;
 
 const RASTER_MAX = 4096;
 
@@ -58,36 +58,56 @@ const RASTER_MAX = 4096;
  * Decode options for EVERY bitmap that becomes a GPU texture.
  *
  * THE ALPHA INVARIANT (stated in full on `TextureSource`,
- * packages/renderer/src/gpu/types.ts): textures hold STRAIGHT alpha.
+ * packages/renderer/src/gpu/types.ts): textures hold PREMULTIPLIED alpha. This is
+ * where a footage bitmap is brought into it, and where the FILE's own alpha mode
+ * is consumed — once per file, not once per draw.
  *
- * This is the half of it the backends cannot do themselves.
- * `createImageBitmap`'s default is `'default'`, which in Chromium means
- * PREMULTIPLIED — and WebGL2's `UNPACK_PREMULTIPLY_ALPHA_WEBGL` can only
- * multiply, never divide, so a premultiplied bitmap stays premultiplied however
- * the unpack flags are set. Asking for straight at DECODE is the only place the
- * conversion can happen on that backend.
+ *   straight file        'premultiply'  the browser multiplies at decode
+ *   premultiplied file   'none'         raw bytes; they are already multiplied
  *
- * It also has to be on every call, not most: a single loader path left at the
- * default would premultiply exactly the formats that take that path (the
- * `<img>` fallback handles GIF/WebP/exotic types) and leave a backend-specific
- * fringe on those files alone.
+ * Either way the bitmap that comes out is premultiplied, which is why the upload
+ * can then pass every bitmap through untouched.
+ *
+ * ## Why the conversion is here and not at the upload
+ *
+ * Measured, not assumed. `UNPACK_PREMULTIPLY_ALPHA_WEBGL` is IGNORED for
+ * `ImageBitmap` sources — an ImageBitmap carries its own premultiply state from
+ * creation and the unpack flag cannot override it. Setting the flag alone left
+ * WebGL2 rendering a premultiplied-declared-straight file as if correct
+ * (measured: linear rms 0.68 where the double multiply predicts 53.77) while
+ * WebGPU, whose `copyExternalImageToTexture` does convert, disagreed. The decode
+ * is the only boundary that governs on both backends.
+ *
+ * ## Why 'premultiply' is also right for our own canvas rasters
+ *
+ * The SVG and `<img>` fallback paths draw into a 2D canvas first, and a canvas
+ * backing store is premultiplied. `'premultiply'` on a canvas source is a no-op
+ * that PRESERVES that; `'none'` would un-premultiply it and put a straight
+ * texture back in the sampler — the halo this invariant exists to remove.
+ *
+ * It has to be on every loader path, not most: one left at the default would
+ * differ only for the formats that take that path (the `<img>` fallback handles
+ * GIF/WebP/exotic types), leaving a fringe on those files alone.
  *
  * Proven by: packages/render-tests/scripts/verify-alpha.mjs
- * (`a straight source composites LINEARLY in alpha`).
+ * (`a straight source composites LINEARLY in alpha`, and the filtering-cost
+ * measurement on `alpha-filter-hard-edge`).
  */
-const STRAIGHT_ALPHA: ImageBitmapOptions = { premultiplyAlpha: 'none' };
+function decodeOptions(premultipliedFile?: boolean): ImageBitmapOptions {
+  return { premultiplyAlpha: premultipliedFile ? 'none' : 'premultiply' };
+}
 
 /** Draw an already-decoded <img> to a canvas at w×h and hand back a bitmap. */
-async function imageToBitmap(img: HTMLImageElement, w: number, h: number): Promise<ImageBitmap> {
+async function imageToBitmap(img: HTMLImageElement, w: number, h: number, premultipliedFile?: boolean): Promise<ImageBitmap> {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.min(RASTER_MAX, Math.round(w)));
   canvas.height = Math.max(1, Math.min(RASTER_MAX, Math.round(h)));
   const ctx = canvas.getContext('2d');
-  if (!ctx) return createImageBitmap(img, STRAIGHT_ALPHA);
+  if (!ctx) return createImageBitmap(img, decodeOptions(premultipliedFile));
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return createImageBitmap(canvas, STRAIGHT_ALPHA);
+  return createImageBitmap(canvas, decodeOptions(premultipliedFile));
 }
 
 /**
@@ -183,7 +203,7 @@ function isSvgBlob(blob: Blob, src: string): boolean {
   return blob.type === 'image/svg+xml' || /^data:image\/svg\+xml/i.test(src) || /\.svg(\?|#|$)/i.test(src);
 }
 
-const defaultLoader: ImageLoader = async (src, fillColor) => {
+const defaultLoader: ImageLoader = async (src, fillColor, premultipliedFile) => {
   // Local-first asset (`motion-blob:<hash>`): resolve bytes from the bundle blob
   // store to a temporary object URL, decode it, then revoke. No network — the
   // bytes are already on disk.
@@ -195,7 +215,7 @@ const defaultLoader: ImageLoader = async (src, fillColor) => {
       const blob = await res.blob();
       if (isSvgBlob(blob, src)) return await rasterizeSvg(url, fillColor);
       try {
-        return await createImageBitmap(blob, STRAIGHT_ALPHA);
+        return await createImageBitmap(blob, decodeOptions(premultipliedFile));
       } catch {
         return await rasterizeViaImage(url);
       }
@@ -218,7 +238,7 @@ const defaultLoader: ImageLoader = async (src, fillColor) => {
   // unreliable in Chromium and is the reason uploaded SVGs rendered broken.
   if (isSvgBlob(blob, src)) return rasterizeSvg(src, fillColor);
   try {
-    return await createImageBitmap(blob, STRAIGHT_ALPHA);
+    return await createImageBitmap(blob, decodeOptions(premultipliedFile));
   } catch {
     // GIF/WebP/exotic types createImageBitmap chokes on — fall back to <img>,
     // which decodes the first frame of any format the browser can display.
@@ -229,6 +249,8 @@ const defaultLoader: ImageLoader = async (src, fillColor) => {
 interface ImageEntry {
   kind: 'image';
   src: string;
+  /** The FILE's alpha mode, carried to the upload. See the alpha invariant. */
+  premultipliedFile?: boolean;
   texture: TextureHandle | null;
   bitmap: ImageBitmap | null;
   width: number;
@@ -249,6 +271,10 @@ export interface TextSpec {
   height: number;
   scaleX?: number;
   scaleY?: number;
+  /** Continuous Rasterization — see `RenderLayer.continuousRaster`. Threaded
+   *  here because the text path sizes its own raster and once silently dropped
+   *  a scale field it was handed. */
+  continuousRaster?: boolean;
   fontFamily?: string;
   fontWeight?: string;
   fontStyle?: string;
@@ -460,6 +486,58 @@ export class AppTextureProvider implements TextureProvider {
     this.rasterScale = scale > 0 && Number.isFinite(scale) ? scale : 1;
   }
 
+  /**
+   * The GPU's real maximum texture dimension, from backend capabilities.
+   *
+   * A hardware fact, not a policy: exceeding it fails the allocation outright,
+   * and WebGL2 in particular can report as little as 4096. Kept as a setter
+   * rather than read from `resources` so this class stays independent of which
+   * backend is attached; the default is the conservative guarantee.
+   */
+  private maxRasterDimension = DEFAULT_MAX_RASTER_DIMENSION;
+
+  setMaxRasterDimension(px: number): void {
+    this.maxRasterDimension = px > 0 && Number.isFinite(px) ? px : DEFAULT_MAX_RASTER_DIMENSION;
+  }
+
+  /**
+   * The tier to rasterize a drawable at: the clamped ladder by default, the
+   * extended one when the layer opted into Continuous Rasterization.
+   *
+   * One helper for both the text and path paths so they cannot diverge — they
+   * did once already, over the `deviceScale` the text path silently dropped.
+   */
+  private tierFor(scale: number, continuous: boolean | undefined, boxW: number, boxH: number): number {
+    return continuous
+      ? continuousResolutionTier(scale, boxW, boxH, undefined, this.maxRasterDimension)
+      : resolutionTier(scale);
+  }
+
+  /**
+   * What to hand the rasterizer as its draw scale.
+   *
+   * CR ON: the tier, so the pixels drawn and the cache key AGREE. CR OFF: the
+   * raw effective scale, which is what this has always passed.
+   *
+   * Those two being different is a real, pre-existing defect and it is left
+   * alone on the OFF path deliberately. `Canvas2DVectorRasterizer` draws at the
+   * raw scale but keys on `resolutionTier(scale)`, which clamps at 4 — so above
+   * 4× distinct scales collide on one key and whichever rasterized FIRST is
+   * reused for all of them. Measured in rasterResolution.probe.test.ts: scale 6
+   * produced 1200px, then scale 12 came back a cache hit at 1200px. The
+   * user-visible symptom is that zooming past 4× stops re-rasterizing.
+   *
+   * It is not fixed here because every consistent fix changes the rendered
+   * output of existing projects (quantizing the draw up makes rasters bigger,
+   * down makes them softer) and today's behaviour is order-dependent, so there
+   * is no byte-identical target to preserve. Filed rather than fixed; opting a
+   * layer into CR is the supported way to get correct, bounded, deterministic
+   * behaviour above 4×.
+   */
+  private drawScaleFor(scale: number, continuous: boolean | undefined, tier: number): number {
+    return continuous ? tier : scale;
+  }
+
   /** Vector-raster cache hit/miss counters. A hit = a set* call whose content
    *  signature was unchanged (no re-rasterization) — the transform-only-animation
    *  fast path. Exposed so the hot path can be asserted (Phase 1 cache gate). */
@@ -488,11 +566,20 @@ export class AppTextureProvider implements TextureProvider {
    * Register/refresh the image source behind a renderable key. Idempotent: the
    * same (key, src, fillColor) never re-decodes. A changed src supersedes the old decode.
    */
-  setImage(key: string, src: string, fillColor?: string): void {
-    const fullKey = fillColor ? `${src}#fill=${fillColor}` : src;
+  /**
+   * @param premultipliedFile  The FILE's own alpha mode
+   *   (`FootageInterpretation.alpha === 'premultiplied'`). It rides all the way
+   *   to the upload call, where it decides whether the browser multiplies — see
+   *   the alpha invariant on `TextureSource`. It is part of the cache key
+   *   because it changes the TEXTURE, not just the draw: without that, toggling
+   *   Interpret Footage would keep serving the bitmap uploaded under the old
+   *   setting and the inspector would appear to do nothing.
+   */
+  setImage(key: string, src: string, fillColor?: string, premultipliedFile?: boolean): void {
+    const fullKey = (fillColor ? `${src}#fill=${fillColor}` : src) + (premultipliedFile ? '#premul' : '');
     const existing = this.entries.get(key);
     if (existing && existing.src === fullKey) return; // already loading or loaded
-    const entry: ImageEntry = { kind: 'image', src: fullKey, texture: null, bitmap: null, width: 1, height: 1, ready: false };
+    const entry: ImageEntry = { kind: 'image', src: fullKey, texture: null, bitmap: null, width: 1, height: 1, ready: false, premultipliedFile };
     this.entries.set(key, entry);
     const decoding = this.decode(key, src, fillColor, entry);
     // Under exact media timing (offline render / the golden-frame harness) the
@@ -511,6 +598,7 @@ export class AppTextureProvider implements TextureProvider {
   setText(key: string, spec: TextSpec): void {
     const layerScale = Math.max(1, Math.abs(spec.scaleX || 1), Math.abs(spec.scaleY || 1));
     const effectiveScale = this.rasterScale * layerScale;
+    const tier = this.tierFor(effectiveScale, spec.continuousRaster, spec.width ?? 1, spec.height ?? 1);
     // Fill opacity changes the baked pixels, so it belongs in the cache key.
     const fillSig = spec.fillOpacity !== undefined && spec.fillOpacity < 1 ? `|fo${spec.fillOpacity}` : '';
     const fxSig = effectsNeedCpuBake(spec.effects)
@@ -527,7 +615,7 @@ export class AppTextureProvider implements TextureProvider {
       // every frame of it.
       `${spec.glyphs && spec.glyphs.length ? `|g${JSON.stringify(spec.glyphs)}` : ''}` +
       `${spec.textPath ? `|tp${JSON.stringify(spec.textPath)}` : ''}` +
-      `|t${resolutionTier(effectiveScale)}`;
+      `|t${tier}`;
 
     // Non-zero only when a CPU-baked chain would bleed outside the text box
     // (see rasterPadding) — otherwise this stays 0 exactly as before.
@@ -538,11 +626,11 @@ export class AppTextureProvider implements TextureProvider {
         kind: 'text',
         contentHash: signature,
       },
-      resolutionScale: effectiveScale,
+      resolutionScale: this.drawScaleFor(effectiveScale, spec.continuousRaster, tier),
       padding: pad,
     });
 
-    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~${paddingClass(pad)}`;
+    const texKey = `raster:${signature}@${tier}~${paddingClass(pad)}`;
     const texture = this.resources.texture(texKey, {
       label: `raster:${signature}`,
       width: result.texture.width,
@@ -647,7 +735,8 @@ export class AppTextureProvider implements TextureProvider {
     const fxSig = effectsNeedCpuBake(layer.effects)
       ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
       : '';
-    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${resolutionTier(effectiveScale)}`;
+    const tier = this.tierFor(effectiveScale, layer.continuousRaster, layer.width ?? 1, layer.height ?? 1);
+    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
 
     const pad = rasterPadding(layer);
     const result = this.rasterizer.rasterize({
@@ -656,11 +745,11 @@ export class AppTextureProvider implements TextureProvider {
         kind: 'path',
         contentHash: signature,
       },
-      resolutionScale: effectiveScale,
+      resolutionScale: this.drawScaleFor(effectiveScale, layer.continuousRaster, tier),
       padding: pad,
     });
 
-    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~${paddingClass(pad)}`;
+    const texKey = `raster:${signature}@${tier}~${paddingClass(pad)}`;
     const texture = this.resources.texture(texKey, {
       label: `raster:${signature}`,
       width: result.texture.width,
@@ -909,7 +998,7 @@ export class AppTextureProvider implements TextureProvider {
   private async decode(key: string, src: string, fillColor: string | undefined, entry: ImageEntry): Promise<void> {
     let bitmap: ImageBitmap;
     try {
-      bitmap = await this.loader(src, fillColor);
+      bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
     } catch {
       return; // broken source — leave the placeholder in place
     }
@@ -917,12 +1006,32 @@ export class AppTextureProvider implements TextureProvider {
     if (this.entries.get(key) !== entry) return;
     entry.width = bitmap.width || 1;
     entry.height = bitmap.height || 1;
+    // The texture id carries the alpha mode: two layers can point at the same
+    // file with different Interpret Footage settings, and they must not share one
+    // uploaded texture — the mode is baked in by the upload, not applied per draw.
+    const texId = entry.premultipliedFile ? `img:${src}#premul` : `img:${src}`;
     const tex = this.resources.texture(
-      `img:${src}`,
+      texId,
       { label: `image:${src}`, width: entry.width, height: entry.height, format: 'rgba8unorm', externalCopy: true },
       /* pinned */ true,
     );
-    this.resources.writeTexture(tex, { type: 'bitmap', bitmap });
+    // `decodeOptions` has already brought the bytes into the invariant, so the
+    // upload must do NOTHING — and "do nothing" is expressed by matching the
+    // bitmap's own premultiply LABEL, which is what this flag ends up meaning
+    // for bitmaps:
+    //
+    //   straight file      decoded 'premultiply' → labelled premultiplied
+    //                      → flag false → dest premultipliedAlpha true → no-op
+    //   premultiplied file decoded 'none' → labelled straight (the label is a
+    //                      lie; the bytes are already multiplied)
+    //                      → flag true → dest premultipliedAlpha false → no-op
+    //
+    // Passing `true` unconditionally looks right and is not: it tells WebGPU the
+    // destination is non-premultiplied, so the browser UN-premultiplies what the
+    // decode just multiplied and the halo comes straight back. Measured that way
+    // round, the premultiplied-declared-straight ramp read linear rms 0.70 where
+    // the double multiply predicts 53.77.
+    this.resources.writeTexture(tex, { type: 'bitmap', bitmap, alreadyPremultiplied: entry.premultipliedFile });
     entry.texture = tex;
     entry.bitmap = bitmap;
     entry.ready = true;

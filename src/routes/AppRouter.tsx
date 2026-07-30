@@ -6,11 +6,17 @@
  * On boot it validates any stored token exactly once (authStore.hydrate) and
  * holds routing behind a splash until that resolves, so RequireAuth never has
  * to guess whether a returning user is still signed in.
+ *
+ * In the local edition none of that applies: there is no backend, so there is no
+ * token to validate and no account-bound route to protect. The auth and
+ * dashboard routes are not registered at all — absent, rather than present and
+ * failing — and the app opens straight into the editor.
  */
 
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@stores/authStore';
+import { cloudAccountsEnabled, cloudProjectsEnabled } from '@core/config/edition';
 import { RequireAuth } from './RequireAuth';
 import { TitleBar } from '@layout/TitleBar/TitleBar';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
@@ -58,20 +64,38 @@ function AppLayout(): JSX.Element {
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <Suspense fallback={<BootSplash />}>
         <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/login" element={<AuthPage mode="login" />} />
-          <Route path="/register" element={<AuthPage mode="register" />} />
-          {/* Both are public: a locked-out user cannot authenticate, and the
-              emailed token is itself the credential. */}
-          <Route path="/forgot-password" element={<AuthPage mode="forgot" />} />
-          <Route path="/reset-password" element={<AuthPage mode="reset" />} />
-          {/* Where the backend's OAuth callback drops the browser, carrying a
-              one-time code to exchange for a session. */}
-          <Route path="/oauth" element={<OAuthCallbackPage />} />
+          {/* The local edition has no dashboard to land on — the editor IS the
+              app — so the root goes straight there. */}
+          <Route
+            path="/"
+            element={<Navigate to={cloudProjectsEnabled() ? '/dashboard' : '/editor'} replace />}
+          />
+          {cloudAccountsEnabled() && (
+            <>
+              <Route path="/login" element={<AuthPage mode="login" />} />
+              <Route path="/register" element={<AuthPage mode="register" />} />
+              {/* Both are public: a locked-out user cannot authenticate, and the
+                  emailed token is itself the credential. */}
+              <Route path="/forgot-password" element={<AuthPage mode="forgot" />} />
+              <Route path="/reset-password" element={<AuthPage mode="reset" />} />
+              {/* Where the backend's OAuth callback drops the browser, carrying a
+                  one-time code to exchange for a session. */}
+              <Route path="/oauth" element={<OAuthCallbackPage />} />
+            </>
+          )}
           <Route path="/popout/:panelId" element={<PopoutRoute />} />
-          <Route path="/dashboard" element={<RequireAuth><DashboardPage /></RequireAuth>} />
+          {cloudProjectsEnabled() && (
+            <Route path="/dashboard" element={<RequireAuth><DashboardPage /></RequireAuth>} />
+          )}
           <Route path="/editor" element={<RequireAuth><EditorPage /></RequireAuth>} />
-          <Route path="/editor/:projectId" element={<RequireAuth><EditorPage /></RequireAuth>} />
+          {/* A `:projectId` names a CLOUD project — it is what binds autosave,
+              thumbnails and version history to a backend row. Unregistered in
+              the local edition so a stale `#/editor/<id>` bookmark falls to the
+              catch-all and opens the plain editor, instead of mounting a loader
+              that has no server to ask. */}
+          {cloudProjectsEnabled() && (
+            <Route path="/editor/:projectId" element={<RequireAuth><EditorPage /></RequireAuth>} />
+          )}
           {/* No /admin route: the admin console lives in the motion-landing web
               app, not in the desktop app. Anything under /admin falls through to
               the catch-all below. */}
@@ -91,6 +115,13 @@ export function AppRouter(): JSX.Element {
   const [booted, setBooted] = useState(false);
 
   useEffect(() => {
+    // No accounts in the local edition, so there is no stored token to validate
+    // — skip the call rather than let it reach for a backend that isn't there.
+    // Boot immediately: this splash exists only to hide the token round-trip.
+    if (!cloudAccountsEnabled()) {
+      setBooted(true);
+      return;
+    }
     let alive = true;
     hydrate().finally(() => { if (alive) setBooted(true); });
     return () => { alive = false; };

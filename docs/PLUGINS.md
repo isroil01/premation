@@ -330,10 +330,11 @@ copy — not the key the download claims. So:
 | Registry itself is compromised and serves a new key | Refused on update: the client pins the stored key |
 | A publisher ships something malicious under their own key | **Not covered.** Signing says who, never whether they meant well — which is why the permission screen still exists. |
 
-ECDSA P-256 / SHA-256, signature as IEEE-P1363, key as SPKI. Both verifiers are
-written down (`src/plugins/plugin-signature.ts` on the server,
-`core/plugins/registry.ts` in the editor) and a test signs with Node and verifies
-with WebCrypto, because that seam breaking silently would mean nothing installs.
+ECDSA P-256 / SHA-256, signature as IEEE-P1363, key as SPKI. The editor's
+verifier is `src/core/plugins/registry.ts`; the registry that signs packages is a
+separate hosted service and is not part of this repository. A test signs with
+Node and verifies with WebCrypto, because that seam breaking silently would mean
+nothing installs.
 
 ### Publishing
 

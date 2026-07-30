@@ -24,6 +24,7 @@
  */
 
 import { request } from '@core/api/client';
+import { pluginRegistryEnabled } from '@core/config/edition';
 import type { PluginPermission } from './manifest';
 
 /** What browse returns for one plugin. Never includes package bytes. */
@@ -100,6 +101,11 @@ export async function verifyPackageSignature(
 
 /** Search the registry. */
 export async function browseRegistry(q?: string): Promise<RegistryPlugin[]> {
+  // No hosted registry in the local edition. An empty result is the same answer
+  // the browse UI already handles for "nothing matched", so it degrades to an
+  // empty list instead of an error — and installing from a local file, which
+  // never touched the network, is unaffected.
+  if (!pluginRegistryEnabled()) return [];
   const query = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
   // `request` and not a bare fetch: it carries the bearer, refreshes it when it
   // has expired, and turns an error body into a message. A hand-rolled fetch
@@ -121,6 +127,13 @@ export async function fetchRegistryPackage(
   version: string,
   expectedKey: string,
 ): Promise<{ bytes: Uint8Array; publisherKey: string }> {
+  // Unreachable through the UI in the local edition (`browseRegistry` returns
+  // nothing to install and `checkForUpdates` nothing to update), but this is the
+  // function that would fetch bytes and run them — so it refuses on its own
+  // rather than trusting its callers to have been gated.
+  if (!pluginRegistryEnabled()) {
+    throw new Error('The plugin registry is not available in this edition.');
+  }
   const body = await request<{
     package: string;
     signature: string;
@@ -157,6 +170,7 @@ export async function fetchRegistryPackage(
 export async function checkForUpdates(
   installed: ReadonlyArray<{ id: string; version: string }>,
 ): Promise<RegistryUpdate[]> {
+  if (!pluginRegistryEnabled()) return [];
   if (installed.length === 0) return [];
   try {
     return await request<RegistryUpdate[]>('/plugins/updates', {

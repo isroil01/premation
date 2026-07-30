@@ -11,6 +11,7 @@
  */
 
 import { API_URL } from './env';
+import { isLocalEdition } from '@core/config/edition';
 import {
   accessTokenExpired,
   clearSession,
@@ -155,6 +156,20 @@ async function toError(res: Response): Promise<ApiError> {
  * forever is how a client turns one bad request into a request loop.
  */
 async function send(path: string, init: RequestInit, headers: Record<string, string>) {
+  // The local edition has no backend. Every UI surface that used to call one is
+  // gated off, so reaching here means a path was missed — fail here, at the one
+  // function `request` and `conditionalGet` share, rather than let a build that
+  // advertises itself as offline quietly attempt a connection. Same reasoning as
+  // the tripwire in core/project/networkFreeSavePath.test.ts, enforced at
+  // runtime instead of in a test.
+  if (isLocalEdition()) {
+    const err = new Error(
+      `This is the local edition — there is no backend to call (${path}).`,
+    ) as ApiError;
+    err.status = 0;
+    throw err;
+  }
+
   if (accessTokenExpired() && isAuthenticated()) await refreshSession();
 
   let res = await fetch(`${BASE_URL}${path}`, { ...init, headers: withAuth(headers) });

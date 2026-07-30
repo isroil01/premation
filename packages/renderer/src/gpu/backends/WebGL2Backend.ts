@@ -34,6 +34,7 @@ import type {
   VertexBufferLayout,
   IndexFormat,
 } from '../types';
+import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
 type GL = WebGL2RenderingContext;
@@ -230,24 +231,23 @@ export class WebGL2Backend implements RenderBackend {
       // no decode step to reinterpret, so the unpack flags do not apply.
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, source.width, source.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, source.data as unknown as ArrayBufferView);
     } else {
-      // THE ALPHA INVARIANT (see TextureSource in ../types.ts): straight alpha,
-      // every source kind, both backends. Set explicitly rather than left to the
-      // default, for two reasons.
+      // THE ALPHA INVARIANT (see TextureSource in ../types.ts): premultiplied
+      // alpha, every source kind, both backends.
       //
-      // 1. It is a statement, not a coincidence. The WebGL2 default happens to
-      //    be false today; a future default flip would silently double-multiply
-      //    every alpha image on this backend with no code change to blame.
-      // 2. It is not sufficient on its own. UNPACK_PREMULTIPLY_ALPHA_WEBGL can
-      //    only MULTIPLY — there is no un-premultiply direction — so a bitmap
-      //    that arrives premultiplied stays premultiplied no matter what is set
-      //    here. That is why the decode side asks for straight explicitly too;
-      //    see `premultiplyAlpha: 'none'` in AppTextureProvider's loaders. Both
-      //    halves are required and neither is sufficient.
+      // This flag means "the DESTINATION shall be premultiplied" — the browser
+      // converts from whatever the source declares itself to be. It does NOT mean
+      // "multiply the source", which is how it was first read here, and reading it
+      // that way un-premultiplied every canvas raster and left the shader dividing
+      // a straight texture (50% fill opacity rendered at 97.3% of full).
       //
-      // For canvas and video sources this flag is what does the work: their
-      // backing stores are premultiplied, and false makes the browser
-      // un-premultiply on upload.
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      // Note it is ignored entirely for ImageBitmap sources — a bitmap carries its
+      // premultiply state from creation and this cannot override it. That is why
+      // footage is converted at DECODE; see `decodeOptions` in AppTextureProvider.
+      //
+      // Set explicitly rather than left to the default: the default is false
+      // today, and a future flip would silently change the alpha space on this
+      // backend with no code change to blame.
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, !sourcePassesThrough(source));
       const src = source.type === 'bitmap' ? source.bitmap : source.type === 'video' ? source.video : source.canvas;
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src as TexImageSource);
     }

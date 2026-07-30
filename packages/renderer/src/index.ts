@@ -20,6 +20,11 @@ export * from './gpu/types';
 // ── Vector rasterizer seam (Phase 1) ──────────────────────────────
 export {
   resolutionTier,
+  continuousResolutionTier,
+  maxContinuousTier,
+  CONTINUOUS_RESOLUTION_TIERS,
+  DEFAULT_MAX_RASTER_DIMENSION,
+  DEFAULT_MAX_RASTER_PIXELS,
   paddingClass,
   rasterCacheKey,
   RESOLUTION_TIERS,
@@ -83,7 +88,6 @@ export {
   type RenderableColorMatrix,
   type RenderableEffect,
   type CompositionInfo,
-  type BackdropMode,
   type SceneLight3D,
   emptyScene,
   depthEligible3D,

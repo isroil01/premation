@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/isroil01/motion-editor/security/advisories/new
+    about: Report it privately here — never as a public issue. See SECURITY.md.
+  - name: Question or idea
+    url: https://github.com/isroil01/motion-editor/discussions
+    about: For usage questions and open-ended discussion, rather than a bug report.
+  - name: Contributing guide
+    url: https://github.com/isroil01/motion-editor/blob/main/CONTRIBUTING.md
+    about: Setup, house style, and what needs help most.

@@ -44,6 +44,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
+import { cloudProjectsEnabled } from '@core/config/edition';
 import { chooseBundleDir } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
@@ -1157,11 +1158,17 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // autosave has been quietly snapshotting the project, with no way
           // to see or restore any of it. Only meaningful for a cloud project:
           // snapshots live on the backend, keyed by project id.
-          registry.register({
-            id: asCommandId('file.versionHistory'), label: 'Version History…', icon: 'undo',
-            enabled: () => useCloudProjectStore.getState().projectId !== null,
-            execute: () => openVersionHistory(),
-          });
+          // In the local edition this command stays unregistered: snapshots live
+          // in the project bundle instead, surfaced by VersionHistorySection in
+          // the inspector. Registering it would put a permanently-disabled menu
+          // item next to a feature that does work.
+          if (cloudProjectsEnabled()) {
+            registry.register({
+              id: asCommandId('file.versionHistory'), label: 'Version History…', icon: 'undo',
+              enabled: () => useCloudProjectStore.getState().projectId !== null,
+              execute: () => openVersionHistory(),
+            });
+          }
           // AE reveal shortcuts. U reveals animated properties on the selected
           // layers; a second U within the double-tap window upgrades to
           // 'revealModified' (dispatched by ShortcutManager, which is why that

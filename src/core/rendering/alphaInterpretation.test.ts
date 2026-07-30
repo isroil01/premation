@@ -174,20 +174,27 @@ describe('it survives the non-flat-quad paths', () => {
     for (const w of walls) expect(w.premultipliedSource).toBeUndefined();
   });
 
-  it('reaches the FrameScene renderable, which is what selects the shader', () => {
+  it('stops at the snapshot — the FrameScene renderable does NOT carry it', () => {
+    // It used to, and that was the point: the flag selected one of six `-premul`
+    // shader variants. Under the alpha invariant (see `TextureSource` in
+    // packages/renderer/src/gpu/types.ts) every texture is premultiplied by the
+    // time it is sampled, so the shader path is uniform and there is nothing for
+    // a per-draw flag to select. The flag now goes to the TEXTURE FEED instead —
+    // MotionRendererBackend hands it to `setImage`, which carries it to the
+    // upload where it decides whether the browser multiplies.
+    //
+    // Asserting its ABSENCE here is what stops it being quietly re-added to the
+    // renderable and read by nothing.
     const fs = snapshotToFrameScene(build({}));
     const r = fs.renderables.find((x) => x.id === 'l');
-    expect(r?.premultipliedSource).toBe(true);
+    expect(r).toBeDefined();
+    expect((r as unknown as Record<string, unknown>).premultipliedSource).toBeUndefined();
   });
 
-  it('straight layers carry nothing into the FrameScene', () => {
-    const g = new SceneGraph();
-    g.addNode(comp('root'));
-    g.addChild('root', node('l', 'root', { assetId: ASSET, src: 'alpha://clip.png' }));
-    setAlpha('straight');
-    const fs = snapshotToFrameScene(buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, {
-      width: W, height: H, background: '#000', rootId: 'root',
-    } as never));
-    expect(fs.renderables.find((x) => x.id === 'l')?.premultipliedSource).toBeUndefined();
+  it('the snapshot layer still carries it, because the feed reads it there', () => {
+    const l = build({}).layers.find((x) => x.id === 'l')!;
+    expect(l.premultipliedSource).toBe(true);
+    // And the texture key the feed uses must exist, or the flag has nowhere to go.
+    expect(l.src).toBeTruthy();
   });
 });

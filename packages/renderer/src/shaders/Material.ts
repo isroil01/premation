@@ -291,32 +291,32 @@ export const DEFORMED_MESH_MATERIAL: MaterialDescriptor = {
   buffers: [DEFORMED_MESH_LAYOUT],
 };
 
-// ── Premultiplied-source twins ──────────────────────────────────────────────
-//
-// One per textured material, differing only in which shader they name. See the
-// long note in builtin.ts for why the flag is a shader variant rather than a
-// field in the shared std140 `Object` block — and, importantly, for the
-// condition that ends this arrangement:
-//
-//   THE SECOND FLAG THAT NEEDS TO REACH THE FRAGMENT STAGE IS THE TRIGGER TO
-//   EXTEND THE UNIFORM BLOCK AND DELETE ALL OF THIS.
-//
-// Variants multiply per family: six materials for one flag, twelve for two,
-// twenty-four for three. A non-black matte colour, Ignore Alpha or Invert Alpha
-// would each be that second flag. Do not add a seventh variant by reflex.
+// The premultiplied-source TWINS are gone, along with the flag that selected
+// them. Under the alpha invariant (see `TextureSource` in ../gpu/types.ts) every
+// texture is premultiplied, so every textured shader un-premultiplies at the
+// sample — there is no second behaviour left to name a material for. What used
+// to live here was `premulMaterial` plus seven `*_PREMUL_MATERIAL` constants;
+// the note that used to sit above them warned that a SECOND fragment-stage flag
+// should trigger extending the std140 block instead of doubling the set again.
+// That warning is now moot for this axis: the count went to zero, not to twelve.
 
-/** The premultiplied-source twin of a textured material. */
-function premulMaterial(base: MaterialDescriptor): MaterialDescriptor {
-  return { ...base, shader: `${base.shader}-premul` };
-}
-
-export const TEXTURED_PREMUL_MATERIAL = premulMaterial(TEXTURED_MATERIAL);
-export const MASKED_TEXTURED_PREMUL_MATERIAL = premulMaterial(MASKED_TEXTURED_MATERIAL);
-export const LUT_TEXTURED_PREMUL_MATERIAL = premulMaterial(LUT_TEXTURED_MATERIAL);
-export const DEFORMED_MESH_PREMUL_MATERIAL = premulMaterial(DEFORMED_MESH_MATERIAL);
-export const TEXTURED3D_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_MATERIAL);
-export const TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_NO_DEPTH_WRITE_MATERIAL);
-export const MASKED_TEXTURED3D_PREMUL_MATERIAL = premulMaterial(MASKED_TEXTURED3D_MATERIAL);
+/**
+ * Fill a texture's ALPHA with a solid colour, discarding its RGB.
+ *
+ * What an outward layer style actually is — see the long note on
+ * `silhouetteOf` in builtin.ts for the multiply-instead-of-fill bug this
+ * replaces, and for why black drop shadows appeared to work while every other
+ * colour did not.
+ *
+ * Deliberately NOT one of the variant families the note above warns about: it
+ * adds no uniform, reinterprets the `tint` already in the block, and needs no
+ * premultiplied twin because it reads only alpha — which is the same value in
+ * either alpha space.
+ */
+export const TEXTURED_SILHOUETTE_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED_MATERIAL,
+  shader: `${TEXTURED_MATERIAL.shader}-silhouette`,
+};
 
 export class MaterialSystem {
   constructor(

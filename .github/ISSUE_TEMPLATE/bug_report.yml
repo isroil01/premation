@@ -1,0 +1,108 @@
+name: Bug report
+description: Something behaves incorrectly, crashes, or renders wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug.
+
+        **Do not report security vulnerabilities here** — use a
+        [private security advisory](https://github.com/isroil01/motion-editor/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what actually happened instead.
+      placeholder: |
+        I expected the layer to fade out over 1s.
+        Instead it disappeared instantly on the second keyframe.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >
+        Numbered steps, ideally starting from a brand-new project. A bug that
+        reproduces from scratch gets fixed much faster than one that needs your
+        specific file.
+      placeholder: |
+        1. New project, 1920×1080 at 30fps
+        2. Add a solid layer
+        3. Keyframe Opacity 100 → 0 across 1s
+        4. Scrub the playhead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: edition
+    attributes:
+      label: Which build?
+      options:
+        - "local (npm run electron:dev:local)"
+        - "local, browser only (npm run dev:local)"
+        - "a packaged build (npm run dist:local)"
+        - "server edition"
+        - "not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Render backend
+      description: Shown in the viewport header, next to the composition name.
+      options:
+        - WebGPU
+        - WebGL2
+        - "not sure / not applicable"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and GPU
+      placeholder: "Windows 11, RTX 3060 / macOS 15, M2 Pro / Ubuntu 24.04, Intel Arc"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The commit you are on (`git rev-parse --short HEAD`), or a release version.
+      placeholder: "34c3dd0 or v0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Errors from the console
+      description: >
+        DevTools console (View → Toggle Developer Tools) and any terminal output.
+        Paste the whole error including the stack.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, recording, or project file
+      description: >
+        Drag files in. For anything visual this is usually the single most useful
+        thing you can attach. A `.motion` bundle can be zipped.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for a duplicate.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

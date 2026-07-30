@@ -32,7 +32,7 @@ function light(graph: Parameters<Scene['build']>[0], id: string, props: Record<s
  * committed as a reference so a change to the PANEL shows up as its own
  * failure rather than silently moving the baseline the pair is measured against.
  */
-function styleOn3dPair(id: string, description: string, styles: Record<string, unknown>): Scene[] {
+function styleOn3dPair(id: string, description: string, styles: Record<string, unknown>, fill = '#4a7fd0'): Scene[] {
   // Off-centre and modest, so every side has background for the style to reach
   // and no edge of the frame can clip the thing being measured.
   const place = { position: { x: 200, y: 155 }, size: { width: 170, height: 120 } };
@@ -41,7 +41,7 @@ function styleOn3dPair(id: string, description: string, styles: Record<string, u
       kind: 'shape',
       position: place.position,
       transform: { ...place.size, shapeType: 'rect', z: 0, rotationX: 12, rotationY: 24 },
-      style: { fill: '#4a7fd0' },
+      style: { fill },
     }));
     graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: { z: -1000, focalLength: 1000 } }));
     if (withStyles) graph.setLayerStyles('p', styles);
@@ -157,33 +157,54 @@ export const threeDScenes: Scene[] = [
     'Drop shadow on a 3D layer — offset DOWN-RIGHT of the panel, nowhere else.',
     { dropShadow: { enabled: true, color: '#000000', opacity: 0.9, distance: 26, angle: 45, blur: 6, useGlobalLight: false } },
   ),
-  // DELIBERATELY UNBLESSED — this one FAILS, and the failure is the point.
+  // FIXED — this scene was created failing and now passes; the history is kept
+  // because it is the only record of what the check is actually for.
   //
-  // Measured on its first run: the ring outside the silhouette comes out
-  // DARKER than the background, not brighter. Along y=155 the delta ramps
-  // 0 → −4 levels approaching the panel edge and the composite tracks
-  // `bg·(1−a)` — i.e. the glow is being drawn BLACK. Its geometry is right
-  // (the falloff extends ~25 px, matching size 22) and only its colour is
-  // wrong, on all four sides equally.
+  // On its first run the ring outside the silhouette came out DARKER than the
+  // background: the delta ramped 0 → −4 levels toward the panel edge and the
+  // composite tracked `bg·(1−a)`, i.e. the glow was drawn BLACK. Geometry was
+  // right (~25 px falloff for size 22) and only the colour was wrong. Cause: the
+  // composite passed the glow colour as a TINT, and a tint multiplies — see
+  // `silhouetteOf` in packages/renderer/src/shaders/builtin.ts. Now a fill.
   //
-  // Not confined to 3D. On the 2D `layer-styles` scene a #78b4ff glow over an
-  // #ff8a3d layer brightens toward ORANGE (14,13,19 → 32,28,27 approaching the
-  // edge) rather than toward blue: outer glow spreads the layer's own COLOUR
-  // instead of filling the blurred alpha with the glow colour. On a light layer
-  // that passes for a glow; on a saturated one it is visibly the wrong hue, and
-  // on the near-black 3D comp it collapses to a dark halo.
-  //
-  // Why it survived: the only other coverage is `layer-styles`, which enables a
-  // drop shadow AND an outer glow on one layer — so the two contributions
-  // cannot be separated — and is marked known-divergent, so it is not gated.
-  //
-  // No reference is committed, so this fails as "missing reference" until the
-  // glow is fixed. Blessing it would make the suite green while certifying the
-  // defect, which is the same trap the bevel-profile goldens set.
+  // Held by the colour pair below, not by this scene: a WHITE glow cannot
+  // distinguish a fill from a tint, because white is the identity of a multiply.
+  // This scene proves the glow lightens and spreads evenly; the green-on-blue
+  // twin proves it is the glow's colour.
   ...styleOn3dPair(
     'three-d-outer-glow',
     'Outer glow on a 3D layer — a bright ring OUTSIDE the silhouette, on all sides.',
     { outerGlow: { enabled: true, color: '#ffffff', opacity: 1, size: 22 } },
+  ),
+
+  // ── the two scenes that pin the style's COLOUR ─────────────────────
+  //
+  // The defect above was a colour defect with correct geometry, so every check
+  // that looks at where a style lands passes straight through it. These two
+  // pick colours that make the arithmetic legible:
+  //
+  //   glow   pure GREEN on a pure BLUE layer. Multiplying the two gives black
+  //          (no channel overlaps), so the broken path renders a dark halo and
+  //          the correct path renders a green one. Nothing in between is
+  //          reachable, which makes the check immune to tolerance choices.
+  //   shadow pure RED on a pure BLUE layer. This is the control that proves the
+  //          shadow shares the bug: it passes today ONLY because the default
+  //          shadow colour is black, and black is the absorbing element of a
+  //          multiply. Give it a non-black colour and the same defect appears.
+  //
+  // Asserted on HUE (which channel dominates), not on brightness — a wrong-hue
+  // glow can be exactly as bright as a right one.
+  ...styleOn3dPair(
+    'three-d-outer-glow-green-on-blue',
+    'Green outer glow on a blue layer — the halo must be GREEN, not the layer’s colour.',
+    { outerGlow: { enabled: true, color: '#00ff00', opacity: 1, size: 22 } },
+    '#0000ff',
+  ),
+  ...styleOn3dPair(
+    'three-d-drop-shadow-red-on-blue',
+    'Red drop shadow on a blue layer — the shadow must be RED, not black.',
+    { dropShadow: { enabled: true, color: '#ff0000', opacity: 1, distance: 26, angle: 45, blur: 6, useGlobalLight: false } },
+    '#0000ff',
   ),
 
   // ── depth of field, measured by EXTENT ─────────────────────────────

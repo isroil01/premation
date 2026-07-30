@@ -18,6 +18,7 @@ import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { isPrecomp, setPrecomp, setCompCollapse } from '@core/scene/precomp';
+import { readContinuousRaster, setContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readCompCollapse } from '@core/scene/compInstance';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
@@ -96,6 +97,39 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
             : 'This composition renders to its own frame first, then composites as one flat layer — so its 3D layers cannot meet the host’s camera.'}
         </p>
         <TimeRemapRow nodeId={nodeId} />
+      </>
+    );
+  }
+
+  /*
+    Continuous Rasterization shares AE's sunburst column with Collapse
+    Transformations: on a placed composition that switch means Collapse (above),
+    on a vector layer it means CR. Same control position, one meaning per layer
+    type — so this sits in the same component rather than a separate panel, and
+    the two cases cannot both appear for one layer.
+
+    Offered only where it can do something: text, SVG and shapes with real
+    geometry. A bitmap cannot be re-rasterized sharper than it was shot, and a
+    flat solid has no edge to sharpen, so a switch there would cost memory and
+    change nothing.
+  */
+  if (supportsContinuousRaster(node)) {
+    const cr = readContinuousRaster(node);
+    return (
+      <>
+        <div className={styles.row}>
+          <span className={styles.label}>Continuous Rasterization</span>
+          <Switch
+            checked={cr}
+            onChange={(e) => setContinuousRaster(nodeId, e.currentTarget.checked)}
+            aria-label="Continuous Rasterization (re-render vector content at the scale it is drawn)"
+          />
+        </div>
+        <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+          {cr
+            ? 'Re-rendered at the size it is actually drawn, so it stays sharp past 400% and as a 3D camera moves in. Costs memory in proportion to scale²; Draft and reduced preview resolution cap it.'
+            : 'Rasterized once and scaled like an image, so it softens past 400%. Turn on for a logo or title that a camera pushes into.'}
+        </p>
       </>
     );
   }

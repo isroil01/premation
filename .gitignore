@@ -37,6 +37,14 @@ Thumbs.db
 .idea/
 *.swp
 
-# Claude Code skill lockfile (local tooling, not part of the app)
+# AI coding-assistant config, skill packs and hooks. Local developer tooling —
+# not part of the application, and not something a contributor needs or should
+# inherit. Kept out of the repo rather than deleted from disk, so whoever uses
+# these tools keeps them locally.
 skills-lock.json
 .claude/
+.agents/
+.cursor/
+.gemini/
+.codex/
+.impeccable/

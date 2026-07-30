@@ -15,9 +15,6 @@ import type { MatteProp } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
-import type { BackdropMode } from '@motion/renderer';
-
-export type { BackdropMode };
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
@@ -250,6 +247,12 @@ export interface RenderLayer {
    * The layer's footage is interpreted as PREMULTIPLIED (see
    * `FootageInterpretation.alpha`). Nothing in a file records this, so it is
    * always a user setting; absent = straight, the default.
+   *
+   * Consumed by the TEXTURE FEED, not by any draw: MotionRendererBackend passes
+   * it to `setImage`, which carries it to the upload where it decides whether
+   * the browser multiplies. It used to select one of six `-premul` shader
+   * variants; under the alpha invariant (see `TextureSource`) every texture is
+   * premultiplied by the time it is sampled, so there is nothing left to select.
    */
   premultipliedSource?: boolean;
   /** Digest of the fields that determine this layer's OWN rasterized pixels
@@ -258,6 +261,15 @@ export interface RenderLayer {
    *  contentHash.ts); the VectorRasterizer keys its texture cache on it, so a
    *  transform-only animation reuses one texture. */
   contentHash?: string;
+  /**
+   * Continuous Rasterization: re-raster this layer's vector content at the scale
+   * it is actually drawn at, past the 4× ceiling `resolutionTier` imposes.
+   *
+   * Absent/false = today's behaviour exactly, which is what keeps every existing
+   * project byte-identical. Only shape/text/SVG layers ever set it; see
+   * `@core/scene/continuousRaster` for why bitmaps and flat solids do not.
+   */
+  continuousRaster?: boolean;
   /** Dynamic CPU-skinned mesh geometry for puppet deformation. */
   deformedMesh?: {
     vertices: Float32Array;
@@ -313,13 +325,6 @@ export interface RenderSnapshot {
   /** When true the comp has no background fill (transparent — checkerboard in
    *  preview, alpha:0 in export). `background` is then ignored for compositing. */
   transparent?: boolean;
-  /**
-   * Where the composition background is painted. Default `'frame'` (the comp
-   * rect, tracking the 2D pan/zoom camera); `'viewport'` in the orthographic
-   * and custom views, which render uncropped and so need the colour everywhere.
-   * See CompositionInfo.backdrop for the full reasoning.
-   */
-  backdrop?: BackdropMode;
   /**
    * Which channel to display. 'alpha' paints the comp's own alpha as opaque
    * greyscale — the standard way to inspect a matte. Preview-only; export

@@ -4,6 +4,7 @@ import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
+import { parseEdition, setEdition } from '@core/config/edition';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import './styles/global.css';
 
@@ -12,10 +13,25 @@ import './styles/global.css';
 // whole point — a purge that runs after a plugin can read storage is theatre.
 purgeLegacyLocalAiKeys();
 
+// Which edition this build is (`VITE_EDITION=local` for the open-source desktop
+// build; anything else, including unset, is the hosted 'server' edition). Read
+// here at the entry for the same reason as the flag below, and read BEFORE it
+// because the local edition implies local-first storage.
+const edition = parseEdition(import.meta.env.VITE_EDITION as string | undefined);
+setEdition(edition);
+
 // Read the LOCAL_FIRST build flag once, here at the entry — `import.meta.env` is
 // a Vite construct, and keeping it out of shared modules avoids Jest's CJS
 // `import.meta` breakage. Enables `.motion` directory-bundle save/open.
-setLocalFirst(import.meta.env.VITE_LOCAL_FIRST === '1' || import.meta.env.VITE_LOCAL_FIRST === 'true');
+//
+// The local edition turns it on unconditionally: there is no backend to autosave
+// to, so an on-disk bundle is the only place a project could live. The env flag
+// stays independently settable so the server edition can still opt in.
+setLocalFirst(
+  edition === 'local' ||
+    import.meta.env.VITE_LOCAL_FIRST === '1' ||
+    import.meta.env.VITE_LOCAL_FIRST === 'true',
+);
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

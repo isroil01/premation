@@ -5,6 +5,7 @@
 
 import { ToolRegistry, type ToolContext } from '@motion/ai-tools';
 import { apiBaseUrl, getToken, type GatewayProviderId } from '@core/api/client';
+import { aiEnabled } from '@core/config/edition';
 import { AiError } from './AgentLoop';
 import type { AgentEvents } from './AgentLoop';
 
@@ -65,6 +66,12 @@ export async function runBackendDirector(
    */
   tally?: (toolName: string) => void,
 ): Promise<DirectorRunResult> {
+  // The director pipeline runs server-side; there is no local equivalent, so in
+  // the local edition it is simply absent. Same refusal as `streamTurn`.
+  if (!aiEnabled()) {
+    throw new AiError('coming_soon', 'The AI assistant is coming soon in the local edition.');
+  }
+
   const token = getToken();
   if (!token) throw new AiError('auth', 'Sign in to run the AI director pipeline.');
 

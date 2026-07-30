@@ -130,13 +130,6 @@ export interface Renderable {
   textureKey?: string;
   /** Sub-rectangle of the source texture in [0,1] uv space (atlas/crop). */
   uvRect?: Rect;
-  /**
-   * This layer's source texture holds PREMULTIPLIED colour, so the shader must
-   * divide the premultiplication back out before grading (After Effects'
-   * Interpret Footage ▸ Alpha ▸ Premultiplied). Absent/false = straight, which
-   * is the default and every existing project.
-   */
-  premultipliedSource?: boolean;
   /** Clip children to this node's bounds. */
   clip?: boolean;
   /**
@@ -275,39 +268,10 @@ export interface SceneLight3D {
   halfConeRad: number;
 }
 
-/** Where the composition background is painted — see `CompositionInfo.backdrop`. */
-export type BackdropMode = 'frame' | 'viewport';
-
 export interface CompositionInfo {
   id: string;
   size: Size;
   background?: Color;
-  /**
-   * Where the composition's background colour is painted. Default `'frame'`.
-   *
-   * `'frame'` fills the comp rect through the 2D viewport transform: the
-   * artboard against the pasteboard, which is what Active Camera wants.
-   *
-   * `'viewport'` fills the whole viewport instead, and is what the six ortho
-   * views and the custom views use. The backdrop is canvas, not scene geometry,
-   * so it cannot be view-transformed; painted as a comp-sized screen-aligned
-   * rect it sat across the composition plane while that plane projected edge-on
-   * to a line — two comp frames, in different places, disagreeing. Painting
-   * NOTHING was the first answer to that and it was worse: a Left view lost the
-   * composition's background colour entirely, so a dark comp and a light one
-   * looked identical and the view read as empty. Filling the viewport keeps the
-   * colour and leaves exactly one frame cue, the projected `comp-frame-3d`
-   * outline drawn by SceneGeometryOverlay.
-   *
-   * Deliberate divergence from After Effects, which renders every view into a
-   * comp-sized frame and crops to it. We render ortho views UNCROPPED (see
-   * `viewIsActiveCamera` in useWorkspace) so you can block out a 3D scene that
-   * extends past the frame — and once the image is bigger than the comp, the
-   * background has to be too.
-   *
-   * Proven by `backgroundPass.test.ts`.
-   */
-  backdrop?: BackdropMode;
 }
 
 export interface FrameScene {

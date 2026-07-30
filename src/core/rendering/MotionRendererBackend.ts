@@ -424,6 +424,11 @@ export class MotionRendererBackend implements RenderBackend {
       // scale × dpr. Drives the resolution tier so a 4K export re-rasters vectors
       // at native instead of upscaling a viewport-resolution texture.
       this.textures.setRasterScale((snapshot.view?.scale ?? 1) * this.dpr);
+      // The GPU's real limit, not a guess: WebGL2 can report as little as 4096,
+      // and a Continuous Rasterization raster over the limit fails to allocate
+      // rather than degrading. See @core/scene/continuousRaster.
+      const maxTex = this.renderer?.backend.capabilities.maxTextureSize;
+      if (maxTex) this.textures.setMaxRasterDimension(maxTex);
       // Walks the full layer tree (including layers nested inside precomps —
       // snapshotToFrameScene.flattenLayers recurses the same way, so every
       // textureKey it emits must be registered here or it renders as a white
@@ -455,7 +460,11 @@ export class MotionRendererBackend implements RenderBackend {
             } else if (layer.kind === 'image' && layer.src) {
               const key = `asset:${layer.id}`;
               activeKeys.add(key);
-              this.textures!.setImage(key, layer.src, layer.fill);
+              // The FILE's alpha mode goes to the UPLOAD, not the draw: it
+              // decides whether the browser multiplies, which is the only place
+              // the question can be settled once per file. See the alpha
+              // invariant on TextureSource.
+              this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource);
             } else if (layer.kind === 'video' && layer.src) {
               if (layer.frameBlend) {
                 // Frame Mix: feed both bracket frames. Cache hits upload the
@@ -489,6 +498,7 @@ export class MotionRendererBackend implements RenderBackend {
                 height: layer.height,
                 scaleX: layer.scaleX,
                 scaleY: layer.scaleY,
+                continuousRaster: layer.continuousRaster,
                 fontFamily: layer.fontFamily,
                 fontWeight: layer.fontWeight,
                 fontStyle: layer.fontStyle,

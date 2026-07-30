@@ -16,6 +16,7 @@ import { getProjectManager } from '@core/services/coreServices';
 import { detectBundleFs } from '@core/project/bundle/bundleFsEnv';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { isLocalFirst } from '@core/config/flags';
+import { cloudSyncEnabled } from '@core/config/edition';
 import { WebCryptoCipher } from './ProjectCipher';
 import { HttpSyncTransport } from './httpSyncTransport';
 import { ProjectSyncService, type SyncOutcome } from './ProjectSyncService';
@@ -30,6 +31,11 @@ async function saltForProject(projectId: string): Promise<Uint8Array> {
 
 /** True when the current project can sync (local-first, a bundle, and open). */
 export function canSyncCurrentProject(): boolean {
+  // The vault is a hosted, paid feature: the server stores the ciphertext and
+  // decides entitlement. The local edition has no server, so sync is off there
+  // regardless of the local-first flag — those two are independent, and only
+  // this one is about whether a remote exists.
+  if (!cloudSyncEnabled()) return false;
   if (!isLocalFirst()) return false;
   const cur = getProjectManager().getState().current;
   return !!(cur?.path && isBundlePath(cur.path));
@@ -43,7 +49,9 @@ export function canSyncCurrentProject(): boolean {
 export async function syncCurrentProject(passphrase: string): Promise<SyncOutcome> {
   const cur = getProjectManager().getState().current;
   const root = cur?.path ?? null;
-  if (!isLocalFirst() || !root || !isBundlePath(root)) return { status: 'failed' };
+  if (!cloudSyncEnabled() || !isLocalFirst() || !root || !isBundlePath(root)) {
+    return { status: 'failed' };
+  }
 
   const salt = await saltForProject(cur!.id);
   const cipher = await WebCryptoCipher.fromPassphrase(passphrase, salt);
