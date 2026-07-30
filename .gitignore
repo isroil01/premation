@@ -6,7 +6,13 @@ dist/
 dist-electron/
 out/
 release/
-build/
+# build/ holds electron-builder's buildResources (electron-builder.yml), not
+# build output. The app icon MUST be tracked: a CI checkout without it packages
+# installers with Electron's default logo. Ignore the directory's transient
+# contents but never the icon. (`build/*` not `build/` — git cannot re-include
+# a file under a directory that is itself ignored.)
+build/*
+!build/icon.png
 .vite/
 
 # Test / coverage
