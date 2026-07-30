@@ -1,3 +1,7 @@
+<img width="2555" height="1389" alt="Screenshot 2026-07-30 010317" src="https://github.com/user-attachments/assets/e6922bfd-423b-46f7-8b67-a15babe7322e" />
+
+
+
 # Motion Editor
 
 A desktop motion-graphics application. Compositions, layers, keyframes, a graph
