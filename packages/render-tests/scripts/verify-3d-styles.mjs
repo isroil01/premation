@@ -130,6 +130,51 @@ try {
   check('outer glow on a 3D layer', false, `not rendered — ${e.message}`);
 }
 
+// ── the style's COLOUR, not its position ──────────────────────────────
+//
+// The outer-glow defect had correct geometry and wrong colour, so every check
+// above passes straight through it. These two use colours with no shared
+// channel, which makes the broken arithmetic unmistakable: the old code
+// composited the blurred layer with the style colour as a TINT, and a tint
+// multiplies, so green × blue = black and red × blue = black.
+//
+// Asserted on which channel DOMINATES rather than on brightness — a wrong-hue
+// halo can be exactly as bright as a right one.
+for (const [id, chan, label] of [
+  ['three-d-outer-glow-green-on-blue', 1, 'outer glow is the GLOW’s colour (green), not the layer’s (blue)'],
+  ['three-d-drop-shadow-red-on-blue', 0, 'drop shadow is the SHADOW’s colour (red), not black'],
+]) {
+  try {
+    const on = await readPng(path.join(ACTUAL, BACKEND, id, '0.png'));
+    const off = await readPng(path.join(ACTUAL, BACKEND, `${id}-off`, '0.png'));
+    // Look only OUTSIDE the layer's silhouette — inside, the layer's own colour
+    // legitimately dominates and would mask the answer.
+    let best = null;
+    for (let i = 0; i < on.data.length; i += 4) {
+      if (lum(off.data, i) > 40) continue;
+      const d = on.data[i + chan] - off.data[i + chan];
+      if (!best || d > best.d) {
+        best = { d, i, on: [on.data[i], on.data[i + 1], on.data[i + 2]], off: [off.data[i], off.data[i + 1], off.data[i + 2]] };
+      }
+    }
+    const names = ['red', 'green', 'blue'];
+    // Assert on the style's CONTRIBUTION (on − off), not on the resulting pixel.
+    //
+    // The resulting pixel is the wrong quantity: the strongest change lands in
+    // the panel's own antialiased fringe, where the underlying pixel is already
+    // the layer's colour, so a perfectly correct green glow still reads
+    // blue-dominant there (measured: 9,9,75 → 3,35,56). The DELTA has no such
+    // contamination — it is what the style added and nothing else.
+    const delta = [0, 1, 2].map((k) => best.on[k] - best.off[k]);
+    const gained = delta[chan];
+    const dominant = delta.indexOf(Math.max(...delta)) === chan;
+    check(label, gained > 20 && dominant,
+      `peak Δ: rgb ${best.off.join(',')} → ${best.on.join(',')} = Δ(${delta.join(',')}) · ${names[chan]} +${gained}, dominant=${dominant}`);
+  } catch (e) {
+    check(label, false, `not rendered — ${e.message}`);
+  }
+}
+
 // ── depth of field: measured by EXTENT ────────────────────────────────
 //
 // Width of the horizontal transition band at the panel's left edge: the run of

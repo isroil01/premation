@@ -10,7 +10,7 @@ import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
 import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
-import { TEXTURED_PREMUL_MATERIAL, MASKED_TEXTURED_PREMUL_MATERIAL, LUT_TEXTURED_PREMUL_MATERIAL, DEFORMED_MESH_PREMUL_MATERIAL, TEXTURED3D_PREMUL_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL, MASKED_TEXTURED3D_PREMUL_MATERIAL } from '../../shaders/Material';
+import { TEXTURED_PREMUL_MATERIAL, MASKED_TEXTURED_PREMUL_MATERIAL, LUT_TEXTURED_PREMUL_MATERIAL, DEFORMED_MESH_PREMUL_MATERIAL, TEXTURED3D_PREMUL_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL, MASKED_TEXTURED3D_PREMUL_MATERIAL, TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
 
 /**
  * Does this draw's source texture hold PREMULTIPLIED colour?
@@ -229,6 +229,40 @@ export function emitTextured(
     material: premultiplied ? TEXTURED_PREMUL_MATERIAL : TEXTURED_MATERIAL,
     blend,
     uniforms: packTextured(mvp, uvRect, tint, opacity, color),
+    texture,
+    sampler,
+  });
+}
+
+/**
+ * Queue a quad that fills a texture's ALPHA with `color`, discarding its RGB.
+ *
+ * The composite an outward layer style needs: Outer Glow and Drop Shadow are a
+ * blurred SILHOUETTE filled with the style's colour. `emitTextured` cannot
+ * express that — its `tint` multiplies, so it returns `layerRGB × styleRGB`,
+ * which equals the style's colour only when the layer is white and equals black
+ * whenever the two share no channel. See `silhouetteOf` in shaders/builtin.ts.
+ *
+ * `color.a` scales the fill's alpha, so a style opacity folded into the colour
+ * (which is how layerStylesToEffects passes it) still works.
+ */
+export function emitSilhouette(
+  cmds: CommandBuffer,
+  mvp: Mat3,
+  color: Color,
+  opacity: number,
+  blend: BlendMode,
+  texture: TextureHandle,
+  sampler: SamplerHandle,
+  uvRect: Rect = FULL_UV,
+): void {
+  cmds.add({
+    batchKey: `silhouette|${texture.id}|${blend}`,
+    material: TEXTURED_SILHOUETTE_MATERIAL,
+    blend,
+    // Same packing as emitTextured — the variant reinterprets `tint` rather than
+    // adding a uniform, so nothing about the layout changes.
+    uniforms: packTextured(mvp, uvRect, color, opacity),
     texture,
     sampler,
   });

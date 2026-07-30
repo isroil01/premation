@@ -318,6 +318,24 @@ export const TEXTURED3D_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_MATERIAL);
 export const TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_NO_DEPTH_WRITE_MATERIAL);
 export const MASKED_TEXTURED3D_PREMUL_MATERIAL = premulMaterial(MASKED_TEXTURED3D_MATERIAL);
 
+/**
+ * Fill a texture's ALPHA with a solid colour, discarding its RGB.
+ *
+ * What an outward layer style actually is — see the long note on
+ * `silhouetteOf` in builtin.ts for the multiply-instead-of-fill bug this
+ * replaces, and for why black drop shadows appeared to work while every other
+ * colour did not.
+ *
+ * Deliberately NOT one of the variant families the note above warns about: it
+ * adds no uniform, reinterprets the `tint` already in the block, and needs no
+ * premultiplied twin because it reads only alpha — which is the same value in
+ * either alpha space.
+ */
+export const TEXTURED_SILHOUETTE_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED_MATERIAL,
+  shader: `${TEXTURED_MATERIAL.shader}-silhouette`,
+};
+
 export class MaterialSystem {
   constructor(
     private readonly resources: ResourceManager,

@@ -5,7 +5,7 @@ import { depthEligible3D, type Renderable, type RenderableEffect, type Renderabl
 import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
+import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
 import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
 import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
@@ -319,7 +319,10 @@ export class CompositionPass extends RenderPass {
         if (effect.type === 'blur') {
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), targetUv);
         } else if (effect.type === 'glow') {
-          emitTextured(compCmds, mvp, effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), 1, 'screen', blurredTex, clampSampler(), targetUv);
+          // emitSilhouette, not emitTextured: the glow is the blurred ALPHA
+          // filled with the glow colour. Tinting instead returned
+          // layerRGB × glowRGB — see silhouetteOf in shaders/builtin.ts.
+          emitSilhouette(compCmds, mvp, effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), 1, 'screen', blurredTex, clampSampler(), targetUv);
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
         } else {
           // The shadow copy is the whole buffer shifted. In screen space that
@@ -339,7 +342,11 @@ export class CompositionPass extends RenderPass {
                 width: viewport.visibleWorldRect.width,
                 height: viewport.visibleWorldRect.height,
               }));
-          emitTextured(compCmds, shadowMvp, effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
+          // Silhouette fill, for the same reason as the glow above. This one
+          // LOOKED correct because the default shadow colour is black and black
+          // is the absorbing element of a multiply — every non-black shadow
+          // colour was returning layerRGB × shadowRGB.
+          emitSilhouette(compCmds, shadowMvp, effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
         }
         const encC = beginViewportPass(ctx, 'fx-comp', writeAttachment(ctx, f1, Color.transparent()));
@@ -1315,8 +1322,9 @@ export class CompositionPass extends RenderPass {
             targetUv
           );
         } else if (effect.type === 'glow') {
-          // Add glow
-          emitTextured(
+          // Add glow — the blurred ALPHA filled with the glow colour (see
+          // emitSilhouette; a tint would return layerRGB × glowRGB).
+          emitSilhouette(
             mainCmds,
             screenMvp(),
             effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), r.opacity, 'screen', blur2Tex,
@@ -1341,7 +1349,10 @@ export class CompositionPass extends RenderPass {
             width: viewport.visibleWorldRect.width,
             height: viewport.visibleWorldRect.height,
           };
-          emitTextured(
+          // Silhouette fill — black shadows were a fixed point of the old
+          // multiply, so this changes nothing for the default and fixes every
+          // other colour.
+          emitSilhouette(
             mainCmds,
             mvpFor(viewport, modelFromRect(rect)),
             effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), r.opacity, 'normal', blur2Tex,

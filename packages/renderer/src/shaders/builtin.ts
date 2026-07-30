@@ -1720,6 +1720,84 @@ void main() {
   },
 };
 
+// ── Silhouette fill ─────────────────────────────────────────────────────────
+//
+// Takes a texture's ALPHA and fills it with a solid colour, discarding the
+// texture's RGB entirely. This is what an outward layer style is: Photoshop's
+// Outer Glow and Drop Shadow are a blurred silhouette FILLED with the style's
+// colour, not a blurred copy of the artwork.
+//
+// ## The bug this exists to fix
+//
+// Both styles used to composite the blurred layer through `TEXTURED` with the
+// style colour as the TINT — and a tint MULTIPLIES. So the output was
+// `layerRGB × styleRGB`, which is the style's colour only when the layer is
+// white:
+//
+//   white glow, blue layer     white × blue   = BLUE   (the layer's colour)
+//   green glow, blue layer     green × blue   = BLACK  (no shared channel)
+//   red shadow, blue layer     red × blue     = BLACK
+//   black shadow, ANY layer    anything × 0   = BLACK  ← correct, by accident
+//
+// The last line is why drop shadow appeared to work and outer glow did not:
+// black is the absorbing element of a multiply, so the DEFAULT shadow colour is
+// a fixed point and every non-black shadow colour was broken in exactly the same
+// way. Measured before the fix on a blue layer: a green glow moved the pixel
+// 7,7,125 → 3,3,60 (darker blue, no green anywhere) and a red shadow moved it
+// 3,3,196 → 2,2,117 (darker blue, no red).
+//
+// Note that INNER glow and inner shadow were never affected: they run through
+// `applyInterior` on the Canvas2D path, which does `source-in` with a
+// `fillStyle` — already a replace-RGB-keep-alpha fill, i.e. the correct
+// operation spelled in Canvas terms.
+//
+// ## Why a shader variant rather than a uniform
+//
+// Same reasoning as the premultiplied variants below: one behaviour switch is
+// cheaper as a variant than as an extension to the shared std140 `Object` block,
+// and this one needs no new uniform at all — it reinterprets `tint` that is
+// already there. It is also alpha-only, so it is INVARIANT-AGNOSTIC: it never
+// reads the texture's RGB, and alpha is identical in straight and premultiplied
+// space, so unlike the textured shaders it needs no premultiplied twin.
+//
+// Proven by: packages/render-tests/scripts/verify-3d-styles.mjs
+// (`outer glow is the GLOW's colour, not the layer's` and the red-shadow twin).
+const SILHOUETTE_SUFFIX = '-silhouette';
+
+/**
+ * Derive the silhouette-fill twin of a textured shader.
+ *
+ * Substitutes the sample line so `c` becomes `(tint.rgb, texel.a × tint.a)`
+ * instead of `texel × tint`. Everything downstream — the colour matrix, the
+ * `graded * c.a` premultiply on the way out — is untouched, so the fill
+ * composites exactly like any other draw.
+ *
+ * Throws at module load if a site is missing, for the same reason `premulOf`
+ * does: a silent no-op would yield a variant identical to its base, which is a
+ * wrong-colour bug that renders plausible pixels and trips no type or test.
+ */
+function silhouetteOf(base: ShaderSource): ShaderSource {
+  const sub = (code: string, from: string, to: string, where: string): string => {
+    if (!code.includes(from)) {
+      throw new Error(`silhouetteOf(${base.name}): no ${where} site matching ${JSON.stringify(from)}`);
+    }
+    return code.split(from).join(to);
+  };
+  const wgsl = sub(
+    base.wgsl,
+    'textureSample(tex, smp, uv) * obj.tint',
+    'vec4<f32>(obj.tint.rgb, textureSample(tex, smp, uv).a * obj.tint.a)',
+    'wgsl sample',
+  );
+  const fragment = sub(
+    base.glsl.fragment,
+    'texture(uTex, vUv) * tint',
+    'vec4(tint.rgb, texture(uTex, vUv).a * tint.a)',
+    'glsl sample',
+  );
+  return { name: `${base.name}${SILHOUETTE_SUFFIX}`, wgsl, glsl: { ...base.glsl, fragment } };
+}
+
 // ── Premultiplied-source variants ───────────────────────────────────────────
 //
 // Every textured shader assumes STRAIGHT input: it grades `c.rgb`, then returns
@@ -1827,6 +1905,8 @@ function premulOf(base: ShaderSource): ShaderSource {
   return { name: `${base.name}${PREMUL_SUFFIX}`, wgsl, glsl: { ...base.glsl, fragment } };
 }
 
+const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
+
 const TEXTURED_PREMUL = premulOf(TEXTURED);
 const MASKED_TEXTURED_PREMUL = premulOf(MASKED_TEXTURED);
 const LUT_TEXTURED_PREMUL = premulOf(LUT_TEXTURED);
@@ -1840,5 +1920,6 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID3D, TEXTURED3D, MASKED_TEXTURED3D,
   TEXTURED_PREMUL, MASKED_TEXTURED_PREMUL, LUT_TEXTURED_PREMUL, DEFORMED_MESH_PREMUL,
   TEXTURED3D_PREMUL, MASKED_TEXTURED3D_PREMUL,
+  TEXTURED_SILHOUETTE,
   GLASS_COMPOSITE,
 ];
