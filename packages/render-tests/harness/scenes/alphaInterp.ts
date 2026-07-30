@@ -113,6 +113,8 @@ function alphaScene(
   alpha: 'straight' | 'premultiplied',
   bg: string,
   extra: Record<string, unknown> = {},
+  /** Pixel tolerance vs the committed reference, when 0.5% is too tight. */
+  tolerance?: number,
 ): Scene {
   return defineScene({
     id,
@@ -121,6 +123,7 @@ function alphaScene(
     comp: { width: W, height: H, background: bg },
     fps: 30,
     frames: [0],
+    tolerance,
     // GPU-native: the premultiplied variants are shader-side, so Canvas2D is not
     // a meaningful oracle for them.
     oracle: 'gpu',
@@ -296,14 +299,19 @@ export const alphaInterpScenes: Scene[] = [
   //     the front face AND the back cap both sample the image. The back cap
   //     silently losing the flag would fringe the back of an object only, which
   //     reads as a lighting artefact rather than an alpha bug.
+  // Raised tolerance on both extruded scenes: a rotated extrusion's silhouette
+  // is one long AA edge, and the committed reference (hardware GL) vs CI's
+  // SwiftShader lands right on the default 0.5% line (measured 0.501% on
+  // identical code). The alpha SEMANTICS are gated separately by verify-alpha
+  // as shapes, so the pixel slack costs no invariant coverage.
   alphaScene('alpha-extruded-premul', 'Premultiplied ramp on an extruded layer (front + back cap).', 'premultiplied', LIGHT, {
     ...THREE_D,
     rotationY: 28,
     extrusionDepth: 40,
-  }),
+  }, 0.01),
   alphaScene('alpha-extruded-straight', 'Extruded layer read as straight.', 'straight', LIGHT, {
     ...THREE_D,
     rotationY: 28,
     extrusionDepth: 40,
-  }),
+  }, 0.01),
 ];

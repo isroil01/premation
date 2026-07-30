@@ -47,6 +47,7 @@ function svgLayerScene(entry: SvgCorpusEntry): Scene {
     fidelityTwin: `${id}-src`,
     fidelityTolerance: entry.fidelityTolerance,
     fidelityException: entry.exception,
+    tolerance: entry.tolerance,
     build(graph) {
       // Scope on the NODE id, as the importer does — so the scene also proves
       // the scoped document is what actually renders.

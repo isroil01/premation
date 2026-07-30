@@ -1,7 +1,7 @@
 {
   "name": "motion-editor",
-  "version": "0.1.0",
-  "description": "AI-native motion design and animation editor for the desktop \u2014 an After Effects-class timeline, 2D/3D compositing and a GPU renderer, running entirely on your machine.",
+  "version": "0.1.1",
+  "description": "AI-native motion design and animation editor for the desktop — an After Effects-class timeline, 2D/3D compositing and a GPU renderer, running entirely on your machine.",
   "license": "AGPL-3.0-only",
   "author": "Motion Editor contributors",
   "repository": {

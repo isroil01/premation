@@ -29,6 +29,15 @@ export interface SvgCorpusEntry {
   fidelityTolerance?: number;
   /** Why this file needs a raised tolerance. Required when one is set. */
   exception?: string;
+  /**
+   * Fraction of pixels allowed to differ from the COMMITTED reference PNG
+   * (the gpu-oracle gate), when the default 0.5% is too tight. Distinct from
+   * `fidelityTolerance`: the fidelity twin renders on the same machine and is
+   * immune to rasterizer differences, but the committed reference was blessed
+   * on real hardware while CI renders with SwiftShader — scenes dominated by
+   * font or AA edge pixels sit right on the default line.
+   */
+  tolerance?: number;
 }
 
 const svg = (inner: string, attrs = 'viewBox="0 0 100 100"'): string =>
@@ -341,6 +350,10 @@ export const SVG_CORPUS: SvgCorpusEntry[] = [
     name: 'text-stroked',
     description: 'Stroked and filled text.',
     markup: svg('<text x="50" y="60" font-family="sans-serif" font-size="34" font-weight="bold" text-anchor="middle" fill="#ffd166" stroke="#073b4c" stroke-width="1.5">Mg</text>'),
+    // Bold stroked glyphs are nearly all edge pixels, and text renders with
+    // HOST fonts: the committed reference (hardware GL, local fonts) vs CI
+    // (SwiftShader, Ubuntu fonts) lands at ~0.98% on identical code.
+    tolerance: 0.02,
   },
   {
     name: 'text-on-path',
