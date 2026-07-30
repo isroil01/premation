@@ -99,14 +99,16 @@ jobs:
 
       - name: Build renderer and main process
         # VITE_BACKEND_ORIGIN is what makes this a client of your deployed server:
-        # it becomes the API base URL AND the shell's CSP connect-src. Set it in
-        # GitHub ▸ Settings ▸ Secrets and variables ▸ Actions ▸ Variables.
-        # Left empty, the build targets http://localhost:4000 — correct for a
-        # self-hosted install, useless for everyone else.
-        env:
-          VITE_BACKEND_ORIGIN: ${{ vars.VITE_BACKEND_ORIGIN }}
-          VITE_MEDIA_ORIGINS: ${{ vars.VITE_MEDIA_ORIGINS }}
-        run: npm run electron:build
+        # it becomes the API base URL AND the shell's CSP connect-src. A repo
+        # Actions VARIABLE overrides; otherwise the committed .env.production
+        # supplies it. Export only when non-empty — loadEnv gives process.env
+        # precedence, so an unconditional empty env var would ERASE the
+        # .env.production value and the build would fall back to localhost:4000.
+        shell: bash
+        run: |
+          if [ -n "${{ vars.VITE_BACKEND_ORIGIN }}" ]; then export VITE_BACKEND_ORIGIN="${{ vars.VITE_BACKEND_ORIGIN }}"; fi
+          if [ -n "${{ vars.VITE_MEDIA_ORIGINS }}" ]; then export VITE_MEDIA_ORIGINS="${{ vars.VITE_MEDIA_ORIGINS }}"; fi
+          npm run electron:build
 
       - name: Warn if no backend origin was configured
         if: ${{ vars.VITE_BACKEND_ORIGIN == '' }}
