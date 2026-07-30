@@ -2,8 +2,19 @@
 #
 # Runs the offscreen-Electron + SwiftShader golden suite headlessly. SwiftShader
 # pins the GL driver so "same runner image ⇒ same bytes"; xvfb provides the
-# virtual display Electron needs on Linux CI. This scaffold is ready for when a
-# remote is wired up — it is not yet exercised by any hosted CI in this repo.
+# virtual display Electron needs on Linux CI.
+#
+# What gates here: the WebGL2 oracle, which needs no GPU. WebGPU is rendered and
+# MEASURED but never gated — a hosted runner has no WebGPU adapter, so the
+# resolvedKind assertion in renderEntry.ts fires by design (to stop WebGL2 pixels
+# being filed under webgpu/) and the semantic gates report "SKIPPED, webgpu
+# rendered no frames on this machine". A green run here therefore means the
+# oracle matched, not that WebGPU was verified.
+#
+# Electron runs with --no-sandbox: a runner installs node_modules as a non-root
+# user, so chrome-sandbox can never be the root-owned mode-4755 binary the SUID
+# helper demands, and it aborts the process rather than dropping the sandbox. See
+# the note in packages/render-tests/electron/main.cjs.
 name: render-tests
 
 on:
