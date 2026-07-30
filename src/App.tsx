@@ -26,6 +26,7 @@ import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
 import { useProjectStore } from '@stores/projectStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
@@ -391,8 +392,16 @@ function EditorShellInner(): JSX.Element {
 
       // Flat union of all keyframes (collapsed summary row).
       const keyframes: TimelineKeyframeRef[] = properties.flatMap((p) => p.keyframes);
+      // The asset a clip's waveform is drawn from. Audio layers carry it on
+      // their Audio component; a VIDEO layer's own track hangs off the same
+      // asset as its picture, so the bar can show the sound it will actually
+      // play — cutting to a beat was otherwise guesswork.
       const audioComp = node.components.find((c) => c.type === 'Audio');
-      const assetId = audioComp?.props?.__assetId as string | undefined;
+      const mediaAssetId =
+        (audioComp?.props?.__assetId as string | undefined) ??
+        (node.components.find((c) => typeof (c.props as Record<string, unknown>)?.assetId === 'string')
+          ?.props as Record<string, unknown> | undefined)?.assetId as string | undefined;
+      const waveAssetId = kind === 'audio' || kind === 'video' ? mediaAssetId : undefined;
       // Clip bars for this node = its Timeline Engine layers (seconds).
       const clips: TimelineClip[] = controller.getLayersForNode(node.id).map((l) => ({
         id: l.id,
@@ -402,7 +411,12 @@ function EditorShellInner(): JSX.Element {
         duration: l.duration / compFps,
         label: node.name ?? node.id,
         color: (node as any).color ?? KIND_FILL[kind],
-        ...(kind === 'audio' && assetId ? { assetId } : {}),
+        ...(waveAssetId ? { assetId: waveAssetId } : {}),
+        // The window this bar shows onto its source, in SOURCE seconds. Trim
+        // moves the edges, slip slides both — the waveform reads these so it
+        // shows the audible region rather than the whole file squeezed to fit.
+        sourceInSec: l.clip.sourceIn / compFps,
+        sourceOutSec: (l.clip.sourceIn + l.clip.duration) / compFps,
       }));
       const track: TimelineTrack = {
         id: node.id as TrackId,
@@ -411,6 +425,7 @@ function EditorShellInner(): JSX.Element {
         icon: KIND_ICON[kind],
         color: (node as any).color ?? KIND_COLOR[kind],
         muted: node.visible === false,
+        audioMuted: isLayerAudioMuted(node),
         locked: node.locked === true,
         solo: node.solo === true,
         blendMode: getNodeBlend(node.id),
@@ -747,6 +762,32 @@ function EditorShellInner(): JSX.Element {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node) return;
     node.name = newName;
+    bumpScene();
+  };
+
+  /**
+   * Toggle a layer's AUDIO mute from the speaker glyph on its clip bar.
+   *
+   * Deliberately separate from the track's visibility eye: hiding a layer
+   * silences it too, but muting the sound must not blank the picture. Writes
+   * the same prop the inspector's Mute switch does — the glyph is a second view
+   * of one piece of state, not a second piece of state.
+   */
+  const handleClipMuteToggle = (nodeId: string): void => {
+    const node = defaultSceneGraph.getNode(nodeId);
+    if (!node) return;
+    const kind = readNodeKind(node);
+    if (kind === 'audio') {
+      const comp = node.components.find((c) => c.type === 'Audio');
+      if (!comp) return;
+      const next = comp.props?.__muted === true ? undefined : true;
+      defaultSceneGraph.writeProp(nodeId, comp.id, '__muted', next);
+    } else {
+      const comp = node.components.find((c) => c.type === 'Transform');
+      if (!comp) return;
+      const next = (comp.props as Record<string, unknown>)?.[VIDEO_AUDIO_MUTED_PROP] === true ? undefined : true;
+      defaultSceneGraph.writeProp(nodeId, comp.id, VIDEO_AUDIO_MUTED_PROP, next);
+    }
     bumpScene();
   };
 
@@ -1221,6 +1262,7 @@ function EditorShellInner(): JSX.Element {
               revealProps={revealFilter}
               onTrackToggleExpand={toggleExpand}
               onTrackActivate={handleTrackActivate}
+              onClipMuteToggle={handleClipMuteToggle}
               onTrackRename={handleTrackRename}
               onTrackReorder={handleTrackReorder}
               onTrackColorChange={(trackId, color) => setNodeColor(trackId, color)}
@@ -1231,6 +1273,25 @@ function EditorShellInner(): JSX.Element {
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Is this layer's AUDIO muted? (Separate from the visibility eye, which hides
+ * the picture.) Module scope on purpose: it is called from the `tracks` memo,
+ * which runs during render well before any `const` declared inside the
+ * component body has initialised — as a component-scope const it threw
+ * "Cannot access before initialization" and took the whole editor down.
+ */
+function isLayerAudioMuted(node: ReturnType<typeof defaultSceneGraph.getNode>): boolean {
+  if (!node) return false;
+  const kind = readNodeKind(node);
+  if (kind === 'audio') {
+    return node.components.find((c: { type: string }) => c.type === 'Audio')?.props?.__muted === true;
+  }
+  if (kind !== 'video') return false;
+  return node.components.some(
+    (c: { props?: Record<string, unknown> }) => c.props?.[VIDEO_AUDIO_MUTED_PROP] === true,
   );
 }
 

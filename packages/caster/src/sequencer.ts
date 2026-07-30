@@ -25,6 +25,7 @@
  */
 
 import type { SlotContent, SlotRole } from '@motion/design-system';
+import { GENERATED_MEDIA } from './types';
 import type { Beat, BriefBeat, CreativeBrief, Sequence, Survival, SurvivalKind } from './types';
 
 /** The minimum a beat needs to read at all. */
@@ -93,7 +94,12 @@ function rolesIn(content: SlotContent): Set<SlotRole> {
  * exactly the case `validate` rejects.
  */
 export function survivalBetween(a: SlotContent, b: SlotContent): Survival | undefined {
-  if (a.mediaAssetId && a.mediaAssetId === b.mediaAssetId) {
+  // The sentinel is excluded deliberately. `transform_into` is the strongest
+  // survival there is BECAUSE the viewer tracks one object across the cut — and
+  // two beats that each asked for a generated picture asked for two DIFFERENT
+  // pictures. Matching on the sentinel would claim the strongest continuity in
+  // the vocabulary for the one case that has none.
+  if (a.mediaAssetId && a.mediaAssetId !== GENERATED_MEDIA && a.mediaAssetId === b.mediaAssetId) {
     return { kind: 'transform_into', role: 'media' };
   }
   if (a.headline && a.headline === b.headline) {
@@ -138,13 +144,20 @@ export function sequence(brief: CreativeBrief, o: SequenceOptions = {}): Sequenc
     // Every beat gets at least MIN_BEAT_MS, taken proportionally from the rest.
     const share = (Math.max(0.01, b.weight) / totalWeight) * total;
     const durationMs = Math.max(MIN_BEAT_MS, Math.round(share));
+    // Art direction makes the media role fillable. Candidacy is decided by
+    // `availableRoles`, which reads `mediaAssetId` — so without the sentinel a
+    // beat that asked for a picture would still be offered only the layouts
+    // that need no picture, and the art direction would go nowhere.
+    const content: SlotContent =
+      b.art && !b.content.mediaAssetId ? { ...b.content, mediaAssetId: GENERATED_MEDIA } : b.content;
     beats.push({
       index: i,
       startMs: cursor,
       durationMs,
       purpose: b.purpose,
-      content: b.content,
+      content,
       tags: tagsForPurpose(b.purpose),
+      ...(b.art ? { art: b.art } : {}),
     });
     cursor += durationMs;
   });
@@ -226,9 +239,28 @@ export function validate(seq: Sequence): SequenceProblem[] {
   return problems;
 }
 
-/** Roles a beat's content can fill — for constraining the motion cast. */
-export function availableRolesFor(beat: Beat): SlotRole[] {
+/**
+ * Roles a beat's content can fill — for constraining the motion cast.
+ *
+ * Returns the ANIMATABLE role vocabulary, which is wider than the layout slot
+ * vocabulary: `background` is a real target (the composition's backdrop) that no
+ * layout template declares a slot for.
+ */
+export function availableRolesFor(beat: Beat): (SlotRole | 'background')[] {
   const roles = [...rolesIn(beat.content)];
   // A layout can always draw a mark and a rule, so they are always castable.
-  return [...roles, 'mark', 'rule'];
+  //
+  // `background` too, and its absence was expensive. The candidate filter is
+  // `t.roles.some(r => availableRoles.has(r))`, so every technique declaring
+  // ONLY `background` matched nothing and was dropped on 100% of beats —
+  // seven of them: the five `background.*` ambients plus `transition.rule_wipe`
+  // and `transition.glitch_slam`. All seven are named in pack `prefer` lists, so
+  // six of the eight packs were asking for techniques the caster could not
+  // reach, and quietly got their fallback instead. That is a large part of why
+  // pieces in different packs still resembled each other.
+  //
+  // It is honest now in a way it was not before: the composition owns exactly
+  // one backdrop, at a known id, created before any beat — so there really is
+  // always a background layer to animate. `emitPass` supplies the id.
+  return [...roles, 'mark', 'rule', 'background'];
 }

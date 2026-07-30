@@ -78,6 +78,8 @@ import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration,
 import { TRANSITION_ITEMS, applyTransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
 import { SFX_ITEMS, insertSfxItem, type SfxCategory } from '@core/library/sfxLibrary';
 import { LOTTIE_ITEMS, insertLottieItem, importLottieFile, type LottieCategory } from '@core/library/lottieLibrary';
+import { prepareLottiePreview, drawLottiePreview } from '@core/library/lottiePreview';
+import type { LottieJson } from '@core/lottie/lottieImport';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
@@ -1811,89 +1813,61 @@ function SoundFXContent(): JSX.Element {
 // ── Lottie Micro UI Panel ─────────────────────────────────────────
 // Advanced Apple-style UI micro-interactions (Pill Stepper, Dynamic Island, Fluid Switch, Face ID, etc.)
 
-function renderLottiePreviewSvg(id: string, color: string): JSX.Element {
-  switch (id) {
-    case 'lot-pill-stepper':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <text x="2" y="15" fill="#ffffff" fontSize="9" fontWeight="800" fontFamily="sans-serif">3</text>
-          <rect x="10" y="4" width="26" height="16" rx="8" fill="#000000" stroke="#ffffff" strokeWidth="0.8" />
-          <path d="M 10 12 A 8 8 0 0 1 18 4 L 23 4 L 23 20 L 18 20 A 8 8 0 0 1 10 12 Z" fill="#ffffff" />
-          <line x1="13" y1="12" x2="19" y2="12" stroke="#000000" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="26" y1="12" x2="32" y2="12" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="29" y1="9" x2="29" y2="15" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      );
-    case 'lot-dynamic-island':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <rect x="2" y="5" width="36" height="14" rx="7" fill="#09090b" stroke="#27272a" strokeWidth="0.8" />
-          <line x1="10" y1="9" x2="10" y2="15" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="14" y1="7" x2="14" y2="17" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
-          <line x1="18" y1="10" x2="18" y2="14" stroke="#38bdf8" strokeWidth="1.5" strokeLinecap="round" />
-          <circle cx="30" cy="12" r="2.5" fill="#22c55e" />
-        </svg>
-      );
-    case 'lot-fluid-switch':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <rect x="2" y="4" width="36" height="16" rx="8" fill="#18181b" stroke="#27272a" strokeWidth="0.8" />
-          <rect x="20" y="6" width="16" height="12" rx="6" fill="#ffffff" />
-          <circle cx="10" cy="12" r="2" fill="#71717a" />
-          <circle cx="28" cy="12" r="2" fill="#000000" />
-        </svg>
-      );
-    case 'lot-glass-action':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <circle cx="20" cy="12" r="10" fill="none" stroke="#6366f1" strokeWidth="1" strokeDasharray="3 2" opacity="0.6" />
-          <rect x="6" y="5" width="28" height="14" rx="7" fill="#0f172a" stroke="#6366f1" strokeWidth="0.8" />
-          <circle cx="20" cy="12" r="3.5" fill="#10b981" />
-          <path d="M 18.5 12 L 19.5 13 L 21.5 11" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" fill="none" />
-        </svg>
-      );
-    case 'lot-face-id':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <circle cx="20" cy="12" r="9" fill="none" stroke="#38bdf8" strokeWidth="1.2" strokeDasharray="4 2" />
-          <rect x="15" y="7" width="10" height="10" rx="2.5" fill="#09090b" stroke="#22c55e" strokeWidth="1" />
-          <circle cx="20" cy="12" r="1.8" fill="#22c55e" />
-        </svg>
-      );
-    case 'lot-volume-pill':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <rect x="14" y="2" width="12" height="20" rx="6" fill="#18181b" stroke="#27272a" strokeWidth="0.8" />
-          <rect x="15" y="10" width="10" height="11" rx="5" fill="#f43f5e" />
-          <circle cx="20" cy="6" r="1.5" fill="#ffffff" />
-        </svg>
-      );
-    case 'lot-toast-banner':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <rect x="4" y="5" width="32" height="14" rx="7" fill="#09090b" stroke="#a855f7" strokeWidth="0.8" />
-          <circle cx="11" cy="12" r="3" fill="#a855f7" />
-          <line x1="17" y1="12" x2="30" y2="12" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" opacity="0.7" />
-        </svg>
-      );
-    case 'lot-liquid-toggle':
-      return (
-        <svg viewBox="0 0 40 24" width="34" height="20" style={{ margin: 'auto', display: 'block' }}>
-          <rect x="4" y="4" width="32" height="16" rx="8" fill="#10b981" />
-          <circle cx="28" cy="12" r="6" fill="#ffffff" />
-        </svg>
-      );
-    default:
-      return (
-        <circle cx="20" cy="12" r="6" fill={color} />
-      );
-  }
+/**
+ * A library card that PLAYS ITS OWN DOCUMENT.
+ *
+ * Each card used to be a hand-drawn SVG impression of its item, with nothing
+ * tying it to the Lottie document the card actually inserts — so a card could
+ * keep looking right long after the document stopped landing that way. This
+ * draws the same plan applyImportPlan realises, which is why inserting an item
+ * now reproduces its card.
+ *
+ * Still by default (one frame is the honest contract for "what you get"), and
+ * it plays while hovered so the motion is still visible before you commit.
+ */
+function LottieCardPreview({ doc, playing }: { doc: LottieJson; playing: boolean }): JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Planning is pure and cheap, but it is per-document work — do it once.
+  const scene = useMemo(() => prepareLottiePreview(doc), [doc]);
+  const restT = scene.restSec;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = canvas.clientWidth || 44;
+    const h = canvas.clientHeight || 30;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Resizing the canvas above CLEARS it, so paint before yielding: an rAF
+    // that never arrives (hidden pane, background window) would otherwise leave
+    // the card blank for as long as the throttle lasts.
+    drawLottiePreview(ctx, scene, playing ? 0 : restT, w, h);
+    if (!playing) return;
+
+    let raf = 0;
+    const started = performance.now();
+    const tick = (): void => {
+      const elapsed = (performance.now() - started) / 1000;
+      drawLottiePreview(ctx, scene, scene.durationSec > 0 ? elapsed % scene.durationSec : 0, w, h);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [scene, playing, restT]);
+
+  return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />;
 }
 
 function LottieContent(): JSX.Element {
   const [filter, setFilter] = useState<'all' | LottieCategory>('all');
   const notify = useUIStore((s) => s.notify);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
   const items = LOTTIE_ITEMS.filter((l) => filter === 'all' || l.cat === filter);
 
   const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -1933,9 +1907,11 @@ function LottieContent(): JSX.Element {
               key={item.id}
               type="button"
               className={styles.libChip}
-              title={`${item.name} — ${item.frames}f @ 30fps. Drag onto canvas or click to insert`}
+              title={`${item.name} — ${item.frames}f @ 30fps. Hover to play, drag onto canvas or click to insert`}
               draggable
               onDragStart={(e) => setCanvasDrag(e, { kind: 'lottie', lottieId: item.id, name: item.name })}
+              onMouseEnter={() => setHovered(item.id)}
+              onMouseLeave={() => setHovered((h) => (h === item.id ? null : h))}
               onClick={() => {
                 const ids = insertLottieItem(item.id);
                 if (ids.length > 0) notify({ level: 'success', message: `Inserted ${item.name} (${ids.length} layer${ids.length > 1 ? 's' : ''})`, durationMs: 1800 });
@@ -1943,7 +1919,7 @@ function LottieContent(): JSX.Element {
               }}>
               <span className={styles.libChipThumb}
                 style={{ background: `radial-gradient(circle at 50% 45%, ${item.color}22 0%, transparent 70%), #09090b`, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {renderLottiePreviewSvg(item.id, item.color)}
+                <LottieCardPreview doc={item.doc} playing={hovered === item.id} />
                 <span style={{ position: 'absolute', bottom: 2, right: 3, fontSize: '0.52rem', fontWeight: 800,
                   color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em' }}>LOTTIE</span>
               </span>

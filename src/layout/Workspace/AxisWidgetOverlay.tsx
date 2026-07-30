@@ -14,14 +14,13 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
-import { readSceneCamera } from '@core/scene/camera3d';
+import { activeCameraNode, readSceneCamera } from '@core/scene/camera3d';
 import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { defaultAnimation } from '@motion/animation';
 import { Project3D, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
-import type { SceneNode } from '@core/types';
 
 /** Same palette as the 3D gizmo (gizmo3d.ts): Red=X, Green=Y, Blue=Z. */
 const AXIS_COLORS = { x: '#ff3b30', y: '#34c759', z: '#007aff' } as const;
@@ -35,21 +34,26 @@ export const AxisWidgetOverlay: React.FC = () => {
   useSceneRevision((s) => s.rev);
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
+  // Scoped like the renderer's, so the overlay never draws a different camera
+  // than the one the frame was rendered through.
+  const compRootId = useCompositionStore((s) => s.id);
   const camera3dMode = useGuidesStore((s) => s.camera3dMode);
   const customViews = useGuidesStore((s) => s.customViews);
   const time = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
 
   // Visible only when the comp actually has 3D content.
+  // Comp-scoped: another composition's 3D layers must not make THIS comp's
+  // viewport claim it is 3D.
   let has3D = false;
-  let cameraNode: SceneNode | undefined;
-  for (const n of flattenScene(defaultSceneGraph)) {
+  for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
     const k = readNodeKind(n);
-    if (k === 'camera') {
-      if (!cameraNode) cameraNode = n;
-      continue;
-    }
+    if (k === 'camera') continue;
     if (k !== 'light' && is3DEnabled(n)) has3D = true;
   }
+  // One resolver for every camera read in the app. A local first-match search
+  // here would draw the widget for a different camera than the frame was
+  // rendered through — same scope and same tie-break, or neither is trustworthy.
+  const cameraNode = activeCameraNode(defaultSceneGraph, compRootId);
   if (!has3D) return null;
 
   // Resolve the view camera at the playhead — same resolver chain the gizmo
@@ -65,7 +69,7 @@ export const AxisWidgetOverlay: React.FC = () => {
       id === camNode.id ? camValues.get(p) : undefined,
     );
   } else {
-    camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight);
+    camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, undefined, compRootId);
   }
   const orthoView: OrthoView | null =
     camera3dMode === 'active' || isCustomViewId(camera3dMode) ? null : (camera3dMode as OrthoView);

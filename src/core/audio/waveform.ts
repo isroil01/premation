@@ -87,6 +87,38 @@ export function amplitudeAt(wave: WaveformPeaks, tSec: number): number {
 }
 
 /**
+ * The slice of a waveform's peaks covering `[fromSec, toSec]` of the SOURCE.
+ *
+ * A clip bar shows a WINDOW onto its source, not the whole file: trimming moves
+ * the window's edges and slipping slides it along. Drawing the full peak array
+ * across the bar — which is what a clip bar did before this existed — meant the
+ * waveform showed the whole file squeezed into whatever width the bar happened
+ * to be, so the peaks under the playhead were not the audio you would hear
+ * there, and trimming or slipping visibly changed nothing.
+ *
+ * Returns an empty array when the range is degenerate or entirely outside the
+ * file, so callers can skip drawing rather than render a flat line that looks
+ * like silence.
+ */
+export function peaksInRange(
+  wave: WaveformPeaks,
+  fromSec: number,
+  toSec: number,
+): Float32Array {
+  if (wave.duration <= 0 || wave.peaks.length === 0) return new Float32Array(0);
+  const from = Math.max(0, Math.min(fromSec, wave.duration));
+  const to = Math.max(0, Math.min(toSec, wave.duration));
+  if (!(to > from)) return new Float32Array(0);
+
+  const n = wave.peaks.length;
+  const lo = Math.floor((from / wave.duration) * n);
+  // `ceil` so a window shorter than one bucket still yields the bucket it
+  // touches rather than nothing at all.
+  const hi = Math.min(n, Math.max(lo + 1, Math.ceil((to / wave.duration) * n)));
+  return wave.peaks.subarray(lo, hi);
+}
+
+/**
  * Build an SVG path string for a symmetric (mirrored) waveform filling a
  * `width`×`height` box, baseline centred. Pure geometry so it can be unit
  * tested and reused by any renderer.
@@ -94,7 +126,12 @@ export function amplitudeAt(wave: WaveformPeaks, tSec: number): number {
 export function waveformPath(peaks: Float32Array, width: number, height: number): string {
   if (peaks.length === 0 || width <= 0 || height <= 0) return '';
   const mid = height / 2;
-  const step = width / peaks.length;
+  // Span the FULL width: the last sample sits at `width`, not one step short
+  // of it. Dividing by `peaks.length` left a trailing gap of one bucket —
+  // 0.1% and invisible across a 1024-bucket envelope, but a clip bar trimmed
+  // to a short window draws from only a handful of buckets, where the same gap
+  // is a visible chunk of empty bar at the end of the waveform.
+  const step = peaks.length > 1 ? width / (peaks.length - 1) : width;
   const top: string[] = [];
   const bottom: string[] = [];
   for (let i = 0; i < peaks.length; i++) {

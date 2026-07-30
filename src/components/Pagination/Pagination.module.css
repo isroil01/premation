@@ -1,0 +1,106 @@
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4, 10px);
+  padding: var(--space-4, 10px) var(--space-2, 4px) var(--space-1, 2px);
+}
+
+/* The count is the point of the control — it is the only thing on screen that
+   says the list continues past what is rendered. */
+.count {
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary, #7e7e7e);
+  font-variant-numeric: tabular-nums;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5, 12px);
+  margin-left: auto;
+}
+
+.sizeLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3, 6px);
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary, #7e7e7e);
+}
+
+.sizeSelect {
+  height: 24px;
+  padding: 0 var(--space-3, 6px);
+  border-radius: var(--radius-control, 4px);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.sizeSelect:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.page,
+.step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--space-2, 5px);
+  border-radius: var(--radius-control, 4px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: var(--motion-hover-transition, background 120ms ease);
+}
+
+.page:hover:not(:disabled),
+.step:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.page:disabled,
+.step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page:focus-visible,
+.step:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+  outline: none;
+}
+
+.pageActive,
+.pageActive:hover:not(:disabled) {
+  background: var(--color-primary);
+  border-color: transparent;
+  color: var(--color-primary-foreground, #fff);
+  font-weight: 600;
+}
+
+.gap {
+  min-width: 16px;
+  text-align: center;
+  color: var(--color-text-tertiary, #7e7e7e);
+  font-size: 0.72rem;
+  user-select: none;
+}

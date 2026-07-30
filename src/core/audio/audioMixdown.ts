@@ -15,6 +15,7 @@
 import { audioEngine } from './AudioEngine';
 import { readAudioLayers } from './audioScene';
 import type { AudioLayerState } from './AudioEngine';
+import { buildParamRamp, applyRamp } from './audioParams';
 
 /** Standard export sample rate — 48 kHz is what AAC/most containers expect. */
 const EXPORT_SAMPLE_RATE = 48000;
@@ -128,13 +129,28 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
   const duration = Math.max(0, endSec - startSec);
   if (!Ctor || duration <= 0) return null;
 
-  const layers = readAudioLayers().filter((l) => !l.muted && l.level > 0);
+  // A muted layer contributes nothing. Level is NOT filtered on here: an
+  // animated level that starts at silence and rises is entirely legitimate, and
+  // dropping it on its opening value would remove exactly the fade-in case
+  // keyframable levels exist for.
+  const layers = readAudioLayers().filter((l) => !l.muted);
   if (layers.length === 0) return null;
 
   // Decode anything not already in the AudioEngine's cache.
   await Promise.all(layers.map((l) => audioEngine.load(l.assetId, l.src)));
 
-  const scheduled = layers
+  // `outSec: 0` is the "play to the end of the file" sentinel the live engine
+  // already honours (`l.outSec > 0 ? l.outSec : buffer.duration`). It reaches
+  // here for any voice with no timeline bar and no known duration — including
+  // every video layer imported before its metadata resolved. Resolving it
+  // against the decoded buffer has to happen AFTER the decode above and BEFORE
+  // `audibleWindow`, which would otherwise compute a zero-length clip and drop
+  // the layer from the export while preview played it fine.
+  const resolved = layers.map((l) =>
+    l.outSec > 0 ? l : { ...l, outSec: audioEngine.decodedBuffer(l.assetId)?.duration ?? 0 },
+  );
+
+  const scheduled = resolved
     .map((l) => ({ l, win: audibleWindow(l, startSec, endSec) }))
     .filter((x): x is { l: AudioLayerState; win: NonNullable<ReturnType<typeof audibleWindow>> } => x.win !== null);
   if (scheduled.length === 0) return null;
@@ -149,8 +165,23 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     const gain = ctx.createGain();
-    gain.gain.value = Math.max(0, l.level / 100);
     source.connect(gain).connect(ctx.destination);
+
+    // The SAME curve builder the live engine uses, scheduled on the offline
+    // context's clock. This is the seam where preview and export could drift
+    // apart, and the reason it is one function rather than two: a level curve
+    // that sounds right while scrubbing and renders differently is only
+    // discoverable by exporting and listening to the whole file.
+    //
+    // `win.offset` is a position in the SOURCE buffer, so the comp time this
+    // window begins at is startSec + (offset - inSec) — the same conversion
+    // startVoice does when resuming mid-fade.
+    const compStart = l.startSec + (win.offset - l.inSec);
+    const ramp = buildParamRamp(l.nodeId, l.levelDb, compStart, win.duration, {
+      animated: l.levelAnimated === true,
+    });
+    applyRamp(gain.gain, ramp, win.when);
+
     try {
       source.start(win.when, win.offset, win.duration);
       voices++;

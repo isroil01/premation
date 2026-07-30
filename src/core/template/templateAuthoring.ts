@@ -14,6 +14,7 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { declareSlot, DEFAULT_SLOT_FIT } from './mediaSlots';
 import { bumpScene } from '@stores/sceneStore';
 import type { TemplateField } from './templateTypes';
 
@@ -59,11 +60,23 @@ export function inferFieldForNode(nodeId: string): TemplateField | null {
     };
   }
 
+  // MEDIA SLOT — any layer that shows a source, not just stills.
+  //
+  // This used to require `sceneKind === 'image'`, so a video placeholder could
+  // not be exposed at all: the most obvious thing to want in a product-launch
+  // template (drop your clip here) was the one thing the author could not
+  // offer. Asking `sourceOf` instead of matching a kind means stills, footage,
+  // image sequences and placed compositions are all slottable by the same rule,
+  // and no new source kind has to be remembered here later.
   const transform = node.components.find((c) => c.type === 'Transform');
   const sceneKind = transform && (transform.props as Record<string, unknown>)[SCENE_KIND_PROP];
-  if (transform && sceneKind === 'image') {
+  if (transform && (sceneKind === 'image' || sceneKind === 'video' || sceneKind === 'svg' || sceneKind === 'comp')) {
+    // Capture the placeholder's box as the slot rect NOW, while it is still the
+    // authored design — after the first fill the box is the fitted size, and
+    // capturing then would make every later fill compound.
+    declareSlot(nodeId, DEFAULT_SLOT_FIT);
     return {
-      id: `f_${nodeId}_src`, label, kind: 'image', group: 'Media',
+      id: `f_${nodeId}_src`, label, kind: 'media', group: 'Media', fit: DEFAULT_SLOT_FIT,
       default: String((transform.props as Record<string, unknown>).src ?? ''),
       target: { nodeId, componentType: 'Transform', prop: 'src' },
     };

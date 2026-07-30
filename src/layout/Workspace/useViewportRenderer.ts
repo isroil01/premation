@@ -18,11 +18,13 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { resolveViewCameraInput } from '@core/workspace/cameraNav';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
 import { useProjectStore } from '@stores/projectStore';
+import { compSizeOf } from '@core/composition/compSizes';
 
 
 
@@ -143,6 +145,12 @@ export function useViewportRenderer(
   const draft3dRef = useRef(draft3d);
   draft3dRef.current = draft3d;
 
+  // Proxies are a VIEWPORT concession. This is one of only two places that opt
+  // in; export and the offline renderer never do. See `@core/assets/proxy`.
+  const useProxies = usePreferenceStore((s) => s.useProxies);
+  const useProxiesRef = useRef(useProxies);
+  useProxiesRef.current = useProxies;
+
   // Wrap in try/finally so a buildSnapshot/renderFrame exception never
   // permanently wedges rafIdRef.current at a non-null handle — if it got
   // stuck, the RAF deduplication guard would silently halt all future renders.
@@ -173,7 +181,9 @@ export function useViewportRenderer(
           {
             ...compRef.current,
             rootId: compRef.current.id,
+            compSizeOf,
             draft3d: draft3dRef.current,
+            useProxies: useProxiesRef.current,
             ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
           },
         ),

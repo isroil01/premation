@@ -54,6 +54,20 @@ export interface Preferences {
    * boxes could not be turned OFF, not that they were on.
    */
   showLayerBounds: boolean;
+  /**
+   * Decode low-resolution proxies in the viewport (After Effects' Use Proxies).
+   *
+   * A PREFERENCE, not project content, and that is a deliberate choice: a proxy
+   * is a fact about one machine's disk. Saved into the project it would travel
+   * to a collaborator who has no proxy files, or — far worse — arrive already
+   * ON, so their first render of your project would silently be low-res. Scoped
+   * here it persists across sessions for the person who turned it on and means
+   * nothing to anyone else.
+   *
+   * Off by default. Export and offline renders ignore it entirely; see
+   * `@core/assets/proxy` for why that is enforced by polarity.
+   */
+  useProxies: boolean;
 }
 
 interface PreferenceActions {
@@ -76,6 +90,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   timelineHeaderWidth: 460,
   retainOriginalSvg: true,
   showLayerBounds: true,
+  useProxies: false,
 };
 
 /** Pluggable persistence backend. */

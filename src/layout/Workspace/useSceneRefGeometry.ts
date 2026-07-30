@@ -19,9 +19,9 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
-import { readSceneCamera } from '@core/scene/camera3d';
+import { activeCameraNode, readSceneCamera } from '@core/scene/camera3d';
 import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
 import { collectSceneGizmos } from '@core/workspace/sceneGizmoData';
 import { getRemappedTime } from '@core/timeline/TimelineController';
@@ -29,7 +29,6 @@ import { defaultAnimation } from '@motion/animation';
 import type { Camera3dMode } from '@stores/guidesStore';
 import type { Camera3D, OrthoView } from '@motion/scene';
 import type { SceneGizmo } from '@motion/workspace';
-import type { SceneNode } from '@core/types';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
 export interface SceneRefGeometry {
@@ -57,6 +56,9 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   const draft3d = useGuidesStore((s) => s.draft3d);
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
+  // Scoped like the renderer's, so the overlay never draws a different camera
+  // than the one the frame was rendered through.
+  const compRootId = useCompositionStore((s) => s.id);
   const time = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
   const sceneRev = useSceneRevision((s) => s.rev);
 
@@ -72,13 +74,8 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   if (isCustomViewId(mode)) {
     camera = customViewCamera(customViews[mode], compWidth, compHeight);
   } else {
-    let cameraNode: SceneNode | undefined;
-    for (const n of flattenScene(defaultSceneGraph)) {
-      if (readNodeKind(n) === 'camera') {
-        cameraNode = n;
-        break;
-      }
-    }
+    // The shared resolver — same scope, same tie-break as the renderer.
+    const cameraNode = activeCameraNode(defaultSceneGraph, compRootId);
     activeCameraId = cameraNode?.id ?? null;
     if (cameraNode) {
       const camNode = cameraNode;
@@ -87,7 +84,7 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
         id === camNode.id ? camValues.get(p) : undefined,
       );
     } else {
-      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight);
+      camera = readSceneCamera(defaultSceneGraph, compWidth, compHeight, undefined, compRootId);
     }
   }
 
@@ -103,7 +100,9 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
    */
   const scene3d = (() => {
     if (mode !== 'active' || draft3d) return true;
-    for (const n of flattenScene(defaultSceneGraph)) {
+    // Comp-scoped: a camera or 3D layer in a DIFFERENT composition must not
+    // switch this one's reference geometry on.
+    for (const n of flattenComposition(defaultSceneGraph, compRootId)) {
       const k = readNodeKind(n);
       if (k === 'camera') return true;
       if (k !== 'light' && is3DEnabled(n)) return true;

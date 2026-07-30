@@ -46,6 +46,8 @@ export {
 
 export { emitAndValidate, sceneFromCalls, type EmitOptions } from './emit';
 
+export { GENERATED_MEDIA } from './types';
+
 export type {
   Beat,
   BriefBeat,
@@ -64,6 +66,8 @@ export type {
 export {
   runCaster,
   type CasterHooks,
+  type CasterVariant,
+  type Direction,
   type RunCasterOptions,
   type RunCasterResult,
 } from './run';

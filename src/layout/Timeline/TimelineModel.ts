@@ -93,7 +93,14 @@ export interface TimelineClip {
   duration: number;
   label?: string;
   color?: string;
+  /** Media asset behind this clip, for the waveform. Set for audio layers and
+   *  for video layers (whose own audio track shares the picture's asset). */
   assetId?: string;
+  /** The window this bar shows onto its source, in SOURCE seconds. Trim moves
+   *  the edges, slip slides both. The waveform slices to this so it draws the
+   *  audible region rather than the whole file scaled to the bar. */
+  sourceInSec?: number;
+  sourceOutSec?: number;
 }
 
 export interface TimelineTrack {
@@ -103,6 +110,9 @@ export interface TimelineTrack {
   kind?: string;
   /** Icon glyph name (from the shared Icon set) shown left of the name. */
   icon?: string;
+  /** This layer's AUDIO is muted. Separate from `muted` (the visibility eye),
+   *  which hides the picture. Drives the clip bar's speaker glyph. */
+  audioMuted?: boolean;
   /** Locked tracks don't allow edits. */
   locked?: boolean;
   /** Muted / solo state. */

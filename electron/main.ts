@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerCredentialIpc } from './credentialStore';
+import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -302,6 +303,157 @@ function registerRenderIpc(): void {
     const jpg = files.filter((f) => /^frame_\d+\.jpg$/i.test(f)).length;
     return png > jpg ? { count: png, ext: 'png' } : { count: jpg, ext: 'jpg' };
   };
+
+  /**
+   * Probe a media file's real stream facts.
+   *
+   * The renderer cannot learn these on its own. Nothing in the browser reports a
+   * `<video>`'s frame rate — `requestVideoFrameCallback` is the only API that
+   * exposes real frame times and it never fires for a detached, paused element
+   * (measured) — and `decodeAudioData` only tells you whether a file HAS audio
+   * by throwing at playback time, long after import.
+   *
+   * Bytes come over IPC and land in a temp file rather than being piped to
+   * ffprobe's stdin, deliberately: a pipe is not seekable, and an mp4 with its
+   * moov atom at the end (every file a phone or a browser recorder produces)
+   * cannot be parsed without seeking. The temp file is always removed.
+   *
+   * Returns null rather than throwing when ffprobe/ffmpeg is absent — the probe
+   * is an enhancement, and an import must never fail because a codec tool is
+   * missing. `resolveFfmpeg` falls back to bare 'ffmpeg' on PATH, so "not
+   * installed" is a real, common state on desktop, not just on web.
+   */
+  const resolveFfprobe = (): string => {
+    if (process.env.FFPROBE_PATH && existsSync(process.env.FFPROBE_PATH)) return process.env.FFPROBE_PATH;
+    const name = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+    const bundled = path.join(process.resourcesPath ?? '', 'ffmpeg', name);
+    if (existsSync(bundled)) return bundled;
+    // Sibling of a resolved ffmpeg — the usual layout for both bundles and
+    // package managers.
+    const ff = resolveFfmpeg();
+    if (ff !== 'ffmpeg') {
+      const sibling = path.join(path.dirname(ff), name);
+      if (existsSync(sibling)) return sibling;
+    }
+    return 'ffprobe';
+  };
+
+  /** Run a binary and capture stdout. Resolves null on any failure, including
+   *  the executable not existing — every caller treats absence as "unknown". */
+  const capture = (bin: string, args: string[]): Promise<string | null> =>
+    new Promise((resolve) => {
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch {
+        resolve(null);
+        return;
+      }
+      let out = '';
+      let err = '';
+      proc.stdout?.on('data', (d) => (out += String(d)));
+      proc.stderr?.on('data', (d) => (err += String(d)));
+      proc.on('error', () => resolve(null));
+      proc.on('close', (code) => resolve(code === 0 ? out : err || null));
+    });
+
+  ipcMain.handle('media:probe', async (_e, bytes: Uint8Array, ext: string) => {
+    const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : 'bin';
+    const tmp = path.join(
+      app.getPath('temp'),
+      `motion-probe-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}.${safeExt}`,
+    );
+    try {
+      await writeFile(tmp, bytes);
+      const json = await capture(resolveFfprobe(), [
+        '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', tmp,
+      ]);
+      if (!json) return null;
+
+      try {
+        return parseProbeJson(JSON.parse(json) as ProbeJson);
+      } catch {
+        return null;
+      }
+    } catch {
+      return null;
+    } finally {
+      await unlink(tmp).catch(() => {});
+    }
+  });
+
+  /**
+   * Transcode an imported file into a low-resolution editing proxy.
+   *
+   * Runs as a CHILD PROCESS for the same reason the export encode does: the
+   * transcode must never compete with the editor's UI thread, because the whole
+   * point is that the asset stays usable at full resolution while this runs.
+   *
+   * Cancellation is real, not cooperative. `proxy:cancel` kills the child, and
+   * killing it is also what happens on app close — an ffmpeg child does not
+   * outlive the app, which is precisely why a 'generating' record is never
+   * persisted (see `saveProxies`).
+   *
+   * Returns null rather than throwing when ffmpeg is missing, matching
+   * `media:probe`: no codec tool is a real desktop state, and the caller
+   * degrades to full resolution rather than surfacing an error.
+   */
+  const proxyJobs = new Map<string, ReturnType<typeof spawn>>();
+
+  ipcMain.handle(
+    'proxy:generate',
+    async (_e, assetId: string, bytes: Uint8Array, ext: string, args: string[], outExt: string) => {
+      const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : 'bin';
+      const safeOut = /^[a-z0-9]{1,5}$/i.test(outExt) ? outExt : 'mp4';
+      const stamp = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      const input = path.join(app.getPath('temp'), `motion-proxy-in-${stamp}.${safeExt}`);
+      const output = path.join(app.getPath('temp'), `motion-proxy-out-${stamp}.${safeOut}`);
+
+      // A second request for the same asset supersedes the first — re-importing
+      // or re-requesting must not leave two children racing to write one file.
+      proxyJobs.get(assetId)?.kill();
+
+      try {
+        await writeFile(input, bytes);
+        // The renderer chose the encode (`proxyEncodeArgs`), so the rule lives in
+        // one place; main only substitutes the paths it owns.
+        const resolved = args.map((a) => (a === '__IN__' ? input : a === '__OUT__' ? output : a));
+
+        const code = await new Promise<number | null>((resolve) => {
+          const proc = spawn(resolveFfmpeg(), resolved, { stdio: ['ignore', 'ignore', 'pipe'] });
+          proxyJobs.set(assetId, proc);
+          let stderr = '';
+          proc.stderr?.on('data', (d) => (stderr += String(d)));
+          proc.on('error', () => resolve(null));
+          proc.on('close', (c) => {
+            proxyJobs.delete(assetId);
+            if (c !== 0 && stderr) console.warn(`[proxy] ffmpeg ${c}: ${stderr.slice(-400)}`);
+            resolve(c);
+          });
+        });
+        if (code !== 0) return null;
+        return await readFile(output);
+      } catch {
+        return null;
+      } finally {
+        await unlink(input).catch(() => {});
+        await unlink(output).catch(() => {});
+      }
+    },
+  );
+
+  ipcMain.handle('proxy:cancel', (_e, assetId: string) => {
+    const proc = proxyJobs.get(assetId);
+    if (!proc) return false;
+    proc.kill();
+    proxyJobs.delete(assetId);
+    return true;
+  });
+
+  app.on('before-quit', () => {
+    for (const proc of proxyJobs.values()) proc.kill();
+    proxyJobs.clear();
+  });
 
   ipcMain.handle('render:beginJob', async () => {
     const jobId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;

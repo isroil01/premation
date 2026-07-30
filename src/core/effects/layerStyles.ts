@@ -421,6 +421,50 @@ export function layerStylesToEffects(
   return out;
 }
 
+/**
+ * The colour a layer's SURFACE actually reads as once its overlay styles are
+ * applied — what an extruded object's side walls and back cap must be tinted
+ * from.
+ *
+ * An extruded layer is one object, but only its FRONT face is the layer's own
+ * pixels; the walls, bevel rings and back cap are geometry the renderer
+ * synthesizes, and they take a flat fill derived from `layer.fill`. That fill
+ * is the layer's RAW colour, so a Colour Overlay repainted the front face and
+ * left every other face the original colour — a red-fronted, blue-sided box.
+ * Same for a Gradient Overlay.
+ *
+ * The overlays are the two styles that answer "what colour is this surface",
+ * which is the only question a flat face fill can ask. The rest of the styles
+ * (inner shadow, satin, bevel, stroke, glow) describe a 2D SILHOUETTE — an
+ * inner shadow hugs the contour of the shape — and a solid's faces have no
+ * shared silhouette to hug, so stamping them per-face would draw a seam around
+ * every wall strip rather than one coherent object. Those stay on the front
+ * face; per-face surface shading on a real solid is the material + lighting
+ * system's job, not a layer style's.
+ *
+ * The gradient case is necessarily an approximation: a face gets ONE colour, so
+ * it takes the ramp's midpoint. Reading as part of the same object beats
+ * matching no part of it.
+ */
+export function styledSurfaceFill(styles: LayerStyles | undefined, baseFill: string): string {
+  if (!styles) return baseFill;
+  let out = baseFill;
+  const co = styles.colorOverlay;
+  if (co?.enabled && co.opacity > 0) out = mixHex(out, co.color, co.opacity);
+  const go = styles.gradientOverlay;
+  if (go?.enabled && go.opacity > 0) out = mixHex(out, mixHex(go.from, go.to, 0.5), go.opacity);
+  return out;
+}
+
+/** Linear mix of two `#rrggbb[aa]` colours; `t` = 0 keeps `a`, 1 takes `b`. */
+function mixHex(a: string, b: string, t: number): string {
+  const ca = parseHex(a);
+  const cb = parseHex(b);
+  const k = Math.max(0, Math.min(1, t));
+  const h = (v: number): string => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  return `#${h(ca.r + (cb.r - ca.r) * k)}${h(ca.g + (cb.g - ca.g) * k)}${h(ca.b + (cb.b - ca.b) * k)}`;
+}
+
 /** `#rrggbb` (or `#rrggbbaa`) × a 0..1 opacity → 8-digit hex. */
 function withAlphaHex(hex: string, opacity: number): string {
   const c = parseHex(hex);

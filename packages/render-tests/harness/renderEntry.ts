@@ -61,11 +61,18 @@ interface RGBA {
   data: Uint8Array;
 }
 
-/** Read the current frame buffer as top-down RGBA, per backend kind. */
-function readCanvasRGBA(canvas: HTMLCanvasElement, kind: string): RGBA {
+/**
+ * Read the current frame buffer as top-down RGBA, per RESOLVED backend tier.
+ *
+ * Takes the resolved tier rather than a free-form kind string. The old
+ * substring matching (`kind.includes('webgpu')`) read whatever the backend had
+ * been asked for, so a stepped-down WebGPU→WebGL2 run was read through the
+ * WebGPU path — see the resolvedKind assertion in renderScene.
+ */
+function readCanvasRGBA(canvas: HTMLCanvasElement, kind: 'webgl2' | 'webgpu' | 'null' | string): RGBA {
   const w = canvas.width;
   const h = canvas.height;
-  if (kind.includes('webgpu')) {
+  if (kind === 'webgpu') {
     // WebGPU canvas: no GL context to read from. Draw the presented canvas into
     // a scratch 2D canvas — rows come back top-down already (no flip; WebGPU's
     // framebuffer origin is top-left, unlike GL).
@@ -77,7 +84,7 @@ function readCanvasRGBA(canvas: HTMLCanvasElement, kind: string): RGBA {
     const img = sctx.getImageData(0, 0, w, h);
     return { width: w, height: h, data: new Uint8Array(img.data.buffer.slice(0)) };
   }
-  if (kind.includes('motion') || kind.includes('webgl')) {
+  if (kind === 'webgl2') {
     // GPU backends: read the drawing buffer directly (no preserveDrawingBuffer
     // dependency) and flip vertically — GL's origin is bottom-left.
     const gl = canvas.getContext('webgl2') as WebGL2RenderingContext | null;
@@ -92,10 +99,10 @@ function readCanvasRGBA(canvas: HTMLCanvasElement, kind: string): RGBA {
     }
     return { width: w, height: h, data: flipped };
   }
-  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null;
-  if (!ctx) throw new Error('expected a 2d context for Canvas2D backend readback');
-  const img = ctx.getImageData(0, 0, w, h);
-  return { width: w, height: h, data: new Uint8Array(img.data.buffer.slice(0)) };
+  // 'null' and anything else: NullBackend produces no pixels, so there is no
+  // frame to read and pretending otherwise would write a blank PNG that passes
+  // a non-emptiness check nowhere and a golden diff loudly. Refuse instead.
+  throw new Error(`no readback path for backend tier "${kind}" — only webgl2 and webgpu produce pixels`);
 }
 
 /** Encode raw top-down RGBA to a base64 PNG using a scratch 2D canvas. */
@@ -125,6 +132,20 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
   be.setExactMediaTiming?.(true);
   if (be.readyPromise) await be.readyPromise;
 
+  // The backend we ASKED for must be the one that rendered.
+  //
+  // MotionRendererBackend's ladder steps WebGPU → WebGL2 on any init failure,
+  // which is right for the product and wrong for a comparison harness: a
+  // WebGPU run on a box with no adapter used to write WebGL2 pixels into
+  // `actual/webgpu/`, and every parity figure computed from that directory was
+  // comparing WebGL2 against WebGL2 while claiming otherwise. Fail loudly.
+  if (be.resolvedKind !== backend) {
+    throw new Error(
+      `${scene.id} [${backend}]: asked for ${backend}, got ${be.resolvedKind ?? 'no backend'}` +
+        `${be.initErrorMessage ? ` — ${be.initErrorMessage}` : ''}`,
+    );
+  }
+
   try {
     for (const i of scene.frames) {
       const t = i / scene.fps;
@@ -147,13 +168,17 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
         await Promise.all(waits);
         be.renderFrame(snap);
       }
-      const rgba = readCanvasRGBA(canvas, be.kind);
+      // Readback path is chosen from the RESOLVED tier, not the requested one:
+      // WebGPU's framebuffer origin is top-left and GL's is bottom-left, so
+      // reading a WebGL2 surface through the WebGPU path (or vice versa) is a
+      // silently V-flipped or blank frame.
+      const rgba = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);
       // Determinism gate (real GPU, not Null): re-render the scene's FIRST
       // frame from the same snapshot and require byte-identical output —
       // "same machine + same driver ⇒ same bytes" (the AE-level promise).
       if (i === scene.frames[0]) {
         be.renderFrame(snap);
-        const again = readCanvasRGBA(canvas, be.kind);
+        const again = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);
         if (again.data.length !== rgba.data.length || !again.data.every((v, k) => v === rgba.data[k])) {
           throw new Error(`${scene.id}#${i} [${backend}] double-render bytes differ — non-deterministic output`);
         }

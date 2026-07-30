@@ -24,6 +24,7 @@ import {
   trackNavBy,
 } from './cameraNav';
 
+const ROOT = 'camnav-views-root';
 const SHAPE = 'camnav-views-shape';
 const CAMERA = 'camnav-views-camera';
 
@@ -35,15 +36,30 @@ function makeNode(id: string, props: Record<string, unknown>): SceneNode {
   } as unknown as SceneNode;
 }
 
+/**
+ * Layers live INSIDE a composition, never at the graph root.
+ *
+ * These lookups are comp-scoped now (a camera belongs to its composition and
+ * steers nothing outside it), and `activeCompRootId()` falls back to the first
+ * ROOT node. With the layers added as roots the first layer became the "comp"
+ * and the search never reached its siblings — so the fixture has to model a
+ * composition the way a real document does.
+ */
+function addComp(): void {
+  defaultSceneGraph.addNode(makeNode(ROOT, { [SCENE_KIND_PROP]: 'group' }));
+}
+
 /** A 3D content layer (numeric z ⇒ is3DEnabled). */
 function add3DShape(): void {
-  defaultSceneGraph.addNode(
+  addComp();
+  defaultSceneGraph.addChild(ROOT,
     makeNode(SHAPE, { [SCENE_KIND_PROP]: 'shape', x: 100, y: 100, z: 0, rotationX: 0, rotationY: 0 }),
   );
 }
 
 function addCamera(): void {
-  defaultSceneGraph.addNode(makeNode(CAMERA, { [SCENE_KIND_PROP]: 'camera', x: 960, y: 540 }));
+  addComp();
+  defaultSceneGraph.addChild(ROOT, makeNode(CAMERA, { [SCENE_KIND_PROP]: 'camera', x: 960, y: 540 }));
 }
 
 function camProps(): Record<string, unknown> {
@@ -59,7 +75,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const id of [SHAPE, CAMERA]) {
+  for (const id of [SHAPE, CAMERA, ROOT]) {
     try { defaultSceneGraph.removeNode(id); } catch { /* not added in this test */ }
   }
 });

@@ -607,6 +607,17 @@ export class SceneGraph {
     this.setFx(nodeId, 'audioWaveform', config);
   }
 
+  /**
+   * Write an arbitrary key onto the node's `fx` component.
+   *
+   * The ~30 named setters above are the curated surface; this is the escape
+   * hatch for flags that do not warrant one of their own. Same semantics:
+   * `undefined` clears, so a default-valued flag stores nothing.
+   */
+  setFxKey(nodeId: ID, key: string, value: unknown): void {
+    this.setFx(nodeId, key, value);
+  }
+
   /** Write a single key onto the node's `fx` component (created on demand). */
   private setFx(nodeId: ID, key: string, value: unknown): void {
     const e = this.engine(nodeId);

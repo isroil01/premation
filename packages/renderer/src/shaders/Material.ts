@@ -232,6 +232,32 @@ export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
   depth: { test: true, write: true },
 };
 
+/**
+ * 3D textured quad that depth-TESTS but does not depth-WRITE.
+ *
+ * For a layer whose effect chain was resolved into a texture: that texture is
+ * WIDER than the layer, because a drop shadow or glow has to have somewhere to
+ * spread (see CompositionPass.resolveEffect3DTexture). The extra margin is
+ * transparent, and a transparent fragment still writes depth — so with the
+ * ordinary material an extruded object's own front face punched a rectangular
+ * hole through its side walls wherever that margin covered them.
+ *
+ * Not writing depth is also the honest description of what the quad is: a
+ * composited RESULT on the layer's plane, not new occluding geometry. It is
+ * still occluded by anything already in the depth buffer, and the group draws
+ * back-to-front, so the ordering that matters is preserved.
+ */
+export const TEXTURED3D_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
+  shader: 'textured3d',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+  depth: { test: true, write: false },
+};
+
 /** 3D masked textured quad with depth test+write. */
 export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured3d',
@@ -264,6 +290,33 @@ export const DEFORMED_MESH_MATERIAL: MaterialDescriptor = {
   ],
   buffers: [DEFORMED_MESH_LAYOUT],
 };
+
+// ── Premultiplied-source twins ──────────────────────────────────────────────
+//
+// One per textured material, differing only in which shader they name. See the
+// long note in builtin.ts for why the flag is a shader variant rather than a
+// field in the shared std140 `Object` block — and, importantly, for the
+// condition that ends this arrangement:
+//
+//   THE SECOND FLAG THAT NEEDS TO REACH THE FRAGMENT STAGE IS THE TRIGGER TO
+//   EXTEND THE UNIFORM BLOCK AND DELETE ALL OF THIS.
+//
+// Variants multiply per family: six materials for one flag, twelve for two,
+// twenty-four for three. A non-black matte colour, Ignore Alpha or Invert Alpha
+// would each be that second flag. Do not add a seventh variant by reflex.
+
+/** The premultiplied-source twin of a textured material. */
+function premulMaterial(base: MaterialDescriptor): MaterialDescriptor {
+  return { ...base, shader: `${base.shader}-premul` };
+}
+
+export const TEXTURED_PREMUL_MATERIAL = premulMaterial(TEXTURED_MATERIAL);
+export const MASKED_TEXTURED_PREMUL_MATERIAL = premulMaterial(MASKED_TEXTURED_MATERIAL);
+export const LUT_TEXTURED_PREMUL_MATERIAL = premulMaterial(LUT_TEXTURED_MATERIAL);
+export const DEFORMED_MESH_PREMUL_MATERIAL = premulMaterial(DEFORMED_MESH_MATERIAL);
+export const TEXTURED3D_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_MATERIAL);
+export const TEXTURED3D_NO_DEPTH_WRITE_PREMUL_MATERIAL = premulMaterial(TEXTURED3D_NO_DEPTH_WRITE_MATERIAL);
+export const MASKED_TEXTURED3D_PREMUL_MATERIAL = premulMaterial(MASKED_TEXTURED3D_MATERIAL);
 
 export class MaterialSystem {
   constructor(

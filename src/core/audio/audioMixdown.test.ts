@@ -12,7 +12,7 @@ import type { AudioLayerState } from './AudioEngine';
 
 function layer(over: Partial<AudioLayerState> = {}): AudioLayerState {
   return {
-    nodeId: 'a', assetId: 'asset', src: 'x', level: 100,
+    nodeId: 'a', assetId: 'asset', src: 'x', levelDb: 0,
     startSec: 0, inSec: 0, outSec: 10, muted: false, ...over,
   };
 }

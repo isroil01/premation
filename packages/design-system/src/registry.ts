@@ -14,6 +14,7 @@ import { EDITORIAL_TEMPLATES_2 } from './templates/editorial2';
 import { EDITORIAL_TEMPLATES_3 } from './templates/editorial3';
 import { EDITORIAL_TEMPLATES_4 } from './templates/editorial4';
 import { DEVICE_TEMPLATES } from './templates/device';
+import { DEVICE_TEMPLATES_2 } from './templates/device2';
 import type { LayoutTemplate, SlotContent, SlotRole } from './compose';
 import { lookPack, type LookPack } from './packs';
 
@@ -27,6 +28,11 @@ export const LAYOUT_TEMPLATES: readonly LayoutTemplate[] = [
   // named four templates in `layoutPrefer` that did not exist, so they had
   // techniques and components but nowhere to put them.
   ...DEVICE_TEMPLATES,
+  // The second product set. Measured before it: `mobile_app` could use THREE
+  // templates in total and `saas_product` six, against eleven to thirty for
+  // every editorial pack — so the caster's structural choice for a product
+  // prompt was made before the model was asked.
+  ...DEVICE_TEMPLATES_2,
 ];
 
 const BY_ID = new Map(LAYOUT_TEMPLATES.map((t) => [t.id, t]));

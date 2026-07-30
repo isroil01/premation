@@ -84,7 +84,12 @@ describe('planLottieImport — shapes & outlines', () => {
     expect(L.pointsTrack).toBeDefined();
     expect(L.pointsTrack!.closed).toBe(true);
     expect(L.pointsTrack!.keyframes.map((k) => k.t)).toEqual([0, 0.5]);
-    expect((L.pointsTrack!.keyframes[1]!.value as DataPoint[])[0]!.x).toBe(50);
+    // The morph carries the full 50-unit travel. Absolute coordinates are not
+    // asserted: outlines are re-centred on their own bbox with the offset paid
+    // back in the node position (`recentreOutlines`), so only the SHAPE of the
+    // morph is meaningful here.
+    const at = (i: number): number => (L.pointsTrack!.keyframes[i]!.value as DataPoint[])[0]!.x;
+    expect(at(1) - at(0)).toBe(50);
     expect(L.staticProps.fill).toBe('#ff0000');
   });
 

@@ -22,7 +22,31 @@ export const Color = {
 
   /** Parse `#rgb`, `#rrggbb`, or `#rrggbbaa` into a linear-ish sRGB color 0..1. */
   fromHex(hex: string): Color {
-    let h = hex.trim().replace(/^#/, '');
+    const raw = hex.trim();
+    // `rgb()` / `rgba()` as well as hex, because the adapter reaches this with
+    // both. `withAlpha()` (core/effects) folds an effect's opacity into its
+    // colour by rewriting a 6-digit hex as `rgba(r,g,b,a)` — the CSS form the
+    // deleted Canvas2D backend consumed. A hex-only parser returned BLACK for
+    // every one of those, so on the GPU path Gradient Ramp painted a black
+    // rectangle (and the Gradient Overlay layer style with it), while Glow,
+    // Drop Shadow, Fill and Stroke lost any colour given as a plain hex.
+    // Colours already carrying 8-digit alpha never hit `withAlpha`'s rewrite,
+    // which is why the same styles looked right in some places and not others.
+    const fn = /^rgba?\(([^)]+)\)$/i.exec(raw);
+    if (fn) {
+      const parts = fn[1]!.split(/[,\s/]+/).filter((s) => s.length > 0).map(Number);
+      if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
+        const a = parts.length > 3 && Number.isFinite(parts[3]!) ? parts[3]! : 1;
+        return {
+          r: Math.max(0, Math.min(1, parts[0]! / 255)),
+          g: Math.max(0, Math.min(1, parts[1]! / 255)),
+          b: Math.max(0, Math.min(1, parts[2]! / 255)),
+          a: Math.max(0, Math.min(1, a)),
+        };
+      }
+      return Color.black();
+    }
+    let h = raw.replace(/^#/, '');
     if (h.length === 3) h = h.split('').map((c) => c + c).join('');
     if (h.length === 6) h += 'ff';
     if (h.length !== 8) return Color.black();

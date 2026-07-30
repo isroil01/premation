@@ -14,14 +14,13 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
-import { readSceneCamera } from '@core/scene/camera3d';
+import { activeCameraNode, readSceneCamera } from '@core/scene/camera3d';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 import { defaultAnimation } from '@motion/animation';
 import { Project3D } from '@motion/scene';
 import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import { customViewCamera, isCustomViewId } from '@core/workspace/customViews';
-import type { SceneNode } from '@core/types';
 
 export type Projector = (p: { x: number; y: number; z: number }) => Project3D.Projected;
 
@@ -105,21 +104,23 @@ export function currentViewCamera(
     return customViewCamera(useGuidesStore.getState().customViews[cameraMode], width, height);
   }
 
-  let cameraNode: SceneNode | undefined;
-  for (const n of flattenScene(defaultSceneGraph)) {
-    if (readNodeKind(n) === 'camera') {
-      cameraNode = n;
-      break;
-    }
-  }
+  // The SAME resolver the renderer uses. This module used to run its own
+  // `flattenScene` + first-match search, which is how the viewport could end up
+  // projecting through a different camera than the render — scoped differently
+  // (whole project vs. active comp) and ordered differently (bottom-most vs.
+  // top-most) once those rules were corrected in one place and not the other.
+  const rootId = useCompositionStore.getState().comp().id;
+  const cameraNode = activeCameraNode(defaultSceneGraph, rootId);
   if (!cameraNode) return Project3D.defaultCamera(width, height);
   // Sample the camera at the playhead — an animated/orbited camera otherwise
   // projects through frame 0's view.
   const camNode = cameraNode;
   const camTime = getRemappedTime(camNode.id, time);
   const camValues = defaultAnimation.evaluateNode(camNode.id, camTime);
-  return readSceneCamera(defaultSceneGraph, width, height, (id, p) =>
-    id === camNode.id ? camValues.get(p) : undefined,
+  return readSceneCamera(
+    defaultSceneGraph, width, height,
+    (id, p) => (id === camNode.id ? camValues.get(p) : undefined),
+    rootId,
   );
 }
 

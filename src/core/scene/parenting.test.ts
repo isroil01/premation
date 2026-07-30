@@ -126,3 +126,70 @@ describe('insertNull', () => {
     expect(nulls[0]!.name).toBe('Null');
   });
 });
+
+/**
+ * Parenting is bounded by the composition.
+ *
+ * `parent` IS the tree structure here, so a cross-composition parent did not
+ * merely behave oddly — it physically relocated the layer into the other
+ * composition. It disappeared from the comp being edited and started rendering
+ * in one the user wasn't looking at, and the dropdown offered every layer in the
+ * project with nothing to tell them apart.
+ */
+describe('parenting is scoped to the composition', () => {
+  const A = 'pc-rootA';
+  const B = 'pc-rootB';
+
+  function twoComps(): void {
+    for (const [root, kid] of [[A, 'pc-a1'], [B, 'pc-b1']] as const) {
+      defaultSceneGraph.addNode({
+        id: root, name: root, parent: null, children: [], visible: true, locked: false,
+        transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+        components: [{ id: `${root}_t`, type: 'Transform', props: {} }],
+      } as never);
+      defaultSceneGraph.addChild(root, {
+        id: kid, name: kid, parent: root, children: [], visible: true, locked: false,
+        transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+        components: [{ id: `${kid}_t`, type: 'Transform', props: {} }],
+      } as never);
+    }
+  }
+
+  afterEach(() => {
+    for (const id of ['pc-a1', 'pc-b1', A, B]) {
+      try { defaultSceneGraph.removeNode(id); } catch { /* not added */ }
+    }
+  });
+
+  it('offers only same-composition layers as parents', () => {
+    twoComps();
+    const ids = eligibleParents('pc-a1').map((o) => o.id);
+    expect(ids).not.toContain('pc-b1');
+    expect(ids).not.toContain(B);
+    // …and does not offer its own composition root either.
+    expect(ids).not.toContain(A);
+  });
+
+  it('refuses a cross-composition reparent at the API, not just the dropdown', () => {
+    // The AI tools call reparentNode directly; a UI-only rule gets bypassed.
+    twoComps();
+    expect(canReparent('pc-a1', 'pc-b1')).toBe(false);
+    expect(reparentNode('pc-a1', 'pc-b1')).toBe(false);
+    expect(defaultSceneGraph.getNode('pc-a1')!.parent).toBe(A);
+  });
+
+  it('still allows parenting within one composition', () => {
+    twoComps();
+    defaultSceneGraph.addChild(A, {
+      id: 'pc-a2', name: 'pc-a2', parent: A, children: [], visible: true, locked: false,
+      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [{ id: 'pc-a2_t', type: 'Transform', props: {} }],
+    } as never);
+    try {
+      expect(canReparent('pc-a1', 'pc-a2')).toBe(true);
+      expect(eligibleParents('pc-a1').map((o) => o.id)).toContain('pc-a2');
+    } finally {
+      try { defaultSceneGraph.removeNode('pc-a2'); } catch { /* ignore */ }
+    }
+  });
+});

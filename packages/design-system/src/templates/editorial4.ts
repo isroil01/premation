@@ -125,7 +125,7 @@ export const twoColumnBullets: LayoutTemplate = {
   displayName: 'Two Column Bullets',
   intent: 'A list split across two columns so a long set stays on one screen.',
   tags: ['list', 'dense', 'feature', 'reference', 'scannable'],
-  packs: ['saas_explainer', 'swiss_editorial', 'apple_keynote'],
+  packs: ['saas_explainer', 'swiss_editorial', 'apple_keynote', 'cyberpunk_kinetic'],
   slots: [
     { role: 'headline', required: false, max: 1 },
     { role: 'list', required: true, max: 8 },
@@ -325,7 +325,7 @@ export const numberedSection: LayoutTemplate = {
   displayName: 'Numbered Section',
   intent: 'A large section number set against the title, the way a chapter opens.',
   tags: ['editorial', 'chapter', 'sequence', 'literary', 'structured'],
-  packs: ['swiss_editorial', 'luxury_film', 'apple_keynote', 'saas_explainer'],
+  packs: ['swiss_editorial', 'luxury_film', 'apple_keynote', 'saas_explainer', 'cyberpunk_kinetic'],
   slots: [
     { role: 'stat', required: true, max: 1 },
     { role: 'headline', required: true, max: 1 },
@@ -399,7 +399,7 @@ export const legendChart: LayoutTemplate = {
   displayName: 'Chart with Legend',
   intent: 'A plot area with its key beside it, so the series can be named as they draw.',
   tags: ['data', 'chart', 'report', 'analytical', 'dashboard'],
-  packs: ['saas_explainer', 'swiss_editorial', 'saas_product', 'broadcast_sports'],
+  packs: ['saas_explainer', 'swiss_editorial', 'saas_product', 'broadcast_sports', 'cyberpunk_kinetic'],
   slots: [
     { role: 'headline', required: false, max: 1 },
     { role: 'media', required: false, max: 1 },

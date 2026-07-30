@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
+import { Pagination } from '@components/Pagination';
 import { cn } from '@utils/cn';
 import { openModal } from '@stores/modalStore';
 import { useVersionHistoryStore } from '@stores/versionHistoryStore';
@@ -33,12 +34,15 @@ function formatWhen(iso: string): string {
 }
 
 function VersionHistory(): JSX.Element {
-  const { versions, status, error, restoringId, load, saveCheckpoint, restore } =
+  const { versions, total, limit, offset, status, error, restoringId, load, saveCheckpoint, restore } =
     useVersionHistoryStore();
   const [label, setLabel] = useState('');
 
+  // Always open on page 1: the modal outlives its own state, so reopening it
+  // after a week of autosaves would otherwise land on a page number from then.
   useEffect(() => {
-    void load();
+    void load({ limit, offset: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
   const onSave = async (): Promise<void> => {
@@ -100,6 +104,16 @@ function VersionHistory(): JSX.Element {
           );
         })}
       </div>
+
+      <Pagination
+        total={total}
+        limit={limit}
+        offset={offset}
+        busy={status === 'loading'}
+        onChange={(page) => void load(page)}
+        itemLabel="version"
+        pageSizes={[10, 20, 50]}
+      />
     </div>
   );
 }

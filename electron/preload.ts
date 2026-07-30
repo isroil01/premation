@@ -38,6 +38,18 @@ const bridge = {
     list: (root: string) => ipcRenderer.invoke('blob:list', root),
   },
 
+  media: {
+    /** Real stream facts for an imported file (frame rate, audio track, codec).
+     *  Resolves null when ffprobe/ffmpeg is not installed — callers degrade. */
+    probe: (bytes: Uint8Array, ext: string) => ipcRenderer.invoke('media:probe', bytes, ext),
+    /** Transcode a file to an editing proxy. Resolves null when ffmpeg is
+     *  missing or the encode failed/was cancelled — callers stay at full res. */
+    generateProxy: (assetId: string, bytes: Uint8Array, ext: string, args: string[], outExt: string) =>
+      ipcRenderer.invoke('proxy:generate', assetId, bytes, ext, args, outExt),
+    /** Kill a running proxy encode. True if one was actually running. */
+    cancelProxy: (assetId: string) => ipcRenderer.invoke('proxy:cancel', assetId),
+  },
+
   render: {
     beginJob: () => ipcRenderer.invoke('render:beginJob'),
     stageFrame: (jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png') =>

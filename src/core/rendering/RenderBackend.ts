@@ -15,6 +15,9 @@ import type { MatteProp } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
+import type { BackdropMode } from '@motion/renderer';
+
+export type { BackdropMode };
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
@@ -232,6 +235,23 @@ export interface RenderLayer {
   src?: string;
   /** Referenced project asset ID. */
   assetId?: string;
+  /**
+   * Sub-rect of the SOURCE texture to sample, in 0..1 UV space. Absent = the
+   * whole texture.
+   *
+   * This is how a `cover` media slot crops: the drawn quad stays exactly the
+   * slot rect and the overflow is removed in texture space, so a covered source
+   * cannot bleed over the rest of the composition. Scaling the quad up instead
+   * would need a clipping step that could be forgotten; cropping the UVs makes
+   * overflow impossible by construction.
+   */
+  uvRect?: { x: number; y: number; width: number; height: number };
+  /**
+   * The layer's footage is interpreted as PREMULTIPLIED (see
+   * `FootageInterpretation.alpha`). Nothing in a file records this, so it is
+   * always a user setting; absent = straight, the default.
+   */
+  premultipliedSource?: boolean;
   /** Digest of the fields that determine this layer's OWN rasterized pixels
    *  (geometry + fills/strokes/text/masks + pre-DOF effects + width/height),
    *  excluding transform + compositing. Computed once in buildSnapshot (see
@@ -294,6 +314,13 @@ export interface RenderSnapshot {
    *  preview, alpha:0 in export). `background` is then ignored for compositing. */
   transparent?: boolean;
   /**
+   * Where the composition background is painted. Default `'frame'` (the comp
+   * rect, tracking the 2D pan/zoom camera); `'viewport'` in the orthographic
+   * and custom views, which render uncropped and so need the colour everywhere.
+   * See CompositionInfo.backdrop for the full reasoning.
+   */
+  backdrop?: BackdropMode;
+  /**
    * Which channel to display. 'alpha' paints the comp's own alpha as opaque
    * greyscale — the standard way to inspect a matte. Preview-only; export
    * always writes real colour.
@@ -348,7 +375,13 @@ export interface RenderSnapshot {
 }
 
 export interface RenderBackend {
+  /** The tier this backend was ASKED for. Stable from construction, so it is
+   *  readable before init resolves — and therefore NOT an answer to "what
+   *  rendered this frame". Use `resolvedKind` for that. */
   readonly kind: string;
+  /** The tier that actually initialized, or null before/after one does. See
+   *  MotionRendererBackend.resolvedKind for why the distinction matters. */
+  resolvedKind?: 'webgl2' | 'webgpu' | 'null' | null;
   attach(canvas: HTMLCanvasElement): void;
   /** CSS pixel size + device pixel ratio. */
   resize(width: number, height: number, dpr: number): void;

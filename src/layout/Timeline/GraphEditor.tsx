@@ -29,6 +29,7 @@ import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
 import { withOutgoingSpeed, withIncomingSpeed, type Bezier } from './speedGraph';
+import { useResizeObserver } from '@hooks/useResizeObserver';
 import styles from './GraphEditor.module.css';
 
 export interface GraphEditorProps {
@@ -130,14 +131,16 @@ export function GraphEditor({
   duration,
   pixelsPerSecond: pps,
   scrollLeft,
-  height = GRAPH_HEIGHT_DEFAULT,
+  height: propsHeight,
   onScrub,
 }: GraphEditorProps): JSX.Element {
   const rev = useSceneRevision((s) => s.rev);
   const [mode, setMode] = useState<'value' | 'speed'>('value');
   const [selectedKf, setSelectedKf] = useState<SelectedKf | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
+
+  const height = propsHeight ?? (size.height > 0 ? size.height : GRAPH_HEIGHT_DEFAULT);
 
   // Clear selection when selected nodes change.
   useEffect(() => { setSelectedKf(null); }, [selectedNodeIds]);
@@ -155,7 +158,7 @@ export function GraphEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNodeIds, rev]);
 
-  const INNER_H = height - 40; // leave 40 px for toolbar
+  const INNER_H = Math.max(40, height - 40); // leave 40 px for toolbar
   const SAMPLES = 200;
 
   const sampledPaths = useMemo(() => {
@@ -511,7 +514,7 @@ export function GraphEditor({
     : null;
 
   return (
-    <div className={styles.root} style={{ height }} ref={containerRef}>
+    <div className={styles.root} style={propsHeight ? { height: propsHeight } : undefined} ref={containerRef}>
       {/* ── Toolbar ────────────────────────────────────────────── */}
       <div className={styles.toolbar}>
         <button type="button" className={mode === 'value' ? styles.tabActive : styles.tab} onClick={() => setMode('value')} title="Value graph">

@@ -22,6 +22,7 @@ import { assetUrl } from '@core/api/client';
 import { readNodeSequence, sequenceSrcAt } from '@core/scene/imageSequence';
 import { svgLayerSrc } from '@core/svg/svgLayer';
 import { getImageCoverageMask } from '@core/rendering/imageAlphaCoverage';
+import { resolveMediaSrc, type ProxyRecord } from '@core/assets/proxy';
 import type { PuppetCoverageMask, PuppetSilhouette } from './puppet';
 
 /** The media reference scanned off a node's components (mirrors readBase). */
@@ -30,9 +31,12 @@ export interface RigMediaRef {
   assetId?: string;
 }
 
-/** Minimal asset shape the src resolver needs. */
+/** Minimal asset shape the src resolver needs. `proxy` rides along so the ONE
+ *  place an asset id becomes a decodable URL is also the one place a proxy can
+ *  be substituted — see `@core/assets/proxy`. */
 export interface RigAssetRef {
   src?: string;
+  proxy?: ProxyRecord;
 }
 
 /**
@@ -70,6 +74,11 @@ export function rigLayerKind(kind: SceneKind): 'shape' | 'text' | 'image' | 'vid
  * `lookupAsset` is injected so each caller keeps its own cache strategy
  * (buildSnapshot memoizes an id→asset Map once per snapshot; the overlay reads
  * the store directly) without the resolution ORDER ever diverging.
+ *
+ * `useProxies` opts this call in to low-res stand-ins. It defaults to FALSE, and
+ * that polarity is the safety property: export, the offline renderer and the
+ * render-test harness never pass it, so they cannot use a proxy by forgetting
+ * to opt out. Only the interactive viewport sets it. See `@core/assets/proxy`.
  */
 export function resolveRigImageSrc(
   node: SceneNode,
@@ -77,6 +86,7 @@ export function resolveRigImageSrc(
   media: RigMediaRef,
   sourceTime: number,
   lookupAsset: (id: string) => RigAssetRef | undefined,
+  useProxies = false,
 ): string {
   // SVG layer: the document lives on the node, not in the asset library.
   // `svgLayerSrc` memoizes the data URL per node and hands back the SAME string
@@ -92,7 +102,12 @@ export function resolveRigImageSrc(
   if (seq) return assetUrl(sequenceSrcAt(seq, sourceTime));
   if (media.assetId) {
     const asset = lookupAsset(media.assetId);
-    if (asset && asset.src) return asset.src;
+    // The single substitution point. `resolveMediaSrc` falls back to the
+    // original for every proxy state that is not ready-with-a-src.
+    if (asset) {
+      const resolved = resolveMediaSrc(asset, useProxies);
+      if (resolved) return resolved;
+    }
   }
   return assetUrl(media.src);
 }

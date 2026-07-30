@@ -76,6 +76,8 @@ import { openPalette } from '@stores/commandPaletteStore';
 import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
 import { findNavTarget } from '@core/workspace/cameraNav';
 import { insertNull, moveNodeInStack } from '@core/scene/parenting';
+import { fitNodeTo, centreAnchorInContent } from '@core/source/fitCommands';
+import { activeCompSize } from '@core/scene/activeComp';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
@@ -218,6 +220,7 @@ function buildViewSwitchCommands(): ReadonlyArray<Command> {
  * menuModel), so they're discoverable rather than shortcut-only.
  */
 import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { compSizeOf } from '@core/composition/compSizes';
 
 function buildMergePathCommands(): ReadonlyArray<Command> {
   const ops: Array<{ id: string; label: string; op: MergeOp }> = [
@@ -512,6 +515,36 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 'c', meta: true, shift: true },
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => precomposeSelected(),
+    },
+    // ── Fit (AE's Layer ▸ Transform submenu) ──────────────────────────
+    // One-shot commands that COMPUTE a size and write it, rather than a stored
+    // "fit mode" the renderer re-resolves every frame. The old Media panel had
+    // the property version and it never did anything — see fitCommands.ts for
+    // why the command form is the one that can work. They read intrinsic size
+    // through `sourceOf`, so a placed composition fits exactly like footage.
+    ...([
+      ['layer.fitToComp', 'Fit to Comp', 'contain' as const, { key: 'f', meta: true, alt: true }],
+      ['layer.fitToCompWidth', 'Fit to Comp Width', 'width' as const, undefined],
+      ['layer.fitToCompHeight', 'Fit to Comp Height', 'height' as const, undefined],
+      ['layer.fillComp', 'Fill Comp (crop to frame)', 'cover' as const, undefined],
+      ['layer.nativeSize', 'Set to Native Size', 'native' as const, undefined],
+    ] as const).map(([id, label, mode, shortcut]) => ({
+      id: asCommandId(id),
+      label,
+      ...(shortcut ? { shortcut } : {}),
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        const frame = activeCompSize();
+        for (const nodeId of useSelectionStore.getState().ids) fitNodeTo(nodeId, frame, mode);
+      },
+    })),
+    {
+      id: asCommandId('layer.centreAnchor'),
+      label: 'Centre Anchor Point in Layer Content',
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        for (const nodeId of useSelectionStore.getState().ids) centreAnchorInContent(nodeId);
+      },
     },
     {
       // Flatten a multi-part logo (group / precomp / multi-selection) to one
@@ -1010,7 +1043,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               const c = useCompositionStore.getState().comp();
               const frame = Math.round(getTimelineController().timeline.currentFrame);
               const blob = await renderStillFrame(
-                { width: c.width, height: c.height, fps: c.fps, durationSec: c.durationSeconds, comp: { ...c, rootId: c.id } },
+                { width: c.width, height: c.height, fps: c.fps, durationSec: c.durationSeconds, comp: { ...c, rootId: c.id, compSizeOf } },
                 frame,
               );
               if (!blob) { notify('Could not render the frame', 'warning'); return; }

@@ -186,8 +186,8 @@ check('baseline: subject rendered at all', base.a > 250 && lum(base) > 20,
 // the comparison whose absence caused the previous downscale attempt to be
 // reverted — a flattened profile is invisible in either reference on its own.
 {
-  const lo = await load('bevel-profile-lowres');
-  const hi = await load('bevel-profile-hires');
+  const lo = await load('bevel-below-cap');
+  const hi = await load('bevel-above-cap');
 
   /** Luminance at a relative (0..1) position within the frame. */
   const at = (img, u, v) => lum(img.px(Math.round(u * img.width), Math.round(v * img.height)));

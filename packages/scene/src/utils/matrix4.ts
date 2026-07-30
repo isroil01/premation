@@ -67,6 +67,111 @@ export function transformPoint(m: Matrix4, p: Vec3): Vec3 {
 }
 
 /**
+ * The inverse of `m`, or null when it is singular.
+ *
+ * Needed to turn a WORLD-space position back into the PARENT-space values a node
+ * actually stores. Direct manipulation computes where the user dropped something
+ * in world space; the node holds local values, so a parented object dragged
+ * without this inversion is written a world position that is then composed with
+ * its parent AGAIN — it snaps away from the cursor on release by exactly the
+ * parent transform. That failure is invisible from reading the write path, which
+ * is why this lives here rather than being open-coded at a drag site.
+ *
+ * Affine matrices (bottom row 0,0,0,1 — every transform this app composes) take
+ * the closed-form path: invert the 3x3 basis, then apply it to the negated
+ * translation. The general cofactor expansion is kept for the projection
+ * matrices, whose bottom row is not affine.
+ */
+export function invert(m: Matrix4, out: Matrix4 = identity()): Matrix4 | null {
+  const affine = m[3] === 0 && m[7] === 0 && m[11] === 0 && m[15] === 1;
+  if (affine) {
+    // 3x3 basis (column-major): columns are (m0,m1,m2), (m4,m5,m6), (m8,m9,m10).
+    const a = m[0], b = m[1], c = m[2];
+    const d = m[4], e = m[5], f = m[6];
+    const g = m[8], h = m[9], i = m[10];
+    // Cofactors of the basis.
+    const A = e * i - f * h;
+    const B = f * g - d * i;
+    const C = d * h - e * g;
+    const det = a * A + b * B + c * C;
+    if (!det || !Number.isFinite(det)) return null;
+    const inv = 1 / det;
+    // Inverse basis = adjugate / det. Written straight into column-major slots.
+    const i0 = A * inv;
+    const i1 = (c * h - b * i) * inv;
+    const i2 = (b * f - c * e) * inv;
+    const i4 = B * inv;
+    const i5 = (a * i - c * g) * inv;
+    const i6 = (c * d - a * f) * inv;
+    const i8 = C * inv;
+    const i9 = (b * g - a * h) * inv;
+    const i10 = (a * e - b * d) * inv;
+    const tx = m[12], ty = m[13], tz = m[14];
+    out[0] = i0; out[1] = i1; out[2] = i2; out[3] = 0;
+    out[4] = i4; out[5] = i5; out[6] = i6; out[7] = 0;
+    out[8] = i8; out[9] = i9; out[10] = i10; out[11] = 0;
+    // −(B⁻¹ · t): the inverse basis applied to the negated translation.
+    // `+ 0` normalises the −0 that negating a zero translation produces: it is
+    // mathematically identical but compares unequal to 0 and would otherwise
+    // leak into serialised matrices and snapshot comparisons.
+    out[12] = -(i0 * tx + i4 * ty + i8 * tz) + 0;
+    out[13] = -(i1 * tx + i5 * ty + i9 * tz) + 0;
+    out[14] = -(i2 * tx + i6 * ty + i10 * tz) + 0;
+    out[15] = 1;
+    return out;
+  }
+
+  // General 4x4 inverse (cofactor / Laplace expansion), for non-affine matrices.
+  const [n0, n1, n2, n3, n4, n5, n6, n7, n8, n9, n10, n11, n12, n13, n14, n15] = m;
+  const s0 = n0 * n5 - n1 * n4;
+  const s1 = n0 * n6 - n2 * n4;
+  const s2 = n0 * n7 - n3 * n4;
+  const s3 = n1 * n6 - n2 * n5;
+  const s4 = n1 * n7 - n3 * n5;
+  const s5 = n2 * n7 - n3 * n6;
+  const c5 = n10 * n15 - n11 * n14;
+  const c4 = n9 * n15 - n11 * n13;
+  const c3 = n9 * n14 - n10 * n13;
+  const c2 = n8 * n15 - n11 * n12;
+  const c1 = n8 * n14 - n10 * n12;
+  const c0 = n8 * n13 - n9 * n12;
+  const det = s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0;
+  if (!det || !Number.isFinite(det)) return null;
+  const v = 1 / det;
+  out[0] = (n5 * c5 - n6 * c4 + n7 * c3) * v;
+  out[1] = (-n1 * c5 + n2 * c4 - n3 * c3) * v;
+  out[2] = (n13 * s5 - n14 * s4 + n15 * s3) * v;
+  out[3] = (-n9 * s5 + n10 * s4 - n11 * s3) * v;
+  out[4] = (-n4 * c5 + n6 * c2 - n7 * c1) * v;
+  out[5] = (n0 * c5 - n2 * c2 + n3 * c1) * v;
+  out[6] = (-n12 * s5 + n14 * s2 - n15 * s1) * v;
+  out[7] = (n8 * s5 - n10 * s2 + n11 * s1) * v;
+  out[8] = (n4 * c4 - n5 * c2 + n7 * c0) * v;
+  out[9] = (-n0 * c4 + n1 * c2 - n3 * c0) * v;
+  out[10] = (n12 * s4 - n13 * s2 + n15 * s0) * v;
+  out[11] = (-n8 * s4 + n9 * s2 - n11 * s0) * v;
+  out[12] = (-n4 * c3 + n5 * c1 - n6 * c0) * v;
+  out[13] = (n0 * c3 - n1 * c1 + n2 * c0) * v;
+  out[14] = (-n12 * s3 + n13 * s1 - n14 * s0) * v;
+  out[15] = (n8 * s3 - n9 * s1 + n10 * s0) * v;
+  return out;
+}
+
+/**
+ * A world-space point expressed in the space of `m` — i.e. `m⁻¹ · p`.
+ *
+ * The one operation direct manipulation needs: given where the user put
+ * something in world space and the parent's world matrix, produce the local
+ * value to store. Returns the point unchanged when `m` is singular, so a
+ * degenerate parent (scale 0) leaves the drag where it was instead of sending
+ * it to NaN.
+ */
+export function toLocalPoint(m: Matrix4, p: Vec3): Vec3 {
+  const inv = invert(m);
+  return inv ? transformPoint(inv, p) : p;
+}
+
+/**
  * Transform a 3D direction vector (ignores matrix translation, returns normalized vector).
  */
 export function transformVector(m: Matrix4, v: Vec3): Vec3 {

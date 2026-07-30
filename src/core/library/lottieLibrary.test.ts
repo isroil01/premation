@@ -69,4 +69,71 @@ describe('lottieLibrary', () => {
       for (const l of withParent) expect(inds.has(l.parentInd!)).toBe(true);
     }
   });
+
+  /**
+   * THE REGRESSION THAT BROKE EVERY PARENTED ITEM.
+   *
+   * These documents are authored in one flat design box, but Lottie parenting
+   * composes (`world = parent · local`, same as the engine's worldTransform).
+   * Shipping the authored absolute number as the child's local position added
+   * the parent's position on top of it, once per level of parenting — a stepper
+   * drawn inside a 200px box put its glyphs at (366,300), so inserting an item
+   * scattered its parts across the scene instead of reproducing the card.
+   *
+   * Every part must therefore compose back INSIDE the design box.
+   */
+  it('every layer composes to a world position inside the design box', () => {
+    const BOX = LOTTIE_DESIGN_CENTER * 2;
+    for (const item of LOTTIE_ITEMS) {
+      const plan = planLottieImport(item.doc);
+      const byUid = new Map(plan.layers.map((l) => [l.uid, l]));
+      for (const l of plan.layers) {
+        // Rest position: static value, or where an animated channel settles.
+        const restOf = (n: typeof l, prop: 'x' | 'y'): number => {
+          const tr = n.scalarTracks.find((s) => s.prop === prop);
+          return tr ? tr.keyframes[tr.keyframes.length - 1]!.value : prop === 'x' ? n.x : n.y;
+        };
+        let x = restOf(l, 'x');
+        let y = restOf(l, 'y');
+        let p = l.parentUid;
+        for (let guard = 0; p !== undefined && guard < 16; guard++) {
+          const q = byUid.get(p);
+          if (!q) break;
+          x += restOf(q, 'x');
+          y += restOf(q, 'y');
+          p = q.parentUid;
+        }
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThanOrEqual(BOX);
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(y).toBeLessThanOrEqual(BOX);
+      }
+    }
+  });
+
+  /** A parented part must land exactly where the flat design says it does. */
+  it('Pill Stepper composes its capsules and glyphs onto the pill', () => {
+    const plan = planLottieImport(getLottieItem('lot-pill-stepper')!.doc);
+    const at = (name: string): { x: number; y: number } => {
+      const l = plan.layers.find((n) => n.name === name)!;
+      const byUid = new Map(plan.layers.map((n) => [n.uid, n]));
+      let x = l.x;
+      let y = l.y;
+      let p = l.parentUid;
+      for (let guard = 0; p !== undefined && guard < 16; guard++) {
+        const q = byUid.get(p);
+        if (!q) break;
+        x += q.x;
+        y += q.y;
+        p = q.parentUid;
+      }
+      return { x, y };
+    };
+    expect(at('Outer Container')).toEqual({ x: 100, y: 100 });
+    expect(at('Left White Capsule')).toEqual({ x: 67, y: 100 });
+    expect(at('Right Dark Capsule')).toEqual({ x: 133, y: 100 });
+    // Two levels deep — the level that used to be flung furthest out (234,300).
+    expect(at('Minus Glyph')).toEqual({ x: 67, y: 100 });
+    expect(at('Plus V Glyph')).toEqual({ x: 133, y: 100 });
+  });
 });

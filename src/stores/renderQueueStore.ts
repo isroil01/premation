@@ -22,6 +22,7 @@ import {
 } from '@core/export/exportManager';
 import { canEncodeLocally, type VideoFormat } from '@core/export/videoSink';
 import { DEFAULT_COMPOSITION } from './compositionStore';
+import { compSizeOf } from '@core/composition/compSizes';
 
 export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
 
@@ -142,6 +143,7 @@ function jobOptions(job: RenderJob): ExportOptions {
       // hardcoded '#101014' regardless of what was queued.
       background: job.background ?? DEFAULT_COMPOSITION.background,
       ...(job.compositionId ? { rootId: job.compositionId } : {}),
+      compSizeOf,
     },
   };
 }

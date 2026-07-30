@@ -15,6 +15,28 @@ export interface MotionEditorFile {
 }
 
 /** What the desktop shell persists for a signed-in user. Never the password. */
+/** What an ffprobe pass can tell us about an imported file. Every field is
+ *  nullable: a probe that ran but could not determine a value must say so
+ *  rather than guess, because the whole point is to stop guessing. */
+export interface MediaProbeResult {
+  container: string | null;
+  durationSec: number | null;
+  video: {
+    codec: string | null;
+    width: number | null;
+    height: number | null;
+    fps: number | null;
+    par: number | null;
+    /** Source carries an alpha channel (pix_fmt or the container alpha_mode tag). */
+    hasAlpha: boolean;
+  } | null;
+  audio: {
+    codec: string | null;
+    channels: number | null;
+    sampleRate: number | null;
+  } | null;
+}
+
 export interface StoredCredentials {
   /** The long-lived, single-use refresh token. Rotated on every exchange. */
   refreshToken: string;
@@ -86,6 +108,30 @@ export interface MotionEditorApi {
    * @see electron/main.ts registerRenderIpc
    * @see src/core/export/videoSink.ts (the renderer-side consumer)
    */
+  /**
+   * Media probing. Desktop only, and best-effort even there: resolves null when
+   * ffprobe/ffmpeg is not installed. See `@core/assets/mediaProbe`.
+   */
+  media?: {
+    probe?(bytes: Uint8Array, ext: string): Promise<MediaProbeResult | null>;
+    /**
+     * Transcode a file into an editing proxy. `args` is the ffmpeg argument
+     * list from `proxyEncodeArgs`, with `__IN__`/`__OUT__` placeholders the
+     * main process substitutes with paths it owns. Resolves null when ffmpeg
+     * is absent, the encode failed, or the job was cancelled — every one of
+     * which leaves the asset at full resolution.
+     */
+    generateProxy?(
+      assetId: string,
+      bytes: Uint8Array,
+      ext: string,
+      args: string[],
+      outExt: string,
+    ): Promise<Uint8Array | null>;
+    /** Kill a running proxy encode. True if one was actually running. */
+    cancelProxy?(assetId: string): Promise<boolean>;
+  };
+
   render?: {
     beginJob?(): Promise<string>;
     stageFrame?(jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png'): Promise<void>;

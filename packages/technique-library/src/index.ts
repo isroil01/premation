@@ -35,6 +35,7 @@ export {
   heroMove,
   hold,
   offsetFor,
+  enterCameraSpace,
   rolesTargets,
   sec,
   staggerAt,

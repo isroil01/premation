@@ -21,25 +21,53 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 
-// ── Deterministic software GL, headless-safe ──────────────────────────
-// WebGPU spot-check runs (HARNESS_BACKENDS=…,webgpu) need an adapter, which
-// disableHardwareAcceleration() would block — those runs keep HW acceleration
-// on and are NOT byte-deterministic (they verify orientation/feature parity,
-// not the golden gate; the gate always compares the webgl2/SwiftShader run).
+// ── Deterministic software rendering, headless-safe, PER BACKEND ──────
+//
+// The two APIs need DIFFERENT software rasterizers, and the flags for one
+// suppress the other — which is why every backend renders in its own process
+// (see renderBackendsIsolated in scripts/run.mjs).
+//
+//   WebGL2 → ANGLE over SwiftShader   (--use-gl=angle --use-angle=swiftshader)
+//   WebGPU → Dawn over Vulkan-SwiftShader (--use-vulkan=swiftshader)
+//
+// `--use-angle=swiftshader` is not neutral for WebGPU: with it set, Dawn finds
+// NO adapter at all and `navigator.gpu.requestAdapter()` resolves null. That is
+// not a theory — probed in this Electron (32.3.3) across four flag sets:
+//
+//   flags                                          adapter
+//   use-angle=swiftshader + use-webgpu-adapter     none          ← what we had
+//   use-angle=swiftshader (no webgpu-adapter)      none
+//   nothing forced                                 nvidia/lovelace
+//   use-vulkan=swiftshader + use-webgpu-adapter    google/swiftshader
+//
+// So the harness's WebGPU runs never had a WebGPU adapter. MotionRendererBackend
+// stepped silently down to WebGL2 and the harness recorded the result under
+// `webgpu/`, which is the whole reason its "WebGPU parity" figure was
+// meaningless. renderEntry.ts now asserts the resolved tier, so a repeat of this
+// fails loudly instead of producing mislabelled pixels.
 const WANT_WEBGPU = (process.env.HARNESS_BACKENDS || '').includes('webgpu');
-if (WANT_WEBGPU) {
-  app.commandLine.appendSwitch('enable-unsafe-webgpu');
-  // Dawn's software rasterizer — lets an adapter exist without a real GPU.
-  app.commandLine.appendSwitch('use-webgpu-adapter', 'swiftshader');
-  app.commandLine.appendSwitch('enable-features', 'Vulkan,WebGPUService');
-} else {
-  app.disableHardwareAcceleration();
-}
-app.commandLine.appendSwitch('use-gl', 'angle');
-app.commandLine.appendSwitch('use-angle', 'swiftshader');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('disable-gpu-sandbox');
+if (WANT_WEBGPU) {
+  app.commandLine.appendSwitch('enable-unsafe-webgpu');
+  // NOTE: the WebGPU run uses the machine's REAL adapter, and is therefore only
+  // deterministic in the "same machine + same driver" sense — not the stronger
+  // "any machine" sense the ANGLE-SwiftShader WebGL2 run gives.
+  //
+  // Dawn's software rasterizer was the obvious alternative and it does not work
+  // here. `--use-vulkan=swiftshader --use-webgpu-adapter=swiftshader` yields an
+  // adapter (google/swiftshader) and a device, then kills the render process on
+  // the first submit: "A valid external Instance reference no longer exists" /
+  // "Instance dropped in onSubmittedWorkDone", under OSR and windowed alike, on
+  // Electron 32.3.3. Until that is fixed upstream there is no software WebGPU
+  // to bless against, which is why references are still blessed from WebGL2 —
+  // see GATE_BACKEND in scripts/run.mjs.
+} else {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('use-gl', 'angle');
+  app.commandLine.appendSwitch('use-angle', 'swiftshader');
+}
 
 const OUT = process.env.HARNESS_OUT;
 const MANIFEST_OUT = process.env.HARNESS_MANIFEST_OUT;

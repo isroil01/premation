@@ -548,21 +548,23 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
       )}
 
       <div className={cn(styles.body, isCollapsed && styles.bodyCollapsed)}>
-        <Timeline
-          {...timelineModelProps}
-          searchQuery={searchQuery}
-          globalShy={globalShy}
-          onDurationChange={(v) => {
-            updateComp({ durationSeconds: v });
-            getTimelineController().setDurationSeconds(v);
-          }}
-          onScroll={(px) => {
-            setScrollLeft(px);
-            timelineProps.onScroll?.(px);
-          }}
-        />
+        <div style={{ display: graphEditorOpen ? 'none' : 'flex', flex: 1, flexDirection: 'column', minHeight: 0, height: '100%' }}>
+          <Timeline
+            {...timelineModelProps}
+            searchQuery={searchQuery}
+            globalShy={globalShy}
+            onDurationChange={(v) => {
+              updateComp({ durationSeconds: v });
+              getTimelineController().setDurationSeconds(v);
+            }}
+            onScroll={(px) => {
+              setScrollLeft(px);
+              timelineProps.onScroll?.(px);
+            }}
+          />
+        </div>
 
-        {/* Graph Editor panel — slides in below the track rows when toggled */}
+        {/* Graph Editor panel — full height view replacing track rows below the header toolbar when toggled */}
         {graphEditorOpen && (
           <GraphEditor
             selectedNodeIds={selectedIds}
@@ -570,7 +572,6 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
             duration={props.model.duration}
             pixelsPerSecond={pps}
             scrollLeft={scrollLeft}
-            height={200}
             onScrub={props.onScrub}
           />
         )}

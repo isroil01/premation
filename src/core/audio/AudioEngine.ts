@@ -15,6 +15,7 @@
 
 import { computePeaks, mixToMono, amplitudeAt, type WaveformPeaks } from './waveform';
 import { rmsPeak, type Levels } from './audioLevels';
+import { buildParamRamp, applyRamp } from './audioParams';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
 export interface AudioLayerState {
@@ -28,8 +29,16 @@ export interface AudioLayerState {
   nodeId: string;
   assetId: string;
   src: string;
-  /** Layer gain, percent (100 = unity). */
-  level: number;
+  /** Static layer gain in DECIBELS (0 = unity). When `levelAnimated` is set
+   *  this is only the fallback — the real curve is sampled per frame. */
+  levelDb: number;
+  /** True when the node carries level keyframes, so a constant gain is not
+   *  enough and the voice needs a scheduled ramp. */
+  levelAnimated?: boolean;
+  /** `'audio'` for a real audio layer, `'video'` for a clip's own track.
+   *  Read by `currentLevel` so audio-reactive expressions can keep their
+   *  pre-existing meaning — see there. */
+  source?: 'audio' | 'video';
   /** Comp time (seconds) at which the clip starts. */
   startSec: number;
   /** In/out trim within the clip, seconds. */
@@ -85,6 +94,13 @@ class AudioEngine {
   private ctx: AudioContext | null = null;
   private readonly assets = new Map<string, LoadedAsset>();
   private readonly loading = new Map<string, Promise<LoadedAsset | null>>();
+  /**
+   * Assets whose decode failed — a video with no audio track, or a codec the
+   * platform can't decode. Remembered because `sync` runs on every playhead
+   * change and asks for every referenced asset: without this, a silent video
+   * re-fetched and re-decoded its entire file dozens of times a second.
+   */
+  private readonly undecodable = new Set<string>();
   private readonly voices = new Map<string, ActiveVoice>();
   /** The layer set from the most recent {@link sync} — what `currentLevel`
    *  samples, so it reflects the scene rather than the decode cache. */
@@ -163,12 +179,29 @@ class AudioEngine {
   }
 
   /**
+   * Decode outcome for an asset, for UI that needs to distinguish "still
+   * working" from "there is genuinely no sound here" — a video layer has to be
+   * able to say *why* it is silent.
+   */
+  decodeState(assetId: string): 'decoded' | 'silent' | 'pending' {
+    if (this.assets.has(assetId)) return 'decoded';
+    if (this.undecodable.has(assetId)) return 'silent';
+    return 'pending';
+  }
+
+  /** Forget a failed decode so a replaced/re-encoded source is retried. */
+  retry(assetId: string): void {
+    this.undecodable.delete(assetId);
+  }
+
+  /**
    * Decode an asset into a buffer + waveform (idempotent, cached). Returns null
    * when Web Audio is unavailable or decoding fails.
    */
   async load(assetId: string, src: string): Promise<LoadedAsset | null> {
     const cached = this.assets.get(assetId);
     if (cached) return cached;
+    if (this.undecodable.has(assetId)) return null;
     const inflight = this.loading.get(assetId);
     if (inflight) return inflight;
 
@@ -191,6 +224,11 @@ class AudioEngine {
         this.emit();
         return loaded;
       } catch {
+        // Most common cause by far is a legitimate one: a video file with no
+        // audio track. Remember it so the per-frame `sync` stops asking, and
+        // emit so any inspector showing "checking…" can settle on "no audio".
+        this.undecodable.add(assetId);
+        this.emit();
         return null;
       } finally {
         this.loading.delete(assetId);
@@ -215,6 +253,19 @@ class AudioEngine {
     let max = 0;
     for (const l of this.layers) {
       if (l.muted) continue;
+      // AUDIO LAYERS ONLY, deliberately.
+      //
+      // This drives the expression engine's `audio` accessor and the Audio
+      // Throb behaviour. Video layers only became voices recently; counting
+      // them here would silently re-key every existing audio-reactive
+      // composition to a louder, different signal the moment footage was added
+      // — a behaviour change to saved projects, arriving without an edit. The
+      // VU meter is a different question and correctly reads the whole master
+      // bus, footage included, because it is metering output rather than
+      // driving animation.
+      //
+      // If per-layer source selection lands, this is the seam it plugs into.
+      if (l.source === 'video') continue;
       const asset = this.assets.get(l.assetId);
       if (!asset) continue;
       const localT = this.timeSec - l.startSec;
@@ -229,7 +280,9 @@ class AudioEngine {
   }
 
   private voiceKey(l: AudioLayerState): string {
-    return `${l.assetId}|${l.level}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}`;
+    // `levelAnimated` is part of the identity: turning keyframes on or off
+    // changes how the voice must be scheduled, not just its value.
+    return `${l.assetId}|${l.levelDb}|${l.levelAnimated ? 'a' : 's'}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}`;
   }
 
   /** Stable per-voice identity — the clip id when the caller supplies one. */
@@ -248,7 +301,9 @@ class AudioEngine {
     const ctx = this.context();
     if (!ctx) return;
 
-    // Ensure every referenced asset is (being) decoded.
+    // Ensure every referenced asset is (being) decoded. `load` short-circuits
+    // on both the decoded and the known-undecodable cases, so this stays a map
+    // lookup per layer per frame rather than a re-fetch.
     for (const l of layers) if (!this.assets.has(l.assetId)) void this.load(l.assetId, l.src);
 
     if (!playing) {
@@ -307,11 +362,26 @@ class AudioEngine {
     const source = ctx.createBufferSource();
     source.buffer = asset.buffer;
     const gain = ctx.createGain();
-    gain.gain.value = Math.max(0, l.level / 100);
     source.connect(gain).connect(this.master ?? ctx.destination);
     const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
     const remaining = Math.max(0, outSec - offset);
     const startAt = Math.max(0, offset);
+
+    // Gain is SCHEDULED on the param, never assigned per frame — see
+    // audioParams for why (assignment steps once per render quantum and
+    // zippers). An unanimated level yields a single point, so the common case
+    // is still one setValueAtTime.
+    //
+    // The ramp is built from the comp time this voice resumes at, which is
+    // `startSec + (offset - inSec)` — NOT `startSec`. Seeking into the middle
+    // of a fade has to pick the curve up where the playhead is, or the fade
+    // restarts from its beginning every time the transport moves.
+    const resumeCompSec = l.startSec + (startAt - l.inSec);
+    const ramp = buildParamRamp(l.nodeId, l.levelDb, resumeCompSec, remaining, {
+      animated: l.levelAnimated === true,
+    });
+    applyRamp(gain.gain, ramp, ctx.currentTime);
+
     try {
       source.start(ctx.currentTime, startAt, remaining);
     } catch {

@@ -408,7 +408,7 @@ export const heroNumber: LayoutTemplate = {
   displayName: 'Hero Number',
   intent: 'One number at full display scale, everything else deliberately subordinate to it.',
   tags: ['stat', 'data', 'impact', 'single-focus', 'report'],
-  packs: ['broadcast_sports', 'saas_explainer', 'swiss_editorial', 'apple_keynote'],
+  packs: ['broadcast_sports', 'saas_explainer', 'swiss_editorial', 'apple_keynote', 'cyberpunk_kinetic'],
   slots: [
     { role: 'stat', required: true, max: 1 },
     { role: 'subhead', required: false, max: 1 },
@@ -470,7 +470,7 @@ export const statBand: LayoutTemplate = {
   displayName: 'Stat Band',
   intent: 'Figures in a horizontal band across the middle, separated by rules.',
   tags: ['stat', 'data', 'report', 'horizontal', 'comparison'],
-  packs: ['saas_explainer', 'swiss_editorial', 'broadcast_sports'],
+  packs: ['saas_explainer', 'swiss_editorial', 'broadcast_sports', 'cyberpunk_kinetic'],
   slots: [
     { role: 'stat', required: true, max: 4 },
     { role: 'overline', required: false, max: 1 },
@@ -550,7 +550,7 @@ export const checklist: LayoutTemplate = {
   displayName: 'Checklist',
   intent: 'Marked rows with a hanging indent, so the marks form their own vertical line.',
   tags: ['list', 'feature', 'saas', 'scannable', 'benefit'],
-  packs: ['saas_explainer', 'apple_keynote', 'swiss_editorial'],
+  packs: ['saas_explainer', 'apple_keynote', 'swiss_editorial', 'cyberpunk_kinetic', 'mobile_app', 'saas_product'],
   slots: [
     { role: 'headline', required: false, max: 1 },
     { role: 'list', required: true, max: 6 },
@@ -620,7 +620,7 @@ export const timeline: LayoutTemplate = {
   displayName: 'Timeline',
   intent: 'A vertical spine with events hung off it — sequence made visible.',
   tags: ['list', 'sequence', 'process', 'roadmap', 'chronological'],
-  packs: ['saas_explainer', 'swiss_editorial', 'apple_keynote'],
+  packs: ['saas_explainer', 'swiss_editorial', 'apple_keynote', 'cyberpunk_kinetic'],
   slots: [
     { role: 'overline', required: false, max: 1 },
     { role: 'list', required: true, max: 5 },
@@ -693,7 +693,7 @@ export const endcardLockup: LayoutTemplate = {
   displayName: 'End Card Lockup',
   intent: 'Mark, tagline and call to action, centred and quiet. The last thing on screen.',
   tags: ['endcard', 'closing', 'brand', 'centred', 'calm'],
-  packs: ['apple_keynote', 'luxury_film', 'saas_explainer', 'swiss_editorial'],
+  packs: ['apple_keynote', 'luxury_film', 'saas_explainer', 'swiss_editorial', 'mobile_app', 'saas_product'],
   slots: [
     { role: 'mark', required: false, max: 1 },
     { role: 'headline', required: true, max: 1 },
@@ -758,7 +758,7 @@ export const beforeAfter: LayoutTemplate = {
   displayName: 'Before / After',
   intent: 'The frame split down the middle, both halves carrying equal weight.',
   tags: ['compare', 'split', 'symmetric', 'product', 'proof'],
-  packs: ['saas_explainer', 'apple_keynote', 'broadcast_sports'],
+  packs: ['saas_explainer', 'apple_keynote', 'broadcast_sports', 'cyberpunk_kinetic'],
   slots: [
     { role: 'headline', required: false, max: 1 },
     { role: 'media', required: false, max: 2 },

@@ -1720,9 +1720,125 @@ void main() {
   },
 };
 
+// ── Premultiplied-source variants ───────────────────────────────────────────
+//
+// Every textured shader assumes STRAIGHT input: it grades `c.rgb`, then returns
+// `graded * c.a` to premultiply on the way out. Footage whose RGB is already
+// multiplied by its alpha — After Effects-rendered elements, TGA, some TIFF/EXR
+// — is therefore multiplied TWICE, and every soft edge darkens into a fringe.
+//
+// The fix is to divide the premultiplication back out at the SAMPLE, so the
+// grade sees straight colour and the existing output line becomes correct
+// rather than doubled.
+//
+// ## Why divide here and not un-premultiply the texture on the CPU
+//
+// Correctness, before throughput. A straight-alpha texture is the WRONG space
+// to filter in: bilinear and mipmap sampling average transparent texels whose
+// RGB is arbitrary, which is the classic source of dark or bright halos on soft
+// edges. Premultiplied is the correct space to filter in. Sampling premultiplied
+// and dividing immediately after keeps filtering correct and converts only for
+// the grade. (It is also far cheaper — the CPU route would mean a full-frame
+// readback per video frame, measured at ~230 ms at 1080p and ~900 ms at 4K.)
+//
+// ## Why derived rather than six hand-written twins
+//
+// Six shaders sample identically, so the substitution is one line applied
+// twelve times. Writing them out would be twelve copies of one idea, and the
+// day someone edits a sample site the copies rot silently.
+//
+// ## WHEN TO DELETE THIS AND USE A UNIFORM INSTEAD
+//
+// These variants exist because ONE flag needs to reach the fragment stage, and
+// one flag is cheaper as a variant than as an extension to the fixed std140
+// `Object` block that the textured, masked and 3D shaders all share.
+//
+// **The SECOND such flag is the trigger to stop.** Variant count multiplies per
+// family: a matte colour, or Ignore / Invert Alpha, would each double this set
+// again. At two flags, extend the uniform block and delete everything in this
+// section — `premulOf`, the derived shaders, `premulMaterial` in Material.ts and
+// the `premultiplied` arguments on the emit helpers. Nothing here encodes logic
+// that would have to be re-derived; it is a string substitution and a set of
+// registrations.
+
+/** Below one 8-bit alpha quantum a texel is indistinguishable from empty. */
+const ALPHA_FLOOR = '0.00392156862745098'; // 1.0 / 255.0
+
+/**
+ * Un-premultiply, guarded.
+ *
+ * A THRESHOLD, not merely an epsilon. `max(a, eps)` bounds the divide but not
+ * the amplification: at alpha 1/255 the divide multiplies RGB by 255, so
+ * quantisation noise in nearly-transparent texels becomes visible specks and
+ * banding along feathered masks, motion-blurred edges and glow falloff. Below
+ * one alpha quantum there is no recoverable colour to begin with, so the texel
+ * resolves to empty instead of to amplified noise.
+ *
+ * The `min(…, 1.0)` repairs invalid data: in valid premultiplied colour every
+ * channel is ≤ alpha, so a quotient above 1 means the source was not really
+ * premultiplied. Clamping there stops one bad texel entering the colour matrix
+ * as a wild value and coming back out as a bright speck.
+ */
+const UNPREMUL_WGSL = `fn unpremul(t : vec4<f32>) -> vec4<f32> {
+  if (t.a < ${ALPHA_FLOOR}) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  return vec4<f32>(min(t.rgb / t.a, vec3<f32>(1.0)), t.a);
+}
+
+`;
+
+const UNPREMUL_GLSL = `vec4 unpremul(vec4 t) {
+  if (t.a < ${ALPHA_FLOOR}) return vec4(0.0);
+  return vec4(min(t.rgb / t.a, vec3(1.0)), t.a);
+}
+
+`;
+
+/** Suffix appended to a base shader's name to form its premultiplied twin. */
+export const PREMUL_SUFFIX = '-premul';
+
+/**
+ * Derive the premultiplied-source twin of a textured shader.
+ *
+ * Throws at module load if a substitution site is missing. That is deliberate:
+ * a silent no-op would produce a variant identical to its base, which renders
+ * plausible-looking but doubly-multiplied pixels — a wrong-output bug that no
+ * type or test signature would catch. Failing at import turns it into a boot
+ * failure, which `editorBoot.smoke.test` already guards.
+ */
+function premulOf(base: ShaderSource): ShaderSource {
+  const sub = (code: string, from: string, to: string, where: string): string => {
+    if (!code.includes(from)) {
+      throw new Error(`premulOf(${base.name}): no ${where} site matching ${JSON.stringify(from)}`);
+    }
+    return code.split(from).join(to);
+  };
+  const wgsl = sub(
+    sub(base.wgsl, '@fragment', `${UNPREMUL_WGSL}@fragment`, 'wgsl fragment entry'),
+    'textureSample(tex, smp, uv) * obj.tint',
+    'unpremul(textureSample(tex, smp, uv)) * obj.tint',
+    'wgsl sample',
+  );
+  const fragment = sub(
+    sub(base.glsl.fragment, 'void main()', `${UNPREMUL_GLSL}void main()`, 'glsl main'),
+    'texture(uTex, vUv) * tint',
+    'unpremul(texture(uTex, vUv)) * tint',
+    'glsl sample',
+  );
+  return { name: `${base.name}${PREMUL_SUFFIX}`, wgsl, glsl: { ...base.glsl, fragment } };
+}
+
+const TEXTURED_PREMUL = premulOf(TEXTURED);
+const MASKED_TEXTURED_PREMUL = premulOf(MASKED_TEXTURED);
+const LUT_TEXTURED_PREMUL = premulOf(LUT_TEXTURED);
+const DEFORMED_MESH_PREMUL = premulOf(DEFORMED_MESH);
+const TEXTURED3D_PREMUL = premulOf(TEXTURED3D);
+const MASKED_TEXTURED3D_PREMUL = premulOf(MASKED_TEXTURED3D);
+
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, TEXTURED, MASKED_TEXTURED, LUT_TEXTURED, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
   FILL, STROKE, SHARPEN, NOISE, DEFORMED_MESH,
   SOLID3D, TEXTURED3D, MASKED_TEXTURED3D,
+  TEXTURED_PREMUL, MASKED_TEXTURED_PREMUL, LUT_TEXTURED_PREMUL, DEFORMED_MESH_PREMUL,
+  TEXTURED3D_PREMUL, MASKED_TEXTURED3D_PREMUL,
   GLASS_COMPOSITE,
 ];

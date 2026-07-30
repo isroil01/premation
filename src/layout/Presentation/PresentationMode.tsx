@@ -26,6 +26,7 @@ import { framesToTimecode } from '@core/time/timecode';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { renderStillFrame } from '@core/export/offlineRenderer';
 import styles from './PresentationMode.module.css';
+import { compSizeOf } from '@core/composition/compSizes';
 
 const QUALITY_ORDER: PreviewResolution[] = [1, 2, 3, 4];
 /** Hide the chrome after this long with no pointer movement while playing. */
@@ -158,7 +159,7 @@ export function PresentationMode(): JSX.Element | null {
           height,
           fps,
           durationSec: duration,
-          comp: { ...comp, rootId: comp.id },
+          comp: { ...comp, rootId: comp.id, compSizeOf },
         },
         currentFrame,
       );

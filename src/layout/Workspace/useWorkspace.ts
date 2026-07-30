@@ -29,6 +29,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
@@ -53,16 +54,16 @@ import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { bumpScene } from '@stores/sceneStore';
-import { readNodeKind, flattenScene } from '@core/scene/sceneDerive';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { addPaintStroke } from '@core/paint/paintStrokes';
 import { compToLayerLocal, isPaintableKind, localBrushSize } from '@core/paint/paintCoords';
 import { usePaintStore } from '@stores/paintStore';
 import { useInfoStore } from '@stores/infoStore';
 import { samplePixelRgba } from '@core/workspace/pixelSample';
-import { readGeometry } from '@core/workspace/geometry';
 import {
   cancelSmoothDolly,
   dollyNavBy,
+  describeNavUnavailable,
   findNavTarget,
   orbitNavBy,
   resolveViewCameraInput,
@@ -85,6 +86,7 @@ import { moveNodeInStack } from '@core/scene/parenting';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace } from '@core/scene/facePicking';
+import { compSizeOf } from '@core/composition/compSizes';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
@@ -240,6 +242,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   const draft3dRef = useRef(draft3d);
   draft3dRef.current = draft3d;
 
+  // Proxies are a VIEWPORT concession — the other opt-in site is
+  // useViewportRenderer. Export never sets this. See `@core/assets/proxy`.
+  const useProxiesPref = usePreferenceStore((s) => s.useProxies);
+  const useProxiesRef = useRef(useProxiesPref);
+  useProxiesRef.current = useProxiesPref;
+
   const mbEnabled = useMotionBlurStore((s) => s.enabled);
   const mbShutter = useMotionBlurStore((s) => s.shutterAngle);
   const mbPhase = useMotionBlurStore((s) => s.shutterPhase);
@@ -373,11 +381,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           {
             ...compRef.current,
             rootId: compRef.current.id,
+            compSizeOf,
             // Custom views resolve to a pre-built override camera; ortho /
             // active pass straight through (resolveViewCameraInput reads the
             // live store, so the closure never freezes a stale view).
             ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
             draft3d: draft3dRef.current,
+            useProxies: useProxiesRef.current,
           },
         ),
         // The only producer of `snapshot.roi`. Read live from the store so the
@@ -718,7 +728,14 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
     const startCameraNav = (e: PointerEvent, mode: CameraNavMode): boolean => {
       const target = findNavTarget();
-      if (!target) return false;
+      if (!target) {
+        // Say WHY rather than doing nothing. Inertness here is correct — a
+        // camera only moves 3D layers — but silent inertness is indistinguishable
+        // from a broken tool, and was reported as one.
+        const why = describeNavUnavailable();
+        if (why) useUIStore.getState().notify({ level: 'info', message: why, durationMs: 6000 });
+        return false;
+      }
       camNav = { target, mode, last: local(e), pointerId: e.pointerId };
       e.preventDefault();
       try {
@@ -1438,7 +1455,9 @@ function paintOverlay(
   guideDrag: GuideDrag | null = null,
   controller?: WorkspaceController,
   paintStroke: Array<{ x: number; y: number }> | null = null,
-  time = 0,
+  // Kept for call-site positional compatibility; the playhead-sampled camera
+  // and light guides that used it now live in the 3D gizmo overlay.
+  _time = 0,
   creationDrag: { start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null = null,
 ): void {
   const ctx = canvas.getContext('2d');
@@ -1806,74 +1825,26 @@ function paintOverlay(
     }
   }
 
-  // Draw scene guides for Camera / Light nodes
-  if (controller) {
-    for (const node of flattenScene(defaultSceneGraph)) {
-      const kind = readNodeKind(node);
-      if (kind === 'camera' || kind === 'light') {
-        const geometry = readGeometry(node);
-        if (!geometry) continue;
-
-        // Sample ANIMATED values at the current playhead (mirrors buildSnapshot)
-        // so the icon tracks a keyframed/orbited camera or light instead of
-        // sitting at the static base position.
-        const v = defaultAnimation.evaluateNode(node.id, getRemappedTime(node.id, time));
-        const x = v.get('x') ?? geometry.x;
-        const y = v.get('y') ?? geometry.y;
-        const rotationDeg = v.get('rotation') ?? geometry.rotationDeg;
-
-        // Calculate screen position from world position
-        const screenPos = controller.ws.worldToScreen({ x, y });
-        const selected = useSelectionStore.getState().isSelected(node.id);
-
-        ctx.save();
-        ctx.translate(screenPos.x, screenPos.y);
-        ctx.rotate((rotationDeg * Math.PI) / 180);
-        
-        if (kind === 'camera') {
-          // Draw a beautiful camera guide shape
-          ctx.strokeStyle = selected ? ACCENT : '#38bdf8';
-          ctx.fillStyle = selected ? 'rgba(56, 189, 248, 0.2)' : 'rgba(56, 189, 248, 0.05)';
-          ctx.lineWidth = 1.5;
-          
-          ctx.beginPath();
-          // Draw camera body
-          ctx.rect(-10, -6, 20, 12);
-          // Draw lens cone
-          ctx.moveTo(10, -3);
-          ctx.lineTo(16, -8);
-          ctx.lineTo(16, 8);
-          ctx.lineTo(10, 3);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
-        } else if (kind === 'light') {
-          // Draw a beautiful light bulb / starburst shape
-          ctx.strokeStyle = selected ? ACCENT : '#f59e0b';
-          ctx.fillStyle = selected ? 'rgba(245, 158, 11, 0.2)' : 'rgba(245, 158, 11, 0.05)';
-          ctx.lineWidth = 1.5;
-          
-          ctx.beginPath();
-          // Inner circle
-          ctx.arc(0, 0, 8, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          
-          // Draw light rays
-          for (let r = 0; r < 8; r++) {
-            const angle = (r * Math.PI) / 4;
-            ctx.beginPath();
-            ctx.moveTo(Math.cos(angle) * 10, Math.sin(angle) * 10);
-            ctx.lineTo(Math.cos(angle) * 18, Math.sin(angle) * 18);
-            ctx.stroke();
-          }
-        }
-        
-        ctx.restore();
-      }
-    }
-  }
-
+  // The Camera / Light guide icons that used to be drawn here are GONE.
+  //
+  // They were a second, incompatible representation of every camera and light:
+  // a fixed-size camcorder glyph and a starburst, painted on the 2D canvas at
+  // `worldToScreen({x, y})` — the raw local props with **z dropped** and no
+  // parent lift, rotated only by the 2D z-rotation, and never passed through the
+  // view projection at all.
+  //
+  // Every symptom followed from that. The glyph sat on the comp plane however
+  // far the camera was pulled back (z was discarded), so it disagreed with its
+  // own frustum — two pictures of one camera, hundreds of pixels apart. It was
+  // the same size and faced the same way in every view, because a 2D rotation
+  // cannot express yaw or pitch: in a Left view it still faced right while the
+  // camera it stood for was aimed left. And it was drawn for cameras in OTHER
+  // compositions too.
+  //
+  // `SceneGizmos` already draws both devices properly — oriented 3D chassis,
+  // frustum cone, spot cones and falloff spheres, all parent-aware and all
+  // projected through whatever view is active (see sceneGizmoData.ts and
+  // SceneGeometryOverlay.tsx). That is the one truth; this was the other one.
   if (guidesState.rulers && controller) {
     paintRulers(ctx, controller, cssW, cssH);
   }

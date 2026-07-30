@@ -16,8 +16,9 @@
  * because the validator falls back deterministically rather than trusting the pick.
  */
 
-import { LOOK_PACKS } from '@motion/design-system';
+import { LOOK_PACKS, candidates, layoutTemplateIds, templatesForPack } from '@motion/design-system';
 import { TECHNIQUES } from '@motion/technique-library';
+import { PRODUCT_TECHNIQUES } from '@motion/product-motion';
 import {
   briefPrompt,
   emitAndValidate,
@@ -25,6 +26,8 @@ import {
   motionCastPrompts,
   runCaster,
   sequence,
+  availableRolesFor,
+  GENERATED_MEDIA,
   survivalBetween,
   tagsForPurpose,
   validate,
@@ -473,5 +476,614 @@ describe('what the model is shown', () => {
         }
       }
     }
+  });
+});
+
+/**
+ * The composition is ONE composition, not N stacked posters.
+ *
+ * Paint order is creation order, so a template that emits its own full-frame
+ * backdrop inside a multi-beat piece covers every beat composed before it. That
+ * failure is invisible in a per-template test — each template is correct alone —
+ * and invisible in a linter that reads a flat layer list with no z-order. It is
+ * only visible here, where several beats share a frame.
+ */
+describe('composition integrity', () => {
+  const emitFor = (packId: string, energy = 0.5) => {
+    const brief = briefFor(packId, energy);
+    const seq = sequence(brief);
+    const casting = validateCasting(seq, packId, energy, {
+      layouts: layoutCastPrompts(seq, packId).map((p, i) => ({
+        beatIndex: p.beatIndex, templateId: p.allowed[0]!, seed: i * 7 + 1,
+      })),
+      motion: motionCastPrompts(seq, packId, energy).map((p, i) => ({
+        beatIndex: p.beatIndex, techniqueId: p.allowed[0]!, params: {}, seed: i * 11 + 3,
+      })),
+    }).casting;
+    return { seq, ...emitAndValidate({ sequence: seq, casting, lookPackId: packId, ...FRAME }) };
+  };
+
+  it('emits exactly one backdrop and one surface treatment, whatever the beat count', () => {
+    for (const pack of LOOK_PACKS) {
+      const { calls, seq } = emitFor(pack.id);
+      expect(seq.beats.length).toBeGreaterThan(1);
+      expect(calls.filter((c) => c.name === 'create_gradient')).toHaveLength(1);
+      expect(calls.filter((c) => c.name === 'add_surface_treatment')).toHaveLength(1);
+    }
+  });
+
+  it('creates the backdrop before any beat content, so it sits behind it', () => {
+    for (const pack of LOOK_PACKS) {
+      const { calls } = emitFor(pack.id);
+      const backdrop = calls.findIndex((c) => c.name === 'create_gradient');
+      const firstContent = calls.findIndex((c) => c.name === 'create_layer');
+      expect(backdrop).toBeGreaterThanOrEqual(0);
+      expect(firstContent).toBeGreaterThan(backdrop);
+    }
+  });
+
+  it('does not vary the backdrop angle only by pack — the seed moves it too', () => {
+    const angles = new Set<number>();
+    for (let seed = 0; seed < 8; seed++) {
+      const brief = briefFor('apple_keynote');
+      const seq = sequence(brief);
+      const { calls } = emitAndValidate({
+        sequence: seq,
+        casting: {
+          layouts: seq.beats.map((b) => ({ beatIndex: b.index, templateId: 'hero.centered_stack', seed })),
+          motion: [],
+        },
+        lookPackId: 'apple_keynote',
+        ...FRAME,
+      });
+      const g = calls.find((c) => c.name === 'create_gradient');
+      angles.add(Number(g!.args.angle));
+    }
+    expect(angles.size).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * Beat lifecycle.
+ *
+ * The renderer has no per-layer time range — visibility is `visible !== false`
+ * and the only lever on "is this on screen now" is the opacity track. So a beat
+ * whose content is never animated out stays in frame for the rest of the piece,
+ * and a five-beat composition renders as a pile.
+ */
+describe('beat lifecycle', () => {
+  const PACK = 'apple_keynote';
+
+  /** Opacity tracks, keyed by layer, rebuilt from the emitted calls. */
+  function opacityTracks(calls: readonly { name: string; args: Record<string, unknown> }[]) {
+    const byId = new Map<string, { t: number; value: number }[]>();
+    for (const c of calls) {
+      if (c.name !== 'set_keyframes') continue;
+      for (const raw of (c.args.keyframes as Record<string, unknown>[]) ?? []) {
+        if (String(raw.prop) !== 'opacity') continue;
+        const id = String(raw.nodeId);
+        const keys = byId.get(id) ?? [];
+        keys.push({ t: Number(raw.t) * 1000, value: Number(raw.value) });
+        byId.set(id, keys);
+      }
+    }
+    for (const keys of byId.values()) keys.sort((a, b) => a.t - b.t);
+    return byId;
+  }
+
+  function emitFor(packId: string) {
+    const brief = briefFor(packId);
+    const seq = sequence(brief);
+    const casting = validateCasting(seq, packId, brief.energy, {
+      layouts: layoutCastPrompts(seq, packId).map((p, i) => ({
+        beatIndex: p.beatIndex, templateId: p.allowed[0]!, seed: i * 7 + 1,
+      })),
+      motion: motionCastPrompts(seq, packId, brief.energy).map((p, i) => ({
+        beatIndex: p.beatIndex, techniqueId: p.allowed[0]!, params: {}, seed: i * 11 + 3,
+      })),
+    }).casting;
+    const { calls } = emitAndValidate({ sequence: seq, casting, lookPackId: packId, ...FRAME });
+    return { seq, calls, tracks: opacityTracks(calls), casting };
+  }
+
+  it('animates every non-final beat OUT, so content does not accumulate', () => {
+    const { seq, calls, tracks } = emitFor(PACK);
+    // Which layers belong to which beat: the emitter prefixes them `b{index}_`.
+    for (const beat of seq.beats.slice(0, -1)) {
+      const ids = calls
+        .filter((c) => c.name === 'create_layer' && String(c.args.id ?? '').startsWith(`b${beat.index}_`))
+        .map((c) => String(c.args.id));
+      expect(ids.length).toBeGreaterThan(0);
+      for (const id of ids) {
+        const keys = tracks.get(id);
+        expect(keys).toBeDefined();
+        // Ends hidden…
+        expect(keys![keys!.length - 1]!.value).toBeLessThanOrEqual(1);
+        // …and is hidden by the time the NEXT beat is properly under way.
+        const nextEnd = seq.beats[beat.index + 1]!.startMs + seq.beats[beat.index + 1]!.durationMs;
+        expect(keys![keys!.length - 1]!.t).toBeLessThan(nextEnd);
+      }
+    }
+  });
+
+  it('holds the FINAL beat to the end — a piece must not end on an empty frame', () => {
+    const { seq, calls, tracks } = emitFor(PACK);
+    const last = seq.beats[seq.beats.length - 1]!;
+    const ids = calls
+      .filter((c) => c.name === 'create_layer' && String(c.args.id ?? '').startsWith(`b${last.index}_`))
+      .map((c) => String(c.args.id));
+    expect(ids.length).toBeGreaterThan(0);
+    // At least one element is still visible at the final frame.
+    const visible = ids.filter((id) => {
+      const keys = tracks.get(id);
+      return !keys || keys[keys.length - 1]!.value > 1;
+    });
+    expect(visible.length).toBeGreaterThan(0);
+  });
+
+  it('lets the SURVIVING role cross the boundary and cuts everything else before it', () => {
+    // This is the only place `survival` changes the output. Until the lifecycle
+    // pass existed the sequencer computed a survivor, validated that one was
+    // present, and nothing ever read it.
+    const { seq, calls, tracks, casting } = emitFor(PACK);
+    const beat = seq.beats[0]!;
+    const boundary = beat.startMs + beat.durationMs;
+    const survivingRole = beat.survival?.role;
+    expect(survivingRole).toBeDefined();
+
+    // Layer ids carry their role in the id: `b0_headline_0`, `b0_cta`, …
+    const ids = calls
+      .filter((c) => c.name === 'create_layer' && String(c.args.id ?? '').startsWith('b0_'))
+      .map((c) => String(c.args.id));
+    const survivors = ids.filter((id) => id.startsWith(`b0_${survivingRole}`));
+    const others = ids.filter((id) => !id.startsWith(`b0_${survivingRole}`) && tracks.has(id));
+    expect(survivors.length).toBeGreaterThan(0);
+    expect(others.length).toBeGreaterThan(0);
+
+    for (const id of survivors) {
+      const keys = tracks.get(id)!;
+      expect(keys[keys.length - 1]!.t).toBeGreaterThan(boundary);
+    }
+    for (const id of others) {
+      const keys = tracks.get(id)!;
+      expect(keys[keys.length - 1]!.t).toBeLessThanOrEqual(boundary + 1);
+    }
+    expect(casting.layouts).toHaveLength(seq.beats.length);
+  });
+
+  it('never fades a layer past a value the template set deliberately', () => {
+    // `emitMedia` places its placeholder at 82. An entrance that ramps to 100
+    // would silently overrule a design decision with a default.
+    for (const pack of LOOK_PACKS) {
+      const { calls, tracks } = emitFor(pack.id);
+      const capped = new Map<string, number>();
+      for (const c of calls) {
+        if (c.name !== 'update_layer' || c.args.opacity === undefined) continue;
+        capped.set(String(c.args.nodeId), Number(c.args.opacity));
+      }
+      for (const [id, cap] of capped) {
+        for (const k of tracks.get(id) ?? []) expect(k.value).toBeLessThanOrEqual(cap);
+      }
+    }
+  });
+});
+
+/**
+ * Art-directed imagery.
+ *
+ * The design linter has always carried a `PRIMITIVE_ONLY` rule whose message is
+ * the plainest statement of the ceiling in the whole codebase: "it is entirely
+ * rectangles and text. That is the ceiling on how designed it can look." It
+ * fired on 100% of output and no template could satisfy it, because nothing in
+ * the pipeline could produce a picture.
+ */
+describe('art-directed imagery', () => {
+  const PACK = 'swiss_editorial';
+
+  function emitWithArt(art: string | undefined, packId = PACK) {
+    const base = briefFor(packId);
+    const brief: CreativeBrief = {
+      ...base,
+      beats: base.beats.map((b, i) => (i === 0 && art ? { ...b, art } : b)),
+    };
+    const seq = sequence(brief);
+    const casting = validateCasting(seq, packId, brief.energy, {
+      layouts: layoutCastPrompts(seq, packId).map((p) => ({
+        // Prefer a media layout where one is offered, so the rewrite is exercised.
+        beatIndex: p.beatIndex,
+        templateId: p.allowed.find((a) => /media|split|scrim|gallery/.test(a)) ?? p.allowed[0]!,
+        seed: 1,
+      })),
+      motion: motionCastPrompts(seq, packId, brief.energy).map((p) => ({
+        beatIndex: p.beatIndex, techniqueId: p.allowed[0]!, params: {}, seed: 3,
+      })),
+    }).casting;
+    return { seq, ...emitAndValidate({ sequence: seq, casting, lookPackId: packId, ...FRAME }) };
+  }
+
+  it('makes media layouts castable for a beat that asked for a picture', () => {
+    const withArt = sequence({
+      ...briefFor(PACK),
+      beats: [{ purpose: 'open', weight: 1, content: { headline: 'One' }, art: 'a lone figure on a salt flat at dawn' }],
+    });
+    expect(withArt.beats[0]!.content.mediaAssetId).toBeDefined();
+    // …and a beat with no art direction stays free of the sentinel, so it is
+    // never offered a layout it cannot fill.
+    const without = sequence({
+      ...briefFor(PACK),
+      beats: [{ purpose: 'open', weight: 1, content: { headline: 'One' } }],
+    });
+    expect(without.beats[0]!.content.mediaAssetId).toBeUndefined();
+  });
+
+  it('emits generate_image instead of create_media, keeping the template layer id', () => {
+    const { calls } = emitWithArt('a lone figure on a salt flat at dawn');
+    const gen = calls.filter((c) => c.name === 'generate_image');
+    expect(gen.length).toBeGreaterThan(0);
+    // The sentinel must never reach the engine.
+    expect(calls.some((c) => c.name === 'create_media' && c.args.assetId === GENERATED_MEDIA)).toBe(false);
+
+    for (const g of gen) {
+      const id = String(g.args.id);
+      // The layer id is the template's own, so the sizing call still lands.
+      expect(calls.some((c) => c.name === 'update_layer' && c.args.nodeId === id)).toBe(true);
+      expect(String(g.args.prompt)).toContain('salt flat');
+      expect(['square', 'landscape', 'portrait']).toContain(String(g.args.aspect));
+    }
+  });
+
+  it('appends the pack\'s own art direction, so imagery belongs to the piece', () => {
+    const { calls } = emitWithArt('a lone figure on a salt flat at dawn');
+    const g = calls.find((c) => c.name === 'generate_image')!;
+    const prompt = String(g.args.prompt);
+    // The pack decides palette and surface for everything else in the frame; an
+    // image generated without them is the one element that does not match.
+    expect(prompt).toContain('#');
+    expect(prompt).toMatch(/no lettering|no logo|no watermark/);
+  });
+
+  it('clears PRIMITIVE_ONLY when a picture is present, and reports it when not', () => {
+    const withArt = emitWithArt('a lone figure on a salt flat at dawn');
+    const without = emitWithArt(undefined);
+    const has = (r: { findings: readonly { rule: string }[] }) =>
+      r.findings.some((f) => f.rule === 'PRIMITIVE_ONLY');
+    expect(has(without.report)).toBe(true);
+    expect(has(withArt.report)).toBe(false);
+  });
+
+  it('never generates over imagery the user actually supplied', () => {
+    const base = briefFor(PACK);
+    const brief: CreativeBrief = {
+      ...base,
+      beats: base.beats.map((b, i) =>
+        i === 0 ? { ...b, art: 'something else entirely', content: { ...b.content, mediaAssetId: 'asset_42' } } : b,
+      ),
+    };
+    const seq = sequence(brief);
+    expect(seq.beats[0]!.content.mediaAssetId).toBe('asset_42');
+  });
+
+  it('does not claim transform_into between two DIFFERENT generated pictures', () => {
+    // The strongest survival in the vocabulary exists because the viewer tracks
+    // one object across the cut. Two beats that each asked for a picture asked
+    // for two different pictures.
+    const seq = sequence({
+      ...briefFor(PACK),
+      beats: [
+        { purpose: 'a', weight: 1, content: { headline: 'One' }, art: 'a salt flat at dawn' },
+        { purpose: 'b', weight: 1, content: { quote: 'Q' }, art: 'a city street at night' },
+      ],
+    });
+    expect(seq.beats[0]!.survival?.kind).not.toBe('transform_into');
+  });
+});
+
+describe('the image budget', () => {
+  it('caps generated images per composition however many beats ask for one', () => {
+    const base = briefFor('swiss_editorial');
+    const brief: CreativeBrief = {
+      ...base,
+      beats: base.beats.map((b) => ({ ...b, art: 'a lone figure on a salt flat at dawn' })),
+    };
+    const seq = sequence(brief);
+    expect(seq.beats.every((b) => b.art)).toBe(true);
+
+    const casting = validateCasting(seq, 'swiss_editorial', brief.energy, {
+      layouts: layoutCastPrompts(seq, 'swiss_editorial').map((p) => ({
+        beatIndex: p.beatIndex,
+        templateId: p.allowed.find((a) => /media|split|scrim/.test(a)) ?? p.allowed[0]!,
+        seed: 1,
+      })),
+      motion: [],
+    }).casting;
+    const { calls } = emitAndValidate({ sequence: seq, casting, lookPackId: 'swiss_editorial', ...FRAME });
+
+    expect(calls.filter((c) => c.name === 'generate_image').length).toBeLessThanOrEqual(2);
+    // Beats over budget must not emit a create_media for an asset that does not
+    // exist — they fall back to the deliberate placeholder panel.
+    expect(calls.some((c) => c.name === 'create_media' && c.args.assetId === GENERATED_MEDIA)).toBe(false);
+  });
+});
+
+/**
+ * Graphic devices.
+ *
+ * Before these existed the whole forty-template library emitted six kinds of
+ * tool call and every shape it ever made was `shape: 'rect'`. The engine has had
+ * star, polygon, line and ellipse primitives, a repeater, trim paths and inline
+ * SVG the entire time.
+ */
+describe('graphic devices', () => {
+  function emitFor(packId: string, seed = 1) {
+    const brief = briefFor(packId);
+    const seq = sequence(brief);
+    const casting = validateCasting(seq, packId, brief.energy, {
+      layouts: layoutCastPrompts(seq, packId).map((p) => ({
+        beatIndex: p.beatIndex, templateId: p.allowed[0]!, seed,
+      })),
+      motion: [],
+    }).casting;
+    return emitAndValidate({ sequence: seq, casting, lookPackId: packId, ...FRAME });
+  }
+
+  it('puts something that is not a rectangle into every editorial composition', () => {
+    for (const pack of LOOK_PACKS.filter((p) => p.vocabulary === 'editorial')) {
+      const { calls } = emitFor(pack.id);
+      const nonRect = calls.filter(
+        (c) =>
+          (c.name === 'create_layer' && c.args.shape !== undefined && c.args.shape !== 'rect') ||
+          c.name === 'import_svg' ||
+          c.name === 'add_repeater' ||
+          c.name === 'set_trim_path',
+      );
+      expect(`${pack.id}: ${nonRect.length}`).not.toBe(`${pack.id}: 0`);
+    }
+  });
+
+  it('gives the PRODUCT packs no device — a dashboard has no halftone behind it', () => {
+    for (const pack of LOOK_PACKS.filter((p) => p.vocabulary === 'product')) {
+      const { calls } = emitFor(pack.id);
+      const deviceCalls = calls.filter((c) => String(c.args.id ?? c.args.nodeId ?? '').startsWith('comp_') &&
+        c.name !== 'create_gradient' && c.name !== 'add_surface_treatment' && c.name !== 'set_motion_blur');
+      expect(`${pack.id}: ${deviceCalls.length}`).toBe(`${pack.id}: 0`);
+    }
+  });
+
+  it('keeps devices ambient — nothing a device draws competes with the content', () => {
+    for (const pack of LOOK_PACKS.filter((p) => p.vocabulary === 'editorial')) {
+      const { calls } = emitFor(pack.id);
+      const deviceOpacities = calls
+        .filter((c) => c.name === 'update_layer' && String(c.args.nodeId ?? '').startsWith('comp_'))
+        .map((c) => Number(c.args.opacity ?? 100));
+      expect(deviceOpacities.length).toBeGreaterThan(0);
+      for (const o of deviceOpacities) expect(o).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it('places devices ON the grid — "nearly aligned" is the amateur signal', () => {
+    // OFF_GRID is an error, so this is really a guard against a future device
+    // choosing an arbitrary x/y and only failing on some frame sizes.
+    for (const pack of LOOK_PACKS) {
+      const { report } = emitFor(pack.id);
+      const offGrid = report.findings.filter((f) => f.rule === 'OFF_GRID');
+      expect(`${pack.id}: ${offGrid.length}`).toBe(`${pack.id}: 0`);
+    }
+  });
+
+  it('does not let a decorative crop mark answer PRIMITIVE_ONLY', () => {
+    // The registration-mark device is an `import_svg`, and therefore an asset by
+    // the letter of `isAsset`. If it satisfied PRIMITIVE_ONLY, a rule about
+    // whether the frame contains real imagery would be answered by a 64px mark
+    // in a corner — retiring the rule without changing a single frame.
+    const swiss = emitFor('swiss_editorial');
+    const hasSvg = swiss.calls.some((c) => c.name === 'import_svg');
+    if (hasSvg) {
+      expect(swiss.report.findings.some((f) => f.rule === 'PRIMITIVE_ONLY')).toBe(true);
+    }
+  });
+
+  it('varies the device with the seed rather than pinning one per pack', () => {
+    const ids = new Set<string>();
+    for (let seed = 0; seed < 8; seed++) {
+      const { calls } = emitFor('swiss_editorial', seed);
+      const names = calls
+        .filter((c) => String(c.args.id ?? '').startsWith('comp_') && c.name !== 'create_gradient')
+        .map((c) => String(c.args.name ?? ''));
+      ids.add(names.join('|'));
+    }
+    expect(ids.size).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * Template breadth.
+ *
+ * Measured before this was addressed: `mobile_app` could use THREE templates in
+ * total and `saas_product` six, against eleven to thirty for every editorial
+ * pack. A pack with three layouts has no structural choice to make — the
+ * caster's whole job at that stage is picking a structure, and with three
+ * options it is decided before the model is asked.
+ */
+describe('template breadth', () => {
+  const RICH_CONTENT = {
+    overline: 'Introducing',
+    headline: 'Ship the thing you actually meant to ship',
+    subhead: 'One pipeline, from the first commit to the last deploy.',
+    support: 'No card required.',
+    cta: 'Start free',
+    quote: 'It changed how the team works.',
+    attribution: 'Someone',
+    items: [
+      { value: '4.2x', label: 'Faster', title: 'Faster builds', body: 'Incremental everywhere.' },
+      { value: '99.99%', label: 'Uptime', title: 'Always on', body: 'Multi-region by default.' },
+      { value: '12k', label: 'Teams', title: 'Proven', body: 'Startups to public companies.' },
+    ],
+  };
+
+  it('gives every pack a real structural choice', () => {
+    for (const pack of LOOK_PACKS) {
+      const allowed = templatesForPack(pack).length;
+      expect(`${pack.id}: ${allowed >= 8}`).toBe(`${pack.id}: true`);
+    }
+  });
+
+  it('offers every pack enough candidates that the pick is a decision', () => {
+    for (const pack of LOOK_PACKS) {
+      const offered = candidates({ packId: pack.id, content: RICH_CONTENT }).length;
+      expect(`${pack.id}: ${offered >= 6}`).toBe(`${pack.id}: true`);
+    }
+  });
+
+  it('keeps every layoutPrefer entry pointing at a template that exists', () => {
+    // A prefer list naming a template that was never written is how both product
+    // packs ended up with techniques and nowhere to put them.
+    const ids = new Set(layoutTemplateIds());
+    for (const pack of LOOK_PACKS) {
+      for (const id of pack.layoutPrefer) {
+        expect(`${pack.id} -> ${id}: ${ids.has(id)}`).toBe(`${pack.id} -> ${id}: true`);
+      }
+    }
+  });
+
+  it('keeps every template reachable from at least one pack', () => {
+    const reachable = new Set(LOOK_PACKS.flatMap((p) => templatesForPack(p).map((t) => t.id)));
+    for (const id of layoutTemplateIds()) {
+      expect(`${id}: ${reachable.has(id)}`).toBe(`${id}: true`);
+    }
+  });
+});
+
+/**
+ * Direction and variants.
+ *
+ * The caster has always accepted a pack, an accent, an energy and a duration,
+ * and nothing in the product could supply any of them — so every run guessed
+ * four things the person typing may already have decided.
+ */
+describe('direction and variants', () => {
+  const hooks = (brief: CreativeBrief): CasterHooks => weakHooks(brief);
+
+  it('lets the user override the pack the model picked', async () => {
+    const brief = briefFor('broadcast_sports');
+    const r = await runCaster({
+      userPrompt: 'x', hooks: hooks(brief), ...FRAME,
+      direction: { lookPackId: 'luxury_film' },
+    });
+    expect(r.brief.lookPackId).toBe('luxury_film');
+    expect(r.report.lookPackId).toBe('luxury_film');
+  });
+
+  it('applies the override BEFORE casting, so candidates come from the right pack', async () => {
+    // Overriding after the sequencer would leave the cast prompts describing a
+    // pack the piece is not in, and every template would then be substituted.
+    const brief = briefFor('broadcast_sports');
+    const r = await runCaster({
+      userPrompt: 'x', hooks: hooks(brief), ...FRAME,
+      direction: { lookPackId: 'luxury_film' },
+    });
+    for (const t of r.report.templates) {
+      expect(`${t}: ${templatesForPack(LOOK_PACKS.find((p) => p.id === 'luxury_film')!).some((x) => x.id === t)}`)
+        .toBe(`${t}: true`);
+    }
+  });
+
+  it('carries accent, energy and duration through', async () => {
+    const brief = briefFor('apple_keynote');
+    const r = await runCaster({
+      userPrompt: 'x', hooks: hooks(brief), ...FRAME,
+      direction: { accent: '#ff0055', energy: 0.9, totalDurationMs: 6000 },
+    });
+    expect(r.brief.accent).toBe('#ff0055');
+    expect(r.brief.energy).toBe(0.9);
+    expect(r.brief.totalDurationMs).toBe(6000);
+  });
+
+  it('produces one variant by default, and it is the validated casting', async () => {
+    const brief = briefFor('apple_keynote');
+    const r = await runCaster({ userPrompt: 'x', hooks: hooks(brief), ...FRAME });
+    expect(r.variants).toHaveLength(1);
+    expect(r.variants[0]!.calls).toBe(r.calls);
+  });
+
+  it('produces N genuinely different variants, all of them lint-clean', async () => {
+    const brief = briefFor('swiss_editorial');
+    const r = await runCaster({ userPrompt: 'x', hooks: hooks(brief), ...FRAME, variants: 4 });
+    expect(r.variants).toHaveLength(4);
+
+    // Different, not just re-labelled: the seeds drive real variant selection
+    // inside the templates and techniques.
+    const shapes = new Set(r.variants.map((v) => JSON.stringify(v.calls)));
+    expect(shapes.size).toBeGreaterThan(1);
+
+    // Every alternative is held to the same bar as the single-result path —
+    // offering a choice between one good piece and three broken ones is worse
+    // than not offering a choice.
+    for (const v of r.variants) {
+      const errors = v.report.findings.filter((f) => f.severity === 'error');
+      expect(`variant ${v.index}: ${errors.map((e) => e.rule).join(',')}`).toBe(`variant ${v.index}: `);
+    }
+  });
+
+  it('returns the variants best-first and applies the best', async () => {
+    const brief = briefFor('saas_explainer');
+    const r = await runCaster({ userPrompt: 'x', hooks: hooks(brief), ...FRAME, variants: 3 });
+    const score = (v: (typeof r.variants)[number]) =>
+      v.report.designScore + v.report.craftScore + v.report.uiMotionScore;
+    for (let i = 1; i < r.variants.length; i++) {
+      expect(score(r.variants[i - 1]!)).toBeGreaterThanOrEqual(score(r.variants[i]!));
+    }
+    expect(r.calls).toBe(r.variants[0]!.calls);
+  });
+});
+
+/**
+ * Reachability.
+ *
+ * A technique can be registered, linted, craft-floor-verified and completely
+ * unreachable. `camera.crash_zoom` declared `roles: ['camera']`, no layout ever
+ * produces a `camera` slot, and the candidate filter is
+ * `t.roles.some(r => availableRoles.has(r))` — so it was dropped on 100% of
+ * beats and had never once been cast.
+ */
+describe('technique reachability', () => {
+  /** Every role a beat can ever offer, across all content shapes. */
+  const EVERY_OFFERABLE_ROLE = new Set<string>([
+    ...availableRolesFor({
+      index: 0, startMs: 0, durationMs: 5000, purpose: 'x', tags: [],
+      content: {
+        headline: 'h', subhead: 's', support: 'sp', overline: 'o', quote: 'q', cta: 'c',
+        mediaAssetId: 'a', items: [{ value: '1', label: 'l', title: 't', body: 'b' }],
+      },
+    } as never),
+  ]);
+
+  it('every technique declares at least one role a beat can actually offer', () => {
+    const unreachable = [...TECHNIQUES, ...PRODUCT_TECHNIQUES]
+      .filter((t) => !t.roles.some((r) => EVERY_OFFERABLE_ROLE.has(r)))
+      .map((t) => `${t.id} (roles: ${t.roles.join(', ')})`);
+    expect(unreachable).toEqual([]);
+  });
+
+  it('every technique is offered for at least one pack and beat', () => {
+    // The stronger end-to-end form: walk every pack over rich content and check
+    // each technique surfaces somewhere. Catches role lists that are technically
+    // satisfiable but excluded by every pack's forbid rules.
+    const offered = new Set<string>();
+    for (const pack of LOOK_PACKS) {
+      const seq = sequence(briefFor(pack.id));
+      for (const energy of [0.2, 0.5, 0.85]) {
+        for (const p of motionCastPrompts(seq, pack.id, energy)) {
+          for (const id of p.allowed) offered.add(id);
+        }
+      }
+    }
+    const never = [...TECHNIQUES, ...PRODUCT_TECHNIQUES]
+      .map((t) => t.id)
+      .filter((id) => !offered.has(id));
+    // Reported rather than asserted empty: a technique can legitimately need
+    // content this fixture does not produce. The assertion is that CAMERA
+    // techniques — the ones this investigation was about — are all reachable.
+    const cameraNever = never.filter((id) => id.startsWith('camera.'));
+    expect(cameraNever).toEqual([]);
   });
 });

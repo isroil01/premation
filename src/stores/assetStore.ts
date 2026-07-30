@@ -5,6 +5,10 @@ import { api, isAuthenticated } from '@core/api/client';
 import { AssetDatabase } from '@core/services/AssetDatabase';
 import { isLocalFirst } from '@core/config/flags';
 import { importLocalAsset } from '@core/assets/local/importLocalAsset';
+import type { FootageInterpretation } from '@core/source/sourceInfo';
+import type { ProxyRecord } from '@core/assets/proxy';
+import { probeMedia } from '@core/assets/mediaProbe';
+import { bumpScene } from '@stores/sceneStore';
 
 export interface ImportedAsset {
   id: string;
@@ -24,7 +28,40 @@ export interface ImportedAsset {
     width?: number;
     height?: number;
     duration?: number;
+    /**
+     * Real source frame rate. Only the desktop ffmpeg probe can fill this in —
+     * nothing in the browser reports a `<video>`'s rate — so it stays undefined
+     * on web imports and every reader must handle that rather than substituting
+     * the composition's rate.
+     */
+    fps?: number;
+    /**
+     * Whether the container has an audio stream. Only a real probe can answer
+     * this at import; `undefined` means "nobody looked", which is a different
+     * claim from `false` and the audio UI must distinguish them.
+     */
+    hasAudioTrack?: boolean;
+    /** The file carries an alpha channel (probe: pix_fmt OR the container's
+     *  alpha_mode tag). Gates the Alpha interpretation control — it is noise on
+     *  the opaque footage that makes up most of a project. */
+    hasAlpha?: boolean;
+    audioChannels?: number;
   };
+  /**
+   * Per-FILE reinterpretation (frame rate conform, pixel aspect, alpha, loop).
+   * Lives on the asset rather than the layer so changing it updates every layer
+   * using this footage at once. See `@core/source/sourceInfo`.
+   */
+  interpret?: FootageInterpretation;
+  /**
+   * Low-resolution stand-in used while EDITING only.
+   *
+   * Deliberately NOT reflected in `metadata`: a proxy substitutes pixels, never
+   * facts. Size, duration, fps, PAR and alpha keep describing the original, so
+   * `sourceOf` and every timing operation are unaffected by a proxy existing.
+   * See `@core/assets/proxy`.
+   */
+  proxy?: ProxyRecord;
 }
 
 /** Longest edge (px) of a generated panel thumbnail — comfortably sharp for the
@@ -128,6 +165,16 @@ interface AssetStoreActions {
   removeFolder: (id: string) => void;
   /** Move an asset into a folder (null = root). */
   moveAssetToFolder: (assetId: string, folderId: string | null) => void;
+  /**
+   * Reinterpret a FILE — frame-rate conform, pixel aspect, alpha, loop count.
+   * Patch-merged, and it applies to every layer using this asset at once, which
+   * is the whole point: a mis-tagged import can be corrected after it has been
+   * cut with. Pass a field as `undefined` to clear it back to the file's own
+   * value.
+   */
+  setInterpretation: (assetId: string, patch: FootageInterpretation) => void;
+  /** Write or clear an asset's proxy record. Pass null to detach. */
+  setProxy: (assetId: string, proxy: ProxyRecord | null) => void;
   /** Replace the local list with the signed-in user's cloud assets. */
   loadFromCloud: () => Promise<void>;
   /** Initialize local assets hydrated from IndexedDB. */
@@ -141,6 +188,15 @@ interface AssetStoreActions {
 // folderId, so we re-apply the saved assignment map after every load.
 const FOLDERS_KEY = 'motion-editor.assetFolders.v1';
 const ASSIGN_KEY = 'motion-editor.assetFolderAssignments.v1';
+// Interpretation rides the same client-side persistence as folder assignments,
+// and for the same reason: it is a statement the editor makes ABOUT a file, and
+// neither the cloud schema nor the IndexedDB record carries it. Losing it on
+// reload would silently un-conform footage that had already been cut with.
+const INTERPRET_KEY = 'motion-editor.assetInterpretations.v1';
+// Proxies persist alongside interpretations, for the same reason: the record is
+// a statement the editor makes about a file, and neither the cloud schema nor
+// the IndexedDB record carries it.
+const PROXY_KEY = 'motion-editor.assetProxies.v1';
 
 function loadFolders(): AssetFolder[] {
   try {
@@ -178,13 +234,116 @@ function saveAssignments(assets: ImportedAsset[]): void {
   }
 }
 
-/** Overlay the saved folder assignments onto a freshly loaded asset list. */
+function loadInterpretations(): Record<string, FootageInterpretation> {
+  try {
+    const raw = localStorage.getItem(INTERPRET_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, FootageInterpretation>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Restore proxy records.
+ *
+ * A persisted 'generating' is dropped rather than restored — see `saveProxies`.
+ * It should never be written, but a record from a crashed session or a hand
+ * -edited store must not resurrect a job with no child process behind it.
+ */
+function loadProxies(): Record<string, ProxyRecord> {
+  try {
+    const raw = localStorage.getItem(PROXY_KEY);
+    const map = raw ? (JSON.parse(raw) as Record<string, ProxyRecord>) : {};
+    for (const [id, p] of Object.entries(map)) if (p?.status === 'generating') delete map[id];
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Persist proxy records.
+ *
+ * `generating` is deliberately NOT persisted. An ffmpeg child dies with the app,
+ * so a stored 'generating' would reload as a job that will never finish and can
+ * never be cancelled — the asset would sit spinning forever. On reload an
+ * interrupted job is simply absent, and the asset is back to full resolution
+ * with the Create Proxy action available again, which is the honest state.
+ */
+function saveProxies(assets: ImportedAsset[]): void {
+  try {
+    const map: Record<string, ProxyRecord> = {};
+    for (const a of assets) if (a.proxy && a.proxy.status !== 'generating') map[a.id] = a.proxy;
+    localStorage.setItem(PROXY_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+function saveInterpretations(assets: ImportedAsset[]): void {
+  try {
+    const map: Record<string, FootageInterpretation> = {};
+    for (const a of assets) if (a.interpret && Object.keys(a.interpret).length > 0) map[a.id] = a.interpret;
+    localStorage.setItem(INTERPRET_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Fold a desktop ffprobe pass into an asset's metadata.
+ *
+ * Additive and best-effort by design. The media element already supplied size
+ * and duration; the probe's unique contribution is the **real frame rate**,
+ * the container's **pixel aspect**, and a definitive **audio stream inventory**
+ * — none of which the browser can report. When no probe ran, the asset keeps
+ * exactly the element-derived metadata it has always had (see `mediaProbe`'s
+ * tier table), so import behaviour is unchanged rather than degraded.
+ *
+ * The probed rate goes to `metadata.fps` — the file's own truth. It is
+ * deliberately NOT written to `interpret.conformFps`, which means "the user
+ * overrode the file"; `footageSourceOf` already prefers conform over probed, so
+ * writing both would make an untouched import indistinguishable from a
+ * hand-conformed one and there would be nothing to reset to.
+ */
+async function applyProbe(file: File, asset: ImportedAsset): Promise<void> {
+  if (asset.type !== 'video' && asset.type !== 'audio') return;
+  const facts = await probeMedia(file);
+  if (facts.tier !== 'probed') return;
+
+  asset.metadata = {
+    ...asset.metadata,
+    ...(facts.width ? { width: facts.width } : {}),
+    ...(facts.height ? { height: facts.height } : {}),
+    // The element's duration is often rounded; the container's is exact.
+    ...(facts.durationSec ? { duration: facts.durationSec } : {}),
+    ...(facts.fps ? { fps: facts.fps } : {}),
+    ...(facts.audio !== undefined ? { hasAudioTrack: facts.audio !== null } : {}),
+    ...(facts.hasAlpha ? { hasAlpha: true } : {}),
+    ...(facts.audio?.channels ? { audioChannels: facts.audio.channels } : {}),
+  };
+  // A non-square pixel aspect IS an interpretation — it is the container
+  // telling us how it wants to be displayed, and the user can override it.
+  if (facts.par) asset.interpret = { ...(asset.interpret ?? {}), par: facts.par };
+}
+
+/** Overlay the saved folder assignments and interpretations onto a freshly
+ *  loaded asset list. */
 function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): ImportedAsset[] {
   const map = loadAssignments();
+  const interp = loadInterpretations();
+  const proxies = loadProxies();
   const validFolder = new Set(folders.map((f) => f.id));
   return assets.map((a) => {
     const fid = map[a.id];
-    return { ...a, folderId: fid && validFolder.has(fid) ? fid : a.folderId ?? null };
+    const i = interp[a.id];
+    const p = proxies[a.id];
+    return {
+      ...a,
+      folderId: fid && validFolder.has(fid) ? fid : a.folderId ?? null,
+      ...(i ? { interpret: i } : {}),
+      ...(p ? { proxy: p } : {}),
+    };
   });
 }
 
@@ -211,6 +370,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             folderId,
             ...(imported.metadata ? { metadata: imported.metadata } : {}),
           };
+          await applyProbe(file, asset);
           set((s) => {
             s.assets.push(asset);
           });
@@ -298,6 +458,11 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           video.src = src;
         });
       }
+
+      // Real stream facts, where a demuxer is available (desktop + ffprobe).
+      // After the element pass so it can correct duration and add what the
+      // element cannot know; before the IndexedDB write so it persists.
+      await applyProbe(file, asset);
 
       // Downscaled panel preview (images only) — keeps the grid fast.
       const thumb = type === 'image' ? await makeImageThumb(file) : null;
@@ -467,12 +632,77 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       saveAssignments(get().assets);
     },
 
+    setInterpretation: (assetId, patch) => {
+      set((s) => {
+        const a = s.assets.find((x) => x.id === assetId);
+        if (!a) return;
+        const next: FootageInterpretation = { ...(a.interpret ?? {}) };
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === undefined) delete (next as Record<string, unknown>)[k];
+          else (next as Record<string, unknown>)[k] = v;
+        }
+        a.interpret = next;
+      });
+      saveInterpretations(get().assets);
+      // Every layer using this file just changed size/rate/alpha, so the
+      // renderer's per-frame caches and the timeline's duration bounds are both
+      // stale. Bumping the scene is what makes the change visible everywhere at
+      // once rather than on the next unrelated edit.
+      bumpScene();
+    },
+
+    /**
+     * Write a proxy record. The ONE mutation point for `asset.proxy`, so a
+     * generation job, a user attach and a failure all land the same way.
+     *
+     * `bumpScene` is what makes the change visible: `resolveRigImageSrc` reads
+     * the store per snapshot, so without a bump the viewport would keep
+     * decoding the previous source until some unrelated edit forced a rebuild.
+     */
+    setProxy: (assetId, proxy) => {
+      set((s) => {
+        const a = s.assets.find((x) => x.id === assetId);
+        if (!a) return;
+        if (proxy) a.proxy = proxy;
+        else delete a.proxy;
+      });
+      saveProxies(get().assets);
+      bumpScene();
+    },
+
+    /**
+     * The whole cloud library, one page at a time.
+     *
+     * This asked for `{limit: 100}` once and treated the answer as everything,
+     * so account number 101 onwards simply did not exist in the editor — no
+     * error, no truncation notice, just missing footage in the Assets panel.
+     * The store is the editor's asset index (documents reference assets by id),
+     * so it does need all of them; what it must not do is pretend one page is
+     * all of them.
+     */
     loadFromCloud: async () => {
       if (!isAuthenticated()) return;
+      const PAGE = 100;
+      /** Backstop against a runaway loop, not a real ceiling on a library. */
+      const MAX_PAGES = 50;
       try {
-        const cloud = (await api.listAssets(undefined, { limit: 100 })).items;
+        const all: ImportedAsset[] = [];
+        let offset = 0;
+        let total = 0;
+        for (let i = 0; i < MAX_PAGES; i++) {
+          const page = await api.listAssets(undefined, { limit: PAGE, offset });
+          all.push(...page.items);
+          total = page.total;
+          offset += page.items.length;
+          if (page.items.length === 0 || all.length >= total) break;
+        }
+        if (all.length < total) {
+          console.warn(
+            `[assets] loaded ${all.length} of ${total} cloud assets (page cap reached)`,
+          );
+        }
         set((s) => {
-          s.assets = applyAssignments(cloud, s.folders);
+          s.assets = applyAssignments(all, s.folders);
         });
       } catch {
         /* offline — keep local list */

@@ -485,6 +485,12 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     // Texture-backed kinds resolve via the provider
     ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
     ...(!isCustomPath && (kind === 'image' || kind === 'video') ? { textureKey: `asset:${layer.id}` } : {}),
+    // Media-slot cover crop. FrameScene already carries `uvRect` and the pass
+    // reads `r.uvRect ?? tex.uv`, so this is the whole of the plumbing.
+    ...(layer.uvRect ? { uvRect: layer.uvRect } : {}),
+    // Premultiplied footage: routes the draw to the shader twin that divides
+    // the premultiplication out before grading.
+    ...(layer.premultipliedSource ? { premultipliedSource: true } : {}),
     ...(kind === 'text' ? { textureKey: `text:${layer.id}` } : {}),
     ...(!cpuBaked && layer.mask && layer.mask.paths.length > 0 ? { maskTextureKey: `mask:${layer.id}` } : {}),
     // Colour LUT (Levels/Curves/Posterize) on a textured layer: the provider
@@ -534,6 +540,25 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
  * Everything else (plain transform, full opacity, single child) keeps the fast
  * inline-collapse path. Exported for unit tests.
  */
+/**
+ * The matrix a precomp container's CHILDREN compose under: the container's own
+ * placement, with its box re-origined to its top-left so a child at (0, 0) in
+ * the referenced composition lands at the container's top-left corner.
+ *
+ * Shared by both composite paths (isolated-to-texture and inline-collapse) on
+ * purpose — they disagreed, so whether a nested composition landed in the right
+ * place depended on whether it happened to carry a blend mode or an effect.
+ *
+ * For a full-comp carrier (x = w/2, y = h/2, no rotation, unit scale) this is
+ * exactly the identity, which is why plain precomp groups are unaffected.
+ */
+export function precompChildParent(layer: RenderLayer, parentMatrix: Mat3): Mat3 {
+  const rad = (layer.rotation * Math.PI) / 180;
+  const tOrigin = Mat3.translation(-layer.width / 2, -layer.height / 2);
+  const mPrecomp = Mat3.compose(layer.x, layer.y, rad, layer.scaleX || 1, layer.scaleY || 1);
+  return Mat3.multiply(parentMatrix, Mat3.multiply(mPrecomp, tOrigin));
+}
+
 export function precompNeedsIsolation(layer: RenderLayer): boolean {
   if (!layer.precompLayers || layer.precompLayers.length === 0) return false;
   if (layer.blend && layer.blend !== 'normal') return true;
@@ -551,10 +576,16 @@ export function precompNeedsIsolation(layer: RenderLayer): boolean {
  *  the ordinary per-layer machinery (blend / advanced blend / effects / matte),
  *  so the whole group behaves exactly like a single layer. */
 function precompToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpacity: number): Renderable {
-  // Children flatten with IDENTITY parent — they are already in the container's
-  // comp space (buildSnapshot emits them with full world transforms) and the
-  // offscreen texture is composited in that same space.
-  const inner = flattenLayers(layer.precompLayers!, Mat3.identity(), 1);
+  // Children flatten under the container's OWN transform — the same matrix the
+  // inline-collapse path below builds, so the two agree.
+  //
+  // This used to pass IDENTITY, on the reasoning that children were already in
+  // comp space. That held only while every container was a full-comp carrier at
+  // the comp centre, where the matrix degenerates to the identity anyway. A comp
+  // instance has a real position, size and rotation, and the isolated path threw
+  // all three away — so the moment a precomp got a blend mode, a mask, a matte
+  // or an effect (the things that force isolation) it jumped back to the origin.
+  const inner = flattenLayers(layer.precompLayers!, precompChildParent(layer, parentMatrix), 1);
   const local = centerModel(layer);
   const model = Mat3.multiply(parentMatrix, local);
   const advBlend = advancedBlendId(layer.blend);
@@ -743,15 +774,12 @@ function flattenLayers(
       }
       // Fast path (plain transform + full/single-child opacity, no compositing
       // features): collapse inline — transform folds, opacity multiplies.
-      const rad = (layer.rotation * Math.PI) / 180;
-      const tOrigin = Mat3.translation(-layer.width / 2, -layer.height / 2);
-      const mPrecomp = Mat3.compose(layer.x, layer.y, rad, layer.scaleX || 1, layer.scaleY || 1);
-
-      const localParent = Mat3.multiply(mPrecomp, tOrigin);
-      const nextParent = Mat3.multiply(parentMatrix, localParent);
-      const nextOpacity = parentOpacity * layer.opacity;
-
-      flattenLayers(layer.precompLayers, nextParent, nextOpacity, result);
+      flattenLayers(
+        layer.precompLayers,
+        precompChildParent(layer, parentMatrix),
+        parentOpacity * layer.opacity,
+        result,
+      );
     } else if (layer.kind === 'video' && layer.frameBlend) {
       // Frame blending (Frame Mix): the two decoded frames bracketing the
       // playhead cross-dissolve — frame A full, frame B at the sub-frame
@@ -829,6 +857,7 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
       id: 'composition',
       size: { width: snapshot.width, height: snapshot.height },
       background: snapshot.transparent ? Color.transparent() : Color.fromHex(snapshot.background),
+      ...(snapshot.backdrop ? { backdrop: snapshot.backdrop } : {}),
     },
     renderables,
     selection: [],

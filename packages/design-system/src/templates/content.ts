@@ -39,7 +39,7 @@ export const statTrio: LayoutTemplate = {
   displayName: 'Stat Trio',
   intent: 'Two to four big numbers across the frame, each with a small caption beneath.',
   tags: ['stat', 'data', 'row', 'proof'],
-  packs: ['apple_keynote', 'saas_explainer', 'broadcast_sports', 'swiss_editorial', 'cyberpunk_kinetic'],
+  packs: ['apple_keynote', 'saas_explainer', 'broadcast_sports', 'swiss_editorial', 'cyberpunk_kinetic', 'mobile_app', 'saas_product'],
   slots: [
     { role: 'overline', required: false, max: 1 },
     { role: 'stat', required: true, max: 4 },
@@ -122,7 +122,7 @@ export const featureTiles: LayoutTemplate = {
   displayName: 'Feature Tiles',
   intent: 'Two or three elevated cards in a row, each a small title over a line of body copy.',
   tags: ['grid', 'cards', 'features', 'saas'],
-  packs: ['saas_explainer', 'apple_keynote', 'swiss_editorial'],
+  packs: ['saas_explainer', 'apple_keynote', 'swiss_editorial', 'cyberpunk_kinetic'],
   slots: [
     { role: 'headline', required: false, max: 1 },
     { role: 'list', required: true, max: 4 },
@@ -303,7 +303,7 @@ export const numberedSteps: LayoutTemplate = {
   displayName: 'Numbered Steps',
   intent: 'A vertical sequence of numbered rows, each a title and a line of detail.',
   tags: ['list', 'steps', 'sequence', 'process'],
-  packs: ['saas_explainer', 'swiss_editorial', 'apple_keynote', 'cyberpunk_kinetic'],
+  packs: ['saas_explainer', 'swiss_editorial', 'apple_keynote', 'cyberpunk_kinetic', 'mobile_app', 'saas_product'],
   slots: [
     { role: 'headline', required: false, max: 1 },
     { role: 'list', required: true, max: 5 },

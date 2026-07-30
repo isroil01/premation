@@ -54,17 +54,40 @@ export type ImageLoader = (src: string, fillColor?: string) => Promise<ImageBitm
 
 const RASTER_MAX = 4096;
 
+/**
+ * Decode options for EVERY bitmap that becomes a GPU texture.
+ *
+ * THE ALPHA INVARIANT (stated in full on `TextureSource`,
+ * packages/renderer/src/gpu/types.ts): textures hold STRAIGHT alpha.
+ *
+ * This is the half of it the backends cannot do themselves.
+ * `createImageBitmap`'s default is `'default'`, which in Chromium means
+ * PREMULTIPLIED — and WebGL2's `UNPACK_PREMULTIPLY_ALPHA_WEBGL` can only
+ * multiply, never divide, so a premultiplied bitmap stays premultiplied however
+ * the unpack flags are set. Asking for straight at DECODE is the only place the
+ * conversion can happen on that backend.
+ *
+ * It also has to be on every call, not most: a single loader path left at the
+ * default would premultiply exactly the formats that take that path (the
+ * `<img>` fallback handles GIF/WebP/exotic types) and leave a backend-specific
+ * fringe on those files alone.
+ *
+ * Proven by: packages/render-tests/scripts/verify-alpha.mjs
+ * (`a straight source composites LINEARLY in alpha`).
+ */
+const STRAIGHT_ALPHA: ImageBitmapOptions = { premultiplyAlpha: 'none' };
+
 /** Draw an already-decoded <img> to a canvas at w×h and hand back a bitmap. */
 async function imageToBitmap(img: HTMLImageElement, w: number, h: number): Promise<ImageBitmap> {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.min(RASTER_MAX, Math.round(w)));
   canvas.height = Math.max(1, Math.min(RASTER_MAX, Math.round(h)));
   const ctx = canvas.getContext('2d');
-  if (!ctx) return createImageBitmap(img);
+  if (!ctx) return createImageBitmap(img, STRAIGHT_ALPHA);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return createImageBitmap(canvas);
+  return createImageBitmap(canvas, STRAIGHT_ALPHA);
 }
 
 /**
@@ -172,7 +195,7 @@ const defaultLoader: ImageLoader = async (src, fillColor) => {
       const blob = await res.blob();
       if (isSvgBlob(blob, src)) return await rasterizeSvg(url, fillColor);
       try {
-        return await createImageBitmap(blob);
+        return await createImageBitmap(blob, STRAIGHT_ALPHA);
       } catch {
         return await rasterizeViaImage(url);
       }
@@ -195,7 +218,7 @@ const defaultLoader: ImageLoader = async (src, fillColor) => {
   // unreliable in Chromium and is the reason uploaded SVGs rendered broken.
   if (isSvgBlob(blob, src)) return rasterizeSvg(src, fillColor);
   try {
-    return await createImageBitmap(blob);
+    return await createImageBitmap(blob, STRAIGHT_ALPHA);
   } catch {
     // GIF/WebP/exotic types createImageBitmap chokes on — fall back to <img>,
     // which decodes the first frame of any format the browser can display.

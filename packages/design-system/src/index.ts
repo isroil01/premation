@@ -136,6 +136,8 @@ export {
   type SlotContent,
   type SlotDef,
   type SlotRole,
+  COMPOSITION_BACKDROP_ID,
+  COMPOSITION_SURFACE_ID,
   composeContext,
   emitText,
   layerId,
@@ -168,7 +170,22 @@ export {
 
 export { type ToolCall, mk, mulberry32, pick, pickInt, shuffled } from './toolcall';
 
-export { emitBackdrop, emitMedia, emitPanel, emitRule } from './templates/shared';
+export { emitBackdrop, emitCompositionBackdrop, emitMedia, emitPanel, emitRule } from './templates/shared';
+
+export {
+  emitDepth,
+  emitLitStage,
+  emitTypeMask,
+  type LitStage,
+} from './stage';
+
+export {
+  GRAPHIC_DEVICES,
+  deviceFor,
+  devicesForPack,
+  type DeviceContext,
+  type GraphicDevice,
+} from './devices';
 
 export {
   DEVICES,

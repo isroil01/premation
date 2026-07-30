@@ -49,6 +49,7 @@ export type DesignRule =
   | 'ACCENT_OVERUSE'
   | 'EVERYTHING_CENTERED'
   | 'PRIMITIVE_ONLY'
+  | 'RECT_ONLY'
   | 'DEFAULT_RADIUS';
 
 export type Severity = 'error' | 'warn';
@@ -90,6 +91,43 @@ export interface LintLayer {
   letterSpacingPx?: number;
   /** True for imported/generated assets — media, SVG, image. */
   isAsset?: boolean;
+  /**
+   * The shape primitive, for `kind === 'shape'` — rect, ellipse, line, star,
+   * polygon.
+   *
+   * Needed by `RECT_ONLY`. Without it the linter cannot tell a composition made
+   * of boxes from one with a drawn arc in it, which is the difference the rule
+   * exists to name.
+   */
+  shape?: string;
+  /** True when the layer carries a repeater — one layer, many marks. */
+  hasRepeater?: boolean;
+  /**
+   * True for an ambient graphic device — a drawn arc, a halftone field, a
+   * registration mark.
+   *
+   * The distinction is load-bearing for `PRIMITIVE_ONLY`. A device may be a real
+   * vector (`import_svg`), which makes it an asset by the letter of `isAsset` —
+   * and a 64px crop mark in a corner would then satisfy a rule about whether the
+   * composition contains any real imagery. It does not: the rule is about the
+   * ceiling on how designed the frame can look, and ambient texture does not
+   * lift that ceiling. `RECT_ONLY` counts devices, because escaping the box is
+   * exactly what they are for; `PRIMITIVE_ONLY` ignores them.
+   */
+  isAmbient?: boolean;
+  /**
+   * Which set of co-visible layers this belongs to — a beat, in caster terms.
+   *
+   * A type hierarchy is a property of a FRAME, not of a timeline. Without this
+   * the size ladder sorted every layer in the composition together and compared
+   * beat 0's headline against beat 1's stat — two things that are never on
+   * screen at the same moment and between which "they read as one block" is not
+   * a statement about anything.
+   *
+   * Absent means "the single implicit group", which is what a caller linting one
+   * still frame passes.
+   */
+  group?: string;
   /** Text alignment, for the everything-centred check. */
   align?: string;
   /** Whether this layer is a frame-wide adjustment/treatment layer. */
@@ -284,25 +322,37 @@ export function lintDesign(scene: LintScene): DesignFinding[] {
   // ── WEAK_TYPE_CONTRAST ────────────────────────────────────────────────────
   // Adjacent levels by size. Two text layers at the SAME size are peers (a row of
   // labels), not a failed hierarchy — so identical sizes are skipped.
-  const texts = layers
-    .filter((l) => l.fontSizePx !== undefined && l.fontWeight !== undefined)
-    .sort((a, b) => b.fontSizePx! - a.fontSizePx!);
-  // Ornaments are excluded from the LADDER but still checked for contrast and
-  // tracking below — they are decoration, not a rung.
-  const ladder = texts.filter((l) => !isOrnament(l));
-  for (let i = 1; i < ladder.length; i++) {
-    const a = ladder[i - 1]!;
-    const b = ladder[i]!;
-    if (Math.abs(a.fontSizePx! - b.fontSizePx!) < 0.5) continue; // peers
-    if (!hasHierarchyContrast(
-      { fontSizePx: a.fontSizePx!, fontWeight: a.fontWeight! },
-      { fontSizePx: b.fontSizePx!, fontWeight: b.fontWeight! },
-    )) {
-      out.push(find('WEAK_TYPE_CONTRAST', [a.id, b.id],
-        `'${a.name ?? a.id}' (${a.fontSizePx}px/${a.fontWeight}) and '${b.name ?? b.id}' ` +
-        `(${b.fontSizePx}px/${b.fontWeight}) differ by less than ${MIN_SIZE_RATIO}× in size AND ` +
-        `less than ${MIN_WEIGHT_CONTRAST} in weight, so they read as one block. Widen either ` +
-        `lever — two weights of one family beat two families.`));
+  const texts = layers.filter((l) => l.fontSizePx !== undefined && l.fontWeight !== undefined);
+  // Per GROUP, because a hierarchy is a property of a frame. Comparing a
+  // headline in one beat against a stat in another asks whether two things that
+  // are never on screen together read as one block, which is not a question.
+  const byGroup = new Map<string, LintLayer[]>();
+  for (const l of texts) {
+    const key = l.group ?? '';
+    const bucket = byGroup.get(key);
+    if (bucket) bucket.push(l);
+    else byGroup.set(key, [l]);
+  }
+  for (const group of byGroup.values()) {
+    // Ornaments are excluded from the LADDER but still checked for contrast and
+    // tracking below — they are decoration, not a rung.
+    const ladder = group
+      .filter((l) => !isOrnament(l))
+      .sort((a, b) => b.fontSizePx! - a.fontSizePx!);
+    for (let i = 1; i < ladder.length; i++) {
+      const a = ladder[i - 1]!;
+      const b = ladder[i]!;
+      if (Math.abs(a.fontSizePx! - b.fontSizePx!) < 0.5) continue; // peers
+      if (!hasHierarchyContrast(
+        { fontSizePx: a.fontSizePx!, fontWeight: a.fontWeight! },
+        { fontSizePx: b.fontSizePx!, fontWeight: b.fontWeight! },
+      )) {
+        out.push(find('WEAK_TYPE_CONTRAST', [a.id, b.id],
+          `'${a.name ?? a.id}' (${a.fontSizePx}px/${a.fontWeight}) and '${b.name ?? b.id}' ` +
+          `(${b.fontSizePx}px/${b.fontWeight}) differ by less than ${MIN_SIZE_RATIO}× in size AND ` +
+          `less than ${MIN_WEIGHT_CONTRAST} in weight, so they read as one block. Widen either ` +
+          `lever — two weights of one family beat two families.`));
+      }
     }
   }
 
@@ -392,11 +442,38 @@ export function lintDesign(scene: LintScene): DesignFinding[] {
   }
 
   // ── PRIMITIVE_ONLY (warn) ─────────────────────────────────────────────────
-  if (layers.length > 2 && !layers.some((l) => l.isAsset)) {
+  // Ambient devices are excluded on purpose — see `LintLayer.isAmbient`. A
+  // decorative crop mark is an `import_svg` and therefore an asset, and letting
+  // it answer "does this composition contain any real imagery?" would retire the
+  // rule without changing a single frame.
+  if (layers.length > 2 && !layers.some((l) => l.isAsset && !l.isAmbient)) {
     out.push(find('PRIMITIVE_ONLY', [],
       `Nothing in this composition is an imported or generated asset — it is entirely rectangles ` +
       `and text. That is the ceiling on how designed it can look. Place real imagery, an SVG mark, ` +
       `or an image used as a luma matte for a text reveal.`));
+  }
+
+  // ── RECT_ONLY (warn) ──────────────────────────────────────────────────────
+  // The plainest version of the ceiling, and the one a viewer states first:
+  // everything in the frame is a box. `PRIMITIVE_ONLY` asks whether anything is
+  // a picture; this asks whether anything is even a curve or a diagonal.
+  //
+  // A warning rather than an error, and honestly so: a product-UI composition is
+  // legitimately all rectangles, because interfaces are. It is satisfiable on
+  // every editorial run — `deviceFor` returns a device for every editorial shape
+  // vocabulary — so unlike `PRIMITIVE_ONLY` it points at something the pipeline
+  // can actually fix on its own.
+  const shapes = layers.filter((l) => l.kind === 'shape');
+  if (shapes.length >= 4) {
+    const drawn = shapes.filter(
+      (l) => (l.shape !== undefined && l.shape !== 'rect') || l.hasRepeater || (l.cornerRadius ?? 0) > 0,
+    );
+    if (!drawn.length && !layers.some((l) => l.isAsset)) {
+      out.push(find('RECT_ONLY', [],
+        `All ${shapes.length} shapes in this composition are plain rectangles — no curve, no ` +
+        `diagonal, no repeated mark, not even a corner radius. That is the flattest a frame can ` +
+        `read. Add a graphic device (an arc, a halftone field, a hatch) behind the content.`));
+    }
   }
 
   // ── DEFAULT_RADIUS (warn) ─────────────────────────────────────────────────
@@ -421,8 +498,8 @@ export function designScore(findings: readonly DesignFinding[]): number {
   const errors = findings.filter((f) => f.severity === 'error').length;
   const warns = findings.filter((f) => f.severity === 'warn').length;
   const penalty = errors * 3 + warns;
-  // 13 rules; the worst realistic case trips most of them.
-  return Math.max(0, 1 - penalty / 24);
+  // 14 rules; the worst realistic case trips most of them.
+  return Math.max(0, 1 - penalty / 26);
 }
 
 /** Findings as a repair brief, or null when clean. */

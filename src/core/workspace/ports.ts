@@ -719,6 +719,60 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): v
 }
 
 /**
+ * Write arbitrary numeric props to ONE node through the same dual path
+ * `applyGizmo3DTransforms` uses: static base prop always, plus a keyframe when
+ * the prop is already animated or Auto-Keyframe is on.
+ *
+ * Exists because camera navigation writes props the layer-transform type does
+ * not cover — `orbitYaw`, `orbitPitch`, `poiX/Y/Z`, `focalLength`. Those writes
+ * went straight to `updateNodeComponentProp`, i.e. base props only, so the C
+ * tool could move a camera but could never ANIMATE one: with Auto-Keyframe on,
+ * dragging the camera silently produced no keyframes while dragging a layer's
+ * gizmo produced them normally. In After Effects the camera tools keyframe like
+ * anything else.
+ *
+ * `mergeKey` coalesces a whole drag into one undo entry — pass something stable
+ * for the gesture's duration.
+ */
+export function applyNodePropsKeyframed(
+  nodeId: string,
+  values: Readonly<Record<string, number>>,
+  mergeKey: string,
+): void {
+  const node = defaultSceneGraph.getNode(nodeId as ID);
+  if (!node || node.locked) return;
+  const transComp = node.components.find((c) => c.type === 'Transform');
+  if (!transComp) return;
+
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  const lt = getRemappedTime(nodeId, rawTime);
+
+  const keyed: Array<{ prop: string; value: number }> = [];
+  let changed = false;
+  for (const [prop, value] of Object.entries(values)) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    // Position keyframes as a group (x/y together) so a track lit on one axis
+    // keyframes both — the same rule the layer gizmo applies.
+    const group = GIZMO_TRACK_GROUPS[prop as keyof Transform3DValues] ?? [prop];
+    if (autoKeyframe || hasAnyTrack(nodeId, group)) keyed.push({ prop, value });
+    defaultSceneGraph.writeProp(nodeId as ID, transComp.id, prop, value);
+    changed = true;
+  }
+
+  if (keyed.length > 0) {
+    runAnimEdit(
+      'Keyframe Camera',
+      () => {
+        for (const k of keyed) defaultAnimation.setKeyframe(nodeId, k.prop, lt, k.value);
+      },
+      mergeKey,
+    );
+  }
+  if (changed) bumpScene();
+}
+
+/**
  * A drag in an ORTHOGRAPHIC view moves the layer along that view's axes.
  *
  * The delta arrives in projected 2D. In Front view that happens to equal world
@@ -733,6 +787,32 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): v
  * and go through {@link perspectiveDelta3D}, which additionally needs the
  * layer's depth.
  */
+/**
+ * A projected 2D drag delta as a WORLD translation, for whichever view is
+ * active — the ortho table or the camera's own basis, chosen the same way the
+ * layer drag chooses it.
+ *
+ * Exported so dragging a camera or light handle cannot grow a fourth way to
+ * turn a pointer movement into world motion. `at` supplies the depth the
+ * perspective case divides by.
+ */
+export function viewDragToWorldDelta(
+  delta: { x: number; y: number },
+  view: Camera3dMode,
+  at: { x: number; y: number; z: number },
+  compW: number,
+  compH: number,
+  rawTime: number,
+): { x: number; y: number; z: number } {
+  const ortho = orthoDelta3D(delta, view);
+  if (ortho) return ortho;
+  const camera = currentViewCamera(compW, compH, rawTime, view);
+  // No view camera (shouldn't happen once ortho is excluded) ⇒ treat the drag
+  // as in-plane, which is the pre-3D behaviour.
+  if (!camera) return { x: delta.x, y: delta.y, z: 0 };
+  return perspectiveDelta3D(delta, camera, at);
+}
+
 function orthoDelta3D(
   delta: { x: number; y: number },
   view: Camera3dMode,

@@ -44,12 +44,17 @@ export interface Gizmo3dOverlayProps {
   groundGridVisible: boolean;
   /** Camera frustums, light cones and 3D layer boxes, in comp space. */
   sceneGizmos: readonly SceneGizmo[];
+  /** Draggable camera / light points, drawn as grab dots (see useDeviceHandles). */
+  deviceHandles?: readonly { nodeId: string; kind: 'position' | 'poi'; world: Vec3 }[];
+  hoveredDeviceHandle?: { nodeId: string; kind: 'position' | 'poi' } | null;
   activeHandle: GizmoHandleType | null;
   hoverHandle: GizmoHandleType | null;
   dragState: DragState3D | null;
 }
 
 export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
+  deviceHandles,
+  hoveredDeviceHandle,
   showGizmo,
   position3D,
   nodeRotation,
@@ -217,6 +222,8 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
         viewTransform={viewTransform}
         groundGridVisible={groundGridVisible}
         sceneGizmos={sceneGizmos}
+        deviceHandles={deviceHandles}
+        hoveredDeviceHandle={hoveredDeviceHandle}
       />
 
       {/* ── Render 3D Gizmo Handles ── */}

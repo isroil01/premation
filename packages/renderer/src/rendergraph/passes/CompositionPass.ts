@@ -1,4 +1,5 @@
 import { Color } from '../../core/math/Color';
+import { Mat3 } from '../../core/math/Mat3';
 import { Rect } from '../../core/math/geometry';
 import { depthEligible3D, type Renderable, type RenderableEffect, type RenderableSdf } from '../../scene/FrameScene';
 import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
@@ -77,6 +78,73 @@ function toSolidShape(sdf: RenderableSdf | undefined): SolidShape | undefined {
   return { kind: 1, radiusPx: r, width: sdf.width, height: sdf.height };
 }
 
+/**
+ * The buffer an effect chain is running in, when it is NOT screen space.
+ *
+ * Effect sizes (blur radius, shadow offset, stroke width) are comp px, and the
+ * chain converts them to texels. In the 2D route the buffer IS the screen, so
+ * the conversion is the identity and no space is passed. The 3D route resolves
+ * a layer's chain in the LAYER's own space, where the scale depends on the
+ * layer's size — see resolveEffect3DTexture.
+ */
+interface FxSpace {
+  /** Texels per comp px, horizontally. */
+  pxToTexelX: number;
+  /** Texels per comp px, vertically. */
+  pxToTexelY: number;
+}
+
+/**
+ * How far outside its own rectangle a layer's effect chain reaches, in comp px.
+ *
+ * Drives the margin reserved around a 3D layer's effect resolve. Deliberately
+ * generous for blur-like effects: the shader treats the radius as a Gaussian
+ * SIGMA and samples to ±2.5σ, so a margin of one radius would clip the tail
+ * into a visible straight edge.
+ */
+function effectSpreadPx(effects: readonly RenderableEffect[]): number {
+  let max = 0;
+  for (const e of effects) {
+    let s = 0;
+    if (e.type === 'blur') s = e.radiusPx * BLUR_TAIL;
+    else if (e.type === 'glow') s = e.radiusPx * BLUR_TAIL;
+    else if (e.type === 'drop-shadow') s = Math.hypot(e.offsetX, e.offsetY) + e.radiusPx * BLUR_TAIL;
+    else if (e.type === 'stroke') s = e.widthPx;
+    else if (e.type === 'displacement-map') s = e.amount;
+    if (s > max) max = s;
+  }
+  return max;
+}
+
+/** Gaussian extent the blur shader actually samples, in radii. */
+const BLUR_TAIL = 2.5;
+
+/** Margin ceiling, as a fraction of the layer's own size per side. Past this
+ *  the content would be squeezed into too few texels to stay sharp; a huge glow
+ *  on a tiny layer gets a clipped tail rather than a mushy layer. */
+const MAX_FX_MARGIN = 1.5;
+
+/**
+ * Grow a unit-quad model matrix about the quad's CENTRE by (ex, ey).
+ *
+ * The matrix maps [0,1]² onto the layer's plane, so the centre is (0.5, 0.5)
+ * in its own space and the scale has to be conjugated by that translation —
+ * scaling in place would slide the plane by half the growth.
+ */
+function expandUnitQuadModel(model: readonly number[], ex: number, ey: number): readonly number[] {
+  const m = Array.from(model);
+  // Columns 0 and 1 are the width and height edges; scale them, then pull the
+  // origin (column 3) back by the half-edge each one gained.
+  for (let i = 0; i < 3; i++) {
+    const cx = m[i]! * ex;
+    const cy = m[4 + i]! * ey;
+    m[12 + i] = m[12 + i]! - (cx - m[i]!) * 0.5 - (cy - m[4 + i]!) * 0.5;
+    m[i] = cx;
+    m[4 + i] = cy;
+  }
+  return m;
+}
+
 /** Per-list rendering state: which colour target composites land in (the scene
  *  target at the top level, a precomp target inside an isolated group), plus
  *  the batched main command buffer and the sibling lookup for mattes /
@@ -136,13 +204,13 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, r.premultipliedSource);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, opacity, blend, toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix, r.premultipliedSource);
       else if (tex) emitLayerTexture(ctx, r, { texture: tex.texture, sampler: smp(), uv }, opacity, cmds, modelOverride, blendOverride);
     }
     return cmds;
@@ -186,10 +254,19 @@ export class CompositionPass extends RenderPass {
     pool: readonly [string, string, string],
     byId: ReadonlyMap<string, Renderable>,
     selfId: string,
+    space?: FxSpace,
   ): { tex: TextureHandle; name: string } {
     const { viewport, services } = ctx;
     const targetUv = targetSampleUv(ctx);
     const mvp = screenMvp();
+    // Comp px → target texels. The 2D route feeds the chain a SCREEN-space
+    // buffer where one comp px is one texel, so it passes no space and every
+    // formula below stays byte-for-byte what it was. The 3D route feeds it a
+    // LAYER-space buffer whose scale is set by the layer's own size, so its
+    // radii and offsets have to be converted or a shadow comes out a fraction
+    // of the size it was asked for.
+    const kx = space?.pxToTexelX ?? 1;
+    const ky = space?.pxToTexelY ?? 1;
     const clampSampler = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     const texOf = (name: string): TextureHandle | null =>
       ctx.services.backend.renderTargetTexture(ctx.target(name)!) ?? null;
@@ -212,7 +289,7 @@ export class CompositionPass extends RenderPass {
           const blur1Cmds = new CommandBuffer();
           blur1Cmds.add({
             batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
-            uniforms: packBlur(mvp, targetUv, 1.0 / viewport.pixelSize.width, 0, rPx),
+            uniforms: packBlur(mvp, targetUv, 1.0 / viewport.pixelSize.width, 0, rPx * kx),
             texture: curTex, sampler: clampSampler(),
           });
           const encH = beginViewportPass(ctx, 'blurH', writeAttachment(ctx, f1, Color.transparent()));
@@ -226,7 +303,7 @@ export class CompositionPass extends RenderPass {
             const blur2Cmds = new CommandBuffer();
             blur2Cmds.add({
               batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
-              uniforms: packBlur(mvp, targetUv, 0, 1.0 / viewport.pixelSize.height, rPx),
+              uniforms: packBlur(mvp, targetUv, 0, 1.0 / viewport.pixelSize.height, rPx * ky),
               texture: hTex, sampler: clampSampler(),
             });
             const encV = beginViewportPass(ctx, 'blurV', writeAttachment(ctx, f0, Color.transparent()));
@@ -245,13 +322,24 @@ export class CompositionPass extends RenderPass {
           emitTextured(compCmds, mvp, effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), 1, 'screen', blurredTex, clampSampler(), targetUv);
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
         } else {
-          const rect = {
-            x: viewport.visibleWorldRect.x + effect.offsetX,
-            y: viewport.visibleWorldRect.y + effect.offsetY,
-            width: viewport.visibleWorldRect.width,
-            height: viewport.visibleWorldRect.height,
-          };
-          emitTextured(compCmds, mvpFor(viewport, modelFromRect(rect)), effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
+          // The shadow copy is the whole buffer shifted. In screen space that
+          // is the visible world rect translated by the offset; in layer space
+          // there is no world rect to translate, so the same shift is expressed
+          // as a fraction of the buffer (offset in texels ÷ buffer size).
+          const shadowMvp = space
+            ? Mat3.multiply(mvp, modelFromRect({
+                x: (effect.offsetX * kx) / viewport.pixelSize.width,
+                y: (effect.offsetY * ky) / viewport.pixelSize.height,
+                width: 1,
+                height: 1,
+              }))
+            : mvpFor(viewport, modelFromRect({
+                x: viewport.visibleWorldRect.x + effect.offsetX,
+                y: viewport.visibleWorldRect.y + effect.offsetY,
+                width: viewport.visibleWorldRect.width,
+                height: viewport.visibleWorldRect.height,
+              }));
+          emitTextured(compCmds, shadowMvp, effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
         }
         const encC = beginViewportPass(ctx, 'fx-comp', writeAttachment(ctx, f1, Color.transparent()));
@@ -284,7 +372,7 @@ export class CompositionPass extends RenderPass {
         const mapTex = (canUseMap ? this.displacementMapTexture(ctx, byId, effect.mapLayerId, selfId) : null) ?? curTex;
         cmds.add({
           batchKey: 'displace', material: DISPLACEMENT_MAP_MATERIAL, blend: 'normal',
-          uniforms: packDisplacementMap(mvp, targetUv, effect.amount / viewport.pixelSize.width, effect.amount / viewport.pixelSize.height),
+          uniforms: packDisplacementMap(mvp, targetUv, (effect.amount * kx) / viewport.pixelSize.width, (effect.amount * ky) / viewport.pixelSize.height),
           texture: curTex, sampler: clampSampler(),
           maskTexture: mapTex,
         });
@@ -303,7 +391,7 @@ export class CompositionPass extends RenderPass {
       } else if (effect.type === 'stroke') {
         cmds.add({
           batchKey: 'stroke', material: STROKE_MATERIAL, blend: 'normal',
-          uniforms: packStroke(mvp, targetUv, effect.color, effect.widthPx, 1 / viewport.pixelSize.width, 1 / viewport.pixelSize.height),
+          uniforms: packStroke(mvp, targetUv, effect.color, effect.widthPx, kx / viewport.pixelSize.width, ky / viewport.pixelSize.height),
           texture: curTex, sampler: clampSampler(),
         });
       } else if (effect.type === 'sharpen') {
@@ -381,10 +469,11 @@ export class CompositionPass extends RenderPass {
     srcTex: TextureHandle,
     dest: string,
     byId: ReadonlyMap<string, Renderable>,
+    space?: FxSpace,
   ): TextureHandle | null {
     if (!r.effects || r.effects.length === 0) return srcTex;
     const { services } = ctx;
-    const res = this.runEffectsChain(ctx, r.effects, srcTex, [dest, BLUR_TARGET1, BLUR_TARGET2], byId, r.id);
+    const res = this.runEffectsChain(ctx, r.effects, srcTex, [dest, BLUR_TARGET1, BLUR_TARGET2], byId, r.id, space);
     if (res.name === dest) return res.tex;
     // Settle the result into `dest` (scratch targets are reused immediately after).
     const clampSampler = services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
@@ -502,10 +591,13 @@ export class CompositionPass extends RenderPass {
    * over; the resolved texture is then sampled 1:1 by the depth-tested quad.
    * (No lighting/shade here — that is applied per-fragment on the resolved quad.)
    */
-  private fill3DContentCmds(ctx: RenderPassContext, r: Renderable): CommandBuffer {
+  private fill3DContentCmds(ctx: RenderPassContext, r: Renderable, inset?: Rect): CommandBuffer {
     const { services } = ctx;
     const cmds = new CommandBuffer();
-    const mvp = screenMvp();
+    // `inset` places the content inside a MARGIN when the effect chain needs
+    // room to spread outside the layer (see resolveEffect3DTexture). Absent =
+    // the whole buffer, which is the effect-free geometry of this function.
+    const mvp = inset ? Mat3.multiply(screenMvp(), modelFromRect(inset)) : screenMvp();
     const smp = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     const uv = r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 };
     const isSolid = r.kind === 'rect' || r.kind === 'path' || r.kind === 'group';
@@ -514,41 +606,88 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, r.premultipliedSource);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, 1, 'normal', toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix);
-      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix, r.premultipliedSource);
+      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix, r.premultipliedSource);
     }
     return cmds;
   }
 
   /**
    * Pre-resolve an effect-laden 3D layer's effect chain into a single texture
-   * (living in LAYER_TARGET). The layer content is drawn flat into LAYER_TARGET
-   * (layer space), then its spatial-effects chain runs over it via the SHARED
-   * applyLayerEffects / runEffectsChain machinery (the identical pipeline the 2D
-   * offscreen route uses), settling back into LAYER_TARGET. The caller then draws
-   * that texture as a textured3d quad inside the depth pass. MUST run BEFORE (and
-   * outside) the depth pass — you cannot sample a target you are writing.
-   * Returns null when the layer has no drawable content.
+   * (living in LAYER_TARGET), returning it together with the model matrix the
+   * caller must draw it with. MUST run BEFORE (and outside) the depth pass —
+   * you cannot sample a target you are writing. Null when there is no content.
+   *
+   * ── The margin, and why the result carries its own matrix ────────────
+   *
+   * The layer content used to be drawn across the WHOLE buffer, and the quad
+   * then sampled that buffer 1:1. Both halves of that are wrong for any effect
+   * that reaches OUTSIDE the layer's own rectangle — which is most of them:
+   *
+   *   • Nothing outside the rectangle survives. A drop shadow is the layer
+   *     shifted and darkened; shifted within a buffer the layer already fills
+   *     edge to edge, every pixel of it lands outside and is clipped, then the
+   *     layer is drawn back over the rest. Outer glow blooms outward from the
+   *     alpha edge, and a solid has no alpha edge inside the buffer to bloom
+   *     from. So both rendered NOTHING on a 3D layer while rendering correctly
+   *     on the same layer in 2D — flipping the 3D switch silently deleted them.
+   *   • The radii were wrong even where something did survive. Blur, glow and
+   *     shadow sizes are comp px, and the chain applies them in texels; with
+   *     the layer stretched across the buffer a 140px-wide layer on a 1920px
+   *     buffer shrank every radius by ~14×. Depth of field on a 3D layer is a
+   *     `blur` effect and was under-blurred by the same factor.
+   *
+   * So: reserve a margin wide enough for the chain's outward spread, draw the
+   * content inset by it, run the chain in that space with the px→texel scale it
+   * implies, and hand the caller a model matrix EXPANDED by the same margin so
+   * the wider texture lands on a correspondingly wider plane. The effect then
+   * lives on the layer's own plane — it tilts, foreshortens, depth-tests and
+   * lights with the layer, which is what a layer style on a 3D layer should do
+   * (and what After Effects does: styles resolve in layer space, then the whole
+   * result is transformed into 3D).
    */
   private resolveEffect3DTexture(
     ctx: RenderPassContext,
     r: Renderable,
     byId: ReadonlyMap<string, Renderable>,
-  ): TextureHandle | null {
-    const cmds = this.fill3DContentCmds(ctx, r);
+  ): { tex: TextureHandle; model: readonly number[] } | null {
+    const model = r.threeD!.model;
+    // The layer's size in comp px: the model maps the unit quad onto its plane,
+    // so its first two column vectors ARE the width and height edges.
+    const worldW = Math.hypot(model[0]!, model[1]!, model[2]!) || 1;
+    const worldH = Math.hypot(model[4]!, model[5]!, model[6]!) || 1;
+    const spread = effectSpreadPx(r.effects!);
+
+    // Margin as a fraction of the layer, per axis, capped so a small layer
+    // under a large glow degrades to a soft-edged result instead of shrinking
+    // its own content to a handful of texels.
+    const fx = Math.min(spread / worldW, MAX_FX_MARGIN);
+    const fy = Math.min(spread / worldH, MAX_FX_MARGIN);
+    const ex = 1 + 2 * fx;
+    const ey = 1 + 2 * fy;
+
+    const cmds = this.fill3DContentCmds(ctx, r, { x: fx / ex, y: fy / ey, width: 1 / ex, height: 1 / ey });
     if (cmds.length === 0) return null;
     const enc = beginViewportPass(ctx, 'threed-fx-src', writeAttachment(ctx, LAYER_TARGET, Color.transparent()));
     ctx.services.quad.execute(enc, cmds);
     enc.end();
     const tex = ctx.services.backend.renderTargetTexture(ctx.target(LAYER_TARGET)!);
     if (!tex) return null;
-    return this.applyLayerEffects(ctx, r, tex, LAYER_TARGET, byId);
+
+    // One comp px spans this many texels of the padded buffer.
+    const space: FxSpace = {
+      pxToTexelX: ctx.viewport.pixelSize.width / (worldW * ex),
+      pxToTexelY: ctx.viewport.pixelSize.height / (worldH * ey),
+    };
+    const out = this.applyLayerEffects(ctx, r, tex, LAYER_TARGET, byId, space);
+    if (!out) return null;
+    return { tex: out, model: expandUnitQuadModel(model, ex, ey) };
   }
 
   /**
@@ -630,11 +769,23 @@ export class CompositionPass extends RenderPass {
         if (pendingResolved) flush();
         const resolved = this.resolveEffect3DTexture(ctx, r, byId);
         if (resolved) {
+          // Drawn on the MARGIN-EXPANDED plane, not the layer's own — the
+          // resolved texture is wider than the layer by whatever room its
+          // effects needed, and sampling it onto the bare layer quad would
+          // squeeze the shadow back inside the silhouette it just escaped.
+          const fxMvp = mvp3dFor(viewport, camera3d, resolved.model);
           // Colour is baked into the resolved texture; the quad's tint is white
           // (or the per-quad light gain when no scene lights were delivered),
-          // and shade lights the effect result per-fragment.
-          const tint = litColor(r, Color.white(), shade);
-          emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, resolved, clampSampler(), targetUv, undefined, shade);
+          // and shade lights the effect result per-fragment. The shade's own
+          // model follows the expanded quad so its world positions match the
+          // geometry actually being drawn.
+          const fxShade = shade ? { ...shade, model: resolved.model } : undefined;
+          const tint = litColor(r, Color.white(), fxShade);
+          // Depth WRITE off: the quad is wider than the layer and its margin is
+          // transparent, so writing depth there would punch a rectangular hole
+          // through anything behind it — an extruded object's own side walls,
+          // most visibly. It still depth-tests, so it is occluded correctly.
+          emitTextured3D(cmds, fxMvp, tint, r.opacity, r.blend, resolved.tex, clampSampler(), targetUv, undefined, fxShade, false);
           pendingResolved = true;
         }
         continue;
@@ -646,7 +797,7 @@ export class CompositionPass extends RenderPass {
         let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
         if (isSolid && !tex) tex = services.textures.get('texture:white');
         if (maskTex && tex) {
-          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade);
+          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade, r.premultipliedSource);
         }
       } else if (isSolid && r.color) {
         emitSolid3D(cmds, mvp, tint, r.opacity, r.blend, toSolidShape(r.sdf), shade);
@@ -655,7 +806,7 @@ export class CompositionPass extends RenderPass {
         // Known limitation: no LUT variant in the 3D material set — a 3D layer
         // carrying a colour LUT keeps its affine grade rows but skips the LUT
         // remap inside a depth group (rare combination).
-        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade);
+        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade, undefined, r.premultipliedSource);
       }
     }
     flush();

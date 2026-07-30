@@ -54,6 +54,37 @@ export interface BufferDescriptor {
   data?: ArrayBufferView;
 }
 
+/**
+ * ## THE ALPHA INVARIANT
+ *
+ * **Every texture uploaded through `writeTexture` holds STRAIGHT
+ * (non-premultiplied) alpha, on every backend, from every source kind.**
+ *
+ * This is not a description of what the browser happens to do — it is a
+ * requirement each backend enforces at its upload call, because the browsers'
+ * defaults disagree. Before this was written down, WebGPU converted every
+ * source to straight (so it was accidentally correct) while WebGL2 left
+ * `createImageBitmap` output premultiplied and un-premultiplied canvases, so
+ * the same project rendered different pixels on different backends.
+ *
+ * Straight is the invariant because it is what every textured shader already
+ * assumes: each one grades `c.rgb` and returns `graded * c.a`, premultiplying
+ * on the way OUT. A premultiplied texture entering that shader is multiplied
+ * twice, which is the dark fringe `FootageInterpretation.alpha` exists to undo.
+ *
+ * ### What it costs
+ *
+ * Straight is the wrong space to FILTER in: bilinear and mipmap sampling
+ * average transparent texels whose RGB is arbitrary, so soft edges can halo.
+ * Measured on the alpha soft-edge scene, that cost is reported by
+ * `scripts/verify-alpha.mjs`, which fits the composited ramp against the linear
+ * prediction — a filtering halo shows up as departure from the line at low
+ * alpha, and the number it prints is what the choice actually costs.
+ *
+ * Proven by: packages/render-tests/scripts/verify-alpha.mjs
+ * (`a straight source composites LINEARLY in alpha` — the upload is the only
+ * thing that can make a straight source read as quadratic).
+ */
 export type TextureSource =
   | { type: 'bitmap'; bitmap: ImageBitmap }
   | { type: 'video'; video: HTMLVideoElement }

@@ -177,17 +177,31 @@ export const interiorStyleScenes: Scene[] = [
   // ── Bevel working-buffer parity ──────────────────────────────────
   //
   // The bevel computes its shading on a buffer capped at 640px on the long side,
-  // which makes its cost constant instead of resolution-proportional. These two
-  // scenes are the gate for that: identical geometry at exactly 2× scale, with
-  // the small one BELOW the cap (computed at full resolution) and the large one
-  // ABOVE it (computed downscaled and upsampled back).
+  // which makes its cost constant instead of resolution-proportional. One of
+  // these scenes sits below that cap and the other above it, so between them they
+  // hold a committed reference for both code paths.
   //
-  // If the depth compensation is wrong the large one's shading flattens out —
-  // which is exactly how the previous attempt at this failed, and it was reverted
-  // for want of this comparison. verify-interior.mjs compares the two profiles at
-  // relative coordinates; neither reference alone would catch it, because each is
-  // internally consistent with whatever it was blessed from.
-  scene('bevel-profile-lowres', 'Bevel below the working-buffer cap — computed at full resolution.', (graph) => {
+  // THEY ARE NOT A PROFILE COMPARISON, and must not be read as one. The bevel
+  // takes its normal from a per-pixel slope, so doubling the geometry AND the
+  // bevel size together genuinely halves the shading: the 2× scene is a weaker
+  // bevel by construction, not by defect. Measured — amplitude tracks depth/size,
+  // linearly in depth until the highlight clamps — which is the same model
+  // Photoshop uses, where a larger Size at constant Depth is a softer bevel.
+  // Comparing these two profiles therefore measures the algorithm's legitimate
+  // scale-dependence, not the working buffer, and "the large one is flatter" is
+  // the CORRECT result.
+  //
+  // An earlier version of this comment claimed verify-interior.mjs compares the
+  // two profiles at relative coordinates. It does not, and deliberately does not
+  // — see the note above the both-resolutions checks in that file. The claim cost
+  // a false defect report and a needless revert of these very references, so it
+  // is corrected rather than softened.
+  //
+  // THE CAP'S ACTUAL GATE IS src/core/effects/bevelWorkingBuffer.test.ts, which
+  // runs the SAME input through both paths and asserts the capped profile tracks
+  // the full-resolution one. That is the test that would catch the flat-shading
+  // regression the previous attempt shipped; these scenes would not.
+  scene('bevel-below-cap', 'Bevel below the working-buffer cap — computed at full resolution.', (graph) => {
     graph.addNode(node('s', {
       kind: 'shape',
       position: { x: 320, y: 240 },
@@ -205,7 +219,7 @@ export const interiorStyleScenes: Scene[] = [
     });
   }, { size: { w: 640, h: 480 }, comp: { width: 640, height: 480, background: '#0c0c12' } }),
 
-  scene('bevel-profile-hires', 'Same bevel at 2× — computed on the capped buffer and upsampled.', (graph) => {
+  scene('bevel-above-cap', 'Same bevel at 2× — computed on the capped buffer and upsampled.', (graph) => {
     graph.addNode(node('s', {
       kind: 'shape',
       position: { x: 640, y: 480 },
