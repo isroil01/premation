@@ -28,6 +28,7 @@ import { KeyframeRow } from './KeyframeRow';
 import { readNodeLayerTime } from '@core/scene/layerTime';
 import { defaultAnimation } from '@motion/animation';
 import { TimeRemapRow } from './PrecompControl';
+import { ProxyRow } from './ProxyRow';
 import { customPrompt } from '@components/Modal';
 import styles from './TransformSection.module.css';
 
@@ -199,6 +200,15 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
             aria-label="Loop image sequence"
           />
         </InspectorRow>
+      )}
+
+      {/* Proxy: per-FILE like Alpha above, so it keys off the asset. Video only
+          — a still has no seek cost to avoid. */}
+      {isVideo && alphaAssetId && (
+        <>
+          <h4 className={styles.title} style={{ marginTop: 12 }}>Proxy</h4>
+          <ProxyRow assetId={alphaAssetId} />
+        </>
       )}
 
       {isVideo && (
