@@ -301,25 +301,30 @@ async function gateFidelityTwins(scenes) {
  * Skipped, loudly, if WebGPU produced no frames — a machine with no adapter
  * must not silently lose the gate, but must not fail the build for it either.
  */
-async function gateAlphaSemantics(scenes, backends) {
+async function gateSemantics(scenes, backends, script, probeScene, label) {
   if (!backends.includes(SEMANTIC_GATE_BACKEND)) return 0;
-  const probe = await readPngSafe(
-    path.join(ACTUAL, SEMANTIC_GATE_BACKEND, 'alpha-control-straight-src', '0.png'),
-  );
+  const probe = await readPngSafe(path.join(ACTUAL, SEMANTIC_GATE_BACKEND, probeScene, '0.png'));
   if (!probe) {
     process.stdout.write(
-      '\n' + yellow(`  alpha semantics gate SKIPPED — ${SEMANTIC_GATE_BACKEND} rendered no frames on this machine.\n`),
+      '\n' + yellow(`  ${label} — gate SKIPPED, ${SEMANTIC_GATE_BACKEND} rendered no frames on this machine.\n`),
     );
     return 0;
   }
-  process.stdout.write('\n' + dim(`  alpha semantics gate (${SEMANTIC_GATE_BACKEND}, shapes not bytes):\n`));
+  process.stdout.write('\n' + dim(`  semantics gate (${SEMANTIC_GATE_BACKEND}) — ${label}:\n`));
   const code = await new Promise((resolve) => {
-    const child = spawn(process.execPath, [path.join(__dirname, 'verify-alpha.mjs'), SEMANTIC_GATE_BACKEND], {
+    const child = spawn(process.execPath, [path.join(__dirname, script), SEMANTIC_GATE_BACKEND], {
       stdio: ['ignore', 'inherit', 'inherit'],
     });
     child.on('exit', (c) => resolve(c ?? 1));
   });
   return code === 0 ? 0 : 1;
+}
+
+async function gateAlphaSemantics(scenes, backends) {
+  return gateSemantics(
+    scenes, backends, 'verify-alpha.mjs', 'alpha-control-straight-src',
+    'the alpha invariant and footage interpretation (shapes not bytes)',
+  );
 }
 
 async function compareAll(scenes) {
@@ -452,6 +457,10 @@ async function main() {
   const { parityFail, parityKnownGap, parityResolved } = await compareAll(scenes);
   const { fidelityFail } = await gateFidelityTwins(scenes);
   const alphaFail = await gateAlphaSemantics(scenes, backends);
+  const stylesFail = await gateSemantics(
+    scenes, backends, 'verify-3d-styles.mjs', 'three-d-drop-shadow',
+    'layer styles + depth of field on 3D layers (direction and extent, not presence)',
+  );
 
   process.stdout.write('\n');
   process.stdout.write(dim('  GPU-parity dashboard (unified engine comparison against committed reference):\n'));
@@ -471,12 +480,13 @@ async function main() {
     if (backend !== GATE_BACKEND) await reportSecondaryBackend(scenes, backend);
   }
 
-  if (parityFail === 0 && fidelityFail === 0 && alphaFail === 0) {
+  if (parityFail === 0 && fidelityFail === 0 && alphaFail === 0 && stylesFail === 0) {
     process.stdout.write(green(`\n✓ gate green — unified engine output matches golden expectations.\n`));
     process.exit(0);
   }
   process.stdout.write(
-    red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}, alpha semantics: ${alphaFail}.\n`) +
+    red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}, ` +
+      `alpha semantics: ${alphaFail}, 3D-style semantics: ${stylesFail}.\n`) +
       dim(`  artifacts: ${path.join(ARTIFACTS, 'diff')}\n`),
   );
   process.exit(1);
