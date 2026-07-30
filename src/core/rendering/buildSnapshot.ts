@@ -53,6 +53,7 @@ import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
+import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import type { PropPath } from '@motion/animation';
 import { Project3D, Matrix4Math, type Matrix2D, type Matrix4 } from '@motion/scene';
 import type { LayerMask } from '@core/effects/mask';
@@ -1535,6 +1536,14 @@ export function buildSnapshot(
       // from the sampled values first and the static prop second.
       skew: a?.get('skew') ?? readNumProp(node, 'skew'),
       skewAxis: a?.get('skewAxis') ?? readNumProp(node, 'skewAxis'),
+      // Continuous Rasterization. Emitted only when ON, so a layer without the
+      // switch carries no field and the snapshot is unchanged from before this
+      // feature existed. Gated on `supportsContinuousRaster` here rather than
+      // trusted from the prop, so a stray flag on an image layer cannot make the
+      // provider allocate a 64MB raster that cannot look any better.
+      ...(readContinuousRaster(node) && supportsContinuousRaster(node)
+        ? { continuousRaster: true }
+        : {}),
       x: isSolid && !is3D ? comp.width / 2 : px,
       y: isSolid && !is3D ? comp.height / 2 : py,
       rotation: isSolid && !is3D ? 0 : rot,

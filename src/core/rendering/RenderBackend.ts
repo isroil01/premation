@@ -258,6 +258,15 @@ export interface RenderLayer {
    *  contentHash.ts); the VectorRasterizer keys its texture cache on it, so a
    *  transform-only animation reuses one texture. */
   contentHash?: string;
+  /**
+   * Continuous Rasterization: re-raster this layer's vector content at the scale
+   * it is actually drawn at, past the 4× ceiling `resolutionTier` imposes.
+   *
+   * Absent/false = today's behaviour exactly, which is what keeps every existing
+   * project byte-identical. Only shape/text/SVG layers ever set it; see
+   * `@core/scene/continuousRaster` for why bitmaps and flat solids do not.
+   */
+  continuousRaster?: boolean;
   /** Dynamic CPU-skinned mesh geometry for puppet deformation. */
   deformedMesh?: {
     vertices: Float32Array;

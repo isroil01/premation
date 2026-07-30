@@ -90,6 +90,15 @@ export const RESOLUTION_TIERS = [0.5, 1, 2, 4] as const;
  * The tier to rasterize at for a target device scale: the smallest tier that is
  * >= the requested scale (round UP so content is never softer than requested),
  * clamped to the tier range. So scale 1.0 → 1, 1.3 → 2, 0.4 → 0.5, 6 → 4.
+ *
+ * The 4× ceiling is the whole reason CONTINUOUS RASTERIZATION is a feature: a
+ * shape scaled to 800% asks for 8 and gets 4, so the GPU magnifies the texture
+ * 2× and the edge goes soft. Everything else CR needs already works — the
+ * layer's own scale, its parent chain and its 3D camera distance all reach this
+ * function (measured in rasterScale.probe.test.ts) — it is this clamp that
+ * throws the information away. Left exactly as it was so CR OFF is byte
+ * -identical for every existing project; `continuousResolutionTier` is the
+ * opted-in path.
  */
 export function resolutionTier(scale: number): number {
   if (!(scale > 0) || Number.isNaN(scale)) return 1;
@@ -97,6 +106,82 @@ export function resolutionTier(scale: number): number {
     if (scale <= t) return t;
   }
   return RESOLUTION_TIERS[RESOLUTION_TIERS.length - 1]!;
+}
+
+/**
+ * Tiers reachable with Continuous Rasterization on — the same power-of-two
+ * ladder, continued. Doubling keeps re-rasters rare (a continuous zoom crosses a
+ * tier only when it doubles) and keeps the scaler on clean ratios.
+ */
+export const CONTINUOUS_RESOLUTION_TIERS = [0.5, 1, 2, 4, 8, 16, 32, 64] as const;
+
+/** Hard ceiling on either axis of a raster texture when the backend does not
+ *  report its own. 8192 is the floor of what WebGL2/WebGPU guarantee in
+ *  practice; exceeding the real limit fails the texture allocation outright. */
+export const DEFAULT_MAX_RASTER_DIMENSION = 8192;
+
+/** Pixel budget for a single continuously-rasterized layer. 16M px = 64MB at
+ *  RGBA8 — a 4096² raster, which is a 512px box at 8× or a 1024px box at 4×.
+ *  Chosen so a handful of CR layers coexist in a normal VRAM budget. */
+export const DEFAULT_MAX_RASTER_PIXELS = 16 * 1024 * 1024;
+
+/**
+ * Largest tier a box may be rasterized at without blowing a limit.
+ *
+ * Two independent bounds, both real:
+ *
+ *  - `maxDimension` — the GPU refuses a texture wider or taller than this, so
+ *    this one is a hardware fact, not a policy. A 1000px box cannot exceed 8×
+ *    against an 8192 limit.
+ *  - `maxPixels` — a policy budget. The dimension limit alone still permits
+ *    8192² = 67M pixels = 268MB for ONE layer, and a comp full of them would
+ *    exhaust VRAM. This is what keeps CR from being a footgun.
+ *
+ * Returns the largest ladder tier satisfying both, never below the smallest
+ * tier — a box that cannot fit even at 0.5× is degenerate and the caller's
+ * existing clamps handle it.
+ */
+export function maxContinuousTier(
+  boxWidth: number,
+  boxHeight: number,
+  maxDimension: number = DEFAULT_MAX_RASTER_DIMENSION,
+  maxPixels: number = DEFAULT_MAX_RASTER_PIXELS,
+): number {
+  const w = Math.max(1, boxWidth || 1);
+  const h = Math.max(1, boxHeight || 1);
+  let best: number = CONTINUOUS_RESOLUTION_TIERS[0]!;
+  for (const t of CONTINUOUS_RESOLUTION_TIERS) {
+    if (w * t > maxDimension || h * t > maxDimension) break;
+    if (w * t * h * t > maxPixels) break;
+    best = t;
+  }
+  return best;
+}
+
+/**
+ * The tier for a CONTINUOUSLY RASTERIZED drawable.
+ *
+ * Same round-up rule as `resolutionTier`, on the extended ladder, then bounded
+ * by what the box can actually be allocated at and by `ceiling` — the per-frame
+ * cap the renderer lowers during draft/reduced-resolution preview so scrubbing
+ * does not pay for export-grade rasters.
+ */
+export function continuousResolutionTier(
+  scale: number,
+  boxWidth: number,
+  boxHeight: number,
+  ceiling: number = CONTINUOUS_RESOLUTION_TIERS[CONTINUOUS_RESOLUTION_TIERS.length - 1]!,
+  maxDimension?: number,
+  maxPixels?: number,
+): number {
+  if (!(scale > 0) || Number.isNaN(scale)) return 1;
+  const limit = Math.min(maxContinuousTier(boxWidth, boxHeight, maxDimension, maxPixels), ceiling);
+  let chosen: number = CONTINUOUS_RESOLUTION_TIERS[0]!;
+  for (const t of CONTINUOUS_RESOLUTION_TIERS) {
+    chosen = t;
+    if (scale <= t) break;
+  }
+  return Math.min(chosen, Math.max(CONTINUOUS_RESOLUTION_TIERS[0]!, limit));
 }
 
 /**

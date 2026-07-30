@@ -29,7 +29,7 @@ import type {
 import type { RenderLayer } from './RenderBackend';
 import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
 import { rasterPadding } from './raster/vectorDraw';
-import { resolutionTier, paddingClass } from '@motion/renderer';
+import { resolutionTier, paddingClass, continuousResolutionTier, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
 import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake } from '@core/effects/effectBake';
@@ -249,6 +249,10 @@ export interface TextSpec {
   height: number;
   scaleX?: number;
   scaleY?: number;
+  /** Continuous Rasterization — see `RenderLayer.continuousRaster`. Threaded
+   *  here because the text path sizes its own raster and once silently dropped
+   *  a scale field it was handed. */
+  continuousRaster?: boolean;
   fontFamily?: string;
   fontWeight?: string;
   fontStyle?: string;
@@ -460,6 +464,58 @@ export class AppTextureProvider implements TextureProvider {
     this.rasterScale = scale > 0 && Number.isFinite(scale) ? scale : 1;
   }
 
+  /**
+   * The GPU's real maximum texture dimension, from backend capabilities.
+   *
+   * A hardware fact, not a policy: exceeding it fails the allocation outright,
+   * and WebGL2 in particular can report as little as 4096. Kept as a setter
+   * rather than read from `resources` so this class stays independent of which
+   * backend is attached; the default is the conservative guarantee.
+   */
+  private maxRasterDimension = DEFAULT_MAX_RASTER_DIMENSION;
+
+  setMaxRasterDimension(px: number): void {
+    this.maxRasterDimension = px > 0 && Number.isFinite(px) ? px : DEFAULT_MAX_RASTER_DIMENSION;
+  }
+
+  /**
+   * The tier to rasterize a drawable at: the clamped ladder by default, the
+   * extended one when the layer opted into Continuous Rasterization.
+   *
+   * One helper for both the text and path paths so they cannot diverge — they
+   * did once already, over the `deviceScale` the text path silently dropped.
+   */
+  private tierFor(scale: number, continuous: boolean | undefined, boxW: number, boxH: number): number {
+    return continuous
+      ? continuousResolutionTier(scale, boxW, boxH, undefined, this.maxRasterDimension)
+      : resolutionTier(scale);
+  }
+
+  /**
+   * What to hand the rasterizer as its draw scale.
+   *
+   * CR ON: the tier, so the pixels drawn and the cache key AGREE. CR OFF: the
+   * raw effective scale, which is what this has always passed.
+   *
+   * Those two being different is a real, pre-existing defect and it is left
+   * alone on the OFF path deliberately. `Canvas2DVectorRasterizer` draws at the
+   * raw scale but keys on `resolutionTier(scale)`, which clamps at 4 — so above
+   * 4× distinct scales collide on one key and whichever rasterized FIRST is
+   * reused for all of them. Measured in rasterResolution.probe.test.ts: scale 6
+   * produced 1200px, then scale 12 came back a cache hit at 1200px. The
+   * user-visible symptom is that zooming past 4× stops re-rasterizing.
+   *
+   * It is not fixed here because every consistent fix changes the rendered
+   * output of existing projects (quantizing the draw up makes rasters bigger,
+   * down makes them softer) and today's behaviour is order-dependent, so there
+   * is no byte-identical target to preserve. Filed rather than fixed; opting a
+   * layer into CR is the supported way to get correct, bounded, deterministic
+   * behaviour above 4×.
+   */
+  private drawScaleFor(scale: number, continuous: boolean | undefined, tier: number): number {
+    return continuous ? tier : scale;
+  }
+
   /** Vector-raster cache hit/miss counters. A hit = a set* call whose content
    *  signature was unchanged (no re-rasterization) — the transform-only-animation
    *  fast path. Exposed so the hot path can be asserted (Phase 1 cache gate). */
@@ -511,6 +567,7 @@ export class AppTextureProvider implements TextureProvider {
   setText(key: string, spec: TextSpec): void {
     const layerScale = Math.max(1, Math.abs(spec.scaleX || 1), Math.abs(spec.scaleY || 1));
     const effectiveScale = this.rasterScale * layerScale;
+    const tier = this.tierFor(effectiveScale, spec.continuousRaster, spec.width ?? 1, spec.height ?? 1);
     // Fill opacity changes the baked pixels, so it belongs in the cache key.
     const fillSig = spec.fillOpacity !== undefined && spec.fillOpacity < 1 ? `|fo${spec.fillOpacity}` : '';
     const fxSig = effectsNeedCpuBake(spec.effects)
@@ -527,7 +584,7 @@ export class AppTextureProvider implements TextureProvider {
       // every frame of it.
       `${spec.glyphs && spec.glyphs.length ? `|g${JSON.stringify(spec.glyphs)}` : ''}` +
       `${spec.textPath ? `|tp${JSON.stringify(spec.textPath)}` : ''}` +
-      `|t${resolutionTier(effectiveScale)}`;
+      `|t${tier}`;
 
     // Non-zero only when a CPU-baked chain would bleed outside the text box
     // (see rasterPadding) — otherwise this stays 0 exactly as before.
@@ -538,11 +595,11 @@ export class AppTextureProvider implements TextureProvider {
         kind: 'text',
         contentHash: signature,
       },
-      resolutionScale: effectiveScale,
+      resolutionScale: this.drawScaleFor(effectiveScale, spec.continuousRaster, tier),
       padding: pad,
     });
 
-    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~${paddingClass(pad)}`;
+    const texKey = `raster:${signature}@${tier}~${paddingClass(pad)}`;
     const texture = this.resources.texture(texKey, {
       label: `raster:${signature}`,
       width: result.texture.width,
@@ -647,7 +704,8 @@ export class AppTextureProvider implements TextureProvider {
     const fxSig = effectsNeedCpuBake(layer.effects)
       ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
       : '';
-    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${resolutionTier(effectiveScale)}`;
+    const tier = this.tierFor(effectiveScale, layer.continuousRaster, layer.width ?? 1, layer.height ?? 1);
+    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
 
     const pad = rasterPadding(layer);
     const result = this.rasterizer.rasterize({
@@ -656,11 +714,11 @@ export class AppTextureProvider implements TextureProvider {
         kind: 'path',
         contentHash: signature,
       },
-      resolutionScale: effectiveScale,
+      resolutionScale: this.drawScaleFor(effectiveScale, layer.continuousRaster, tier),
       padding: pad,
     });
 
-    const texKey = `raster:${signature}@${resolutionTier(effectiveScale)}~${paddingClass(pad)}`;
+    const texKey = `raster:${signature}@${tier}~${paddingClass(pad)}`;
     const texture = this.resources.texture(texKey, {
       label: `raster:${signature}`,
       width: result.texture.width,
