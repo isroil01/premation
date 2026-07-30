@@ -857,7 +857,6 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
       id: 'composition',
       size: { width: snapshot.width, height: snapshot.height },
       background: snapshot.transparent ? Color.transparent() : Color.fromHex(snapshot.background),
-      ...(snapshot.backdrop ? { backdrop: snapshot.backdrop } : {}),
     },
     renderables,
     selection: [],

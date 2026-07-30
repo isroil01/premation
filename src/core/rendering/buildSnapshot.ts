@@ -2509,10 +2509,6 @@ export function buildSnapshot(
     width: comp.width,
     height: comp.height,
     background: comp.background,
-    // Non-camera views (the six ortho views and the custom views) render
-    // uncropped, so the comp background covers the whole viewport rather than a
-    // comp-sized rect that would contradict the edge-on comp plane.
-    ...(orthoView || customCamera ? { backdrop: 'viewport' as const } : {}),
     backgroundPaint: comp.backgroundPaint,
     transparent: comp.transparent,
     time: t,
