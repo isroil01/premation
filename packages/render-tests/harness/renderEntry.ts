@@ -40,6 +40,7 @@ interface SceneManifestEntry {
   size: { w: number; h: number };
   tolerance?: number;
   gpuParity: 'expect-pass' | 'known-divergent';
+  divergence?: { why: string; wouldMatchWhen: string; proof?: string };
   oracle: 'canvas2d' | 'gpu';
   /** Scene id whose output is this scene's fidelity oracle (see sceneKit). */
   fidelityTwin?: string;
@@ -206,6 +207,7 @@ async function main(): Promise<void> {
         size: s.size,
         tolerance: s.tolerance,
         gpuParity: s.gpuParity ?? 'expect-pass',
+        ...(s.divergence ? { divergence: s.divergence } : {}),
         oracle: s.oracle ?? 'canvas2d',
         fidelityTwin: s.fidelityTwin,
         fidelityTolerance: s.fidelityTolerance,

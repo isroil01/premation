@@ -11,6 +11,7 @@ import { arcTable } from '@core/scene/trimPath';
 import { mixHex } from '@core/text/textAnimators';
 import { paintMaskMatte } from '@core/effects/mask';
 import { applyEffectChain, layerNeedsCpuBake } from '@core/effects/effectBake';
+import { scaleEffectLengths } from '@core/effects/effects';
 import {
   fillStyleFor,
   shapePath,
@@ -32,6 +33,47 @@ export interface RasterStats {
  *  silent no-op (see the note in `releaseEntry`). */
 function poolKeyFor(cacheKey: string): string {
   return `raster:${cacheKey}`;
+}
+
+/** Supersample factor applied on top of the resolution tier. */
+const SUPERSAMPLE = 2;
+
+/**
+ * Largest raster canvas we will ask for, per axis.
+ *
+ * The bake chain allocates SEVERAL scratch canvases of the same size, and the
+ * result still has to become a GPU texture — 8192 is the floor of what WebGL2
+ * and WebGPU guarantee, so staying under half of it leaves room for the
+ * scratches without risking an allocation that simply fails.
+ */
+const MAX_RASTER_DIM = 4096;
+
+/**
+ * How much to oversample the layer's box, given the resolution tier.
+ *
+ * The BAKE path deliberately gets no supersample. Not supersampling it does
+ * cost edge quality — the same text is measurably softer with a layer style on
+ * it than without — but supersampling it was tried and is worse overall:
+ *
+ *  · It changes what pixel-density-dependent effects LOOK like. Noise and
+ *    turbulence are generated per pixel, so drawing at 2x and averaging back
+ *    down makes grain finer and flatter; `effect-noise` moved 38% against its
+ *    reference, which is a different effect, not a better-sampled one.
+ *  · Interior styles shift with it too (`interior-bevel`, 6.7%), because their
+ *    alpha algebra runs over a different number of samples.
+ *  · It costs 4x the pixels on every styled layer, and the bake allocates
+ *    several scratch canvases of that size.
+ *
+ * Measured against a small anti-aliasing gain that only showed up at the very
+ * bottom of a scale animation. Filed, not taken.
+ *
+ * The clamp IS new: a large box at a high tier could ask for a canvas nothing
+ * can allocate. It only engages where the request would have failed outright.
+ */
+function supersampleFor(tier: number, boxW: number, boxH: number, bake: boolean): number {
+  const want = bake ? tier : tier * SUPERSAMPLE;
+  const longest = Math.max(1, boxW, boxH);
+  return Math.max(Math.min(tier, want), Math.min(want, MAX_RASTER_DIM / longest));
 }
 
 export class Canvas2DVectorRasterizer implements VectorRasterizer {
@@ -162,12 +204,12 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     // Fill opacity is applied by the bake chain, so a layer using it must
     // enter that branch even with no CPU-only effect in its stack.
     const bake = layerNeedsCpuBake(spec.effects, spec.fillOpacity);
-    const ss = bake ? tier : tier * 2; // TEXT_SUPERSAMPLE = 2
     // Padded box, so a baked drop shadow / glow / blur has somewhere to fade
     // out instead of being sliced at the texture edge. `pad` is 0 for every
     // stack the GPU handles natively, which is the overwhelming majority.
     const bw = spec.width + 2 * pad;
     const bh = spec.height + 2 * pad;
+    const ss = supersampleFor(tier, bw, bh, bake);
     const w = Math.max(1, Math.round(bw * ss));
     const h = Math.max(1, Math.round(bh * ss));
     const canvas = document.createElement('canvas');
@@ -194,7 +236,12 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
           }
         }
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        applyEffectChain(ctx, w, h, spec.effects, (sw, sh) => {
+        // Lengths scaled with the raster: the chain runs in DEVICE px while the
+        // glyphs were drawn through ctx.scale(ss, ss), so unscaled parameters
+        // make a style's size relative to its content depend on the raster
+        // resolution — which the tier cache then freezes and stretches. See
+        // scaleEffectLengths.
+        applyEffectChain(ctx, w, h, scaleEffectLengths(spec.effects, ss), (sw, sh) => {
           const s = document.createElement('canvas');
           s.width = sw; s.height = sh;
           return s;
@@ -381,9 +428,9 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
 
   private drawPath(layer: any, tier: number, pad: number): HTMLCanvasElement {
     const bake = layerNeedsCpuBake(layer.effects, layer.fillOpacity);
-    const ss = bake ? tier : tier * 2; // TEXT_SUPERSAMPLE = 2
     const bw = layer.width + 2 * pad;
     const bh = layer.height + 2 * pad;
+    const ss = supersampleFor(tier, bw, bh, bake);
     const w = Math.max(1, Math.round(bw * ss));
     const h = Math.max(1, Math.round(bh * ss));
     const canvas = document.createElement('canvas');
@@ -433,7 +480,8 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         }
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      applyEffectChain(ctx, w, h, layer.effects, (sw, sh) => {
+      // Same device-px/raster-scale correction as the text path.
+      applyEffectChain(ctx, w, h, scaleEffectLengths(layer.effects, ss), (sw, sh) => {
         const s = document.createElement('canvas');
         s.width = sw; s.height = sh;
         return s;

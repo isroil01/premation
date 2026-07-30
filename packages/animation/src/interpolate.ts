@@ -84,7 +84,13 @@ export function sampleTrack(track: PropertyTrack, t: number): number | undefined
     const b = kfs[i + 1]!;
     if (t >= a.t && t <= b.t) {
       const kind = a.easing ?? 'linear';
-      if (kind === 'step' || kind === 'hold') return a.value;
+      // Hold/step holds the start value UP TO — but not AT — the next keyframe:
+      // at exactly b.t the arriving keyframe's authored value wins, the same as
+      // every other easing (which reaches b.value at local=1). Without the
+      // `t < b.t` guard a held keyframe that lands on a frame showed its target
+      // one frame late — the classic off-by-one at an interior keyframe (the
+      // last-keyframe clamp above hid it for the final key only).
+      if (kind === 'step' || kind === 'hold') return t < b.t ? a.value : b.value;
       const span = b.t - a.t;
       const local = span <= 0 ? 0 : (t - a.t) / span;
       const eased =

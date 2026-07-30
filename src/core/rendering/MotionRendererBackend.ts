@@ -26,6 +26,7 @@ import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
+import { imageNeedsCpuBake } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
 
@@ -464,7 +465,22 @@ export class MotionRendererBackend implements RenderBackend {
               // decides whether the browser multiplies, which is the only place
               // the question can be settled once per file. See the alpha
               // invariant on TextureSource.
-              this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource);
+              // Canvas2D-only effects have no GPU form, so they must be baked
+              // into the bitmap or they render nothing at all on a photo. Gated
+              // by the SAME predicate the snapshot adapter uses to withhold
+              // them from the GPU, so they cannot both apply.
+              const bakeImg = imageNeedsCpuBake(layer.kind, layer.effects)
+                ? {
+                    effects: layer.effects!,
+                    width: layer.width,
+                    height: layer.height,
+                    fillOpacity: layer.fillOpacity,
+                    // Baked into the bitmap, so the GPU must not mask it again
+                    // — the adapter drops maskTextureKey for a baked image.
+                    ...(layer.mask && layer.mask.paths.length > 0 ? { mask: layer.mask } : {}),
+                  }
+                : undefined;
+              this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource, bakeImg);
             } else if (layer.kind === 'video' && layer.src) {
               if (layer.frameBlend) {
                 // Frame Mix: feed both bracket frames. Cache hits upload the

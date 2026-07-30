@@ -32,7 +32,9 @@ import { rasterPadding } from './raster/vectorDraw';
 import { resolutionTier, paddingClass, continuousResolutionTier, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
 import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
-import { effectsNeedCpuBake } from '@core/effects/effectBake';
+import { effectsNeedCpuBake, applyEffectChain } from '@core/effects/effectBake';
+import { scaleEffectLengths, type Effect } from '@core/effects/effects';
+import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
 import { isLocalBlobRef, loadLocalBlobObjectUrl } from './localBlobSource';
@@ -246,9 +248,26 @@ const defaultLoader: ImageLoader = async (src, fillColor, premultipliedFile) => 
   }
 };
 
+/**
+ * What an image needs baked into its texture: the effect chain, plus the layer
+ * box the chain's px parameters are expressed in (the bitmap is at its own
+ * natural resolution, which is rarely the same thing).
+ */
+export interface ImageBakeSpec {
+  effects: ReadonlyArray<Effect>;
+  width: number;
+  height: number;
+  fillOpacity?: number;
+  /** Baked BEFORE the chain, so interior styles shape themselves from the
+   *  masked silhouette rather than the bitmap's rectangle. */
+  mask?: LayerMask;
+}
+
 interface ImageEntry {
   kind: 'image';
   src: string;
+  /** Effect chain to bake into the bitmap (see imageNeedsCpuBake). */
+  bake?: ImageBakeSpec;
   /** The FILE's alpha mode, carried to the upload. See the alpha invariant. */
   premultipliedFile?: boolean;
   texture: TextureHandle | null;
@@ -514,28 +533,29 @@ export class AppTextureProvider implements TextureProvider {
   }
 
   /**
-   * What to hand the rasterizer as its draw scale.
+   * What to hand the rasterizer as its draw scale: the TIER, always.
    *
-   * CR ON: the tier, so the pixels drawn and the cache key AGREE. CR OFF: the
-   * raw effective scale, which is what this has always passed.
+   * The pixels drawn and the cache key have to be the same number. They used to
+   * disagree on the CR-OFF path — drawn at the raw scale, keyed on the
+   * quantized tier — which meant one texture served a whole tier and was
+   * stretched to whatever size the layer had grown to since. During a scale
+   * animation that reads as content going progressively soft and then snapping
+   * sharp at each tier boundary, over and over; it also made the result
+   * ORDER-DEPENDENT, since whichever scale rasterized first won the key.
    *
-   * Those two being different is a real, pre-existing defect and it is left
-   * alone on the OFF path deliberately. `Canvas2DVectorRasterizer` draws at the
-   * raw scale but keys on `resolutionTier(scale)`, which clamps at 4 — so above
-   * 4× distinct scales collide on one key and whichever rasterized FIRST is
-   * reused for all of them. Measured in rasterResolution.probe.test.ts: scale 6
-   * produced 1200px, then scale 12 came back a cache hit at 1200px. The
-   * user-visible symptom is that zooming past 4× stops re-rasterizing.
-   *
-   * It is not fixed here because every consistent fix changes the rendered
-   * output of existing projects (quantizing the draw up makes rasters bigger,
-   * down makes them softer) and today's behaviour is order-dependent, so there
-   * is no byte-identical target to preserve. Filed rather than fixed; opting a
-   * layer into CR is the supported way to get correct, bounded, deterministic
-   * behaviour above 4×.
+   * The tier rounds UP, so below the ceiling it is >= the requested scale and
+   * the raster is never magnified — this is sharper than it was, not softer, as
+   * well as stable. Above the ceiling the tier clamps and the texture is
+   * magnified, which is the documented >4x limitation and exactly what
+   * CONTINUOUS RASTERIZATION exists to lift: it extends the ladder so the tier
+   * keeps up. Before, above 4x was sharp but arbitrary — the first scale
+   * rasterized was reused for every other, so the same project could render
+   * differently depending on which frame you visited first. Predictable and
+   * bounded beats sharp and arbitrary.
    */
   private drawScaleFor(scale: number, continuous: boolean | undefined, tier: number): number {
-    return continuous ? tier : scale;
+    void scale; void continuous;
+    return tier;
   }
 
   /** Vector-raster cache hit/miss counters. A hit = a set* call whose content
@@ -575,11 +595,15 @@ export class AppTextureProvider implements TextureProvider {
    *   Interpret Footage would keep serving the bitmap uploaded under the old
    *   setting and the inspector would appear to do nothing.
    */
-  setImage(key: string, src: string, fillColor?: string, premultipliedFile?: boolean): void {
-    const fullKey = (fillColor ? `${src}#fill=${fillColor}` : src) + (premultipliedFile ? '#premul' : '');
+  setImage(key: string, src: string, fillColor?: string, premultipliedFile?: boolean, bake?: ImageBakeSpec): void {
+    // The bake belongs in the key: it changes the TEXTURE, so two layers on the
+    // same file with different styles must not share one upload, and editing a
+    // style has to invalidate what is already there.
+    const bakeSig = bake ? `#bake=${JSON.stringify(bake)}` : '';
+    const fullKey = (fillColor ? `${src}#fill=${fillColor}` : src) + (premultipliedFile ? '#premul' : '') + bakeSig;
     const existing = this.entries.get(key);
     if (existing && existing.src === fullKey) return; // already loading or loaded
-    const entry: ImageEntry = { kind: 'image', src: fullKey, texture: null, bitmap: null, width: 1, height: 1, ready: false, premultipliedFile };
+    const entry: ImageEntry = { kind: 'image', src: fullKey, bake, texture: null, bitmap: null, width: 1, height: 1, ready: false, premultipliedFile };
     this.entries.set(key, entry);
     const decoding = this.decode(key, src, fillColor, entry);
     // Under exact media timing (offline render / the golden-frame harness) the
@@ -995,6 +1019,77 @@ export class AppTextureProvider implements TextureProvider {
     this.retain(new Set());
   }
 
+  /**
+   * Run an effect chain over a decoded bitmap and hand back the baked result.
+   *
+   * The chain's px parameters are COMP px while the canvas is at the bitmap's
+   * own resolution, so they are scaled by the ratio — the same correction the
+   * vector rasterizer applies, and for the same reason: otherwise a 10px inner
+   * shadow means something different on a 400px photo than on a 4000px one.
+   *
+   * Returns null if anything is unavailable, leaving the untouched bitmap in
+   * place rather than dropping the layer.
+   */
+  private async bakeImageBitmap(
+    bitmap: ImageBitmap,
+    bake: ImageBakeSpec,
+    premultipliedFile: boolean | undefined,
+  ): Promise<ImageBitmap | null> {
+    const w = bitmap.width;
+    const h = bitmap.height;
+    if (!(w > 0) || !(h > 0)) return null;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(bitmap, 0, 0);
+      const k = bake.width > 0 ? w / bake.width : 1;
+      // MASK FIRST, matching the vector path. An interior style is generated
+      // from the layer's silhouette, and for a masked layer that silhouette is
+      // the masked one — run the chain first and an inner shadow hangs off the
+      // bitmap's rectangle instead of the mask's contour. The matte is drawn in
+      // the layer's centred space scaled to the bitmap's resolution, since the
+      // two are rarely the same size.
+      if (bake.mask && bake.mask.paths.length > 0) {
+        const matte = document.createElement('canvas');
+        matte.width = w;
+        matte.height = h;
+        const mc = matte.getContext('2d');
+        if (mc) {
+          const ky = bake.height > 0 ? h / bake.height : 1;
+          mc.setTransform(k, 0, 0, ky, w / 2, h / 2);
+          paintMaskMatte(mc, bake.mask, bake.width, bake.height);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalCompositeOperation = 'destination-in';
+          ctx.drawImage(matte, 0, 0);
+          ctx.globalCompositeOperation = 'source-over';
+        }
+      }
+      applyEffectChain(
+        ctx,
+        w,
+        h,
+        scaleEffectLengths(bake.effects, k),
+        (sw, sh) => {
+          const c = document.createElement('canvas');
+          c.width = sw;
+          c.height = sh;
+          return c;
+        },
+        bake.fillOpacity ?? 1,
+      );
+      void premultipliedFile;
+      // A canvas is straight alpha; 'premultiply' brings it into the invariant.
+      return await createImageBitmap(canvas, decodeOptions(false));
+    } catch {
+      return null;
+    }
+  }
+
   private async decode(key: string, src: string, fillColor: string | undefined, entry: ImageEntry): Promise<void> {
     let bitmap: ImageBitmap;
     try {
@@ -1004,12 +1099,31 @@ export class AppTextureProvider implements TextureProvider {
     }
     // A newer setImage for this key (different src) supersedes this decode.
     if (this.entries.get(key) !== entry) return;
+
+    // Canvas2D-only effects (Inner Shadow / Glow, Satin, Bevel, Stroke, Fill…)
+    // have no GPU form, so they are baked into the bitmap here — the same
+    // round-trip the vector rasterizer does, and the only way they render on a
+    // photo at all. Gated by imageNeedsCpuBake; see there for what is excluded.
+    if (entry.bake) {
+      const baked = await this.bakeImageBitmap(bitmap, entry.bake, entry.premultipliedFile);
+      if (this.entries.get(key) !== entry) return; // superseded while baking
+      if (baked) {
+        bitmap = baked;
+        // The bake produced its bitmap from a CANVAS, whose pixels are straight
+        // alpha, decoded with 'premultiply'. So whatever the FILE was, what we
+        // now hold is a premultiplied-labelled bitmap — the "straight file" row
+        // of the table below — and the upload flag has to say so or the browser
+        // un-premultiplies it and the halo comes back.
+        entry.premultipliedFile = false;
+      }
+    }
+
     entry.width = bitmap.width || 1;
     entry.height = bitmap.height || 1;
     // The texture id carries the alpha mode: two layers can point at the same
     // file with different Interpret Footage settings, and they must not share one
     // uploaded texture — the mode is baked in by the upload, not applied per draw.
-    const texId = entry.premultipliedFile ? `img:${src}#premul` : `img:${src}`;
+    const texId = `img:${entry.src}`;
     const tex = this.resources.texture(
       texId,
       { label: `image:${src}`, width: entry.width, height: entry.height, format: 'rgba8unorm', externalCopy: true },

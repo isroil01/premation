@@ -143,12 +143,21 @@ export class RenderGraph {
     viewport: Viewport,
     colorFormat: import('../gpu/types').TextureFormat,
   ): Map<string, RenderTargetHandle> {
-    void backend;
+    // Kill switch for the higher-precision intermediate targets. Float
+    // compositing cannot be pixel-validated under a software rasteriser
+    // (SwiftShader in CI), so keep a one-line rollback here. When false — or
+    // when the backend cannot render float — every target uses the surface
+    // format, exactly as before this change.
+    const HDR_INTERMEDIATES = true;
     const map = new Map<string, RenderTargetHandle>();
     const { width, height } = viewport.pixelSize;
     for (const decl of this.targets.values()) {
       const desc = decl.descriptor(viewport);
-      desc.format = colorFormat;
+      // A target opts into float precision by declaring `rgba16float`; anything
+      // else (matte/mask coverage buffers) shares the surface format as before.
+      const useFloat =
+        desc.format === 'rgba16float' && HDR_INTERMEDIATES && backend.capabilities.float16Textures;
+      desc.format = useFloat ? 'rgba16float' : colorFormat;
       const handle = resources.renderTarget(`graph-target:${decl.name}:${width}x${height}`, desc);
       map.set(decl.name, handle);
     }

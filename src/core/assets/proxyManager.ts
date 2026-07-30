@@ -13,6 +13,7 @@
  */
 
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { proxyResolution, proxyCodec, proxyEncodeArgs, type ProxyRecord } from './proxy';
 
 /** Placeholders the main process substitutes with paths it owns. Keeping the
@@ -136,6 +137,31 @@ export async function startProxy(assetId: string): Promise<ProxyRefusal | null> 
     height: size.height,
   });
   return null;
+}
+
+/**
+ * Auto-start a proxy when an asset is imported — the "generated at import" half
+ * of the feature, as opposed to the manual Create Proxy button.
+ *
+ * Fire-and-forget: it is never awaited and `startProxy` itself never blocks, so
+ * import stays instant and the asset renders at full resolution until (and
+ * unless) a proxy is both ready and Use Proxies is on.
+ *
+ * DECISION — gated on the Use Proxies preference. Generating a proxy costs real
+ * CPU and disk, and a user who never turns proxies on should pay neither on
+ * every 4K import. Turning Use Proxies on is the signal "I work with proxies,"
+ * so from then on imports generate one automatically; a user who leaves it off
+ * still has the manual action. This is why the toggle both selects the viewport
+ * source AND arms import-time generation.
+ *
+ * Only footage worth a proxy starts a job — `proxyRefusal === null` is the exact
+ * gate the button uses (video, known size, large enough, ffmpeg present, not
+ * already running), so nothing here can start a job the manual path would refuse.
+ */
+export function maybeAutoGenerateProxy(assetId: string): void {
+  if (!usePreferenceStore.getState().useProxies) return;
+  if (proxyRefusal(current(assetId)) !== null) return;
+  void startProxy(assetId);
 }
 
 /**

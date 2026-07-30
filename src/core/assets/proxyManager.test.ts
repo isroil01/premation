@@ -7,7 +7,8 @@
  */
 
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
-import { startProxy, cancelProxy, attachProxy, detachProxy, proxyRefusal, canGenerateProxy } from './proxyManager';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { startProxy, cancelProxy, attachProxy, detachProxy, proxyRefusal, canGenerateProxy, maybeAutoGenerateProxy } from './proxyManager';
 import { resolveMediaSrc } from './proxy';
 
 const ORIGINAL = 'blob:original';
@@ -179,6 +180,44 @@ describe('cancellation', () => {
     seed(asset({ proxy: { status: 'generating' } }));
     await expect(cancelProxy('a1')).resolves.toBeUndefined();
     expect(proxyOf()).toBeUndefined();
+  });
+});
+
+describe('auto-generate at import (gated on the Use Proxies preference)', () => {
+  afterEach(() => usePreferenceStore.setState({ useProxies: false } as never));
+
+  it('does nothing when Use Proxies is off — the default costs no CPU on import', async () => {
+    usePreferenceStore.setState({ useProxies: false } as never);
+    generate.mockResolvedValue(new Uint8Array([1]));
+    maybeAutoGenerateProxy('a1');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(generate).not.toHaveBeenCalled();
+    expect(proxyOf()).toBeUndefined();
+  });
+
+  it('starts a job for worth-it footage when Use Proxies is on', () => {
+    usePreferenceStore.setState({ useProxies: true } as never);
+    generate.mockResolvedValue(new Uint8Array([1]));
+    maybeAutoGenerateProxy('a1');
+    // startProxy writes 'generating' synchronously, before its first await.
+    expect(proxyOf()?.status).toBe('generating');
+  });
+
+  it('honours the SAME refusal gate as the manual button — never starts what it would refuse', async () => {
+    usePreferenceStore.setState({ useProxies: true } as never);
+    seed(asset({ metadata: { width: 640, height: 360 } })); // too-small
+    maybeAutoGenerateProxy('a1');
+    await Promise.resolve();
+    expect(generate).not.toHaveBeenCalled();
+    expect(proxyOf()).toBeUndefined();
+  });
+
+  it('does not double-start when a job is already running', () => {
+    usePreferenceStore.setState({ useProxies: true } as never);
+    seed(asset({ proxy: { status: 'generating' } }));
+    maybeAutoGenerateProxy('a1');
+    expect(generate).not.toHaveBeenCalled(); // already-running refusal
   });
 });
 

@@ -27,6 +27,27 @@ function blendScene(mode: string): Scene {
     fps: 30,
     frames: [0],
     gpuParity: isGpuOk ? 'expect-pass' : 'known-divergent',
+    // Measured, not assumed. scripts/analyze-gap.mjs classifies every differing
+    // pixel in all thirteen of these as SUB-PIXEL COVERAGE, and decomposing by
+    // geometry agrees: of ~1000 differing pixels the ellipse's interior
+    // contributes 0 and the area outside it 0 — they sit entirely on the rim,
+    // and the centre pixel matches the reference exactly.
+    divergence: {
+      why:
+        'The subject is an ellipse, and the two engines resolve its rim differently: the GPU '
+        + 'evaluates an analytic SDF per fragment, the deleted Canvas2D reference used a scanline '
+        + 'rasterizer with its own coverage rule. The blend maths is NOT implicated — the ellipse '
+        + 'interior and the background are pixel-identical in every mode, including `normal`, and '
+        + 'the shared gradient base scores 0 differing pixels on its own scene '
+        + '(`linear-gradient-fill`). Only the ~1000 rim pixels disagree, by an amount that stays '
+        + 'inside the range the reference itself spans across that rim.',
+      wouldMatchWhen:
+        'The references are re-blessed from the GPU engine. Canvas2D was deleted, so these '
+        + 'reference PNGs are frozen output of an engine that no longer ships; the coverage rule '
+        + 'they encode cannot be matched, only replaced. Blessing must wait until each scene is '
+        + 'verified correct on its own terms — a golden blessed over a defect certifies it.',
+      proof: 'packages/render-tests/scripts/analyze-gap.mjs — reports coverage-only, 0 flat-region pixels',
+    },
     build(graph) {
       // Base: comp-filling multi-stop gradient.
       graph.addNode(node('base', { kind: 'shape', style: { fill: '#000' } }));

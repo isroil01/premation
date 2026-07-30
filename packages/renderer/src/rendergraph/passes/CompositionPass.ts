@@ -92,6 +92,9 @@ interface FxSpace {
   pxToTexelX: number;
   /** Texels per comp px, vertically. */
   pxToTexelY: number;
+  /** Where the layer sits in the buffer, [0,1] — the 3D route insets it by the
+   *  effect margin, so it is not the whole buffer. */
+  box: Rect;
 }
 
 /**
@@ -143,6 +146,76 @@ function expandUnitQuadModel(model: readonly number[], ex: number, ey: number): 
     m[4 + i] = cy;
   }
   return m;
+}
+
+/**
+ * Ramp endpoints for the gradient shader, from an angle in degrees.
+ *
+ * The shader parameterises by `dot(uv − p0, p1 − p0)`, so the two points are
+ * the ends of the ramp in the SAMPLED UV space. They were hardcoded to
+ * `[0,0,1,1]` — the box diagonal — which meant the Gradient Ramp effect's Angle
+ * control, and the Gradient Overlay layer style that compiles to it, moved
+ * nothing at all.
+ *
+ * Convention matches a gradient FILL (0° = left→right, 90° = top→bottom) so the
+ * same number means the same direction wherever a user types it. The span is
+ * `(|dx| + |dy|)/2` about the centre, again matching `makeCanvasGradient`, so
+ * the ramp covers the whole box at every angle instead of running short on the
+ * diagonals.
+ *
+ * `uv` carries the backend's V orientation: WebGL2 samples render targets
+ * bottom-up, so its V axis runs opposite to the screen's and a "downward" ramp
+ * has to flip with it, or the two backends disagree by a mirror.
+ */
+function rampPoints(
+  angleDeg: number | undefined,
+  uv: Rect,
+  /** Where the LAYER sits in the buffer, [0,1], screen-oriented (V down). */
+  box: Rect,
+  /** Buffer size in px — the ramp's span is an angled projection of the box, so
+   *  the two axes have to be compared in the same units. */
+  size: { width: number; height: number },
+): [number, number, number, number] {
+  const a = ((angleDeg ?? 90) * Math.PI) / 180;
+  const dx = Math.cos(a);
+  const dy = Math.sin(a);
+  // Project the box onto the axis so the ramp spans it fully at any angle —
+  // the same rule makeCanvasGradient uses, in px.
+  const wPx = box.width * size.width;
+  const hPx = box.height * size.height;
+  const half = (Math.abs(dx) * wPx + Math.abs(dy) * hPx) / 2;
+  const cx = (box.x + box.width / 2) * size.width;
+  const cy = (box.y + box.height / 2) * size.height;
+  const toUv = (px: number, py: number): [number, number] => {
+    const u = px / size.width;
+    const v = py / size.height;
+    // WebGL2 samples render targets bottom-up, so its V axis runs opposite to
+    // the screen's; without this the two backends mirror each other.
+    return [u, uv.height < 0 ? 1 - v : v];
+  };
+  const [u0, v0] = toUv(cx - dx * half, cy - dy * half);
+  const [u1, v1] = toUv(cx + dx * half, cy + dy * half);
+  return [u0, v0, u1, v1];
+}
+
+/**
+ * Where a renderable sits in the viewport, as a [0,1] rect.
+ *
+ * A layer effect is a function of the LAYER's box — a Gradient Ramp runs from
+ * one edge of the layer to the other. The chain runs in a viewport-sized
+ * buffer, though, so without this the ramp spanned the whole SCREEN and the
+ * layer showed whatever slice of it happened to fall behind it. Falls back to
+ * the full buffer when there is nothing to measure, which is the old behaviour.
+ */
+function renderableBox(ctx: RenderPassContext, r: Renderable | undefined): Rect {
+  const vwr = ctx.viewport.visibleWorldRect;
+  if (!r || vwr.width <= 0 || vwr.height <= 0) return { x: 0, y: 0, width: 1, height: 1 };
+  return {
+    x: (r.bounds.x - vwr.x) / vwr.width,
+    y: (r.bounds.y - vwr.y) / vwr.height,
+    width: r.bounds.width / vwr.width,
+    height: r.bounds.height / vwr.height,
+  };
 }
 
 /** Per-list rendering state: which colour target composites land in (the scene
@@ -267,6 +340,10 @@ export class CompositionPass extends RenderPass {
     // of the size it was asked for.
     const kx = space?.pxToTexelX ?? 1;
     const ky = space?.pxToTexelY ?? 1;
+    // Box-relative effects (the gradient ramp) need the LAYER's extent, not the
+    // buffer's. The 3D route states it (its buffer is layer space plus a
+    // margin); the 2D route measures the renderable against the viewport.
+    const fxBox = space?.box ?? renderableBox(ctx, byId.get(selfId));
     const clampSampler = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     const texOf = (name: string): TextureHandle | null =>
       ctx.services.backend.renderTargetTexture(ctx.target(name)!) ?? null;
@@ -362,7 +439,7 @@ export class CompositionPass extends RenderPass {
       if (effect.type === 'gradient-ramp') {
         cmds.add({
           batchKey: 'ramp', material: GRADIENT_RAMP_MATERIAL, blend: 'normal',
-          uniforms: packGradientRamp(mvp, targetUv, [effect.colorA || Color.white(), effect.colorB || Color.black()], [0, 0, 1, 1], effect.blend),
+          uniforms: packGradientRamp(mvp, targetUv, [effect.colorA || Color.white(), effect.colorB || Color.black()], rampPoints(effect.angle, targetUv, fxBox, viewport.pixelSize), effect.blend),
           texture: curTex, sampler: clampSampler(),
         });
       } else if (effect.type === 'fractal-noise') {
@@ -691,6 +768,9 @@ export class CompositionPass extends RenderPass {
     const space: FxSpace = {
       pxToTexelX: ctx.viewport.pixelSize.width / (worldW * ex),
       pxToTexelY: ctx.viewport.pixelSize.height / (worldH * ey),
+      // The content was drawn into this inset; the margin around it is the room
+      // the effects spread into, and is not part of the layer.
+      box: { x: fx / ex, y: fy / ey, width: 1 / ex, height: 1 / ey },
     };
     const out = this.applyLayerEffects(ctx, r, tex, LAYER_TARGET, byId, space);
     if (!out) return null;
@@ -1372,7 +1452,7 @@ export class CompositionPass extends RenderPass {
         const rampCmds = new CommandBuffer();
         rampCmds.add({
           batchKey: 'ramp', material: GRADIENT_RAMP_MATERIAL, blend: r.blend,
-          uniforms: packGradientRamp(screenMvp(), targetUv, [effect.colorA || Color.white(), effect.colorB || Color.black()], [0, 0, 1, 1], effect.blend),
+          uniforms: packGradientRamp(screenMvp(), targetUv, [effect.colorA || Color.white(), effect.colorB || Color.black()], rampPoints(effect.angle, targetUv, renderableBox(ctx, r), viewport.pixelSize), effect.blend),
           texture: layerTex, sampler: clampSampler(),
         });
         const enc = beginViewportPass(ctx, 'ramp', writeAttachment(ctx, st.out));

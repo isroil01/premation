@@ -41,6 +41,43 @@ describe('remapTime', () => {
     expect(remapTime(0, c, span)).toBe(1.5);
     expect(remapTime(9, c, span)).toBe(1.5);
   });
+
+  // ── Composition probes (the brief: "remap composes with stretch/reverse/freeze") ──
+  test('reverse composes with stretch — starts at the end, advances at the stretched rate', () => {
+    const c = cfg({ reverse: true, stretch: 200 }); // half speed, backwards
+    // At comp start the reversed source sits on span.end.
+    expect(remapTime(0, c, span)).toBeCloseTo(10);
+    // Half speed: it takes 2× the span duration (20s comp) to reach span.start.
+    expect(remapTime(20, c, span)).toBeCloseTo(0);
+    // Midway through that traversal it is at the span midpoint.
+    expect(remapTime(10, c, span)).toBeCloseTo(5);
+  });
+
+  test('reverse+stretch stays anchored on a non-zero span start', () => {
+    const s = { start: 4, end: 8 };
+    const c = cfg({ reverse: true, stretch: 50 }); // double speed, backwards
+    expect(remapTime(4, c, s)).toBeCloseTo(8); // begins at the end
+    expect(remapTime(6, c, s)).toBeCloseTo(4); // reaches the start in half the span
+  });
+
+  test('freeze dominates reverse and stretch (holds regardless)', () => {
+    const c = cfg({ freeze: true, freezeTime: 3, reverse: true, stretch: 250 });
+    expect(remapTime(0, c, span)).toBe(3);
+    expect(remapTime(7, c, span)).toBe(3);
+  });
+
+  test('a degenerate zero-length span stays finite under reverse and stretch', () => {
+    // No traversal to reverse; the map linearly extrapolates comp time (as it
+    // does for any out-of-span time) and stays finite — sampleTrack clamps the
+    // out-of-range result to the lone keyframe downstream, so the value is moot;
+    // what matters is that nothing divides by zero or returns NaN.
+    const s = { start: 5, end: 5 };
+    for (const c of [cfg({ reverse: true }), cfg({ reverse: true, stretch: 200 }), cfg({ stretch: 50 })]) {
+      expect(Number.isFinite(remapTime(2, c, s))).toBe(true);
+    }
+    // At the span point itself the source is exactly that point.
+    expect(remapTime(5, cfg({ reverse: true }), s)).toBeCloseTo(5);
+  });
 });
 
 describe('isIdentityTime', () => {

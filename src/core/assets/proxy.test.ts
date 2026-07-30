@@ -12,6 +12,7 @@ import {
   proxyEncodeArgs,
   resolveMediaSrc,
   isProxyInUse,
+  isPersistableProxy,
   PROXY_MIN_SOURCE_LONG_EDGE,
   PROXY_TARGET_LONG_EDGE,
   type ProxyRecord,
@@ -212,5 +213,46 @@ describe('isProxyInUse — what the UI badges', () => {
         expect(isProxyInUse(asset, on)).toBe(resolveMediaSrc(asset, on) !== 'blob:o');
       }
     }
+  });
+});
+
+describe('isPersistableProxy — only records that survive a reload are stored', () => {
+  it('a blob-backed ready proxy is NOT persistable (the blob url dies with the session)', () => {
+    // Both generated and user-attached proxies use URL.createObjectURL, so this
+    // is every ready proxy the app makes today. Persisting one restores a dead
+    // url that resolveMediaSrc would hand to the decoder instead of falling back.
+    expect(isPersistableProxy({ status: 'ready', src: 'blob:proxy' })).toBe(false);
+    expect(isPersistableProxy({ status: 'ready', src: 'blob:proxy', userSupplied: true })).toBe(false);
+    expect(isPersistableProxy({ status: 'ready', src: 'data:video/mp4;base64,AAAA' })).toBe(false);
+  });
+
+  it('a ready proxy on a durable url (e.g. cloud-hosted) IS persistable', () => {
+    expect(isPersistableProxy({ status: 'ready', src: 'https://cdn/x.mp4' })).toBe(true);
+  });
+
+  it('a ready record with no src at all is not persistable', () => {
+    expect(isPersistableProxy({ status: 'ready' })).toBe(false);
+  });
+
+  it('generating is never persistable — its ffmpeg child dies with the app', () => {
+    expect(isPersistableProxy({ status: 'generating' })).toBe(false);
+  });
+
+  it('failed is persistable — it is just an error, no url to go stale', () => {
+    expect(isPersistableProxy({ status: 'failed', error: 'x' })).toBe(true);
+  });
+
+  it('absent record is not persistable', () => {
+    expect(isPersistableProxy(undefined)).toBe(false);
+    expect(isPersistableProxy(null)).toBe(false);
+  });
+
+  it('a restored dead-blob ready record would mis-decode — which is why it is dropped', () => {
+    // If a blob-ready record HAD been persisted, resolveMediaSrc(on) returns the
+    // dead blob rather than the original. This is the exact damage the drop
+    // prevents; asserting it here pins WHY the persistence gate exists.
+    const dead: ProxyRecord = { status: 'ready', src: 'blob:dead' };
+    expect(resolveMediaSrc({ src: 'blob:original', proxy: dead }, true)).toBe('blob:dead');
+    expect(isPersistableProxy(dead)).toBe(false); // ...so it never reaches storage
   });
 });

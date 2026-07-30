@@ -6,7 +6,7 @@ import { AssetDatabase } from '@core/services/AssetDatabase';
 import { isLocalFirst } from '@core/config/flags';
 import { importLocalAsset } from '@core/assets/local/importLocalAsset';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
-import type { ProxyRecord } from '@core/assets/proxy';
+import { isPersistableProxy, type ProxyRecord } from '@core/assets/proxy';
 import { probeMedia } from '@core/assets/mediaProbe';
 import { bumpScene } from '@stores/sceneStore';
 
@@ -254,7 +254,12 @@ function loadProxies(): Record<string, ProxyRecord> {
   try {
     const raw = localStorage.getItem(PROXY_KEY);
     const map = raw ? (JSON.parse(raw) as Record<string, ProxyRecord>) : {};
-    for (const [id, p] of Object.entries(map)) if (p?.status === 'generating') delete map[id];
+    // Drop anything that cannot survive a reload — a 'generating' job with no
+    // child behind it, or (the common case) a 'ready' record whose only src is
+    // an ephemeral blob: URL that died with the previous session. Restoring
+    // either would hand the decoder a dead url instead of falling back to full
+    // resolution. Also cleans stores written by builds that persisted them.
+    for (const [id, p] of Object.entries(map)) if (!isPersistableProxy(p)) delete map[id];
     return map;
   } catch {
     return {};
@@ -273,7 +278,11 @@ function loadProxies(): Record<string, ProxyRecord> {
 function saveProxies(assets: ImportedAsset[]): void {
   try {
     const map: Record<string, ProxyRecord> = {};
-    for (const a of assets) if (a.proxy && a.proxy.status !== 'generating') map[a.id] = a.proxy;
+    // Persist only records that can be restored — never a blob-backed 'ready'
+    // (dead on reload) or a 'generating' job (no child survives the app). See
+    // isPersistableProxy: writing a liability is how the decoder later gets a
+    // dead url instead of a clean fall back to full resolution.
+    for (const a of assets) if (isPersistableProxy(a.proxy)) map[a.id] = a.proxy!;
     localStorage.setItem(PROXY_KEY, JSON.stringify(map));
   } catch {
     /* ignore */
@@ -347,6 +356,21 @@ function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): Impo
   });
 }
 
+/**
+ * Kick off import-time proxy generation for a freshly-added video asset.
+ *
+ * Fire-and-forget, and loaded via a dynamic import so the store does not couple
+ * to the proxy manager at module-eval time (the manager imports this store
+ * back). Non-video assets and every gating decision are handled inside
+ * `maybeAutoGenerateProxy`; this only keeps the dependency edge lazy.
+ */
+function triggerAutoProxy(asset: ImportedAsset): void {
+  if (asset.type !== 'video') return;
+  void import('@core/assets/proxyManager')
+    .then((m) => m.maybeAutoGenerateProxy(asset.id))
+    .catch(() => {});
+}
+
 export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
   immer((set, get) => ({
     assets: [],
@@ -375,6 +399,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             s.assets.push(asset);
           });
           saveAssignments(get().assets);
+          triggerAutoProxy(asset);
           return asset;
         }
       }
@@ -390,6 +415,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             s.assets.push(withFolder);
           });
           saveAssignments(get().assets);
+          triggerAutoProxy(withFolder);
           return withFolder;
         } catch {
           // fall through to local blob on failure
@@ -483,6 +509,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         s.assets.push(asset);
       });
       saveAssignments(get().assets);
+      triggerAutoProxy(asset);
 
       return asset;
     },

@@ -62,7 +62,7 @@ struct VOut {
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
   return o;
 }
@@ -130,7 +130,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,

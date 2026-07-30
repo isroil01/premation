@@ -28,6 +28,7 @@ import type {
   ShaderModuleDescriptor,
   ShaderModuleHandle,
   TextureDescriptor,
+  TextureFormat,
   TextureHandle,
   TextureSource,
   BlendMode,
@@ -328,7 +329,7 @@ export class WebGPUBackend implements RenderBackend {
     return {
       kind: 'render-target',
       id: nextId(),
-      native: { texture, view: texture.createView(), msaaTexture, msaaView, sampleCount, depthTexture, depthView },
+      native: { texture, view: texture.createView(), msaaTexture, msaaView, sampleCount, depthTexture, depthView, format: desc.format },
     };
   }
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
@@ -371,8 +372,12 @@ export class WebGPUBackend implements RenderBackend {
           msaaView?: GPUTextureView;
           sampleCount?: number;
           depthView?: GPUTextureView;
+          format?: TextureFormat;
         });
     const sampleCount = native?.sampleCount ?? 1;
+    // The pass's colour-attachment format — the pipelines drawing into it must
+    // match (WebGPU validates it). Surface passes use the swapchain format.
+    const format = (toSurface ? this.surfaceFormat : native!.format) as TextureFormat;
     const view = toSurface
       ? this.context.getCurrentTexture().createView()
       : (native!.msaaView ?? native!.view);
@@ -424,7 +429,7 @@ export class WebGPUBackend implements RenderBackend {
       const h = Math.max(0, Math.min(this.surfaceH - y, Math.round(clip.height)));
       pass.setScissorRect(x, y, w, h);
     }
-    return new WebGPUPassEncoder(pass, sampleCount);
+    return new WebGPUPassEncoder(pass, sampleCount, format);
   }
   endFrame(): void {
     if (!this.encoder) return;
@@ -462,7 +467,11 @@ export class WebGPUBackend implements RenderBackend {
 
 class WebGPUPassEncoder implements RenderPassEncoder {
   private pipeline: GPURenderPipeline | null = null;
-  constructor(private readonly pass: GPURenderPassEncoder, readonly samples: number = 1) {}
+  constructor(
+    private readonly pass: GPURenderPassEncoder,
+    readonly samples: number = 1,
+    readonly format?: TextureFormat,
+  ) {}
   setPipeline(pipeline: PipelineHandle): void {
     this.pipeline = (pipeline.native as { pipeline: GPURenderPipeline }).pipeline;
     this.pass.setPipeline(this.pipeline);

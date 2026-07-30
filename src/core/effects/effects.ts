@@ -153,6 +153,52 @@ export function effectNumber(effect: Effect, key: string): number {
   return typeof v === 'number' ? v : 0;
 }
 
+/**
+ * The same effects with every LENGTH parameter multiplied by `k`.
+ *
+ * For the CPU bake path, whose canvas is the layer's box × a raster scale. The
+ * glyphs and paths are drawn through `ctx.scale(ss, ss)`, but the effect chain
+ * runs at identity on the device-pixel canvas and reads its parameters raw — so
+ * a 5px stroke was 5 DEVICE px however large the layer was drawn, and the
+ * style's size relative to the content it decorates moved with the raster
+ * scale instead of staying put.
+ *
+ * That is invisible while the raster is rebuilt every frame, and very visible
+ * when it is not: the raster cache is keyed on a QUANTIZED resolution tier
+ * while the draw uses the raw scale, so during a scale animation one texture is
+ * reused across a whole tier and stretched. Measured on text growing 0.25×→4×,
+ * a 5px stroke's thickness relative to the glyphs ramped up and then halved at
+ * each tier boundary — a black edge that visibly thickened and snapped back,
+ * over and over, for the length of the animation.
+ *
+ * Scaling the lengths with the raster makes the baked result depend only on the
+ * RATIO of style to content, which no amount of magnification can disturb. The
+ * tier cache then costs sharpness — as it always did — and nothing else.
+ *
+ * Driven off each parameter's declared `unit`, so a new px parameter is covered
+ * the day it is added and angles, percentages and counts are left alone.
+ */
+export function scaleEffectLengths(
+  effects: ReadonlyArray<Effect> | undefined,
+  k: number,
+): ReadonlyArray<Effect> | undefined {
+  if (!effects || effects.length === 0 || k === 1 || !(k > 0)) return effects;
+  return effects.map((e) => {
+    const def = DEF.get(e.type);
+    if (!def) return e;
+    const lengths = def.params.filter((p) => p.type === 'number' && p.unit === 'px');
+    if (lengths.length === 0) return e;
+    // Resolve through paramsOf first: it folds in declared defaults and the
+    // legacy `amount`, so a param the caller never set still scales.
+    const params: Record<string, EffectParamValue> = { ...paramsOf(e) };
+    for (const p of lengths) {
+      const v = params[p.key];
+      if (typeof v === 'number') params[p.key] = v * k;
+    }
+    return { ...e, params };
+  });
+}
+
 /** The parameter legacy `amount` and legacy keyframe tracks refer to. */
 export function primaryParamKey(type: EffectType): string | undefined {
   return DEF.get(type)?.params.find((p) => p.type === 'number')?.key;

@@ -69,7 +69,16 @@ export type RenderableEffect =
   | { type: 'blur'; radiusPx: number }
   | { type: 'glow'; radiusPx: number; color?: Color }
   | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number }
-  | { type: 'gradient-ramp'; blend: number; colorA?: Color; colorB?: Color }
+  | {
+      type: 'gradient-ramp';
+      blend: number;
+      colorA?: Color;
+      colorB?: Color;
+      /** Ramp direction in degrees, 0 = left→right, 90 = top→bottom (the same
+       *  convention as a gradient FILL). Absent → 90, the previous hardcoded
+       *  diagonal's nearest sane default. */
+      angle?: number;
+    }
   | { type: 'fractal-noise'; scale: number }
   | {
       type: 'displacement-map';
@@ -139,6 +148,15 @@ export interface Renderable {
    * fully-composed model matrix for that sub-frame plus its sampled opacity.
    */
   motionSamples?: ReadonlyArray<{ modelMatrix: Mat3; opacity: number }>;
+  /**
+   * Corner Pin homography as four normalised [0,1] corners (TL,TR,BR,BL). When
+   * present, the draw composes `modelMatrix · squareToQuad(cornerPin)` into a
+   * PROJECTIVE mvp so the layer is perspective-warped onto the quad; the shaders
+   * emit p.z as w so the hardware divides and interpolates UVs correctly.
+   * `modelMatrix` itself stays AFFINE (bounds, 3D and hit paths depend on that);
+   * the pin is a pure render stage. Absent = no pin, fully affine.
+   */
+  cornerPin?: readonly [number, number, number, number, number, number, number, number];
   /** Id of a renderable used as an alpha mask. */
   maskId?: string;
   /** Texture key for a pre-rasterized alpha mask. */

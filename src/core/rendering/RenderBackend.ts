@@ -88,6 +88,11 @@ export interface RenderLayer {
   /** Sub-frame transform samples for motion blur (accumulated by the backend).
    *  Present only when motion blur is on and the layer actually moves. */
   motionSamples?: ReadonlyArray<MotionSample>;
+  /** Corner Pin: four normalised [0,1] corners (TL,TR,BR,BL) the source
+   *  rectangle is mapped onto via a perspective homography. Present only for a
+   *  non-identity, convex pin — the affine path is unchanged otherwise. Applied
+   *  as a separate render stage on the mvp; `matrix` stays affine. */
+  cornerPin?: readonly [number, number, number, number, number, number, number, number];
   /** Center position in composition space. */
   x: number;
   y: number;
@@ -160,6 +165,18 @@ export interface RenderLayer {
   /** For shapes. */
   primitive?: 'rect' | 'ellipse' | 'path';
   cornerRadius?: number;
+  /**
+   * Draw as a bare quad with no SDF edge coverage.
+   *
+   * For a facet of a larger body — the strips an extruded object's wall ring is
+   * made of. A solid quad's SDF edge fades to transparent, so two facets meeting
+   * along a shared edge each blend half the BACKGROUND in and the join shows as
+   * a dark hairline: twenty of them around a cylinder, more on a rounded box.
+   * The facets tile exactly, so the coverage that makes a standalone shape look
+   * smooth is the very thing that ruins a seam. The body's OUTER silhouette is
+   * still antialiased by the pass's multisampling.
+   */
+  flatFacet?: boolean;
   /** Vector path points in LOCAL space (only present if primitive === 'path') */
   pathPoints?: ReadonlyArray<BezierPoint>;
   /** True for open strokes (freehand pencil / line) that must NOT be closed or

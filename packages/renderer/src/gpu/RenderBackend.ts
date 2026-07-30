@@ -24,6 +24,7 @@ import type {
   ShaderModuleDescriptor,
   ShaderModuleHandle,
   TextureDescriptor,
+  TextureFormat,
   TextureHandle,
   TextureSource,
 } from './types';
@@ -45,6 +46,15 @@ export interface RenderPassEncoder {
    * reports 1; its pipelines ignore the field.
    */
   readonly samples?: number;
+  /**
+   * Color-attachment format this pass writes. Like `samples`, WebGPU bakes the
+   * target format into the PIPELINE and rejects a pipeline whose format differs
+   * from the attachment — so a draw must know its target's format before it
+   * picks a pipeline. This is what lets the intermediate compositing targets be
+   * `rgba16float` (higher-precision, HDR-capable) while the surface stays 8-bit.
+   * WebGL2 has no such coupling and simply reports it; its pipelines ignore it.
+   */
+  readonly format?: TextureFormat;
   setPipeline(pipeline: PipelineHandle): void;
   setBindGroup(index: number, group: BindGroupHandle): void;
   setVertexBuffer(slot: number, buffer: BufferHandle): void;

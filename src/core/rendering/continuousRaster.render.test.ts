@@ -47,10 +47,16 @@ function pathLayer(over: Partial<RenderLayer> = {}): RenderLayer {
     fill: '#ff0000',
     contentHash: 'cr-test',
     primitive: 'path',
+    // CENTRED local space (−w/2..w/2), which is what `shapeOutline` emits and
+    // what every real path carries. These were 0..100, i.e. a box-sized
+    // triangle sitting entirely in the lower-right quadrant — harmless while
+    // padding ignored the path, but it reads as 50px of escape now that padding
+    // measures how far the geometry leaves the box, and inflated every texture
+    // in this file.
     pathPoints: [
-      { x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 },
-      { x: 100, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 },
-      { x: 50, y: 100, inX: 0, inY: 0, outX: 0, outY: 0 },
+      { x: -50, y: -50, inX: 0, inY: 0, outX: 0, outY: 0 },
+      { x: 50, y: -50, inX: 0, inY: 0, outX: 0, outY: 0 },
+      { x: 0, y: 50, inX: 0, inY: 0, outX: 0, outY: 0 },
     ],
     ...over,
   } as unknown as RenderLayer;
@@ -121,7 +127,7 @@ describe('CR ON: the raster resolution follows the scale', () => {
   });
 });
 
-describe('CR OFF is unchanged — the regression guard for every existing project', () => {
+describe('CR OFF: bounded and deterministic, drawn at the tier it is keyed on', () => {
   it('produces the same texture size with the flag absent as with it false', () => {
     const a = provider();
     a.p.setRasterScale(1);
@@ -134,14 +140,25 @@ describe('CR OFF is unchanged — the regression guard for every existing projec
     expect(lastPx(a)).toBe(lastPx(b));
   });
 
-  it('draws at the RAW scale, uncapped — 16x on a 100px box is 3200px', () => {
-    // The measurement that corrected the premise: `resolutionTier`'s 4x clamp
-    // applies to the cache KEY, not to the pixels. OFF is already sharp; what it
-    // is not is correctly cached or bounded.
+  it('draws at the TIER, so the pixels and the cache key are the same number', () => {
+    // OFF used to draw at the raw scale while keying on the 4x-clamped tier.
+    // That was sharp above 4x but ORDER-DEPENDENT — one key served every scale
+    // past the ceiling, so whichever rasterized first was reused for all of
+    // them, and below the ceiling a scale animation stretched one texture
+    // across a whole tier and snapped at each boundary. Drawing at the tier
+    // makes the two agree: bounded and deterministic, and never magnified below
+    // the ceiling (the tier rounds UP). Past it, CR is the way to stay sharp.
     const h = provider();
     h.p.setRasterScale(1);
     h.p.setPath('path:a', pathLayer({ scaleX: 16, scaleY: 16, contentHash: 'raw' }));
-    expect(lastPx(h)).toBe(100 * 16 * 2);
+    expect(lastPx(h)).toBe(100 * 4 * 2); // tier 4 (clamped) x2 supersample
+  });
+
+  it('below the ceiling the tier rounds UP, so the raster is never magnified', () => {
+    const h = provider();
+    h.p.setRasterScale(1);
+    h.p.setPath('path:a', pathLayer({ scaleX: 3, scaleY: 3, contentHash: 'up' }));
+    expect(lastPx(h)).toBe(100 * 4 * 2); // tier 4 for a requested 3
   });
 
   it('is unaffected by the max-dimension report', () => {
@@ -158,9 +175,13 @@ describe('CR OFF is unchanged — the regression guard for every existing projec
 });
 
 describe('CR ON stays inside its bounds', () => {
-  it('at an exact power of two, ON and OFF agree — CR does not spend extra pixels', () => {
-    // The reason there is no draft cap: OFF already draws at the raw scale, so a
-    // cap below the requested scale would make ON SOFTER than OFF.
+  it('past the OFF ceiling, ON is SHARPER — which is the whole point of it', () => {
+    // This used to assert the two AGREE, because OFF drew at the raw scale and
+    // so was already sharp at any zoom. It also meant CR could only ever match
+    // OFF or, with a draft cap, come out worse — the anomaly that got a draft
+    // cap built and deleted. Now that OFF is bounded by its 4x ceiling, the
+    // extended ladder is a real upgrade rather than a lateral move, and CR is
+    // never softer than OFF at any scale.
     const on = provider();
     on.p.setRasterScale(1);
     on.p.setPath('path:a', pathLayer({ scaleX: 16, scaleY: 16, continuousRaster: true, contentHash: 'q' }));
@@ -169,7 +190,9 @@ describe('CR ON stays inside its bounds', () => {
     off.p.setRasterScale(1);
     off.p.setPath('path:a', pathLayer({ scaleX: 16, scaleY: 16, contentHash: 'q' }));
 
-    expect(lastPx(on)).toBe(lastPx(off));
+    expect(lastPx(on)).toBe(100 * 16 * 2); // the ladder keeps up
+    expect(lastPx(off)).toBe(100 * 4 * 2); // the clamp does not
+    expect(lastPx(on)).toBeGreaterThan(lastPx(off));
   });
 
   it('between tiers, ON rounds UP — never softer than OFF', () => {

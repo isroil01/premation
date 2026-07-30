@@ -53,6 +53,40 @@ export function layerNeedsCpuBake(
 }
 
 /**
+ * Should an IMAGE layer's texture be baked through the effect chain?
+ *
+ * Shapes and text rasterize themselves, so a Canvas2D-only effect just joins
+ * their draw. An image arrives as a decoded bitmap and used to be uploaded
+ * untouched, so those effects — Inner Shadow, Inner Glow, Satin, Bevel, and the
+ * rest of the Canvas2D-only family — silently did NOTHING on a photo, in 2D and
+ * 3D alike. They are not GPU-expressible, so the only way to render them is to
+ * take the same canvas round-trip the vector path takes.
+ *
+ * VIDEO is excluded, deliberately: a per-frame canvas round-trip through the
+ * whole chain, forever. The vector path can cache on a content signature; a
+ * video frame changes every frame by definition.
+ *
+ * A MASK is baked first, exactly as the vector path bakes it — interior styles
+ * shape themselves from the layer's silhouette, and for a masked layer that
+ * silhouette is the MASKED one, so the order is load-bearing rather than
+ * incidental. This used to be an exclusion: masked image layers silently got no
+ * interior styles at all, which is the one shape of limitation this codebase
+ * keeps deleting, because the control accepts the value and quietly does
+ * nothing. The GPU mask is dropped for a baked layer so the mask is applied
+ * once, not twice.
+ *
+ * Both the renderer backend (which requests the bake) and the snapshot adapter
+ * (which then must NOT also hand the effects to the GPU) gate on THIS, so the
+ * two cannot disagree and double-apply.
+ */
+export function imageNeedsCpuBake(
+  kind: string,
+  effects: ReadonlyArray<Effect> | undefined,
+): boolean {
+  return kind === 'image' && effectsNeedCpuBake(effects);
+}
+
+/**
  * Apply the effect chain to `oc` (a w×h content canvas, transform reset to
  * identity by the caller). `scratch` supplies a same-size working canvas for
  * the CSS-filter flush step (the caller owns pooling). Mutates `oc` in place.

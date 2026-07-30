@@ -2,6 +2,15 @@
  * Built-in shader sources. Each provides WGSL (WebGPU) and GLSL ES 3.0 (WebGL2)
  * so a backend can pick the matching one. Geometry is a unit quad in [0,1]²;
  * per-object data (transform, color, uv, opacity) arrives via a uniform block.
+ *
+ * Every 2D vertex shader emits `gl_Position = vec4(p.xy, 0.0, p.z)` after
+ * `p = mvp * vec3(pos, 1.0)` — it passes p.z as the homogeneous w rather than
+ * hardcoding 1.0. This is the Corner Pin hook: when `mvp` is a projective matrix
+ * (an affine layer matrix composed with a corner-pin homography) the hardware
+ * divides x,y by w and interpolates the UV/local varyings PERSPECTIVE-CORRECTLY
+ * for free. For every AFFINE mvp — which is every path that has no corner pin —
+ * p.z is identically 1, so this is byte-for-byte the old `vec4(p.xy, 0.0, 1.0)`.
+ * The 3D shaders keep their own mat4 path (mvp3dFor) untouched.
  */
 
 export interface ShaderSource {
@@ -40,7 +49,7 @@ struct VOut {
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.local = pos;
   return o;
 }
@@ -79,7 +88,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 color; vec4 shape; };
 out vec2 vLocal;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vLocal = pos;
 }
 `,
@@ -143,7 +152,7 @@ struct VOut {
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
   return o;
 }
@@ -163,7 +172,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -208,7 +217,7 @@ struct VOut {
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
   return o;
 }
@@ -230,7 +239,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -282,7 +291,7 @@ struct VOut {
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
   return o;
 }
@@ -306,7 +315,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -349,7 +358,7 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
   return o;
 }
@@ -382,7 +391,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 layout(location = 0) in vec2 pos;
 layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
 out vec2 vUv;
-void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, 1.0); vUv = uvRect.xy + pos * uvRect.zw; }
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
@@ -479,7 +488,7 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
   return o;
 }
@@ -543,7 +552,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 layout(location = 0) in vec2 pos;
 layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
 out vec2 vUv;
-void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, 1.0); vUv = uvRect.xy + pos * uvRect.zw; }
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
@@ -590,7 +599,7 @@ struct VOut {
 fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
   return o;
 }
@@ -629,7 +638,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 blurParams; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -695,7 +704,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; mat4 colors; vec4 points;
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -763,7 +772,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -829,7 +838,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -875,7 +884,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -918,7 +927,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 color; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -973,7 +982,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 color; vec4 params; 
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -1036,7 +1045,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -1104,7 +1113,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uvRect.xy + pos * uvRect.zw;
 }
 `,
@@ -1679,7 +1688,7 @@ struct VOut {
 fn vs(@location(0) pos : vec2<f32>, @location(1) uv : vec2<f32>) -> VOut {
   var o : VOut;
   let p = obj.mvp * vec3<f32>(pos, 1.0);
-  o.pos = vec4<f32>(p.xy, 0.0, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
   o.uv = uv;
   return o;
 }
@@ -1700,7 +1709,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
   vUv = uv;
 }
 `,

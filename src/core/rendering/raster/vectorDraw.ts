@@ -178,15 +178,48 @@ export function rasterPadding(layer: RenderLayer): number {
     // both are resolved per-frame in buildSnapshot, so both are known here.
     const escape = Math.min(MAX_GLYPH_PAD, Math.max(glyphSpread(layer), textPathSpread(layer)));
     if (escape > pad) pad = escape;
-    return pad > 0 ? Math.ceil(pad + 1) : 0;
+    // Clamped AFTER the rounding nudge, or the cap is not a cap: ceil(512 + 1)
+  // is 513, and MAX_GLYPH_PAD exists precisely to bound the allocation.
+  return pad > 0 ? Math.min(MAX_GLYPH_PAD, Math.ceil(pad + 1)) : 0;
   }
   const strokes = layer.strokes && layer.strokes.length > 0 ? layer.strokes : layer.stroke ? [layer.stroke] : [];
+  let strokeOvershoot = 0;
   for (const s of strokes) {
     if (!s || s.width <= 0) continue;
     // center/miter: a full width covers the half-width band + a 90° miter tip
     // (~0.71×w). outside: the band sits fully outside (~1×w) + miter → 2×w.
     const overshoot = s.align === 'outside' ? s.width * 2 : s.align === 'inside' ? 0 : s.width;
-    if (overshoot > pad) pad = overshoot;
+    if (overshoot > strokeOvershoot) strokeOvershoot = overshoot;
+  }
+  if (strokeOvershoot > pad) pad = strokeOvershoot;
+  // How far the PATH ITSELF escapes the layer's box, plus the stroke drawn on
+  // top of wherever it went.
+  //
+  // A path operator moves points: Zigzag displaces them perpendicular by its
+  // `amount`, so the geometry provably leaves the w×h box, and this function
+  // measured only the stroke. The raster was sized for an 8px stroke while the
+  // outline had travelled 16px further out, and the mitred spike tips were
+  // sliced off at the texture edge — measured on `shape-path-op-zigzag`, whose
+  // inked extent came out 238px against the reference's 262px, losing 22% of
+  // the stroke's pixels. Reading the resolved points covers every operator
+  // (and any future one) instead of special-casing Zigzag's parameter.
+  const pts = layer.pathPoints;
+  if (pts && pts.length > 0) {
+    const hw = layer.width / 2;
+    const hh = layer.height / 2;
+    let escape = 0;
+    for (const p of pts) {
+      // Handles too: a bezier bulges toward them, so an anchor inside the box
+      // with a handle outside it still paints outside.
+      const xs = [p.x, p.x + (p.inX ?? 0), p.x + (p.outX ?? 0)];
+      const ys = [p.y, p.y + (p.inY ?? 0), p.y + (p.outY ?? 0)];
+      for (const x of xs) escape = Math.max(escape, Math.abs(x) - hw);
+      for (const y of ys) escape = Math.max(escape, Math.abs(y) - hh);
+    }
+    if (escape > 0) {
+      const total = Math.min(MAX_GLYPH_PAD, escape + strokeOvershoot);
+      if (total > pad) pad = total;
+    }
   }
   if (layer.paint && layer.paint.strokes.length > 0) {
     let maxStroke = 0;
@@ -195,7 +228,9 @@ export function rasterPadding(layer: RenderLayer): number {
     }
     if (maxStroke / 2 > pad) pad = maxStroke / 2;
   }
-  return pad > 0 ? Math.ceil(pad + 1) : 0;
+  // Clamped AFTER the rounding nudge, or the cap is not a cap: ceil(512 + 1)
+  // is 513, and MAX_GLYPH_PAD exists precisely to bound the allocation.
+  return pad > 0 ? Math.min(MAX_GLYPH_PAD, Math.ceil(pad + 1)) : 0;
 }
 
 /** Resolve a layer's fill into a Canvas fillStyle. Gradients are built in the

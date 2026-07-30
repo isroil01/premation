@@ -9,8 +9,14 @@ const COMP = { width: 480, height: 360, background: '#0c0c12' };
 const SIZE = { w: 480, h: 360 };
 const CENTER = { x: 240, y: 180 };
 
-function scene(id: string, description: string, build: Scene['build'], gpuParity: Scene['gpuParity'] = 'expect-pass'): Scene {
-  return defineScene({ id, description, size: SIZE, comp: COMP, fps: 30, frames: [0], gpuParity, build });
+function scene(
+  id: string,
+  description: string,
+  build: Scene['build'],
+  gpuParity: Scene['gpuParity'] = 'expect-pass',
+  divergence?: Scene['divergence'],
+): Scene {
+  return defineScene({ id, description, size: SIZE, comp: COMP, fps: 30, frames: [0], gpuParity, divergence, build });
 }
 
 /** A large flat panel used as a 3D surface. */
@@ -105,7 +111,23 @@ export const threeDScenes: Scene[] = [
     graph.addNode(node('far', { kind: 'shape', position: { x: 120, y: 100 }, transform: { width: 240, height: 180, shapeType: 'rect', z: 600 }, style: { fill: '#d05a7f' } }));
     graph.addNode(node('near', { kind: 'shape', position: { x: 330, y: 250 }, transform: { width: 180, height: 130, shapeType: 'rect', z: 0 }, style: { fill: '#4ad0a0' } }));
     graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: { z: -1000, focalLength: 1000, dofStrength: 24, focusDistance: 1000, dofAperture: 40 } }));
-  }, 'known-divergent'),
+  }, 'known-divergent', {
+    why:
+      'The reference is frozen output of the DELETED Canvas2D backend, which shaded a lit plane '
+      + 'PER QUAD — one flat tint for the whole layer — while the GPU shades per fragment '
+      + '(Lambert + Blinn-Phong, see FrameScene.threeD.shade, whose `quadGain` is explicitly the '
+      + 'old per-quad value kept as a fallback). A plane that was one flat colour is now a '
+      + 'gradient, so the two disagree across the whole lit area rather than at its edges. A light '
+      + 'also emits a comp-sized WASH layer (buildSnapshot, `emitLayer` for kind light), and the '
+      + 'two engines draw that wash differently too. NOT YET ESTABLISHED, and the reason this '
+      + 'entry is not simply re-blessed: whether the ambient wash SHOULD have a radial falloff at '
+      + 'all. An ambient light has no position — buildSnapshot pins its wash to the comp centre — '
+      + 'so a falloff looks wrong on inspection and may be a real defect rather than an upgrade.',
+    wouldMatchWhen:
+      'The ambient-wash question is settled and, if the GPU behaviour is confirmed correct, the '
+      + 'reference is re-blessed from the GPU engine. Blessing before settling it would certify '
+      + 'whatever the wash currently does.',
+  }),
 
   scene('light-point', 'Point light on a 3D panel.', (graph) => {
     panel(graph, 'p', { z: 0, rotationX: 10 }, '#c9c9d6');
@@ -115,12 +137,44 @@ export const threeDScenes: Scene[] = [
   scene('light-spot', 'Spot light on a 3D panel.', (graph) => {
     panel(graph, 'p', { z: 0 }, '#c9c9d6');
     light(graph, 'L', { z: -300, intensity: 100, radius: 400, lightType: 'spot', lightAngle: 90, lightCone: 32 }, '#88d0ff');
-  }, 'known-divergent'),
+  }, 'known-divergent', {
+    why:
+      'The reference is frozen output of the DELETED Canvas2D backend, which shaded a lit plane '
+      + 'PER QUAD — one flat tint for the whole layer — while the GPU shades per fragment '
+      + '(Lambert + Blinn-Phong, see FrameScene.threeD.shade, whose `quadGain` is explicitly the '
+      + 'old per-quad value kept as a fallback). A plane that was one flat colour is now a '
+      + 'gradient, so the two disagree across the whole lit area rather than at its edges. A light '
+      + 'also emits a comp-sized WASH layer (buildSnapshot, `emitLayer` for kind light), and the '
+      + 'two engines draw that wash differently too. NOT YET ESTABLISHED, and the reason this '
+      + 'entry is not simply re-blessed: whether the ambient wash SHOULD have a radial falloff at '
+      + 'all. An ambient light has no position — buildSnapshot pins its wash to the comp centre — '
+      + 'so a falloff looks wrong on inspection and may be a real defect rather than an upgrade.',
+    wouldMatchWhen:
+      'The ambient-wash question is settled and, if the GPU behaviour is confirmed correct, the '
+      + 'reference is re-blessed from the GPU engine. Blessing before settling it would certify '
+      + 'whatever the wash currently does.',
+  }),
 
   scene('light-ambient', 'Ambient light tint on a 3D panel.', (graph) => {
     panel(graph, 'p', { z: 0, rotationX: 5 }, '#9098b0');
     light(graph, 'L', { intensity: 70, lightType: 'ambient' }, '#ff88aa');
-  }, 'known-divergent'),
+  }, 'known-divergent', {
+    why:
+      'The reference is frozen output of the DELETED Canvas2D backend, which shaded a lit plane '
+      + 'PER QUAD — one flat tint for the whole layer — while the GPU shades per fragment '
+      + '(Lambert + Blinn-Phong, see FrameScene.threeD.shade, whose `quadGain` is explicitly the '
+      + 'old per-quad value kept as a fallback). A plane that was one flat colour is now a '
+      + 'gradient, so the two disagree across the whole lit area rather than at its edges. A light '
+      + 'also emits a comp-sized WASH layer (buildSnapshot, `emitLayer` for kind light), and the '
+      + 'two engines draw that wash differently too. NOT YET ESTABLISHED, and the reason this '
+      + 'entry is not simply re-blessed: whether the ambient wash SHOULD have a radial falloff at '
+      + 'all. An ambient light has no position — buildSnapshot pins its wash to the comp centre — '
+      + 'so a falloff looks wrong on inspection and may be a real defect rather than an upgrade.',
+    wouldMatchWhen:
+      'The ambient-wash question is settled and, if the GPU behaviour is confirmed correct, the '
+      + 'reference is re-blessed from the GPU engine. Blessing before settling it would certify '
+      + 'whatever the wash currently does.',
+  }),
 
   // 2.5D light-cast shadow: a shadow-casting point light above-left of a small
   // panel throws a soft drop-shadow down-right (away from the light). No
@@ -133,7 +187,23 @@ export const threeDScenes: Scene[] = [
     graph.addNode(node('bg', { kind: 'shape', position: CENTER, transform: { width: 480, height: 360, shapeType: 'rect', castsShadows: false }, style: { fill: '#c8ccd8' } }));
     graph.addNode(node('p', { kind: 'shape', position: { x: 260, y: 200 }, transform: { width: 140, height: 100, shapeType: 'rect' }, style: { fill: '#4ad0a0' } }));
     light(graph, 'L', { z: -200, intensity: 100, radius: 320, lightType: 'point', castShadows: true }, '#ffcc55');
-  }, 'known-divergent'),
+  }, 'known-divergent', {
+    why:
+      'The reference is frozen output of the DELETED Canvas2D backend, which shaded a lit plane '
+      + 'PER QUAD — one flat tint for the whole layer — while the GPU shades per fragment '
+      + '(Lambert + Blinn-Phong, see FrameScene.threeD.shade, whose `quadGain` is explicitly the '
+      + 'old per-quad value kept as a fallback). A plane that was one flat colour is now a '
+      + 'gradient, so the two disagree across the whole lit area rather than at its edges. A light '
+      + 'also emits a comp-sized WASH layer (buildSnapshot, `emitLayer` for kind light), and the '
+      + 'two engines draw that wash differently too. NOT YET ESTABLISHED, and the reason this '
+      + 'entry is not simply re-blessed: whether the ambient wash SHOULD have a radial falloff at '
+      + 'all. An ambient light has no position — buildSnapshot pins its wash to the comp centre — '
+      + 'so a falloff looks wrong on inspection and may be a real defect rather than an upgrade.',
+    wouldMatchWhen:
+      'The ambient-wash question is settled and, if the GPU behaviour is confirmed correct, the '
+      + 'reference is re-blessed from the GPU engine. Blessing before settling it would certify '
+      + 'whatever the wash currently does.',
+  }),
 
   // ── layer styles ON 3D LAYERS ──────────────────────────────────────
   //
