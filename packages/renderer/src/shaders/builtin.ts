@@ -1110,7 +1110,12 @@ fn rand(co: vec2<f32>) -> f32 {
   }
   // c.rgb is premultiplied; unpremultiply, add noise in straight-alpha space,
   // clamp, then re-premultiply so the output stays premultiplied.
-  let straight = c.rgb / c.a;
+  //
+  // The guard is not cosmetic: a fully transparent pixel divides by zero, and
+  // what that produces is DRIVER-DEPENDENT - NaN, Inf, or a flushed zero. NaN
+  // survives the clamp on some hardware and NaN times 0.0 is still NaN, so the
+  // premultiply cannot rescue it. Matches the gradient-ramp guard above.
+  let straight = select(c.rgb / c.a, vec3<f32>(0.0), c.a == 0.0);
   let rgb = clamp(straight + rnd * amount, vec3<f32>(0.0), vec3<f32>(1.0));
   return vec4<f32>(rgb * c.a, c.a);
 }
@@ -1157,7 +1162,12 @@ void main() {
   }
   // c.rgb is premultiplied; unpremultiply, add noise in straight-alpha space,
   // clamp, then re-premultiply so the output stays premultiplied.
-  vec3 straight = c.rgb / c.a;
+  //
+  // The guard is not cosmetic: a fully transparent pixel divides by zero, and
+  // what that produces is DRIVER-DEPENDENT - NaN, Inf, or a flushed zero. NaN
+  // survives the clamp on some hardware and NaN times 0.0 is still NaN, so the
+  // premultiply cannot rescue it. Matches the gradient-ramp guard above.
+  vec3 straight = (c.a > 0.0) ? c.rgb / c.a : vec3(0.0);
   vec3 rgb = clamp(straight + rnd * amount, vec3(0.0), vec3(1.0));
   frag = vec4(rgb * c.a, c.a);
 }
