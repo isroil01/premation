@@ -24,7 +24,7 @@ const blend = BUILTIN_SHADERS.find((s) => s.name === 'blend-combine');
  *  Duplicated deliberately: this file lives in the renderer package and must not
  *  import from the app, and a copy that drifts is exactly what the count test
  *  below catches. */
-const EXPECTED_IDS = Array.from({ length: 28 }, (_, i) => i + 1);
+const EXPECTED_IDS = Array.from({ length: 30 }, (_, i) => i + 1);
 
 /** Ids the dialect branches on, from `mode == N` / `mode >= N` comparisons. */
 function handledIds(source: string): Set<number> {
@@ -69,6 +69,17 @@ describe('BLEND_COMBINE dialect parity', () => {
     // appended. Both dialects must bound the range.
     expect(blend!.wgsl).toMatch(/mode\s*>=\s*12\s*&&\s*mode\s*<=\s*15/);
     expect(blend!.glsl!.fragment).toMatch(/mode\s*>=\s*12\s*&&\s*mode\s*<=\s*15/);
+  });
+
+  it('handles the alpha-writing utility modes past the composite line', () => {
+    // 29/30 do not contribute a blended COLOUR — they change the Porter-Duff
+    // line itself (Alpha Add rewrites ao; Luminescent Premul rewrites co). A
+    // bChan branch for either would be silently wrong: it would produce a
+    // plausible colour and leave alpha alone, which is the whole point of them.
+    for (const src of [blend!.wgsl!, blend!.glsl!.fragment]) {
+      expect(src).toMatch(/mode\s*==\s*29/);
+      expect(src).toMatch(/mode\s*==\s*30/);
+    }
   });
 
   it('routes the whole-colour compare modes outside the separable helper', () => {

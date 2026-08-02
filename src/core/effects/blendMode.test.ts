@@ -31,7 +31,6 @@ describe('isBlendMode', () => {
     // mode that renders as Normal with no signal.
     for (const notYet of [
       'dissolve', 'dancing-dissolve',
-      'alpha-add', 'luminescent-premul',
       'stencil-alpha', 'stencil-luma', 'silhouette-alpha', 'silhouette-luma',
     ]) {
       expect(isBlendMode(notYet)).toBe(false);
@@ -58,11 +57,11 @@ describe('readNodeBlend', () => {
 });
 
 describe('BLEND_MODES table', () => {
-  test('ships 30 of AE\'s 38, with the 8 absentees accounted for', () => {
-    // 38 - 30 = 8: Dissolve, Dancing Dissolve (M5), Alpha Add, Luminescent
-    // Premul (M4), Stencil/Silhouette x4 (M8c). If this number moves without a
-    // milestone landing, something was added without a shader branch.
-    expect(BLEND_MODES).toHaveLength(30);
+  test('ships 32 of AE\'s 38, with the 6 absentees accounted for', () => {
+    // 38 - 32 = 6: Dissolve, Dancing Dissolve (M5) and Stencil/Silhouette x4
+    // (M8c). If this number moves without a milestone landing, something was
+    // added without a shader branch behind it.
+    expect(BLEND_MODES).toHaveLength(32);
   });
 
   test('normal leads, and every mode is unique', () => {
@@ -79,7 +78,7 @@ describe('BLEND_MODES table', () => {
   test('uses AE\'s own group names, in AE\'s order', () => {
     const seen: string[] = [];
     for (const { group } of BLEND_MODES) if (seen[seen.length - 1] !== group) seen.push(group);
-    expect(seen).toEqual(['Normal', 'Subtractive', 'Additive', 'Complex', 'Difference', 'HSL']);
+    expect(seen).toEqual(['Normal', 'Subtractive', 'Additive', 'Complex', 'Difference', 'HSL', 'Utility']);
   });
 
   test('groups are contiguous — a mode cannot appear outside its section', () => {
@@ -101,6 +100,7 @@ describe('BLEND_MODES table', () => {
     expect(count('Complex')).toBe(7);
     expect(count('Difference')).toBe(5);
     expect(count('HSL')).toBe(4);
+    expect(count('Utility')).toBe(2);
   });
 
   test('every table entry passes its own validator', () => {

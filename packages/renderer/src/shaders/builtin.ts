@@ -613,8 +613,23 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   } else {
     B = vec3<f32>(bChan(mode, cb.r, cs.r), bChan(mode, cb.g, cs.g), bChan(mode, cb.b, cs.b));
   }
-  let co = as1 * (1.0 - ad) * cs + as1 * ad * B + (1.0 - as1) * ad * cb;
-  let ao = as1 + ad - as1 * ad;
+  var co = as1 * (1.0 - ad) * cs + as1 * ad * B + (1.0 - as1) * ad * cb;
+  var ao = as1 + ad - as1 * ad;
+  // ── Utility family (29-30): these write ALPHA, not just colour ──
+  // They cannot be a bChan branch, because bChan only ever produces a blended
+  // COLOUR that the standard Porter-Duff line above then composites. These two
+  // change that line itself.
+  if (mode == 29) {
+    // Alpha Add. Standard alpha is as + ad - as*ad, which is exactly why two
+    // touching anti-aliased 50% edges composite to 75% and leave a visible seam
+    // down the join. Adding instead of union-ing closes it.
+    ao = min(1.0, as1 + ad);
+  } else if (mode == 30) {
+    // Luminescent Premul. Treats the source as ALREADY premultiplied and adds it
+    // rather than lerping, so colour that exceeds its own alpha is kept instead
+    // of clipped — the glow/highlight case AE keeps this mode for.
+    co = s.rgb + (1.0 - as1) * d.rgb;
+  }
   return vec4<f32>(co, ao);
 }
 `,
@@ -646,6 +661,18 @@ void main() {
   vec3 B = nonSeparable ? bHSL(mode, cb, cs) : bSep(mode, cb, cs);
   vec3 co = as1 * (1.0 - ad) * cs + as1 * ad * B + (1.0 - as1) * ad * cb;
   float ao = as1 + ad - as1 * ad;
+  // Utility family (29-30): these write ALPHA, not just colour, so they change
+  // the composite line itself rather than contributing a blended B.
+  // Must match the WGSL branch above.
+  if (mode == 29) {
+    // Alpha Add — standard alpha (as + ad - as*ad) makes two touching
+    // anti-aliased 50% edges composite to 75% and leave a seam. Adding closes it.
+    ao = min(1.0, as1 + ad);
+  } else if (mode == 30) {
+    // Luminescent Premul — treat the source as already premultiplied and add,
+    // keeping colour that exceeds its own alpha instead of clipping it.
+    co = s.rgb + (1.0 - as1) * d.rgb;
+  }
   frag = vec4(co, ao);
 }
 `,

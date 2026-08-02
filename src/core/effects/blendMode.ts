@@ -21,11 +21,10 @@
  * exists.
  *
  * ── Coverage ─────────────────────────────────────────────────────────
- * 30 of AE's 38. Missing: Dissolve and Dancing Dissolve (stochastic, need a
- * deterministic seed — M5), Alpha Add and Luminescent Premul (they write ALPHA,
- * not just colour — M4), and the four Stencil/Silhouette modes (they modify the
- * alpha of every layer BELOW them, which needs a compositing-group boundary —
- * M8c).
+ * 32 of AE's 38. Missing: Dissolve and Dancing Dissolve (stochastic, need a
+ * deterministic seed — M5), and the four Stencil/Silhouette modes (they modify
+ * the alpha of every layer BELOW them, which needs a compositing-group
+ * boundary — M8c).
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -63,7 +62,10 @@ export type LayerBlendMode =
   | 'hard-mix'
   | 'classic-difference'
   | 'subtract'
-  | 'divide';
+  | 'divide'
+  // ── M4: the Utility family. These write ALPHA, not just colour. ──
+  | 'alpha-add'
+  | 'luminescent-premul';
 
 /**
  * Blend modes in AE's own menu order and AE's own group names, so a user coming
@@ -121,6 +123,9 @@ export const BLEND_MODES: ReadonlyArray<{ mode: LayerBlendMode; label: string; g
   { mode: 'saturation', label: 'Saturation', group: 'HSL' },
   { mode: 'color', label: 'Color', group: 'HSL' },
   { mode: 'luminosity', label: 'Luminosity', group: 'HSL' },
+
+  { mode: 'alpha-add', label: 'Alpha Add', group: 'Utility' },
+  { mode: 'luminescent-premul', label: 'Luminescent Premul', group: 'Utility' },
 ];
 
 const VALID = new Set<string>(BLEND_MODES.map((b) => b.mode));

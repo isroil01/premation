@@ -87,6 +87,9 @@ function advancedBlendId(mode: LayerBlendMode | undefined): number {
     case 'classic-difference': return 26;
     case 'darker-color': return 27;
     case 'lighter-color': return 28;
+    // ── M4 (Utility): these write alpha, handled past the composite line ──
+    case 'alpha-add': return 29;
+    case 'luminescent-premul': return 30;
     default: return 0; // normal / add → simple fixed-function blend
   }
 }
