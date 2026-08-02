@@ -11,9 +11,10 @@
  * Both solid and gradient fills render through the Canvas2DVectorRasterizer in
  * the GPU engine — no fallback to a first-stop approximation.
  *
- * Not yet supported: KEYFRAMING per-stop colour or gradient angle. The
- * AnimationEngine holds scalar tracks only, so animatable gradients wait on
- * colour/vector track support. Static editing and undo work today.
+ * Animatable: gradient angle / centre / radius via scalar tracks (`fillAngle`,
+ * `fillCenterX/Y`, `fillRadius`), and the full stop list via a `fill.stops`
+ * data track (`gradientStops` kind — position + colour, eased). See
+ * AppearanceSection and buildSnapshot's fillPaint resolution.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';

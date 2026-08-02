@@ -19,14 +19,29 @@
  * older callers still reference the CSS form; nothing in the render path reads
  * it.
  *
- * Implemented: DROP SHADOW + OUTER GLOW. Inner shadow, inner glow, bevel,
- * satin and the overlays need compositing passes that do not exist yet.
+ * ── What compiles to what ────────────────────────────────────────────
+ * ALL nine styles render. Each maps onto an ordinary effect type, in
+ * Photoshop's stacking order (shadow/glow behind, overlays recolour, stroke on
+ * top):
+ *
+ *   dropShadow      → 'drop-shadow'    outerGlow  → 'glow'
+ *   innerShadow     → 'inner-shadow'   innerGlow  → 'inner-glow'
+ *   satin           → 'satin'          bevel      → 'bevel'
+ *   colorOverlay    → 'fill'           stroke     → 'stroke'
+ *   gradientOverlay → 'gradient-ramp'
+ *
+ * The interior four (inner shadow/glow, satin, bevel) have no GPU shader, so a
+ * layer using any of them is CPU-baked — which drops that layer's GPU effect
+ * list wholesale. Color Overlay and Stroke therefore have to be drawable by the
+ * BAKE as well as by the GPU; see `hasCanvas2dImplementation`. They once were
+ * not, and both styles silently vanished the moment an interior style was
+ * switched on beside them.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import { parseHex } from '@core/paint/fill';
-import type { Effect } from '@core/effects/effects';
+import type { Effect, EffectType } from '@core/effects/effects';
 import type { SceneNode } from '@core/types';
 
 export interface DropShadowStyle {
@@ -259,16 +274,156 @@ export interface LayerStyles {
  * they must be STABLE across frames, since keyframe prop paths and the
  * renderer's per-effect caching are both keyed by effect id.
  */
+/**
+ * Which EFFECT parameter each style field compiles to, and the factor between
+ * their units.
+ *
+ * The two names are often different — a Drop Shadow's `blur` is the effect's
+ * `softness`, an Outer Glow's `size` is its `radius`, a Gradient Overlay's
+ * `opacity` is `blend` — and the 0..1 opacities become 0..100 percentages. The
+ * inspector needs this to put a keyframe on the path the RENDERER will sample;
+ * guessing `effect.layerstyle:dropShadow.blur` would write a track nothing ever
+ * reads.
+ *
+ * Co-located with `layerStylesToEffects` deliberately: this table and that
+ * function are two halves of one mapping, and `layerStyles.test.ts` asserts
+ * every entry here names a param the function actually emits, so they cannot
+ * drift apart silently.
+ */
+export interface StyleParamBinding {
+  /** Param key on the compiled effect. */
+  param: string;
+  /** Stored value × this = effect param value (100 for the 0..1 opacities). */
+  scale: number;
+}
+const N = (param: string, scale = 1): StyleParamBinding => ({ param, scale });
+
+export const LAYER_STYLE_NUMBER_PARAMS: Readonly<Record<string, Readonly<Record<string, StyleParamBinding>>>> = {
+  dropShadow: { distance: N('distance'), angle: N('angle'), blur: N('softness'), opacity: N('opacity', 100) },
+  outerGlow: { size: N('radius'), opacity: N('intensity', 100) },
+  innerShadow: { distance: N('distance'), angle: N('angle'), size: N('softness'), opacity: N('opacity', 100) },
+  innerGlow: { size: N('size'), opacity: N('opacity', 100) },
+  satin: { distance: N('distance'), angle: N('angle'), size: N('size'), opacity: N('opacity', 100) },
+  bevel: {
+    size: N('size'), depth: N('depth'), angle: N('angle'), altitude: N('altitude'),
+    highlightOpacity: N('highlightOpacity', 100), shadowOpacity: N('shadowOpacity', 100),
+  },
+  colorOverlay: { opacity: N('opacity', 100) },
+  gradientOverlay: { angle: N('angle'), opacity: N('blend', 100) },
+  stroke: { size: N('width'), opacity: N('opacity', 100) },
+};
+
+/** Colour fields → the compiled effect's colour param. Animated through the
+ *  decomposed `_r/_g/_b/_a` channel tracks, same as an effect's colour. */
+export const LAYER_STYLE_COLOR_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  dropShadow: { color: 'color' },
+  outerGlow: { color: 'color' },
+  innerShadow: { color: 'color' },
+  innerGlow: { color: 'color' },
+  satin: { color: 'color' },
+  bevel: { highlightColor: 'highlightColor', shadowColor: 'shadowColor' },
+  colorOverlay: { color: 'color' },
+  gradientOverlay: { from: 'colorA', to: 'colorB' },
+  stroke: { color: 'color' },
+};
+
+/**
+ * Which EFFECT TYPE each style compiles to.
+ *
+ * Lets a reader resolve `effect.layerstyle:<style>.<param>` back to a real
+ * definition. The compiled styles are synthesised per frame and never stored on
+ * the node, so `getNodeEffects` cannot find them — without this, the timeline
+ * fell back to matching the bare param key across every effect definition and
+ * would happily label a Bevel's `size` with Inner Glow's description.
+ */
+export const LAYER_STYLE_EFFECT_TYPE: Readonly<Record<string, EffectType>> = {
+  dropShadow: 'drop-shadow',
+  outerGlow: 'glow',
+  innerShadow: 'inner-shadow',
+  innerGlow: 'inner-glow',
+  satin: 'satin',
+  bevel: 'bevel',
+  colorOverlay: 'fill',
+  gradientOverlay: 'gradient-ramp',
+  stroke: 'stroke',
+};
+
+/**
+ * Display name per style — what the INSPECTOR calls it.
+ *
+ * A style track's timeline row used to be labelled from the effect it compiles
+ * to, so Outer Glow's Size read "Glow Radius" and Gradient Overlay's Opacity
+ * read "Gradient Ramp Blend". Naming a row after an implementation detail the
+ * user never chose is exactly the disagreement propertyMeta exists to prevent.
+ */
+export const LAYER_STYLE_LABEL: Readonly<Record<string, string>> = {
+  dropShadow: 'Drop Shadow',
+  outerGlow: 'Outer Glow',
+  innerShadow: 'Inner Shadow',
+  innerGlow: 'Inner Glow',
+  satin: 'Satin',
+  bevel: 'Bevel & Emboss',
+  colorOverlay: 'Color Overlay',
+  gradientOverlay: 'Gradient Overlay',
+  stroke: 'Stroke',
+};
+
+/**
+ * Effect param key → the STYLE field it was compiled from (`softness` → `blur`,
+ * `radius` → `size`, `blend` → `opacity`). The inverse of the two param maps.
+ *
+ * Used for labelling only: the field name is the one on the control the user
+ * actually edited, so the timeline row and the inspector agree.
+ */
+export function styleFieldForParam(styleKey: string, param: string): string | null {
+  const nums = LAYER_STYLE_NUMBER_PARAMS[styleKey];
+  if (nums) {
+    for (const [field, b] of Object.entries(nums)) if (b.param === param) return field;
+  }
+  const cols = LAYER_STYLE_COLOR_PARAMS[styleKey];
+  if (cols) {
+    for (const [field, p] of Object.entries(cols)) if (p === param) return field;
+  }
+  return null;
+}
+
+/** `layerstyle:dropShadow` → `dropShadow`, or null for a non-style effect id. */
+export function styleKeyFromEffectId(effectId: string): string | null {
+  return effectId.startsWith('layerstyle:') ? effectId.slice('layerstyle:'.length) : null;
+}
+
+/** Stable effect id for a layer style — the key its keyframe tracks hang off
+ *  (`effect.layerstyle:dropShadow.distance`). Stable across edits by
+ *  construction, which is what makes styles keyframeable at all. */
+export function layerStyleEffectId(style: keyof LayerStyles): string {
+  return `layerstyle:${style}`;
+}
+
+/**
+ * @param isAnimated true when the named style carries ANY keyframe track.
+ *
+ * Load-bearing for animation, not an optimisation. Each style below is emitted
+ * only when it would draw something — a drop shadow with distance 0 and blur 0
+ * contributes nothing, and emitting it anyway costs a pass on every styled
+ * layer. But that test reads the STORED value, and a keyframed parameter's
+ * stored value is not what renders. Keyframing shadow opacity 0 → 100 meant the
+ * effect was never emitted at the frames where the stored value was 0, so there
+ * was nothing for the sampler to raise and the shadow never appeared at all.
+ *
+ * An animated style therefore always emits and lets the sampled value decide.
+ */
 export function layerStylesToEffects(
   styles: LayerStyles | undefined,
   globalLightAngle?: number,
   globalLightAltitude?: number,
+  isAnimated?: (styleKey: string) => boolean,
 ): Effect[] {
   if (!styles) return [];
   const out: Effect[] = [];
+  const anim = (k: keyof LayerStyles): boolean => isAnimated?.(k as string) ?? false;
 
   const ds = styles.dropShadow;
-  if (ds?.enabled && (ds.blur > 0 || ds.distance > 0)) {
+  if (ds?.enabled && (ds.blur > 0 || ds.distance > 0 || anim('dropShadow'))) {
     // Bound styles follow the comp light; unbound ones keep their own angle.
     // A missing global angle falls back to the style's own, so a caller that
     // has no composition context (a test, a thumbnail) still renders sensibly.
@@ -282,16 +437,20 @@ export function layerStylesToEffects(
         distance: Math.max(0, ds.distance),
         angle,
         softness: Math.max(0, ds.blur),
-        color: withAlphaHex(ds.color, ds.opacity),
-        // The colour already carries the style's opacity, so the effect's own
-        // opacity param must stay at full or it would be applied twice.
-        opacity: 100,
+        color: ds.color,
+        // Opacity rides the effect's OWN param rather than being pre-multiplied
+        // into an 8-digit colour. Identical output — `extractSpatialEffects`
+        // applies `withAlpha(color, opacity/100)` either way — but keyframeable,
+        // which the baked form was not: `withAlpha` only matches 6-digit hex, so
+        // it returned the pre-alpha'd colour untouched and ignored the param.
+        // Animating a shadow's opacity is the ordinary way to fade one in.
+        opacity: Math.round(clamp01(ds.opacity) * 100),
       },
     });
   }
 
   const is = styles.innerShadow;
-  if (is?.enabled && (is.size > 0 || is.distance > 0)) {
+  if (is?.enabled && (is.size > 0 || is.distance > 0 || anim('innerShadow'))) {
     const angle = is.useGlobalLight && Number.isFinite(globalLightAngle)
       ? (globalLightAngle as number)
       : is.angle;
@@ -309,20 +468,22 @@ export function layerStylesToEffects(
   }
 
   const og = styles.outerGlow;
-  if (og?.enabled && og.size > 0) {
+  if (og?.enabled && (og.size > 0 || anim('outerGlow'))) {
     out.push({
       id: 'layerstyle:outerGlow',
       type: 'glow',
       params: {
         radius: Math.max(0, og.size),
-        color: withAlphaHex(og.color, og.opacity),
-        intensity: 100,
+        color: og.color,
+        // Same as Drop Shadow: keep opacity on the param (here `intensity`, the
+        // glow effect's name for it) so it can be keyframed.
+        intensity: Math.round(clamp01(og.opacity) * 100),
       },
     });
   }
 
   const ig = styles.innerGlow;
-  if (ig?.enabled && ig.size > 0) {
+  if (ig?.enabled && (ig.size > 0 || anim('innerGlow'))) {
     out.push({
       id: 'layerstyle:innerGlow',
       type: 'inner-glow',
@@ -335,7 +496,7 @@ export function layerStylesToEffects(
   }
 
   const sa = styles.satin;
-  if (sa?.enabled && sa.opacity > 0 && (sa.size > 0 || sa.distance > 0)) {
+  if (sa?.enabled && ((sa.opacity > 0 && (sa.size > 0 || sa.distance > 0)) || anim('satin'))) {
     out.push({
       id: 'layerstyle:satin',
       type: 'satin',
@@ -351,7 +512,7 @@ export function layerStylesToEffects(
   }
 
   const bv = styles.bevel;
-  if (bv?.enabled && bv.depth > 0 && bv.size > 0) {
+  if (bv?.enabled && ((bv.depth > 0 && bv.size > 0) || anim('bevel'))) {
     const bound = bv.useGlobalLight && Number.isFinite(globalLightAngle);
     out.push({
       id: 'layerstyle:bevel',
@@ -380,7 +541,7 @@ export function layerStylesToEffects(
   // top. Recolouring after the shadow is cast is correct — the shadow comes
   // from the silhouette, which a recolour does not change.
   const co = styles.colorOverlay;
-  if (co?.enabled && co.opacity > 0) {
+  if (co?.enabled && (co.opacity > 0 || anim('colorOverlay'))) {
     out.push({
       id: 'layerstyle:colorOverlay',
       type: 'fill',
@@ -389,7 +550,7 @@ export function layerStylesToEffects(
   }
 
   const go = styles.gradientOverlay;
-  if (go?.enabled && go.opacity > 0) {
+  if (go?.enabled && (go.opacity > 0 || anim('gradientOverlay'))) {
     const angle = go.useGlobalLight && Number.isFinite(globalLightAngle)
       ? (globalLightAngle as number)
       : go.angle;
@@ -406,7 +567,7 @@ export function layerStylesToEffects(
   }
 
   const st = styles.stroke;
-  if (st?.enabled && st.size > 0 && st.opacity > 0) {
+  if (st?.enabled && ((st.size > 0 && st.opacity > 0) || anim('stroke'))) {
     out.push({
       id: 'layerstyle:stroke',
       type: 'stroke',
@@ -465,12 +626,9 @@ function mixHex(a: string, b: string, t: number): string {
   return `#${h(ca.r + (cb.r - ca.r) * k)}${h(ca.g + (cb.g - ca.g) * k)}${h(ca.b + (cb.b - ca.b) * k)}`;
 }
 
-/** `#rrggbb` (or `#rrggbbaa`) × a 0..1 opacity → 8-digit hex. */
-function withAlphaHex(hex: string, opacity: number): string {
-  const c = parseHex(hex);
-  const a = Math.max(0, Math.min(255, Math.round((c.a / 255) * opacity * 255)));
-  const h = (v: number): string => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
-  return `#${h(c.r)}${h(c.g)}${h(c.b)}${h(a)}`;
+/** Styles store opacity 0..1; the effect params want 0..100. */
+function clamp01(v: number): number {
+  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
 }
 
 export const DEFAULT_DROP_SHADOW: DropShadowStyle = {

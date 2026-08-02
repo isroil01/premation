@@ -65,10 +65,34 @@ describe('layerStylesToEffects', () => {
     ).toEqual([]);
   });
 
-  it('folds style opacity into the effect colour', () => {
+  /**
+   * Opacity rides the effect's own `opacity` param, NOT a pre-multiplied
+   * 8-digit colour.
+   *
+   * It used to be folded into the colour, which rendered identically but could
+   * not be keyframed: `withAlpha` (effects.ts) only matches 6-digit hex, so it
+   * handed the pre-alpha'd colour straight through and ignored whatever the
+   * opacity param — animated or not — said.
+   */
+  it('carries style opacity on the effect param, keyframeable', () => {
     const [shadow] = layerStylesToEffects(DROP_SHADOW);
-    // 0.5 opacity on #000000 → 8-digit hex ending in the alpha byte (0x80).
-    expect(String(shadow!.params!.color).toLowerCase()).toMatch(/^#[0-9a-f]{6}80$/);
+    // Plain 6-digit colour, so withAlpha() can apply the opacity param to it.
+    expect(String(shadow!.params!.color).toLowerCase()).toMatch(/^#[0-9a-f]{6}$/);
+    // 0.5 → 50%.
+    expect(shadow!.params!.opacity).toBe(50);
+  });
+
+  /**
+   * A zero-strength style still emits when it is ANIMATED — otherwise keyframing
+   * opacity 0 → 100 could never start, because the frame whose stored value is 0
+   * would emit no effect for the sampler to raise.
+   */
+  it('emits a zero-strength style when it carries keyframes', () => {
+    const flat = { dropShadow: { ...DROP_SHADOW.dropShadow!, distance: 0, blur: 0 } };
+    expect(layerStylesToEffects(flat)).toEqual([]);
+    const animated = layerStylesToEffects(flat, undefined, undefined, (k) => k === 'dropShadow');
+    expect(animated).toHaveLength(1);
+    expect(animated[0]!.id).toBe('layerstyle:dropShadow');
   });
 });
 

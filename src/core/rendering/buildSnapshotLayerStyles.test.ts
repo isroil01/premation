@@ -133,3 +133,73 @@ describe('buildSnapshot — the composition light reaches the layer', () => {
     expect(angle).toBe(90);
   });
 });
+
+/**
+ * THE keyframing regression test.
+ *
+ * Layer styles used to be compiled and concatenated AFTER `resolveEffectParams`
+ * ran, so their parameters were frozen at whatever was stored — a drop shadow's
+ * distance, an overlay's colour and a stroke's width could not be keyframed,
+ * while the identical parameter on the equivalent EFFECT could. Anything that
+ * asserts only "the style reaches the renderer" passes either way; these sample
+ * the SAME layer at two times and require the value to move.
+ */
+describe('buildSnapshot — layer style parameters animate', () => {
+  const snapAt = (node: SceneNode, anim: AnimationEngine, t: number) => {
+    const graph = new SceneGraph();
+    graph.addNode(node);
+    const snap = buildSnapshot(graph, anim, t, undefined, undefined, undefined, undefined, {
+      width: 400, height: 300, background: '#000',
+    });
+    return snap.layers.find((l) => l.id === node.id)!;
+  };
+  const shadowOf = (layer: ReturnType<typeof snapAt>) =>
+    layer.effects?.find((e) => e.type === 'drop-shadow');
+
+  it('a keyframed shadow distance moves between frames', () => {
+    const node = shapeNode('anim1', { layerStyles: { dropShadow: { ...DEFAULT_DROP_SHADOW } } });
+    const anim = new AnimationEngine();
+    anim.setKeyframe('anim1', 'effect.layerstyle:dropShadow.distance', 0, 0);
+    anim.setKeyframe('anim1', 'effect.layerstyle:dropShadow.distance', 1, 100);
+
+    const at0 = shadowOf(snapAt(node, anim, 0));
+    const at1 = shadowOf(snapAt(node, anim, 1));
+    expect(at0?.params?.distance).toBe(0);
+    expect(at1?.params?.distance).toBe(100);
+  });
+
+  /**
+   * The case the user actually asked for: a shadow present for part of the
+   * timeline and gone for the rest. Opacity is the parameter to animate — the
+   * same technique After Effects users reach for, since the style's enable
+   * checkbox is not itself an animatable property.
+   */
+  it('a shadow can be faded in and out over time', () => {
+    const node = shapeNode('anim2', {
+      // Stored opacity 0: without the animated-style emit gate this style would
+      // not be compiled at all and the keyframes would have nothing to drive.
+      layerStyles: { dropShadow: { ...DEFAULT_DROP_SHADOW, opacity: 0 } },
+    });
+    const anim = new AnimationEngine();
+    const P = 'effect.layerstyle:dropShadow.opacity';
+    anim.setKeyframe('anim2', P, 0, 0);
+    anim.setKeyframe('anim2', P, 1, 100);
+    anim.setKeyframe('anim2', P, 2, 0);
+
+    expect(shadowOf(snapAt(node, anim, 0))?.params?.opacity).toBe(0);
+    expect(shadowOf(snapAt(node, anim, 1))?.params?.opacity).toBe(100);
+    expect(shadowOf(snapAt(node, anim, 2))?.params?.opacity).toBe(0);
+  });
+
+  it('a keyframed style COLOUR animates through its channel tracks', () => {
+    const node = shapeNode('anim3', { layerStyles: { dropShadow: { ...DEFAULT_DROP_SHADOW } } });
+    const anim = new AnimationEngine();
+    const P = 'effect.layerstyle:dropShadow.color';
+    // Black → red on the red channel alone.
+    anim.setKeyframe('anim3', `${P}_r`, 0, 0);
+    anim.setKeyframe('anim3', `${P}_r`, 1, 255);
+
+    expect(String(shadowOf(snapAt(node, anim, 0))?.params?.color).toLowerCase()).toMatch(/^#00/);
+    expect(String(shadowOf(snapAt(node, anim, 1))?.params?.color).toLowerCase()).toMatch(/^#ff/);
+  });
+});
