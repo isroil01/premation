@@ -58,22 +58,41 @@ function levelsTable(inBlack: number, inWhite: number, gamma: number, outBlack: 
 /**
  * A monotone Curves remap through the control points, as a single-channel table.
  *
- * Points are `[inputX, outputY]` pairs in 0–255, sorted by X. Segments are
- * linearly interpolated (a spline is a later refinement — linear already gives
- * the essential tone-curve control, and stays monotone by construction).
+ * Points are `[inputX, outputY]` pairs in 0–255, sorted by X. Segments use
+ * Catmull–Rom (cubic Hermite with finite-difference tangents) so midtones roll
+ * instead of kink at every control point — the AE Curves feel. Endpoints clamp
+ * their missing neighbours so the curve stays well-defined with 2+ points.
+ * Output is clamped 0–255; tangents are scaled so a monotone control polygon
+ * stays nearly monotone in practice.
  */
 function curvesTable(points: ReadonlyArray<[number, number]>): Uint8Array {
   const pts = [...points].sort((a, b) => a[0] - b[0]);
   if (pts.length < 2) return identityTable();
   const t = new Uint8Array(256);
+  const n = pts.length;
+  const tangents: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const [x0, y0] = pts[Math.max(0, i - 1)]!;
+    const [x1, y1] = pts[Math.min(n - 1, i + 1)]!;
+    const dx = x1 - x0;
+    tangents[i] = dx === 0 ? 0 : (y1 - y0) / dx;
+  }
   let seg = 0;
   for (let i = 0; i < 256; i++) {
-    while (seg < pts.length - 2 && i > pts[seg + 1]![0]) seg++;
+    while (seg < n - 2 && i > pts[seg + 1]![0]) seg++;
     const [x0, y0] = pts[seg]!;
     const [x1, y1] = pts[seg + 1]!;
     const dx = x1 - x0;
-    const f = dx <= 0 ? 0 : (i - x0) / dx;
-    t[i] = clamp255(Math.round(y0 + (y1 - y0) * Math.max(0, Math.min(1, f))));
+    const u = dx <= 0 ? 0 : Math.max(0, Math.min(1, (i - x0) / dx));
+    const u2 = u * u;
+    const u3 = u2 * u;
+    const h00 = 2 * u3 - 3 * u2 + 1;
+    const h10 = u3 - 2 * u2 + u;
+    const h01 = -2 * u3 + 3 * u2;
+    const h11 = u3 - u2;
+    const m0 = tangents[seg]! * dx;
+    const m1 = tangents[seg + 1]! * dx;
+    t[i] = clamp255(Math.round(h00 * y0 + h10 * m0 + h01 * y1 + h11 * m1));
   }
   return t;
 }
