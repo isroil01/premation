@@ -693,7 +693,10 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   let t = clamp(dot(uv - p0, dir) / max(len2, 0.0001), 0.0, 1.0);
   let rampColor = mix(obj.colors[0], obj.colors[1], t);
   let c = textureSample(tex, smp, uv);
-  let outColor = mix(c.rgb, rampColor.rgb, rampColor.a * obj.blend);
+  // c.rgb is premultiplied; unpremultiply before mixing with straight rampColor,
+  // then re-premultiply once so the output stays premultiplied.
+  let straight = select(c.rgb / c.a, vec3<f32>(0.0), c.a == 0.0);
+  let outColor = mix(straight, rampColor.rgb, rampColor.a * obj.blend);
   return vec4<f32>(outColor * c.a, c.a);
 }
 `,
@@ -720,7 +723,10 @@ void main() {
   float t = clamp(dot(vUv - p0, dir) / max(len2, 0.0001), 0.0, 1.0);
   vec4 rampColor = mix(colors[0], colors[1], t);
   vec4 c = texture(uTex, vUv);
-  vec3 outColor = mix(c.rgb, rampColor.rgb, rampColor.a * blend);
+  // c.rgb is premultiplied; unpremultiply before mixing with straight rampColor,
+  // then re-premultiply once so the output stays premultiplied.
+  vec3 straight = (c.a > 0.0) ? c.rgb / c.a : vec3(0.0);
+  vec3 outColor = mix(straight, rampColor.rgb, rampColor.a * blend);
   frag = vec4(outColor * c.a, c.a);
 }
 `
@@ -1102,8 +1108,11 @@ fn rand(co: vec2<f32>) -> f32 {
       rand(uv * 1.7 + evolution * 0.03) - 0.5
     );
   }
-  let rgb = clamp(c.rgb + rnd * amount, vec3<f32>(0.0), vec3<f32>(1.0));
-  return vec4<f32>(rgb, c.a);
+  // c.rgb is premultiplied; unpremultiply, add noise in straight-alpha space,
+  // clamp, then re-premultiply so the output stays premultiplied.
+  let straight = c.rgb / c.a;
+  let rgb = clamp(straight + rnd * amount, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(rgb * c.a, c.a);
 }
 `,
   glsl: {
@@ -1146,8 +1155,11 @@ void main() {
       rand(vUv * 1.7 + evolution * 0.03) - 0.5
     );
   }
-  vec3 rgb = clamp(c.rgb + rnd * amount, vec3(0.0), vec3(1.0));
-  frag = vec4(rgb, c.a);
+  // c.rgb is premultiplied; unpremultiply, add noise in straight-alpha space,
+  // clamp, then re-premultiply so the output stays premultiplied.
+  vec3 straight = c.rgb / c.a;
+  vec3 rgb = clamp(straight + rnd * amount, vec3(0.0), vec3(1.0));
+  frag = vec4(rgb * c.a, c.a);
 }
 `
   }
