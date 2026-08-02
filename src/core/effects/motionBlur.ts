@@ -53,6 +53,26 @@ export function motionBlurSampleTimes(
   return times;
 }
 
+/**
+ * Raise sample count with on-screen travel so fast kinetic type and camera
+ * moves stay smooth without paying full cost on near-static layers.
+ *
+ * `travelPx` is the Euclidean distance a layer's anchor moves across the
+ * shutter (comp px). Rough rule: ~1 sample per 2 px of travel, floored at the
+ * configured base and capped by `adaptiveSampleLimit`.
+ */
+export function adaptiveMotionBlurSamples(
+  baseSamples: number,
+  travelPx: number,
+  adaptiveSampleLimit = 128,
+): number {
+  const base = Math.max(1, Math.floor(baseSamples));
+  const limit = Math.max(base, Math.floor(adaptiveSampleLimit));
+  if (!(travelPx > 0) || !Number.isFinite(travelPx)) return Math.min(base, limit);
+  const fromTravel = Math.ceil(travelPx / 2);
+  return Math.min(limit, Math.max(base, fromTravel));
+}
+
 export function readNodeMotionBlur(node: SceneNode): boolean {
   const fx = node.components.find((c) => c.type === 'fx');
   return fx?.props.motionBlur === true;

@@ -8,14 +8,19 @@ import { renderComponentsOf, renderTransformOf } from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
 import { flattenComposition, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
 import { readNodeRenderEffects, effectsToFilter, resolveEffectParams, type Effect } from '@core/effects/effects';
-import { readNodeLayerStyles, layerStylesToEffects, styledSurfaceFill } from '@core/effects/layerStyles';
+import { readNodeLayerStyles, layerStylesToEffects, layerStyleEffectId, styledSurfaceFill } from '@core/effects/layerStyles';
+
+/** Prop-path prefix every layer-style keyframe track shares —
+ *  `effect.layerstyle:<style>.<param>`. Derived, so it cannot drift from
+ *  `layerStyleEffectId`. */
+const LAYER_STYLE_TRACK_PREFIX = `effect.${layerStyleEffectId('dropShadow')}`.replace(/dropShadow$/, '');
 import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMaskAt } from '@core/effects/mask';
 import { readNodeMatte, getMatteSourceId } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
-import { readNodeMotionBlur, motionBlurSampleTimes, type MotionBlurConfig } from '@core/effects/motionBlur';
+import { readNodeMotionBlur, motionBlurSampleTimes, adaptiveMotionBlurSamples, type MotionBlurConfig } from '@core/effects/motionBlur';
 import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core/paint/fill';
 import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
@@ -53,6 +58,7 @@ import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
+import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
 import type { PropPath } from '@motion/animation';
@@ -523,6 +529,51 @@ export function buildSnapshot(
     return v;
   };
 
+  /**
+   * A node's effect stack AND its layer styles, both sampled at `t`.
+   *
+   * `own` is the layer's own stack alone (the CSS `filter` describes only that,
+   * so the two cannot double-apply); `all` appends the compiled styles, which is
+   * what renders. After Effects evaluates layer styles after effects, hence the
+   * order.
+   *
+   * The styles go through `resolveEffectParams` WITH the effects rather than
+   * being concatenated after it. They used to be appended afterwards, which
+   * meant every layer-style parameter was frozen at its stored value — a drop
+   * shadow's distance, an overlay's colour and a stroke's width simply could not
+   * be keyframed, while the identical parameter on the equivalent EFFECT could.
+   * The compiled styles carry stable ids (`layerstyle:dropShadow`), so they need
+   * nothing else to animate through the ordinary `effect.<id>.<key>` path.
+   */
+  const effectsAndStyles = (node: SceneNode, values: Map<PropPath, number> | undefined): {
+    own: Effect[];
+    all: Effect[];
+  } => {
+    const sample = (path: string): number | undefined => {
+      const v = values?.get(path);
+      return typeof v === 'number' ? v : undefined;
+    };
+    // Which styles carry ANY track — collected in one pass so the emit gates in
+    // layerStylesToEffects can keep a style alive whose stored value is zero.
+    const animated = new Set<string>();
+    if (values) {
+      for (const k of values.keys()) {
+        if (!k.startsWith(LAYER_STYLE_TRACK_PREFIX)) continue;
+        // `effect.layerstyle:dropShadow.distance` → `dropShadow`
+        const rest = k.slice(LAYER_STYLE_TRACK_PREFIX.length);
+        const dot = rest.indexOf('.');
+        animated.add(dot < 0 ? rest : rest.slice(0, dot));
+      }
+    }
+    const ownRaw = readNodeRenderEffects(node);
+    const styleRaw = layerStylesToEffects(
+      readNodeLayerStyles(node), globalLight.angle, globalLight.altitude,
+      (k) => animated.has(k),
+    );
+    const all = resolveEffectParams([...ownRaw, ...styleRaw], sample);
+    return { own: all.slice(0, ownRaw.length), all };
+  };
+
   const localOf: LocalOf = (id) => {
     const n = nodeById.get(id);
     if (!n) return null;
@@ -609,14 +660,9 @@ export function buildSnapshot(
     // Resolve the container's effect stack once — the CSS string stays for
     // tests/legacy readers, the structured list is what the GPU path renders
     // (without it a precomp's effects were silently dropped on composite).
-    const gFxOwn = resolveEffectParams(readNodeRenderEffects(groupNode), (path) => {
-      const v = gv?.get(path);
-      return typeof v === 'number' ? v : undefined;
-    });
-    // Layer styles append AFTER the container's own effects — After Effects
-    // evaluates layer styles after effects, and they are structured effects
-    // now rather than a CSS string nothing reads.
-    const gFx = [...gFxOwn, ...layerStylesToEffects(readNodeLayerStyles(groupNode), globalLight.angle, globalLight.altitude)];
+    // Own effects + layer styles, both sampled — see `effectsAndStyles`. The
+    // styles are appended after the container's own stack, matching AE.
+    const { own: gFxOwn, all: gFx } = effectsAndStyles(groupNode, gv);
     const filter = effectsToFilter(gFxOwn) || undefined;
     // A comp INSTANCE has an intrinsic frame: the referenced composition's own
     // width/height, placed at the instance layer's own transform. A plain
@@ -1081,6 +1127,10 @@ export function buildSnapshot(
     }
     // Groups / nulls / cameras / audio are structural — they never draw.
     if (kind === 'group' || kind === 'null' || kind === 'camera' || kind === 'audio') continue;
+    // Live-boolean operands stay in the scene for editing/animation but paint
+    // only through their result layer — skipping here is what keeps the merge
+    // from double-drawing the sources.
+    if (isBooleanOperand(node)) continue;
 
     // AE-style layer in/out points: when the timeline has clip bars for this
     // node and NONE is active at the current frame, the layer sits outside its
@@ -1195,10 +1245,6 @@ export function buildSnapshot(
     // Canvas2D, and the structured list attached to the layer for the GPU path.
     // readNodeRenderEffects (not readNodeEffects) so the layer's `fx` switch
     // actually silences the stack — it had no reader at all before.
-    const ownEffects = resolveEffectParams(readNodeRenderEffects(node), (path) => {
-      const v = a?.get(path);
-      return typeof v === 'number' ? v : undefined;
-    });
     // Layer styles are STRUCTURED effects appended after the layer's own stack.
     //
     // They used to be folded into the CSS `filter` string below, which no
@@ -1206,7 +1252,10 @@ export function buildSnapshot(
     // and every style preset that specified them (Glass, Neon, Sticker, Long
     // Shadow, …) shipped its fills without its depth. Appending rather than
     // prepending matches AE: layer styles evaluate after effects.
-    const resolvedEffects = [...ownEffects, ...layerStylesToEffects(readNodeLayerStyles(node), globalLight.angle, globalLight.altitude)];
+    //
+    // Both go through ONE sampler pass (`effectsAndStyles`), which is what makes
+    // layer-style parameters keyframeable at all.
+    const { own: ownEffects, all: resolvedEffects } = effectsAndStyles(node, a);
     // The CSS form is retained for export/legacy readers only; `RenderLayer.
     // filter` is not consulted by any render path. It deliberately describes
     // the layer's OWN effects, not its styles, so the two cannot double-apply
@@ -1244,8 +1293,8 @@ export function buildSnapshot(
     const measuredText = layerKind === 'text'
       ? measureTextNodeSize(node, evalMap)
       : null;
-    const layerW = isSolid ? comp.width : (measuredText?.w ?? (a?.has('width') ? (a.get('width') as number) : base.width) ?? size.w);
-    const layerH = isSolid ? comp.height : (measuredText?.h ?? (a?.has('height') ? (a.get('height') as number) : base.height) ?? size.h);
+    let layerW = isSolid ? comp.width : (measuredText?.w ?? (a?.has('width') ? (a.get('width') as number) : base.width) ?? size.w);
+    let layerH = isSolid ? comp.height : (measuredText?.h ?? (a?.has('height') ? (a.get('height') as number) : base.height) ?? size.h);
 
     // Audio Waveform generator (envelope, not spectrum): a referenced audio
     // layer's precomputed peaks become this shape's live outline. Overrides any
@@ -1255,6 +1304,44 @@ export function buildSnapshot(
     const audioWaveformCfg = readNodeAudioWaveform(node);
     if (audioWaveformCfg) {
       pathPoints = resolveAudioWaveformPoints(audioWaveformCfg, layerW, layerH, remapOf(node.id)(t));
+    }
+
+    // Live Merge Paths: re-evaluate the boolean from animated operands each
+    // frame. Geometry is world-space → recentred onto the result layer.
+    let liveBooleanPose: { cx: number; cy: number; width: number; height: number } | null = null;
+    if (readLiveBoolean(node)) {
+      const ev = evaluateLiveBoolean(
+        node,
+        (id) => graph.getNode(id),
+        (id) => {
+          // WORLD pose so parented operands (null rigs, groups) stay correct.
+          const w = worldTransformOf(id, localOf, parentOf, worldCache);
+          const m = valuesOf(id);
+          return (prop) => {
+            if (prop === 'x') return w.x;
+            if (prop === 'y') return w.y;
+            if (prop === 'rotation') return w.rotation;
+            if (prop === 'scaleX') return w.scaleX;
+            if (prop === 'scaleY') return w.scaleY;
+            return m.get(prop);
+          };
+        },
+        (id) => () => {
+          // Each source samples at ITS own remapped time — using the result's
+          // remap made time-stretched operands freeze relative to the merge.
+          const remapped = remapOf(id)(t);
+          const pts = anim.sampleData(id, 'path.points', remapped);
+          if (!Array.isArray(pts) || pts.length < 3) return undefined;
+          if (typeof pts[0] !== 'object' || pts[0] === null || !('x' in (pts[0] as object))) return undefined;
+          return (pts as Array<{ x: number; y: number; inX?: number; inY?: number; outX?: number; outY?: number }>).map(
+            (p) => ({ x: p.x, y: p.y, inX: p.inX ?? p.x, inY: p.inY ?? p.y, outX: p.outX ?? p.x, outY: p.outY ?? p.y }),
+          );
+        },
+      );
+      if (ev) {
+        pathPoints = ev.points;
+        liveBooleanPose = { cx: ev.cx, cy: ev.cy, width: ev.width, height: ev.height };
+      }
     }
 
     // Project 3D layers through the camera into a full 2×3 affine, so X/Y
@@ -1390,6 +1477,21 @@ export function buildSnapshot(
       sy = Math.hypot(m[2], m[3]);
       rot = Math.atan2(m[1], m[0]) / DEG;
       depth = O.depth;
+    }
+
+    // Live boolean result rides the union centre each frame so animating an
+    // operand moves the merge without baking. Identity scale — the outline is
+    // already in world pixels.
+    if (liveBooleanPose) {
+      px = liveBooleanPose.cx;
+      py = liveBooleanPose.cy;
+      layerW = liveBooleanPose.width;
+      layerH = liveBooleanPose.height;
+      sx = 1;
+      sy = 1;
+      rot = 0;
+      matrix = undefined;
+      world3d = undefined;
     }
 
     let fillPaint = readNodeFill(node);
@@ -2614,7 +2716,23 @@ function sampleMotion(
    *  nothing. */
   matrixAt?: (ti: number) => readonly [number, number, number, number, number, number],
 ): MotionSample[] {
-  const times = motionBlurSampleTimes(t, cfg.fps, cfg.shutterAngle, cfg.samples, cfg.shutterPhase ?? -90, cfg.adaptiveSampleLimit ?? 128);
+  const limit = cfg.adaptiveSampleLimit ?? 128;
+  // Probe the shutter endpoints to size the sample count to on-screen travel.
+  // Fixed sample counts either strobe on fast kinetic type or waste budget on
+  // near-static layers; AE's adaptive limit exists for the same reason.
+  const probe = motionBlurSampleTimes(t, cfg.fps, cfg.shutterAngle, 2, cfg.shutterPhase ?? -90, limit);
+  let travelPx = 0;
+  if (probe.length >= 2) {
+    const a = remap(probe[0]!);
+    const b = remap(probe[probe.length - 1]!);
+    const xa = anim.sample(nodeId, 'x', a) ?? base.x;
+    const ya = anim.sample(nodeId, 'y', a) ?? base.y;
+    const xb = anim.sample(nodeId, 'x', b) ?? base.x;
+    const yb = anim.sample(nodeId, 'y', b) ?? base.y;
+    travelPx = Math.hypot(xb - xa, yb - ya);
+  }
+  const samples = adaptiveMotionBlurSamples(cfg.samples, travelPx, limit);
+  const times = motionBlurSampleTimes(t, cfg.fps, cfg.shutterAngle, samples, cfg.shutterPhase ?? -90, limit);
   const g = ghost ? GHOST_OPACITY : 1;
   return times.map((tc) => {
     const ti = remap(tc);
