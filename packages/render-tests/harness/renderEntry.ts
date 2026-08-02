@@ -176,7 +176,21 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
       const rgba = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);
       // Determinism gate (real GPU, not Null): re-render the scene's FIRST
       // frame from the same snapshot and require byte-identical output —
-      // "same machine + same driver ⇒ same bytes" (the AE-level promise).
+      // "same machine + same driver ⇒ same bytes".
+      //
+      // WHAT THIS DOES NOT COVER. It re-renders from the SAME `snap` object, so
+      // it gates the BACK half of the pipeline (renderFrame → GPU → readback)
+      // and silently vouches for the front half. Anything nondeterministic in
+      // SNAPSHOT CONSTRUCTION is invisible here — a wall-clock seed, iteration
+      // order over a Map, a Set serialized to an array, an id from a counter
+      // that isn't reset — because it is sampled once into `snap` and then
+      // replayed from identical input. Nor does it compare this path against
+      // `offlineRenderer`, so it is not a preview-vs-export check.
+      //
+      // Frame 0 is also the WORST frame for exposing time-dependent
+      // nondeterminism, since t = 0 collapses many time-derived values to a
+      // constant. Do not read a green run here as "the pipeline is
+      // deterministic" — it means "the renderer is, for this one frame".
       if (i === scene.frames[0]) {
         be.renderFrame(snap);
         const again = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);

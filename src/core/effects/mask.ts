@@ -19,13 +19,22 @@ import type { SceneNode } from '@core/types';
 /**
  * How a mask combines with the matte accumulated from the masks above it.
  *
- * The first three are set operations on coverage; `lighten`, `darken` and
- * `difference` are AE's per-pixel modes, which matter once masks have FEATHER
- * or partial opacity — with hard-edged, fully-opaque masks `lighten` matches
- * `add` and `darken` matches `intersect`, and the difference only appears in
- * the soft overlap.
+ * `add`, `subtract` and `intersect` are set operations on coverage; `lighten`,
+ * `darken` and `difference` are AE's per-pixel modes, which matter once masks
+ * have FEATHER or partial opacity — with hard-edged, fully-opaque masks
+ * `lighten` matches `add` and `darken` matches `intersect`, and the difference
+ * only appears in the soft overlap.
+ *
+ * `none` is the odd one out and the reason it exists is worth stating: a `none`
+ * mask contributes NOTHING to layer alpha. It is a path that stays in the stack
+ * as addressable geometry without clipping anything — which is what lets a mask
+ * be used as data rather than as a cut. That is the prerequisite for scoping an
+ * effect to a mask region (an effect mask must not modify layer alpha), and for
+ * anything else that wants to reference a path without it becoming a hole.
+ *
+ * It is also AE's 7th mode, so the label is familiar rather than invented.
  */
-export type MaskMode = 'add' | 'subtract' | 'intersect' | 'lighten' | 'darken' | 'difference';
+export type MaskMode = 'none' | 'add' | 'subtract' | 'intersect' | 'lighten' | 'darken' | 'difference';
 
 /** A single anchor with absolute in/out bezier handles (local space). */
 export interface MaskPoint {
@@ -188,7 +197,14 @@ export function maskPathToPath2D(path: MaskPath, width: number, height: number):
   return p;
 }
 
-/** The composite op that implements a mask mode against the accumulated matte. */
+/**
+ * The composite op that implements a mask mode against the accumulated matte.
+ *
+ * `none` has no meaningful answer here — it never reaches the canvas, because
+ * `paintMaskMatte` filters it out before compositing. It maps to `source-over`
+ * only so the function stays total; a `none` path arriving here is a bug in the
+ * caller, not a mask that should be drawn normally.
+ */
 export function maskModeToComposite(mode: MaskMode): GlobalCompositeOperation {
   switch (mode) {
     case 'subtract': return 'destination-out';
@@ -213,9 +229,31 @@ export function maskModeToComposite(mode: MaskMode): GlobalCompositeOperation {
  * else REMOVES from what is already there — leading with one against an empty
  * matte would erase from nothing and the layer would simply vanish, which is
  * the AE behaviour this preserves.
+ *
+ * `none` never leads the stack for this purpose: it is filtered out before the
+ * decision is made, so the question is asked of the first ACTIVE mask. Answering
+ * false here is belt-and-braces — a `none` mask must never cause a full-frame
+ * fill, since that would make it change the picture.
  */
 export function maskModeStartsFull(mode: MaskMode): boolean {
-  return mode !== 'add' && mode !== 'lighten';
+  return mode !== 'add' && mode !== 'lighten' && mode !== 'none';
+}
+
+/** The masks that actually affect alpha — everything except `none`. */
+export function activeMaskPaths(mask: LayerMask): MaskPath[] {
+  return mask.paths.filter((p) => p.mode !== 'none');
+}
+
+/**
+ * True when the mask stack clips anything at all.
+ *
+ * A stack of only `none` paths is geometry, not a cut, so the layer must render
+ * UNMASKED. Render gates currently test `mask.paths.length > 0`; this is the
+ * predicate they should move to when that path is next touched (see the note in
+ * `paintMaskMatte`).
+ */
+export function hasActiveMaskPaths(mask: LayerMask | undefined): boolean {
+  return !!mask && mask.paths.some((p) => p.mode !== 'none');
 }
 
 /**
@@ -238,11 +276,28 @@ export function paintMaskMatte(
   w: number,
   h: number,
 ): void {
-  if (mask.paths[0] && maskModeStartsFull(mask.paths[0].mode)) {
+  // `none` masks are geometry, not coverage — they never reach the canvas.
+  const paths = activeMaskPaths(mask);
+
+  // A stack of only `none` paths must leave the layer UNMASKED, so the matte is
+  // fully opaque. Without this the matte would come out empty and the layer
+  // would vanish — the exact failure a mode called "none" must not cause.
+  //
+  // Callers still gate on `mask.paths.length > 0`, so this pass runs and fills
+  // the frame rather than being skipped. That is one redundant full-frame fill
+  // for an all-`none` stack; correctness first, and `hasActiveMaskPaths` is
+  // ready for when those gates are next touched.
+  if (paths.length === 0) {
+    g.fillStyle = '#fff';
+    g.fillRect(-w / 2, -h / 2, w, h);
+    return;
+  }
+
+  if (maskModeStartsFull(paths[0]!.mode)) {
     g.fillStyle = '#fff';
     g.fillRect(-w / 2, -h / 2, w, h);
   }
-  for (const path of mask.paths) {
+  for (const path of paths) {
     const p = maskPathToPath2D(path, w, h);
     if (!p) continue;
     g.save();
