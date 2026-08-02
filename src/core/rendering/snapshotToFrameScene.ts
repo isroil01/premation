@@ -24,8 +24,8 @@ import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
 import { isLutEffect } from '@core/effects/colorLut';
 import { getMatteMode } from '@core/effects/matte';
-import { effectNumber, effectParam, withAlpha } from '@core/effects/effects';
-import { effectsNeedCpuBake, layerNeedsCpuBake, imageNeedsCpuBake } from '@core/effects/effectBake';
+import { effectNumber, effectParam, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
+import { layerNeedsCpuBake, imageNeedsCpuBake } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
@@ -312,12 +312,24 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   return { shape: 'rounded', radiusPx: layer.cornerRadius ?? 0, width: layer.width, height: layer.height };
 }
 
-// effectsNeedCpuBake imported for both needsShapeRaster and layerToRenderable.
-function extractSpatialEffects(layer: RenderLayer): import('@motion/renderer').RenderableEffect[] | undefined {
+// layerNeedsCpuBake is shared by needsShapeRaster and layerToRenderable, which
+// must agree with Canvas2DVectorRasterizer about who owns the effect chain.
+/**
+ * @param onlyGpuOnly restrict the output to effects the CPU bake CANNOT draw
+ *   (Displace, Motion Tile). For a baked layer: the bake owns everything else,
+ *   so handing the GPU the full list would double-apply it — but these two have
+ *   neither a CSS form nor a Canvas2D case, so the bake skips them and dropping
+ *   them here too made them vanish entirely.
+ */
+function extractSpatialEffects(
+  layer: RenderLayer,
+  onlyGpuOnly = false,
+): import('@motion/renderer').RenderableEffect[] | undefined {
   if (!layer.effects || layer.effects.length === 0) return undefined;
   const spatial: import('@motion/renderer').RenderableEffect[] = [];
   for (const e of layer.effects) {
     if (e.enabled === false) continue;
+    if (onlyGpuOnly && !isGpuOnlyEffect(e.type)) continue;
     // Read each effect's own params. Glow's colour, Drop Shadow's angle and
     // Gradient Ramp's endpoints were hardcoded here and unreachable from the UI.
     const n = (k: string): number => effectNumber(e, k);
@@ -520,11 +532,18 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // dropped to avoid double-applying. A track matte is a compositing
   // relationship, not baked, so it survives. (Image/video are not baked:
   // dynamic/large content; those still route to Canvas2D.)
-  const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text') && effectsNeedCpuBake(layer.effects);
-  // An IMAGE bakes too, when its stack contains something the GPU cannot draw.
-  // The bake has already applied the colour grade, any LUT, AND the mask — the
-  // mask first, so interior styles shape themselves from the masked silhouette
-  // — so none of the three may run again here.
+  // `layerNeedsCpuBake`, NOT `effectsNeedCpuBake` — the SAME predicate
+  // Canvas2DVectorRasterizer gates its bake on. They must agree or the two
+  // sides disagree about who owns the effect chain and it is applied twice:
+  // fill opacity alone sends a layer down the bake path, and gating this side
+  // on the effects term only meant the grade, LUT, mask and spatial effects
+  // were baked into the texture AND handed to the GPU on top of it.
+  const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text')
+    && layerNeedsCpuBake(layer.effects, layer.fillOpacity);
+  // An IMAGE or VIDEO bakes too, when its stack contains something the GPU
+  // cannot draw. The bake has already applied the colour grade, any LUT, AND
+  // the mask — the mask first, so interior styles shape themselves from the
+  // masked silhouette — so none of the three may run again here.
   const imgBaked = imageNeedsCpuBake(layer.kind, layer.effects);
   const baked = cpuBaked || imgBaked;
   // Per-quad Lambert gain (Accepts Lights): folded into the draw tint on the
@@ -561,7 +580,14 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(matteOf(layer) ? { matte: matteOf(layer)! } : {}),
     ...(textured ? { colorMatrix: baked ? undefined : texturedColorMatrix(layer) } : { sdf: sdfFor(layer) }),
     ...(motionSamples ? { motionSamples } : {}),
-    effects: baked ? undefined : extractSpatialEffects(layer),
+    // A baked layer carries content + mask + the whole drawable chain in its
+    // texture, so the GPU must not re-apply any of it. The exception is the
+    // GPU-ONLY pair (Displace, Motion Tile): the bake has no form for them and
+    // skips them, so they are passed through here rather than lost. They land
+    // AFTER the baked result regardless of their position in the stack — a real
+    // ordering compromise, but a displaced layer beats a silently undisplaced
+    // one, and stack order is already exact on the unbaked path.
+    effects: baked ? extractSpatialEffects(layer, true) : extractSpatialEffects(layer),
     ...(layer.deformedMesh ? { deformedMesh: normalizeDeformedMesh(layer.deformedMesh, layer.width, layer.height, pad) } : {}),
     // True-3D placement for the depth-tested GPU path. Only meaningful for a
     // layer whose 2D model came from the projected affine (`layer.matrix`) —
