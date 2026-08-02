@@ -227,22 +227,24 @@ export interface GlassStyle {
 export function defaultGlassStyle(): GlassStyle {
   return {
     enabled: true,
-    blur: 24,
-    saturation: 1.8,
+    blur: 28,
+    saturation: 1.9,
     tintColor: '#ffffff',
-    tintOpacity: 0.08,
-    refraction: 28,
-    edgeWidth: 3,
-    chromaticAberration: 6,
+    tintOpacity: 0.1,
+    refraction: 34,
+    edgeWidth: 3.5,
+    // Chromatic split at the rim is the whole difference between "frosted
+    // rectangle" and glass — default was too shy to read on product shots.
+    chromaticAberration: 10,
     rimColor: '#ffffff',
-    rimOpacity: 0.35,
-    rimWidth: 6,
+    rimOpacity: 0.42,
+    rimWidth: 7,
     rimAngle: 315,
-    useGlobalLight: false,
+    useGlobalLight: true,
     specularAngle: 315,
-    specularIntensity: 0.25,
-    specularFalloff: 8,
-    grain: 0.03,
+    specularIntensity: 0.38,
+    specularFalloff: 10,
+    grain: 0.04,
   };
 }
 
