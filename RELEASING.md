@@ -1,4 +1,4 @@
-# Releasing Motion Editor
+# Releasing Premation
 
 How a version becomes installers, how those installers reach users through GitHub
 Releases, and how an already-installed app finds the next version.
@@ -11,8 +11,8 @@ Everything lands in **`release/`** (gitignored). A Windows build produces:
 
 ```
 motion-editor/release/
-├── MotionEditor-Setup-Windows.exe        ← the installer users download (~90 MB)
-├── MotionEditor-Setup-Windows.exe.blockmap
+├── Premation-Setup-Windows.exe           ← the installer users download (~90 MB)
+├── Premation-Setup-Windows.exe.blockmap
 ├── latest.yml                            ← update manifest: version + sha512 + filename
 ├── builder-debug.yml
 └── win-unpacked/                          ← the unpacked app (for local testing)
@@ -25,9 +25,9 @@ Per platform:
 
 | Platform | Command | Artifact |
 | --- | --- | --- |
-| Windows | `npm run dist` (on Windows) | `MotionEditor-Setup-Windows.exe` + `latest.yml` |
-| macOS | `npm run dist` (on macOS) | `MotionEditor-macOS-arm64.dmg`, `MotionEditor-macOS-x64.dmg` + `latest-mac.yml` |
-| Linux | `npm run dist` (on Linux) | `MotionEditor.AppImage` + `latest-linux.yml` |
+| Windows | `npm run dist` (on Windows) | `Premation-Setup-Windows.exe` + `latest.yml` |
+| macOS | `npm run dist` (on macOS) | `Premation-macOS-arm64.dmg`, `Premation-macOS-x64.dmg` + `latest-mac.yml` |
+| Linux | `npm run dist` (on Linux) | `Premation.AppImage` + `latest-linux.yml` |
 
 Each platform must be built **on** that platform. That is what the release
 workflow's three-runner matrix is for.
@@ -93,10 +93,10 @@ GitHub Repository
 ├── Source code
 └── Releases
     └── v0.1.1  (draft until you publish it)
-        ├── MotionEditor-Setup-Windows.exe
-        ├── MotionEditor-macOS-arm64.dmg
-        ├── MotionEditor-macOS-x64.dmg
-        ├── MotionEditor.AppImage
+        ├── Premation-Setup-Windows.exe
+        ├── Premation-macOS-arm64.dmg
+        ├── Premation-macOS-x64.dmg
+        ├── Premation.AppImage
         ├── latest.yml / latest-mac.yml / latest-linux.yml
         └── *.blockmap
 ```

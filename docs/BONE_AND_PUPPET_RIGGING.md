@@ -1,6 +1,6 @@
 # Bone Tool & Puppet Tool — Complete Reference
 
-**Scope:** everything the motion-editor ships for 2D mesh deformation — the Puppet (pin) tool and the Bone (skeleton) tool: the math, the data model, the evaluation path, the UI surfaces, the AI tools, caching/performance, determinism guarantees, test coverage, and the honest current state including gaps and known defects.
+**Scope:** everything Premation ships for 2D mesh deformation — the Puppet (pin) tool and the Bone (skeleton) tool: the math, the data model, the evaluation path, the UI surfaces, the AI tools, caching/performance, determinism guarantees, test coverage, and the honest current state including gaps and known defects.
 
 **Written:** 2026-07-27 · **Last updated:** 2026-07-28 (Phases 1–4 of the AE-parity brief landed)
 **Verified against:** working tree at `Desktop/motion-editor`; rig-related suites green
