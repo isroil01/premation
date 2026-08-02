@@ -109,14 +109,14 @@ describe('addNoiseData', () => {
 });
 
 describe('classification', () => {
-  test('the new effects are Canvas2D-only', () => {
-    for (const t of ['fill', 'four-color-gradient', 'stroke', 'beam', 'sharpen', 'noise', 'keylight']) {
+  test('pixel-pass generators without GPU shaders are Canvas2D-only', () => {
+    for (const t of ['four-color-gradient', 'beam', 'keylight', 'bevel', 'inner-shadow']) {
       expect(isCanvas2dOnlyEffect(t)).toBe(true);
     }
   });
 
-  test('existing effects are not misclassified as Canvas2D-only', () => {
-    for (const t of ['blur', 'glow', 'levels', 'tint', 'gradient-ramp', 'displacement-map']) {
+  test('effects with CompositionPass GPU materials are not Canvas2D-only', () => {
+    for (const t of ['blur', 'glow', 'levels', 'tint', 'gradient-ramp', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise']) {
       expect(isCanvas2dOnlyEffect(t)).toBe(false);
     }
   });
