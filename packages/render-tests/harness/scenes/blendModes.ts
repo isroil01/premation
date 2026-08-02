@@ -1,8 +1,15 @@
 /**
- * Blend-mode family: one scene per LayerBlendMode (17 total, per
+ * Blend-mode family: one scene per LayerBlendMode (30 total, per
  * src/core/effects/blendMode.ts). A colourful gradient base with a
  * mid-tone ellipse on top carrying the blend mode — chosen so every mode
  * produces a visibly distinct composite.
+ *
+ * The base gradient runs blue → red → yellow and the ellipse is a desaturated
+ * mid-tone, which matters for the M1 modes specifically: Vivid Light, Hard Mix
+ * and the Classic (unclamped) variants only separate from their modern
+ * counterparts where a channel is driven past 0 or 1, and a mid-tone source over
+ * a saturated backdrop is what drives them there. A grey-on-grey scene would
+ * render several of these identically and certify nothing.
  */
 
 import { defineScene, node, type Scene } from '../sceneKit';
@@ -10,11 +17,19 @@ import { defineScene, node, type Scene } from '../sceneKit';
 const COMP = { width: 320, height: 220, background: '#101014' };
 const SIZE = { w: 320, h: 220 };
 
-// The full 17, in menu order (blendMode.ts:42). 'normal' is the default.
+// All 30, in menu order (blendMode.ts BLEND_MODES). 'normal' is the default.
 const MODES = [
-  'normal', 'add', 'multiply', 'screen', 'overlay', 'darken', 'lighten',
-  'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference',
-  'exclusion', 'hue', 'saturation', 'color', 'luminosity',
+  'normal',
+  // Subtractive
+  'darken', 'multiply', 'color-burn', 'classic-color-burn', 'linear-burn', 'darker-color',
+  // Additive
+  'add', 'lighten', 'screen', 'color-dodge', 'classic-color-dodge', 'linear-dodge', 'lighter-color',
+  // Complex
+  'overlay', 'soft-light', 'hard-light', 'linear-light', 'vivid-light', 'pin-light', 'hard-mix',
+  // Difference
+  'difference', 'classic-difference', 'exclusion', 'subtract', 'divide',
+  // HSL
+  'hue', 'saturation', 'color', 'luminosity',
 ] as const;
 
 function blendScene(mode: string): Scene {

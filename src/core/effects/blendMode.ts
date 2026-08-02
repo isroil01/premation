@@ -4,11 +4,28 @@
  * The blend mode lives on the node's `fx` component (sibling to the effect
  * stack), so History / autosave / export capture it for free.
  *
- * The live app composites on Canvas 2D, so we expose the full set of AE-standard
- * modes that `globalCompositeOperation` renders natively (~16). Each entry is
- * flagged `gpuSafe` = whether the GPU renderer's portable `BlendMode` union
- * already supports it; when the GPU path is wired in, non-safe modes fall back to
- * the nearest supported mode there rather than changing the picture on Canvas 2D.
+ * ── How a mode actually reaches pixels ───────────────────────────────
+ * There is ONE rendering engine and it is GPU-backed (WebGPU -> WebGL2, see
+ * createRenderBackend.ts). Every mode except Normal composites through the
+ * BLEND_COMBINE shader, which samples the backdrop and implements the W3C
+ * compositing formula in both WGSL and GLSL. `snapshotToFrameScene.advancedBlendId`
+ * maps each mode here onto that shader's integer selector.
+ *
+ * This file used to say the app composited on Canvas 2D, and that the mode list
+ * was therefore capped at what `globalCompositeOperation` renders natively. That
+ * stopped being true when the engine was unified; the claim survived and was the
+ * reason the remaining AE modes were estimated as far more expensive than they
+ * are. `blendToComposite()` — which returned a GlobalCompositeOperation and was
+ * called by nothing but its own test — is deleted along with the claim. So is
+ * the `gpuSafe` flag, which described a Canvas2D-to-GPU fallback that no longer
+ * exists.
+ *
+ * ── Coverage ─────────────────────────────────────────────────────────
+ * 30 of AE's 38. Missing: Dissolve and Dancing Dissolve (stochastic, need a
+ * deterministic seed — M5), Alpha Add and Luminescent Premul (they write ALPHA,
+ * not just colour — M4), and the four Stencil/Silhouette modes (they modify the
+ * alpha of every layer BELOW them, which needs a compositing-group boundary —
+ * M8c).
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -32,31 +49,78 @@ export type LayerBlendMode =
   | 'hue'
   | 'saturation'
   | 'color'
-  | 'luminosity';
+  | 'luminosity'
+  // ── M1 ──
+  | 'classic-color-burn'
+  | 'linear-burn'
+  | 'darker-color'
+  | 'classic-color-dodge'
+  | 'linear-dodge'
+  | 'lighter-color'
+  | 'linear-light'
+  | 'vivid-light'
+  | 'pin-light'
+  | 'hard-mix'
+  | 'classic-difference'
+  | 'subtract'
+  | 'divide';
 
 /**
- * Blend modes in AE menu order, grouped by family. `gpuSafe` marks the ones the
- * portable GPU `BlendMode` union renders directly today; the rest are Canvas-2D
- * native and map to their nearest GPU equivalent until per-mode GPU shaders land.
+ * Blend modes in AE's own menu order and AE's own group names, so a user coming
+ * from After Effects finds each one where they expect it. The groups are load
+ * bearing for the picker's section headers; do not rename them to something
+ * tidier.
+ *
+ * ── The three Classic modes are COMPATIBILITY ALIASES, not distinct maths ──
+ * AE keeps `Classic Color Burn` / `Classic Color Dodge` / `Classic Difference`
+ * for projects authored before its blend maths was revised. We keep the NAMES so
+ * an imported project's mode survives a round trip and the picker matches AE's,
+ * but they currently render identically to Color Burn / Color Dodge / Difference.
+ *
+ * This is stated rather than implied because measurement contradicted the
+ * intent: the Classic branches were written as the unclamped forms, and the
+ * output-clamp at the end of the channel function collapses them back onto the
+ * modern ones — verified, not assumed, by rendering both and comparing. Shipping
+ * them as "unclamped variants" would have been a parity claim the pixels do not
+ * support. Logged as F9; closing it needs AE's actual pre-7.0 formulas, which we
+ * do not have.
  */
-export const BLEND_MODES: ReadonlyArray<{ mode: LayerBlendMode; label: string; group: string; gpuSafe: boolean }> = [
-  { mode: 'normal', label: 'Normal', group: 'Normal', gpuSafe: true },
-  { mode: 'add', label: 'Add', group: 'Lighten', gpuSafe: true },
-  { mode: 'lighten', label: 'Lighten', group: 'Lighten', gpuSafe: true },
-  { mode: 'screen', label: 'Screen', group: 'Lighten', gpuSafe: true },
-  { mode: 'color-dodge', label: 'Color Dodge', group: 'Lighten', gpuSafe: false },
-  { mode: 'darken', label: 'Darken', group: 'Darken', gpuSafe: true },
-  { mode: 'multiply', label: 'Multiply', group: 'Darken', gpuSafe: true },
-  { mode: 'color-burn', label: 'Color Burn', group: 'Darken', gpuSafe: false },
-  { mode: 'overlay', label: 'Overlay', group: 'Contrast', gpuSafe: true },
-  { mode: 'soft-light', label: 'Soft Light', group: 'Contrast', gpuSafe: false },
-  { mode: 'hard-light', label: 'Hard Light', group: 'Contrast', gpuSafe: false },
-  { mode: 'difference', label: 'Difference', group: 'Comparative', gpuSafe: false },
-  { mode: 'exclusion', label: 'Exclusion', group: 'Comparative', gpuSafe: false },
-  { mode: 'hue', label: 'Hue', group: 'HSL', gpuSafe: false },
-  { mode: 'saturation', label: 'Saturation', group: 'HSL', gpuSafe: false },
-  { mode: 'color', label: 'Color', group: 'HSL', gpuSafe: false },
-  { mode: 'luminosity', label: 'Luminosity', group: 'HSL', gpuSafe: false },
+export const BLEND_MODES: ReadonlyArray<{ mode: LayerBlendMode; label: string; group: string }> = [
+  { mode: 'normal', label: 'Normal', group: 'Normal' },
+
+  { mode: 'darken', label: 'Darken', group: 'Subtractive' },
+  { mode: 'multiply', label: 'Multiply', group: 'Subtractive' },
+  { mode: 'color-burn', label: 'Color Burn', group: 'Subtractive' },
+  { mode: 'classic-color-burn', label: 'Classic Color Burn', group: 'Subtractive' },
+  { mode: 'linear-burn', label: 'Linear Burn', group: 'Subtractive' },
+  { mode: 'darker-color', label: 'Darker Color', group: 'Subtractive' },
+
+  { mode: 'add', label: 'Add', group: 'Additive' },
+  { mode: 'lighten', label: 'Lighten', group: 'Additive' },
+  { mode: 'screen', label: 'Screen', group: 'Additive' },
+  { mode: 'color-dodge', label: 'Color Dodge', group: 'Additive' },
+  { mode: 'classic-color-dodge', label: 'Classic Color Dodge', group: 'Additive' },
+  { mode: 'linear-dodge', label: 'Linear Dodge', group: 'Additive' },
+  { mode: 'lighter-color', label: 'Lighter Color', group: 'Additive' },
+
+  { mode: 'overlay', label: 'Overlay', group: 'Complex' },
+  { mode: 'soft-light', label: 'Soft Light', group: 'Complex' },
+  { mode: 'hard-light', label: 'Hard Light', group: 'Complex' },
+  { mode: 'linear-light', label: 'Linear Light', group: 'Complex' },
+  { mode: 'vivid-light', label: 'Vivid Light', group: 'Complex' },
+  { mode: 'pin-light', label: 'Pin Light', group: 'Complex' },
+  { mode: 'hard-mix', label: 'Hard Mix', group: 'Complex' },
+
+  { mode: 'difference', label: 'Difference', group: 'Difference' },
+  { mode: 'classic-difference', label: 'Classic Difference', group: 'Difference' },
+  { mode: 'exclusion', label: 'Exclusion', group: 'Difference' },
+  { mode: 'subtract', label: 'Subtract', group: 'Difference' },
+  { mode: 'divide', label: 'Divide', group: 'Difference' },
+
+  { mode: 'hue', label: 'Hue', group: 'HSL' },
+  { mode: 'saturation', label: 'Saturation', group: 'HSL' },
+  { mode: 'color', label: 'Color', group: 'HSL' },
+  { mode: 'luminosity', label: 'Luminosity', group: 'HSL' },
 ];
 
 const VALID = new Set<string>(BLEND_MODES.map((b) => b.mode));
@@ -81,29 +145,4 @@ export function setNodeBlend(nodeId: string, mode: LayerBlendMode): void {
   defaultSceneGraph.setBlendMode(nodeId, mode);
   // Compositing changed → same refresh signal as an effect/animation edit.
   getEventBus().emit('AnimationChanged', { nodeId });
-}
-
-/** Map a blend mode to a Canvas 2D `globalCompositeOperation`. Most AE modes map
- *  1:1 to a native CSS/Canvas blend keyword; `add` is Canvas's `lighter`. */
-export function blendToComposite(mode: LayerBlendMode): GlobalCompositeOperation {
-  switch (mode) {
-    case 'add': return 'lighter'; // additive / Linear Dodge
-    case 'multiply': return 'multiply';
-    case 'screen': return 'screen';
-    case 'overlay': return 'overlay';
-    case 'darken': return 'darken';
-    case 'lighten': return 'lighten';
-    case 'color-dodge': return 'color-dodge';
-    case 'color-burn': return 'color-burn';
-    case 'hard-light': return 'hard-light';
-    case 'soft-light': return 'soft-light';
-    case 'difference': return 'difference';
-    case 'exclusion': return 'exclusion';
-    case 'hue': return 'hue';
-    case 'saturation': return 'saturation';
-    case 'color': return 'color';
-    case 'luminosity': return 'luminosity';
-    case 'normal':
-    default: return 'source-over';
-  }
 }

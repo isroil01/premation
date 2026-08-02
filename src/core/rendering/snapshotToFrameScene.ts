@@ -30,41 +30,31 @@ import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
 /**
- * Map a layer blend mode to the renderer's portable `BlendMode` union. The live
- * Canvas2D path renders the full AE set natively; the GPU union is narrower, so
- * modes without a direct GPU op fall back to their nearest family member
- * (dodge→screen, burn→multiply, light variants→overlay, HSL modes→normal) until
- * per-mode GPU shaders land. Keep this in sync with `gpuSafe` in blendMode.ts.
+ * Map a layer blend mode to the renderer's portable `BlendMode` union.
+ *
+ * Reachable only for `normal` and `add`. Every other mode composites through
+ * BLEND_COMBINE, and `advancedBlendId() > 0` forces `blend: 'normal'` at each
+ * call site — so the old "nearest family member" fallbacks (dodge→screen,
+ * HSL→normal, …) described behaviour that had already stopped happening. Deleted
+ * rather than left as a comment describing a dead path.
  */
 export function layerBlendToGpu(mode: LayerBlendMode | undefined): BlendMode {
-  switch (mode) {
-    case 'multiply': return 'multiply';
-    case 'screen': return 'screen';
-    case 'overlay': return 'overlay';
-    case 'add': return 'add';
-    case 'darken': return 'darken';
-    case 'lighten': return 'lighten';
-    case 'color-dodge': return 'screen';   // brighten family
-    case 'color-burn': return 'multiply';  // darken family
-    case 'hard-light':
-    case 'soft-light': return 'overlay';   // contrast family
-    case 'difference': return 'subtract';
-    case 'exclusion': return 'screen';
-    case 'hue':
-    case 'saturation':
-    case 'color':
-    case 'luminosity':                     // no GPU HSL op yet
-    case 'normal':
-    default: return 'normal';
-  }
+  return mode === 'add' ? 'add' : 'normal';
 }
 
 /**
- * Advanced blend-mode id (1..15) for modes fixed-function GL can't do correctly
- * (they need the backdrop as a shader input). 0 = a mode the fixed-function
- * `blend` path handles (normal/add). Multiply/screen/darken/lighten ARE routed
- * through the combine too, because the fixed-function versions mishandle source
- * alpha. Ids match the BLEND_COMBINE shader's mode selector (builtin.ts).
+ * Advanced blend-mode id for modes that need the backdrop as a shader input.
+ * 0 = handled by the fixed-function `blend` path (normal / add only).
+ *
+ * Multiply/screen/darken/lighten are routed through the combine too, because the
+ * fixed-function versions mishandle source alpha.
+ *
+ * These ids are a WIRE FORMAT between this file and two shader dialects. Never
+ * renumber an existing id; only append. 1-11 separable, 12-15 non-separable HSL,
+ * 16-26 separable (M1), 27-28 whole-colour compare (M1). The separable range is
+ * deliberately NON-CONTIGUOUS, which is why the shader dispatches by family
+ * rather than by a `>=` threshold — a threshold would sweep 16-26 into the
+ * non-separable branch.
  */
 function advancedBlendId(mode: LayerBlendMode | undefined): number {
   switch (mode) {
@@ -83,6 +73,20 @@ function advancedBlendId(mode: LayerBlendMode | undefined): number {
     case 'saturation': return 13;
     case 'color': return 14;
     case 'luminosity': return 15;
+    // ── M1 ──
+    case 'linear-burn': return 16;
+    case 'linear-dodge': return 17;
+    case 'linear-light': return 18;
+    case 'vivid-light': return 19;
+    case 'pin-light': return 20;
+    case 'hard-mix': return 21;
+    case 'subtract': return 22;
+    case 'divide': return 23;
+    case 'classic-color-burn': return 24;
+    case 'classic-color-dodge': return 25;
+    case 'classic-difference': return 26;
+    case 'darker-color': return 27;
+    case 'lighter-color': return 28;
     default: return 0; // normal / add → simple fixed-function blend
   }
 }

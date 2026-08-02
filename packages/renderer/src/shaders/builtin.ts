@@ -449,6 +449,31 @@ float bChan(int mode, float cb, float cs) {
   }
   if (mode == 10) return abs(cb - cs);
   if (mode == 11) return cb + cs - 2.0 * cb * cs;
+  // ── M1 additions (16-26). Clamped where the formula can leave [0,1]. ──
+  if (mode == 16) return clamp(cb + cs - 1.0, 0.0, 1.0);           // Linear Burn
+  if (mode == 17) return clamp(cb + cs, 0.0, 1.0);                 // Linear Dodge
+  if (mode == 18) return clamp(cb + 2.0 * cs - 1.0, 0.0, 1.0);     // Linear Light
+  if (mode == 19) {                                                 // Vivid Light
+    if (cs <= 0.5) { float d = 2.0 * cs; return d <= 0.0 ? 0.0 : 1.0 - min(1.0, (1.0 - cb) / d); }
+    float d = 2.0 * (cs - 0.5);
+    return d >= 1.0 ? 1.0 : min(1.0, cb / (1.0 - d));
+  }
+  if (mode == 20) return cs <= 0.5 ? min(cb, 2.0 * cs) : max(cb, 2.0 * cs - 1.0); // Pin Light
+  if (mode == 21) {                                                 // Hard Mix
+    float v;
+    if (cs <= 0.5) { float d = 2.0 * cs; v = d <= 0.0 ? 0.0 : 1.0 - min(1.0, (1.0 - cb) / d); }
+    else { float d = 2.0 * (cs - 0.5); v = d >= 1.0 ? 1.0 : min(1.0, cb / (1.0 - d)); }
+    return v < 0.5 ? 0.0 : 1.0;
+  }
+  if (mode == 22) return clamp(cb - cs, 0.0, 1.0);                 // Subtract
+  if (mode == 23) return cs <= 0.0 ? 1.0 : min(1.0, cb / cs);      // Divide
+  // 24-26 are COMPATIBILITY ALIASES of Color Burn / Color Dodge / Difference.
+  // They keep AE's mode names alive across import so a project round-trips, but
+  // they are not distinct maths: the output clamp collapses the unclamped forms
+  // back onto the modern ones. Verified by rendering both, not assumed. See F9.
+  if (mode == 24) return clamp(1.0 - (1.0 - cb) / max(cs, 1e-6), 0.0, 1.0);  // Classic Color Burn
+  if (mode == 25) return clamp(cb / max(1.0 - cs, 1e-6), 0.0, 1.0);          // Classic Color Dodge
+  if (mode == 26) return abs(cb - cs);                             // Classic Difference
   return cs;
 }
 vec3 bSep(int mode, vec3 cb, vec3 cs) {
@@ -472,6 +497,10 @@ vec3 bHSL(int mode, vec3 cb, vec3 cs) {
   if (mode == 13) return bSetLum(bSetSat(cb, bSat(cs)), bLum(cb));
   if (mode == 14) return bSetLum(cs, bLum(cb));
   if (mode == 15) return bSetLum(cb, bLum(cs));
+  // Darker/Lighter Color compare the WHOLE colour by luminance and pick one
+  // outright — they never mix channels, which is why they cannot live in bChan.
+  if (mode == 27) return bLum(cs) < bLum(cb) ? cs : cb;
+  if (mode == 28) return bLum(cs) > bLum(cb) ? cs : cb;
   return cs;
 }
 `;
@@ -509,6 +538,41 @@ fn bChan(mode : i32, cb : f32, cs : f32) -> f32 {
   }
   if (mode == 10) { return abs(cb - cs); }
   if (mode == 11) { return cb + cs - 2.0 * cb * cs; }
+  // -- M1 additions (16-26). Clamped where the formula can leave [0,1]. --
+  if (mode == 16) { return clamp(cb + cs - 1.0, 0.0, 1.0); }
+  if (mode == 17) { return clamp(cb + cs, 0.0, 1.0); }
+  if (mode == 18) { return clamp(cb + 2.0 * cs - 1.0, 0.0, 1.0); }
+  if (mode == 19) {
+    if (cs <= 0.5) {
+      let d0 = 2.0 * cs;
+      if (d0 <= 0.0) { return 0.0; }
+      return 1.0 - min(1.0, (1.0 - cb) / d0);
+    }
+    let d1 = 2.0 * (cs - 0.5);
+    if (d1 >= 1.0) { return 1.0; }
+    return min(1.0, cb / (1.0 - d1));
+  }
+  if (mode == 20) {
+    if (cs <= 0.5) { return min(cb, 2.0 * cs); }
+    return max(cb, 2.0 * cs - 1.0);
+  }
+  if (mode == 21) {
+    var v : f32;
+    if (cs <= 0.5) {
+      let d0 = 2.0 * cs;
+      if (d0 <= 0.0) { v = 0.0; } else { v = 1.0 - min(1.0, (1.0 - cb) / d0); }
+    } else {
+      let d1 = 2.0 * (cs - 0.5);
+      if (d1 >= 1.0) { v = 1.0; } else { v = min(1.0, cb / (1.0 - d1)); }
+    }
+    if (v < 0.5) { return 0.0; }
+    return 1.0;
+  }
+  if (mode == 22) { return clamp(cb - cs, 0.0, 1.0); }
+  if (mode == 23) { if (cs <= 0.0) { return 1.0; } return min(1.0, cb / cs); }
+  if (mode == 24) { return clamp(1.0 - (1.0 - cb) / max(cs, 1e-6), 0.0, 1.0); }
+  if (mode == 25) { return clamp(cb / max(1.0 - cs, 1e-6), 0.0, 1.0); }
+  if (mode == 26) { return abs(cb - cs); }
   return cs;
 }
 fn bLum(c : vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.3, 0.59, 0.11)); }
@@ -533,12 +597,19 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = s.rgb / as1; }
   var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = d.rgb / ad; }
   let mode = i32(obj.cr0.x + 0.5);
+  // Dispatch is by FAMILY, not by a >= threshold. The separable range is no
+  // longer contiguous (1-11 and 16-26), so a bare mode >= 12 would have swept
+  // every mode added after the HSL block into the non-separable branch.
   var B : vec3<f32>;
-  if (mode >= 12) {
+  if (mode >= 12 && mode <= 15) {
     if (mode == 12) { B = bSetLum(bSetSat(cs, bSat(cb)), bLum(cb)); }
     else if (mode == 13) { B = bSetLum(bSetSat(cb, bSat(cs)), bLum(cb)); }
     else if (mode == 14) { B = bSetLum(cs, bLum(cb)); }
     else { B = bSetLum(cb, bLum(cs)); }
+  } else if (mode == 27) {
+    if (bLum(cs) < bLum(cb)) { B = cs; } else { B = cb; }
+  } else if (mode == 28) {
+    if (bLum(cs) > bLum(cb)) { B = cs; } else { B = cb; }
   } else {
     B = vec3<f32>(bChan(mode, cb.r, cs.r), bChan(mode, cb.g, cs.g), bChan(mode, cb.b, cs.b));
   }
@@ -569,7 +640,10 @@ void main() {
   vec3 cs = as1 > 0.0 ? s.rgb / as1 : vec3(0.0);
   vec3 cb = ad > 0.0 ? d.rgb / ad : vec3(0.0);
   int mode = int(cr0.x + 0.5);
-  vec3 B = mode >= 12 ? bHSL(mode, cb, cs) : bSep(mode, cb, cs);
+  // Dispatch is by FAMILY, not by a >= threshold — the separable range is no
+  // longer contiguous (1-11 and 16-26). Must match the WGSL branch above.
+  bool nonSeparable = (mode >= 12 && mode <= 15) || mode == 27 || mode == 28;
+  vec3 B = nonSeparable ? bHSL(mode, cb, cs) : bSep(mode, cb, cs);
   vec3 co = as1 * (1.0 - ad) * cs + as1 * ad * B + (1.0 - as1) * ad * cb;
   float ao = as1 + ad - as1 * ad;
   frag = vec4(co, ao);

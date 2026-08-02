@@ -118,6 +118,9 @@ function rgbaToPngBase64(rgba: RGBA): string {
 }
 
 /** Render one scene on one backend for all its frames, streaming each out. */
+/** One backend announcement per process, not one per scene. */
+let announcedBackend = false;
+
 async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> {
   const graph = new SceneGraph();
   const anim = new AnimationEngine();
@@ -145,6 +148,20 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
       `${scene.id} [${backend}]: asked for ${backend}, got ${be.resolvedKind ?? 'no backend'}` +
         `${be.initErrorMessage ? ` — ${be.initErrorMessage}` : ''}`,
     );
+  }
+
+  // POSITIVE emission, once per run, not per scene.
+  //
+  // The assertion above only speaks when it fails, so a green run said nothing
+  // about which backend actually rendered — parity was inferred from the absence
+  // of a throw. That is the same shape of mistake as a determinism gate that
+  // vouches for a pipeline half it never exercises: silence read as evidence.
+  // main.cjs forwards console output to the runner's stdout, so this lands in
+  // the run log next to the results it is a claim about.
+  if (!announcedBackend) {
+    announcedBackend = true;
+    // eslint-disable-next-line no-console
+    console.log(`[harness] backend resolved: asked ${backend}, running ${be.resolvedKind}`);
   }
 
   try {
