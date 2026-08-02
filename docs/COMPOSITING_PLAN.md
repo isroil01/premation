@@ -270,9 +270,47 @@ determinism (§0.0):
 - **Rollback:** the gate and the feature are separate commits. Revert Dissolve
   without losing the harness.
 
+### M5b — One source of truth for "is this layer baked" (F6) · **S–M**
+
+Scheduled **before M6**, because `hasActiveMaskPaths` is about to become a fourth
+gate in the same family. Not folded into another milestone.
+
+**The class, stated properly:** bake ownership is expressed by more than one
+predicate, and they can disagree. This is not a typo — it is two predicates never
+reconciled:
+
+| Site | Gates on |
+|---|---|
+| `Canvas2DVectorRasterizer` | `layerNeedsCpuBake` |
+| `snapshotToFrameScene` (was) | `effectsNeedCpuBake` |
+| `effectBake.imageNeedsCpuBake` | its own kind check |
+| M6 will add | `hasActiveMaskPaths` |
+
+`layerNeedsCpuBake` and `effectsNeedCpuBake` differ: **fill opacity alone sends a
+layer down the bake path with no effect requiring it.** So the rasterizer baked
+the grade, LUT, mask and spatial effects into the texture, the GPU side did not
+know, and applied them again. Everything twice.
+
+**Why it is a class and not an incident:** `fill-opacity-zero-stroke` was correct
+at HEAD, wrong mid-branch, and correct again only because of which commits landed
+together. Nothing in the golden set would have caught it had the branch ended one
+commit earlier. Three sites kept in sync by attention is the defect; a fourth
+makes it worse.
+
+- **Fix:** one predicate — `layerIsBaked(layer)` — that every site calls. Not
+  three call sites kept aligned by review.
+- **Files:** `src/core/effects/effectBake.ts` (the single source),
+  `src/core/rendering/snapshotToFrameScene.ts`,
+  `src/core/rendering/raster/Canvas2DVectorRasterizer.ts`
+- **Tests:** a property test that the rasterizer and the frame-scene builder
+  return the same answer for every combination of (kind, effects, fill opacity,
+  mask) — the disagreement itself is what to assert on, not one repro
+- **Risk:** Medium — touches the routing every layer goes through
+- **Rollback:** revert; the predicates diverge again
+
 ### M6 — Effect-scoped masking · **M–L**
 
-- **Prerequisite:** M2
+- **Prerequisite:** M2, M5b (or M6 adds the fourth gate to an unfixed family)
 - **Files:** effect descriptor in `src/core/effects/effects.ts` (optional
   `maskId` scope), per-layer effect chain `CompositionPass.ts:320`, effect
   inspector UI
@@ -407,14 +445,40 @@ M8's *shape and estimate*, not just its start.
 
 ---
 
+## 2a. Method: revert-and-verify is required for golden attribution
+
+**A plausible cause and a verified cause read identically in a report. Only one
+survives contact.**
+
+Whenever a reference image changes, the cause must be established by REVERTING
+the candidate and re-running the gate — never by reading the diff and reasoning
+about it. Two cases from this branch:
+
+- I attributed the three glow goldens to the `layerStyles` rework. Reverting
+  proved it was `CompositionPass` optical bloom; `layerStyles` moves no golden
+  at all.
+- `builtin.ts` is a premultiplied-alpha fix in `FRACTAL_NOISE` — a completely
+  convincing explanation for a noise golden moving, and **wrong**: those scenes
+  bake noise on the CPU, so the GPU noise shader never runs. Reverting it left
+  every scene passing.
+
+The second is the sharper case. A correct-sounding falsehood would have gone
+into the permanent record with nothing to contradict it.
+
+The check is cheap (`run.mjs --scene <id>`) and the failure mode is invisible
+without it. It also produces the right commit message for free: "reverting ONLY
+these files fails exactly these scenes."
+
 ## 2b. Findings logged, not fixed
 
-Surfaced while executing M0/M0.5/M2. Catalogued rather than absorbed.
+Catalogued rather than absorbed.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
 | **F1** | A precomp used as a **matte source** beyond the depth cap renders the matted layer **UNMATTED, silently** (`CompositionPass.ts:1057` → `:1068`). Pre-existing, unrelated to stencil, same severity class as the risk D2 exists to prevent. | Correctness, latent | **SCHEDULED as M8b (S)**, immediately after the M8a mechanism it shares. Not folded into stencil work, where it would be invisible in review. |
 | **F4** | **The local test suite silently ran 13 fewer test files than a clean checkout** — 392 vs 405 discovered, ~533 tests, including `editorBoot.smoke.test.tsx`. Files present on disk and tracked at HEAD; jest returned nothing even when pointed directly at them. Not a cache issue. Same directories `git stash` failed on with "Permission denied". | **Process, high** | **RESOLVED 2026-08-03** — repo moved `OneDrive/Desktop/motion-editor` → `C:\Users\isroi\dev\motion-editor`. Discovery now 405/405; full suite 488 suites / 5739 passing / 0 failures. |
+| **F6** | **Bake ownership is expressed by more than one predicate and they can disagree.** `snapshotToFrameScene` gated on `effectsNeedCpuBake`, the rasterizer on `layerNeedsCpuBake`; fill opacity alone triggers a bake without any effect requiring it, so both sides claimed the chain and effects applied twice. Third instance of the family (after ea47497 "which side may bake" and b814e3a "what the bake can draw"). `fill-opacity-zero-stroke` was correct at HEAD, wrong mid-branch, correct again by luck of commit order — no golden would have caught it one commit earlier. | Correctness, class | **SCHEDULED as M5b**, before M6 — `hasActiveMaskPaths` is about to become a fourth gate. Fix is one `layerIsBaked()` source of truth, not three sites kept in sync by attention. |
+| **F7** | **Bisect hazard in this branch's range:** `vectorDraw.ts` alone makes `fill-opacity-zero-stroke` *worse* (9.572%) than not applying it at all; only the coupled set (`layerStyles` + `vectorDraw` + `paint/fill`) passes. Anyone bisecting b814e3a would land on a commit that looks like the culprit and is not. | Process | Recorded in b814e3a's message. No fix — the coupling is real, the note is the mitigation. |
 | **F5** | `bevelWorkingBuffer.test.ts:119` asserts `expect(capped.ms).toBeLessThan(full.ms)` — **a wall-clock performance assertion inside a correctness suite**. Failed once under full-suite load, then green 3/3. It will flake on any loaded machine, and CI is a loaded machine. Compounded by F4: it only ever ran in environments not used locally, so F4 was hiding *failures*, not just tests. | Test integrity | Assert the invariant it proxies for (bounded work / buffer size), or move it to a benchmark that does not gate a merge. **Filed, not fixed.** |
 | **F2** | Render gates test `mask.paths.length > 0`; an all-`none` stack therefore still runs one redundant full-frame matte fill. Correct output, wasted pass. | Perf, minor | Move gates to `hasActiveMaskPaths` when that path is next touched (M6). |
 | **F3** | Precomp targets are the heaviest in the graph (viewport × `rgba16float` × depth × MSAA 4, ×4). No test asserts a memory ceiling. | Perf, unmeasured | Consider a cheaper 2D-only pool for stencil scopes; measure first. |
