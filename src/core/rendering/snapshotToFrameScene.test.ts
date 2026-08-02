@@ -106,7 +106,7 @@ describe('snapshotToFrameScene', () => {
     // pixels are available to build the matte for the matted layer.
     const scene = snapshotToFrameScene(snapshot([
       layer({ id: 'src', isMatteSource: true }),
-      layer({ id: 'matted', matte: 'alpha' }),
+      layer({ id: 'matted', matte: { mode: 'alpha', inverted: false } }),
     ]));
     expect(scene.renderables.map((r) => r.id)).toEqual(['src', 'matted']);
     const src = scene.renderables.find((r) => r.id === 'src')!;
@@ -154,7 +154,7 @@ describe('snapshotToFrameScene', () => {
       layer({ id: 's', kind: 'shape' }),
       layer({ id: 'p', kind: 'shape', primitive: 'path', pathPoints: [{ x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 }] }),
       layer({ id: 'm', kind: 'shape', mask: { paths: [{ id: 'm1', points: [], inverted: false, mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0 }] } }),
-      layer({ id: 'c', kind: 'shape', matte: 'alpha' }),
+      layer({ id: 'c', kind: 'shape', matte: { mode: 'alpha', inverted: false } }),
       layer({ id: 't', kind: 'text' }),
       layer({ id: 'i', kind: 'image' }),
       layer({ id: 'v', kind: 'video' }),

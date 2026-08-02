@@ -23,7 +23,7 @@ import { Matrix4Math } from '@motion/scene';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
 import { isLutEffect } from '@core/effects/colorLut';
-import { getMatteMode } from '@core/effects/matte';
+import { readMatte } from '@core/effects/matte';
 import { effectNumber, effectParam, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
 import { layerNeedsCpuBake, imageNeedsCpuBake } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
@@ -659,7 +659,7 @@ export function precompNeedsIsolation(layer: RenderLayer): boolean {
   if (!layer.precompLayers || layer.precompLayers.length === 0) return false;
   if (layer.blend && layer.blend !== 'normal') return true;
   if (layer.mask && layer.mask.paths.length > 0) return true;
-  if (getMatteMode(layer.matte) && layer.matteSourceId) return true;
+  if (readMatte(layer.matte) && layer.matteSourceId) return true;
   if (layer.isMatteSource) return true;
   if (layer.effects && layer.effects.length > 0) return true;
   if (layer.opacity < 1 && layer.precompLayers.filter((l) => l.visible).length > 1) return true;
@@ -739,14 +739,19 @@ function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpa
   };
 }
 
-/** Parse a layer's track matte into the renderable's matte descriptor, or null
- *  when it has no matte (or its source wasn't resolved). */
+/**
+ * Parse a layer's track matte into the renderable's matte descriptor, or null
+ * when it has no matte (or its source wasn't resolved).
+ *
+ * This used to translate four enum values into `{mode, inverted}` here, which
+ * meant the renderer had always been on the two-field model while storage and UI
+ * were not. Since 1.2.0 the stored shape IS the descriptor, so the translation
+ * is gone and only the source-resolution guard remains.
+ */
 function matteOf(layer: RenderLayer): { mode: 'alpha' | 'luma'; inverted: boolean; sourceId: string } | null {
-  const mode = getMatteMode(layer.matte);
-  if (!mode || !layer.matteSourceId) return null;
-  const luma = mode === 'luma' || mode === 'luma-inv';
-  const inverted = mode === 'alpha-inv' || mode === 'luma-inv';
-  return { mode: luma ? 'luma' : 'alpha', inverted, sourceId: layer.matteSourceId };
+  const m = readMatte(layer.matte);
+  if (!m || !layer.matteSourceId) return null;
+  return { mode: m.mode, inverted: m.inverted, sourceId: layer.matteSourceId };
 }
 
 /** True when a layer carries an enabled per-channel LUT colour effect. */

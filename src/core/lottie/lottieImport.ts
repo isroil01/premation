@@ -40,7 +40,7 @@ import {
   type DataPoint,
   type LottieShapeProp,
 } from '@motion/animation';
-import type { MatteType } from '@core/effects/matte';
+import type { TrackMatte } from '@core/effects/matte';
 
 // ── Minimal Lottie shapes (only what we read) ──────────────────────
 
@@ -209,7 +209,7 @@ export interface PlannedLayer {
    * source id; the renderer then draws the source into an alpha texture instead
    * of onto the canvas.
    */
-  matte?: { mode: MatteType; sourceUid: string };
+  matte?: { matte: Omit<TrackMatte, 'sourceId'>; sourceUid: string };
   /**
    * Do not draw this layer. Lottie never paints a matte source, so when the
    * matte cannot be wired the source must still be hidden — painting it puts a
@@ -693,12 +693,14 @@ function bakeAnchorIntoChildren(out: readonly PlannedLayer[], parentUid: string,
   }
 }
 
-/** Lottie's `tt` value → the engine's matte mode. */
-const MATTE_BY_TT: Record<number, MatteType | undefined> = {
-  1: 'alpha',
-  2: 'alpha-inv',
-  3: 'luma',
-  4: 'luma-inv',
+/** Lottie's `tt` value → the engine's matte.
+ *  Lottie's own model is a 4-value enum, so this stays a lookup either way; it
+ *  now lands directly on {mode, inverted} instead of on a parallel spelling. */
+const MATTE_BY_TT: Record<number, Omit<TrackMatte, 'sourceId'> | undefined> = {
+  1: { mode: 'alpha', inverted: false },
+  2: { mode: 'alpha', inverted: true },
+  3: { mode: 'luma', inverted: false },
+  4: { mode: 'luma', inverted: true },
 };
 
 /** Every planned layer descending from `uid` (inclusive of nothing else). */
@@ -759,7 +761,7 @@ function planTrackMattes(
     const targetKids = subtreeOf(out, dst.uid);
     const matted = targetKids.length === 0 ? [targetLayer] : targetKids.filter((l) => l.kind === 'shape');
     if (mode && sourceKids.length === 0 && sourceLayer.kind === 'shape' && matted.length > 0) {
-      for (const m of matted) m.matte = { mode, sourceUid: src.uid };
+      for (const m of matted) m.matte = { matte: mode, sourceUid: src.uid };
       continue;
     }
     // Cannot express this pair — hide the source outright so it at least stops

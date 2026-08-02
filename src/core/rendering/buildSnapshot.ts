@@ -18,7 +18,7 @@ import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodeMaskAt } from '@core/effects/mask';
-import { readNodeMatte, getMatteSourceId } from '@core/effects/matte';
+import { readNodeMatte, readMatte } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readNodeMotionBlur, motionBlurSampleTimes, adaptiveMotionBlurSamples, type MotionBlurConfig } from '@core/effects/motionBlur';
 import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core/paint/fill';
@@ -2619,7 +2619,7 @@ export function buildSnapshot(
       if (!l.matrix) locked[i] = true;
       if (l.matte) {
         locked[i] = true; // the matted layer
-        const sourceId = getMatteSourceId(l.matte);
+        const sourceId = readMatte(l.matte)?.sourceId;
         if (sourceId) {
           const j = layers.findIndex((x) => x.id === sourceId);
           if (j >= 0) locked[j] = true;
@@ -2762,7 +2762,7 @@ export function resolveMatteSources(layers: RenderLayer[]): void {
   for (let i = 0; i < layers.length; i++) {
     const layer = layers[i]!;
     if (!layer.matte || (layer.matte as any) === 'none') continue;
-    const sourceId = getMatteSourceId(layer.matte);
+    const sourceId = readMatte(layer.matte)?.sourceId;
     if (sourceId && layerMap.has(sourceId)) {
       layerMap.get(sourceId)!.isMatteSource = true;
       layer.matteSourceId = sourceId;

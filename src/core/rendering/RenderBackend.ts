@@ -11,7 +11,7 @@
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import type { Effect } from '@core/effects/effects';
 import type { LayerMask } from '@core/effects/mask';
-import type { MatteProp } from '@core/effects/matte';
+import type { TrackMatte } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
@@ -41,8 +41,8 @@ export interface RenderLayer {
   blend?: LayerBlendMode;
   /** Vector mask clipping the layer (local space). Omitted when unmasked. */
   mask?: LayerMask;
-  /** Track matte: the layer above (or explicit sourceId) defines this layer's alpha. */
-  matte?: MatteProp;
+  /** Track matte: the explicit sourceId (or the layer above) defines this layer's alpha. */
+  matte?: TrackMatte;
   /** Resolved matte source layer id (explicit sourceId, else the layer above) —
    *  set by resolveMatteSources so the GPU path can pair by lookup. */
   matteSourceId?: string;

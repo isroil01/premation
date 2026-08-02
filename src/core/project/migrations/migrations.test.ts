@@ -1,13 +1,15 @@
 /**
- * M0 — the migration mechanism.
+ * The migration mechanism (M0) and every registered step.
  *
- * The registry is empty in production, so the WALK is proven here with an
- * injected synthetic chain. That is deliberate: shipping a fake `1.1.0 → 1.1.0`
- * identity migration to make the loop look exercised would be a cycle hazard in
- * the walker and a lie in the registry.
+ * Multi-step walking is additionally proven with an INJECTED synthetic chain, so
+ * the walker stays covered independently of how many real migrations exist —
+ * shipping a fake `x → x` identity migration to exercise the loop would be a
+ * cycle hazard in the walker and a lie in the registry.
  *
- * The fixture test is the one that matters long-term — it is the guard the
- * "never break existing saved projects" rule actually hangs off.
+ * The per-step FIXTURE tests are the ones that matter long-term: each holds a
+ * document literal in a shape nothing writes any more, which is the only thing
+ * that actually guards "never break existing saved projects". Do not update a
+ * fixture when the schema changes — add a new one and migrate the old.
  */
 
 import {
@@ -66,10 +68,10 @@ describe('migrateDocument — current documents', () => {
     expect(migrateDocument(d)).toBe(d);
   });
 
-  it('leaves a current fixture structurally unchanged', () => {
-    const before = structuredClone(FIXTURE_V1_1_0);
-    const after = migrateDocument(doc());
-    expect(after).toEqual(before);
+  it('leaves an already-current document structurally unchanged', () => {
+    const current = doc(CURRENT_DOCUMENT_VERSION);
+    const before = structuredClone(current);
+    expect(migrateDocument(current)).toEqual(before);
   });
 
   it('ships a real registry chain reaching the current version', () => {
@@ -98,8 +100,9 @@ describe('migrateDocument — the real 1.0.0 → 1.1.0 step', () => {
   };
 
   it('hoists the single active comp into the comps registry', () => {
+    // Walks the whole chain now, not just this step — assert the end version.
     const out = migrateDocument({ ...doc('1.0.0'), comp: legacyComp } as EditorDocument);
-    expect(out.version).toBe('1.1.0');
+    expect(out.version).toBe(CURRENT_DOCUMENT_VERSION);
     expect(out.comps).toEqual({ comp_root: legacyComp });
   });
 
@@ -122,7 +125,7 @@ describe('migrateDocument — the real 1.0.0 → 1.1.0 step', () => {
 
   it('upgrades a v1.0.0 document that has no comp at all', () => {
     const out = migrateDocument(doc('1.0.0'));
-    expect(out.version).toBe('1.1.0');
+    expect(out.version).toBe(CURRENT_DOCUMENT_VERSION);
     expect(out.comps).toBeUndefined();
   });
 });
@@ -158,6 +161,88 @@ describe('migrateDocument — failing loudly', () => {
     delete (legacy as { version?: string }).version;
     expect(compareVersions(IMPLIED_LEGACY_VERSION, '1.0.0')).toBe(0);
     expect(migrateDocument(legacy).version).toBe(CURRENT_DOCUMENT_VERSION);
+  });
+});
+
+describe('migrateDocument — the real 1.1.0 → 1.2.0 step (matte reshape)', () => {
+  /**
+   * A v1.1.0 document, committed as a literal. Do NOT update this when the
+   * schema next changes — it is the pre-change artifact, and its whole value is
+   * that nothing writes this shape any more.
+   */
+  const fixtureV1_1_0 = (): EditorDocument => ({
+    version: '1.1.0',
+    scene: {
+      version: '1.0.0',
+      nodes: [
+        { id: 'a', components: [{ type: 'fx', props: { matte: 'alpha-inv' } }] },
+        { id: 'b', components: [{ type: 'fx', props: { matte: { mode: 'luma-inv', sourceId: 'a' } } }] },
+        {
+          id: 'group',
+          components: [],
+          children: [{ id: 'nested', components: [{ type: 'fx', props: { matte: 'luma' } }] }],
+        },
+        { id: 'plain', components: [{ type: 'fx', props: { blendMode: 'screen' } }] },
+      ],
+    } as unknown as EditorDocument['scene'],
+    animation: { tracks: {}, expressions: {} } as unknown as EditorDocument['animation'],
+  });
+
+  const fxOf = (d: EditorDocument, id: string): Record<string, unknown> => {
+    const walk = (ns: Array<Record<string, any>>): Record<string, any> | undefined => {
+      for (const n of ns) {
+        if (n.id === id) return n;
+        const hit = n.children ? walk(n.children) : undefined;
+        if (hit) return hit;
+      }
+      return undefined;
+    };
+    return walk((d.scene as unknown as { nodes: Array<Record<string, any>> }).nodes)!.components[0].props;
+  };
+
+  it('rewrites the legacy string form', () => {
+    const out = migrateDocument(fixtureV1_1_0());
+    expect(out.version).toBe('1.2.0');
+    expect(fxOf(out, 'a').matte).toEqual({ mode: 'alpha', inverted: true });
+  });
+
+  it('rewrites the legacy OBJECT form and PRESERVES sourceId', () => {
+    // Losing sourceId re-points the matte at whatever layer sits above: still
+    // matted, still looks fine, cut to the wrong shape. Worst failure available.
+    expect(fxOf(migrateDocument(fixtureV1_1_0()), 'b').matte)
+      .toEqual({ mode: 'luma', inverted: true, sourceId: 'a' });
+  });
+
+  it('reaches nested children, not just top-level nodes', () => {
+    expect(fxOf(migrateDocument(fixtureV1_1_0()), 'nested').matte)
+      .toEqual({ mode: 'luma', inverted: false });
+  });
+
+  it('leaves unrelated fx props alone', () => {
+    const props = fxOf(migrateDocument(fixtureV1_1_0()), 'plain');
+    expect(props.blendMode).toBe('screen');
+    expect(props.matte).toBeUndefined();
+  });
+
+  it('does not mutate the input document', () => {
+    const input = fixtureV1_1_0();
+    const before = structuredClone(input);
+    migrateDocument(input);
+    expect(input).toEqual(before);
+  });
+
+  it('is idempotent — re-running over already-migrated data changes nothing', () => {
+    const once = migrateDocument(fixtureV1_1_0());
+    const twice = migrateDocument({ ...structuredClone(once), version: '1.1.0' });
+    expect(fxOf(twice, 'b').matte).toEqual({ mode: 'luma', inverted: true, sourceId: 'a' });
+  });
+
+  it('migrates a v1.0.0 document through BOTH steps', () => {
+    // The multi-step walk exercised on the real registry, not an injected chain.
+    const legacy = { ...fixtureV1_1_0(), version: '1.0.0' } as EditorDocument;
+    const out = migrateDocument(legacy);
+    expect(out.version).toBe('1.2.0');
+    expect(fxOf(out, 'a').matte).toEqual({ mode: 'alpha', inverted: true });
   });
 });
 

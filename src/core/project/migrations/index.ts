@@ -32,9 +32,10 @@
 import type { EditorDocument } from '@core/api/cloudDocument';
 // Type-only in the other direction, so this is not a runtime cycle.
 import { v1_0_0_to_v1_1_0 } from './v1_0_0_to_v1_1_0';
+import { v1_1_0_to_v1_2_0 } from './v1_1_0_to_v1_2_0';
 
 /** The version this build writes and understands. Bump when adding a migration. */
-export const CURRENT_DOCUMENT_VERSION = '1.1.0';
+export const CURRENT_DOCUMENT_VERSION = '1.2.0';
 
 /**
  * The version assumed for a document that carries none. The oldest shape we
@@ -81,7 +82,7 @@ export class DocumentVersionError extends Error {
  * makes "older than us with no covering migration" a genuine error rather than
  * the normal case.
  */
-export const MIGRATIONS: readonly DocumentMigration[] = [v1_0_0_to_v1_1_0];
+export const MIGRATIONS: readonly DocumentMigration[] = [v1_0_0_to_v1_1_0, v1_1_0_to_v1_2_0];
 
 /**
  * Compare two dotted numeric versions. Returns <0, 0, >0 like a comparator.
