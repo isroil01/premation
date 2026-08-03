@@ -17,8 +17,9 @@ import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import {
-  readPathOpConfig,
-  setPathOp,
+  readPathOps,
+  removePathOp,
+  reorderPathOp,
   updatePathOp,
   pathOpPropPath,
   type PathOp,
@@ -73,12 +74,15 @@ function paramMin(type: PathOpType, param: PathOpParam): number | undefined {
 
 function ParamRow({
   nodeId,
+  opId,
   param,
   label,
   value,
   min,
 }: {
   nodeId: string;
+  /** Which operator in the chain this row edits. Keyframes are id-scoped. */
+  opId: string;
   param: PathOpParam;
   label: string;
   value: number;
@@ -86,7 +90,7 @@ function ParamRow({
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
-  const path = pathOpPropPath(param);
+  const path = pathOpPropPath(opId, param);
   const animated = defaultAnimation.isAnimated(nodeId, path);
   // ONE axis for reads and writes: the canonical keyframe time.
   const layerT = compToKeyframeTime(nodeId, time);
@@ -96,7 +100,7 @@ function ParamRow({
     if (animated) {
       runAnimEdit(`Set ${label}`, () => defaultAnimation.setKeyframe(nodeId, path, layerT, v), `pathop:${nodeId}:${path}:${layerT}`);
     } else {
-      updatePathOp(nodeId, { [param]: v } as Partial<PathOp>);
+      updatePathOp(nodeId, opId, { [param]: v } as Partial<PathOp>);
     }
   };
   const toggle = (): void => {
@@ -120,28 +124,69 @@ function ParamRow({
   );
 }
 
-export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || readNodeKind(node) !== 'shape') return null;
-
-  const op = readPathOpConfig(node);
-  if (!op) return null; // added via the Shape-Effects menu
-
+/**
+ * One operator in the chain.
+ *
+ * The header carries its POSITION and the move controls, because the order is
+ * not cosmetic: Round Corners then Zig-Zag gives soft ridges, the reverse gives
+ * rounded spikes. A stack whose order could not be changed would be a list, not
+ * a chain.
+ */
+function PathOpCard({
+  nodeId,
+  op,
+  index,
+  count,
+}: {
+  nodeId: string;
+  op: PathOp;
+  index: number;
+  count: number;
+}): JSX.Element {
   const typeLabel = TYPES.find((t) => t.id === op.type)?.label ?? 'Zig-Zag';
   const items: DropdownItem[] = TYPES.map((t) => ({
     type: 'item',
     id: t.id,
     label: t.label,
     icon: t.id === op.type ? 'check' : undefined,
-    onSelect: () => updatePathOp(nodeId, { type: t.id }),
+    onSelect: () => updatePathOp(nodeId, op.id, { type: t.id }),
   }));
 
   return (
     <div className={styles.root}>
       <div className={styles.head}>
-        <span className={styles.title}>Path Operator</span>
-        <button type="button" className={styles.remove} onClick={() => setPathOp(nodeId, null)} aria-label="Remove path operator" title="Remove path operator">
+        <span className={styles.title}>
+          {count > 1 ? `${index + 1}. ${typeLabel}` : 'Path Operator'}
+        </span>
+        {index > 0 && (
+          <button
+            type="button"
+            className={styles.remove}
+            onClick={() => reorderPathOp(nodeId, op.id, index - 1)}
+            aria-label={`Move ${typeLabel} up`}
+            title="Move up — operators apply top to bottom"
+          >
+            <Icon name="chevron-up" size={12} />
+          </button>
+        )}
+        {index < count - 1 && (
+          <button
+            type="button"
+            className={styles.remove}
+            onClick={() => reorderPathOp(nodeId, op.id, index + 1)}
+            aria-label={`Move ${typeLabel} down`}
+            title="Move down — operators apply top to bottom"
+          >
+            <Icon name="chevron-down" size={12} />
+          </button>
+        )}
+        <button
+          type="button"
+          className={styles.remove}
+          onClick={() => removePathOp(nodeId, op.id)}
+          aria-label={`Remove ${typeLabel}`}
+          title="Remove path operator"
+        >
           <Icon name="minus" size={12} />
         </button>
       </div>
@@ -160,6 +205,7 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       </div>
       <ParamRow
         nodeId={nodeId}
+        opId={op.id}
         param="amount"
         label={paramLabels(op.type).amount}
         value={op.amount}
@@ -168,6 +214,7 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       {paramLabels(op.type).detail && (
         <ParamRow
           nodeId={nodeId}
+          opId={op.id}
           param="detail"
           label={paramLabels(op.type).detail!}
           value={op.detail}
@@ -180,6 +227,7 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         <>
           <ParamRow
             nodeId={nodeId}
+            opId={op.id}
             param="wigglesPerSecond"
             label="Wiggles/Second"
             value={op.wigglesPerSecond ?? 0}
@@ -190,7 +238,7 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             <span className={styles.paramLabel}>Random Seed</span>
             <ValueField
               value={op.seed ?? 0}
-              onChange={(v) => updatePathOp(nodeId, { seed: Math.round(v) })}
+              onChange={(v) => updatePathOp(nodeId, op.id, { seed: Math.round(v) })}
               min={0}
               aria-label="Random Seed"
             />
@@ -198,6 +246,26 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </>
       )}
     </div>
+  );
+}
+
+export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | null {
+  useSceneRevision((s) => s.rev);
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node || readNodeKind(node) !== 'shape') return null;
+
+  const ops = readPathOps(node);
+  if (ops.length === 0) return null; // added via the Shape-Effects menu
+
+  // Rendered top-to-bottom in APPLICATION order, so the panel reads the way the
+  // geometry evaluates. Keyed by operator id rather than index, or React reuses
+  // a card's state across a reorder and the wrong parameters animate.
+  return (
+    <>
+      {ops.map((op, i) => (
+        <PathOpCard key={op.id} nodeId={nodeId} op={op} index={i} count={ops.length} />
+      ))}
+    </>
   );
 }
 

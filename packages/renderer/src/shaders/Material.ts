@@ -157,6 +157,19 @@ export const DISPLACEMENT_MAP_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Binding 3 is the matte layer's texture — the same layout as displacement-map,
+ *  which is the established shape for an effect that samples another layer. */
+export const SET_MATTE_MATERIAL: MaterialDescriptor = {
+  shader: 'set-matte',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
 export const MOTION_TILE_MATERIAL: MaterialDescriptor = {
   shader: 'motion-tile',
   topology: 'triangle-list',

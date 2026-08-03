@@ -18,7 +18,29 @@ export interface ChannelLut {
   b: Uint8Array;
 }
 
-const LUT_EFFECTS: ReadonlySet<EffectType> = new Set<EffectType>(['levels', 'curves', 'posterize']);
+/**
+ * Effects expressible as a per-channel 0–255 transfer function.
+ *
+ * Membership here is worth more than it looks: everything in this set renders on
+ * BOTH backends with NO CPU bake. `MotionRendererBackend` filters by
+ * `isLutEffect` and uploads the composed table, `snapshotToFrameScene` flags the
+ * layer, `capabilities` declares the need. An effect that fits this shape
+ * belongs here rather than in the Canvas2D pixel-pass family — the pixel pass
+ * would work, but it would drag the whole layer onto the CPU to do something the
+ * GPU already does.
+ *
+ * The SHAPE is the entry requirement: each channel must map independently, with
+ * no reference to the other two. Exposure qualifies. Vibrance does not — its
+ * strength depends on the pixel's existing saturation, which needs all three
+ * channels — which is why that one is a pixel pass despite also being "a colour
+ * effect". Getting that wrong gives an effect that is subtly not the effect.
+ */
+const LUT_EFFECTS: ReadonlySet<EffectType> = new Set<EffectType>([
+  'levels',
+  'curves',
+  'posterize',
+  'exposure',
+]);
 
 export function isLutEffect(type: EffectType): boolean {
   return LUT_EFFECTS.has(type);
@@ -137,7 +159,51 @@ function tableFor(effect: Effect): Uint8Array | null {
   }
   if (effect.type === 'curves') return curvesTable(curvePoints(effect));
   if (effect.type === 'posterize') return posterizeTable(effectNumber(effect, 'levels'));
+  if (effect.type === 'exposure') {
+    return exposureTable(
+      effectNumber(effect, 'exposure'),
+      effectNumber(effect, 'offset'),
+      effectNumber(effect, 'gammaCorrection'),
+    );
+  }
   return null;
+}
+
+/**
+ * Exposure, as a transfer table.
+ *
+ * AE's three controls, in the order they apply:
+ *
+ *   linear = (in/255) · 2^exposure      — exposure is in STOPS, so +1 doubles
+ *                                          the light. That is the whole reason
+ *                                          the control is worth having over
+ *                                          Brightness: it is multiplicative, so
+ *                                          it behaves like a camera rather than
+ *                                          washing the blacks up off zero.
+ *   linear += offset                    — an additive lift, applied AFTER the
+ *                                          gain. This one does move black, and
+ *                                          is what you reach for to flatten a
+ *                                          contrasty plate.
+ *   out    = linear^(1/gamma)           — the midtone bend, last.
+ *
+ * Order matters and is not interchangeable: offset before the gain would be
+ * multiplied by it, and a gamma applied first would be undone by the gain.
+ */
+function exposureTable(stops: number, offset: number, gamma: number): Uint8Array {
+  const t = new Uint8Array(256);
+  const gain = Math.pow(2, stops);
+  // Guard the reciprocal: gamma 0 is reachable from the inspector and would
+  // otherwise produce Infinity and a table of NaN, which clamps to a black frame.
+  const invGamma = gamma > 0.0001 ? 1 / gamma : 1;
+  for (let i = 0; i < 256; i++) {
+    const linear = (i / 255) * gain + offset;
+    // Math.pow of a negative base with a fractional exponent is NaN, so the
+    // clamp has to happen BEFORE the gamma, not after. A negative offset makes
+    // this reachable for real inputs, not just pathological ones.
+    const clamped = linear < 0 ? 0 : linear > 1 ? 1 : linear;
+    t[i] = clamp255(Math.round(Math.pow(clamped, invGamma) * 255));
+  }
+  return t;
 }
 
 /**

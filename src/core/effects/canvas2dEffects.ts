@@ -36,6 +36,14 @@ import { applyKeyData, chokeAlpha, softenAlpha } from './keylight';
 import { waveWarpData, turbulentDisplaceData } from './warp';
 import { blurRgba, radialBlurData, blurDimensions } from './blurs';
 import { mosaicData, findEdgesData, roughenEdgesData } from './stylize';
+import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
+import {
+  simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
+} from './keyingEffects';
+import {
+  venetianBlindsData, gradientWipeData, cardWipeData, cardWipeDirection, luminanceMapFrom,
+} from './transitions';
+import { drawLensFlare, formatNumber, formatTimecode, drawTextReadout } from './generateText';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -64,6 +72,26 @@ const CANVAS2D_ONLY = new Set<string>([
   'mosaic',
   'find-edges',
   'roughen-edges',
+  // Colour family. `exposure` is deliberately ABSENT: it is a per-channel
+  // transfer function, so it lives in LUT_EFFECTS and renders on both backends
+  // with no bake. These two read all three channels per pixel, which no
+  // per-channel table can express.
+  'vibrance',
+  'colorama',
+  // Keying family. `set-matte` is deliberately ABSENT: it reads another layer's
+  // pixels, which this chain's per-layer signature cannot express, so it lives
+  // on the GPU path beside displacement-map instead.
+  'simple-choker',
+  'linear-color-key',
+  'shift-channels',
+  // Transition family — alpha-only reveals, like the existing `linear-wipe`.
+  'venetian-blinds',
+  'gradient-wipe',
+  'card-wipe',
+  // Generate / Text — these DRAW rather than transform, like `beam` above.
+  'lens-flare',
+  'numbers',
+  'timecode',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -202,7 +230,198 @@ export function applyCanvas2dEffect(
       return applyFindEdges(oc, w, h, e);
     case 'roughen-edges':
       return applyRoughenEdges(oc, w, h, e);
+    case 'vibrance':
+      return applyVibrance(oc, w, h, e);
+    case 'colorama':
+      return applyColorama(oc, w, h, e);
+    case 'simple-choker':
+      return applySimpleChoker(oc, w, h, e);
+    case 'linear-color-key':
+      return applyLinearColorKey(oc, w, h, e);
+    case 'shift-channels':
+      return applyShiftChannels(oc, w, h, e);
+    case 'venetian-blinds':
+      return applyVenetianBlinds(oc, w, h, e);
+    case 'gradient-wipe':
+      return applyGradientWipe(oc, w, h, e);
+    case 'card-wipe':
+      return applyCardWipe(oc, w, h, e);
+    case 'lens-flare':
+      return applyLensFlare(oc, w, h, e);
+    case 'numbers':
+      return applyNumbers(oc, w, h, e);
+    case 'timecode':
+      return applyTimecode(oc, w, h, e);
   }
+}
+
+// ── Generate / Text (kernels in generateText.ts) ───────────────────
+//
+// Positions are OFFSETS from the layer centre, as with radial blur: absolute
+// coordinates would default to the top-left corner and put every readout
+// half off its own layer on the first add.
+
+function applyLensFlare(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawLensFlare(
+    oc, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    effectNumber(e, 'brightness') / 100,
+    effectNumber(e, 'scale'),
+    str(e, 'color', '#ffd9a0'),
+  );
+}
+
+function applyNumbers(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const text = formatNumber(
+    effectNumber(e, 'value'),
+    effectNumber(e, 'decimals'),
+    bool(e, 'useCommas', false),
+    effectNumber(e, 'padTo'),
+  );
+  drawTextReadout(oc, w, h, text, {
+    x: w / 2 + effectNumber(e, 'positionX'),
+    y: h / 2 + effectNumber(e, 'positionY'),
+    size: effectNumber(e, 'size'),
+    color: str(e, 'color', '#ffffff'),
+    align: 'center',
+    showBox: bool(e, 'showBox', false),
+    boxColor: str(e, 'boxColor', '#000000'),
+  });
+}
+
+function applyTimecode(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const text = formatTimecode(
+    effectNumber(e, 'time'),
+    effectNumber(e, 'fps'),
+    bool(e, 'dropFrame', false),
+  );
+  drawTextReadout(oc, w, h, text, {
+    x: w / 2 + effectNumber(e, 'positionX'),
+    y: h / 2 + effectNumber(e, 'positionY'),
+    size: effectNumber(e, 'size'),
+    color: str(e, 'color', '#ffffff'),
+    align: 'center',
+    showBox: bool(e, 'showBox', true),
+    boxColor: str(e, 'boxColor', '#000000'),
+  });
+}
+
+// ── Transition family (kernels in transitions.ts) ──────────────────
+
+function applyVenetianBlinds(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  venetianBlindsData(
+    img.data, w, h,
+    completion / 100,
+    effectNumber(e, 'direction'),
+    effectNumber(e, 'width'),
+    effectNumber(e, 'feather'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyGradientWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  // The map is the layer's OWN luminance — see the effect def for why there is
+  // no map-layer picker on this path.
+  gradientWipeData(
+    img.data,
+    luminanceMapFrom(img.data),
+    completion / 100,
+    effectNumber(e, 'softness') / 100,
+    bool(e, 'invertGradient', false),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyCardWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  cardWipeData(
+    img.data, w, h,
+    completion / 100,
+    effectNumber(e, 'rows'),
+    effectNumber(e, 'columns'),
+    cardWipeDirection(effectNumber(e, 'flipOrder')),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+// ── Keying family (kernels in keyingEffects.ts) ────────────────────
+//
+// `set-matte` has no case here on purpose — it is a GPU effect, and the
+// dispatch-coverage test only requires a case for CANVAS2D_ONLY members.
+
+function applySimpleChoker(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const choke = effectNumber(e, 'chokeAmount');
+  if (choke === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  simpleChokerData(img.data, w, h, choke);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyLinearColorKey(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  linearColorKeyData(
+    img.data,
+    parseHex(str(e, 'keyColor', '#00ff00')),
+    colorMatchMode(effectNumber(e, 'matchOn')),
+    effectNumber(e, 'tolerance'),
+    effectNumber(e, 'softness'),
+    bool(e, 'keepMatched', false),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyShiftChannels(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  shiftChannelsData(
+    img.data,
+    channelSource(effectNumber(e, 'takeAlphaFrom')),
+    channelSource(effectNumber(e, 'takeRedFrom')),
+    channelSource(effectNumber(e, 'takeGreenFrom')),
+    channelSource(effectNumber(e, 'takeBlueFrom')),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+// ── Colour family (kernels in colorEffects.ts) ─────────────────────
+
+function applyVibrance(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const vib = effectNumber(e, 'vibrance');
+  const sat = effectNumber(e, 'saturation');
+  if (vib === 0 && sat === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  vibranceData(img.data, vib, sat);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyColorama(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const idx = Math.max(0, Math.min(COLORAMA_PALETTES.length - 1, Math.round(effectNumber(e, 'palette'))));
+  const palette = COLORAMA_PALETTES[idx]!;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  coloramaData(
+    img.data,
+    palette.stops,
+    effectNumber(e, 'phaseShift'),
+    effectNumber(e, 'cycleRepetitions'),
+    Math.max(0, Math.min(100, effectNumber(e, 'blendWithOriginal'))) / 100,
+  );
+  oc.putImageData(img, 0, 0);
 }
 
 // ── Stylize family (kernels in stylize.ts) ─────────────────────────

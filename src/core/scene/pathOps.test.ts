@@ -88,10 +88,10 @@ describe('twist', () => {
 describe('applyPathOp', () => {
   it('routes to the configured operator, none is identity', () => {
     const pts: Pt[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }];
-    expect(applyPathOp(pts, true, { type: 'none', amount: 5, detail: 2 } as PathOp)).toEqual(pts);
-    expect(applyPathOp(pts, true, { type: 'zigzag', amount: 2, detail: 2 }).length).toBeGreaterThan(pts.length);
-    expect(applyPathOp(square, true, { type: 'pucker', amount: 100, detail: 0 })[0]).toEqual({ x: -5, y: -5 });
-    expect(applyPathOp(square, true, { type: 'twist', amount: 0, detail: 0 })).toEqual(square);
+    expect(applyPathOp(pts, true, { id: 'o1', type: 'none', amount: 5, detail: 2 } as PathOp)).toEqual(pts);
+    expect(applyPathOp(pts, true, { id: 'o1', type: 'zigzag', amount: 2, detail: 2 }).length).toBeGreaterThan(pts.length);
+    expect(applyPathOp(square, true, { id: 'o1', type: 'pucker', amount: 100, detail: 0 })[0]).toEqual({ x: -5, y: -5 });
+    expect(applyPathOp(square, true, { id: 'o1', type: 'twist', amount: 0, detail: 0 })).toEqual(square);
   });
 });
 
@@ -153,8 +153,8 @@ describe('roughen', () => {
   });
 
   it('applyPathOp routes offset and roughen', () => {
-    const off: PathOp = { type: 'offset', amount: 2, detail: 0 };
-    const rough: PathOp = { type: 'roughen', amount: 2, detail: 3 };
+    const off: PathOp = { id: 'o1', type: 'offset', amount: 2, detail: 0 };
+    const rough: PathOp = { id: 'o1', type: 'roughen', amount: 2, detail: 3 };
     expect(applyPathOp(sq, true, off)).toHaveLength(4);
     expect(applyPathOp(sq, true, rough)).toHaveLength(12);
   });
@@ -183,17 +183,17 @@ describe('roughen over time (Wiggle Paths)', () => {
   });
 
   it('a zero wiggle rate makes the outline independent of time', () => {
-    const op: PathOp = { type: 'roughen', amount: 3, detail: 4, wigglesPerSecond: 0 };
+    const op: PathOp = { id: 'o1', type: 'roughen', amount: 3, detail: 4, wigglesPerSecond: 0 };
     expect(applyPathOp(sq, true, op, 9.75)).toEqual(applyPathOp(sq, true, op, 0));
   });
 
   it('a non-zero wiggle rate makes the outline move', () => {
-    const op: PathOp = { type: 'roughen', amount: 3, detail: 4, wigglesPerSecond: 2 };
+    const op: PathOp = { id: 'o1', type: 'roughen', amount: 3, detail: 4, wigglesPerSecond: 2 };
     expect(maxDelta(applyPathOp(sq, true, op, 0), applyPathOp(sq, true, op, 0.25))).toBeGreaterThan(0);
   });
 
   it('is deterministic across calls at the same time (preview ≡ export)', () => {
-    const op: PathOp = { type: 'roughen', amount: 4, detail: 3, wigglesPerSecond: 3, seed: 7 };
+    const op: PathOp = { id: 'o1', type: 'roughen', amount: 4, detail: 3, wigglesPerSecond: 3, seed: 7 };
     expect(applyPathOp(sq, true, op, 1.37)).toEqual(applyPathOp(sq, true, op, 1.37));
   });
 
@@ -201,7 +201,7 @@ describe('roughen over time (Wiggle Paths)', () => {
     // Straddle a whole-numbered phase boundary, where a naive implementation
     // would swap noise fields outright. The step across it must be no larger
     // than a comparable step just inside one field.
-    const op: PathOp = { type: 'roughen', amount: 5, detail: 4, wigglesPerSecond: 1 };
+    const op: PathOp = { id: 'o1', type: 'roughen', amount: 5, detail: 4, wigglesPerSecond: 1 };
     const eps = 1e-3;
     const across = maxDelta(applyPathOp(sq, true, op, 1 - eps), applyPathOp(sq, true, op, 1 + eps));
     const within = maxDelta(applyPathOp(sq, true, op, 1.4), applyPathOp(sq, true, op, 1.4 + 2 * eps));

@@ -87,6 +87,17 @@ export type RenderableEffect =
        *  Unset/unresolvable → the layer displaces by its own content. */
       mapLayerId?: string;
     }
+  | {
+      type: 'set-matte';
+      /** Renderable id of the layer supplying the coverage. Unset or
+       *  unresolvable → the effect is a NO-OP, deliberately. Falling back to
+       *  self-matting (as displacement-map does) would multiply the layer by its
+       *  own alpha and read as a broken effect rather than an unconfigured one. */
+      matteLayerId?: string;
+      /** Read the matte's luminance instead of its alpha. */
+      useLuminance: boolean;
+      invert: boolean;
+    }
   | { type: 'motion-tile'; scale: number }
   | { type: 'fill'; color: Color }
   | { type: 'stroke'; widthPx: number; color: Color }

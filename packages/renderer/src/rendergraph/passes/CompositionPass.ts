@@ -6,8 +6,8 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import { EffectPass } from './EffectPass';
 
@@ -519,6 +519,25 @@ export class CompositionPass extends RenderPass {
           texture: curTex, sampler: clampSampler(),
           maskTexture: mapTex,
         });
+      } else if (effect.type === 'set-matte') {
+        // Same borrow-MATTE_TARGET constraint as displacement-map: the source
+        // render needs a target, and MATTE_TARGET is only free when it is not
+        // already part of this chain's pool. Unlike displacement-map there is no
+        // sensible fallback — matting a layer by its own alpha is not a degraded
+        // Set Matte, it is a different and wrong picture — so the effect is
+        // SKIPPED when the source cannot be resolved, leaving the layer as it
+        // was. That is also what an unset Matte Layer does.
+        const matteTex = pool.includes(MATTE_TARGET)
+          ? null
+          : this.displacementMapTexture(ctx, byId, effect.matteLayerId, selfId);
+        if (matteTex) {
+          cmds.add({
+            batchKey: 'setmatte', material: SET_MATTE_MATERIAL, blend: 'normal',
+            uniforms: packSetMatte(mvp, targetUv, effect.useLuminance, effect.invert),
+            texture: curTex, sampler: clampSampler(),
+            maskTexture: matteTex,
+          });
+        }
       } else if (effect.type === 'motion-tile') {
         cmds.add({
           batchKey: 'motiontile', material: MOTION_TILE_MATERIAL, blend: 'normal',

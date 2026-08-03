@@ -46,7 +46,7 @@ import { extrusionFaces, clampBevel, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
-import { resolvePathOp, applyPathOp, shapeOutline } from '@core/scene/pathOps';
+import { resolvePathOps, applyPathOpChain, shapeOutline } from '@core/scene/pathOps';
 import { corner } from '../../../packages/workspace/src/math/BezierPoint';
 import { resolveAnimators, evaluateTextAnimators } from '@core/text/textAnimators';
 import { layoutPerChar3D } from '@core/text/perChar3D';
@@ -1922,10 +1922,13 @@ export function buildSnapshot(
     // (zig-zag / round corners), keyframeable. Replaces the primitive with the
     // deformed polyline so the renderer draws (and trims/repeats) the result.
     if (layerKind === 'shape') {
-      const op = resolvePathOp(node, a);
-      if (op && op.type !== 'none') {
-        // Pucker/twist deform every vertex, so a rect needs a denser outline.
-        const dense = op.type === 'pucker' || op.type === 'twist' ? 8 : 0;
+      const ops = resolvePathOps(node, a);
+      if (ops.length > 0) {
+        // Density is decided by whether ANY operator in the chain wants it. A
+        // pucker three steps down still deforms every vertex, so testing only
+        // the first operator would starve it of geometry — the coarse outline
+        // is generated once, before the chain runs, and cannot be re-densified.
+        const dense = ops.some((o) => o.type === 'pucker' || o.type === 'twist') ? 8 : 0;
         const base = pathPoints && pathPoints.length > 1
           ? pathPoints.map((p) => ({ x: p.x, y: p.y }))
           : shapeOutline(layer.primitive, layerW, layerH, 48, dense);
@@ -1933,7 +1936,7 @@ export function buildSnapshot(
         // sampled on (valuesOf → remapOf). Handing it comp `t` would leave the
         // noise running at wall-clock speed while the keyframes it animates
         // alongside obey time remapping and stretch.
-        layer.pathPoints = applyPathOp(base, true, op, remapOf(node.id)(t)).map((p) => corner(p.x, p.y));
+        layer.pathPoints = applyPathOpChain(base, true, ops, remapOf(node.id)(t)).map((p) => corner(p.x, p.y));
         layer.primitive = 'path';
       }
     }

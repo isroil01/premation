@@ -202,7 +202,7 @@ describe('migrateDocument — the real 1.1.0 → 1.2.0 step (matte reshape)', ()
 
   it('rewrites the legacy string form', () => {
     const out = migrateDocument(fixtureV1_1_0());
-    expect(out.version).toBe('1.2.0');
+    expect(out.version).toBe(CURRENT_DOCUMENT_VERSION);
     expect(fxOf(out, 'a').matte).toEqual({ mode: 'alpha', inverted: true });
   });
 
@@ -241,7 +241,7 @@ describe('migrateDocument — the real 1.1.0 → 1.2.0 step (matte reshape)', ()
     // The multi-step walk exercised on the real registry, not an injected chain.
     const legacy = { ...fixtureV1_1_0(), version: '1.0.0' } as EditorDocument;
     const out = migrateDocument(legacy);
-    expect(out.version).toBe('1.2.0');
+    expect(out.version).toBe(CURRENT_DOCUMENT_VERSION);
     expect(fxOf(out, 'a').matte).toEqual({ mode: 'alpha', inverted: true });
   });
 });
@@ -263,6 +263,9 @@ describe('migrateDocument — the walk (injected chain)', () => {
   ];
 
   it('applies every step in order across a multi-step gap', () => {
+    // The SYNTHETIC chain's own target, deliberately NOT CURRENT_DOCUMENT_VERSION:
+    // these two exercise the walker rather than the real registry, and pinning
+    // them to the live version would couple a walker test to every schema bump.
     const out = migrateDocument(doc('1.0.0'), chain, '1.2.0');
     expect(out.version).toBe('1.2.0');
     expect(out.comp).toMatchObject({ stepOne: true, stepTwo: true });

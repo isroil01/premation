@@ -55,7 +55,24 @@ export type EffectType =
   // ── Stylize family ──
   | 'mosaic'
   | 'find-edges'
-  | 'roughen-edges';
+  | 'roughen-edges'
+  // ── Colour family ──
+  | 'exposure'
+  | 'vibrance'
+  | 'colorama'
+  // ── Matte / keying family ──
+  | 'set-matte'
+  | 'simple-choker'
+  | 'linear-color-key'
+  | 'shift-channels'
+  // ── Transition family ──
+  | 'venetian-blinds'
+  | 'gradient-wipe'
+  | 'card-wipe'
+  // ── Generate / Text families ──
+  | 'lens-flare'
+  | 'numbers'
+  | 'timecode';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -509,6 +526,233 @@ export const EFFECT_DEFS: EffectDef[] = [
       // is what keeps them deterministic and scrub-stable.
       { key: 'evolution', label: 'Evolution', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
       { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 9999, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+
+  // ── Colour family ──────────────────────────────────────────────────
+  //
+  // Exposure is a LUT effect (see colorLut.ts), NOT a Canvas2D pixel pass: it is
+  // a per-channel transfer function, so it renders on both backends with no
+  // bake. Vibrance and Colorama read all three channels to decide what to do
+  // with a pixel, which no per-channel table can express, so those two are
+  // pixel passes.
+  {
+    type: 'exposure',
+    label: 'Exposure',
+    params: [
+      // STOPS, like a camera — +1 doubles the light. That multiplicative
+      // behaviour is the whole reason to reach for this over Brightness, which
+      // is additive and washes the blacks up off zero.
+      { key: 'exposure', label: 'Exposure', type: 'number', unit: 'stops', min: -20, max: 20, precision: 2, default: 0 },
+      { key: 'offset', label: 'Offset', type: 'number', min: -1, max: 1, precision: 3, default: 0 },
+      { key: 'gammaCorrection', label: 'Gamma Correction', type: 'number', min: 0.01, max: 10, precision: 2, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'vibrance',
+    label: 'Vibrance',
+    params: [
+      // Weighted by how far the pixel already is from grey, which is what makes
+      // it different from Saturation and what protects skin tones.
+      { key: 'vibrance', label: 'Vibrance', type: 'number', min: -100, max: 100, default: 30 },
+      { key: 'saturation', label: 'Saturation', type: 'number', min: -100, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'colorama',
+    label: 'Colorama',
+    params: [
+      // Index into COLORAMA_PALETTES. A number so it can be keyframed, and the
+      // indices are STABLE — new palettes go on the end, because inserting into
+      // the middle would silently re-map every saved project.
+      { key: 'palette', label: 'Output Cycle', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+      // The signature control: one keyframe here cycles the palette through the
+      // image. The cycle wraps, so the animation loops seamlessly.
+      { key: 'phaseShift', label: 'Phase Shift', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
+      { key: 'cycleRepetitions', label: 'Cycle Repetitions', type: 'number', min: 0.1, max: 20, precision: 2, default: 1 },
+      { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Matte / keying family ──────────────────────────────────────────
+  //
+  // Set Matte is the one with structural reach, and is NOT a Canvas2D pass: it
+  // reads ANOTHER LAYER's pixels, which the bake chain's `(oc, w, h, effect)`
+  // signature cannot express at all. It follows the `displacement-map`
+  // precedent — a GPU material with the source layer bound as a second texture.
+  {
+    type: 'set-matte',
+    label: 'Set Matte',
+    params: [
+      { key: 'matteLayerId', label: 'Take Matte From Layer', type: 'layer', default: '' },
+      // Checkboxes, and they MUST be read as booleans — `effectNumber` returns 0
+      // for one, so reading these through it gives a control that persists,
+      // keyframes, and does nothing. See snapshotToFrameScene.
+      { key: 'useLuminance', label: 'Use Luminance', type: 'checkbox', default: false },
+      { key: 'invert', label: 'Invert Matte', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+    // A real shader pass with no CSS or Canvas2D equivalent — the bake chain is
+    // handed one layer's buffer and could not reach the matte layer even in
+    // principle. Marking it means the UI SAYS it does nothing on the Canvas2D
+    // backend rather than offering it as though it worked, which is the whole
+    // reason this flag exists. It also satisfies the EFFECT_DEFS classification
+    // test, which is what caught the omission.
+    gpuOnly: true,
+  },
+  {
+    type: 'simple-choker',
+    label: 'Simple Choker',
+    params: [
+      // Positive chokes the matte inward, negative spreads it outward. The
+      // control people reach for immediately after any key, to eat the fringe.
+      { key: 'chokeAmount', label: 'Choke Matte', type: 'number', unit: 'px', min: -50, max: 50, precision: 1, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'linear-color-key',
+    label: 'Linear Color Key',
+    params: [
+      { key: 'keyColor', label: 'Key Color', type: 'color', default: '#00ff00' },
+      // 0 = RGB distance, 1 = hue, 2 = chroma. A number so it can be keyframed.
+      { key: 'matchOn', label: 'Match Colors', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'tolerance', label: 'Matching Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'softness', label: 'Matching Softness', type: 'number', unit: '%', min: 0, max: 100, default: 10 },
+      // AE's Key Colors / Keep Colors. Keeping only what matched is how this
+      // effect gets used as a selective colour isolator.
+      { key: 'keepMatched', label: 'Keep Matched Instead', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'shift-channels',
+    label: 'Shift Channels',
+    params: [
+      // Each output channel picks a SOURCE: 0 alpha, 1 red, 2 green, 3 blue,
+      // 4 luminance, 5 full-on, 6 full-off. The defaults are the identity.
+      { key: 'takeAlphaFrom', label: 'Take Alpha From', type: 'number', min: 0, max: 6, precision: 0, default: 0 },
+      { key: 'takeRedFrom', label: 'Take Red From', type: 'number', min: 0, max: 6, precision: 0, default: 1 },
+      { key: 'takeGreenFrom', label: 'Take Green From', type: 'number', min: 0, max: 6, precision: 0, default: 2 },
+      { key: 'takeBlueFrom', label: 'Take Blue From', type: 'number', min: 0, max: 6, precision: 0, default: 3 },
+    ],
+    css: () => '',
+  },
+
+  // ── Transition family ──────────────────────────────────────────────
+  //
+  // All three are alpha-only reveals driven by `completion`, matching the
+  // existing `linear-wipe`: one keyframe 0 → 100 is the whole effect, and every
+  // other parameter is a static look choice. They ERASE rather than composite —
+  // what shows through underneath is the compositor's business.
+  {
+    type: 'venetian-blinds',
+    label: 'Venetian Blinds',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'direction', label: 'Direction', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 1, max: 500, default: 30 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'gradient-wipe',
+    label: 'Gradient Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      // NO "Gradient Layer" control, deliberately. AE lets you nominate another
+      // layer as the map; this runs on the Canvas2D bake path, which is handed
+      // one layer's buffer and cannot reach a sibling — the same wall Set Matte
+      // hit. Shipping the control anyway would give a picker that persists,
+      // keyframes and does nothing, which is precisely the failure this codebase
+      // keeps finding. The wipe is driven by the LAYER'S OWN luminance, which is
+      // also AE's behaviour when no map is chosen, so pairing it with a Ramp or
+      // Fractal Noise below it in the stack gives the full effect.
+      { key: 'softness', label: 'Transition Softness', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'invertGradient', label: 'Invert Gradient', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'card-wipe',
+    label: 'Card Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'rows', label: 'Rows', type: 'number', min: 1, max: 100, precision: 0, default: 6 },
+      { key: 'columns', label: 'Columns', type: 'number', min: 1, max: 100, precision: 0, default: 8 },
+      // 0 right, 1 left, 2 down, 3 up, 4 radial. A number so it keyframes.
+      { key: 'flipOrder', label: 'Flip Order', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Generate / Text families ───────────────────────────────────────
+  {
+    type: 'lens-flare',
+    label: 'Lens Flare',
+    params: [
+      { key: 'centerX', label: 'Flare Centre X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Flare Centre Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'brightness', label: 'Flare Brightness', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'scale', label: 'Scale', type: 'number', min: 0.05, max: 5, precision: 2, default: 1 },
+      { key: 'color', label: 'Flare Colour', type: 'color', default: '#ffd9a0' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'numbers',
+    label: 'Numbers',
+    params: [
+      // The VALUE is a keyframeable parameter, which is what makes this a real
+      // counter: two keyframes and it counts. It deliberately does not read the
+      // composition clock — see `timecode` below for why that is a much larger
+      // change than it looks.
+      { key: 'value', label: 'Value', type: 'number', min: -1e9, max: 1e9, precision: 3, default: 0 },
+      { key: 'decimals', label: 'Decimal Places', type: 'number', min: 0, max: 10, precision: 0, default: 0 },
+      { key: 'padTo', label: 'Pad To Digits', type: 'number', min: 0, max: 20, precision: 0, default: 0 },
+      { key: 'useCommas', label: 'Thousands Separator', type: 'checkbox', default: false },
+      { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'positionY', label: 'Position Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 1, max: 800, default: 48 },
+      { key: 'color', label: 'Fill Colour', type: 'color', default: '#ffffff' },
+      { key: 'showBox', label: 'Composite On Box', type: 'checkbox', default: false },
+      { key: 'boxColor', label: 'Box Colour', type: 'color', default: '#000000' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'timecode',
+    label: 'Timecode',
+    params: [
+      /**
+       * `time` is an explicit, KEYFRAMEABLE parameter — this does not follow the
+       * composition clock, and that is a deliberate limit rather than an
+       * oversight.
+       *
+       * Reading comp time here would mean feeding it into the Canvas2D bake
+       * chain, whose output is cached by CONTENT HASH. A time-varying effect
+       * that is not in the hash renders once and freezes; putting time in the
+       * hash defeats the raster cache for the whole layer on every frame. That
+       * is a change to the caching model, not to an effect, and it is the same
+       * wall Audio Spectrum hit.
+       *
+       * Two keyframes give a running timecode, which is honest and works. The
+       * label says so.
+       */
+      { key: 'time', label: 'Time (keyframe this)', type: 'number', unit: 's', min: -86400, max: 86400, precision: 3, default: 0 },
+      { key: 'fps', label: 'Frame Rate', type: 'number', unit: 'fps', min: 1, max: 240, precision: 0, default: 24 },
+      { key: 'dropFrame', label: 'Drop Frame', type: 'checkbox', default: false },
+      { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'positionY', label: 'Position Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 1, max: 800, default: 40 },
+      { key: 'color', label: 'Fill Colour', type: 'color', default: '#ffffff' },
+      { key: 'showBox', label: 'Composite On Box', type: 'checkbox', default: true },
+      { key: 'boxColor', label: 'Box Colour', type: 'color', default: '#000000' },
     ],
     css: () => '',
   },

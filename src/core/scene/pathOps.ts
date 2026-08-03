@@ -24,6 +24,14 @@ import { bumpScene } from '@stores/sceneStore';
 export type PathOpType = 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen';
 
 export interface PathOp {
+  /**
+   * Stable identity, unique within the node.
+   *
+   * Exists so keyframes can be scoped to an OPERATOR rather than to a position
+   * in the chain — see `pathOpPropPath`. Without it, reordering the stack would
+   * hand each operator its neighbour's animation.
+   */
+  id: string;
   type: PathOpType;
   /** Zig-Zag amplitude (px) or Round-Corners radius (px). */
   amount: number;
@@ -46,11 +54,29 @@ export interface PathOp {
  */
 export const PATHOP_PARAMS = ['amount', 'detail', 'wigglesPerSecond'] as const;
 export type PathOpParam = (typeof PATHOP_PARAMS)[number];
-export function pathOpPropPath(param: PathOpParam): string {
-  return `pathop.${param}`;
+
+/**
+ * The keyframe path for one operator's parameter.
+ *
+ * Scoped by the operator's ID, not by its index. That is the whole reason
+ * `PathOp.id` exists: with `pathop.0.amount`, dragging an operator up the list
+ * would hand its keyframes to whichever operator landed on index 0 — an
+ * animation silently jumping to a different operator, which reads as corruption
+ * rather than as a reorder.
+ */
+export function pathOpPropPath(opId: string, param: PathOpParam): string {
+  return `pathop.${opId}.${param}`;
 }
+
+/** Unique within a node, and stable across saves. */
+let opIdCounter = 0;
+export function newPathOpId(): string {
+  opIdCounter += 1;
+  return `op${opIdCounter}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
 export function defaultPathOp(): PathOp {
-  return { type: 'zigzag', amount: 20, detail: 4, wigglesPerSecond: 0, seed: 0 };
+  return { id: newPathOpId(), type: 'zigzag', amount: 20, detail: 4, wigglesPerSecond: 0, seed: 0 };
 }
 
 const DEG = Math.PI / 180;
@@ -342,21 +368,39 @@ function isPathOpType(v: unknown): v is PathOpType {
   return typeof v === 'string' && (PATH_OP_TYPES as readonly string[]).includes(v);
 }
 
-export function readPathOpConfig(node: SceneNode): PathOp | null {
-  const raw = fxProps(node)?.pathOp;
+/**
+ * Read the operator CHAIN.
+ *
+ * `fx.pathOps` is an ordered array — AE's shape contents list, where operators
+ * stack and each one deforms the result of the last. It replaced a single
+ * `fx.pathOp` slot in document version 1.3.0.
+ *
+ * This reads ONLY the new key. The legacy single slot is handled by the
+ * migration (v1_2_0_to_v1_3_0), not by a fallback here, and that is deliberate:
+ * a reader that quietly accepts both shapes means documents can stay
+ * un-migrated indefinitely, the migration never gets exercised, and the two
+ * shapes drift. The migration runs at `restoreDocument`, which is the single
+ * point every foreign document passes through.
+ */
+export function readPathOps(node: SceneNode): PathOp[] {
+  const raw = fxProps(node)?.pathOps;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => coercePathOp(entry))
+    .filter((op): op is PathOp => op !== null);
+}
+
+/** Validate one stored entry into a `PathOp`, or null if it is not one. */
+function coercePathOp(raw: unknown): PathOp | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Partial<PathOp>;
   const d = defaultPathOp();
-  // Validate against the whole union. This used to allowlist only
-  // roundCorners/none and coerce EVERYTHING else to 'zigzag', so Pucker & Bloat
-  // and Twist could be selected but never read back — the dropdown snapped
-  // straight back and `applyPathOp`'s pucker/twist branches were unreachable.
-  const type: PathOpType = isPathOpType(o.type) ? o.type : d.type;
-  // Missing wigglesPerSecond/seed default to 0 — a project authored before the
-  // temporal wiggle existed keeps its frozen noise rather than starting to move
-  // on load. Optional-with-zero-default is why this needs no schema migration.
   return {
-    type,
+    // A stored op with no id is repaired rather than dropped. Losing the op
+    // would lose the user's work; losing only its keyframe binding is the
+    // smaller failure, and this path is unreachable for migrated documents.
+    id: typeof o.id === 'string' && o.id !== '' ? o.id : newPathOpId(),
+    type: isPathOpType(o.type) ? o.type : d.type,
     amount: num(o.amount, d.amount),
     detail: num(o.detail, d.detail),
     wigglesPerSecond: Math.max(0, num(o.wigglesPerSecond, 0)),
@@ -364,34 +408,104 @@ export function readPathOpConfig(node: SceneNode): PathOp | null {
   };
 }
 
-export function hasPathOp(node: SceneNode): boolean {
-  const o = readPathOpConfig(node);
-  return !!o && o.type !== 'none';
+/** The first operator, for the callers that only ever wanted one. */
+export function readPathOpConfig(node: SceneNode): PathOp | null {
+  return readPathOps(node)[0] ?? null;
 }
 
-export function resolvePathOp(node: SceneNode, av: Map<string, number> | undefined): PathOp | null {
-  const base = readPathOpConfig(node);
-  if (!base) return null;
-  const v = (p: PathOpParam, fb: number): number => av?.get(pathOpPropPath(p)) ?? fb;
+export function hasPathOp(node: SceneNode): boolean {
+  return readPathOps(node).some((o) => o.type !== 'none');
+}
+
+/** One operator with its animated values applied at the sampled time. */
+function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
+  const v = (p: PathOpParam, fb: number): number => av?.get(pathOpPropPath(op.id, p)) ?? fb;
   return {
-    type: base.type,
-    amount: v('amount', base.amount),
-    detail: v('detail', base.detail),
+    id: op.id,
+    type: op.type,
+    amount: v('amount', op.amount),
+    detail: v('detail', op.detail),
     // Animated wiggles-per-second is clamped the same way the static read is,
     // so a keyframe that dips below zero cannot run the noise backwards.
-    wigglesPerSecond: Math.max(0, v('wigglesPerSecond', base.wigglesPerSecond ?? 0)),
-    seed: base.seed ?? 0,
+    wigglesPerSecond: Math.max(0, v('wigglesPerSecond', op.wigglesPerSecond ?? 0)),
+    seed: op.seed ?? 0,
   };
 }
 
-export function setPathOp(nodeId: string, op: PathOp | null): void {
-  defaultSceneGraph.setPathOp(nodeId, op ?? undefined);
+/**
+ * The resolved chain, in application order, with inert operators dropped.
+ *
+ * `none` entries are filtered here rather than at the call site so the renderer
+ * never has to special-case them, and an all-`none` stack costs nothing.
+ */
+export function resolvePathOps(node: SceneNode, av: Map<string, number> | undefined): PathOp[] {
+  return readPathOps(node)
+    .map((op) => resolveOne(op, av))
+    .filter((op) => op.type !== 'none');
+}
+
+/**
+ * Fold the whole chain over a polyline.
+ *
+ * Order is significant and is the point of the feature: Round Corners then
+ * Zig-Zag gives soft ridges, Zig-Zag then Round Corners gives rounded spikes.
+ * AE evaluates its contents list top-down and so does this.
+ */
+export function applyPathOpChain(
+  pts: readonly Pt[],
+  closed: boolean,
+  ops: readonly PathOp[],
+  timeSec = 0,
+): Pt[] {
+  let out: Pt[] = [...pts];
+  for (const op of ops) {
+    if (op.type === 'none') continue;
+    out = applyPathOp(out, closed, op, timeSec);
+  }
+  return out;
+}
+
+/** Replace the whole chain. */
+export function setPathOps(nodeId: string, ops: readonly PathOp[]): void {
+  defaultSceneGraph.setPathOps(nodeId, ops.length > 0 ? [...ops] : undefined);
   bumpScene();
 }
 
-export function updatePathOp(nodeId: string, patch: Partial<PathOp>): void {
+/** Append an operator to the end of the chain. */
+export function addPathOp(nodeId: string, op: PathOp = defaultPathOp()): void {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return;
-  const base = readPathOpConfig(node) ?? defaultPathOp();
-  setPathOp(nodeId, { ...base, ...patch });
+  setPathOps(nodeId, [...readPathOps(node), op]);
+}
+
+export function removePathOp(nodeId: string, opId: string): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  setPathOps(nodeId, readPathOps(node).filter((o) => o.id !== opId));
+}
+
+/** Patch one operator, found by id. */
+export function updatePathOp(nodeId: string, opId: string, patch: Partial<PathOp>): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  setPathOps(
+    nodeId,
+    // `id` is spread first and then re-pinned, so a patch carrying an `id` can
+    // never re-key an operator out from under its own keyframes.
+    readPathOps(node).map((o) => (o.id === opId ? { ...o, ...patch, id: o.id } : o)),
+  );
+}
+
+/** Move an operator to a new index. Keyframes follow it — they are id-scoped. */
+export function reorderPathOp(nodeId: string, opId: string, toIndex: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const ops = readPathOps(node);
+  const from = ops.findIndex((o) => o.id === opId);
+  if (from < 0) return;
+  const next = [...ops];
+  const [moved] = next.splice(from, 1);
+  if (!moved) return;
+  next.splice(Math.max(0, Math.min(next.length, toIndex)), 0, moved);
+  setPathOps(nodeId, next);
 }

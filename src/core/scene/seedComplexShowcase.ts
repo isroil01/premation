@@ -21,7 +21,7 @@ import { bezierCorner as corner } from '@motion/workspace';
 import { addEffect, getNodeEffects, effectPropPath, type EffectType } from '@core/effects/effects';
 import { setRepeater, repeaterPropPath } from './repeater';
 import { setTrim, trimPropPath } from './trimPath';
-import { setPathOp, pathOpPropPath } from './pathOps';
+import { setPathOps, pathOpPropPath } from './pathOps';
 import { setPrecomp } from './precomp';
 import { set3DEnabled } from './threeD';
 import { setNodeBlend } from '@core/effects/blendMode';
@@ -210,8 +210,11 @@ export function buildComplexShowcase(): { root: string; layerCount: number; ids:
 
   // 9 ── Wobble hex with an animated Zig-Zag path operator.
   const wob = add(node('wobble', 'Wobble Hex', 'shape', CX - 640, CY, [geom('wobble', polyPts(6, 90)), styleFill('wobble', '#06d6a0')]));
-  setPathOp(wob, { type: 'zigzag', amount: 0, detail: 5 });
-  kf(wob, pathOpPropPath('amount'), [[0, 0], [1, 0], [3, 34], [6, 6], [9, 34], [DUR, 0]]);
+  // A FIXED id, so the keyframe path below can name it. A seed is the one place
+  // a generated id is a nuisance rather than a help — it has to be written twice.
+  const wobOp = 'seed_wobble_zigzag';
+  setPathOps(wob, [{ id: wobOp, type: 'zigzag', amount: 0, detail: 5 }]);
+  kf(wob, pathOpPropPath(wobOp, 'amount'), [[0, 0], [1, 0], [3, 34], [6, 6], [9, 34], [DUR, 0]]);
   kf(wob, 'rotation', [[0, 0], [DUR, 180, 'linear']]);
 
   // 10 ── 3D card that tumbles in Y, with a camera + light lighting the scene.
