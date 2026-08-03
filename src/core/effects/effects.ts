@@ -55,7 +55,11 @@ export type EffectType =
   // ── Stylize family ──
   | 'mosaic'
   | 'find-edges'
-  | 'roughen-edges';
+  | 'roughen-edges'
+  // ── Colour family ──
+  | 'exposure'
+  | 'vibrance'
+  | 'colorama';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -509,6 +513,54 @@ export const EFFECT_DEFS: EffectDef[] = [
       // is what keeps them deterministic and scrub-stable.
       { key: 'evolution', label: 'Evolution', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
       { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 9999, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+
+  // ── Colour family ──────────────────────────────────────────────────
+  //
+  // Exposure is a LUT effect (see colorLut.ts), NOT a Canvas2D pixel pass: it is
+  // a per-channel transfer function, so it renders on both backends with no
+  // bake. Vibrance and Colorama read all three channels to decide what to do
+  // with a pixel, which no per-channel table can express, so those two are
+  // pixel passes.
+  {
+    type: 'exposure',
+    label: 'Exposure',
+    params: [
+      // STOPS, like a camera — +1 doubles the light. That multiplicative
+      // behaviour is the whole reason to reach for this over Brightness, which
+      // is additive and washes the blacks up off zero.
+      { key: 'exposure', label: 'Exposure', type: 'number', unit: 'stops', min: -20, max: 20, precision: 2, default: 0 },
+      { key: 'offset', label: 'Offset', type: 'number', min: -1, max: 1, precision: 3, default: 0 },
+      { key: 'gammaCorrection', label: 'Gamma Correction', type: 'number', min: 0.01, max: 10, precision: 2, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'vibrance',
+    label: 'Vibrance',
+    params: [
+      // Weighted by how far the pixel already is from grey, which is what makes
+      // it different from Saturation and what protects skin tones.
+      { key: 'vibrance', label: 'Vibrance', type: 'number', min: -100, max: 100, default: 30 },
+      { key: 'saturation', label: 'Saturation', type: 'number', min: -100, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'colorama',
+    label: 'Colorama',
+    params: [
+      // Index into COLORAMA_PALETTES. A number so it can be keyframed, and the
+      // indices are STABLE — new palettes go on the end, because inserting into
+      // the middle would silently re-map every saved project.
+      { key: 'palette', label: 'Output Cycle', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+      // The signature control: one keyframe here cycles the palette through the
+      // image. The cycle wraps, so the animation loops seamlessly.
+      { key: 'phaseShift', label: 'Phase Shift', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
+      { key: 'cycleRepetitions', label: 'Cycle Repetitions', type: 'number', min: 0.1, max: 20, precision: 2, default: 1 },
+      { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
     ],
     css: () => '',
   },

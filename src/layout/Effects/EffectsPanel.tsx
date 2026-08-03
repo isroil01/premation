@@ -79,6 +79,9 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   mosaic: 'Stylize',
   'find-edges': 'Stylize',
   'roughen-edges': 'Stylize',
+  exposure: 'Color Correction',
+  vibrance: 'Color Correction',
+  colorama: 'Color Correction',
   // Color Correction
   brightness: 'Color Correction',
   contrast: 'Color Correction',

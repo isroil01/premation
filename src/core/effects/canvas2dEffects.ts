@@ -36,6 +36,7 @@ import { applyKeyData, chokeAlpha, softenAlpha } from './keylight';
 import { waveWarpData, turbulentDisplaceData } from './warp';
 import { blurRgba, radialBlurData, blurDimensions } from './blurs';
 import { mosaicData, findEdgesData, roughenEdgesData } from './stylize';
+import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -64,6 +65,12 @@ const CANVAS2D_ONLY = new Set<string>([
   'mosaic',
   'find-edges',
   'roughen-edges',
+  // Colour family. `exposure` is deliberately ABSENT: it is a per-channel
+  // transfer function, so it lives in LUT_EFFECTS and renders on both backends
+  // with no bake. These two read all three channels per pixel, which no
+  // per-channel table can express.
+  'vibrance',
+  'colorama',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -202,7 +209,38 @@ export function applyCanvas2dEffect(
       return applyFindEdges(oc, w, h, e);
     case 'roughen-edges':
       return applyRoughenEdges(oc, w, h, e);
+    case 'vibrance':
+      return applyVibrance(oc, w, h, e);
+    case 'colorama':
+      return applyColorama(oc, w, h, e);
   }
+}
+
+// ── Colour family (kernels in colorEffects.ts) ─────────────────────
+
+function applyVibrance(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const vib = effectNumber(e, 'vibrance');
+  const sat = effectNumber(e, 'saturation');
+  if (vib === 0 && sat === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  vibranceData(img.data, vib, sat);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyColorama(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const idx = Math.max(0, Math.min(COLORAMA_PALETTES.length - 1, Math.round(effectNumber(e, 'palette'))));
+  const palette = COLORAMA_PALETTES[idx]!;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  coloramaData(
+    img.data,
+    palette.stops,
+    effectNumber(e, 'phaseShift'),
+    effectNumber(e, 'cycleRepetitions'),
+    Math.max(0, Math.min(100, effectNumber(e, 'blendWithOriginal'))) / 100,
+  );
+  oc.putImageData(img, 0, 0);
 }
 
 // ── Stylize family (kernels in stylize.ts) ─────────────────────────
