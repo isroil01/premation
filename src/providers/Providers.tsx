@@ -822,11 +822,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
     },
     {
       id: asCommandId(ProjectCommands.About),
-      label: 'About Motion Editor',
+      label: 'About Premation',
       enabled: () => true,
       execute: () => {
         openModal({
-          title: 'Motion Editor',
+          title: 'Premation',
           size: 'sm',
           render: () => (
             <div style={{ color: 'var(--color-text-secondary)', lineHeight: 1.6, fontSize: 'var(--font-size-md)' }}>
@@ -1278,7 +1278,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               size: 'sm',
               render: () => (
                 <div style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-md)', lineHeight: 1.6 }}>
-                  Motion Editor found unsaved changes from your last session
+                  Premation found unsaved changes from your last session
                   (about {mins} min ago). Restore them, or discard and start fresh.
                 </div>
               ),

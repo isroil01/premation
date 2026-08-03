@@ -245,8 +245,8 @@ export function muxWebm(
     ID.Info,
     concat([
       uintEl(ID.TimestampScale, TIMESTAMP_SCALE_NS),
-      strEl(ID.MuxingApp, 'Motion Editor'),
-      strEl(ID.WritingApp, 'Motion Editor'),
+      strEl(ID.MuxingApp, 'Premation'),
+      strEl(ID.WritingApp, 'Premation'),
       floatEl(ID.Duration, durationMs),
     ]),
   );

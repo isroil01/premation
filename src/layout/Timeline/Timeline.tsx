@@ -61,6 +61,7 @@ import { audioEngine } from '@core/audio/AudioEngine';
 import { waveformPath, peaksInRange } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
 import { LABEL_COLORS } from '@core/scene/labelColor';
+import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
 
 const RULER_HEIGHT_DEFAULT = 26;
 const TRACK_HEIGHT_DEFAULT = 30;
@@ -1598,18 +1599,10 @@ const TrackHeader = memo(function TrackHeader({
     ? parentOptions.find((o) => o.id === currentParent)?.name ?? 'Parent'
     : 'None';
 
-  const currentMatteMode = typeof track.matteMode === 'object' && track.matteMode !== null
-    ? track.matteMode.mode
-    : track.matteMode || 'none';
-
-  const MATTE_LABELS: Record<string, string> = {
-    none: 'None',
-    alpha: 'Alpha Matte',
-    'alpha-inv': 'Alpha Inv Matte',
-    luma: 'Luma Matte',
-    'luma-inv': 'Luma Inv Matte',
-  };
-  const currentMatteLabel = MATTE_LABELS[currentMatteMode] ?? 'None';
+  // Option id + label come from the SHARED menu, not a second hardcoded copy of
+  // the four labels. This row and the inspector used to each own their own list.
+  const currentMatteOption = matteOptionId(track.matteMode);
+  const currentMatteLabel = MATTE_SHORT_LABEL[currentMatteOption] ?? 'None';
 
   const parentItems = [
     {
@@ -1796,18 +1789,14 @@ const TrackHeader = memo(function TrackHeader({
               {currentMatteLabel}
             </button>
           }
-          items={[
-            { value: 'none', label: 'None' },
-            { value: 'alpha', label: 'Alpha' },
-            { value: 'alpha-inv', label: 'Alpha Inv' },
-            { value: 'luma', label: 'Luma' },
-            { value: 'luma-inv', label: 'Luma Inv' },
-          ].map((m) => ({
+          items={MATTE_OPTIONS.map((m) => ({
             type: 'item',
-            id: m.value,
-            label: m.label,
-            icon: m.value === currentMatteMode ? ('check' as const) : undefined,
-            onSelect: () => onMatteChange?.(m.value as any),
+            id: m.id,
+            label: MATTE_SHORT_LABEL[m.id] ?? m.label,
+            icon: m.id === currentMatteOption ? ('check' as const) : undefined,
+            // Carries an explicit matte source across a mode change; dropping it
+            // would silently re-point the matte at the layer above.
+            onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
           }))}
         />
       </div>

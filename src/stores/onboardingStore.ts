@@ -29,9 +29,9 @@ export const TOUR_STEPS: TourStep[] = [
     hint: 'Try it: press ⌘⇧P and type ":3" to jump to 3 seconds.',
   },
   {
-    title: 'The Motion Editor',
+    title: 'The Graph Editor',
     body: 'Shape how a value moves with a large, direct curve editor — easing presets, custom bezier handles, and exact numeric input.',
-    hint: 'Try it: select an animated layer → the Motion tab.',
+    hint: 'Try it: select an animated layer → the Graph tab.',
   },
   {
     title: 'Focus Mode',

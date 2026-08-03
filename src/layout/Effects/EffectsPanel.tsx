@@ -6,7 +6,6 @@
  */
 
 import { useState, useMemo } from 'react';
-import { cn } from '@utils/cn';
 import { Icon } from '@components/Icon';
 import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
@@ -17,7 +16,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { EFFECT_DEFS, addEffect, getNodeEffects } from '@core/effects/effects';
+import { EFFECT_DEFS, addEffect, getNodeEffects, type EffectType } from '@core/effects/effects';
 import {
   copyAllEffects,
   pasteEffects,
@@ -46,13 +45,79 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import styles from './EffectsPanel.module.css';
 
+// AE menu order — `None` leads, because it is the "this path does not cut"
+// option rather than a variant of the set operations below it.
 const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
+  { mode: 'none', label: 'None' },
   { mode: 'add', label: 'Add' },
   { mode: 'subtract', label: 'Subtract' },
   { mode: 'intersect', label: 'Intersect' },
   { mode: 'lighten', label: 'Lighten' },
   { mode: 'darken', label: 'Darken' },
   { mode: 'difference', label: 'Difference' },
+];
+
+/**
+ * Browser folders, following After Effects' own grouping so the names are the
+ * ones users already know.
+ *
+ * A `Record` keyed by `EffectType`, NOT an if-chain with a catch-all: the
+ * previous version routed two named lists and dropped EVERYTHING else into a
+ * single "Stylize, Keying & Utility" bucket — 24 of the 38 effects in one
+ * accordion, which is the folder users open most. Typing it this way means a
+ * new effect type is a compile error until it is filed somewhere.
+ */
+const EFFECT_CATEGORY: Record<EffectType, string> = {
+  // Blur & Sharpen
+  blur: 'Blur & Sharpen',
+  sharpen: 'Blur & Sharpen',
+  'directional-blur': 'Blur & Sharpen',
+  // Color Correction
+  brightness: 'Color Correction',
+  contrast: 'Color Correction',
+  saturate: 'Color Correction',
+  grayscale: 'Color Correction',
+  sepia: 'Color Correction',
+  'hue-rotate': 'Color Correction',
+  'hue-saturation': 'Color Correction',
+  invert: 'Color Correction',
+  levels: 'Color Correction',
+  curves: 'Color Correction',
+  posterize: 'Color Correction',
+  tint: 'Color Correction',
+  'channel-mixer': 'Color Correction',
+  // Generate
+  fill: 'Generate',
+  stroke: 'Generate',
+  beam: 'Generate',
+  'four-color-gradient': 'Generate',
+  'gradient-ramp': 'Generate',
+  'fractal-noise': 'Generate',
+  // Stylize (incl. the Photoshop-style layer styles)
+  glow: 'Stylize',
+  'drop-shadow': 'Stylize',
+  'inner-shadow': 'Stylize',
+  'inner-glow': 'Stylize',
+  satin: 'Stylize',
+  bevel: 'Stylize',
+  noise: 'Stylize',
+  // Distort
+  transform: 'Distort',
+  'wave-warp': 'Distort',
+  'turbulent-displace': 'Distort',
+  'displacement-map': 'Distort',
+  'motion-tile': 'Distort',
+  // Keying / Time / Transition
+  keylight: 'Keying',
+  echo: 'Time',
+  'posterize-time': 'Time',
+  'linear-wipe': 'Transition',
+};
+
+/** Folder order in the browser — most-reached-for first. */
+const EFFECT_CATEGORY_ORDER: readonly string[] = [
+  'Blur & Sharpen', 'Color Correction', 'Stylize', 'Generate',
+  'Distort', 'Keying', 'Time', 'Transition',
 ];
 
 export function EffectsPanel(): JSX.Element {
@@ -74,41 +139,25 @@ export function EffectsPanel(): JSX.Element {
 
   const q = effectQuery.trim().toLowerCase();
   const browserDefs = q ? EFFECT_DEFS.filter((d) => d.label.toLowerCase().includes(q)) : EFFECT_DEFS;
-  // Unified GPU engine renders every effect — no locks needed.
-  const effectAvailability = (_d: (typeof EFFECT_DEFS)[number]): { ok: true } | { ok: false; reason: string } => {
-    return { ok: true };
-  };
+  // Every effect in EFFECT_DEFS renders on the unified GPU engine, so nothing
+  // is locked. The availability check that used to gate this returned a constant
+  // `{ ok: true }`, which left the lock icon, the `disabled` attribute and the
+  // `effectRowCardUnavailable` style permanently unreachable — dead branches
+  // that read as if a real capability check were still running. Removed rather
+  // than kept as a stub; reinstate a real predicate here if a backend ever
+  // stops supporting an effect again.
   const node = hasSelection ? defaultSceneGraph.getNode(primary!) : undefined;
   const kind = node ? readNodeKind(node) : 'shape';
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
   const { w: maskW, h: maskH } = SIZE[layerKind];
   const masks = hasSelection ? getNodeMask(primary!).paths : [];
 
-  const getCategoryForEffect = (type: string): string => {
-    if (type === 'blur' || type === 'sharpen') return 'Blur & Sharpen';
-    if ([
-      'brightness', 'contrast', 'saturate', 'grayscale', 'sepia', 
-      'hue-rotate', 'hue-saturation', 'invert', 'levels', 'curves', 
-      'posterize', 'tint', 'channel-mixer', 'fill', 'four-color-gradient'
-    ].includes(type)) {
-      return 'Color Correction';
-    }
-    return 'Stylize, Keying & Utility';
-  };
-
   const effectGroups = useMemo(() => {
-    const groups: Record<string, typeof browserDefs> = {
-      'Blur & Sharpen': [],
-      'Color Correction': [],
-      'Stylize, Keying & Utility': [],
-    };
+    const groups: Record<string, typeof browserDefs> = {};
+    for (const cat of EFFECT_CATEGORY_ORDER) groups[cat] = [];
     browserDefs.forEach((d) => {
-      const cat = getCategoryForEffect(d.type);
-      if (groups[cat]) {
-        groups[cat].push(d);
-      } else {
-        groups[cat] = [d];
-      }
+      const cat = EFFECT_CATEGORY[d.type];
+      (groups[cat] ??= []).push(d);
     });
     return groups;
   }, [browserDefs]);
@@ -124,21 +173,18 @@ export function EffectsPanel(): JSX.Element {
         content: (
           <div className={styles.effectRowsList}>
             {items.map((d) => {
-              const avail = effectAvailability(d);
-              const unavailable = !avail.ok;
               return (
                 <button
                   key={d.type}
                   type="button"
-                  className={cn(styles.effectRowCard, unavailable && styles.effectRowCardUnavailable)}
-                  disabled={unavailable}
-                  draggable={!unavailable}
+                  className={styles.effectRowCard}
+                  draggable
                   onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
-                  title={avail.ok ? `Add ${d.label} — or drag onto a layer` : avail.reason}
+                  title={`Add ${d.label} — or drag onto a layer`}
                   onClick={() => { if (primary) addEffect(primary, d.type); }}
                 >
                   <div className={styles.effectIconWrapper}>
-                    <Icon name={unavailable ? 'lock' : 'sparkles'} size={12} />
+                    <Icon name="sparkles" size={12} />
                   </div>
                   <div className={styles.effectInfo}>
                     <span className={styles.effectLabelText}>{d.label}</span>

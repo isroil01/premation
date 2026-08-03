@@ -1,8 +1,19 @@
 import {
   layerStylesToFilter,
+  layerStylesToEffects,
   readNodeLayerStyles,
+  LAYER_STYLE_NUMBER_PARAMS,
+  LAYER_STYLE_COLOR_PARAMS,
+  LAYER_STYLE_EFFECT_TYPE,
   DEFAULT_DROP_SHADOW,
   DEFAULT_OUTER_GLOW,
+  DEFAULT_INNER_SHADOW,
+  DEFAULT_INNER_GLOW,
+  DEFAULT_SATIN,
+  DEFAULT_BEVEL,
+  DEFAULT_COLOR_OVERLAY,
+  DEFAULT_GRADIENT_OVERLAY,
+  DEFAULT_STROKE_STYLE,
   type LayerStyles,
 } from './layerStyles';
 import type { SceneNode } from '@core/types';
@@ -65,5 +76,70 @@ describe('readNodeLayerStyles', () => {
   test('undefined when no fx / no enabled style', () => {
     expect(readNodeLayerStyles(node(null))).toBeUndefined();
     expect(readNodeLayerStyles(node({ layerStyles: {} }))).toBeUndefined();
+  });
+});
+
+/**
+ * The inspector puts keyframes on `effect.layerstyle:<style>.<param>` using
+ * LAYER_STYLE_*_PARAMS, and the renderer samples whatever `layerStylesToEffects`
+ * emitted. If those two disagree by so much as a param name, the stopwatch
+ * writes a track nothing reads and the control silently stops animating — the
+ * failure this whole feature exists to avoid.
+ *
+ * So: every mapped param must actually appear on the compiled effect.
+ */
+describe('style→effect param map matches what layerStylesToEffects emits', () => {
+  // Every style enabled with non-zero values, so all nine compile.
+  const ALL: LayerStyles = {
+    dropShadow: { ...DEFAULT_DROP_SHADOW },
+    outerGlow: { ...DEFAULT_OUTER_GLOW },
+    innerShadow: { ...DEFAULT_INNER_SHADOW },
+    innerGlow: { ...DEFAULT_INNER_GLOW },
+    satin: { ...DEFAULT_SATIN },
+    bevel: { ...DEFAULT_BEVEL },
+    colorOverlay: { ...DEFAULT_COLOR_OVERLAY },
+    gradientOverlay: { ...DEFAULT_GRADIENT_OVERLAY },
+    stroke: { ...DEFAULT_STROKE_STYLE },
+  };
+
+  const compiled = new Map(
+    layerStylesToEffects(ALL).map((e) => [e.id, e]),
+  );
+
+  const check = (styleKey: string, params: readonly string[]): void => {
+    const fx = compiled.get(`layerstyle:${styleKey}`);
+    expect(fx).toBeDefined();
+    for (const p of params) {
+      expect(Object.keys(fx!.params ?? {})).toContain(p);
+    }
+  };
+
+  for (const [styleKey, fields] of Object.entries(LAYER_STYLE_NUMBER_PARAMS)) {
+    test(`${styleKey} numeric params exist on the effect`, () => {
+      check(styleKey, Object.values(fields).map((b) => b.param));
+    });
+  }
+
+  for (const [styleKey, fields] of Object.entries(LAYER_STYLE_COLOR_PARAMS)) {
+    test(`${styleKey} colour params exist on the effect`, () => {
+      check(styleKey, Object.values(fields));
+    });
+  }
+
+  test('LAYER_STYLE_EFFECT_TYPE names the type actually emitted', () => {
+    // The timeline resolves a style track's label through this map. If it named
+    // the wrong type, rows would show another effect's parameter descriptions.
+    for (const [styleKey, type] of Object.entries(LAYER_STYLE_EFFECT_TYPE)) {
+      expect(compiled.get(`layerstyle:${styleKey}`)?.type).toBe(type);
+    }
+  });
+
+  test('every compiled style is covered by the map', () => {
+    for (const id of compiled.keys()) {
+      const styleKey = id.replace('layerstyle:', '');
+      expect(
+        LAYER_STYLE_NUMBER_PARAMS[styleKey] ?? LAYER_STYLE_COLOR_PARAMS[styleKey],
+      ).toBeDefined();
+    }
   });
 });

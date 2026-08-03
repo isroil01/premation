@@ -1,4 +1,4 @@
-# Contributing to Motion Editor
+# Contributing to Premation
 
 Thanks for considering it. This is a large codebase with a few strong opinions;
 this document is mostly about those, so your first PR doesn't get bounced on

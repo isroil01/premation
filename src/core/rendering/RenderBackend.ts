@@ -11,7 +11,7 @@
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import type { Effect } from '@core/effects/effects';
 import type { LayerMask } from '@core/effects/mask';
-import type { MatteProp } from '@core/effects/matte';
+import type { TrackMatte } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
@@ -41,8 +41,8 @@ export interface RenderLayer {
   blend?: LayerBlendMode;
   /** Vector mask clipping the layer (local space). Omitted when unmasked. */
   mask?: LayerMask;
-  /** Track matte: the layer above (or explicit sourceId) defines this layer's alpha. */
-  matte?: MatteProp;
+  /** Track matte: the explicit sourceId (or the layer above) defines this layer's alpha. */
+  matte?: TrackMatte;
   /** Resolved matte source layer id (explicit sourceId, else the layer above) —
    *  set by resolveMatteSources so the GPU path can pair by lookup. */
   matteSourceId?: string;
@@ -408,6 +408,16 @@ export interface RenderBackend {
   /** CSS pixel size + device pixel ratio. */
   resize(width: number, height: number, dpr: number): void;
   renderFrame(snapshot: RenderSnapshot): void;
+  /**
+   * Compositing operations the LAST renderFrame could not honour.
+   *
+   * Empty on the overwhelmingly common path. Non-empty means the frame is a
+   * materially different picture from the one authored — e.g. a track matte that
+   * could not be built, so the layer drew unmatted. The CALLER decides: the
+   * viewport warns and keeps the frame, an export must refuse it, because a
+   * warning next to a delivered file is not a warning anyone acts on.
+   */
+  lastFrameDiagnostics?(): ReadonlyArray<{ code: string; detail: string; layerId?: string }>;
   /** Enable preview-only chrome (float shadow + transparency checkerboard).
    *  Left off for export so transparent comps yield real alpha. */
   setPreviewChrome?(on: boolean): void;

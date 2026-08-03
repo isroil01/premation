@@ -19,15 +19,15 @@ function PopoutContent(): JSX.Element {
 
   useEffect(() => {
     const titleMap: Record<string, string> = {
-      viewport: 'Viewport Preview — Motion Editor',
-      timeline: 'Timeline — Motion Editor',
-      presentation: 'Presentation Mode — Motion Editor',
+      viewport: 'Viewport Preview — Premation',
+      timeline: 'Timeline — Premation',
+      presentation: 'Presentation Mode — Premation',
     };
     // `panel` comes from the layout store, which is EMPTY in a pop-out window
     // (registerPanel only runs in the editor shell), so this always fell through
     // to the generic "Detached Window". The shared registry knows the real name.
     const name = panel?.title ?? panelDef(panelId ?? '')?.title;
-    document.title = titleMap[panelId ?? ''] ?? (name ? `${name} — Motion Editor` : 'Detached Window');
+    document.title = titleMap[panelId ?? ''] ?? (name ? `${name} — Premation` : 'Detached Window');
 
     // Ask the editor shell for the live document. `startWindowSync` (mounted by
     // Providers, above this component) owns the subscriptions that apply it and

@@ -4,11 +4,16 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
+import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import {
   flattenOutline,
   nodeWorldPolygon,
   booleanPolygons,
   mergeSelectedPaths,
+  liveMergeSelectedPaths,
+  readLiveBoolean,
+  isBooleanOperand,
+  evaluateLiveBoolean,
 } from './mergePaths';
 import type { SceneNode } from '@core/types';
 
@@ -142,6 +147,82 @@ describe('mergeSelectedPaths', () => {
     expect(mergeSelectedPaths('union')).toHaveLength(0);
     expect(defaultSceneGraph.getNode('mp_c')).toBeTruthy();
     defaultSceneGraph.removeNode('mp_c');
+    useSelectionStore.getState().clear();
+  });
+});
+
+describe('liveMergeSelectedPaths', () => {
+  beforeAll(() => {
+    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+  });
+
+  it('keeps sources as hidden operands and wires a live boolean result', () => {
+    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+    defaultSceneGraph.addChild(rootId, rect('lm_a', 100, 100, 40, 40));
+    defaultSceneGraph.addChild(rootId, rect('lm_b', 120, 100, 40, 40));
+    useSelectionStore.getState().set(['lm_a', 'lm_b']);
+
+    const ids = liveMergeSelectedPaths('union');
+    expect(ids).toHaveLength(1);
+    const a = defaultSceneGraph.getNode('lm_a')!;
+    const b = defaultSceneGraph.getNode('lm_b')!;
+    expect(a).toBeTruthy();
+    expect(b).toBeTruthy();
+    expect(isBooleanOperand(a)).toBe(true);
+    expect(isBooleanOperand(b)).toBe(true);
+    expect(a.visible).toBe(false);
+    expect(b.visible).toBe(false);
+
+    const result = defaultSceneGraph.getNode(ids[0]!)!;
+    const live = readLiveBoolean(result);
+    expect(live).toEqual({ op: 'union', sources: ['lm_a', 'lm_b'] });
+
+    const ev = evaluateLiveBoolean(
+      result,
+      (id) => defaultSceneGraph.getNode(id),
+      () => undefined,
+      () => undefined,
+    );
+    expect(ev).not.toBeNull();
+    expect(ev!.points.length).toBeGreaterThanOrEqual(3);
+    expect(ev!.width).toBeGreaterThan(40);
+
+    defaultSceneGraph.removeNode(ids[0]!);
+    defaultSceneGraph.removeNode('lm_a');
+    defaultSceneGraph.removeNode('lm_b');
+    useSelectionStore.getState().clear();
+  });
+
+  it('re-evaluates when an operand moves (animated-style sample)', () => {
+    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+    defaultSceneGraph.addChild(rootId, rect('lm_c', 100, 100, 40, 40));
+    defaultSceneGraph.addChild(rootId, rect('lm_d', 120, 100, 40, 40));
+    useSelectionStore.getState().set(['lm_c', 'lm_d']);
+    const [id] = liveMergeSelectedPaths('intersect');
+    const result = defaultSceneGraph.getNode(id!)!;
+
+    const atRest = evaluateLiveBoolean(
+      result,
+      (nid) => defaultSceneGraph.getNode(nid),
+      () => undefined,
+      () => undefined,
+    )!;
+    const moved = evaluateLiveBoolean(
+      result,
+      (nid) => defaultSceneGraph.getNode(nid),
+      (nid) => (prop) => {
+        if (nid === 'lm_d' && prop === 'x') return 200; // pull B far away → no overlap
+        return undefined;
+      },
+      () => undefined,
+    );
+    expect(atRest.width).toBeGreaterThan(0);
+    // No intersection when B is moved away.
+    expect(moved).toBeNull();
+
+    defaultSceneGraph.removeNode(id!);
+    defaultSceneGraph.removeNode('lm_c');
+    defaultSceneGraph.removeNode('lm_d');
     useSelectionStore.getState().clear();
   });
 });

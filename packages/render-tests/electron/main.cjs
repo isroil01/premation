@@ -150,8 +150,18 @@ app.whenReady().then(() => {
   });
 
   // Surface renderer console + crashes to our stdout for debugging.
+  //
+  // `level >= 2` keeps ordinary renderer chatter out of the run log. The
+  // harness's own announcements are not chatter: the resolved-backend line is a
+  // CLAIM ABOUT THE RESULTS and has to travel with them, so it is forwarded
+  // regardless of level. It goes to stdout (informational) rather than stderr
+  // (the failure channel).
   win.webContents.on('console-message', (_e, level, message) => {
-    if (level >= 2) process.stderr.write(`[renderer] ${message}\n`);
+    if (typeof message === 'string' && message.startsWith('[harness]')) {
+      process.stdout.write(`${message}\n`);
+    } else if (level >= 2) {
+      process.stderr.write(`[renderer] ${message}\n`);
+    }
   });
   win.webContents.on('render-process-gone', (_e, details) => {
     fail(`render process gone: ${details.reason}`);

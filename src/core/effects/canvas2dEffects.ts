@@ -1,6 +1,6 @@
 /**
- * Canvas2D-only generator / pixel-pass effects — the AE "Generate" and
- * "Blur & Sharpen"/"Noise & Grain" families the GPU backend has no shader for.
+ * Canvas2D-only generator / pixel-pass effects — the AE "Generate" and style
+ * families the GPU backend has no shader for.
  *
  * Every effect here is a PURE function of its params and the layer's native-size
  * offscreen buffer (`oc`, transform already reset to identity, 0..w × 0..h). No
@@ -9,9 +9,25 @@
  * scrub-stable, and lets `bakeEffectChain` interleave them with CSS/LUT/matrix
  * passes in stack order.
  *
- * They have no CSS-filter form and no GPU shader, so `capabilities.ts` reports
- * them as Canvas2D-only — a WebGL2 export warns rather than silently dropping
- * them (see `canvas2dEffects` capability dimension).
+ * Two DIFFERENT questions get asked about this module, and conflating them cost
+ * Fill / Stroke / Sharpen / Noise every pixel they were supposed to draw:
+ *
+ *   • "Does this effect FORCE a CPU bake?" — `isCanvas2dOnlyEffect`. True only
+ *     when the GPU has no shader for it at all.
+ *   • "Can the bake chain DRAW this effect?" — `hasCanvas2dImplementation`.
+ *     True for everything with a `case` in `applyCanvas2dEffect` below.
+ *
+ * Fill / Stroke / Sharpen / Noise gained GPU materials in CompositionPass, so
+ * they no longer answer YES to the first — a layer carrying only those stays on
+ * the cheap GPU path instead of paying for a canvas round-trip. But they still
+ * answer YES to the second, because a layer baked for some OTHER reason (an
+ * interior style, a warp) has its GPU effect list dropped wholesale, and the
+ * bake is then the only chance those four get to render.
+ *
+ * Collapsing the two into one predicate made them fall through both routes and
+ * silently draw nothing on any layer that also had an interior style — which is
+ * exactly how a Color Overlay or Stroke layer style disappeared the moment an
+ * Inner Shadow was switched on.
  */
 
 import type { Effect } from './effects';
@@ -23,12 +39,8 @@ import { waveWarpData, turbulentDisplaceData } from './warp';
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
  *  shaders — gradient-ramp / fractal-noise render on both backends.) */
 const CANVAS2D_ONLY = new Set<string>([
-  'fill',
   'four-color-gradient',
-  'stroke',
   'beam',
-  'sharpen',
-  'noise',
   'keylight',
   'wave-warp',
   'turbulent-displace',
@@ -43,6 +55,27 @@ const CANVAS2D_ONLY = new Set<string>([
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
   return CANVAS2D_ONLY.has(type);
+}
+
+/**
+ * Effects the bake chain can DRAW — the Canvas2D-only family plus the four that
+ * also have GPU materials (Fill, Stroke, Sharpen, Noise).
+ *
+ * Never gate "does this layer need baking?" on this set: doing so would drag
+ * every layer with a Fill back onto the CPU. It answers only "now that we ARE
+ * baking, can this effect come along?", which for these four must be yes — the
+ * GPU list is dropped for a baked layer, so the bake is their only route.
+ */
+const CANVAS2D_IMPLEMENTED: ReadonlySet<string> = new Set<string>([
+  ...CANVAS2D_ONLY,
+  'fill',
+  'stroke',
+  'sharpen',
+  'noise',
+]);
+
+export function hasCanvas2dImplementation(type: string): boolean {
+  return CANVAS2D_IMPLEMENTED.has(type);
 }
 
 /**

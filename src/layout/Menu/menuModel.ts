@@ -178,7 +178,7 @@ export const APP_MENU: MenuGroupModel[] = [
     items: [
       { commandId: 'help.tour', label: 'Take a Tour' },
       { separator: true },
-      { commandId: ProjectCommands.About, label: 'About Motion Editor' },
+      { commandId: ProjectCommands.About, label: 'About Premation' },
     ],
   },
 ];

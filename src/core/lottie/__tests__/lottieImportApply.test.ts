@@ -275,8 +275,8 @@ describe('applyImportPlan — parenting keeps LOCAL transforms', () => {
     const sourceId = findByName('Sweep').id;
     const matteOf = (nm: string): unknown =>
       findByName(nm).components.find((c) => c.type === 'fx')?.props.matte;
-    expect(matteOf('A')).toEqual({ mode: 'alpha', sourceId });
-    expect(matteOf('B')).toEqual({ mode: 'alpha', sourceId });
+    expect(matteOf('A')).toEqual({ mode: 'alpha', inverted: false, sourceId });
+    expect(matteOf('B')).toEqual({ mode: 'alpha', inverted: false, sourceId });
     // The container carries nothing — it draws nothing, so a matte there is inert.
     expect(matteOf('Highlight')).toBeUndefined();
     // The source stays in the scene (it IS the alpha texture) and stays visible;

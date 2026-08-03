@@ -207,11 +207,11 @@ describe('EFFECT_DEFS', () => {
   // used to be gpuOnly; now they render on every backend.
   const PROCEDURAL_EFFECTS = new Set<string>(['gradient-ramp', 'fractal-noise']);
   // Canvas2D-only generators / pixel passes with no GPU shader form
-  // (canvas2dEffects.ts): Fill, 4-Color Gradient, Stroke, Beam, Sharpen, Noise.
-  // Read the REAL predicate rather than a copy of the list. This used to be a
-  // duplicated Set here, which meant adding a Canvas2D-only effect failed this
-  // invariant for the wrong reason — the effect was registered correctly and
-  // the test's private list was simply stale.
+  // (canvas2dEffects.ts). Read the REAL predicate rather than a copy of the list.
+  //
+  // GPU spatial effects with empty CSS (CompositionPass materials) — Fill,
+  // Stroke, Sharpen, Noise used to be Canvas2D-only; they now run as shaders.
+  const GPU_SPATIAL_NO_CSS = new Set<string>(['fill', 'stroke', 'sharpen', 'noise']);
   // Temporal effects (Echo, Posterize Time) are resolved in buildSnapshot's
   // time plumbing, not as a per-layer pass. Read the REAL predicate — this was
   // a second private list beside the Canvas2D one, and it went stale for the
@@ -223,6 +223,7 @@ describe('EFFECT_DEFS', () => {
     MATRIX_PIXEL_EFFECTS.has(type) ||
     PROCEDURAL_EFFECTS.has(type) ||
     isCanvas2dOnlyEffect(type) ||
+    GPU_SPATIAL_NO_CSS.has(type) ||
     isTemporalEffect(type);
 
   test('every CSS-form effect compiles to a non-empty filter at its defaults', () => {

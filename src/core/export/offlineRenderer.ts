@@ -163,6 +163,26 @@ export async function renderOffline(
         if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
         backend.renderFrame(snap);
       }
+
+      // EXPORT half of the M8a split: FAIL, do not warn.
+      //
+      // The preview shows the same notice and keeps the frame, because a human
+      // is looking at it and can act. Here the frame is about to be encoded into
+      // a file someone ships, and a warning in a log next to a delivered MP4 is
+      // not a warning anyone acts on. Wrong pixels on screen are recoverable;
+      // wrong pixels in a deliverable are not.
+      //
+      // Thrown BEFORE onFrame, so a frame known to be wrong is never handed to
+      // the sink. A refused export beats a half-written file that looks finished.
+      const diags = backend.lastFrameDiagnostics?.() ?? [];
+      if (diags.length > 0) {
+        const lines = diags.map((d) => `  • ${d.detail}${d.layerId ? ` (layer ${d.layerId})` : ''}`);
+        throw new Error(
+          `Export stopped at frame ${i}: ${diags.length} compositing operation(s) could not be `
+          + `honoured, so this frame would not match the composition.\n${lines.join('\n')}`,
+        );
+      }
+
       await onFrame(canvas, i - start, total);
       // Yield so progress paints, the editor stays usable, and cancellation can
       // interrupt between frames.

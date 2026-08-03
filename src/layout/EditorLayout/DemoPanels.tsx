@@ -72,7 +72,7 @@ import {
   insertShape,
   insertText,
 } from '@core/scene/sceneInsert';
-import { mergeSelectedPaths } from '@core/scene/mergePaths';
+import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
 import { TRANSITION_ITEMS, applyTransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
@@ -308,10 +308,15 @@ export function ScenePanel(): JSX.Element {
               id: 'merge-paths',
               label: 'Merge Paths',
               children: [
-                { id: 'merge-union', label: 'Union (Add)', onSelect: () => mergeSelectedPaths('union') },
-                { id: 'merge-subtract', label: 'Subtract', onSelect: () => mergeSelectedPaths('subtract') },
-                { id: 'merge-intersect', label: 'Intersect', onSelect: () => mergeSelectedPaths('intersect') },
-                { id: 'merge-exclude', label: 'Exclude (XOR)', onSelect: () => mergeSelectedPaths('exclude') },
+                { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => liveMergeSelectedPaths('union') },
+                { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => liveMergeSelectedPaths('subtract') },
+                { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
+                { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
+                { id: 'merge-sep', label: '—', disabled: true },
+                { id: 'merge-union', label: 'Bake Union', onSelect: () => mergeSelectedPaths('union') },
+                { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => mergeSelectedPaths('subtract') },
+                { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => mergeSelectedPaths('intersect') },
+                { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => mergeSelectedPaths('exclude') },
               ],
             },
           ]

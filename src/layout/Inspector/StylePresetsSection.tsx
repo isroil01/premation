@@ -28,12 +28,35 @@ function paintToCss(paint: FillPaint): string {
     : `radial-gradient(circle at ${(paint.cx * 100).toFixed(0)}% ${(paint.cy * 100).toFixed(0)}%, ${list})`;
 }
 
-const GROUPS: Array<{ id: StylePresetCategory; label: string }> = [
-  { id: 'surface', label: 'Surfaces' },
-  { id: 'outline', label: 'Outlines' },
-  { id: 'text', label: 'Text' },
-  { id: 'depth', label: 'Depth' },
-];
+/**
+ * A `Record` keyed by the category union, NOT a hand-written array: a preset
+ * whose category has no entry here renders nowhere, and `STYLE_PRESETS` has no
+ * other consumer. That is how all six 3D material presets (Steel, Gold,
+ * Plastic, Glass, Neon, Obsidian) came to be unreachable — 'material' was
+ * simply missing from the list, and nothing failed to say so.
+ *
+ * As a Record, adding a category to `StylePresetCategory` without giving it a
+ * label is a compile error instead of six silently invisible presets.
+ */
+const GROUP_LABELS: Record<StylePresetCategory, string> = {
+  surface: 'Surfaces',
+  outline: 'Outlines',
+  text: 'Text',
+  depth: 'Depth',
+  material: 'Materials',
+};
+
+/** Display order; anything not listed still renders, after these. */
+const GROUP_ORDER: StylePresetCategory[] = ['surface', 'outline', 'text', 'depth', 'material'];
+
+const GROUPS: Array<{ id: StylePresetCategory; label: string }> = (
+  Object.keys(GROUP_LABELS) as StylePresetCategory[]
+)
+  .sort((a, b) => {
+    const ia = GROUP_ORDER.indexOf(a), ib = GROUP_ORDER.indexOf(b);
+    return (ia < 0 ? Number.MAX_SAFE_INTEGER : ia) - (ib < 0 ? Number.MAX_SAFE_INTEGER : ib);
+  })
+  .map((id) => ({ id, label: GROUP_LABELS[id] }));
 
 export function StylePresetsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);

@@ -83,6 +83,16 @@
   color: var(--color-text-secondary);
 }
 
+/* Label row for a keyframeable style field: stopwatch, then the name. The
+   stopwatch sits inline with the label rather than in its own column so these
+   two-up fields keep the width they had before they became animatable. */
+.styleFieldHead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 16px;
+}
+
 .invertOn {
   display: inline-flex;
   align-items: center;

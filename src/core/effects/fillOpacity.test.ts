@@ -12,6 +12,7 @@ import type { Effect } from './effects';
 
 const blur: Effect = { id: 'e1', type: 'blur', params: { amount: 4 } };
 const fill: Effect = { id: 'e2', type: 'fill', params: { color: '#f00', opacity: 100 } };
+const satin: Effect = { id: 'e3', type: 'satin', params: { distance: 14, angle: 135, size: 16, color: '#000', opacity: 45 } };
 
 describe('routing — one implementation, both backends', () => {
   it('a layer using fill opacity takes the CPU-bake path', () => {
@@ -28,8 +29,16 @@ describe('routing — one implementation, both backends', () => {
   });
 
   it('still bakes for CPU-only effects regardless of fill opacity', () => {
-    expect(effectsNeedCpuBake([fill])).toBe(true);
-    expect(layerNeedsCpuBake([fill], 1)).toBe(true);
+    expect(effectsNeedCpuBake([satin])).toBe(true);
+    expect(layerNeedsCpuBake([satin], 1)).toBe(true);
+  });
+
+  // Fill gained a GPU material, so it no longer drags a layer onto the CPU on
+  // its own — but the bake must still DRAW it when something else forces one,
+  // because a baked layer's GPU effect list is dropped wholesale.
+  it('Fill alone does not force a bake, but rides along in one', () => {
+    expect(effectsNeedCpuBake([fill])).toBe(false);
+    expect(effectsNeedCpuBake([fill, satin])).toBe(true);
   });
 });
 

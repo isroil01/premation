@@ -75,7 +75,7 @@ jobs:
         include:
           - os: windows-latest
             name: Windows
-            # NSIS installer → MotionEditor-Setup-Windows.exe
+            # NSIS installer → Premation-Setup-Windows.exe
             args: --win
           - os: macos-latest
             name: macOS

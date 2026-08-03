@@ -237,7 +237,7 @@ export function applyImportPlan(
     if (!nodeId) continue;
     if (L.matte) {
       const sourceId = idByUid.get(L.matte.sourceUid);
-      if (sourceId) setNodeMatte(nodeId, { mode: L.matte.mode, sourceId });
+      if (sourceId) setNodeMatte(nodeId, { ...L.matte.matte, sourceId });
     }
     // A matte the engine could not take on. Lottie never paints a matte source,
     // so hide it rather than let a raw slab land over the artwork; the layers

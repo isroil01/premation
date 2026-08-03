@@ -118,6 +118,9 @@ function rgbaToPngBase64(rgba: RGBA): string {
 }
 
 /** Render one scene on one backend for all its frames, streaming each out. */
+/** One backend announcement per process, not one per scene. */
+let announcedBackend = false;
+
 async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> {
   const graph = new SceneGraph();
   const anim = new AnimationEngine();
@@ -145,6 +148,20 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
       `${scene.id} [${backend}]: asked for ${backend}, got ${be.resolvedKind ?? 'no backend'}` +
         `${be.initErrorMessage ? ` — ${be.initErrorMessage}` : ''}`,
     );
+  }
+
+  // POSITIVE emission, once per run, not per scene.
+  //
+  // The assertion above only speaks when it fails, so a green run said nothing
+  // about which backend actually rendered — parity was inferred from the absence
+  // of a throw. That is the same shape of mistake as a determinism gate that
+  // vouches for a pipeline half it never exercises: silence read as evidence.
+  // main.cjs forwards console output to the runner's stdout, so this lands in
+  // the run log next to the results it is a claim about.
+  if (!announcedBackend) {
+    announcedBackend = true;
+    // eslint-disable-next-line no-console
+    console.log(`[harness] backend resolved: asked ${backend}, running ${be.resolvedKind}`);
   }
 
   try {
@@ -176,7 +193,21 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
       const rgba = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);
       // Determinism gate (real GPU, not Null): re-render the scene's FIRST
       // frame from the same snapshot and require byte-identical output —
-      // "same machine + same driver ⇒ same bytes" (the AE-level promise).
+      // "same machine + same driver ⇒ same bytes".
+      //
+      // WHAT THIS DOES NOT COVER. It re-renders from the SAME `snap` object, so
+      // it gates the BACK half of the pipeline (renderFrame → GPU → readback)
+      // and silently vouches for the front half. Anything nondeterministic in
+      // SNAPSHOT CONSTRUCTION is invisible here — a wall-clock seed, iteration
+      // order over a Map, a Set serialized to an array, an id from a counter
+      // that isn't reset — because it is sampled once into `snap` and then
+      // replayed from identical input. Nor does it compare this path against
+      // `offlineRenderer`, so it is not a preview-vs-export check.
+      //
+      // Frame 0 is also the WORST frame for exposing time-dependent
+      // nondeterminism, since t = 0 collapses many time-derived values to a
+      // constant. Do not read a green run here as "the pipeline is
+      // deterministic" — it means "the renderer is, for this one frame".
       if (i === scene.frames[0]) {
         be.renderFrame(snap);
         const again = readCanvasRGBA(canvas, be.resolvedKind ?? be.kind);

@@ -1,111 +1,234 @@
 .root {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
-  min-width: 360px;
+  gap: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ── Top Navigation Tabs (General / Background / Grid & Guides) ─ */
+.navTabs {
+  display: flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--color-surface-2, #181a20) 90%, #000 10%);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.navTab {
+  flex: 1 1 0px;
+  width: 33.333%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+
+.navTab:hover:not(.navTabActive) {
+  color: var(--color-text-primary, #ffffff);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.navTabActive {
+  background: var(--color-primary, #2b7eff) !important;
+  border-color: var(--color-primary, #2b7eff) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 2px 10px rgba(43, 126, 255, 0.35);
+}
+
+.tabBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 240px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 10px;
+  background: color-mix(in srgb, var(--color-surface-1, #16171b) 70%, transparent);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.07));
+  border-radius: 8px;
+  padding: 12px 14px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .label {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-tertiary, rgba(255, 255, 255, 0.45));
 }
 
 .row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rowThree {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 4px;
+  min-width: 0;
 }
 
 .fieldLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
 }
 
 .chips {
   display: flex;
-  gap: var(--space-2);
+  gap: 6px;
   flex-wrap: wrap;
+  margin-top: 4px;
 }
 
 .chip,
 .chipOn {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--color-surface-1, #1a1b20);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.75));
+  font-size: 11px;
+  font-family: var(--font-family-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  box-sizing: border-box;
+}
+
+.chip:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .chipOn {
-  border-color: var(--color-primary);
-  color: var(--color-text-primary);
-  background: var(--color-primary-subtle);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
 }
 
-/* ── Segmented Control Tabs (Solid / Linear / Radial) ───────── */
+/* ── Segmented Control Tabs (Solid / Linear / Radial) ─ */
 .segmentedControl {
   display: flex;
-  background: color-mix(in srgb, var(--color-surface-2) 60%, transparent);
+  background: var(--color-surface-0, #121316);
   padding: 3px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-subtle);
-  gap: 2px;
-  width: 240px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 3px;
+  width: 100%;
+  box-sizing: border-box;
   flex: none;
 }
 
 .segmentBtn {
   flex: 1 1 0px;
+  width: 33.333%;
   min-width: 0;
-  width: 0;
-  padding: 6px 0;
-  border-radius: 4px;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: 5px;
   background: transparent;
-  border: none;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+  border: 1px solid transparent;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  font-size: 11px;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   text-align: center;
   white-space: nowrap;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  box-sizing: border-box;
 }
 
 .segmentBtn:hover:not(:disabled) {
-  color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-surface-3) 40%, transparent);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .segmentBtnActive {
-  background: var(--color-surface-3, #2b2e38) !important;
-  color: var(--color-text-primary) !important;
-  font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--color-surface-2, #24262d) !important;
+  border-color: rgba(56, 189, 248, 0.35) !important;
+  color: #38bdf8 !important;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 .segmentBtn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* ── Custom Select ── */
+.selectInput {
+  width: 100%;
+  background: var(--color-surface-1, #1a1b20);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary, #ffffff);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  outline: none;
+  transition: all 120ms ease;
+  box-sizing: border-box;
+}
+
+.selectInput:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.selectInput:focus {
+  border-color: var(--color-primary, #2b7eff);
 }
 
 /* ── Color Selector Card Rows ────────────────────────────────── */
@@ -115,15 +238,17 @@
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--color-surface-2) 40%, transparent);
-  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1, #1a1b20);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 6px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .colorCardLabel {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.8));
 }
 
 .stopsContainer {
@@ -131,9 +256,11 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--color-surface-2) 40%, transparent);
-  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1, #1a1b20);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 6px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .stopRow {
@@ -146,7 +273,9 @@
 .bgRow {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .colorTrigger {
@@ -156,12 +285,18 @@
 
 .hint {
   margin: 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: 11px;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.45));
   line-height: 1.4;
 }
 
 .footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  width: 100%;
+  box-sizing: border-box;
 }

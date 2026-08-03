@@ -2,12 +2,12 @@
 
 
 
-# Motion Editor
+# Premation
 
-A desktop motion-graphics application. Compositions, layers, keyframes, a graph
-editor, 3D space with cameras and lights, effects, masks and mattes, per-glyph
-text animators, mesh rigging, particles, and a deterministic export pipeline —
-built on a GPU render engine that runs on WebGPU or WebGL2.
+An open-source motion editor for the desktop. Compositions, layers, keyframes, a
+graph editor, 3D space with cameras and lights, effects, masks and mattes,
+per-glyph text animators, mesh rigging, particles, and a deterministic export
+pipeline — built on a GPU render engine that runs on WebGPU or WebGL2.
 
 It is modelled on After Effects' Classic 3D workflow: if you know AE, the tools,
 the panel layout and most of the keyboard shortcuts are already where you expect
@@ -288,7 +288,7 @@ source is right — and a PR fixing the document is very welcome.
 
 ## License
 
-Copyright © Motion Editor contributors.
+Copyright © Premation contributors.
 
 Licensed under the **GNU Affero General Public License v3.0 only**. The full text
 is in [LICENSE](LICENSE).

@@ -20,14 +20,19 @@ import type { Effect } from './effects';
 import { effectCss } from './effects';
 import { isLutEffect, buildChannelLut, applyChannelLut } from './colorLut';
 import { isCanvas2dProcedural, applyProceduralEffect } from './proceduralCanvas2d';
-import { isCanvas2dOnlyEffect, applyCanvas2dEffect, withStyleSilhouette } from './canvas2dEffects';
+import {
+  isCanvas2dOnlyEffect,
+  hasCanvas2dImplementation,
+  applyCanvas2dEffect,
+  withStyleSilhouette,
+} from './canvas2dEffects';
 import { isColorEffect, effectColorMatrix, applyColorMatrixImage } from './effectColorMatrix';
 
 /** True when an effect has NO GPU shader form and must be CPU-baked into the
- *  layer texture for the GPU backend (the Canvas2D-only generator/pixel-pass
- *  family: Fill, Stroke, 4-Colour Gradient, Beam, Sharpen, Noise, Keylight,
- *  Wave Warp, Turbulent Displace). CSS/LUT/colour-matrix/procedural effects
- *  all have GPU forms and are handled by shaders, so they are NOT baked here. */
+ *  layer texture for the GPU backend (interior styles, warps, keylight, beam,
+ *  four-color gradient, directional blur, …). Fill / Stroke / Sharpen / Noise
+ *  have CompositionPass materials and are NOT baked here. CSS/LUT/colour-matrix
+ *  /procedural effects also have GPU forms. */
 export function isGpuUnbakeableEffect(type: string): boolean {
   return isCanvas2dOnlyEffect(type);
 }
@@ -52,27 +57,69 @@ export function layerNeedsCpuBake(
   return effectsNeedCpuBake(effects) || (fillOpacity !== undefined && fillOpacity < 1);
 }
 
+/** The minimum a caller must know about a layer to answer "is it baked?". */
+export interface BakeSubject {
+  kind: string;
+  effects?: ReadonlyArray<Effect>;
+  fillOpacity?: number;
+}
+
 /**
- * Should an IMAGE layer's texture be baked through the effect chain?
+ * THE single source of truth for "is this layer baked?" (M5b / F6).
+ *
+ * ── Why this exists ──────────────────────────────────────────────────
+ * Bake ownership was expressed by three predicates that a caller had to CHOOSE
+ * between, and the correct choice depends on the layer's KIND:
+ *
+ *   vector (shape/text)   layerNeedsCpuBake   — effects OR fill opacity
+ *   image / video         imageNeedsCpuBake   — effects only
+ *   neither               effectsNeedCpuBake  — the narrow term
+ *
+ * Choosing wrong is not a crash. It is two sides of the pipeline disagreeing
+ * about who owns the effect chain, and the symptom is that the chain runs TWICE.
+ * That shipped: `snapshotToFrameScene` gated on `effectsNeedCpuBake` while
+ * `Canvas2DVectorRasterizer` gated on `layerNeedsCpuBake`, and because fill
+ * opacity alone triggers a bake with no effect requiring it, the grade, LUT,
+ * mask and spatial effects were applied by both sides. The render-test scene
+ * `fill-opacity-zero-stroke` caught it only by luck of which commits landed
+ * together — correct at HEAD, wrong mid-branch, correct again by accident.
+ *
+ * Three call sites kept in step by attention IS the defect. This function takes
+ * the LAYER and dispatches internally, so there is no choice left to get wrong.
+ * Prefer it everywhere. The narrower predicates stay exported for the places
+ * that genuinely need one term (cache-signature construction) and for tests.
+ *
+ * Fill opacity deliberately does NOT apply to image/video — it is a shape-fill
+ * concept. That asymmetry used to be implicit in which function a caller
+ * happened to reach for; it is now stated once, here.
+ */
+export function layerIsBaked(layer: BakeSubject): boolean {
+  if (layer.kind === 'image' || layer.kind === 'video') {
+    return imageNeedsCpuBake(layer.kind, layer.effects);
+  }
+  return layerNeedsCpuBake(layer.effects, layer.fillOpacity);
+}
+
+/**
+ * Should an IMAGE or VIDEO layer's texture be baked through the effect chain?
  *
  * Shapes and text rasterize themselves, so a Canvas2D-only effect just joins
- * their draw. An image arrives as a decoded bitmap and used to be uploaded
+ * their draw. An image/video arrives as decoded pixels and used to be uploaded
  * untouched, so those effects — Inner Shadow, Inner Glow, Satin, Bevel, and the
- * rest of the Canvas2D-only family — silently did NOTHING on a photo, in 2D and
+ * rest of the Canvas2D-only family — silently did NOTHING on footage, in 2D and
  * 3D alike. They are not GPU-expressible, so the only way to render them is to
  * take the same canvas round-trip the vector path takes.
  *
- * VIDEO is excluded, deliberately: a per-frame canvas round-trip through the
- * whole chain, forever. The vector path can cache on a content signature; a
- * video frame changes every frame by definition.
+ * VIDEO used to be excluded (per-frame bake cost). That made every interior
+ * style and warp a silent no-op on moving footage — the exact failure mode this
+ * codebase keeps deleting. Baking is keyed by source time + effect signature so
+ * paused scrubbing still hits cache; playback pays the cost only when styles
+ * that need it are present.
  *
  * A MASK is baked first, exactly as the vector path bakes it — interior styles
  * shape themselves from the layer's silhouette, and for a masked layer that
  * silhouette is the MASKED one, so the order is load-bearing rather than
- * incidental. This used to be an exclusion: masked image layers silently got no
- * interior styles at all, which is the one shape of limitation this codebase
- * keeps deleting, because the control accepts the value and quietly does
- * nothing. The GPU mask is dropped for a baked layer so the mask is applied
+ * incidental. The GPU mask is dropped for a baked layer so the mask is applied
  * once, not twice.
  *
  * Both the renderer backend (which requests the bake) and the snapshot adapter
@@ -83,7 +130,7 @@ export function imageNeedsCpuBake(
   kind: string,
   effects: ReadonlyArray<Effect> | undefined,
 ): boolean {
-  return kind === 'image' && effectsNeedCpuBake(effects);
+  return (kind === 'image' || kind === 'video') && effectsNeedCpuBake(effects);
 }
 
 /**
@@ -205,7 +252,13 @@ export function applyEffectChain(
       } else if (isCanvas2dProcedural(e.type)) {
         flushCss();
         applyProceduralEffect(oc, w, h, e);
-      } else if (isCanvas2dOnlyEffect(e.type)) {
+      } else if (hasCanvas2dImplementation(e.type)) {
+        // NOT `isCanvas2dOnlyEffect`: Fill / Stroke / Sharpen / Noise have GPU
+        // materials and so do not force a bake, but once a layer is baked for
+        // any other reason its GPU effect list is dropped entirely and this is
+        // the only place left that can draw them. Gating on "forces a bake"
+        // instead of "can be drawn" made all four no-op on every layer that
+        // also carried an interior style.
         flushCss();
         applyCanvas2dEffect(oc, w, h, e);
       }

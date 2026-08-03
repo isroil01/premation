@@ -1,15 +1,37 @@
 /**
- * LayerStylesControls (Prompt E8) — Photoshop-style layer styles for a layer:
- * Drop Shadow + Outer Glow. Both compile to the CSS-filter render path, so
- * edits repaint live and are captured by History / autosave / export.
+ * LayerStylesControls (Prompt E8) — Photoshop-style layer styles for a layer.
+ *
+ * Every numeric and colour field carries a STOPWATCH, so a style animates the
+ * same way an effect parameter does. That is what makes "shadow here, no shadow
+ * there" expressible: keyframe the style's Opacity (or Size) rather than trying
+ * to animate its on/off checkbox, which is also how it is done in After Effects.
+ *
+ * The tracks live on the compiled effect's path — `effect.layerstyle:<style>.
+ * <param>` — because `layerStylesToEffects` is what the renderer samples. The
+ * style field and the effect param are often named differently (a shadow's
+ * `blur` is the effect's `softness`), so the mapping comes from
+ * LAYER_STYLE_NUMBER_PARAMS / LAYER_STYLE_COLOR_PARAMS rather than being
+ * guessed here; a test asserts those name params that really are emitted.
+ *
+ * Glass is the exception: it resolves through `glassResolve`, not the effect
+ * chain, so its fields animate under `glass.<field>` and in STORED units (0..1
+ * opacities) rather than the 0..100 the field displays — hence `trackFactor`.
  */
 
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
 import { AngleDial } from '@components/AngleDial';
+import { StopwatchButton } from '@components/PropertyRow';
 import { useCompositionStore } from '@stores/compositionStore';
-import { resolveGlobalLight } from '@stores/projectStore';
+import { useActiveWorkspace, resolveGlobalLight } from '@stores/projectStore';
+import { useSceneRevision } from '@stores/sceneStore';
+import { defaultAnimation } from '@motion/animation';
+import { runAnimEdit } from '@core/animation/animationCommands';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
+import { Color } from '@motion/renderer';
+import { effectPropPath } from '@core/effects/effects';
+import { glassPropPath, type GlassParam } from '@core/effects/glassResolve';
 import {
   getNodeLayerStyles,
   toggleDropShadow,
@@ -32,8 +54,170 @@ import {
   updateBevel,
   toggleGlass,
   updateGlass,
+  layerStyleEffectId,
+  LAYER_STYLE_NUMBER_PARAMS,
+  LAYER_STYLE_COLOR_PARAMS,
+  type LayerStyles,
 } from '@core/effects/layerStyles';
 import styles from './EffectsPanel.module.css';
+
+/** Animation prop path for one numeric layer-style field. */
+function stylePath(style: keyof LayerStyles, field: string): string | null {
+  const b = LAYER_STYLE_NUMBER_PARAMS[style as string]?.[field];
+  return b ? effectPropPath(layerStyleEffectId(style), b.param) : null;
+}
+
+/** Animation prop path for one colour layer-style field. */
+function styleColorPath(style: keyof LayerStyles, field: string): string | null {
+  const p = LAYER_STYLE_COLOR_PARAMS[style as string]?.[field];
+  return p ? effectPropPath(layerStyleEffectId(style), p) : null;
+}
+
+/**
+ * A numeric style field with a stopwatch.
+ *
+ * `value` and `onChange` are in DISPLAY units (opacity as 0..100, matching what
+ * the field shows). `trackFactor` converts display → track units: 1 for layer
+ * styles, whose compiled effect params share the display scale, and 0.01 for
+ * Glass, whose tracks are read back in stored 0..1.
+ */
+function StyleNum({
+  nodeId, path, label, value, onChange, trackFactor = 1, onAnimate, bare = false,
+  min, max, step, precision = 0, unit,
+}: {
+  nodeId: string;
+  /** Null → not animatable; renders without a stopwatch. */
+  path: string | null;
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  trackFactor?: number;
+  /**
+   * Run once, just before the first keyframe is written.
+   *
+   * For the angle fields bound to the composition's global light: that binding
+   * overrides the style's own angle at render time, so keyframing the angle
+   * while still bound would produce a track the renderer ignores. Editing the
+   * value already unbinds; animating it has to as well.
+   */
+  onAnimate?: () => void;
+  /** Render stopwatch + field only, with no label wrapper — for the horizontal
+   *  rows (Tint, Rim) where the label already sits beside the colour swatch. */
+  bare?: boolean;
+  min?: number; max?: number; step?: number; precision?: number; unit?: string;
+}): JSX.Element {
+  const time = useActiveWorkspace()?.time ?? 0;
+  useSceneRevision((s) => s.rev);
+  const animated = !!path && defaultAnimation.isAnimated(nodeId, path);
+  // The canonical keyframe axis — the same one buildSnapshot samples.
+  const layerT = compToKeyframeTime(nodeId, time);
+  const display = animated
+    ? (defaultAnimation.sample(nodeId, path!, layerT) ?? value * trackFactor) / trackFactor
+    : value;
+
+  const set = (v: number): void => {
+    if (animated) {
+      runAnimEdit(
+        `Set ${label}`,
+        () => defaultAnimation.setKeyframe(nodeId, path!, layerT, v * trackFactor),
+        `ls:${nodeId}:${path}:${layerT}`,
+      );
+    } else {
+      onChange(v);
+    }
+  };
+  const toggle = (): void => {
+    if (!path) return;
+    if (animated) {
+      runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
+    } else {
+      runAnimEdit(`Animate ${label}`, () => {
+        onAnimate?.();
+        defaultAnimation.setKeyframe(nodeId, path, layerT, value * trackFactor);
+      });
+    }
+  };
+
+  const field = (
+    <ValueField
+      value={display}
+      min={min} max={max} step={step} precision={precision} unit={unit}
+      onChange={set}
+      aria-label={label}
+    />
+  );
+  const watch = path ? <StopwatchButton animated={animated} label={label} onToggle={toggle} /> : null;
+
+  if (bare) return <>{watch}{field}</>;
+  return (
+    <label className={styles.maskField}>
+      <span className={styles.styleFieldHead}>{watch}{label}</span>
+      {field}
+    </label>
+  );
+}
+
+/**
+ * A colour style field with a stopwatch.
+ *
+ * Colours animate through the decomposed `_r/_g/_b/_a` channel tracks that
+ * `resolveEffectParams` recomposes per frame — the same mechanism an effect's
+ * colour uses, so an animated shadow colour needs nothing new in the engine.
+ */
+function StyleColor({
+  nodeId, path, label, value, onChange,
+}: {
+  nodeId: string;
+  path: string | null;
+  label: string;
+  value: string;
+  onChange: (hex: string) => void;
+}): JSX.Element {
+  const time = useActiveWorkspace()?.time ?? 0;
+  useSceneRevision((s) => s.rev);
+  const animated = !!path && defaultAnimation.isAnimated(nodeId, `${path}_r`);
+  const layerT = compToKeyframeTime(nodeId, time);
+
+  const displayed = (() => {
+    if (!animated) return value;
+    const r = defaultAnimation.sample(nodeId, `${path}_r`, layerT) ?? 255;
+    const g = defaultAnimation.sample(nodeId, `${path}_g`, layerT) ?? 255;
+    const b = defaultAnimation.sample(nodeId, `${path}_b`, layerT) ?? 255;
+    const a = defaultAnimation.sample(nodeId, `${path}_a`, layerT) ?? 1;
+    return Color.toHex({ r, g, b, a });
+  })();
+
+  const writeChannels = (hex: string, editLabel: string): void => {
+    const c = Color.fromHex(hex);
+    runAnimEdit(editLabel, () => {
+      defaultAnimation.setKeyframe(nodeId, `${path}_r`, layerT, c.r);
+      defaultAnimation.setKeyframe(nodeId, `${path}_g`, layerT, c.g);
+      defaultAnimation.setKeyframe(nodeId, `${path}_b`, layerT, c.b);
+      defaultAnimation.setKeyframe(nodeId, `${path}_a`, layerT, c.a ?? 1);
+    }, `lscolor:${nodeId}:${path}`);
+  };
+  const toggle = (): void => {
+    if (!path) return;
+    if (animated) {
+      runAnimEdit(`Remove ${label} animation`, () => {
+        for (const ch of ['_r', '_g', '_b', '_a']) defaultAnimation.removeTrack(nodeId, `${path}${ch}`);
+      });
+    } else {
+      writeChannels(value, `Animate ${label}`);
+    }
+  };
+
+  return (
+    <>
+      {path ? <StopwatchButton animated={animated} label={label} onToggle={toggle} /> : null}
+      <ColorPicker
+        value={displayed}
+        onChange={(hex) => { if (animated) writeChannels(hex, `Set ${label}`); else onChange(hex); }}
+        aria-label={label}
+      />
+    </>
+  );
+}
 
 export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element {
   const ls = getNodeLayerStyles(nodeId);
@@ -90,59 +274,50 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
       {gl ? (
         <>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Blur</span>
-              <ValueField value={gl.blur} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateGlass(nodeId, { blur: v })} aria-label="Glass blur" />
-            </label>
-            <label className={styles.maskField}>
-              {/* The "vibrancy" boost. Without it frosted glass reads as a grey
-                  smear rather than as glass. */}
-              <span>Saturation</span>
-              <ValueField value={gl.saturation} min={0} max={4} precision={2} step={0.05}
-                onChange={(v) => updateGlass(nodeId, { saturation: v })} aria-label="Glass saturation" />
-            </label>
+            <StyleNum nodeId={nodeId} path={glassPropPath('blur' as GlassParam)}
+              label="Blur" value={gl.blur} min={0} max={200} unit="px"
+              onChange={(v) => updateGlass(nodeId, { blur: v })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('saturation' as GlassParam)}
+              label="Saturation" value={gl.saturation} min={0} max={4} step={0.05} precision={2}
+              onChange={(v) => updateGlass(nodeId, { saturation: v })} />
           </div>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Tint</span>
-            <ColorPicker value={gl.tintColor} onChange={(tintColor) => updateGlass(nodeId, { tintColor })} aria-label="Glass tint" />
-            <ValueField value={Math.round(gl.tintOpacity * 100)} min={0} max={100} precision={0} unit="%"
-              onChange={(v) => updateGlass(nodeId, { tintOpacity: v / 100 })} aria-label="Glass tint opacity" />
+            <StyleColor nodeId={nodeId} path={glassPropPath('tintColor')}
+              label="Glass tint" value={gl.tintColor}
+              onChange={(tintColor) => updateGlass(nodeId, { tintColor })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('tintOpacity')} bare
+              label="Glass tint opacity" value={Math.round(gl.tintOpacity * 100)}
+              min={0} max={100} unit="%" trackFactor={0.01}
+              onChange={(v) => updateGlass(nodeId, { tintOpacity: v / 100 })} />
           </div>
 
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Refraction</span>
-              <ValueField value={gl.refraction} min={-200} max={200} precision={0} unit="px"
-                onChange={(v) => updateGlass(nodeId, { refraction: v })} aria-label="Glass refraction" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Edge width</span>
-              <ValueField value={gl.edgeWidth} min={0} max={64} precision={0} unit="px"
-                onChange={(v) => updateGlass(nodeId, { edgeWidth: v })} aria-label="Glass edge width" />
-            </label>
+            <StyleNum nodeId={nodeId} path={glassPropPath('refraction' as GlassParam)}
+              label="Refraction" value={gl.refraction} min={-200} max={200} unit="px"
+              onChange={(v) => updateGlass(nodeId, { refraction: v })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('edgeWidth' as GlassParam)}
+              label="Edge width" value={gl.edgeWidth} min={0} max={64} unit="px"
+              onChange={(v) => updateGlass(nodeId, { edgeWidth: v })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              {/* Two pixels of this is the whole difference between "blurred
-                  rectangle" and "glass" — real glass splits light. */}
-              <span>Aberration</span>
-              <ValueField value={gl.chromaticAberration} min={-32} max={32} precision={0} unit="px"
-                onChange={(v) => updateGlass(nodeId, { chromaticAberration: v })} aria-label="Glass chromatic aberration" />
-            </label>
-            <label className={styles.maskField}>
-              {/* A blurred gradient bands on any real display. */}
-              <span>Grain</span>
-              <ValueField value={Math.round(gl.grain * 100)} min={0} max={100} precision={0} unit="%"
-                onChange={(v) => updateGlass(nodeId, { grain: v / 100 })} aria-label="Glass grain" />
-            </label>
+            <StyleNum nodeId={nodeId} path={glassPropPath('chromaticAberration' as GlassParam)}
+              label="Aberration" value={gl.chromaticAberration} min={-32} max={32} unit="px"
+              onChange={(v) => updateGlass(nodeId, { chromaticAberration: v })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('grain' as GlassParam)}
+              label="Grain" value={Math.round(gl.grain * 100)} min={0} max={100} unit="%" trackFactor={0.01}
+              onChange={(v) => updateGlass(nodeId, { grain: v / 100 })} />
           </div>
 
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Rim</span>
-            <ColorPicker value={gl.rimColor} onChange={(rimColor) => updateGlass(nodeId, { rimColor })} aria-label="Glass rim colour" />
-            <ValueField value={Math.round(gl.rimOpacity * 100)} min={0} max={100} precision={0} unit="%"
-              onChange={(v) => updateGlass(nodeId, { rimOpacity: v / 100 })} aria-label="Glass rim opacity" />
+            <StyleColor nodeId={nodeId} path={glassPropPath('rimColor')}
+              label="Glass rim colour" value={gl.rimColor}
+              onChange={(rimColor) => updateGlass(nodeId, { rimColor })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('rimOpacity')} bare
+              label="Glass rim opacity" value={Math.round(gl.rimOpacity * 100)}
+              min={0} max={100} unit="%" trackFactor={0.01}
+              onChange={(v) => updateGlass(nodeId, { rimOpacity: v / 100 })} />
           </div>
           <div className={styles.blendRow}>
             <Checkbox
@@ -153,36 +328,22 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
             />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Rim width</span>
-              <ValueField value={gl.rimWidth} min={0} max={64} precision={0} unit="px"
-                onChange={(v) => updateGlass(nodeId, { rimWidth: v })} aria-label="Glass rim width" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Rim angle</span>
-              {/* Shows the LIGHT's angle while bound, so the field cannot
-                  disagree with what is on screen. Editing unbinds. */}
-              <ValueField
-                value={gl.useGlobalLight ? light.angle : gl.rimAngle}
-                precision={0}
-                unit="°"
-                onChange={(v) => updateGlass(nodeId, { rimAngle: v, useGlobalLight: false })}
-                aria-label="Glass rim angle"
-              />
-            </label>
+            <StyleNum nodeId={nodeId} path={glassPropPath('rimWidth' as GlassParam)}
+              label="Rim width" value={gl.rimWidth} min={0} max={64} unit="px"
+              onChange={(v) => updateGlass(nodeId, { rimWidth: v })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('rimAngle' as GlassParam)}
+              label="Rim angle" value={gl.useGlobalLight ? light.angle : gl.rimAngle} unit="°"
+              onAnimate={() => updateGlass(nodeId, { useGlobalLight: false })}
+              onChange={(v) => updateGlass(nodeId, { rimAngle: v, useGlobalLight: false })} />
           </div>
 
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Specular</span>
-              <ValueField value={Math.round(gl.specularIntensity * 100)} min={0} max={200} precision={0} unit="%"
-                onChange={(v) => updateGlass(nodeId, { specularIntensity: v / 100 })} aria-label="Glass specular intensity" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Falloff</span>
-              <ValueField value={gl.specularFalloff} min={0.1} max={64} precision={1}
-                onChange={(v) => updateGlass(nodeId, { specularFalloff: v })} aria-label="Glass specular falloff" />
-            </label>
+            <StyleNum nodeId={nodeId} path={glassPropPath('specularIntensity' as GlassParam)}
+              label="Specular" value={Math.round(gl.specularIntensity * 100)} min={0} max={200} unit="%" trackFactor={0.01}
+              onChange={(v) => updateGlass(nodeId, { specularIntensity: v / 100 })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('specularFalloff' as GlassParam)}
+              label="Falloff" value={gl.specularFalloff} min={0.1} max={64} precision={1}
+              onChange={(v) => updateGlass(nodeId, { specularFalloff: v })} />
           </div>
           {!gl.useGlobalLight && (
             <div className={styles.blendRow}>
@@ -211,7 +372,9 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         <>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Color</span>
-            <ColorPicker value={ds.color} onChange={(color) => updateDropShadow(nodeId, { color })} aria-label="Shadow color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('dropShadow', 'color')}
+              label="Shadow color" value={ds.color}
+              onChange={(color) => updateDropShadow(nodeId, { color })} />
           </div>
           <div className={styles.blendRow}>
             <Checkbox
@@ -222,36 +385,21 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
             />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Distance</span>
-              <ValueField value={ds.distance} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateDropShadow(nodeId, { distance: v })} aria-label="Shadow distance" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Angle</span>
-              {/* Shows the LIGHT's angle while bound, so the field never
-                  disagrees with the shadow on screen. Editing it unbinds — you
-                  cannot meaningfully set a per-style angle and stay bound. */}
-              <ValueField
-                value={boundToLight ? light.angle : ds.angle}
-                precision={0}
-                unit="°"
-                onChange={(v) => updateDropShadow(nodeId, { angle: v, useGlobalLight: false })}
-                aria-label="Shadow angle"
-              />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('dropShadow', 'distance')}
+              label="Distance" value={ds.distance} min={0} max={200} unit="px"
+              onChange={(v) => updateDropShadow(nodeId, { distance: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('dropShadow', 'angle')}
+              label="Angle" value={boundToLight ? light.angle : ds.angle} unit="°"
+              onAnimate={() => updateDropShadow(nodeId, { useGlobalLight: false })}
+              onChange={(v) => updateDropShadow(nodeId, { angle: v, useGlobalLight: false })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Blur</span>
-              <ValueField value={ds.blur} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateDropShadow(nodeId, { blur: v })} aria-label="Shadow blur" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Opacity</span>
-              <ValueField value={Math.round(ds.opacity * 100)} min={0} max={100} precision={0} unit="%"
-                onChange={(v) => updateDropShadow(nodeId, { opacity: v / 100 })} aria-label="Shadow opacity" />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('dropShadow', 'blur')}
+              label="Blur" value={ds.blur} min={0} max={200} unit="px"
+              onChange={(v) => updateDropShadow(nodeId, { blur: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('dropShadow', 'opacity')}
+              label="Opacity" value={Math.round(ds.opacity * 100)} min={0} max={100} unit="%"
+              onChange={(v) => updateDropShadow(nodeId, { opacity: v / 100 })} />
           </div>
         </>
       ) : null}
@@ -268,19 +416,17 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         <>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Color</span>
-            <ColorPicker value={og.color} onChange={(color) => updateOuterGlow(nodeId, { color })} aria-label="Glow color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('outerGlow', 'color')}
+              label="Glow color" value={og.color}
+              onChange={(color) => updateOuterGlow(nodeId, { color })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Size</span>
-              <ValueField value={og.size} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateOuterGlow(nodeId, { size: v })} aria-label="Glow size" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Opacity</span>
-              <ValueField value={Math.round(og.opacity * 100)} min={0} max={100} precision={0} unit="%"
-                onChange={(v) => updateOuterGlow(nodeId, { opacity: v / 100 })} aria-label="Glow opacity" />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('outerGlow', 'size')}
+              label="Size" value={og.size} min={0} max={200} unit="px"
+              onChange={(v) => updateOuterGlow(nodeId, { size: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('outerGlow', 'opacity')}
+              label="Opacity" value={Math.round(og.opacity * 100)} min={0} max={100} unit="%"
+              onChange={(v) => updateOuterGlow(nodeId, { opacity: v / 100 })} />
           </div>
         </>
       ) : null}
@@ -298,36 +444,26 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         <>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Color</span>
-            <ColorPicker value={ish.color} onChange={(color) => updateInnerShadow(nodeId, { color })} aria-label="Inner shadow color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('innerShadow', 'color')}
+              label="Inner shadow color" value={ish.color}
+              onChange={(color) => updateInnerShadow(nodeId, { color })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Distance</span>
-              <ValueField value={ish.distance} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateInnerShadow(nodeId, { distance: v })} aria-label="Inner shadow distance" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Angle</span>
-              <ValueField
-                value={ish.useGlobalLight ? light.angle : ish.angle}
-                precision={0}
-                unit="°"
-                onChange={(v) => updateInnerShadow(nodeId, { angle: v, useGlobalLight: false })}
-                aria-label="Inner shadow angle"
-              />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('innerShadow', 'distance')}
+              label="Distance" value={ish.distance} min={0} max={200} unit="px"
+              onChange={(v) => updateInnerShadow(nodeId, { distance: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('innerShadow', 'angle')}
+              label="Angle" value={ish.useGlobalLight ? light.angle : ish.angle} unit="°"
+              onAnimate={() => updateInnerShadow(nodeId, { useGlobalLight: false })}
+              onChange={(v) => updateInnerShadow(nodeId, { angle: v, useGlobalLight: false })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Size</span>
-              <ValueField value={ish.size} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateInnerShadow(nodeId, { size: v })} aria-label="Inner shadow size" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Opacity</span>
-              <ValueField value={Math.round(ish.opacity * 100)} min={0} max={100} precision={0} unit="%"
-                onChange={(v) => updateInnerShadow(nodeId, { opacity: v / 100 })} aria-label="Inner shadow opacity" />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('innerShadow', 'size')}
+              label="Size" value={ish.size} min={0} max={200} unit="px"
+              onChange={(v) => updateInnerShadow(nodeId, { size: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('innerShadow', 'opacity')}
+              label="Opacity" value={Math.round(ish.opacity * 100)} min={0} max={100} unit="%"
+              onChange={(v) => updateInnerShadow(nodeId, { opacity: v / 100 })} />
           </div>
           <div className={styles.blendRow}>
             <Checkbox
@@ -353,18 +489,16 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         <div className={styles.maskControls}>
           <label className={styles.maskField}>
             <span>Color</span>
-            <ColorPicker value={igl.color} onChange={(color) => updateInnerGlow(nodeId, { color })} aria-label="Inner glow color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('innerGlow', 'color')}
+              label="Inner glow color" value={igl.color}
+              onChange={(color) => updateInnerGlow(nodeId, { color })} />
           </label>
-          <label className={styles.maskField}>
-            <span>Size</span>
-            <ValueField value={igl.size} min={0} max={200} precision={0} unit="px"
-              onChange={(v) => updateInnerGlow(nodeId, { size: v })} aria-label="Inner glow size" />
-          </label>
-          <label className={styles.maskField}>
-            <span>Opacity</span>
-            <ValueField value={Math.round(igl.opacity * 100)} min={0} max={100} precision={0} unit="%"
-              onChange={(v) => updateInnerGlow(nodeId, { opacity: v / 100 })} aria-label="Inner glow opacity" />
-          </label>
+          <StyleNum nodeId={nodeId} path={stylePath('innerGlow', 'size')}
+            label="Size" value={igl.size} min={0} max={200} unit="px"
+            onChange={(v) => updateInnerGlow(nodeId, { size: v })} />
+          <StyleNum nodeId={nodeId} path={stylePath('innerGlow', 'opacity')}
+            label="Opacity" value={Math.round(igl.opacity * 100)} min={0} max={100} unit="%"
+            onChange={(v) => updateInnerGlow(nodeId, { opacity: v / 100 })} />
         </div>
       ) : null}
 
@@ -381,31 +515,25 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         <>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Color</span>
-            <ColorPicker value={sat.color} onChange={(color) => updateSatin(nodeId, { color })} aria-label="Satin color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('satin', 'color')}
+              label="Satin color" value={sat.color}
+              onChange={(color) => updateSatin(nodeId, { color })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Distance</span>
-              <ValueField value={sat.distance} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateSatin(nodeId, { distance: v })} aria-label="Satin distance" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Angle</span>
-              <ValueField value={sat.angle} precision={0} unit="°"
-                onChange={(v) => updateSatin(nodeId, { angle: v })} aria-label="Satin angle" />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('satin', 'distance')}
+              label="Distance" value={sat.distance} min={0} max={200} unit="px"
+              onChange={(v) => updateSatin(nodeId, { distance: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('satin', 'angle')}
+              label="Angle" value={sat.angle} unit="°"
+              onChange={(v) => updateSatin(nodeId, { angle: v })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Size</span>
-              <ValueField value={sat.size} min={0} max={200} precision={0} unit="px"
-                onChange={(v) => updateSatin(nodeId, { size: v })} aria-label="Satin size" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Opacity</span>
-              <ValueField value={Math.round(sat.opacity * 100)} min={0} max={100} precision={0} unit="%"
-                onChange={(v) => updateSatin(nodeId, { opacity: v / 100 })} aria-label="Satin opacity" />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('satin', 'size')}
+              label="Size" value={sat.size} min={0} max={200} unit="px"
+              onChange={(v) => updateSatin(nodeId, { size: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('satin', 'opacity')}
+              label="Opacity" value={Math.round(sat.opacity * 100)} min={0} max={100} unit="%"
+              onChange={(v) => updateSatin(nodeId, { opacity: v / 100 })} />
           </div>
           <div className={styles.blendRow}>
             <Checkbox
@@ -430,55 +558,36 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
       {bev ? (
         <>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Size</span>
-              <ValueField value={bev.size} min={1} max={100} precision={0} unit="px"
-                onChange={(v) => updateBevel(nodeId, { size: v })} aria-label="Bevel size" />
-            </label>
-            <label className={styles.maskField}>
-              <span>Depth</span>
-              <ValueField value={bev.depth} min={0} max={500} precision={0} unit="%"
-                onChange={(v) => updateBevel(nodeId, { depth: v })} aria-label="Bevel depth" />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('bevel', 'size')}
+              label="Size" value={bev.size} min={1} max={100} unit="px"
+              onChange={(v) => updateBevel(nodeId, { size: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('bevel', 'depth')}
+              label="Depth" value={bev.depth} min={0} max={500} unit="%"
+              onChange={(v) => updateBevel(nodeId, { depth: v })} />
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Angle</span>
-              <ValueField
-                value={bev.useGlobalLight ? light.angle : bev.angle}
-                precision={0}
-                unit="°"
-                onChange={(v) => updateBevel(nodeId, { angle: v, useGlobalLight: false })}
-                aria-label="Bevel angle"
-              />
-            </label>
-            <label className={styles.maskField}>
-              <span>Altitude</span>
-              {/* The ONLY control in the app that reads the light's altitude —
-                  a bevel needs to know how steeply the light falls, not just
-                  which way it comes from. */}
-              <ValueField
-                value={bev.useGlobalLight ? light.altitude : bev.altitude}
-                min={0}
-                max={90}
-                precision={0}
-                unit="°"
-                onChange={(v) => updateBevel(nodeId, { altitude: v, useGlobalLight: false })}
-                aria-label="Bevel altitude"
-              />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('bevel', 'angle')}
+              label="Angle" value={bev.useGlobalLight ? light.angle : bev.angle} unit="°"
+              onAnimate={() => updateBevel(nodeId, { useGlobalLight: false })}
+              onChange={(v) => updateBevel(nodeId, { angle: v, useGlobalLight: false })} />
+            <StyleNum nodeId={nodeId} path={stylePath('bevel', 'altitude')}
+              label="Altitude" value={bev.useGlobalLight ? light.altitude : bev.altitude} min={0} max={90} unit="°"
+              onAnimate={() => updateBevel(nodeId, { useGlobalLight: false })}
+              onChange={(v) => updateBevel(nodeId, { altitude: v, useGlobalLight: false })} />
           </div>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Highlight</span>
-            <ColorPicker value={bev.highlightColor}
-              onChange={(highlightColor) => updateBevel(nodeId, { highlightColor })} aria-label="Bevel highlight color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('bevel', 'highlightColor')}
+              label="Bevel highlight color" value={bev.highlightColor}
+              onChange={(highlightColor) => updateBevel(nodeId, { highlightColor })} />
             <ValueField value={Math.round(bev.highlightOpacity * 100)} min={0} max={100} precision={0} unit="%"
               onChange={(v) => updateBevel(nodeId, { highlightOpacity: v / 100 })} aria-label="Bevel highlight opacity" />
           </div>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Shadow</span>
-            <ColorPicker value={bev.shadowColor}
-              onChange={(shadowColor) => updateBevel(nodeId, { shadowColor })} aria-label="Bevel shadow color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('bevel', 'shadowColor')}
+              label="Bevel shadow color" value={bev.shadowColor}
+              onChange={(shadowColor) => updateBevel(nodeId, { shadowColor })} />
             <ValueField value={Math.round(bev.shadowOpacity * 100)} min={0} max={100} precision={0} unit="%"
               onChange={(v) => updateBevel(nodeId, { shadowOpacity: v / 100 })} aria-label="Bevel shadow opacity" />
           </div>
@@ -514,13 +623,13 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         <div className={styles.maskControls}>
           <label className={styles.maskField}>
             <span>Color</span>
-            <ColorPicker value={co.color} onChange={(color) => updateColorOverlay(nodeId, { color })} aria-label="Overlay color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('colorOverlay', 'color')}
+              label="Overlay color" value={co.color}
+              onChange={(color) => updateColorOverlay(nodeId, { color })} />
           </label>
-          <label className={styles.maskField}>
-            <span>Opacity</span>
-            <ValueField value={Math.round(co.opacity * 100)} min={0} max={100} precision={0} unit="%"
-              onChange={(v) => updateColorOverlay(nodeId, { opacity: v / 100 })} aria-label="Overlay opacity" />
-          </label>
+          <StyleNum nodeId={nodeId} path={stylePath('colorOverlay', 'opacity')}
+            label="Opacity" value={Math.round(co.opacity * 100)} min={0} max={100} unit="%"
+            onChange={(v) => updateColorOverlay(nodeId, { opacity: v / 100 })} />
         </div>
       ) : null}
 
@@ -538,29 +647,25 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
           <div className={styles.maskControls}>
             <label className={styles.maskField}>
               <span>From</span>
-              <ColorPicker value={go.from} onChange={(from) => updateGradientOverlay(nodeId, { from })} aria-label="Gradient from" />
+              <StyleColor nodeId={nodeId} path={styleColorPath('gradientOverlay', 'from')}
+                label="Gradient from" value={go.from}
+                onChange={(from) => updateGradientOverlay(nodeId, { from })} />
             </label>
             <label className={styles.maskField}>
               <span>To</span>
-              <ColorPicker value={go.to} onChange={(to) => updateGradientOverlay(nodeId, { to })} aria-label="Gradient to" />
+              <StyleColor nodeId={nodeId} path={styleColorPath('gradientOverlay', 'to')}
+                label="Gradient to" value={go.to}
+                onChange={(to) => updateGradientOverlay(nodeId, { to })} />
             </label>
           </div>
           <div className={styles.maskControls}>
-            <label className={styles.maskField}>
-              <span>Angle</span>
-              <ValueField
-                value={go.useGlobalLight ? light.angle : go.angle}
-                precision={0}
-                unit="°"
-                onChange={(v) => updateGradientOverlay(nodeId, { angle: v, useGlobalLight: false })}
-                aria-label="Gradient angle"
-              />
-            </label>
-            <label className={styles.maskField}>
-              <span>Opacity</span>
-              <ValueField value={Math.round(go.opacity * 100)} min={0} max={100} precision={0} unit="%"
-                onChange={(v) => updateGradientOverlay(nodeId, { opacity: v / 100 })} aria-label="Gradient opacity" />
-            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('gradientOverlay', 'angle')}
+              label="Angle" value={go.useGlobalLight ? light.angle : go.angle} unit="°"
+              onAnimate={() => updateGradientOverlay(nodeId, { useGlobalLight: false })}
+              onChange={(v) => updateGradientOverlay(nodeId, { angle: v, useGlobalLight: false })} />
+            <StyleNum nodeId={nodeId} path={stylePath('gradientOverlay', 'opacity')}
+              label="Opacity" value={Math.round(go.opacity * 100)} min={0} max={100} unit="%"
+              onChange={(v) => updateGradientOverlay(nodeId, { opacity: v / 100 })} />
           </div>
           <div className={styles.blendRow}>
             <Checkbox
@@ -586,18 +691,16 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         <div className={styles.maskControls}>
           <label className={styles.maskField}>
             <span>Color</span>
-            <ColorPicker value={stk.color} onChange={(color) => updateStrokeStyle(nodeId, { color })} aria-label="Stroke style color" />
+            <StyleColor nodeId={nodeId} path={styleColorPath('stroke', 'color')}
+              label="Stroke style color" value={stk.color}
+              onChange={(color) => updateStrokeStyle(nodeId, { color })} />
           </label>
-          <label className={styles.maskField}>
-            <span>Size</span>
-            <ValueField value={stk.size} min={0} max={200} precision={0} unit="px"
-              onChange={(v) => updateStrokeStyle(nodeId, { size: v })} aria-label="Stroke style size" />
-          </label>
-          <label className={styles.maskField}>
-            <span>Opacity</span>
-            <ValueField value={Math.round(stk.opacity * 100)} min={0} max={100} precision={0} unit="%"
-              onChange={(v) => updateStrokeStyle(nodeId, { opacity: v / 100 })} aria-label="Stroke style opacity" />
-          </label>
+          <StyleNum nodeId={nodeId} path={stylePath('stroke', 'size')}
+            label="Size" value={stk.size} min={0} max={200} unit="px"
+            onChange={(v) => updateStrokeStyle(nodeId, { size: v })} />
+          <StyleNum nodeId={nodeId} path={stylePath('stroke', 'opacity')}
+            label="Opacity" value={Math.round(stk.opacity * 100)} min={0} max={100} unit="%"
+            onChange={(v) => updateStrokeStyle(nodeId, { opacity: v / 100 })} />
         </div>
       ) : null}
     </>

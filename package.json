@@ -3,7 +3,7 @@
   "version": "0.1.2",
   "description": "AI-native motion design and animation editor for the desktop — an After Effects-class timeline, 2D/3D compositing and a GPU renderer, running entirely on your machine.",
   "license": "AGPL-3.0-only",
-  "author": "Motion Editor contributors",
+  "author": "Premation contributors",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/isroil01/motion-editor.git"
