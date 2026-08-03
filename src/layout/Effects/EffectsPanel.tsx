@@ -82,6 +82,10 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   exposure: 'Color Correction',
   vibrance: 'Color Correction',
   colorama: 'Color Correction',
+  'set-matte': 'Keying',
+  'simple-choker': 'Keying',
+  'linear-color-key': 'Keying',
+  'shift-channels': 'Keying',
   // Color Correction
   brightness: 'Color Correction',
   contrast: 'Color Correction',

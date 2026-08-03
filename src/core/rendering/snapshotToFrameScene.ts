@@ -376,6 +376,24 @@ function extractSpatialEffects(
       const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
       spatial.push({ type: 'displacement-map', amount: n('amount'), ...(mapLayerId ? { mapLayerId } : {}) });
     }
+    if (e.type === 'set-matte') {
+      // Same shape as displacement-map above — node id === renderable id. The
+      // difference is the unset case: displacement falls back to self, this one
+      // is skipped in CompositionPass, because a layer matted by its own alpha
+      // is a wrong picture rather than a degraded one.
+      const matteRaw = effectParam(e, 'matteLayerId');
+      const matteLayerId = typeof matteRaw === 'string' && matteRaw !== '' ? matteRaw : undefined;
+      // Read as BOOLEANS, not through `n()`. `effectNumber` returns 0 for a
+      // checkbox param, so `n('invert') > 0.5` is unconditionally false — the
+      // control would persist, keyframe, and do nothing. Same reading as
+      // `monochrome` below, which is the existing precedent.
+      spatial.push({
+        type: 'set-matte',
+        useLuminance: e.params?.useLuminance === true,
+        invert: e.params?.invert === true,
+        ...(matteLayerId ? { matteLayerId } : {}),
+      });
+    }
     if (e.type === 'motion-tile') spatial.push({ type: 'motion-tile', scale: n('scale') });
     if (e.type === 'fill') {
       spatial.push({ type: 'fill', color: c('color', n('opacity') / 100) });

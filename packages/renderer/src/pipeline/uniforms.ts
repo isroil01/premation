@@ -369,6 +369,15 @@ export function packDisplacementMap(mvp: Mat3, uvRect: Rect, amountX: number, am
   return out;
 }
 
+/** Set Matte: x = 1 reads the matte's luminance (0 = its alpha), y = 1 inverts. */
+export function packSetMatte(mvp: Mat3, uvRect: Rect, useLuminance: boolean, invert: boolean): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = useLuminance ? 1 : 0; out[o + 1] = invert ? 1 : 0; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
 export function packMotionTile(mvp: Mat3, uvRect: Rect, scaleX: number, scaleY: number, offsetX: number, offsetY: number): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);

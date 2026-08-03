@@ -1021,6 +1021,77 @@ void main() {
   }
 };
 
+/**
+ * Set Matte — take this layer's coverage from ANOTHER layer's pixels.
+ *
+ * The structural sibling of `displacement-map`: same shape (a second texture at
+ * binding 3, sampled with the SAME target UV so orientation matches on both
+ * backends), different arithmetic. Reusing that shape is deliberate — it is the
+ * established route for an effect that reads another layer, and it inherits the
+ * backend-correct UV handling that took real work to get right.
+ *
+ * Distinct from the TRACK MATTE path, which consumes the layer directly above
+ * and removes it from the composite. This one names any layer, leaves it
+ * visible, and occupies a POSITION IN THE EFFECT STACK — so it composes with the
+ * effects above and below it, which a track matte cannot.
+ *
+ * params.x — 0 takes the matte's ALPHA, 1 takes its LUMINANCE.
+ * params.y — 1 inverts.
+ *
+ * The pipeline is premultiplied, so scaling coverage means scaling all four
+ * channels, not just `.a`. Scaling alpha alone would leave colour at full
+ * strength behind a faded matte and read as a bright halo.
+ */
+export const SET_MATTE: ShaderSource = {
+  name: 'set-matte',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var matteTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let m = textureSample(matteTex, smp, uv);
+  // Luminance is read from the PREMULTIPLIED sample deliberately: a transparent
+  // region of the matte layer must read as zero coverage, not as whatever colour
+  // happens to sit in its unused channels.
+  var k = select(m.a, dot(m.rgb, vec3<f32>(0.299, 0.587, 0.114)), obj.params.x > 0.5);
+  k = select(k, 1.0 - k, obj.params.y > 0.5);
+  return textureSample(tex, smp, uv) * clamp(k, 0.0, 1.0);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+uniform sampler2D uMapTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 m = texture(uMapTex, vUv);
+  float k = params.x > 0.5 ? dot(m.rgb, vec3(0.299, 0.587, 0.114)) : m.a;
+  if (params.y > 0.5) k = 1.0 - k;
+  frag = texture(uTex, vUv) * clamp(k, 0.0, 1.0);
+}
+`
+  }
+};
+
 export const MOTION_TILE: ShaderSource = {
   name: 'motion-tile',
   wgsl: `
@@ -2116,7 +2187,7 @@ const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
-  FILL, STROKE, SHARPEN, NOISE,
+  FILL, STROKE, SHARPEN, NOISE, SET_MATTE,
   SOLID3D,
   // The six families that sample a layer texture. Every one un-premultiplies.
   unpremultiplyingSample(TEXTURED),

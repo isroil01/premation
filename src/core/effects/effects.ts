@@ -59,7 +59,12 @@ export type EffectType =
   // ── Colour family ──
   | 'exposure'
   | 'vibrance'
-  | 'colorama';
+  | 'colorama'
+  // ── Matte / keying family ──
+  | 'set-matte'
+  | 'simple-choker'
+  | 'linear-color-key'
+  | 'shift-channels';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -561,6 +566,71 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'phaseShift', label: 'Phase Shift', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
       { key: 'cycleRepetitions', label: 'Cycle Repetitions', type: 'number', min: 0.1, max: 20, precision: 2, default: 1 },
       { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Matte / keying family ──────────────────────────────────────────
+  //
+  // Set Matte is the one with structural reach, and is NOT a Canvas2D pass: it
+  // reads ANOTHER LAYER's pixels, which the bake chain's `(oc, w, h, effect)`
+  // signature cannot express at all. It follows the `displacement-map`
+  // precedent — a GPU material with the source layer bound as a second texture.
+  {
+    type: 'set-matte',
+    label: 'Set Matte',
+    params: [
+      { key: 'matteLayerId', label: 'Take Matte From Layer', type: 'layer', default: '' },
+      // Checkboxes, and they MUST be read as booleans — `effectNumber` returns 0
+      // for one, so reading these through it gives a control that persists,
+      // keyframes, and does nothing. See snapshotToFrameScene.
+      { key: 'useLuminance', label: 'Use Luminance', type: 'checkbox', default: false },
+      { key: 'invert', label: 'Invert Matte', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+    // A real shader pass with no CSS or Canvas2D equivalent — the bake chain is
+    // handed one layer's buffer and could not reach the matte layer even in
+    // principle. Marking it means the UI SAYS it does nothing on the Canvas2D
+    // backend rather than offering it as though it worked, which is the whole
+    // reason this flag exists. It also satisfies the EFFECT_DEFS classification
+    // test, which is what caught the omission.
+    gpuOnly: true,
+  },
+  {
+    type: 'simple-choker',
+    label: 'Simple Choker',
+    params: [
+      // Positive chokes the matte inward, negative spreads it outward. The
+      // control people reach for immediately after any key, to eat the fringe.
+      { key: 'chokeAmount', label: 'Choke Matte', type: 'number', unit: 'px', min: -50, max: 50, precision: 1, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'linear-color-key',
+    label: 'Linear Color Key',
+    params: [
+      { key: 'keyColor', label: 'Key Color', type: 'color', default: '#00ff00' },
+      // 0 = RGB distance, 1 = hue, 2 = chroma. A number so it can be keyframed.
+      { key: 'matchOn', label: 'Match Colors', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'tolerance', label: 'Matching Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'softness', label: 'Matching Softness', type: 'number', unit: '%', min: 0, max: 100, default: 10 },
+      // AE's Key Colors / Keep Colors. Keeping only what matched is how this
+      // effect gets used as a selective colour isolator.
+      { key: 'keepMatched', label: 'Keep Matched Instead', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'shift-channels',
+    label: 'Shift Channels',
+    params: [
+      // Each output channel picks a SOURCE: 0 alpha, 1 red, 2 green, 3 blue,
+      // 4 luminance, 5 full-on, 6 full-off. The defaults are the identity.
+      { key: 'takeAlphaFrom', label: 'Take Alpha From', type: 'number', min: 0, max: 6, precision: 0, default: 0 },
+      { key: 'takeRedFrom', label: 'Take Red From', type: 'number', min: 0, max: 6, precision: 0, default: 1 },
+      { key: 'takeGreenFrom', label: 'Take Green From', type: 'number', min: 0, max: 6, precision: 0, default: 2 },
+      { key: 'takeBlueFrom', label: 'Take Blue From', type: 'number', min: 0, max: 6, precision: 0, default: 3 },
     ],
     css: () => '',
   },

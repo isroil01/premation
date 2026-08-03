@@ -37,6 +37,9 @@ import { waveWarpData, turbulentDisplaceData } from './warp';
 import { blurRgba, radialBlurData, blurDimensions } from './blurs';
 import { mosaicData, findEdgesData, roughenEdgesData } from './stylize';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
+import {
+  simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
+} from './keyingEffects';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -71,6 +74,12 @@ const CANVAS2D_ONLY = new Set<string>([
   // per-channel table can express.
   'vibrance',
   'colorama',
+  // Keying family. `set-matte` is deliberately ABSENT: it reads another layer's
+  // pixels, which this chain's per-layer signature cannot express, so it lives
+  // on the GPU path beside displacement-map instead.
+  'simple-choker',
+  'linear-color-key',
+  'shift-channels',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -213,7 +222,54 @@ export function applyCanvas2dEffect(
       return applyVibrance(oc, w, h, e);
     case 'colorama':
       return applyColorama(oc, w, h, e);
+    case 'simple-choker':
+      return applySimpleChoker(oc, w, h, e);
+    case 'linear-color-key':
+      return applyLinearColorKey(oc, w, h, e);
+    case 'shift-channels':
+      return applyShiftChannels(oc, w, h, e);
   }
+}
+
+// ── Keying family (kernels in keyingEffects.ts) ────────────────────
+//
+// `set-matte` has no case here on purpose — it is a GPU effect, and the
+// dispatch-coverage test only requires a case for CANVAS2D_ONLY members.
+
+function applySimpleChoker(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const choke = effectNumber(e, 'chokeAmount');
+  if (choke === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  simpleChokerData(img.data, w, h, choke);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyLinearColorKey(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  linearColorKeyData(
+    img.data,
+    parseHex(str(e, 'keyColor', '#00ff00')),
+    colorMatchMode(effectNumber(e, 'matchOn')),
+    effectNumber(e, 'tolerance'),
+    effectNumber(e, 'softness'),
+    bool(e, 'keepMatched', false),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyShiftChannels(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  shiftChannelsData(
+    img.data,
+    channelSource(effectNumber(e, 'takeAlphaFrom')),
+    channelSource(effectNumber(e, 'takeRedFrom')),
+    channelSource(effectNumber(e, 'takeGreenFrom')),
+    channelSource(effectNumber(e, 'takeBlueFrom')),
+  );
+  oc.putImageData(img, 0, 0);
 }
 
 // ── Colour family (kernels in colorEffects.ts) ─────────────────────
