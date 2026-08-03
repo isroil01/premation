@@ -60,12 +60,18 @@ function EffectParamRow({
   effect: Effect;
   def: EffectDef;
   param: EffectParamDef;
-}): JSX.Element {
+}): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
 
   const value = effectParam(effect, param.key);
   const label = `${def.label} ${param.label}`;
+
+  // A RESOLVED param is computed by the render pipeline every frame (Audio
+  // Spectrum's band magnitudes). Rendering a control for it would give the user
+  // a field whose input is overwritten before it is ever read — the dead-control
+  // shape this codebase keeps finding. It has no editor by construction.
+  if (param.type === 'resolved') return null;
 
   if (param.type === 'color') {
     // Keyframeable through decomposed channel tracks (`effect.<id>.<key>_r`

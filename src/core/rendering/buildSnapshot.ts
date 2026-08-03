@@ -7,7 +7,7 @@ import type SceneGraph from '@core/scene/SceneGraph';
 import { renderComponentsOf, renderTransformOf } from '@core/scene/SceneGraph';
 import type { SceneNode } from '@core/types';
 import { flattenComposition, readNodeKind, KIND_FILL } from '@core/scene/sceneDerive';
-import { readNodeRenderEffects, effectsToFilter, resolveEffectParams, type Effect } from '@core/effects/effects';
+import { readNodeRenderEffects, effectsToFilter, resolveEffectParams, paramsOf, type Effect } from '@core/effects/effects';
 import { readNodeLayerStyles, layerStylesToEffects, layerStyleEffectId, styledSurfaceFill } from '@core/effects/layerStyles';
 
 /** Prop-path prefix every layer-style keyframe track shares —
@@ -41,6 +41,7 @@ import { readGeometry } from '@core/workspace/geometry';
 import { readEchoConfig } from '@core/effects/echo';
 import { readPosterizeTimeFps } from '@core/effects/posterizeTime';
 import { readNodeQuality } from '@core/effects/layerQuality';
+import { resolveAudioSpectrum } from '@core/audio/audioSpectrum';
 import { readNodeMaterial } from '@core/scene/material';
 import { extrusionFaces, clampBevel, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS } from '@core/scene/extrusion';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
@@ -545,7 +546,19 @@ export function buildSnapshot(
    * The compiled styles carry stable ids (`layerstyle:dropShadow`), so they need
    * nothing else to animate through the ordinary `effect.<id>.<key>` path.
    */
-  const effectsAndStyles = (node: SceneNode, values: Map<PropPath, number> | undefined): {
+  const effectsAndStyles = (
+    node: SceneNode,
+    values: Map<PropPath, number> | undefined,
+    /**
+     * The layer's own time, for TIME-DEPENDENT effects (Timecode).
+     *
+     * Post time-remap, deliberately: a burn-in on a remapped or stretched layer
+     * must read the frame the layer is actually showing — the same axis
+     * Roughen's wiggle rides. Optional because the group and 3D-face call sites
+     * have no meaningful layer clock of their own.
+     */
+    layerTimeSec?: number,
+  ): {
     own: Effect[];
     all: Effect[];
   } => {
@@ -570,7 +583,31 @@ export function buildSnapshot(
       readNodeLayerStyles(node), globalLight.angle, globalLight.altitude,
       (k) => animated.has(k),
     );
-    const all = resolveEffectParams([...ownRaw, ...styleRaw], sample);
+    const resolved = resolveEffectParams([...ownRaw, ...styleRaw], sample, layerTimeSec);
+
+    // Audio Spectrum's band magnitudes are analysed HERE, where the scene and
+    // the audio engine are both reachable, and written into the effect's params.
+    // The drawing kernel then stays a pure function of its params — which is
+    // what keeps preview and export identical — and the per-frame magnitudes are
+    // what correctly make the content hash vary for this layer, and only this
+    // layer. Same mechanism as the Timecode clock above.
+    const all = layerTimeSec === undefined
+      ? resolved
+      : resolved.map((e) => {
+          if (e.type !== 'audio-spectrum') return e;
+          const p = paramsOf(e);
+          const magnitudes = resolveAudioSpectrum(
+            {
+              sourceLayerId: typeof p.audioLayerId === 'string' ? p.audioLayerId : '',
+              bands: typeof p.bands === 'number' ? p.bands : 32,
+              startFreq: typeof p.startFreq === 'number' ? p.startFreq : 40,
+              endFreq: typeof p.endFreq === 'number' ? p.endFreq : 16000,
+            },
+            layerTimeSec,
+          );
+          return { ...e, params: { ...p, magnitudes } };
+        });
+
     return { own: all.slice(0, ownRaw.length), all };
   };
 
@@ -1255,7 +1292,7 @@ export function buildSnapshot(
     //
     // Both go through ONE sampler pass (`effectsAndStyles`), which is what makes
     // layer-style parameters keyframeable at all.
-    const { own: ownEffects, all: resolvedEffects } = effectsAndStyles(node, a);
+    const { own: ownEffects, all: resolvedEffects } = effectsAndStyles(node, a, remapOf(node.id)(t));
     // The CSS form is retained for export/legacy readers only; `RenderLayer.
     // filter` is not consulted by any render path. It deliberately describes
     // the layer's OWN effects, not its styles, so the two cannot double-apply

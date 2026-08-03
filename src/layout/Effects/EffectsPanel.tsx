@@ -92,6 +92,7 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   'lens-flare': 'Generate',
   numbers: 'Generate',
   timecode: 'Generate',
+  'audio-spectrum': 'Generate',
   // Color Correction
   brightness: 'Color Correction',
   contrast: 'Color Correction',
