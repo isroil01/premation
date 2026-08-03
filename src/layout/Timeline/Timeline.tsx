@@ -32,6 +32,7 @@ import { Icon, type IconName } from '@components/Icon';
 import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
 import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
 import { snapKeyframeGroup, type SnapTarget } from './keyframeSnap';
+import { scaleSelection, scaleGrip } from './keyframeTimeScale';
 import { ValueField } from '@components/ValueField';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
@@ -741,7 +742,14 @@ function Timeline({
   useEffect(() => {
     syncKfSelection(selectedKfIds);
   }, [selectedKfIds, syncKfSelection]);
-  const activeKf = useRef<{ ids: string[]; times: Map<string, number>; startX: number; moved: boolean } | null>(null);
+  const activeKf = useRef<{
+    ids: string[];
+    times: Map<string, number>;
+    startX: number;
+    moved: boolean;
+    /** Which keyframe the pointer went down on — the grip for Alt time-scaling. */
+    grabbedId: string;
+  } | null>(null);
   const [kfPreview, setKfPreview] = useState<Map<string, number>>(new Map());
 
   // Build a lookup from keyframe id → time across all visible tracks
@@ -774,9 +782,26 @@ function Timeline({
       const t = id === kf.id ? kf.time : (kfTimeById.get(id) ?? 0);
       times.set(id, t);
     }
-    activeKf.current = { ids: [...nextSel], times, startX: e.clientX, moved: false };
+    activeKf.current = { ids: [...nextSel], times, startX: e.clientX, moved: false, grabbedId: kf.id };
 
     setKfPreview(new Map());
+  }, [selectedKfIds, kfTimeById]);
+
+  /**
+   * Which selected keyframes are an END of the selection, and so act as the
+   * grip for Alt time-scaling. Computed once over the whole selection because
+   * a row only sees its own keyframes and the selection spans rows.
+   */
+  const scaleGripIds = useMemo<Set<string>>(() => {
+    const out = new Set<string>();
+    if (selectedKfIds.size < 2) return out;
+    const times = new Map<string, number>();
+    for (const id of selectedKfIds) {
+      const t = kfTimeById.get(id);
+      if (t !== undefined) times.set(id, t);
+    }
+    for (const id of times.keys()) if (scaleGrip(times, id)) out.add(id);
+    return out;
   }, [selectedKfIds, kfTimeById]);
 
   /** What the in-flight drag is snapped to — drives the indicator line. */
@@ -791,6 +816,20 @@ function Timeline({
       d.moved = true;
       const dtSec = dx / pps;
       const frameDur = 1 / (model.frameRate || 30);
+
+      // Alt on an END of a multi-selection is AE's time-scale gesture: the
+      // group stretches about its opposite end instead of sliding. Everywhere
+      // else — a single keyframe, or an interior one — Alt keeps its existing
+      // meaning of "free the drag from snapping", because there is no span to
+      // scale in those cases and the two readings can never both apply.
+      if (e.altKey) {
+        const scaled = scaleSelection(d.times, d.grabbedId, dtSec, frameDur);
+        if (scaled) {
+          setKfSnap(null);
+          setKfPreview(scaled);
+          return;
+        }
+      }
 
       // Snap to the playhead, then to other keyframes, then to the frame grid.
       // Alt frees the drag entirely. The dragged keys are excluded from the
@@ -1318,6 +1357,7 @@ function Timeline({
                     pps={pps}
                     kfPreview={kfPreview}
                     selectedKfIds={selectedKfIds}
+                    scaleGripIds={scaleGripIds}
                     onKeyframeDown={onKeyframeDown}
                     onKeyframeContextMenu={onKeyframeContextMenu}
                   />
@@ -2185,6 +2225,7 @@ const Keyframes = memo(function Keyframes({
   pps,
   kfPreview,
   selectedKfIds,
+  scaleGripIds,
   onKeyframeDown,
   onKeyframeContextMenu,
 }: {
@@ -2192,6 +2233,8 @@ const Keyframes = memo(function Keyframes({
   pps: number;
   kfPreview: Map<string, number>;
   selectedKfIds: Set<string>;
+  /** Keyframes that are an END of the current multi-selection — the Alt grips. */
+  scaleGripIds: Set<string>;
   onKeyframeDown: (kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
 }): JSX.Element {
@@ -2221,7 +2264,9 @@ const Keyframes = memo(function Keyframes({
               e.preventDefault();
               onKeyframeContextMenu?.(kf.id, e.clientX, e.clientY);
             }}
-            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options`}
+            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options${
+              scaleGripIds.has(kf.id) ? ', Alt+drag to scale the selection in time' : ''
+            }`}
           >
             {!kf.roving && (
               <svg className={styles.keyframeGlyph} viewBox="0 0 12 12" aria-hidden focusable="false">
