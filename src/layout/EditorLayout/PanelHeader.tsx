@@ -116,14 +116,25 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
               Dock Position
             </div>
 
+            {/*
+              Only the two regions that actually RENDER docked panels.
+
+              "Dock Bottom Timeline" used to be here, and it made the panel
+              disappear: `dockPanel` happily set `region: 'bottomTimeline'` and
+              pushed the id into that region's panelOrder, but EditorLayout
+              renders the timeline element in the bottom pane — `DockPanel` is
+              only mounted for leftSidebar and rightInspector. The panel went
+              away, and its header, the one route back, went with it. Recovery
+              was Reset Layout.
+
+              Both sidebars receive the full renderer map, so left↔right docking
+              genuinely works; there is no third destination to offer.
+            */}
             <button type="button" className={styles.menuItem} onClick={() => handleDock('leftSidebar')}>
               <Icon name="panel-left" size={12} /> Dock Left Sidebar
             </button>
             <button type="button" className={styles.menuItem} onClick={() => handleDock('rightInspector')}>
               <Icon name="sliders-h" size={12} /> Dock Right Inspector
-            </button>
-            <button type="button" className={styles.menuItem} onClick={() => handleDock('bottomTimeline')}>
-              <Icon name="video" size={12} /> Dock Bottom Timeline
             </button>
           </div>
         )}
