@@ -84,16 +84,16 @@
 }
 
 .checked {
-  background: color-mix(in srgb, var(--color-primary, #2988ff) 12%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 .itemIconActive {
-  color: var(--color-primary, #2988ff) !important;
+  color: var(--color-primary) !important;
   font-weight: 700;
 }
 
 .itemLabelActive {
-  color: var(--color-primary, #2988ff);
+  color: var(--color-primary);
   font-weight: 600;
 }
 

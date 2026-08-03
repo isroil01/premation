@@ -60,16 +60,16 @@
 }
 
 .timeReadout {
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
   font-size: 12px;
-  color: var(--color-amber-500, #f5b84b);
+  color: var(--color-amber-500);
 }
 
 .badge {
   font-size: 10px;
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-full);
   background: rgba(43, 126, 255, 0.2);
-  color: #2b7eff;
+  color: var(--color-primary);
 }

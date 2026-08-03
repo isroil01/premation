@@ -197,6 +197,15 @@ function WorkspacesTab(): JSX.Element {
   );
 }
 
+/** The accent the active theme is currently painting with, read from the token. */
+function themeAccentColor(): string {
+  if (typeof window === 'undefined') return '#2988ff';
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue('--color-primary')
+    .trim();
+  return v || '#2988ff';
+}
+
 function AppearanceTab(): JSX.Element {
   const [accent, setAccent] = useState<string>(() => getAccentColor());
   const applyAccent = (c: string): void => { setAccent(c); setAccentColor(c); };
@@ -227,7 +236,14 @@ function AppearanceTab(): JSX.Element {
       <div className={styles.row}>
         <span className={styles.rowLabel}>Accent color</span>
         <div className={styles.rowRight}>
-          <ColorPicker value={accent || '#2b7eff'} onChange={applyAccent} aria-label="Accent color" />
+          {/*
+            With no custom accent set the swatch must show the accent actually
+            in force, which is the active theme's --color-primary. This used to
+            fall back to a hardcoded #2b7eff — a blue the app uses nowhere — so
+            the picker opened misreporting the current colour. Read the token
+            rather than keeping a second, drifting copy of the value here.
+          */}
+          <ColorPicker value={accent || themeAccentColor()} onChange={applyAccent} aria-label="Accent color" />
           <Button variant="ghost" size="sm" onClick={() => applyAccent('')} disabled={!accent}>Reset</Button>
         </div>
       </div>

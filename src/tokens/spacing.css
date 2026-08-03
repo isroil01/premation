@@ -21,6 +21,37 @@
   --space-14:  96px;
   --space-15:  128px;
 
+  /* ── Control heights ──────────────────────────────────────────────
+     Every interactive control in the chrome picks one of these four. They
+     step by 4px so controls of different sizes still share a baseline grid,
+     and so a row of mixed controls optically centres instead of drifting.
+
+       xs  20px — badges, pills, status chips (read-only)
+       sm  22px — dense inline controls
+       md  24px — the default: header buttons, selects, timecode, search
+       lg  28px — toolbar tools and primary actions
+
+     Before this existed the chrome shipped 20/22/24/26/30px side by side in
+     the same bar, which is what made it read as unordered. */
+  --control-height-xs: 20px;
+  --control-height-sm: 22px;
+  --control-height-md: 24px;
+  --control-height-lg: 28px;
+
+  /* ── Chrome bar heights ───────────────────────────────────────────
+     The horizontal bands stacked down the editor frame. Each clears its
+     tallest child plus a 4px breathing ring, so a bar's height is derived
+     from its contents rather than guessed:
+
+       menu    30 = 22 (sm) + 4 + 4
+       tool    36 = 28 (lg) + 4 + 4
+       panel   32 = 24 (md) + 4 + 4   ← viewport + docked panel headers
+       status  22 = text only, no controls */
+  --bar-height-menu:   30px;
+  --bar-height-tool:   36px;
+  --bar-height-panel:  32px;
+  --bar-height-status: 22px;
+
   /* Layout-specific (composed) */
   --space-panel-padding:    var(--space-6);
   --space-panel-gap:        var(--space-2);

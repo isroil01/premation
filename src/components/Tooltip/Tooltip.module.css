@@ -1,5 +1,5 @@
 .pop {
-  z-index: var(--z-index-tooltip, 1200);
+  z-index: var(--z-index-tooltip);
   max-width: 260px;
   padding: 4px var(--space-3);
   border-radius: 2px;

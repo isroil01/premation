@@ -35,7 +35,7 @@
   border-radius: 6px;
   cursor: pointer;
   color: var(--color-text-secondary);
-  transition: all 120ms ease;
+  transition: var(--motion-hover-transition);
 }
 
 .swatch:hover {

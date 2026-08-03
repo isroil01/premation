@@ -112,7 +112,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
 
             <div className={styles.menuSeparator} />
 
-            <div style={{ fontSize: 9, color: 'var(--color-text-tertiary)', padding: '2px 8px', textTransform: 'uppercase' }}>
+            <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', padding: '2px 8px', textTransform: 'uppercase' }}>
               Dock Position
             </div>
 

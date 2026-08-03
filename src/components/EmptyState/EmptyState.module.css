@@ -1,32 +1,81 @@
+/*
+ * Empty state.
+ *
+ * Anchored near the top rather than centred in the panel's full height. A
+ * docked inspector can be 900px tall; centring in that put one grey line in
+ * the dead middle of a void, which read as a failed render rather than as a
+ * deliberate state. Sitting it in the reading zone makes it look authored and
+ * keeps it in the same place whether the panel is short or tall.
+ */
 .root {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: var(--space-4);
-  height: 100%;
-  min-height: 96px;
-  padding: var(--space-6);
+  padding: var(--space-11) var(--space-6) var(--space-8);
   text-align: center;
+}
+
+/*
+ * Compact — for an empty SECTION inside an otherwise populated panel (an empty
+ * component library inside the Library tab, say). The panel-level padding
+ * above would push the surrounding content apart and read as a gap in the
+ * layout rather than as one section having nothing in it.
+ */
+.compact {
+  padding: var(--space-6) var(--space-5);
+  gap: var(--space-3);
+}
+
+.compact .tile {
+  width: 28px;
+  height: 28px;
 }
 
 .tile {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-surface);
   background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
   color: var(--color-text-tertiary);
+}
+
+/* Optional. When present it names the surface, so the message underneath can
+   be an instruction instead of having to introduce itself first. */
+.title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-tight);
 }
 
 .message {
-  max-width: 240px;
+  /* ~34 characters per line — long enough not to ragged-break a short
+     sentence, short enough to stay readable while centred. */
+  max-width: 34ch;
   font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal, 1.5);
-  color: var(--color-text-tertiary);
+  line-height: var(--line-height-normal);
+  /*
+   * Secondary, not tertiary. --color-text-tertiary is documented in the theme
+   * as the "AA floor — never below 13px text", and this sits at 12px: measured
+   * against the panel it came out at 3.87:1, under the 4.5:1 AA minimum. This
+   * sentence is the only instruction on an otherwise empty panel, so it is the
+   * last text in the app that should be hard to read.
+   */
+  color: var(--color-text-secondary);
 }
 
+/* Actions stack full-width so two of them read as a menu of next steps rather
+   than as a primary/secondary pair. */
 .action {
-  margin-top: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 220px;
+  margin-top: var(--space-2);
 }

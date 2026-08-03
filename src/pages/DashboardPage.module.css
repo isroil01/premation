@@ -496,7 +496,7 @@
   font-size: 0.75rem;
   font-weight: 600;
   padding: 2px 6px;
-  border-radius: var(--radius-control, 2px);
+  border-radius: var(--radius-control);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -646,7 +646,7 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: var(--motion-hover-transition);
 }
 
 .statCard:hover .statIcon {
@@ -1086,7 +1086,7 @@
   background: var(--color-surface-1, #1e1e1e);
   border: 1px solid var(--color-border-strong, #333333);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85);
-  border-radius: var(--radius-panel, 8px);
+  border-radius: var(--radius-panel);
   width: 100%;
   max-width: 580px;
   max-height: 90vh;
@@ -1132,7 +1132,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: var(--motion-hover-transition);
 }
 
 .modalCloseBtn:hover {
@@ -1335,7 +1335,7 @@
   background: transparent;
   color: var(--color-text-secondary, #aaa);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: var(--motion-hover-transition);
   white-space: nowrap;
 }
 
@@ -1641,7 +1641,7 @@
 .heroBanner {
   background: linear-gradient(135deg, rgba(49, 112, 230, 0.14) 0%, rgba(139, 92, 246, 0.10) 50%, rgba(20, 23, 30, 0.9) 100%);
   border: 1px solid rgba(49, 112, 230, 0.25);
-  border-radius: var(--radius-surface, 12px);
+  border-radius: var(--radius-surface);
   padding: 20px 24px;
   margin-bottom: 24px;
   position: relative;
@@ -1759,7 +1759,7 @@
 .launchpadCard {
   background: var(--color-surface-1, #14171e);
   border: 1px solid var(--color-border-strong, #292e3a);
-  border-radius: var(--radius-surface, 8px);
+  border-radius: var(--radius-surface);
   padding: 14px;
   cursor: pointer;
   transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), border-color 140ms ease, background 140ms ease;

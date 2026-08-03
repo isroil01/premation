@@ -37,7 +37,7 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
     },
     panelOrder: {
       leftSidebar: ['scene', 'assets', 'library', 'ai'],
-      rightInspector: ['properties', 'style', 'rig', 'effects', 'presets', 'misc'],
+      rightInspector: ['properties', 'rig', 'effects', 'motion', 'presets'],
       centerWorkspace: [],
       bottomTimeline: [],
     },
@@ -54,7 +54,7 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
     },
     panelOrder: {
       leftSidebar: ['scene', 'assets', 'library'],
-      rightInspector: ['properties', 'effects', 'style'],
+      rightInspector: ['properties', 'effects', 'motion'],
       centerWorkspace: [],
       bottomTimeline: [],
     },
@@ -105,11 +105,14 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
     },
     panelOrder: {
       leftSidebar: ['scene', 'assets'],
-      rightInspector: ['style', 'effects', 'properties'],
+      // `style` used to lead this list; it was merged into `properties` when
+      // the three selection-scoped inspector tabs became one. Effects leads
+      // now, which is what this workspace is actually for.
+      rightInspector: ['effects', 'properties'],
       centerWorkspace: [],
       bottomTimeline: [],
     },
-    activePanelByRegion: { leftSidebar: 'scene', rightInspector: 'style' },
+    activePanelByRegion: { leftSidebar: 'scene', rightInspector: 'effects' },
   },
   {
     id: 'dual-monitor-studio',

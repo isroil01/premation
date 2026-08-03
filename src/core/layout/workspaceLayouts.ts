@@ -75,7 +75,12 @@ export const BUILTIN_LAYOUTS: ReadonlyArray<WorkspaceLayout> = [
  */
 const DEFAULT_PANEL_ORDER: Record<RegionId, ReadonlyArray<string>> = {
   leftSidebar: ['scene', 'assets', 'library', 'ai'],
-  rightInspector: ['properties', 'style', 'rig', 'effects', 'presets', 'misc'],
+  // `style` and `misc` were merged into `properties` (2026-08-03), so they are
+  // no longer registered. `motion` (Graph) is ADDED here for exactly the reason
+  // described above: it is registered and not on-demand, but was missing from
+  // this list, so applying any workspace preset silently deleted the Graph tab
+  // the same way `library` and `ai` used to be deleted.
+  rightInspector: ['properties', 'rig', 'effects', 'motion', 'presets'],
   centerWorkspace: [],
   bottomTimeline: [],
 };

@@ -77,7 +77,6 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>SVG Layer</h4>
       <div className={styles.inlineRows}>
         <Row label="File" value={data.fileName} />
         <Row

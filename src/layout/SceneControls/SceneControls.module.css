@@ -2,35 +2,35 @@
 .sceneControls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   user-select: none;
 }
 
 .divider {
   width: 1px;
-  height: 18px;
-  background: var(--color-border-subtle, rgba(255, 255, 255, 0.08));
-  margin: 0 8px;
+  height: var(--space-6);
+  background: var(--color-border-subtle);
+  margin: 0 var(--space-4);
 }
 
 .button {
-  width: 30px;
-  height: 30px;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
-  border-radius: var(--radius-md, 6px);
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
-  transition: var(--motion-hover-transition, all 0.1s ease);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  transition: var(--motion-hover-transition);
   outline: none;
 }
 
 .button:hover {
-  background: var(--color-surface-3, rgba(255, 255, 255, 0.08));
-  color: var(--color-text-primary, #ffffff);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .button:active {
@@ -38,15 +38,15 @@
 }
 
 .buttonActive {
-  width: 30px;
-  height: 30px;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  border-radius: var(--radius-md, 6px);
-  background: var(--color-primary-subtle, rgba(43, 126, 255, 0.15));
-  color: var(--color-primary, #2b7eff) !important;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-subtle);
+  color: var(--color-primary) !important;
   border: 1px solid transparent;
   box-shadow: none;
 }
@@ -55,12 +55,12 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
   padding: 2px 6px;
-  border-radius: var(--radius-sm, 4px);
-  background: rgba(245, 184, 75, 0.15);
-  color: var(--color-amber-500, #f5b84b);
-  border: 1px solid rgba(245, 184, 75, 0.3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-amber-500) 15%, transparent);
+  color: var(--color-amber-500);
+  border: 1px solid color-mix(in srgb, var(--color-amber-500) 30%, transparent);
   margin-left: 4px;
 }

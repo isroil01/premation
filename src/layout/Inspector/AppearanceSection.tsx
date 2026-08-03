@@ -377,7 +377,6 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>Appearance & Assembly</h4>
 
       {/* Group Assembly Actions (Group / Ungroup Sub-Parts) */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, padding: '0 4px' }}>

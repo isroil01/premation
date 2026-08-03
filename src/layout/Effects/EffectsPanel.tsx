@@ -201,7 +201,13 @@ export function EffectsPanel(): JSX.Element {
 
   // Every hook above has run — returning here is now hook-count-stable.
   if (!hasSelection || !primary) {
-    return <EmptyState icon="settings" message="Select a layer to add visual effects." />;
+    return (
+      <EmptyState
+        icon="zap"
+        title="No selection"
+        message="Select a layer to add blurs, colour effects and masks to it."
+      />
+    );
   }
 
   return (

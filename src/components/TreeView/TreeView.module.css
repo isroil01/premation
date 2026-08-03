@@ -103,7 +103,7 @@
   font: inherit;
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
-  background: var(--color-surface-raised, var(--color-hover));
+  background: var(--color-surface-raised);
   border: 1px solid var(--color-primary);
   border-radius: var(--radius-xs);
   outline: none;

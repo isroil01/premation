@@ -56,8 +56,19 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'ai',          title: 'AI',        icon: 'ai',          region: 'leftSidebar', weight: 4,   closable: false },
   { id: 'project',     title: 'Project',   icon: 'folder-open', region: 'leftSidebar', weight: 3,   closable: true, onDemand: true },
   // ── Right inspector ──────────────────────────────────────────────
-  { id: 'properties',  title: 'Transform', icon: 'move',        region: 'rightInspector', weight: 5,   closable: false },
-  { id: 'style',       title: 'Style',     icon: 'brush',       region: 'rightInspector', weight: 4,   closable: false },
+  /**
+   * Merged 2026-08-03: `style` (Style) and `misc` (Settings) folded into this
+   * one panel. All three were an accordion of property sections for the
+   * selected layer, so the split only ever made the user guess which tab owned
+   * the property they wanted — and each carried its own search box that could
+   * not see the other two. It is titled "Properties" rather than "Transform"
+   * now, because transform is one section of it, not the whole thing.
+   *
+   * The panels below stay separate deliberately: they are editors and modes
+   * (a curve graph, an effect stack, a rig, a render queue) rather than
+   * properties of the current selection.
+   */
+  { id: 'properties',  title: 'Properties', icon: 'sliders-h',  region: 'rightInspector', weight: 5,   closable: false },
   { id: 'rig',         title: 'Rigging',   icon: 'bone',        region: 'rightInspector', weight: 3.5, closable: false },
   { id: 'effects',     title: 'Effects',   icon: 'zap',         region: 'rightInspector', weight: 3,   closable: false },
   // The graph editor + EXPRESSION editor. Its renderer has always existed in
@@ -65,7 +76,6 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // openPanel('motion') — so the entire expressions feature had no way in.
   { id: 'motion',      title: 'Graph',     icon: 'graph-value', region: 'rightInspector', weight: 1.4, closable: false },
   { id: 'presets',     title: 'Presets',   icon: 'keyframe',    region: 'rightInspector', weight: 1,   closable: false },
-  { id: 'misc',        title: 'Settings',  icon: 'settings',    region: 'rightInspector', weight: 0,   closable: false },
   { id: 'history',     title: 'History',   icon: 'history',     region: 'rightInspector', weight: 0.8, closable: true, onDemand: true },
   { id: 'renderQueue', title: 'Render',    icon: 'queue',       region: 'rightInspector', weight: 0.7, closable: false, onDemand: true },
   // Third-party plugin UI. On demand because it is empty until a plugin with a

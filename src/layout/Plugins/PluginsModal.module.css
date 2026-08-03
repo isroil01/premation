@@ -68,7 +68,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
-  border: 1px solid var(--color-danger, #b3402f);
+  border: 1px solid var(--color-danger);
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
 }
@@ -163,10 +163,10 @@
   background: currentColor;
 }
 
-.status_running { color: var(--color-success, #4caf7d); }
+.status_running { color: var(--color-success); }
 .status_starting { color: var(--color-text-secondary); }
 .status_stopped { color: var(--color-text-muted); }
-.status_error { color: var(--color-danger, #d2634f); }
+.status_error { color: var(--color-danger); }
 
 .rowError {
   display: flex;
@@ -403,7 +403,7 @@
 .dockTab {
   padding: 3px 8px;
   border: none;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
@@ -507,7 +507,7 @@
 }
 
 .metaNarrowed {
-  color: var(--color-warning, #e0a33e);
+  color: var(--color-warning);
 }
 
 /* ── per-row: log drawer, permission editor, reload ───────────────── */
@@ -527,9 +527,9 @@
   max-height: 180px;
   overflow-y: auto;
   border-radius: var(--radius-control);
-  background: var(--color-surface-0, #0d0d10);
+  background: var(--color-surface-0);
   border: 1px solid var(--color-border);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
 }
 
@@ -553,8 +553,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-.log_warn { color: var(--color-warning, #e0a33e); }
-.log_error { color: var(--color-danger, #e06c6c); }
+.log_warn { color: var(--color-warning); }
+.log_error { color: var(--color-danger); }
 
 .permEdit {
   display: flex;
@@ -594,7 +594,7 @@
   margin: var(--space-2) 0 0;
   font-size: var(--font-size-xs);
   line-height: 1.45;
-  color: var(--color-warning, #e0a33e);
+  color: var(--color-warning);
 }
 
 .consentHomepage {

@@ -160,7 +160,7 @@ function EffectParamRow({
             background: 'var(--color-surface-0)',
             color: 'var(--color-text-primary)',
             border: '1px solid var(--color-border-subtle)',
-            borderRadius: 3,
+            borderRadius: 4,
           }}
         >
           <option value="">None (self)</option>

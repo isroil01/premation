@@ -12,14 +12,14 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-dimmed);
+  color: var(--color-text-tertiary);
   margin-bottom: 8px;
 }
 
 .saveBtn {
-  background: var(--color-surface-hover);
+  background: var(--color-hover);
   border: 1px solid transparent;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   border-radius: 4px;
   padding: 2px 8px;
   font-size: 11px;
@@ -44,7 +44,7 @@
   gap: 8px;
   padding: 6px 8px;
   border-radius: 4px;
-  background: var(--color-surface-hover);
+  background: var(--color-hover);
 }
 
 .meta {
@@ -55,7 +55,7 @@
 
 .label {
   font-size: 12px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -63,7 +63,7 @@
 
 .sub {
   font-size: 10px;
-  color: var(--color-text-dimmed);
+  color: var(--color-text-tertiary);
 }
 
 .kind {
@@ -73,7 +73,7 @@
 .restore {
   background: transparent;
   border: 1px solid var(--color-border);
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   border-radius: 4px;
   padding: 2px 8px;
   font-size: 11px;
@@ -81,11 +81,11 @@
   flex-shrink: 0;
 }
 .restore:hover {
-  background: var(--color-surface-hover);
+  background: var(--color-hover);
 }
 
 .empty {
   font-size: 11px;
-  color: var(--color-text-dimmed);
+  color: var(--color-text-tertiary);
   padding: 8px 0;
 }

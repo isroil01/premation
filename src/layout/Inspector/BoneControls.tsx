@@ -116,7 +116,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     minWidth: 0,
                     fontSize: 11,
                     padding: '2px 4px',
-                    borderRadius: 3,
+                    borderRadius: 4,
                     background: 'transparent',
                     color: 'var(--color-text-primary, #fff)',
                     border: '1px solid transparent',

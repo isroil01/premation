@@ -2,16 +2,16 @@
    with a subtle translucent surface blur and sleek divider seam. */
 .titleBar {
   height: 32px;
-  background: var(--color-titlebar, #141416);
+  background: var(--color-titlebar);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--color-divider, rgba(255, 255, 255, 0.07));
+  border-bottom: 1px solid var(--color-divider);
   display: flex;
   align-items: center;
   justify-content: space-between;
   position: relative;
   user-select: none;
-  color: var(--color-text-primary, #ffffff);
+  color: var(--color-text-primary);
   z-index: 1000;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -49,10 +49,10 @@
 }
 
 .appName {
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   letter-spacing: -0.01em;
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.8));
+  color: var(--color-text-secondary);
   max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -79,7 +79,7 @@
 .projectName {
   font-size: 11px;
   font-weight: 500;
-  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+  color: var(--color-text-primary);
   max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -90,7 +90,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-modified, #e0a83c);
+  background: var(--color-modified);
   box-shadow: 0 0 6px rgba(224, 168, 60, 0.45);
   flex-shrink: 0;
 }
@@ -122,7 +122,7 @@
   background: transparent !important;
   box-shadow: none !important;
   color: rgba(255, 255, 255, 0.6) !important;
-  border-radius: 5px !important;
+  border-radius: var(--radius-lg) !important;
   width: 26px !important;
   height: 26px !important;
   display: grid !important;
@@ -143,14 +143,14 @@
 }
 
 .layoutToggle[data-active] {
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.16)) !important;
-  color: var(--color-primary, #2988ff) !important;
+  background: var(--color-primary-subtle) !important;
+  color: var(--color-primary) !important;
   border: none !important;
 }
 
 .layoutToggle[data-active]:hover {
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.24)) !important;
-  color: var(--color-primary-hover, #4097ff) !important;
+  background: var(--color-primary-subtle) !important;
+  color: var(--color-primary-hover) !important;
 }
 
 .appMenuBarWrapper {
@@ -169,7 +169,7 @@
 
 .avatarIcon {
   color: #ffffff;
-  background: var(--color-primary, #2988ff);
+  background: var(--color-primary);
   border-radius: 2px;
   width: 18px;
   height: 18px;

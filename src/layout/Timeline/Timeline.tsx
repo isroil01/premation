@@ -1057,7 +1057,7 @@ function Timeline({
                   same glyphs in its column head — five unlabeled dots were
                   unguessable for new users). */}
               <Icon name="shy" size={9} title="Shy" />
-              <span className={styles.fxText} title="Effects" style={{ fontSize: 8 }}>fx</span>
+              <span className={styles.fxText} title="Effects" style={{ fontSize: 10 }}>fx</span>
               <Icon name="motion-blur" size={9} title="Motion Blur" />
               <Icon name="adjustment" size={9} title="Adjustment Layer" />
               <Icon name="3d" size={9} title="3D Layer" />

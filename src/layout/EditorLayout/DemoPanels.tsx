@@ -18,6 +18,7 @@ import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { PluginsDockPanel } from '@layout/Plugins/PluginPanel';
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Accordion, type AccordionItem } from '@components/Accordion';
+import { EmptyState } from '@components/EmptyState';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
 import { customConfirm } from '@components/Modal';
@@ -717,7 +718,7 @@ export function AssetsPanel(): JSX.Element {
                         autoFocus
                         defaultValue={folder.name}
                         className={styles.assetName}
-                        style={{ background: 'var(--color-surface-0)', border: '1px solid var(--color-primary)', borderRadius: 3, color: 'var(--color-text-primary)' }}
+                        style={{ background: 'var(--color-surface-0)', border: '1px solid var(--color-primary)', borderRadius: 4, color: 'var(--color-text-primary)' }}
                         onClick={(e) => e.stopPropagation()}
                         onBlur={(e) => { renameFolder(folder.id, e.target.value); setRenamingId(null); }}
                         onKeyDown={(e) => {
@@ -827,8 +828,25 @@ export function AssetsPanel(): JSX.Element {
   );
 }
 
-// ── Properties (Right inspector) ─────────────────────────────────
+// ── Inspector (Right inspector) ──────────────────────────────────
 
+/**
+ * PropertiesPanel — the single inspector for whatever is selected.
+ *
+ * This used to be three tabs: Transform (`properties`), Style (`style`) and
+ * Settings (`misc`). All three were the same thing — an accordion of property
+ * sections for the selected layer — so the split only ever asked the user to
+ * guess which tab owned the property they wanted, and each tab carried its own
+ * search box that could not see the other two.
+ *
+ * The split also forced a workaround elsewhere: a selection effect in App.tsx
+ * had to auto-switch tabs for cameras and lights, because picking one while
+ * the wrong tab was active showed nothing at all. Merging removes the need for
+ * that entirely.
+ *
+ * Rigging, Graph, Effects, Presets, Render and Plugins stay separate tabs on
+ * purpose — those are editors and modes, not properties of the selection.
+ */
 export function PropertiesPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
   const primary = selected[0] ?? null;
@@ -855,28 +873,51 @@ export function PropertiesPanel(): JSX.Element {
         </div>
       )}
       <InspectorContent nodeId={primary} query={query} />
+      {/* Applied-template fields — the "fill in the blanks" surface. Shown only
+          when a template is actually applied, so it costs nothing otherwise. */}
+      <TemplateFieldsSection />
+      {/* Project-level, selection-independent — renders only under LOCAL_FIRST.
+          It sits below the accordion rather than inside it because it is not a
+          property of the selected layer, and an accordion row that collapses to
+          nothing would be worse than a quiet block that renders nothing. */}
+      <div style={{ padding: '0 14px' }}>
+        <VersionHistorySection />
+      </div>
     </Panel>
   );
 }
 
 /**
- * Keywords per section id so the Properties search matches on intent, not just
- * the visible title (e.g. searching "color" surfaces Appearance). Motion and
- * effects intentionally aren't here — they live in the dedicated Motion / Effects
- * tabs now, not the Properties accordion.
+ * Keywords per section id so the Inspector search matches on intent, not just
+ * the visible title (e.g. searching "color" surfaces Appearance).
+ *
+ * This map now covers EVERY section, because the inspector has one search box
+ * instead of one per tab. Motion and effects are still deliberately absent —
+ * those live in the Graph / Effects tabs, which are editors, not property
+ * sections.
  */
 const SECTION_KEYWORDS: Record<string, string> = {
+  // Spatial
   transform: 'position scale rotation opacity anchor size 3d',
   parenting: 'parent link pick whip',
-  appearance: 'fill stroke color gradient background border',
-  text: 'font typography size weight letter spacing line height align',
-  media: 'source trim speed fit crop volume',
-  geometry: 'path trim repeater round corners wiggle stroke',
   align: 'align distribute center',
+  // Layer-kind settings
+  custom: 'settings camera light particle audio volume',
+  svg: 'svg vector path import',
+  media: 'source trim speed fit crop volume',
   precomp: 'precompose group children focus',
-  custom: 'settings camera light particle',
   info: 'null object controller',
+  // Style
+  'style-presets': 'style preset look saved',
+  text: 'font typography size weight letter spacing line height align',
   animators: 'text animator range selector',
+  appearance: 'fill stroke color gradient background border',
+  geometry: 'path trim repeater round corners wiggle stroke',
+  compositing: 'blend mode matte track alpha luma',
+  layerStyles: 'shadow glow drop outer bevel layer style',
+  // Layer behaviour
+  layerSwitches: 'switches quality solo shy motion blur collapse',
+  time: 'time playback remap stretch speed in out',
 };
 
 /** Filter inspector sections by a search query; matches are forced open. */
@@ -896,28 +937,50 @@ function renderInspector(items: AccordionItem[], query: string): JSX.Element {
   const filtered = filterInspectorItems(items, query);
   if (query.trim() && filtered.length === 0) {
     return (
-      <div style={{ padding: '16px 14px', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
-        No properties match “{query.trim()}”.
-      </div>
+      <EmptyState
+        compact
+        icon="search"
+        message={`No properties match “${query.trim()}”.`}
+      />
     );
   }
   // Remount on query change so filtered items re-apply their defaultOpen state.
   // No `key={query}`: keying on the search text REMOUNTED the whole Accordion on
   // every keystroke, and its open/closed state lives in its own useState — so
   // every group you expanded snapped shut as soon as you typed a character.
-  return <div style={{ padding: 4 }}><Accordion items={filtered} /></div>;
+  //
+  // No wrapper padding: a 4px inset stopped the section hairlines short of the
+  // panel edge and pushed each section's gutter to 16px, while the search box
+  // above sat at 8px — three different left edges down one narrow column.
+  return <Accordion items={filtered} />;
 }
 
+/**
+ * Every property section for the selected layer, in one ordered list.
+ *
+ * The order is the order you actually work in: where the layer IS, then what
+ * KIND of thing it is, then how it LOOKS, then how it BEHAVES. Previously
+ * these three groups were three separate tabs, so the sequence only existed in
+ * the user's head.
+ *
+ * defaultOpen is deliberately stingier than it was when these lived in three
+ * tabs. Sections that were the only content of their own tab could afford to
+ * start open; in a single column, ten open sections is a scroll, not an
+ * inspector. Spatial and kind-specific sections start open because they are
+ * why you selected the layer; the secondary style and behaviour sections start
+ * closed. A search match still force-opens anything it matches.
+ */
 function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
+  // Hook before any early return — the group section's "Enter group" needs it.
+  const enterFocus = useFocusStore((s) => s.enter);
+
   if (!nodeId) {
     return (
-      <div style={{ padding: '16px 14px', color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
-        <div style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 8 }}>Nothing selected</div>
-        <p style={{ margin: '0 0 12px' }}>
-          Select a layer in the canvas or the Scene panel to edit its transform properties
-          (position, scale, rotation, parenting…).
-        </p>
-      </div>
+      <EmptyState
+        icon="mouse-pointer"
+        title="No selection"
+        message="Select a layer on the canvas or in the Scene panel to edit its properties."
+      />
     );
   }
 
@@ -927,12 +990,16 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   const kind = readNodeKind(node);
   const items: AccordionItem[] = [];
 
-  // Transform Section (spatial coordinates + 3D)
+  // Kinds that have no spatial/visual presence of their own.
+  const isAbstract = kind === 'camera' || kind === 'light' || kind === 'audio';
+  const isDrawable = kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video';
+
+  // ── Where it is ────────────────────────────────────────────────
   if (kind !== 'audio') {
     items.push({
       id: 'transform',
       title: 'Transform',
-      icon: 'settings',
+      icon: 'move',
       defaultOpen: true,
       content: (
         <>
@@ -943,7 +1010,6 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  // Parent & Link Section
   if (kind !== 'light') {
     items.push({
       id: 'parenting',
@@ -954,8 +1020,7 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  // Align & Distribute Section
-  if (kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video' || kind === 'group') {
+  if (isDrawable || kind === 'group') {
     items.push({
       id: 'align',
       title: 'Align & Distribute',
@@ -964,142 +1029,135 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  if (items.length === 0) {
-    return (
-      <div style={{ padding: '16px 14px', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
-        No transform controls are available for this layer type.
-      </div>
-    );
+  // ── What kind of thing it is ───────────────────────────────────
+  if (kind === 'camera') {
+    items.push({
+      id: 'custom', title: 'Camera Settings', icon: 'camera', defaultOpen: true,
+      content: <CameraSection nodeId={nodeId} />,
+    });
+  } else if (kind === 'light') {
+    items.push({
+      id: 'custom', title: 'Light Settings', icon: 'light', defaultOpen: true,
+      content: <LightSection nodeId={nodeId} />,
+    });
+  } else if (kind === 'particle') {
+    items.push({
+      id: 'custom', title: 'Particle Settings', icon: 'sparkles', defaultOpen: true,
+      content: <ParticleSection nodeId={nodeId} />,
+    });
+  } else if (kind === 'audio') {
+    items.push({
+      id: 'custom', title: 'Audio Settings', icon: 'audio', defaultOpen: true,
+      content: <AudioControls nodeId={nodeId} />,
+    });
+  } else if (kind === 'svg') {
+    items.push({
+      id: 'svg', title: 'SVG Layer', icon: 'shape', defaultOpen: true,
+      content: <SvgSection nodeId={nodeId} />,
+    });
+  } else if (kind === 'image' || kind === 'video') {
+    items.push({
+      id: 'media', title: 'Media Settings', icon: 'image', defaultOpen: true,
+      content: <MediaSection nodeId={nodeId} />,
+    });
+  } else if (kind === 'group') {
+    const childrenCount = defaultSceneGraph.getChildren(nodeId).length;
+    items.push({
+      id: 'precomp',
+      title: 'Pre-composition',
+      icon: 'folder',
+      defaultOpen: true,
+      content: (
+        <>
+          <PrecompControl nodeId={nodeId} />
+          {canRevertToSvg(nodeId) && (
+            <RevertSvgRow onRevert={() => revertSvgGroupToLayer(nodeId)} />
+          )}
+          <div className={styles.groupMeta}>
+            <span className={styles.groupCount}>Children: {childrenCount}</span>
+            <Button size="sm" variant="secondary" fullWidth onClick={() => enterFocus(nodeId)}>
+              Enter group
+            </Button>
+          </div>
+        </>
+      ),
+    });
+  } else if (kind === 'null') {
+    items.push({
+      id: 'info',
+      title: 'Null Object',
+      icon: 'info',
+      defaultOpen: true,
+      content: (
+        <p className={styles.sectionNote}>
+          An invisible controller. Attach layers to it as children via Parent &amp; Link.
+        </p>
+      ),
+    });
   }
 
-  return renderInspector(items, query);
-}
-
-// ── Style (Right inspector) ─────────────────────────────────
-
-export function StylePanel(): JSX.Element {
-  const selected = useSelectionStore((s) => s.ids);
-  const primary = selected[0] ?? null;
-  const [query, setQuery] = useState('');
-
-  return (
-    <Panel
-      id="style"
-      title="Style"
-      icon="brush"
-      hideHeader
-      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'style' })}
-    >
-      {primary && (
-        <div className={styles.searchRow}>
-          <Input
-            placeholder="Search style…"
-            size="sm"
-            fullWidth
-            leftIcon="search"
-            value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
-          />
-        </div>
-      )}
-      <StylePanelContent nodeId={primary} query={query} />
-    </Panel>
-  );
-}
-
-function StylePanelContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
-  if (!nodeId) {
-    return (
-      <div style={{ padding: '16px 14px', color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
-        <div style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 8 }}>Nothing selected</div>
-        <p style={{ margin: '0' }}>Select a layer to edit its visual styling (colors, strokes, typography, animators).</p>
-      </div>
-    );
-  }
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return <div className={styles.empty}>No node data</div>;
-
-  const kind = readNodeKind(node);
-  const items: AccordionItem[] = [];
-
-  // Composed looks first — a starting point you then refine in the sections
-  // below, rather than assembling every fill/stroke/shadow by hand.
-  items.push({
-    id: 'style-presets',
-    title: 'Styles',
-    icon: 'sparkles',
-    defaultOpen: true,
-    content: <StylePresetsSection nodeId={nodeId} />,
-  });
-
-  // Text Typography styles
+  // ── How it looks ───────────────────────────────────────────────
   if (kind === 'text') {
     items.push({
-      id: 'text',
-      title: 'Text Styles',
-      icon: 'type',
-      defaultOpen: true,
+      id: 'text', title: 'Text Styles', icon: 'type', defaultOpen: true,
       content: <TextSection nodeId={nodeId} />,
     });
     items.push({
-      id: 'animators',
-      title: 'Text Animators',
-      icon: 'sparkles',
-      defaultOpen: true,
+      id: 'animators', title: 'Text Animators', icon: 'sparkles',
       content: <TextAnimatorControls nodeId={nodeId} />,
     });
   }
 
-  // Appearance (Fill & Stroke)
-  if (kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video') {
+  if (isDrawable) {
     items.push({
-      id: 'appearance',
-      title: 'Appearance (Fill & Stroke)',
-      icon: 'shape',
-      defaultOpen: true,
+      id: 'appearance', title: 'Fill & Stroke', icon: 'shape', defaultOpen: true,
       content: <AppearanceSection nodeId={nodeId} />,
     });
   }
 
-  // Compositing (Blend & Matte)
-  if (kind !== 'camera' && kind !== 'light' && kind !== 'audio') {
-    items.push({
-      id: 'compositing',
-      title: 'Compositing (Blend & Matte)',
-      icon: 'layers',
-      defaultOpen: true,
-      content: <CompositingControls nodeId={nodeId} />,
-    });
-  }
-
-  // Layer Styles (Drop Shadow & Outer Glow)
-  if (kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video') {
-    items.push({
-      id: 'layerStyles',
-      title: 'Layer Styles (Shadow & Glow)',
-      icon: 'sparkles',
-      defaultOpen: false,
-      content: <LayerStylesControls nodeId={nodeId} />,
-    });
-  }
-
-  // Geometry (Shape paths/modifiers)
   if (kind === 'shape') {
     items.push({
-      id: 'geometry',
-      title: 'Geometry & Path Effects',
-      icon: 'line',
-      defaultOpen: true,
+      id: 'geometry', title: 'Geometry & Path Effects', icon: 'line',
       content: <ShapeEffects nodeId={nodeId} />,
     });
   }
 
+  // Composed looks — a starting point you then refine in the sections above.
+  // Gated on drawables: the old Style tab pushed this unconditionally, so a
+  // camera or a light offered you "Neon" and "Gradient Card" presets that
+  // cannot apply to anything they own. Splitting it across tabs hid that;
+  // putting every section in one column made it obvious.
+  if (isDrawable) {
+    items.push({
+      id: 'style-presets', title: 'Saved Styles', icon: 'sparkles',
+      content: <StylePresetsSection nodeId={nodeId} />,
+    });
+    items.push({
+      // "Layer Styles" is the After Effects term users will look for; the
+      // keyword map also matches shadow/glow/bevel so either search finds it.
+      id: 'layerStyles', title: 'Layer Styles', icon: 'sparkles',
+      content: <LayerStylesControls nodeId={nodeId} />,
+    });
+  }
+
+  // ── How it behaves ─────────────────────────────────────────────
+  if (!isAbstract) {
+    items.push({
+      id: 'compositing', title: 'Blend & Matte', icon: 'layers',
+      content: <CompositingControls nodeId={nodeId} />,
+    });
+    items.push({
+      id: 'layerSwitches', title: 'Switches & Quality', icon: 'sliders-h',
+      content: <LayerSwitchesControls nodeId={nodeId} />,
+    });
+    items.push({
+      id: 'time', title: 'Time & Playback', icon: 'stopwatch',
+      content: <TimeControls nodeId={nodeId} />,
+    });
+  }
+
   if (items.length === 0) {
-    return (
-      <div style={{ padding: '16px 14px', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
-        Style options are not available for this layer type.
-      </div>
-    );
+    return <EmptyState icon="info" message="This layer type has no editable properties." />;
   }
 
   return renderInspector(items, query);
@@ -1141,20 +1199,21 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
   const activeTool = useUIStore((s) => s.activeTool);
   if (!nodeId) {
     return (
-      <div style={{ padding: '20px 16px', color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
-        <div style={{ color: 'var(--color-text-primary)', fontWeight: 600, fontSize: 13, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Icon name="bone" size={14} /> Character Rigging
-        </div>
-        <p style={{ margin: '0 0 14px 0' }}>Select a layer to create or edit 2D Puppet Mesh deformation pins or 2D Skeleton Bone hierarchies.</p>
-        <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
-          <Button size="sm" variant="secondary" onClick={() => useUIStore.getState().setActiveTool('bone')}>
-            <Icon name="bone" size={13} /> Activate Bone Tool (Ctrl+B)
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
-            <Icon name="puppet-pin" size={13} /> Activate Puppet Pin Tool (Ctrl+P)
-          </Button>
-        </div>
-      </div>
+      <EmptyState
+        icon="bone"
+        title="Character Rigging"
+        message="Select a layer to add puppet pins or a skeleton, or pick a tool to start."
+        action={
+          <>
+            <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('bone')}>
+              <Icon name="bone" size={13} /> Bone tool
+            </Button>
+            <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
+              <Icon name="puppet-pin" size={13} /> Puppet pin tool
+            </Button>
+          </>
+        }
+      />
     );
   }
   const node = defaultSceneGraph.getNode(nodeId);
@@ -1182,194 +1241,6 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
       defaultOpen: true,
       content: <PuppetControls nodeId={nodeId} />,
     });
-  }
-
-  return renderInspector(items, query);
-}
-
-// ── Settings (Right inspector) ─────────────────────────────────
-
-export function MiscPanel(): JSX.Element {
-  const selected = useSelectionStore((s) => s.ids);
-  const primary = selected[0] ?? null;
-  const [query, setQuery] = useState('');
-
-  return (
-    <Panel
-      id="misc"
-      title="Settings"
-      icon="sliders-h"
-      hideHeader
-      onClose={() => getEventBus().emit('PanelClosed', { panelId: 'misc' })}
-    >
-      {primary && (
-        <div className={styles.searchRow}>
-          <Input
-            placeholder="Search settings…"
-            size="sm"
-            fullWidth
-            leftIcon="search"
-            value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
-          />
-        </div>
-      )}
-      <MiscPanelContent nodeId={primary} query={query} />
-      {/* Applied-template fields — the "fill in the blanks" surface. Shown only
-          when a template is actually applied, so it costs nothing otherwise. */}
-      <TemplateFieldsSection />
-      {/* Project-level, selection-independent — renders only under LOCAL_FIRST. */}
-      <div style={{ padding: '0 14px' }}>
-        <VersionHistorySection />
-      </div>
-    </Panel>
-  );
-}
-
-function MiscPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
-  const enterFocus = useFocusStore((s) => s.enter);
-
-  if (!nodeId) {
-    return (
-      <div style={{ padding: '16px 14px', color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
-        <div style={{ color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 8 }}>Nothing selected</div>
-        <p style={{ margin: '0' }}>Select a layer to configure its custom settings (media, precomp, camera, particle).</p>
-      </div>
-    );
-  }
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return <div className={styles.empty}>No node data</div>;
-
-  const kind = readNodeKind(node);
-  const items: AccordionItem[] = [];
-
-  if (kind === 'camera') {
-    items.push({
-      id: 'custom',
-      title: 'Camera Settings',
-      icon: 'camera',
-      defaultOpen: true,
-      content: <CameraSection nodeId={nodeId} />,
-    });
-  } else if (kind === 'light') {
-    items.push({
-      id: 'custom',
-      title: 'Light Settings',
-      icon: 'light',
-      defaultOpen: true,
-      content: <LightSection nodeId={nodeId} />,
-    });
-  } else if (kind === 'particle') {
-    items.push({
-      id: 'custom',
-      title: 'Particle Settings',
-      icon: 'sparkles',
-      defaultOpen: true,
-      content: <ParticleSection nodeId={nodeId} />,
-    });
-  } else if (kind === 'svg') {
-    items.push({
-      id: 'svg',
-      title: 'SVG Layer',
-      icon: 'shape',
-      defaultOpen: true,
-      content: <SvgSection nodeId={nodeId} />,
-    });
-  } else if (kind === 'image' || kind === 'video') {
-    items.push({
-      id: 'media',
-      title: 'Media Settings',
-      icon: 'image',
-      defaultOpen: true,
-      content: <MediaSection nodeId={nodeId} />,
-    });
-  } else if (kind === 'group') {
-    const childrenCount = defaultSceneGraph.getChildren(nodeId).length;
-    items.push({
-      id: 'precomp',
-      title: 'Pre-composition',
-      icon: 'folder',
-      defaultOpen: true,
-      content: (
-        <>
-          <PrecompControl nodeId={nodeId} />
-          {canRevertToSvg(nodeId) && (
-            <RevertSvgRow onRevert={() => revertSvgGroupToLayer(nodeId)} />
-          )}
-          <div style={{ margin: '12px 0 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-              Children Count: {childrenCount}
-            </span>
-            <button
-              type="button"
-              onClick={() => enterFocus(nodeId)}
-              style={{
-                width: '100%',
-                background: 'var(--color-surface-3)',
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-text-primary)',
-                fontSize: 11,
-                padding: '6px',
-                borderRadius: 4,
-                cursor: 'pointer'
-              }}
-            >
-              Enter Group (Focus Mode)
-            </button>
-          </div>
-        </>
-      ),
-    });
-  } else if (kind === 'null') {
-    items.push({
-      id: 'info',
-      title: 'Null Object Info',
-      icon: 'info',
-      defaultOpen: true,
-      content: (
-        <div style={{ margin: '10px 0', fontSize: 10, color: '#ffb703', background: 'rgba(255, 183, 3, 0.08)', padding: '6px 8px', borderRadius: 4, border: '1px solid rgba(255, 183, 3, 0.2)' }}>
-          <strong>Null Object:</strong> Invisible controller. Attach layers as children via Parent & Link.
-        </div>
-      ),
-    });
-  } else if (kind === 'audio') {
-    items.push({
-      id: 'custom',
-      title: 'Audio Settings',
-      icon: 'audio',
-      defaultOpen: true,
-      content: <AudioControls nodeId={nodeId} />,
-    });
-  }
-
-  // Switches & quality controls
-  if (kind !== 'camera' && kind !== 'light' && kind !== 'audio') {
-    items.push({
-      id: 'layerSwitches',
-      title: 'Switches & Quality',
-      icon: 'sliders-h',
-      defaultOpen: true,
-      content: <LayerSwitchesControls nodeId={nodeId} />,
-    });
-  }
-
-  // Time & Playback controls
-  if (kind !== 'camera' && kind !== 'light' && kind !== 'audio') {
-    items.push({
-      id: 'time',
-      title: 'Time & Playback',
-      icon: 'stopwatch',
-      defaultOpen: false,
-      content: <TimeControls nodeId={nodeId} />,
-    });
-  }
-
-  if (items.length === 0) {
-    return (
-      <div style={{ padding: '16px 14px', color: 'var(--color-text-tertiary)', fontSize: 12 }}>
-        No custom settings are available for this layer type.
-      </div>
-    );
   }
 
   return renderInspector(items, query);
@@ -1472,9 +1343,11 @@ export function ComponentsPanel(): JSX.Element {
             </div>
           )}
           {savedComponents.length === 0 ? (
-            <p style={{ fontSize: 11, color: 'var(--color-text-tertiary)', textAlign: 'center', margin: '8px 0' }}>
-              No components yet. Select a layer or group and save it — then reuse it anywhere.
-            </p>
+            <EmptyState
+              compact
+              icon="component"
+              message="No components yet. Select a layer or group and save it to reuse anywhere."
+            />
           ) : (
             <div className={styles.libGrid}>
               {savedComponents.map((c) => (
@@ -1495,7 +1368,7 @@ export function ComponentsPanel(): JSX.Element {
                           alt=""
                           width={48}
                           height={32}
-                          style={{ objectFit: 'contain', borderRadius: 3, background: 'var(--color-surface-0)' }}
+                          style={{ objectFit: 'contain', borderRadius: 4, background: 'var(--color-surface-0)' }}
                         />
                       ) : (
                         <Icon name="component" size={24} />
@@ -1728,7 +1601,7 @@ function TransitionsContent(): JSX.Element {
               onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
               onClick={() => apply(item.id, item.name)}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                <span style={{ display: 'flex', width: 28, height: 20, borderRadius: 3, overflow: 'hidden', flexShrink: 0 }}>
+                <span style={{ display: 'flex', width: 28, height: 20, borderRadius: 4, overflow: 'hidden', flexShrink: 0 }}>
                   <span style={{ flex: 1, background: item.a, opacity: 0.85 }} />
                   <span style={{ flex: 1, background: item.b, opacity: 0.85 }} />
                 </span>
@@ -2008,17 +1881,21 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     // panels too. They were never registered in PANEL_DEFS and nothing opened
     // them, while the SAME three components already render as sections inside
     // LibraryPanel — so the entries were unreachable copies of live UI.
+    //
+    // `style` and `misc` are gone for the same reason (2026-08-03): they were
+    // two more accordions of properties for the selected layer, which is what
+    // `properties` already is. Their sections now render inside it. DockPanel
+    // drops panelOrder ids that no longer register, so persisted layouts and
+    // saved workspaces holding the old ids simply lose the dead tabs.
     ai: () => <AiChatPanel />,
     project:   () => <ProjectPanel />,
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,
     presets: () => <MotionPresetsPanel />,
     properties: () => <PropertiesPanel />,
-    style: () => <StylePanel />,
     rig: () => <RigPanel />,
     motion: () => <MotionEditorPanel />,
     effects: () => <EffectsPanel />,
-    misc: () => <MiscPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
     plugins: () => <PluginsDockPanel />,

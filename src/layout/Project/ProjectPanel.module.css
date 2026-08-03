@@ -78,7 +78,7 @@
 
 .rowIcon {
   flex: 0 0 auto;
-  color: var(--color-text-tertiary, var(--color-text-secondary));
+  color: var(--color-text-tertiary);
 }
 
 .rowBody {
@@ -140,6 +140,6 @@
 }
 
 .rowAction:hover {
-  background: var(--color-surface-3, var(--color-surface-1));
+  background: var(--color-surface-3);
   color: var(--color-text-primary);
 }

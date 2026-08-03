@@ -496,9 +496,8 @@ export function TopNav(): JSX.Element {
         <div className={styles.inner}>
           <IconButton
             aria-label="Back to Dashboard"
-            size="lg"
+            size="md"
             className={styles.back}
-            style={{ marginRight: 8, marginLeft: 4 }}
             onClick={() => navigate('/')}
           >
             <Icon name="arrow-left" size={18} />
