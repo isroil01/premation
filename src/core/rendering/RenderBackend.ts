@@ -408,6 +408,16 @@ export interface RenderBackend {
   /** CSS pixel size + device pixel ratio. */
   resize(width: number, height: number, dpr: number): void;
   renderFrame(snapshot: RenderSnapshot): void;
+  /**
+   * Compositing operations the LAST renderFrame could not honour.
+   *
+   * Empty on the overwhelmingly common path. Non-empty means the frame is a
+   * materially different picture from the one authored — e.g. a track matte that
+   * could not be built, so the layer drew unmatted. The CALLER decides: the
+   * viewport warns and keeps the frame, an export must refuse it, because a
+   * warning next to a delivered file is not a warning anyone acts on.
+   */
+  lastFrameDiagnostics?(): ReadonlyArray<{ code: string; detail: string; layerId?: string }>;
   /** Enable preview-only chrome (float shadow + transparency checkerboard).
    *  Left off for export so transparent comps yield real alpha. */
   setPreviewChrome?(on: boolean): void;

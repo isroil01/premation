@@ -1062,10 +1062,38 @@ export class CompositionPass extends RenderPass {
           const inv = r.matte.inverted ? 1 : 0;
           const mode = { m: [luma, inv, 0, 0, 0, 0, 0, 0, 0], offset: [0, 0, 0] };
           emitMatteCombine(mainCmds, screenMvp(), r.blend, mattedTex, clampSampler(), matteTex, mode, targetUv);
+        } else {
+          // The matte could not be built. Almost always: the source is a precomp
+          // and prepareIsolatedPrecomp refused because nesting exceeded
+          // MAX_PRECOMP_DEPTH.
+          //
+          // The layer still draws — never silently vanish authored work — but it
+          // draws UNMATTED, which is a materially different picture: a layer
+          // that should be cut to a shape renders whole. That used to happen with
+          // no signal at all, which is the worst available outcome, because the
+          // result looks finished. Now it is stated and the host decides:
+          // preview warns and keeps the frame, export refuses it.
+          ctx.services.diagnostics.push({
+            code: 'matte-source-unavailable',
+            layerId: r.id,
+            detail:
+              `Track matte on "${r.id}" could not be built from source "${r.matte.sourceId}" — `
+              + `the layer rendered WITHOUT its matte. A precomp matte source nested deeper `
+              + `than ${MAX_PRECOMP_DEPTH} levels cannot be isolated.`,
+          });
         }
         return;
       }
-      // No source resolved — fall through and draw the layer normally.
+      // Source id present but no such renderable in this frame. Same class, same
+      // reporting: draw the layer, and say what was lost.
+      ctx.services.diagnostics.push({
+        code: 'matte-source-unavailable',
+        layerId: r.id,
+        detail:
+          `Track matte on "${r.id}" references source "${r.matte.sourceId}", which is not `
+          + `present in this composition — the layer rendered WITHOUT its matte.`,
+      });
+      // Fall through and draw the layer normally.
     }
 
     if (r.adjustment) {
