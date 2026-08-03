@@ -14,7 +14,21 @@ export class OverlayPass extends RenderPass {
   override get writes(): readonly string[] {
     return [SURFACE];
   }
-  override readonly after = ['selection'];
+  /**
+   * `composition` and `effect` are named for the same reason `SelectionPass`
+   * names them: writing the same resource creates no ordering edge, and
+   * `EffectPass` REPLACES the surface rather than blending onto it.
+   *
+   * Ordering after `selection` alone was not enough. Chained through
+   * selection's own (dangling) `after: ['text']`, the grid was emitted before
+   * `composition` and before `effect`, so **every composition grid line and
+   * user guide was wiped the moment any layer in the scene carried an effect**
+   * — the frame routes through SCENE_COLOR_TARGET, and the final blit
+   * overwrote chrome that had already been drawn. Removing the effect brought
+   * the grid back, which is what made it look like an effects bug rather than
+   * an ordering one.
+   */
+  override readonly after = ['selection', 'composition', 'effect'];
 
   gridColor = Color.of(1, 1, 1, 0.06);
   guideColor = Color.of(0.23, 0.51, 0.96, 0.8);

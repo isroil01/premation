@@ -13,7 +13,23 @@ export class SelectionPass extends RenderPass {
   override get writes(): readonly string[] {
     return [SURFACE];
   }
-  override readonly after = ['text'];
+  /**
+   * Chrome paints LAST, over the finished picture.
+   *
+   * This used to be `['text']` — a pass no graph in this codebase builds.
+   * `compile()` links an `after` entry only when that pass is active
+   * (`if (byName.has(a))`), so a dangling name is silently NO constraint, and
+   * selection floated to the front of the order: it ran before `composition`,
+   * which then painted the scene straight over the outlines.
+   *
+   * `effect` is named explicitly because two passes that both WRITE the same
+   * resource get no edge from it — order is derived from `reads` and `after`
+   * only. `EffectPass` blits the whole viewport onto SURFACE with REPLACE (see
+   * its F10/F12 note), so anything drawn to SURFACE before it is erased rather
+   * than blended. A disabled `effect` is absent from `byName`, so naming it
+   * costs nothing on the no-effect path.
+   */
+  override readonly after = ['composition', 'effect'];
 
   /** Selection accent (blue). */
   color = Color.of(0.23, 0.51, 0.96, 1);
