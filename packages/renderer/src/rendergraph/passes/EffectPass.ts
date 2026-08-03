@@ -31,6 +31,22 @@ export const SCENE_COLOR_TARGET = 'scene-color';
  * `activeColorTarget`; Overlay and Selection run after and still blend, as they
  * should. There is nothing underneath for this blit to blend WITH.
  *
+ * ── THAT LAST CLAUSE WAS AN ASSUMPTION, AND IT WAS FALSE ──
+ *
+ * "Overlay and Selection run after" was asserted here and enforced nowhere. The
+ * graph derives order from `reads` and `after` only — two passes that both
+ * WRITE SURFACE get no edge between them — and both of those passes declared
+ * `after: ['text']`, naming a pass no graph builds, which `compile()` silently
+ * drops. Measured production order was `clear → selection → background →
+ * overlay → composition → effect`: this blit ran LAST and erased every
+ * composition grid line and user guide for any scene containing an effect.
+ * Removing the effect brought them back, which is what made it read as an
+ * effects bug rather than an ordering one.
+ *
+ * They now declare `composition` and `effect` in their own `after`, so the
+ * sentence above is a constraint rather than a hope. Guarded by
+ * `passOrder.test.ts`.
+ *
  * Verified by measurement, not reasoning: with the four Matte scenes and the
  * Alpha Add seam scene registered, four consecutive renders were byte-identical
  * on both backends, and no committed golden changed.
@@ -43,7 +59,14 @@ export class EffectPass extends RenderPass {
   override get writes(): readonly string[] {
     return [SURFACE];
   }
-  override readonly after = ['text'];
+  /**
+   * Was `['text']` — a pass no graph builds, so it was never a constraint. The
+   * real ordering already comes from `reads`: `CompositionPass` writes
+   * `activeColorTarget`, which is SCENE_COLOR_TARGET on this path, so the read
+   * edge puts this blit after it. Naming `composition` makes that explicit
+   * rather than emergent, and keeps the graph free of dangling names.
+   */
+  override readonly after = ['composition'];
   override enabled = false;
 
   execute(ctx: RenderPassContext): void {
