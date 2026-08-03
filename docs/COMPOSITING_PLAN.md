@@ -485,6 +485,33 @@ the code.
 makes them agree?* If the answer is "we keep them in sync", that is the bug, not
 the mitigation. F10's suspected mechanism was found by asking exactly that.
 
+### The variant that is hardest to see: a MOCK is a second implementation
+
+`setResponsiveTime` mutated `component.props` in place. Unit tests passed, `tsc`
+passed, and the control did nothing — because the test mocked the scene graph
+with a plain object that RETAINS mutations, while the real graph rebuilds a fresh
+copy on every read.
+
+That is not a coverage gap. **The mock modelled a different system than the one
+shipping**, so the tests were correct about a data structure we do not have. Same
+pattern in a new costume: the mock and the real graph are two implementations of
+one contract, kept in agreement by attention.
+
+Two things to carry:
+
+1. **A test double must model the real contract's SHAPE, not just its surface.**
+   If the real thing returns copies, the double must return copies. The fixed
+   mock does, and models `writeProp`, so this bug would now fail the suite.
+2. **It was caught only by driving the real UI** — and this has now happened
+   twice. M2 shipped a mask mode with no picker entry; M7 shipped a time model
+   with no marking UI. Both times the model was assumed correct because tests
+   were green, and both times building the UI is what exercised the real write
+   path.
+
+   **So: land the UI alongside a model change, not after it.** Not for tidiness —
+   the UI is what proves the model is *reachable*, and reachability is precisely
+   what unit tests are least able to check.
+
 ## 2a. Method: revert-and-verify is required for golden attribution
 
 **A plausible cause and a verified cause read identically in a report. Only one
@@ -592,6 +619,7 @@ Catalogued rather than absorbed.
 | **F4** | **The local test suite silently ran 13 fewer test files than a clean checkout** — 392 vs 405 discovered, ~533 tests, including `editorBoot.smoke.test.tsx`. Files present on disk and tracked at HEAD; jest returned nothing even when pointed directly at them. Not a cache issue. Same directories `git stash` failed on with "Permission denied". | **Process, high** | **RESOLVED 2026-08-03** — repo moved `OneDrive/Desktop/motion-editor` → `C:\Users\isroi\dev\motion-editor`. Discovery now 405/405; full suite 488 suites / 5739 passing / 0 failures. |
 | **F6** | **Bake ownership is expressed by more than one predicate and they can disagree.** `snapshotToFrameScene` gated on `effectsNeedCpuBake`, the rasterizer on `layerNeedsCpuBake`; fill opacity alone triggers a bake without any effect requiring it, so both sides claimed the chain and effects applied twice. Third instance of the family (after ea47497 "which side may bake" and b814e3a "what the bake can draw"). `fill-opacity-zero-stroke` was correct at HEAD, wrong mid-branch, correct again by luck of commit order — no golden would have caught it one commit earlier. | Correctness, class | **SCHEDULED as M5b**, before M6 — `hasActiveMaskPaths` is about to become a fourth gate. Fix is one `layerIsBaked()` source of truth, not three sites kept in sync by attention. |
 | **F7** | **Bisect hazard in this branch's range:** `vectorDraw.ts` alone makes `fill-opacity-zero-stroke` *worse* (9.572%) than not applying it at all; only the coupled set (`layerStyles` + `vectorDraw` + `paint/fill`) passes. Anyone bisecting b814e3a would land on a commit that looks like the culprit and is not. | Process | Recorded in b814e3a's message. No fix — the coupling is real, the note is the mitigation. |
+| **F11** | **In-place mutation of `node.components[...].props` is silently discarded, and production does it in at least four files.** `SceneGraph`'s `get components()` rebuilds fresh objects every read — deliberately, per its own comment at `SceneGraph.ts:154`: *"it is a copy so that `node.components.find(...).props.x = ...` writes land in a throwaway and are discarded (callers all over the app do this)."* Proven empirically by the `setResponsiveTime` bug. The `getNode` → in-place-write shape appears in `ai/toolHandlers.ts`, `ai/recipes.ts`, `scene/sceneInsert.ts` and `commands/clipboard.ts`. **NOT verified which individual sites are live defects** — many are probably harmless (building a node before `addNode`), and layer insertion demonstrably works, so something compensates on that path. Determining which are broken is the audit; this is the finding that one is needed. | **Correctness, unknown scope** | Its own audit. Fix is `writeProp`, as in `responsiveTimeStore.ts`. A lint rule banning assignment into a `getNode()` result would close the class permanently. |
 | **F10** | **Advanced blend + transparent comp = accumulating non-determinism, both backends.** See the full diagnosis in §2c. | **Correctness, high** | **PARKED as real work — see M-F10 below.** Diagnosed, not fixed: the fix touches the advanced-blend path that 30+ goldens depend on. |
 | **F9** | The three Classic blend modes (`classic-color-burn`, `classic-color-dodge`, `classic-difference`) ship as **compatibility aliases**, not distinct maths. The Classic branches were written as the unclamped forms; the output clamp collapses them onto the modern ones. Verified by rendering both and comparing, which is how the intent was found to be wrong. | Fidelity gap | Documented in `blendMode.ts` and the shader. Closing it needs AE's actual pre-7.0 formulas, which we do not have. |
 | **F8** | `add` and `linear-dodge` are the same operation in AE but take different code paths here — `add` uses fixed-function additive blending on premultiplied values, `linear-dodge` goes through BLEND_COMBINE. Measured divergence: 218/2367 sampled pixels, **peak 1 level**. Rounding, not semantics. | Cosmetic | Routing `add` through the combine would unify them and re-bless one golden. Not done; the difference is below perceptual threshold. |
