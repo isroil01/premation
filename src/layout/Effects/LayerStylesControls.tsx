@@ -30,7 +30,7 @@ import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { Color } from '@motion/renderer';
-import { effectPropPath } from '@core/effects/effects';
+import { effectPropPath, resolveChannelColor } from '@core/effects/effects';
 import { glassPropPath, type GlassParam } from '@core/effects/glassResolve';
 import {
   getNodeLayerStyles,
@@ -178,14 +178,12 @@ function StyleColor({
   const animated = !!path && defaultAnimation.isAnimated(nodeId, `${path}_r`);
   const layerT = compToKeyframeTime(nodeId, time);
 
-  const displayed = (() => {
-    if (!animated) return value;
-    const r = defaultAnimation.sample(nodeId, `${path}_r`, layerT) ?? 255;
-    const g = defaultAnimation.sample(nodeId, `${path}_g`, layerT) ?? 255;
-    const b = defaultAnimation.sample(nodeId, `${path}_b`, layerT) ?? 255;
-    const a = defaultAnimation.sample(nodeId, `${path}_a`, layerT) ?? 1;
-    return Color.toHex({ r, g, b, a });
-  })();
+  // Same rule the RENDERER uses — see `resolveChannelColor`. An unanimated
+  // channel falls back to the STORED colour's channel; defaulting it to 255 made
+  // the swatch show a colour the render never used.
+  const displayed = animated
+    ? resolveChannelColor(value, (s) => defaultAnimation.sample(nodeId, `${path}${s}`, layerT))
+    : value;
 
   const writeChannels = (hex: string, editLabel: string): void => {
     const c = Color.fromHex(hex);

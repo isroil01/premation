@@ -106,10 +106,54 @@ const KIND_MAP: Record<RenderLayer['kind'], RenderableKind> = {
   video: 'video',
 };
 
+/**
+ * Where the unit quad's origin sits, in UNIT space, once the anchor is folded in.
+ *
+ * Every matrix below bridges the renderer's [0,1]² unit quad to the layer's own
+ * centred local pixels with `scale(W, H) · translate(−0.5, −0.5)`. The anchor is
+ * a pivot expressed in those same local pixels, and the model the rest of the
+ * app agrees on is
+ *
+ *     content_world = position + R·S·(local − anchor)
+ *
+ * (see `core/scene/anchor.ts`, which is the written definition, and
+ * `core/workspace/ports.ts`, which builds the selection overlay's matrix from
+ * it). Subtracting the anchor is therefore a shift of the bridge's translation
+ * by −anchor/size — and because it rides INSIDE the layer's rotate/scale, the
+ * anchor becomes the point the layer spins and scales about, which is the whole
+ * feature.
+ *
+ * This was missing entirely. `buildSnapshot` has always threaded `anchorX`/
+ * `anchorY` onto the RenderLayer, and `RenderBackend` has always documented them
+ * as "content is shifted by −anchor so the anchor point sits at the pivot" — but
+ * no matrix here ever read them, so on the unified GPU path the field was
+ * write-only. The visible consequences: rotation and scale pivoted at the layer
+ * centre no matter what the anchor said, Pan Behind's position compensation
+ * moved the layer instead of holding it still, and the selection outline (which
+ * DOES apply the anchor) sat exactly `−anchor` away from the artwork. That last
+ * one is how the bug was found; the box was right and the render was wrong.
+ *
+ * Divides by the UNSCALED padded size on purpose: the bridge's scale term is
+ * `W·scaleX`, so `−anchorX/W` lands a world shift of `−anchorX·scaleX`, which is
+ * `R·S·(−anchor)` — the anchor is in the layer's own pre-scale pixels, exactly
+ * as the Inspector shows it.
+ */
+function quadOrigin(layer: RenderLayer, pad: number): { x: number; y: number } {
+  const W = layer.width + 2 * pad;
+  const H = layer.height + 2 * pad;
+  const ax = layer.anchorX ?? 0;
+  const ay = layer.anchorY ?? 0;
+  return {
+    x: -0.5 - (W > 0 ? ax / W : 0),
+    y: -0.5 - (H > 0 ? ay / H : 0),
+  };
+}
+
 /** Center-pivot model matrix: unit-quad centre → (x,y), rotated/scaled in place.
  *  The quad grows by the layer's raster padding so a stroked shape's padded
  *  texture (which includes the outer stroke band) places 1:1 without stretching;
- *  padding is 0 for unstroked shapes/text/image, so those are unaffected. */
+ *  padding is 0 for unstroked shapes/text/image, so those are unaffected.
+ *  The anchor rides in the quad's origin — see {@link quadOrigin}. */
 function centerModel(layer: RenderLayer): Mat3 {
   const rad = (layer.rotation * Math.PI) / 180;
   const pad = rasterPadding(layer);
@@ -121,8 +165,9 @@ function centerModel(layer: RenderLayer): Mat3 {
     // layers changes — skew is strictly additive.
     ? Mat3.compose(layer.x, layer.y, rad, w, h)
     : composeSkewed(layer.x, layer.y, rad, w, h, skew, layer.skewAxis ?? 0);
-  // translate(x,y)·rotate·skew·scale(w,h) · translate(-0.5,-0.5)
-  return Mat3.multiply(base, Mat3.translation(-0.5, -0.5));
+  const o = quadOrigin(layer, pad);
+  // translate(x,y)·rotate·skew·scale(w,h) · translate(-0.5-ax/W, -0.5-ay/H)
+  return Mat3.multiply(base, Mat3.translation(o.x, o.y));
 }
 
 /**
@@ -179,16 +224,21 @@ function composeSkewed(
  * bridge the mat3 path uses — scale(W, H, 1) · translate(−0.5, −0.5, 0) — so
  * the unit quad's centre lands on the layer's anchor exactly like the affine
  * path. Do NOT drop the bridge: without it every 3D layer collapses to ~1px.
+ *
+ * `world3d` is composed with anchor {0, 0, anchorZ} (see buildSnapshot: "x/y are
+ * applied at draw time"), so the X/Y anchor has to enter HERE — the bridge is
+ * the draw-time step that comment refers to.
  */
 function model3dFor(world3d: readonly number[], layer: RenderLayer): readonly number[] {
   const pad = rasterPadding(layer);
   const W = layer.width + 2 * pad;
   const H = layer.height + 2 * pad;
+  const o = quadOrigin(layer, pad);
   const bridge: import('@motion/scene').Matrix4 = [
     W, 0, 0, 0,
     0, H, 0, 0,
     0, 0, 1, 0,
-    -0.5 * W, -0.5 * H, 0, 1,
+    o.x * W, o.y * H, 0, 1,
   ];
   return Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, bridge);
 }
@@ -257,14 +307,32 @@ function boundsOf(m: Mat3): { x: number; y: number; width: number; height: numbe
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-/** Flat colour for the GPU SDF (non-textured) path: the layer's solid fill.
- *  Gradient / multi-stop fills force a rasterized texture via needsShapeRaster,
- *  so a non-solid fill never reaches the SDF path — the old "first gradient
- *  stop" fallback here was dead and has been removed (engine-unification Ph2;
- *  gradients are now fully rasterized, never flattened to one stop). */
+/**
+ * Flat colour for the GPU SDF (non-textured) path: the layer's solid fill.
+ *
+ * `layer.fill` is the RESOLVED answer and the only one to read. buildSnapshot
+ * already applies the whole precedence chain to it — Style fill, then a solid
+ * `fillPaint` from the Fill & Stroke panel, then the animated `fill_r/_g/_b/_a`
+ * channels on top — so re-consulting `fillPaint` here does not add information,
+ * it discards the last step of that chain.
+ *
+ * Which is what it did: this used to return `p.color` whenever the paint was
+ * solid, and essentially every shape carries a solid paint. So a keyframed fill
+ * colour resolved correctly into `layer.fill`, reached this function, and was
+ * thrown away for the stored paint — the shape rendered its authored colour at
+ * every frame while the Inspector, the timeline and the snapshot all agreed it
+ * was animating. The Canvas2D raster path never had the bug: `fillStyleFor`
+ * returns its `fallback` (this same `layer.fill`) for a solid paint and only
+ * builds a gradient otherwise. Two resolutions of one precedence rule.
+ *
+ * Gradient / multi-stop fills force a rasterized texture via needsShapeRaster,
+ * so a non-solid paint never reaches the SDF path at all; `p.color` survives
+ * only as the fallback for a layer that somehow carries a paint and no `fill`.
+ */
 function representativeColor(layer: RenderLayer): string {
+  if (layer.fill) return layer.fill;
   const p = layer.fillPaint;
-  return !p || p.type !== 'solid' ? (layer.fill ?? '#000000') : p.color;
+  return p && p.type === 'solid' ? p.color : '#000000';
 }
 
 /** The layer's solid fill graded by its colour effects (brightness/contrast/…),
@@ -497,9 +565,11 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     // applies it and then draws at (-w/2..w/2)). The renderer's input is the
     // unit quad [0,1]², so scale it up to w×h and centre it BEFORE the affine —
     // without this every 3D layer collapses to a ~1px dot on the GPU path.
+    // The anchor rides in that centring step (quadOrigin).
+    const o = quadOrigin(layer, pad);
     model = Mat3.multiply(
       model,
-      Mat3.multiply(Mat3.scaling(layer.width + 2 * pad, layer.height + 2 * pad), Mat3.translation(-0.5, -0.5)),
+      Mat3.multiply(Mat3.scaling(layer.width + 2 * pad, layer.height + 2 * pad), Mat3.translation(o.x, o.y)),
     );
     if (parentMatrix) model = Mat3.multiply(parentMatrix, model);
   } else {
@@ -517,6 +587,10 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // drawComposited does with them).
   let motionSamples: Array<{ modelMatrix: Mat3; opacity: number }> | undefined;
   if (layer.motionSamples && layer.motionSamples.length > 1) {
+    // Sub-frame samples rebuild the layer model, so they need the same anchored
+    // quad origin the still frame uses — otherwise an anchored layer's blur
+    // trail sits `-anchor` away from the layer it belongs to.
+    const so = quadOrigin(layer, pad);
     motionSamples = layer.motionSamples.map((s) => {
       let m: Mat3;
       if (s.matrix) {
@@ -528,13 +602,13 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         // Same pixel-space → unit-quad bridge as the layer matrix above.
         m = Mat3.multiply(
           m,
-          Mat3.multiply(Mat3.scaling(layer.width + 2 * pad, layer.height + 2 * pad), Mat3.translation(-0.5, -0.5)),
+          Mat3.multiply(Mat3.scaling(layer.width + 2 * pad, layer.height + 2 * pad), Mat3.translation(so.x, so.y)),
         );
       } else {
         const rad = (s.rotation * Math.PI) / 180;
         const w = (layer.width + 2 * pad) * (s.scaleX || 1);
         const h = (layer.height + 2 * pad) * (s.scaleY || 1);
-        m = Mat3.multiply(Mat3.compose(s.x, s.y, rad, w, h), Mat3.translation(-0.5, -0.5));
+        m = Mat3.multiply(Mat3.compose(s.x, s.y, rad, w, h), Mat3.translation(so.x, so.y));
         if (parentMatrix) m = Mat3.multiply(parentMatrix, m);
       }
       return { modelMatrix: m, opacity: s.opacity };
@@ -678,7 +752,14 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
  */
 export function precompChildParent(layer: RenderLayer, parentMatrix: Mat3): Mat3 {
   const rad = (layer.rotation * Math.PI) / 180;
-  const tOrigin = Mat3.translation(-layer.width / 2, -layer.height / 2);
+  // The container's anchor shifts its content in the container's own local
+  // pixels, exactly as `centerModel` shifts the container's own quad. Both paths
+  // must carry it or an anchored precomp lands in two different places
+  // depending on whether it happened to need isolation.
+  const tOrigin = Mat3.translation(
+    -layer.width / 2 - (layer.anchorX ?? 0),
+    -layer.height / 2 - (layer.anchorY ?? 0),
+  );
   const mPrecomp = Mat3.compose(layer.x, layer.y, rad, layer.scaleX || 1, layer.scaleY || 1);
   return Mat3.multiply(parentMatrix, Mat3.multiply(mPrecomp, tOrigin));
 }

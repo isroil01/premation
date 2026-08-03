@@ -419,10 +419,15 @@ function resolveColorChannel(path: string, nodeId?: string): PropertyMeta | null
   if (!m) return null;
   const [, base, suffix] = m;
   if (!base || !suffix) return null;
-  const isAlpha = suffix === '_a';
   const baseLabel =
     COLOR_BASE_LABEL[base] ??
     (base.startsWith('effect.') ? resolvePropertyMeta(base, nodeId).label : titleCase(base));
+  // 0..1 on EVERY channel, alpha included: that is the scale the tracks are
+  // stored in (`Color.fromHex` is what writes them, everywhere). The RGB
+  // channels were declared 0..255 here, so the timeline row, the graph editor
+  // and the slider all described a range 255× wider than the values in it —
+  // dragging the row past 1 was a no-op because both readers clamp, and the
+  // default of 255 offered to "reset" a channel to 255× full white.
   return {
     path,
     label: `${baseLabel} ${CHANNEL_LABEL[suffix]}`,
@@ -430,10 +435,10 @@ function resolveColorChannel(path: string, nodeId?: string): PropertyMeta | null
     type: 'colorChannel',
     unit: '',
     min: 0,
-    max: isAlpha ? 1 : 255,
-    step: isAlpha ? 0.01 : 1,
-    precision: isAlpha ? 2 : 0,
-    defaultValue: isAlpha ? 1 : 255,
+    max: 1,
+    step: 0.01,
+    precision: 3,
+    defaultValue: 1,
     resettable: true,
     order: base.startsWith('effect.') ? ORDER.effects : ORDER.fill,
   };
