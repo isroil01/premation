@@ -69,15 +69,17 @@ export async function runBackendDirector(
   // The director pipeline runs server-side; there is no local equivalent, so in
   // the local edition it is simply absent.
   //
-  // Gated on `aiRunsThroughBackend()`, NOT `aiEnabled()`. This guard was
-  // written when `aiEnabled()` meant `isServerEdition()`; it is now `() => true`
-  // — both editions run the assistant, they differ only in where the key lives.
-  // That change silently neutered the refusal, so the local edition fell
-  // through to the token check below and told a user with no accounts system to
-  // sign in. `aiRunsThroughBackend` is the capability that actually describes
-  // what this function needs. See directorEditionGate.test.ts.
+  // Gated on `aiRunsThroughBackend()`, NOT `aiEnabled()`, and the distinction
+  // has survived `aiEnabled()` changing meaning twice. This guard was written
+  // when `aiEnabled()` was `isServerEdition()`; it briefly became `() => true`,
+  // which silently neutered the refusal and made the local edition fall through
+  // to the token check below and ask a user with no accounts system to sign in.
+  // It is `isServerEdition()` again today — but reading it here would still be
+  // wrong, because what this function needs is the BACKEND, not the assistant
+  // being on. Those are the same value this week and were not last week.
+  // See directorEditionGate.test.ts.
   if (!aiRunsThroughBackend()) {
-    throw new AiError('coming_soon', 'The director pipeline needs the hosted backend; this edition runs the assistant locally.');
+    throw new AiError('coming_soon', 'The director pipeline needs the hosted backend, which this edition does not have.');
   }
 
   const token = getToken();
