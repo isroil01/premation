@@ -34,6 +34,7 @@ import type { SceneNode } from '@core/types';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
 import { readNodePuppet } from '@core/rig/puppet';
+import { writeTransformProps } from '@core/scene/transformWrite';
 
 /**
  * Layer kinds that can carry a puppet / bone rig directly: a rig's warp mesh
@@ -366,10 +367,18 @@ function placeAndSize(nodeId: string, graph: SceneGraph, w: number, h: number): 
   const node = graph.getNode(nodeId);
   if (!node) return;
   const t = node.components.find((c) => c.type === 'Transform');
-  if (t) {
-    graph.writeProp(nodeId, t.id, 'width', w);
-    graph.writeProp(nodeId, t.id, 'height', h);
-  }
+  if (!t) return;
+  // Routed like every other transform write. The node is freshly inserted here,
+  // so it carries no tracks and this resolves to a plain base write — but the
+  // rule is "no raw animatable writes", not "no raw writes we believe are safe".
+  writeTransformProps(
+    nodeId,
+    [
+      { prop: 'width', value: w },
+      { prop: 'height', value: h },
+    ],
+    'Place Rigged Logo',
+  );
 }
 
 /**

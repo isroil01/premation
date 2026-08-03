@@ -50,6 +50,7 @@ import { compSourceOf } from '@core/composition/compSizes';
 import { computeFit, type Size } from '@core/source/fitCommands';
 import type { SlotFit } from './templateTypes';
 import type { SceneNode } from '@core/types';
+import { writeTransformProps } from '@core/scene/transformWrite';
 
 /** Fit policy stored on the placeholder's Transform component. */
 export const SLOT_FIT_PROP = 'slotFit';
@@ -195,9 +196,17 @@ export function fillSlot(nodeId: string, src: string): FillResult | null {
   }
 
   const box = fittedBoxFor({ width: source.width, height: source.height }, slot, fit);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'width', box.width);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'height', box.height);
+  // Through writeTransformProps: filling a slot on a layer whose size is
+  // animated would otherwise take a base-prop write the renderer ignores, and
+  // the media would keep the previous slot's dimensions.
+  writeTransformProps(
+    nodeId,
+    [
+      { prop: 'width', value: box.width },
+      { prop: 'height', value: box.height },
+    ],
+    'Fill Media Slot',
+  );
   // x / y / scale / rotation are deliberately untouched — see the file header.
-  bumpScene();
   return { box, fit, fitted: true };
 }

@@ -16,7 +16,7 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
+import { writeTransformProps } from '@core/scene/transformWrite';
 import { compSourceOf } from '@core/composition/compSizes';
 import { sourceOf, type SourceInfo } from '@core/source/sourceInfo';
 import { SIZE } from '@core/rendering/buildSnapshot';
@@ -116,11 +116,19 @@ export function fitNodeTo(nodeId: string, frame: Size, mode: FitMode): Size | nu
   if (!t || !intrinsic) return null;
 
   const fitted = computeFit(intrinsic, frame, mode);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'width', fitted.width);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'height', fitted.height);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'scaleX', 1);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'scaleY', 1);
-  bumpScene();
+  // Through writeTransformProps: on a layer with animated Scale, raw base
+  // writes to scaleX/scaleY were discarded by the renderer (animated values
+  // win), so Fit to Comp silently did nothing.
+  writeTransformProps(
+    nodeId,
+    [
+      { prop: 'width', value: fitted.width },
+      { prop: 'height', value: fitted.height },
+      { prop: 'scaleX', value: 1 },
+      { prop: 'scaleY', value: 1 },
+    ],
+    'Fit Layer',
+  );
   return fitted;
 }
 
@@ -149,11 +157,16 @@ export function centreAnchorInContent(nodeId: string): void {
   const y = typeof t.props.y === 'number' ? t.props.y : 0;
   // Rotation/scale are deliberately ignored here: the anchor offset is stored
   // in the layer's own unrotated space, and so is position.
-  defaultSceneGraph.writeProp(nodeId, t.id, 'anchorX', 0);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'anchorY', 0);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'x', x - ax);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'y', y - ay);
-  bumpScene();
+  writeTransformProps(
+    nodeId,
+    [
+      { prop: 'anchorX', value: 0 },
+      { prop: 'anchorY', value: 0 },
+      { prop: 'x', value: x - ax },
+      { prop: 'y', value: y - ay },
+    ],
+    'Centre Anchor Point',
+  );
 }
 
 /** Centre a layer in the frame. Used by auto-fit on import. */
@@ -162,7 +175,12 @@ export function centreInFrame(nodeId: string, frame: Size): void {
   if (!node) return;
   const t = transformComponent(node);
   if (!t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'x', Math.round(frame.width / 2));
-  defaultSceneGraph.writeProp(nodeId, t.id, 'y', Math.round(frame.height / 2));
-  bumpScene();
+  writeTransformProps(
+    nodeId,
+    [
+      { prop: 'x', value: Math.round(frame.width / 2) },
+      { prop: 'y', value: Math.round(frame.height / 2) },
+    ],
+    'Centre In Frame',
+  );
 }
