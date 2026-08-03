@@ -45,7 +45,8 @@ import type {
   TimelineClip,
 } from './TimelineModel';
 import { Dropdown } from '@components/Dropdown';
-import { BLEND_MODES, type LayerBlendMode } from '@core/effects/blendMode';
+import { type LayerBlendMode } from '@core/effects/blendMode';
+import { blendDropdownItems, blendModeLabel } from '@layout/Inspector/blendMenu';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { eligibleParents, parentOfNode } from '@core/scene/parenting';
@@ -1808,16 +1809,13 @@ const TrackHeader = memo(function TrackHeader({
           placement="bottom-start"
           trigger={
             <button type="button" className={styles.timelineSelectTrigger} aria-label="Layer Blend Mode">
-              {BLEND_MODES.find((b) => b.mode === track.blendMode)?.label ?? 'Normal'}
+              {blendModeLabel(track.blendMode as LayerBlendMode | undefined)}
             </button>
           }
-          items={BLEND_MODES.map((b) => ({
-            type: 'item',
-            id: b.mode,
-            label: b.label,
-            icon: b.mode === track.blendMode ? ('check' as const) : undefined,
-            onSelect: () => onBlendModeChange?.(b.mode as LayerBlendMode),
-          }))}
+          items={blendDropdownItems(
+            track.blendMode as LayerBlendMode | undefined,
+            (m) => onBlendModeChange?.(m),
+          )}
         />
       </div>
 
