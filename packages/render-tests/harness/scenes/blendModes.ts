@@ -142,4 +142,76 @@ export const alphaAddSeamPending: Scene = defineScene({
   },
 });
 
+/**
+ * The Matte family (M8c) — NOT REGISTERED. See F12, which extends F10.
+ *
+ * These four scenes are believed correct and the shader branch behind them is
+ * unit-tested, but all four fail the harness's own determinism gate on BOTH
+ * backends:
+ *
+ *   blend-stencil-alpha#0     [webgl2] double-render bytes differ
+ *   blend-silhouette-luma#0   [webgpu] double-render bytes differ
+ *
+ * That is not the matte maths. Forcing `matteFactor` to return 1.0 for mode 31
+ * — same branch, same dispatch, but producing no transparency — makes
+ * `blend-stencil-alpha` deterministic and drops it from the failure list while
+ * the other three keep failing. So the trigger is the advanced-blend path
+ * handling TRANSPARENT pixels, exactly as F10 records for Alpha Add.
+ *
+ * F12 is that F10 is broader than it was written. F10 says "over a transparent
+ * comp"; these scenes have an OPAQUE comp (#101014) and the transparency is
+ * produced by the blend itself. The condition is not the comp's alpha, it is
+ * whether the advanced-blend path has transparency to carry at all — which
+ * makes every Matte mode structurally affected, since punching alpha holes in
+ * the backdrop is the entire point of them.
+ *
+ * Registering these would put four flaky tests in the gate; blessing them would
+ * bless one arbitrary sample of a non-deterministic output. Both are worse than
+ * the coverage gap. Re-register once F10/F12 is fixed.
+ *
+ * The generator is kept separate from MODES for a second reason that still
+ * holds: an ordinary blend is judged on the colour INSIDE the ellipse, whereas
+ * a stencil is judged on what survives OUTSIDE it.
+ */
+const MATTE_MODES = ['stencil-alpha', 'stencil-luma', 'silhouette-alpha', 'silhouette-luma'] as const;
+
+function matteScene(mode: string): Scene {
+  return defineScene({
+    id: `blend-${mode}`,
+    description: `Matte mode "${mode}": an ellipse mattes the gradient beneath it.`,
+    size: SIZE,
+    comp: COMP,
+    fps: 30,
+    frames: [0],
+    gpuParity: 'expect-pass',
+    build(graph) {
+      graph.addNode(node('base', { kind: 'shape', style: { fill: '#000' } }));
+      graph.setSolid('base', true);
+      graph.setFill('base', {
+        type: 'linear',
+        angle: 45,
+        stops: [
+          { id: 'a', offset: 0, color: '#1030ff' },
+          { id: 'b', offset: 0.5, color: '#ff2d55' },
+          { id: 'c', offset: 1, color: '#ffd000' },
+        ],
+      } as never);
+      // The matte layer. Its fill is a mid grey on purpose: Stencil Alpha keeps
+      // the backdrop at full strength inside it (alpha 1), while Stencil Luma
+      // scales by its brightness — so the two are only distinguishable when the
+      // matte is neither black nor white.
+      graph.addNode(node('top', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 200, height: 160, shapeType: 'ellipse' },
+        style: { fill: '#6f8fa8' },
+      }));
+      graph.setBlendMode('top', mode);
+    },
+  });
+}
+
+/** Deliberately NOT in `blendModeScenes` — see the F12 note above. */
+export const matteModeScenesPending: Scene[] = MATTE_MODES.map(matteScene);
+
 export const blendModeScenes: Scene[] = MODES.map(blendScene);

@@ -1,5 +1,6 @@
 import { snapshotToFrameScene, layerToRenderable, viewToCamera } from './snapshotToFrameScene';
 import type { RenderSnapshot, RenderLayer } from './RenderBackend';
+import { BLEND_MODES } from '@core/effects/blendMode';
 import { Renderer, NullBackend, type Mat3 } from '@motion/renderer';
 
 function layer(over: Partial<RenderLayer> = {}): RenderLayer {
@@ -198,6 +199,26 @@ describe('snapshotToFrameScene', () => {
     expect(r!.advancedBlend).toBe(1);
     const [o] = snapshotToFrameScene(snapshot([layer({ blend: 'overlay' })])).renderables;
     expect(o!.advancedBlend).toBe(3);
+  });
+
+  test('routes the Matte family through the combine, at its own ids', () => {
+    // These ids are a WIRE FORMAT shared with two shader dialects. Pinning them
+    // here is what stops a renumber from silently turning Stencil Alpha into
+    // Silhouette Luma — both of which render a perfectly plausible picture.
+    const id = (blend: string): number | undefined =>
+      snapshotToFrameScene(snapshot([layer({ blend: blend as never })])).renderables[0]!.advancedBlend;
+    expect(id('stencil-alpha')).toBe(31);
+    expect(id('stencil-luma')).toBe(32);
+    expect(id('silhouette-alpha')).toBe(33);
+    expect(id('silhouette-luma')).toBe(34);
+  });
+
+  test('every blend mode maps to a distinct combine id', () => {
+    // One id serving two modes is invisible until someone compares two renders.
+    const ids = BLEND_MODES
+      .map((b) => snapshotToFrameScene(snapshot([layer({ blend: b.mode })])).renderables[0]!.advancedBlend ?? 0)
+      .filter((n) => n > 0);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   test('keeps a fixed-function blend mode on the renderable blend field', () => {

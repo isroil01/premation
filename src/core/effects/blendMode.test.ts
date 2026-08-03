@@ -1,5 +1,6 @@
 import {
   isBlendMode,
+  isMatteBlend,
   readNodeBlend,
   BLEND_MODES,
   type LayerBlendMode,
@@ -25,14 +26,17 @@ describe('isBlendMode', () => {
     expect(isBlendMode(42)).toBe(false);
   });
 
+  test('accepts the Matte family (M8c)', () => {
+    for (const m of ['stencil-alpha', 'stencil-luma', 'silhouette-alpha', 'silhouette-luma']) {
+      expect(isBlendMode(m)).toBe(true);
+    }
+  });
+
   test('rejects modes that are named in the plan but not yet implemented', () => {
-    // These are real AE modes we deliberately do NOT ship yet (M4/M5/M8c). If
-    // one starts validating without its shader branch, a document could store a
-    // mode that renders as Normal with no signal.
-    for (const notYet of [
-      'dissolve', 'dancing-dissolve',
-      'stencil-alpha', 'stencil-luma', 'silhouette-alpha', 'silhouette-luma',
-    ]) {
+    // Real AE modes we deliberately do NOT ship yet (M5). If one starts
+    // validating without its shader branch, a document could store a mode that
+    // renders as Normal with no signal.
+    for (const notYet of ['dissolve', 'dancing-dissolve']) {
       expect(isBlendMode(notYet)).toBe(false);
     }
   });
@@ -57,11 +61,11 @@ describe('readNodeBlend', () => {
 });
 
 describe('BLEND_MODES table', () => {
-  test('ships 32 of AE\'s 38, with the 6 absentees accounted for', () => {
-    // 38 - 32 = 6: Dissolve, Dancing Dissolve (M5) and Stencil/Silhouette x4
-    // (M8c). If this number moves without a milestone landing, something was
-    // added without a shader branch behind it.
-    expect(BLEND_MODES).toHaveLength(32);
+  test('ships 36 of AE\'s 38, with the 2 absentees accounted for', () => {
+    // 38 - 36 = 2: Dissolve and Dancing Dissolve (M5). If this number moves
+    // without a milestone landing, something was added without a shader branch
+    // behind it.
+    expect(BLEND_MODES).toHaveLength(36);
   });
 
   test('normal leads, and every mode is unique', () => {
@@ -78,7 +82,7 @@ describe('BLEND_MODES table', () => {
   test('uses AE\'s own group names, in AE\'s order', () => {
     const seen: string[] = [];
     for (const { group } of BLEND_MODES) if (seen[seen.length - 1] !== group) seen.push(group);
-    expect(seen).toEqual(['Normal', 'Subtractive', 'Additive', 'Complex', 'Difference', 'HSL', 'Utility']);
+    expect(seen).toEqual(['Normal', 'Subtractive', 'Additive', 'Complex', 'Difference', 'HSL', 'Utility', 'Matte']);
   });
 
   test('groups are contiguous — a mode cannot appear outside its section', () => {
@@ -101,6 +105,16 @@ describe('BLEND_MODES table', () => {
     expect(count('Difference')).toBe(5);
     expect(count('HSL')).toBe(4);
     expect(count('Utility')).toBe(2);
+    expect(count('Matte')).toBe(4);
+  });
+
+  test('the Matte family is exactly the four modes that scale the backdrop', () => {
+    // isMatteBlend gates behaviour that must not apply to an ordinary blend, so
+    // the set and the table have to agree — two lists of the same thing is a
+    // §2·0 site if nothing checks them against each other.
+    const fromTable = BLEND_MODES.filter((b) => b.group === 'Matte').map((b) => b.mode);
+    expect(fromTable.filter(isMatteBlend)).toEqual(fromTable);
+    expect(BLEND_MODES.filter((b) => b.group !== 'Matte').some((b) => isMatteBlend(b.mode))).toBe(false);
   });
 
   test('every table entry passes its own validator', () => {

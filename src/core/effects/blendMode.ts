@@ -21,10 +21,17 @@
  * exists.
  *
  * ── Coverage ─────────────────────────────────────────────────────────
- * 32 of AE's 38. Missing: Dissolve and Dancing Dissolve (stochastic, need a
- * deterministic seed — M5), and the four Stencil/Silhouette modes (they modify
- * the alpha of every layer BELOW them, which needs a compositing-group
- * boundary — M8c).
+ * 36 of AE's 38. Missing: Dissolve and Dancing Dissolve (stochastic, and the
+ * cost is not the blend but a determinism contract between preview and
+ * export — M5).
+ *
+ * The four Stencil/Silhouette modes (M8c) are now in. They were estimated as
+ * needing "a compositing-group boundary" first; that boundary already existed.
+ * The advanced-blend path renders the layer to one target, copies the
+ * accumulated backdrop to another, and OVERWRITES the group's out target with a
+ * function of the two — which is precisely the topology a stencil needs, and
+ * precomps already isolate into their own target so the scope is right too.
+ * Checking the renderer rather than the estimate turned an L into an M.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -65,7 +72,14 @@ export type LayerBlendMode =
   | 'divide'
   // ── M4: the Utility family. These write ALPHA, not just colour. ──
   | 'alpha-add'
-  | 'luminescent-premul';
+  | 'luminescent-premul'
+  // ── M8c: the Matte family. These replace the backdrop with a SCALED copy of
+  // itself and contribute no colour of their own — the layer is a matte, not a
+  // participant in the blend. ──
+  | 'stencil-alpha'
+  | 'stencil-luma'
+  | 'silhouette-alpha'
+  | 'silhouette-luma';
 
 /**
  * Blend modes in AE's own menu order and AE's own group names, so a user coming
@@ -126,7 +140,26 @@ export const BLEND_MODES: ReadonlyArray<{ mode: LayerBlendMode; label: string; g
 
   { mode: 'alpha-add', label: 'Alpha Add', group: 'Utility' },
   { mode: 'luminescent-premul', label: 'Luminescent Premul', group: 'Utility' },
+
+  { mode: 'stencil-alpha', label: 'Stencil Alpha', group: 'Matte' },
+  { mode: 'stencil-luma', label: 'Stencil Luma', group: 'Matte' },
+  { mode: 'silhouette-alpha', label: 'Silhouette Alpha', group: 'Matte' },
+  { mode: 'silhouette-luma', label: 'Silhouette Luma', group: 'Matte' },
 ];
+
+/**
+ * The Matte family, which behaves unlike every other mode: the layer draws no
+ * colour at all and instead scales the alpha of the whole backdrop beneath it.
+ * Callers that reason about "does this layer contribute pixels" need to tell
+ * them apart from the rest.
+ */
+export const MATTE_BLEND_MODES: ReadonlySet<LayerBlendMode> = new Set<LayerBlendMode>([
+  'stencil-alpha', 'stencil-luma', 'silhouette-alpha', 'silhouette-luma',
+]);
+
+export function isMatteBlend(mode: LayerBlendMode | undefined): boolean {
+  return !!mode && MATTE_BLEND_MODES.has(mode);
+}
 
 const VALID = new Set<string>(BLEND_MODES.map((b) => b.mode));
 

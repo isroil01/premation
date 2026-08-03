@@ -433,6 +433,40 @@ void main() {
 // 1 multiply 2 screen 3 overlay 4 darken 5 lighten 6 color-dodge 7 color-burn
 // 8 hard-light 9 soft-light 10 difference 11 exclusion 12 hue 13 saturation
 // 14 color 15 luminosity.
+/**
+ * The Stencil / Silhouette coverage factor, in both dialects.
+ *
+ * Stencil keeps the backdrop where the matte layer is present; Silhouette is
+ * its complement and cuts a hole. Alpha reads the layer's coverage; Luma reads
+ * its brightness.
+ *
+ * Luma deliberately reads the PREMULTIPLIED rgb. Premultiplied luma is
+ * alpha x colour-luma, so a fully transparent pixel weighs 0 — which is exactly
+ * AE's "treat transparent areas as black" rule, obtained for free and without
+ * an unpremultiply that would divide by zero on empty pixels.
+ *
+ * Kept as two strings rather than one because WGSL and GLSL are different
+ * languages, but written together so the pair cannot drift: they are the same
+ * four cases in the same order, and a render test compares their output.
+ */
+const MATTE_FACTOR_WGSL = /* wgsl */ `
+fn matteFactor(mode : i32, s : vec4<f32>) -> f32 {
+  if (mode == 31) { return clamp(s.a, 0.0, 1.0); }
+  if (mode == 32) { return clamp(bLum(s.rgb), 0.0, 1.0); }
+  if (mode == 33) { return clamp(1.0 - s.a, 0.0, 1.0); }
+  return clamp(1.0 - bLum(s.rgb), 0.0, 1.0);
+}
+`;
+
+const MATTE_FACTOR_GLSL = /* glsl */ `
+float matteFactor(int mode, vec4 s) {
+  if (mode == 31) return clamp(s.a, 0.0, 1.0);
+  if (mode == 32) return clamp(bLum(s.rgb), 0.0, 1.0);
+  if (mode == 33) return clamp(1.0 - s.a, 0.0, 1.0);
+  return clamp(1.0 - bLum(s.rgb), 0.0, 1.0);
+}
+`;
+
 const BLEND_COMBINE_GLSL_HELPERS = /* glsl */ `
 float bChan(int mode, float cb, float cs) {
   if (mode == 1) return cb * cs;
@@ -503,7 +537,7 @@ vec3 bHSL(int mode, vec3 cb, vec3 cs) {
   if (mode == 28) return bLum(cs) > bLum(cb) ? cs : cb;
   return cs;
 }
-`;
+${MATTE_FACTOR_GLSL}`;
 const BLEND_COMBINE: ShaderSource = {
   name: 'blend-combine',
   wgsl: /* wgsl */ `
@@ -589,6 +623,7 @@ fn bSetSat(c : vec3<f32>, s : f32) -> vec3<f32> {
   if (mx > mn) { return (c - mn) / (mx - mn) * s; }
   return vec3<f32>(0.0);
 }
+${MATTE_FACTOR_WGSL}
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let s = textureSample(tex, smp, uv);
@@ -629,6 +664,17 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // rather than lerping, so colour that exceeds its own alpha is kept instead
     // of clipped — the glow/highlight case AE keeps this mode for.
     co = s.rgb + (1.0 - as1) * d.rgb;
+  } else if (mode >= 31 && mode <= 34) {
+    // ── Matte family (31-34): Stencil / Silhouette ──
+    // Not blends. The layer contributes NO colour of its own; it scales the
+    // coverage of the whole backdrop beneath it. So the output is the backdrop
+    // times a factor, and the source appears only inside that factor.
+    let k = matteFactor(mode, s);
+    // Everything here is premultiplied, so scaling coverage means scaling all
+    // four channels. Scaling alpha alone would leave colour behind where there
+    // is no longer any coverage to carry it, which reads as a bright fringe.
+    co = d.rgb * k;
+    ao = ad * k;
   }
   return vec4<f32>(co, ao);
 }
@@ -672,6 +718,15 @@ void main() {
     // Luminescent Premul — treat the source as already premultiplied and add,
     // keeping colour that exceeds its own alpha instead of clipping it.
     co = s.rgb + (1.0 - as1) * d.rgb;
+  } else if (mode >= 31 && mode <= 34) {
+    // Matte family (31-34): Stencil / Silhouette. The layer contributes no
+    // colour; it scales the coverage of the whole backdrop beneath it.
+    // Premultiplied throughout, so all four channels scale together — scaling
+    // alpha alone would leave colour with no coverage to carry it.
+    // Must match the WGSL branch above.
+    float k = matteFactor(mode, s);
+    co = d.rgb * k;
+    ao = ad * k;
   }
   frag = vec4(co, ao);
 }

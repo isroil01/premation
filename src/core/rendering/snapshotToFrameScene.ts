@@ -90,6 +90,11 @@ function advancedBlendId(mode: LayerBlendMode | undefined): number {
     // ── M4 (Utility): these write alpha, handled past the composite line ──
     case 'alpha-add': return 29;
     case 'luminescent-premul': return 30;
+    // ── M8c (Matte): these DISCARD the source colour and scale the backdrop ──
+    case 'stencil-alpha': return 31;
+    case 'stencil-luma': return 32;
+    case 'silhouette-alpha': return 33;
+    case 'silhouette-luma': return 34;
     default: return 0; // normal / add → simple fixed-function blend
   }
 }
