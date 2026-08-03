@@ -445,6 +445,46 @@ M8's *shape and estimate*, not just its start.
 
 ---
 
+## 2·0 A HABIT OF THIS CODEBASE: two consumers, one truth, nothing enforcing agreement
+
+**This is not a finding. It is the shape most of the findings turned out to
+share, and it is worth carrying as a review lens rather than rediscovering.**
+
+Each of these was found independently. They are the same bug:
+
+| Where | The two consumers | What disagreed | Symptom |
+|---|---|---|---|
+| **F6 / M5b** | `snapshotToFrameScene` and `Canvas2DVectorRasterizer` | Two of three bake predicates, chosen by hand per call site | Effect chain applied **twice** |
+| **F10** (suspected) | `RenderGraph.compile()` and pass `execute()` | `EffectPass.activeColorTarget` — a mutable static read through getters, behind a **memoized** compile | Compile-time and execution-time see different values |
+| Style presets | The `StylePresetCategory` union and a hand-written category array | `'material'` simply absent from the array | **Six presets unreachable** |
+| Effect folders | The `EffectType` union and an if-chain with a catch-all | Everything unlisted fell into one bucket | **24 of 38** effects in the junk drawer |
+| Viewport attach | `useEffect` deps (ref objects) and the refs' actual contents | Deps never change identity, so null-on-first-tick never retried | Spinner up **forever** |
+
+**The pattern:** a value has two independent readers and nothing forces them to
+agree. Nothing throws, nothing logs, and the result looks finished.
+
+**Why it recurs here:** this codebase is full of *legitimate* dual consumers — a
+CPU raster path and a GPU path, a compile step and an execute step, a type union
+and its presentation. That is good architecture. The failure is not having two
+readers; it is letting the AGREEMENT live in someone's attention instead of in
+the code.
+
+**What fixes it, strongest first — all three were used on this branch:**
+
+1. **Remove the choice.** `layerIsBaked(layer)` dispatches on kind internally, so
+   no call site can pick wrong (M5b). The disagreement becomes unrepresentable.
+2. **Make omission a compile error.** A `Record` keyed by the union rather than
+   an array or an if-chain: adding a member without filing it stops the build
+   (style presets, effect folders).
+3. **Assert agreement across the input space.** `bakeOwnership.test.ts` sweeps
+   4 kinds × 6 stacks × 4 fill opacities — and asserts that no *single* old
+   predicate was correct everywhere, which proves the refactor was necessary
+   rather than merely working.
+
+**As a review lens:** ask of anything new — *who else reads this value, and what
+makes them agree?* If the answer is "we keep them in sync", that is the bug, not
+the mitigation. F10's suspected mechanism was found by asking exactly that.
+
 ## 2a. Method: revert-and-verify is required for golden attribution
 
 **A plausible cause and a verified cause read identically in a report. Only one

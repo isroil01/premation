@@ -18,6 +18,7 @@
 
 import type { Effect } from './effects';
 import { effectCss } from './effects';
+import { paintMaskMatte, type LayerMask, type MaskPath } from '@core/effects/mask';
 import { isLutEffect, buildChannelLut, applyChannelLut } from './colorLut';
 import { isCanvas2dProcedural, applyProceduralEffect } from './proceduralCanvas2d';
 import {
@@ -37,10 +38,20 @@ export function isGpuUnbakeableEffect(type: string): boolean {
   return isCanvas2dOnlyEffect(type);
 }
 
-/** Does this layer's enabled effect stack contain anything the GPU can't draw
- *  natively (so the GPU path must CPU-bake the whole layer)? */
+/**
+ * Does this layer's enabled effect stack contain anything the GPU can't draw
+ * natively (so the GPU path must CPU-bake the whole layer)?
+ *
+ * A MASK-SCOPED effect counts regardless of its type (M6). The GPU effect chain
+ * has no notion of a per-effect scope, so handing it a scoped effect would apply
+ * that effect to the WHOLE layer — a blur meant for one region blurring
+ * everything, which looks like a plausible design choice rather than a bug.
+ * Scoping is honoured only in the bake, so requesting it forces the bake.
+ */
 export function effectsNeedCpuBake(effects: ReadonlyArray<Effect> | undefined): boolean {
-  return !!effects?.some((e) => e.enabled !== false && isGpuUnbakeableEffect(e.type));
+  return !!effects?.some(
+    (e) => e.enabled !== false && (isGpuUnbakeableEffect(e.type) || !!e.maskId),
+  );
 }
 
 /**
@@ -150,6 +161,8 @@ export function applyEffectChain(
   effects: ReadonlyArray<Effect> | undefined,
   scratch: (w: number, h: number) => HTMLCanvasElement,
   fillOpacity = 1,
+  /** The layer's mask stack, for effects that carry a `maskId` scope (M6). */
+  masks?: LayerMask,
 ): void {
   const off = oc.canvas;
   let pending: string[] = [];
@@ -227,9 +240,85 @@ export function applyEffectChain(
     pending = [];
   };
 
+  /**
+   * Composite `after` (currently in `oc`) back over `before`, weighted by the
+   * mask's coverage — the M6 scoped-effect blend.
+   *
+   * out = before·(1−cov) + after·cov, done with canvas ops rather than a pixel
+   * loop so feather and per-mask opacity come through as real partial coverage.
+   *
+   * At cov = 0 the output is `before` BYTE-IDENTICAL, alpha included. That is
+   * the invariant that makes this an effect mask and not a second layer mask:
+   * it decides where the effect applies, never where the layer exists.
+   */
+  const compositeScoped = (before: HTMLCanvasElement, path: MaskPath): void => {
+    const cov = scratch(w, h);
+    const cc = cov.getContext('2d');
+    if (!cc) return;
+    cc.setTransform(1, 0, 0, 1, 0, 0);
+    cc.clearRect(0, 0, w, h);
+    // Mask points are in layer-local CENTRED space; the bake canvas is
+    // top-left origin, so shift by half. Painted as a single-path stack so the
+    // path's own feather and opacity are the coverage — that is what makes a
+    // soft mask give a soft effect edge rather than a hard cut of a soft one.
+    cc.translate(w / 2, h / 2);
+    paintMaskMatte(cc, { paths: [{ ...path, mode: 'add' }] }, w, h);
+
+    // after ∩ coverage
+    const after = scratch(w, h);
+    const ac = after.getContext('2d');
+    if (!ac) return;
+    ac.setTransform(1, 0, 0, 1, 0, 0);
+    ac.clearRect(0, 0, w, h);
+    ac.drawImage(oc.canvas, 0, 0);
+    ac.globalCompositeOperation = 'destination-in';
+    ac.drawImage(cov, 0, 0);
+
+    // before minus coverage, then add the masked after
+    oc.setTransform(1, 0, 0, 1, 0, 0);
+    oc.globalCompositeOperation = 'source-over';
+    oc.filter = 'none';
+    oc.clearRect(0, 0, w, h);
+    oc.drawImage(before, 0, 0);
+    oc.globalCompositeOperation = 'destination-out';
+    oc.drawImage(cov, 0, 0);
+    oc.globalCompositeOperation = 'source-over';
+    oc.drawImage(after, 0, 0);
+  };
+
+  const snapshot = (): HTMLCanvasElement => {
+    const c = scratch(w, h);
+    const cx = c.getContext('2d');
+    if (cx) {
+      cx.setTransform(1, 0, 0, 1, 0, 0);
+      cx.clearRect(0, 0, w, h);
+      cx.drawImage(oc.canvas, 0, 0);
+    }
+    return c;
+  };
+
   const runChain = (): void => {
   for (const e of effects ?? []) {
     if (e.enabled === false) continue;
+    // ── Effect-scoped mask (M6) ──
+    // Everything queued before this must LAND first, or the scoped composite
+    // would capture a `before` that is missing the effects above it and then
+    // replay them through the mask.
+    const scope = e.maskId ? masks?.paths.find((p) => p.id === e.maskId) : undefined;
+    if (scope) {
+      flushCss();
+      const before = snapshot();
+      applyOne(e);
+      flushCss();
+      compositeScoped(before, scope);
+      continue;
+    }
+    applyOne(e);
+  }
+  flushCss();
+  };
+
+  function applyOne(e: Effect): void {
     if (isLutEffect(e.type)) {
       flushCss();
       const lut = buildChannelLut([e]);
@@ -266,8 +355,6 @@ export function applyEffectChain(
       // no Canvas2D form and is skipped here.
     }
   }
-  flushCss();
-  };
 
   // The silhouette is installed for the whole chain, not per effect: a stack can
   // interleave generators with pixel passes, and every generator in it must shape

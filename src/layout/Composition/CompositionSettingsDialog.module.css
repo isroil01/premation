@@ -300,3 +300,17 @@
   width: 100%;
   box-sizing: border-box;
 }
+
+/* Responsive Time (M7) */
+.hint {
+  margin: 6px 0 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary, #8a8a8a);
+}
+.readout {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  color: var(--color-text-primary, #e8e8e8);
+  padding: 5px 0;
+}

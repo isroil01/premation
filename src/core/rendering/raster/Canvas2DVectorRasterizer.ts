@@ -245,7 +245,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
           const s = document.createElement('canvas');
           s.width = sw; s.height = sh;
           return s;
-        }, spec.fillOpacity ?? 1);
+        }, spec.fillOpacity ?? 1, spec.mask);
       }
       return canvas;
     };
@@ -485,7 +485,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         const s = document.createElement('canvas');
         s.width = sw; s.height = sh;
         return s;
-      }, layer.fillOpacity ?? 1);
+      }, layer.fillOpacity ?? 1, layer.mask);
     }
 
     return canvas;
