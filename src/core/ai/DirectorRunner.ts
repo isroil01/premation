@@ -5,7 +5,7 @@
 
 import { ToolRegistry, type ToolContext } from '@motion/ai-tools';
 import { apiBaseUrl, getToken, type GatewayProviderId } from '@core/api/client';
-import { aiEnabled } from '@core/config/edition';
+import { aiRunsThroughBackend } from '@core/config/edition';
 import { AiError } from './AgentLoop';
 import type { AgentEvents } from './AgentLoop';
 
@@ -67,9 +67,17 @@ export async function runBackendDirector(
   tally?: (toolName: string) => void,
 ): Promise<DirectorRunResult> {
   // The director pipeline runs server-side; there is no local equivalent, so in
-  // the local edition it is simply absent. Same refusal as `streamTurn`.
-  if (!aiEnabled()) {
-    throw new AiError('coming_soon', 'The AI assistant is coming soon in the local edition.');
+  // the local edition it is simply absent.
+  //
+  // Gated on `aiRunsThroughBackend()`, NOT `aiEnabled()`. This guard was
+  // written when `aiEnabled()` meant `isServerEdition()`; it is now `() => true`
+  // — both editions run the assistant, they differ only in where the key lives.
+  // That change silently neutered the refusal, so the local edition fell
+  // through to the token check below and told a user with no accounts system to
+  // sign in. `aiRunsThroughBackend` is the capability that actually describes
+  // what this function needs. See directorEditionGate.test.ts.
+  if (!aiRunsThroughBackend()) {
+    throw new AiError('coming_soon', 'The director pipeline needs the hosted backend; this edition runs the assistant locally.');
   }
 
   const token = getToken();
