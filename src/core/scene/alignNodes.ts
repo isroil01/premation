@@ -1,10 +1,13 @@
 /**
  * alignNodes — spatial alignment and distribution helpers.
  *
- * Positions are written through SceneGraph.writeProp onto each node's
- * Transform component `x`/`y` props (center-based, comp space) — the same
- * write path the canvas drag uses. Writing `node.transform.position` would be
- * a silent no-op: that property is a derived, getter-only view.
+ * Positions are written through `writeTransformProps` — the same path the canvas
+ * drag uses — onto each node's Transform `x`/`y` (centre-based, comp space).
+ * That routing is load-bearing twice over: writing `node.transform.position`
+ * would be a silent no-op (it is a derived, getter-only view), and a raw
+ * base-prop write is silently discarded on a layer whose Position is ANIMATED,
+ * because the renderer reads animated values first. Aligning an animated layer
+ * used to appear to do nothing at all.
  *
  * Sizes come from the node's own width/height props when present (drag-created
  * shapes, media) with the renderer's per-kind SIZE as fallback, scaled by
@@ -13,9 +16,9 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
+import { writeTransformProps } from '@core/scene/transformWrite';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { SIZE } from '@core/rendering/buildSnapshot';
-import type { SceneNode } from '@core/types';
 
 export type AlignMode =
   | 'left' | 'center-h' | 'right'
@@ -23,16 +26,6 @@ export type AlignMode =
   | 'distribute-h' | 'distribute-v';
 
 interface Bounds { x: number; y: number; w: number; h: number; cx: number; cy: number; }
-
-/** The component that carries the node's transform props (x/y live here). */
-function transformComponent(node: SceneNode): { id: string } | null {
-  for (const c of node.components) {
-    const p = c.props as Record<string, unknown>;
-    if (typeof p.x === 'number' || typeof p.y === 'number') return { id: c.id };
-  }
-  const t = node.components.find((c) => c.type === 'Transform');
-  return t ? { id: t.id } : null;
-}
 
 function getBounds(nodeId: string): Bounds | null {
   const node = defaultSceneGraph.getNode(nodeId);
@@ -67,14 +60,16 @@ function getBounds(nodeId: string): Bounds | null {
   return { x: cx - w / 2, y: cy - h / 2, w, h, cx, cy };
 }
 
-/** Write a node's center position through the component prop path. */
+/**
+ * Write a node's centre position.
+ *
+ * Goes through `writeTransformProps` so an aligned layer whose Position is
+ * animated gets a KEYFRAME at the current time rather than a base-prop write
+ * the renderer ignores. These were two raw `writeProp` calls, which meant
+ * aligning any animated layer appeared to do nothing at all.
+ */
 function setPos(nodeId: string, x: number, y: number): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node || node.locked) return;
-  const c = transformComponent(node);
-  if (!c) return;
-  defaultSceneGraph.writeProp(node.id, c.id, 'x', x);
-  defaultSceneGraph.writeProp(node.id, c.id, 'y', y);
+  writeTransformProps(nodeId, [{ prop: 'x', value: x }, { prop: 'y', value: y }], 'Align');
 }
 
 export function alignNodes(
