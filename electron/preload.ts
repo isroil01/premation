@@ -173,6 +173,22 @@ const bridge = {
     ipcRenderer.on('menu:command', listener);
     return () => ipcRenderer.removeListener('menu:command', listener);
   },
+
+  /**
+   * Tell the main process which edition the RENDERER thinks it is.
+   *
+   * Diagnostic only. Main does not take its edition from this and must not: the
+   * renderer is the untrusted side of this boundary, so an edition it could
+   * assert is an edition a compromised one could assert to unlock AI IPC. Main
+   * resolves its own (electron/edition.ts) and only compares.
+   *
+   * It exists because the two answers come from different build inputs —
+   * VITE_EDITION for the renderer, MOTION_EDITION or the packaged manifest for
+   * main — and a build where they disagree is exactly the failure the edition
+   * gate is meant to prevent. A test asserts the npm scripts set both halves;
+   * this catches the packaged build where they somehow still did not.
+   */
+  reportEdition: (edition: string) => ipcRenderer.invoke('edition:report', edition),
 };
 
 contextBridge.exposeInMainWorld('motionEditor', bridge);

@@ -349,11 +349,12 @@ export function AiChatPanel(): JSX.Element {
         /* ── Thread ───────────────────────────────────────────────── */
         <div className={styles.thread} ref={threadRef}>
           {/* A "the AI assistant is coming soon" banner used to render here
-              under `!aiEnabled()`. That predicate is `() => true` now — both
-              editions are BYOK, they differ only in where the key lives — so
-              the banner was unreachable, and its claim ("not wired up yet") had
-              become false. Removed rather than left as a branch that reads like
-              a live state. */}
+              under `!aiEnabled()`. It is still gone, and should stay gone even
+              though `aiEnabled()` is edition-gated again: the local edition does
+              not mount this panel AT ALL, so a "not available here" state inside
+              it could only ever be reached by the edition that does have the
+              assistant. A banner explaining an absence, rendered exclusively to
+              the users who are not experiencing it. */}
           {/* Only once the gateway has actually answered. Before that we do not
               know, and guessing "no key" is what made this read as a setup
               prompt that ignored the keys the user had already saved. */}

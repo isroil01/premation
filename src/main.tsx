@@ -20,6 +20,14 @@ purgeLegacyLocalAiKeys();
 const edition = parseEdition(import.meta.env.VITE_EDITION as string | undefined);
 setEdition(edition);
 
+// Report it to the shell, which resolved its OWN edition from a different build
+// input (MOTION_EDITION, or the packaged manifest — a Vite define does not reach
+// the main process). A disagreement matters: main gates the AI IPC on its answer,
+// so a mismatch is a UI hiding the assistant over a process still serving it, or
+// the reverse. Diagnostic only — main never takes its edition from this message.
+// Optional-chained throughout: there is no bridge in a browser build.
+void window.motionEditor?.reportEdition?.(edition);
+
 // Read the LOCAL_FIRST build flag once, here at the entry — `import.meta.env` is
 // a Vite construct, and keeping it out of shared modules avoids Jest's CJS
 // `import.meta` breakage. Enables `.motion` directory-bundle save/open.

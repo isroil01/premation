@@ -7,11 +7,17 @@
  *     const token = getToken();
  *     if (!token) throw new AiError('auth', 'Sign in to run the AI director…');
  *
- * `aiEnabled()` used to be `isServerEdition()`. It is now `() => true` — both
- * editions run the assistant, they differ only in WHERE the key lives. That
- * change silently neutered this guard: the local edition stopped hitting the
+ * `aiEnabled()` used to be `isServerEdition()`. It then became `() => true` —
+ * both editions ran the assistant, differing only in WHERE the key lived — and
+ * that silently neutered this guard: the local edition stopped hitting the
  * honest "not available here" refusal and fell through to the token check,
  * asking a user with no accounts system to sign in.
+ *
+ * `aiEnabled()` is `isServerEdition()` once again, so reading it here would now
+ * work BY COINCIDENCE. Which is precisely why this test still earns its place:
+ * the two predicates have agreed, disagreed, and agreed again, and this guard
+ * has to track the requirement it actually has — a backend — rather than
+ * whichever predicate happens to share its value this month.
  *
  * MEASURED, not assumed: the AgentLoop catch around the call
  * (`recordPathFailure('backend-director', …)`) means this never reached the

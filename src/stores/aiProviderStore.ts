@@ -305,11 +305,14 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
   },
 
   // The `if (!aiEnabled()) return false` short-circuits that used to open
-  // `ready`, `anyReady`, `refreshModels` and `refreshStatus` are gone: they
-  // dated from when the local edition had no way to reach a model, and
-  // `aiEnabled()` is now `() => true` in both editions — so they were dead
-  // branches asserting a gate that no longer exists. Readiness is decided by
-  // whether a provider is actually usable, which is what these now answer.
+  // `ready`, `anyReady`, `refreshModels` and `refreshStatus` are gone, and stay
+  // gone now that `aiEnabled()` is edition-gated again. The reason changed: they
+  // were removed because the predicate had stopped discriminating anything, and
+  // they are not coming back because the gate now happens ABOVE this store —
+  // the local edition never mounts a surface that reaches it. Re-adding them
+  // here would put an edition check on the wrong side of the boundary, where it
+  // answers "false" to a caller that only exists when it would be true.
+  // Readiness is whether a provider is actually usable, which is what these say.
   ready: () => {
     const { provider, status, motion } = get();
     return isUsable(provider, status, motion);

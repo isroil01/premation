@@ -34,11 +34,24 @@ Every item in the Phase-2 prior ordering — graph editor, parenting, expression
 
 This is the same failure mode as decoupled track mattes: the plan describes a build that already happened.
 
-| | Count |
-|---|---|
-| ✅ implemented | 17 |
-| ⚠️ partial | 4 |
-| ❌ missing | 2 |
+| | Count | After the four commits below |
+|---|---|---|
+| ✅ implemented | 17 | **21** |
+| ⚠️ partial | 4 | **1** |
+| ❌ missing | 2 | **1** |
+
+> **Shipped immediately after this audit was written.** Four of the six open
+> items landed within days, which is the same pattern the audit itself is about:
+> the plan describes a build that already happened, and by the time the
+> description is written it has moved again. Marked inline below as **✅ shipped**
+> rather than rewritten, so the audit still reads as the snapshot it was.
+>
+> | Item | Commit |
+> |---|---|
+> | M8c — Stencil / Silhouette | `045cd09` |
+> | Keyframe-selection time scale | `59e6f9c` |
+> | Wiggle Paths (temporal) | `61fc1fc` |
+> | Repeater — the missing three parameters | `a0edf7a` |
 
 ---
 
@@ -50,7 +63,7 @@ This is the same failure mode as decoupled track mattes: the plan describes a bu
 |---|---|---|
 | **M5 — Dissolve / Dancing Dissolve** | ❌ missing | `LayerBlendMode` union has no `dissolve`/`dancing-dissolve` — [blendMode.ts:34](src/core/effects/blendMode.ts:34). `BLEND_MODES` lists **32** modes, [blendMode.ts:90](src/core/effects/blendMode.ts:90). Shader mode ids run 1–28 with no dither branch — [builtin.ts:429](packages/renderer/src/shaders/builtin.ts:429). |
 | **M5 — pipeline-determinism gate** | ❌ missing | No shared preview-vs-export determinism assertion exists for a per-pixel stochastic mode. Dissolve is the first mode whose output depends on a random source, so nothing today forces preview and export to agree on it. |
-| **M8c — Stencil / Silhouette** | ❌ missing | Absent from the union ([blendMode.ts:34](src/core/effects/blendMode.ts:34)) and from `bChan`/`bHSL` ([builtin.ts:436-505](packages/renderer/src/shaders/builtin.ts:436)). Adding these 4 modes closes **38 of 38**: 32 today + 2 dissolve + 4 stencil/silhouette. |
+| **M8c — Stencil / Silhouette** | ✅ **shipped** (`045cd09`) | Was: absent from the union ([blendMode.ts:34](src/core/effects/blendMode.ts:34)) and from `bChan`/`bHSL` ([builtin.ts:436-505](packages/renderer/src/shaders/builtin.ts:436)). Landed as **36 of AE's 38** — the remaining two are the Dissolve pair above, which need the determinism gate first. |
 | **M9 — variable-width mask feather** | ❌ missing | Feather is a **single scalar per path**, not per-point: `MaskPath.feather` at [mask.ts:58](src/core/effects/mask.ts:58); `MaskPoint` carries only x/y and bezier handles, no feather field — [mask.ts:39-50](src/core/effects/mask.ts:39). Uniform feather itself *is* implemented and rendered. |
 
 Note: `MaskMode` already includes AE's 7th mode `none` ([mask.ts:52](src/core/effects/mask.ts:52)), and effect-scoped masking (M6) and protected time regions (M7) are both landed — so the mask model is further along than the feather gap suggests.
@@ -64,7 +77,7 @@ Note: `MaskMode` already includes AE's 7th mode `none` ([mask.ts:52](src/core/ef
 | Roving keyframes | ✅ implemented | `Keyframe.roving` in the schema; `setRoving` on the engine; UI in two places — context menu [App.tsx:1047](src/App.tsx:1047) and [MotionEditorPanel.tsx:222](src/layout/Motion/MotionEditorPanel.tsx:222). |
 | Easing presets + per-keyframe interpolation | ✅ implemented | `EasingPreset` = Linear/Ease/EaseIn/EaseOut/Hold [keyframeAssistants.ts:243](src/core/animation/keyframeAssistants.ts:243); applied to the live selection [easingSelection.ts:20](src/core/animation/easingSelection.ts:20). Per-key `easing` + `bezier` + linked-tangent flag in `Keyframe` (packages/animation/src/types.ts:28). Spatial bezier tangents also present. |
 
-⚠️ **One real gap here:** there is no *time-scale* of a keyframe selection (AE's Alt-drag on a selection range to stretch it proportionally). `stretchTracks` exists but operates on **all** tracks of a node ([keyframeAssistants.ts:67](src/core/animation/keyframeAssistants.ts:67)), not on the selected subset. Classified ⚠️ partial as a sub-item.
+✅ **Shipped** (`59e6f9c`). Was: there is no *time-scale* of a keyframe selection (AE's Alt-drag on a selection range to stretch it proportionally). `stretchTracks` existed but operated on **all** tracks of a node ([keyframeAssistants.ts:67](src/core/animation/keyframeAssistants.ts:67)), not on the selected subset.
 
 ### Transform and hierarchy — **all implemented**
 
@@ -81,10 +94,10 @@ This is more complete than the prior assumed — shutter *phase* and adaptive sa
 | Item | Status | Evidence |
 |---|---|---|
 | Trim Paths | ✅ implemented | [trimPath.ts](src/core/scene/trimPath.ts): `trimSegments` handles the wrap-past-end two-arc case [:50](src/core/scene/trimPath.ts:50), arc-length table + `trimPolyline` [:114-187](src/core/scene/trimPath.ts:114). Keyframeable — `trim.start`/`.end`/`.offset` prop paths [:35](src/core/scene/trimPath.ts:35). UI: `TrimPathControls.tsx`. |
-| Repeater | ⚠️ partial | [repeater.ts](src/core/scene/repeater.ts): copies + position/rotation/scale/opacity offsets, cumulative in each copy's rotated frame [:68](src/core/scene/repeater.ts:68), all six params keyframeable [:43](src/core/scene/repeater.ts:43). UI: `RepeaterControls.tsx`. **Missing vs AE:** per-copy anchor point, start-offset (fractional first copy), and composite order (Above/Below). |
+| Repeater | ✅ **shipped** (`a0edf7a`) | [repeater.ts](src/core/scene/repeater.ts): copies + position/rotation/scale/opacity offsets, cumulative in each copy's rotated frame [:68](src/core/scene/repeater.ts:68), all six params keyframeable [:43](src/core/scene/repeater.ts:43). UI: `RepeaterControls.tsx`. Was missing vs AE: per-copy anchor point, start-offset (fractional first copy), and composite order (Above/Below) — all three landed. |
 | Offset Paths | ✅ implemented | `offsetPath` [pathOps.ts:201](src/core/scene/pathOps.ts:201), exposed as the `'offset'` operator type. |
 | Merge Paths | ✅ implemented | [mergePaths.ts](src/core/scene/mergePaths.ts): all four AE ops (union/subtract/intersect/exclude) [:29](src/core/scene/mergePaths.ts:29), polygon booleans [:142](src/core/scene/mergePaths.ts:142), and a **live** (non-destructive) boolean evaluated at render [:182](src/core/scene/mergePaths.ts:182) as well as a destructive merge [:362](src/core/scene/mergePaths.ts:362). Wired into the menus (commit `9f2ca6d`). |
-| Wiggle Paths | ⚠️ partial | `roughen` [pathOps.ts:230](src/core/scene/pathOps.ts:230) subdivides and displaces along the normal — the *spatial* half of AE's Wiggle Paths. But its noise is seeded by **point index only** ([:246](src/core/scene/pathOps.ts:246)), with no time term: the wiggle is frozen. AE's Wiggles/Second, temporal phase, and correlation are absent. |
+| Wiggle Paths | ✅ **shipped** (`61fc1fc`) | `roughen` [pathOps.ts:230](src/core/scene/pathOps.ts:230) subdivides and displaces along the normal — the *spatial* half of AE's Wiggle Paths. Its noise was seeded by **point index only** ([:246](src/core/scene/pathOps.ts:246)) with no time term, so the wiggle was frozen. Wiggles/Second, temporal phase and correlation landed; it wiggles. |
 | Wiggle Transform | ❌ missing | No hit anywhere in `src`/`packages`. Note the *expression* `wiggle()` exists and is fully implemented — that is a different feature and does not cover the shape-layer operator. |
 | Path operators generally | ⚠️ partial | Seven operators exist and all are reachable — `zigzag`, `roundCorners`, `pucker`, `twist`, `offset`, `roughen` [pathOps.ts:18](src/core/scene/pathOps.ts:18) — with a real regression already fixed in the read path ([:295-305](src/core/scene/pathOps.ts:295), where a stale allowlist made pucker/twist unreachable). **The structural gap: one operator per node, not a stack.** `fx.pathOp` is a single slot ([:296](src/core/scene/pathOps.ts:296)), so operators cannot be chained the way AE's shape contents list allows. Same single-slot shape for `trim`, `rep`, and `textPath`. |
 

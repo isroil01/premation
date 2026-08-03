@@ -10,6 +10,7 @@
 
 import { useLayoutStore, type RegionId } from '@stores/layoutStore';
 import { getSettingsManager } from '@core/services/coreServices';
+import { isPanelAvailable } from '@core/config/panelAvailability';
 
 export interface WorkspaceSnapshot {
   id: string;
@@ -23,6 +24,52 @@ export interface WorkspaceSnapshot {
   rightInspectorPosition?: 'left' | 'right';
   timelinePosition?: 'bottom' | 'top';
   createdAt?: number;
+  /**
+   * A panel this preset exists FOR. When the build does not have it, the whole
+   * preset is withheld rather than stripped — see `listWorkspaces`.
+   *
+   * Only for presets that are meaningless without the panel ("AI Focus"). A
+   * preset that merely mentions a gated panel among others just gets it stripped.
+   */
+  requiresPanel?: string;
+}
+
+/**
+ * Drop panels this build does not have out of a preset.
+ *
+ * Returns the snapshot unchanged when there is nothing to strip, so the common
+ * case does not allocate — `listWorkspaces` runs on every Workspaces menu open.
+ */
+function stripUnavailablePanels(ws: WorkspaceSnapshot): WorkspaceSnapshot {
+  const ids = [
+    ...Object.values(ws.panelOrder ?? {}).flat(),
+    ...Object.values(ws.activePanelByRegion ?? {}),
+  ];
+  if (ids.every((id) => isPanelAvailable(id))) return ws;
+
+  // Rebuilt key-by-key off the original rather than via Object.fromEntries: the
+  // region set is fixed and total, and a mapped-object round trip widens it to a
+  // string index signature that no longer satisfies Record<RegionId, …>.
+  let panelOrder: Record<RegionId, ReadonlyArray<string>> | undefined;
+  if (ws.panelOrder) {
+    const source = ws.panelOrder;
+    panelOrder = { ...source };
+    for (const region of Object.keys(source) as RegionId[]) {
+      panelOrder[region] = source[region].filter((id) => isPanelAvailable(id));
+    }
+  }
+
+  const activePanelByRegion = ws.activePanelByRegion
+    ? Object.fromEntries(
+        Object.entries(ws.activePanelByRegion).filter(([, id]) => id !== undefined && isPanelAvailable(id)),
+      )
+    : undefined;
+
+  return {
+    ...ws,
+    ...(panelOrder ? { panelOrder } : {}),
+    ...(activePanelByRegion ? { activePanelByRegion } : {}),
+  };
 }
 
 const SETTINGS_KEY = 'workspace.userWorkspaces';
@@ -68,6 +115,9 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
     id: 'ai-focus',
     name: 'AI Focus',
     builtin: true,
+    // Withheld entirely in editions with no assistant. Stripping it instead
+    // would leave a preset called "AI Focus" that opens the Scene panel.
+    requiresPanel: 'ai',
     regions: {
       leftSidebar: { size: 420, collapsed: false },
       rightInspector: { size: 320, collapsed: false },
@@ -236,9 +286,31 @@ export class WorkspaceManager {
     return WorkspaceManager.instance;
   }
 
+  /**
+   * The workspaces this build offers.
+   *
+   * Two edition filters, and they are different in kind:
+   *
+   *  • A preset built AROUND a panel this edition lacks is dropped outright.
+   *    "AI Focus" in a build with no assistant is a menu entry whose whole
+   *    purpose is a panel that will not appear — it would apply, put an absent
+   *    panel first, and silently fall back to whatever is next.
+   *
+   *  • Every other preset keeps its layout but has unavailable panels stripped
+   *    from `panelOrder` and `activePanelByRegion`. `Default` lists `ai` last in
+   *    the left sidebar; the dock already drops unregistered ids when it renders,
+   *    so this changes nothing visible — but it stops an id the build does not
+   *    have from being written into the persisted layout, where it would come
+   *    back the day someone opens the same profile in the other edition.
+   *
+   * User-saved workspaces go through the same strip: one saved in a server build
+   * and synced to a local one must not resurrect the panel.
+   */
   public listWorkspaces(): WorkspaceSnapshot[] {
     const userSaved = this.getUserWorkspaces();
-    return [...BUILTIN_WORKSPACES, ...userSaved];
+    return [...BUILTIN_WORKSPACES, ...userSaved]
+      .filter((w) => w.requiresPanel === undefined || isPanelAvailable(w.requiresPanel))
+      .map(stripUnavailablePanels);
   }
 
   public getUserWorkspaces(): WorkspaceSnapshot[] {

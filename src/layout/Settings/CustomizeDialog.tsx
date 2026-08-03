@@ -38,11 +38,13 @@ import { getThemeManager } from '@core/services/coreServices';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import type { KeyChord } from '@app-types/common';
-// NOTE: AI setup is deliberately NOT here. Connecting an account is a
-// once-per-machine errand that needs room to explain the options, so it lives
-// on the Settings page (Dashboard → Settings → Assistant), not in a dialog
-// you have to dismiss to get back to your work.
+// AI setup DOES live here, on the tab below, in the editions that have it. The
+// note that used to sit on this import said the opposite — "deliberately NOT
+// here, it lives on Dashboard → Settings" — and had outlived its own decision by
+// a commit: the dashboard is a server-edition route, so that arrangement left
+// the OSS build with nowhere to enter a key at all.
 import { AiSettingsSection } from './AiSettingsSection';
+import { aiEnabled } from '@core/config/edition';
 import styles from './CustomizeDialog.module.css';
 
 type Tab = 'shortcuts' | 'tabs' | 'appearance' | 'ai';
@@ -468,26 +470,39 @@ function AppearanceTab(): JSX.Element {
   );
 }
 
-const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
-  { id: 'shortcuts', label: 'Shortcuts' },
-  { id: 'tabs', label: 'Workspaces' },
-  { id: 'appearance', label: 'Appearance' },
-  // AI setup used to live ONLY on the dashboard settings page, and the
-  // assistant panel linked to it with `#/dashboard?tab=settings`. The local
-  // edition does not register a /dashboard route at all, so that link fell
-  // through the router's catch-all straight back to the editor — leaving the
-  // OSS build, whose headline is "the full editor, with your own API key",
-  // with nowhere to put the key. The editor now owns this surface in both
-  // editions; the dashboard card still renders the same component.
-  { id: 'ai', label: 'AI' },
-];
+/**
+ * The dialog's tabs, as a FUNCTION rather than a constant.
+ *
+ * A module-level array would be built when this module is first imported, which
+ * happens before `main.tsx` calls `setEdition()` — so an edition-gated entry
+ * would capture the default ('server') and the gate would never fire. Same
+ * reason `panelDefs` takes a predicate instead of a boolean.
+ */
+function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string }> {
+  return [
+    { id: 'shortcuts', label: 'Shortcuts' },
+    { id: 'tabs', label: 'Workspaces' },
+    { id: 'appearance', label: 'Appearance' },
+    // Server edition only. AI setup used to live ONLY on the dashboard settings
+    // page, and the assistant panel linked to it with `#/dashboard?tab=settings`
+    // — a route the local edition does not register, so the OSS build had
+    // nowhere to put a key. The editor owns the surface now, and the local
+    // edition does not ship the assistant at all, so it has no key to enter.
+    ...(aiEnabled() ? ([{ id: 'ai' as const, label: 'AI' }]) : []),
+  ];
+}
 
 function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): JSX.Element {
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const tabs = tabsForEdition();
+  // A persisted or deep-linked 'ai' tab must not survive into an edition that
+  // has no such tab — it would render the panel with no way to leave it.
+  const [tab, setTab] = useState<Tab>(
+    tabs.some((t) => t.id === initialTab) ? initialTab : 'shortcuts',
+  );
   return (
     <div className={styles.root}>
       <div className={styles.tabs} role="tablist">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -524,7 +539,15 @@ export function openCustomizeDialog(initialTab?: Tab): void {
   });
 }
 
-/** Deep link for the assistant's "Connect an AI provider" banner. */
+/**
+ * Deep link for the assistant's "Connect an AI provider" banner.
+ *
+ * A no-op when the edition has no assistant. The only caller is the assistant
+ * panel itself, which that edition never mounts — but this is the kind of
+ * function that acquires a second caller later, and opening Customize on a tab
+ * that does not exist would silently land the user on Shortcuts.
+ */
 export function openAiSettings(): void {
+  if (!aiEnabled()) return;
   openCustomizeDialog('ai');
 }
