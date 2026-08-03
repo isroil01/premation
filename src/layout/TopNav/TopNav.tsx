@@ -39,6 +39,7 @@ import { hasTextComponent } from '@core/text/textAnimators';
 import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { customPrompt } from '@components/Modal/Dialogs';
 import { AppMenuButton } from '@layout/Menu';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
 
@@ -214,10 +215,17 @@ function buildWorkspaceItems(): DropdownItem[] {
     label: 'Save Current Workspace…',
     icon: 'download',
     onSelect: () => {
-      const name = window.prompt('Enter a name for your custom workspace layout:');
-      if (!name) return;
-      getWorkspaceManager().saveCurrentWorkspace(name);
-      useUIStore.getState().notify({ level: 'success', message: `Saved workspace “${name}”`, durationMs: 2600 });
+      void (async () => {
+        const name = await customPrompt(
+          'Save Workspace',
+          'Name this layout. It will appear in this menu and in Customize ▸ Workspaces.',
+          '',
+          { placeholder: 'My layout', confirmLabel: 'Save' },
+        );
+        if (!name?.trim()) return;
+        getWorkspaceManager().saveCurrentWorkspace(name.trim());
+        useUIStore.getState().notify({ level: 'success', message: `Saved workspace “${name.trim()}”`, durationMs: 2600 });
+      })();
     },
   });
   items.push({

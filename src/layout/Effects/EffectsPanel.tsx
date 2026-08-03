@@ -43,6 +43,7 @@ import {
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
+import { customPrompt } from '@components/Modal/Dialogs';
 import styles from './EffectsPanel.module.css';
 
 // AE menu order — `None` leads, because it is the "this path does not cut"
@@ -239,8 +240,15 @@ export function EffectsPanel(): JSX.Element {
           disabled={getNodeEffects(primary).length === 0}
           title="Save this stack as a reusable preset"
           onClick={() => {
-            const name = window.prompt('Preset name');
-            if (name?.trim()) { saveEffectPreset(primary, name.trim()); bumpClipboard((n) => n + 1); }
+            void (async () => {
+              const name = await customPrompt(
+                'Save Effect Preset',
+                'Name this effect stack so you can apply it to other layers.',
+                '',
+                { placeholder: 'My preset', confirmLabel: 'Save' },
+              );
+              if (name?.trim()) { saveEffectPreset(primary, name.trim()); bumpClipboard((n) => n + 1); }
+            })();
           }}
         >
           <Icon name="star" size={11} /> Save Preset

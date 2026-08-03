@@ -683,10 +683,10 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'New Project',
       shortcut: { key: 'n', meta: true },
       enabled: () => true,
-      execute: () => {
+      execute: async () => {
         // Cmd+N is one key away from Cmd+B/Cmd+M. Without this, a slip
         // replaces the document with no way back.
-        if (!confirmDiscardChanges('Create a new project')) return;
+        if (!await confirmDiscardChanges('Create a new project')) return;
         getProjectManager().newProject('Untitled');
         bumpScene();
         notify('New project created', 'success');
@@ -700,7 +700,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: async () => {
         // Asked before the file picker, not after: a user who has decided not
         // to lose their work should not first have to choose a file.
-        if (!confirmDiscardChanges('Open another project')) return;
+        if (!await confirmDiscardChanges('Open another project')) return;
         // Local-first: `.motion` is a directory bundle → use the native folder
         // picker. In the browser build `chooseBundleDir` returns null, so this
         // falls through to the normal file open.
@@ -813,8 +813,8 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       id: asCommandId(ProjectCommands.Close),
       label: 'Close Project',
       enabled: () => true,
-      execute: () => {
-        if (!confirmDiscardChanges('Close the project')) return;
+      execute: async () => {
+        if (!await confirmDiscardChanges('Close the project')) return;
         getProjectManager().close();
         bumpScene();
         notify('Project closed', 'info');

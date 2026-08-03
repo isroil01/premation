@@ -120,6 +120,40 @@ export default tseslint.config(
     },
   },
   {
+    // ── Native browser dialogs are banned in the renderer ──────────────────
+    //
+    // `window.prompt()` is NOT IMPLEMENTED in Electron. Chromium there logs an
+    // error and returns undefined, and every call site in this codebase guards
+    // on the return (`if (!name) return`) — so the feature silently does
+    // nothing in the packaged desktop app while working fine in a browser
+    // build. That is the worst failure shape available: invisible in dev, dead
+    // in the product. It cost three features — Save Current Workspace, Save
+    // Effect Preset and Rename Layer.
+    //
+    // `alert`/`confirm` DO work in Electron, so they are banned for a weaker
+    // reason: they render as OS dialogs in an app that has its own modal
+    // chrome, and they block the renderer thread. Same fix, so same rule.
+    //
+    // Use customPrompt / customConfirm / customAlert from
+    // src/components/Modal/Dialogs.tsx.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['**/*.test.{ts,tsx}', '**/__tests__/**'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        { name: 'prompt', message: 'F-dialog: window.prompt() does not exist in Electron — use customPrompt() from @components/Modal/Dialogs.' },
+        { name: 'alert', message: 'F-dialog: use customAlert() from @components/Modal/Dialogs — native dialogs block the renderer and ignore app chrome.' },
+        { name: 'confirm', message: 'F-dialog: use customConfirm() from @components/Modal/Dialogs — native dialogs block the renderer and ignore app chrome.' },
+      ],
+      'no-restricted-properties': [
+        'error',
+        { object: 'window', property: 'prompt', message: 'F-dialog: window.prompt() does not exist in Electron — use customPrompt() from @components/Modal/Dialogs.' },
+        { object: 'window', property: 'alert', message: 'F-dialog: use customAlert() from @components/Modal/Dialogs.' },
+        { object: 'window', property: 'confirm', message: 'F-dialog: use customConfirm() from @components/Modal/Dialogs.' },
+      ],
+    },
+  },
+  {
     // Tests reach into singletons and cast freely to set up state.
     files: ['**/*.test.{ts,tsx}', '**/__tests__/**', 'jest.setup.ts'],
     rules: {

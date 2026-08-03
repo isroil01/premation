@@ -119,6 +119,65 @@ export function customConfirm(
   });
 }
 
+/**
+ * In-app replacement for `window.alert`.
+ *
+ * Returns a promise so a caller can await dismissal, but most callers just fire
+ * it — the point is that the message lands in the app's own modal chrome rather
+ * than an OS dialog that blocks the renderer thread.
+ *
+ * `message` is rendered with `white-space: pre-wrap` because the plugin
+ * installer's errors arrive as `errors.join('\n')`, and a native alert honoured
+ * those newlines. Losing them would turn a readable validation list into one
+ * run-on line.
+ */
+export function customAlert(
+  title: string,
+  message: string,
+  options?: { isDanger?: boolean; confirmLabel?: string },
+): Promise<void> {
+  const { isDanger = false, confirmLabel = 'OK' } = options ?? {};
+  return new Promise((resolve) => {
+    let resolved = false;
+    const done = (): void => {
+      if (!resolved) {
+        resolved = true;
+        resolve();
+      }
+    };
+
+    openModal({
+      title: (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Icon name={isDanger ? 'warning' : 'info'} size={18} style={{ color: isDanger ? 'var(--color-danger)' : 'var(--color-primary)' }} />
+          <span>{title}</span>
+        </div>
+      ),
+      size: 'sm',
+      persistent: true,
+      onClose: done,
+      render: (close) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)', margin: 0, lineHeight: 'var(--line-height-normal)', whiteSpace: 'pre-wrap' }}>
+            {message}
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+            <Button
+              variant="primary"
+              onClick={() => {
+                done();
+                close();
+              }}
+            >
+              {confirmLabel}
+            </Button>
+          </div>
+        </div>
+      ),
+    });
+  });
+}
+
 export function customPrompt(
   title: string,
   message: string,
