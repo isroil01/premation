@@ -17,7 +17,7 @@ import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import { trimPolyline, type Pt } from '@core/scene/trimPath';
 import { effectNumber } from '@core/effects/effects';
-import { layerNeedsCpuBake } from '@core/effects/effectBake';
+import { layerIsBaked } from '@core/effects/effectBake';
 
 function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
@@ -44,15 +44,15 @@ const MAX_EFFECT_PAD = 256;
  * over a viewport-sized LAYER_TARGET, so their halos already have room; padding
  * them would only grow textures for nothing.
  *
- * Gated on `layerNeedsCpuBake` — the SAME predicate Canvas2DVectorRasterizer
+ * Gated on `layerIsBaked` — the SAME predicate Canvas2DVectorRasterizer
  * bakes on and `snapshotToFrameScene` drops GPU effects on. All three must
  * agree. Asking the narrower `effectsNeedCpuBake` here meant a layer baked for
  * FILL OPACITY alone got no padding at all, so its stroke ring was clipped
  * square at the layer box (golden scene: fill-opacity-zero-stroke).
  */
 function bakedEffectSpread(layer: RenderLayer): number {
-  if (!layerNeedsCpuBake(layer.effects, layer.fillOpacity)) return 0;
-  // `layerNeedsCpuBake` is true for FILL OPACITY alone, and such a layer has no
+  if (!layerIsBaked(layer)) return 0;
+  // `layerIsBaked` is true for FILL OPACITY alone, and such a layer has no
   // effect stack at all — the exact shape that used to crash `applyEffectChain`
   // (`for (const e of undefined)`). Fading spreads nothing anyway, so an absent
   // or empty stack is zero padding, not an iteration.

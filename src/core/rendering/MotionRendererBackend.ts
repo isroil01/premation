@@ -26,7 +26,7 @@ import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
-import { imageNeedsCpuBake } from '@core/effects/effectBake';
+import { layerIsBaked } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
 import { markGpuOwned } from './canvasOwnership';
@@ -531,7 +531,7 @@ export class MotionRendererBackend implements RenderBackend {
               // into the bitmap or they render nothing at all on a photo. Gated
               // by the SAME predicate the snapshot adapter uses to withhold
               // them from the GPU, so they cannot both apply.
-              const bakeImg = imageNeedsCpuBake(layer.kind, layer.effects)
+              const bakeImg = layerIsBaked(layer)
                 ? {
                     effects: layer.effects!,
                     width: layer.width,
@@ -544,7 +544,7 @@ export class MotionRendererBackend implements RenderBackend {
                 : undefined;
               this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource, bakeImg);
             } else if (layer.kind === 'video' && layer.src) {
-              const bakeVid = imageNeedsCpuBake(layer.kind, layer.effects)
+              const bakeVid = layerIsBaked(layer)
                 ? {
                     effects: layer.effects!,
                     width: layer.width,

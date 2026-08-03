@@ -57,6 +57,49 @@ export function layerNeedsCpuBake(
   return effectsNeedCpuBake(effects) || (fillOpacity !== undefined && fillOpacity < 1);
 }
 
+/** The minimum a caller must know about a layer to answer "is it baked?". */
+export interface BakeSubject {
+  kind: string;
+  effects?: ReadonlyArray<Effect>;
+  fillOpacity?: number;
+}
+
+/**
+ * THE single source of truth for "is this layer baked?" (M5b / F6).
+ *
+ * ── Why this exists ──────────────────────────────────────────────────
+ * Bake ownership was expressed by three predicates that a caller had to CHOOSE
+ * between, and the correct choice depends on the layer's KIND:
+ *
+ *   vector (shape/text)   layerNeedsCpuBake   — effects OR fill opacity
+ *   image / video         imageNeedsCpuBake   — effects only
+ *   neither               effectsNeedCpuBake  — the narrow term
+ *
+ * Choosing wrong is not a crash. It is two sides of the pipeline disagreeing
+ * about who owns the effect chain, and the symptom is that the chain runs TWICE.
+ * That shipped: `snapshotToFrameScene` gated on `effectsNeedCpuBake` while
+ * `Canvas2DVectorRasterizer` gated on `layerNeedsCpuBake`, and because fill
+ * opacity alone triggers a bake with no effect requiring it, the grade, LUT,
+ * mask and spatial effects were applied by both sides. The render-test scene
+ * `fill-opacity-zero-stroke` caught it only by luck of which commits landed
+ * together — correct at HEAD, wrong mid-branch, correct again by accident.
+ *
+ * Three call sites kept in step by attention IS the defect. This function takes
+ * the LAYER and dispatches internally, so there is no choice left to get wrong.
+ * Prefer it everywhere. The narrower predicates stay exported for the places
+ * that genuinely need one term (cache-signature construction) and for tests.
+ *
+ * Fill opacity deliberately does NOT apply to image/video — it is a shape-fill
+ * concept. That asymmetry used to be implicit in which function a caller
+ * happened to reach for; it is now stated once, here.
+ */
+export function layerIsBaked(layer: BakeSubject): boolean {
+  if (layer.kind === 'image' || layer.kind === 'video') {
+    return imageNeedsCpuBake(layer.kind, layer.effects);
+  }
+  return layerNeedsCpuBake(layer.effects, layer.fillOpacity);
+}
+
 /**
  * Should an IMAGE or VIDEO layer's texture be baked through the effect chain?
  *

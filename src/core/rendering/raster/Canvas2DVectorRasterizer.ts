@@ -10,7 +10,7 @@ import { applyTextPath } from '@core/text/textPath';
 import { arcTable } from '@core/scene/trimPath';
 import { mixHex } from '@core/text/textAnimators';
 import { paintMaskMatte } from '@core/effects/mask';
-import { applyEffectChain, layerNeedsCpuBake } from '@core/effects/effectBake';
+import { applyEffectChain, layerIsBaked } from '@core/effects/effectBake';
 import { scaleEffectLengths } from '@core/effects/effects';
 import {
   fillStyleFor,
@@ -203,7 +203,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
   private drawText(spec: any, tier: number, pad = 0): HTMLCanvasElement {
     // Fill opacity is applied by the bake chain, so a layer using it must
     // enter that branch even with no CPU-only effect in its stack.
-    const bake = layerNeedsCpuBake(spec.effects, spec.fillOpacity);
+    const bake = layerIsBaked(spec);
     // Padded box, so a baked drop shadow / glow / blur has somewhere to fade
     // out instead of being sliced at the texture edge. `pad` is 0 for every
     // stack the GPU handles natively, which is the overwhelming majority.
@@ -427,7 +427,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
   }
 
   private drawPath(layer: any, tier: number, pad: number): HTMLCanvasElement {
-    const bake = layerNeedsCpuBake(layer.effects, layer.fillOpacity);
+    const bake = layerIsBaked(layer);
     const bw = layer.width + 2 * pad;
     const bh = layer.height + 2 * pad;
     const ss = supersampleFor(tier, bw, bh, bake);

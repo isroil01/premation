@@ -25,7 +25,7 @@ import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@cor
 import { isLutEffect } from '@core/effects/colorLut';
 import { readMatte } from '@core/effects/matte';
 import { effectNumber, effectParam, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
-import { layerNeedsCpuBake, imageNeedsCpuBake } from '@core/effects/effectBake';
+import { layerIsBaked } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
@@ -446,7 +446,7 @@ export function needsShapeRaster(layer: RenderLayer): boolean {
   // A shape carrying a Canvas2D-only effect is CPU-baked (content + mask +
   // full effect chain) into its `path:` texture — those effects have no GPU
   // shader form and otherwise silently no-op.
-  if (layerNeedsCpuBake(layer.effects, layer.fillOpacity)) return true;
+  if (layerIsBaked(layer)) return true;
   return false;
 }
 
@@ -545,14 +545,12 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // fill opacity alone sends a layer down the bake path, and gating this side
   // on the effects term only meant the grade, LUT, mask and spatial effects
   // were baked into the texture AND handed to the GPU on top of it.
-  const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text')
-    && layerNeedsCpuBake(layer.effects, layer.fillOpacity);
-  // An IMAGE or VIDEO bakes too, when its stack contains something the GPU
-  // cannot draw. The bake has already applied the colour grade, any LUT, AND
-  // the mask — the mask first, so interior styles shape themselves from the
-  // masked silhouette — so none of the three may run again here.
-  const imgBaked = imageNeedsCpuBake(layer.kind, layer.effects);
-  const baked = cpuBaked || imgBaked;
+  // ONE predicate, kind-dispatched internally (M5b). This site used to pick
+  // between two by hand and pick wrong; see layerIsBaked for what that cost.
+  // Whichever branch it takes, the bake has already applied the colour grade,
+  // any LUT, AND the mask — the mask first, so interior styles shape themselves
+  // from the masked silhouette — so none of the three may run again here.
+  const baked = layerIsBaked(layer);
   // Per-quad Lambert gain (Accepts Lights): folded into the draw tint on the
   // affine fallback. Renderables that take the depth-tested group path get the
   // gain UNfolded and carry per-fragment shade data instead (decided after
