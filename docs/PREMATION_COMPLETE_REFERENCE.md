@@ -1552,6 +1552,7 @@ Full guide: [`docs/PLUGINS.md`](PLUGINS.md).
 - Never benchmark under jest — the vm realm distorts the profile.
 - `node-canvas` ignores `ctx.filter`, so headless-canvas fidelity ≠ browser fidelity.
 - The harness's swiftshader flag suppresses Dawn — check `resolvedKind`, not `kind`, or you'll believe you tested WebGPU when you tested WebGL2.
+- **Never verify UI state through `innerText`.** It reports only *rendered* text, so it omits collapsed sections entirely, and it returns the `text-transform`ed casing rather than what the DOM holds. It has now produced two confident **false negatives** on this codebase: all 14 new effects read as "missing from the palette" (their categories were collapsed), and the `Geometry & Path Effects` header read as absent (uppercased by CSS). Both were present the whole time. Query **`textContent`**, or `aria-label` / `getAttribute` for controls — and remember that "the label isn't there" is the same observation as "the section is closed" unless you check which.
 
 ---
 
@@ -1712,7 +1713,72 @@ Worth stating because the plans repeatedly under-read the build:
 4. **No motion tracking / rotoscoping** — a hard blocker for a large class of VFX work.
 5. **No collaboration** — deliberate, but it *is* a loss against Rive/Jitter/Figma-adjacent workflows.
 6. **No local project browser** yet in the OSS edition.
-7. ~~**Chainable shape operators**~~ — done for path operators (schema 1.3.0). `trim`, `rep` and `textPath` still hold the single-slot shape, so the ceiling has moved rather than gone.
+7. ~~**Chainable shape operators**~~ — done for path operators (schema 1.3.0). `trim` and `rep` remain single-slot, and `textPath` always will. This is now a **decision with a named blocker**, not deferred work — see §17.5.
+
+### 17.5 DECISION — `trim`, `rep` and `textPath` do NOT fold into `fx.pathOps`
+
+Recorded as a decision because the previous note here recorded an *outcome*
+("the ceiling has moved rather than gone") with no rationale, which is exactly
+what made it read as work someone forgot to finish. Two of the three are
+blocked on one concrete prerequisite; the third is settled permanently.
+
+**`textPath` — separate, permanently.** Not a categorisation call about text
+layers versus shape contents. It is that **`textPath` is not a path operator at
+all.** Every entry in the chain takes the shape's outline and returns an
+outline. `textPath` takes a *mask* as input and returns *glyph placement*
+([`textPath.ts`](../src/core/text/textPath.ts)) — it neither accepts nor
+produces the chain's currency. "Does Zig-Zag run before or after it" has no
+answer, because at that point there is no outline in play. Folding it in would
+invent a semantic AE does not have: AE models this as **Text → Path Options**, a
+property of the text layer, and no arrangement of a shape's contents produces
+it. This one does not become possible later.
+
+**`trim` and `rep` — belong in the list, blocked on multi-subpath geometry.**
+Both genuinely are AE contents-list entries and their order genuinely is
+meaningful in AE. What blocks them is a single fact: **the chain's currency is
+one polyline.** `applyPathOpChain(pts: readonly Pt[], …): Pt[]`
+([`pathOps.ts`](../src/core/scene/pathOps.ts)), and the render contract is
+`pathPoints?: ReadonlyArray<BezierPoint>` —
+[`RenderBackend.ts:181`](../src/core/rendering/RenderBackend.ts) — a single
+subpath, not a list.
+
+Shipping either one early would mean **inert reorder controls**:
+
+- **Trim** is normalised against whatever polyline the stroker finally samples,
+  so its arcs are computed from the *final* outline no matter where its card
+  sits. The arrows would move and the pixels would not change. (Once trim cuts
+  geometry, position matters a great deal — Zig-Zag adds arc length, so
+  trimming to 50% then zig-zagging is a different shape from zig-zagging then
+  taking 50% of the now-longer path. That is the feature, and it is unreachable
+  today.)
+- **The repeater** is transform-only: `RepeaterCopy` is
+  `{dx, dy, drot, scaleMul, opacityMul}`
+  ([`repeater.ts`](../src/core/scene/repeater.ts)) and copies are spread from
+  the base layer, sharing `pathPoints`. Every copy has identical local
+  geometry, so a deform before or after applies the same pure function to the
+  same points. In AE the order matters because a deform below a repeater
+  receives the whole repeated set *as one path* — multi-subpath again.
+
+A control that exists and does not matter is worse than no control, and this
+codebase has shipped that failure before (§2·0). **They land together, after
+the prerequisite, or not at all.**
+
+**The prerequisite, concretely.** `trimPolyline` already returns `Pt[][]`
+([`trimPath.ts`](../src/core/scene/trimPath.ts)) and is the only producer of
+subpath lists in the codebase; it is consumed entirely inside `strokeTrimmed`
+and never escapes into the render contract. The work is lifting that into
+`RenderLayer` and teaching the **rasterizer, content hash, hit-testing and
+bbox** about subpath lists. It is a rendering change, not a schema change.
+
+**Default order for when they do fold in.** The current pipeline is fixed at
+`pathOps → trim → repeater` ([`buildSnapshot.ts`](../src/core/rendering/buildSnapshot.ts),
+path ops → trim → repeater emit). A future migration therefore appends **trim
+immediately after the existing chain** and **the repeater last**, which
+reproduces today's evaluation exactly for every existing document.
+
+> **This decision is not the whole story.** Trim's stroke-only implementation is
+> a live correctness defect against AE independent of any stacking work — logged
+> as **F14**, not as a missing feature. See `COMPOSITING_PLAN.md` §2b.
 
 ---
 
