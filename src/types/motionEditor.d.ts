@@ -254,9 +254,21 @@ export interface MotionEditorApi {
   };
   /** Subscribe to native menu command ids. Returns an unsubscribe fn. */
   onMenuCommand?(handler: (commandId: string) => void): () => void;
-  // NOTE: there is deliberately no `ai` surface any more. AI runs through the
-  // backend gateway (POST /ai/stream) — keys are stored server-side, so the
-  // desktop shell holds no AI privileges at all.
+  /**
+   * Report the RENDERER's edition to the shell, which resolved its own from a
+   * different build input. Diagnostic only — main compares and logs, and never
+   * takes its edition from this. See electron/edition.ts.
+   *
+   * Optional like every other member here: there is no bridge in a browser build.
+   */
+  reportEdition?(edition: string): Promise<{ ok: boolean; message?: string }>;
+  // The NOTE that used to sit here claimed "there is deliberately no `ai` surface
+  // any more — keys are stored server-side, so the desktop shell holds no AI
+  // privileges at all". That stopped being true when the local edition grew its
+  // own key path, and the `ai?:` member above (line ~103) had already contradicted
+  // it. The shell does hold AI privileges, in the server edition; in the local
+  // edition main does not register the channels at all, which is a stronger
+  // guarantee than the comment was claiming and an actually true one.
 }
 
 declare global {

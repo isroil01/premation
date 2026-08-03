@@ -27,13 +27,18 @@ import {
 } from './edition';
 
 /**
- * Capabilities that need a backend, and are therefore off in the local edition.
+ * Capabilities the local edition does not have.
  *
- * `aiEnabled` used to be in this list and deliberately is not any more. The
- * assistant needs a KEY, not a backend, and the local edition now holds one in the
- * OS keystore and calls the provider from the Electron main process. What still
- * differs is *where* the key lives, which is `aiRunsThroughBackend` — asserted
- * separately below.
+ * `aiEnabled` has been in and out of this list, so the current reason is worth
+ * stating plainly: it is here because the local edition does not SHIP the
+ * assistant, not because it cannot run one. The key path it grew — OS keystore in
+ * the main process, `electron/aiProxy.ts` spending it — still exists and still
+ * works; the edition simply does not offer the surface. Every other entry is here
+ * for the older, structural reason: no backend to talk to.
+ *
+ * `aiRunsThroughBackend` stays listed separately from `aiEnabled` even though
+ * both are now false in local, because they answer different questions and one is
+ * about to be true again the moment someone flips the distribution decision.
  */
 const CLOUD_CAPABILITIES = {
   cloudAccountsEnabled,
@@ -42,6 +47,7 @@ const CLOUD_CAPABILITIES = {
   cloudSyncEnabled,
   pluginRegistryEnabled,
   aiRunsThroughBackend,
+  aiEnabled,
 };
 
 describe('edition', () => {
@@ -67,15 +73,21 @@ describe('edition', () => {
     expect(off).toEqual(Object.fromEntries(Object.keys(CLOUD_CAPABILITIES).map((n) => [n, false])));
   });
 
-  it('keeps the assistant on in BOTH editions', () => {
-    // The free tier of this product IS the local edition, and its headline is
-    // "the full editor, with your own API key". An assistant that reads "coming
-    // soon" there made that headline a false statement — which is exactly what
-    // this used to assert. Both editions are BYOK now.
+  it('ships the assistant in the server edition only', () => {
+    // This assertion has been all three values, so read the reason before
+    // changing it a fourth time. It is NOT "local cannot run the assistant" —
+    // local has a complete BYOK path (OS keystore + main-process proxy) and that
+    // code is untouched. It is "the local edition does not ship it", a
+    // distribution decision, and this predicate is the entire mechanism.
+    //
+    // Flipping it back on is a one-line change here. What that one line must NOT
+    // become again is `() => true` with no callers: this used to be exactly that,
+    // which is why turning it false hid nothing until the surfaces were gated
+    // individually. `editionAiSurface.test.ts` is what holds that line.
     setEdition('server');
     expect(aiEnabled()).toBe(true);
     setEdition('local');
-    expect(aiEnabled()).toBe(true);
+    expect(aiEnabled()).toBe(false);
   });
 
   it('routes the assistant through the backend only in the server edition', () => {

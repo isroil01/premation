@@ -83,25 +83,39 @@ export const billingEnabled = (): boolean => isServerEdition();
 export const cloudSyncEnabled = (): boolean => isServerEdition();
 
 /**
- * The assistant.
+ * The assistant — the whole surface, not just the transport.
  *
- * On in BOTH editions now, which is a change worth explaining. This used to be
- * `isServerEdition()`, because every model call went through the backend gateway
- * and the gateway held the key — so the local edition had no way to make one, and
- * the panel honestly said "coming soon".
+ * Off in the local edition. This has now been all three values it can be, so it
+ * is worth writing down why it is this one.
  *
- * That was fine as an engineering state and fatal as a product one: the free tier
- * of this product IS the local edition, and its headline is "the full editor, with
- * your own API key". An assistant that reads "coming soon" made that headline a
- * false statement.
+ * It began as `isServerEdition()` because the backend gateway held the key. Then
+ * the local edition grew a key path of its own — the OS keystore in the main
+ * process, spent by `electron/aiProxy.ts` — and this became `() => true`, on the
+ * reasoning that the assistant needs a KEY, not a backend, and "coming soon" made
+ * the OSS headline a false statement.
  *
- * So the local edition grew its own path — the shell holds the key in the OS
- * keystore and makes the call from the main process (electron/aiKeyVault.ts,
- * electron/aiProxy.ts). Both editions are BYOK; they differ only in who holds the
- * key, which is what `aiTransport` selects between. There are no credits and no
- * plan gate on the assistant in either one.
+ * It is `isServerEdition()` again, and NOT because that path stopped working: the
+ * vault, the proxy, the provider adapters, the tools and the runners are all
+ * untouched and all still correct. The local edition simply does not ship the
+ * assistant as a product surface. That is a distribution decision, not an
+ * engineering one, which is why the code below it stays exactly where it is —
+ * this predicate is the only thing standing between the two states, and flipping
+ * it back is a one-line change.
+ *
+ * ── This gate is load-bearing, which it never used to be ────────────────────
+ *
+ * Read this carefully before adding a call site. Until now `aiEnabled()` was
+ * `() => true` with NO runtime callers at all — every branch that once read it
+ * had been rewritten to read `aiRunsThroughBackend()` instead. So this predicate
+ * did not hide anything, and turning it false on its own would have hidden
+ * nothing either. The surfaces are gated individually (panel registry, panel
+ * renderers, the Customize dialog's AI tab, the AI-focus workspace) and in the
+ * main process (`electron/edition.ts`, which gates the IPC registration).
+ *
+ * `editionAiSurface.test.ts` is what keeps that list honest. If you add an AI
+ * entry point, it fails until the entry point is gated.
  */
-export const aiEnabled = (): boolean => true;
+export const aiEnabled = (): boolean => isServerEdition();
 
 /**
  * Does the assistant run through the backend, or through the desktop shell?

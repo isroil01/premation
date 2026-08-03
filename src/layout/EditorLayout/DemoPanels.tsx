@@ -38,6 +38,7 @@ import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { ThreeDControl } from '@layout/Inspector/ThreeDControl';
 import { AiChatPanel } from '@layout/AiChat/AiChatPanel';
+import { aiEnabled } from '@core/config/edition';
 import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
 import { CameraSection } from '@layout/Inspector/CameraSection';
 import { LightSection } from '@layout/Inspector/LightSection';
@@ -1887,7 +1888,13 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     // `properties` already is. Their sections now render inside it. DockPanel
     // drops panelOrder ids that no longer register, so persisted layouts and
     // saved workspaces holding the old ids simply lose the dead tabs.
-    ai: () => <AiChatPanel />,
+    //
+    // The assistant is spread conditionally rather than listed: the local
+    // edition does not ship it. Not registering the panel (panelDefs.ts) already
+    // stops the dock rendering it, but PopoutRoute resolves renderers by id
+    // straight from this map — so a pop-out window deep-linked at /popout/ai
+    // would have re-mounted the whole panel around the gate.
+    ...(aiEnabled() ? { ai: () => <AiChatPanel /> } : {}),
     project:   () => <ProjectPanel />,
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,

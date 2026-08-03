@@ -47,7 +47,7 @@ import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
 import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
-import { PANEL_DEFS } from '@layout/EditorLayout/panelDefs';
+import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineClip } from '@layout/Timeline';
 import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -191,8 +191,13 @@ function EditorShellInner(): JSX.Element {
     // EditorShell, so it never runs this effect and used to show a raw id.
     // On-demand panels are registered (so menus/shortcuts can open them) then
     // closed unless a persisted layout already had them open.
+    // `availablePanelDefs()`, not PANEL_DEFS: a panel its edition does not offer
+    // must never be registered. That is the gate, not a cosmetic filter — the
+    // dock renders `panelOrder.map(id => panels[id]).filter(Boolean)`, so an id
+    // left over in a PERSISTED layout (or written by a workspace preset) draws
+    // nothing at all once it is absent from the registry.
     const openBefore = new Set(Object.values(useLayoutStore.getState().panelOrder).flat());
-    for (const p of PANEL_DEFS) {
+    for (const p of availablePanelDefs()) {
       registerPanel({ id: p.id, title: p.title, icon: p.icon, region: p.region, weight: p.weight, closable: p.closable });
       if (p.onDemand && !openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
     }

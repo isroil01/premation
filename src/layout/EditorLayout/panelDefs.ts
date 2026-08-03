@@ -14,6 +14,7 @@
 
 import type { IconName } from '@components/Icon';
 import type { RegionId } from '@stores/layoutStore';
+import { isPanelAvailable } from '@core/config/panelAvailability';
 
 export interface PanelDef {
   id: string;
@@ -53,6 +54,10 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'scene',       title: 'Scene',     icon: 'layers',      region: 'leftSidebar', weight: 10,  closable: false },
   { id: 'assets',      title: 'Assets',    icon: 'image',       region: 'leftSidebar', weight: 8,   closable: false },
   { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
+  // Server edition only — see PANEL_AVAILABILITY. The local (OSS) edition does
+  // not ship the assistant, so the panel is absent from the registry rather than
+  // rendered empty: a tab that opens onto "not available in this edition" is a
+  // worse answer than no tab. `getAllPanelRenderers` drops the renderer too.
   { id: 'ai',          title: 'AI',        icon: 'ai',          region: 'leftSidebar', weight: 4,   closable: false },
   { id: 'project',     title: 'Project',   icon: 'folder-open', region: 'leftSidebar', weight: 3,   closable: true, onDemand: true },
   // ── Right inspector ──────────────────────────────────────────────
@@ -93,6 +98,28 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // half-present feature is worse than an absent one.
 ];
 
+/**
+ * The panels this build actually has.
+ *
+ * Everything that REGISTERS or OFFERS a panel must read this rather than
+ * `PANEL_DEFS` — registration, the Window menu, the workspace presets. Call it
+ * at use time; caching the result in a module constant reintroduces exactly the
+ * boot-order bug the `available` predicate exists to avoid.
+ */
+export function availablePanelDefs(): readonly PanelDef[] {
+  return PANEL_DEFS.filter((p) => isPanelAvailable(p.id));
+}
+
+/**
+ * Look up a panel by id, INCLUDING ones this edition does not offer.
+ *
+ * Deliberately unfiltered. This resolves the title and icon of a panel that is
+ * already open — including in a pop-out window, which never runs the
+ * registration effect — so a persisted layout from a server-edition build that
+ * still lists `ai` renders a correctly-labelled panel instead of a raw id. The
+ * gate belongs at the point of registration and offering, not at the point of
+ * naming something already on screen.
+ */
 export function panelDef(id: string): PanelDef | undefined {
   return PANEL_DEFS.find((p) => p.id === id);
 }

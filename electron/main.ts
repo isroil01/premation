@@ -8,6 +8,7 @@ import { registerIndexIpc } from './localIndexDb';
 import { registerCredentialIpc } from './credentialStore';
 import { registerAiKeyIpc } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
+import { aiEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
 
@@ -1045,17 +1046,32 @@ app.whenReady().then(() => {
   // edit it. See credentialStore.ts.
   registerCredentialIpc();
 
-  // The assistant, for the local edition. There is no backend to hold provider
-  // keys, so this process does — encrypted with the OS keystore, and with NO way
-  // for the renderer to read one back (aiKeyVault.ts). The calls themselves also
-  // happen here rather than in the renderer, which is what lets the vault stay
+  // The assistant. Provider keys live here rather than in the renderer —
+  // encrypted with the OS keystore, with NO read-back verb (aiKeyVault.ts) — and
+  // the provider calls happen here too, which is what lets the vault stay
   // write-only and keeps the provider hosts out of the page CSP (aiProxy.ts).
   //
-  // Registered unconditionally: the server edition simply never invokes these —
-  // it posts to the backend gateway instead — and a build-time branch here would
-  // mean the two editions had different IPC surfaces to reason about.
-  registerAiKeyIpc();
-  registerAiProxyIpc();
+  // GATED, where this used to be unconditional. The old comment argued that one
+  // IPC surface for both editions was simpler to reason about, and that held
+  // while both editions shipped the assistant. The local edition no longer does,
+  // and "the renderer doesn't render the panel" is not a gate: this is the
+  // privileged side of the boundary, and anything running in the renderer — a
+  // third-party plugin panel, an imported document, the DevTools console of a
+  // packaged build — can invoke a channel that exists. Not registering it is the
+  // gate. It is also what keeps the local edition off the network: aiProxy is the
+  // only code here that contacts a third-party host. See electron/edition.ts.
+  if (aiEnabled()) {
+    registerAiKeyIpc();
+    registerAiProxyIpc();
+  }
+
+  // The renderer reports its own edition on first paint so a build whose two
+  // halves disagree says so. Not authoritative — see preload's `reportEdition`.
+  ipcMain.handle('edition:report', (_event, reported: unknown) => {
+    const result = assertRendererEditionMatches(reported);
+    if (!result.ok) console.error(result.message);
+    return result;
+  });
 
   // A normal build is a CLIENT: it talks to a deployed motion-back at the origin
   // baked in by VITE_BACKEND_ORIGIN, or to one you run yourself on localhost:4000
