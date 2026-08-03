@@ -164,6 +164,68 @@ Two migrations are in play (path-op stack, feather). They touch disjoint parts o
 
 ---
 
+## 4a. Phase 2 progress (2026-08-03)
+
+Landed on `dev`, in ranking order:
+
+| # | Item | State |
+|---|---|---|
+| 1 | Temporal Wiggle Paths | ✅ merged |
+| 2 | Keyframe selection time-scale | ✅ merged |
+| 3 | Repeater param completeness | ✅ merged |
+| 4 | M8c Stencil / Silhouette | ⚠️ shipped and unit-tested; pixel gate blocked by F12 |
+| 5 | M5 Dissolve + determinism gate | **blocked on F10/F12 — do not start** |
+
+M8c cost an M, not the L the estimate implied: the "compositing-group boundary"
+it was said to need already existed. The advanced-blend path renders the layer
+to one target, copies the accumulated backdrop to another, and overwrites the
+group's out target with a function of the two — the exact topology a stencil
+needs — and precomps already isolate into their own target.
+
+### F12 — F10 is broader than recorded (new finding, logged not fixed)
+
+F10 records that an advanced blend mode "over a transparent comp" renders
+non-deterministically on both backends. That understates it.
+
+The four Matte scenes use an **opaque** comp (`#101014`) and still fail the
+harness's double-render determinism gate on both WebGL2 and WebGPU. The
+transparency is produced *by the blend itself*, not supplied by the comp.
+
+Verified by revert-and-verify, not inferred: forcing `matteFactor` to return
+`1.0` for mode 31 — identical branch, identical dispatch, but emitting no
+transparency — makes `blend-stencil-alpha` deterministic and drops it from the
+failure list, while the other three continue to fail. The probe was reverted.
+
+The real condition is **whether the advanced-blend path has any transparency to
+carry**, which makes every Matte mode structurally affected: punching alpha
+holes in the backdrop is what they are for.
+
+Consequences:
+
+- The four Matte render scenes are written and kept as source but **not
+  registered** (`matteModeScenesPending` in
+  `packages/render-tests/harness/scenes/blendModes.ts`) — the same call F10
+  already made for Alpha Add. The gate is green.
+- **M5 is blocked, and the audit's dependency graph was wrong about it.** The
+  audit treated M5's preview≡export determinism gate as new infrastructure worth
+  building for its own sake. But a determinism contract cannot be built on a
+  path that is not deterministic *against itself*, and Dissolve is both
+  stochastic and alpha-producing, so it lands squarely inside F12's failure
+  region. F10/F12 is a prerequisite for M5, not a consequence of it.
+
+**Recommended next step: fix F10/F12, not build M5.** One fix unblocks M5, the
+four Matte scenes, and the pending Alpha Add seam scene.
+
+### Minor finding (not fixed)
+
+`BLEND_MODES` documents its `group` field as "load bearing for the picker's
+section headers", but neither consumer — `CompositingControls.tsx:15` nor the
+timeline Mode column at `Timeline.tsx:1814` — reads `group`; both flat-map the
+table. The careful AE group ordering is currently invisible in the UI.
+Cosmetic, and out of scope for this run.
+
+---
+
 ## 5. Notes for Phase 2
 
 - **§2·0 watch.** The determinism gate (#5) is a textbook instance: one noise source, two readers (preview path and `offlineRenderer`), nothing forcing agreement. Build the gate as an assertion, not a golden — a wrong dissolve looks like a plausible dissolve.
