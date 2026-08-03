@@ -76,6 +76,50 @@ export default tseslint.config(
     },
   },
   {
+    // ── F11: writes into a scene node's components are silently discarded ──
+    //
+    // `SceneGraph.get components()` rebuilds fresh objects on EVERY read, and
+    // says so at SceneGraph.ts:154 — "it is a copy so that
+    // `node.components.find(...).props.x = ...` writes land in a throwaway and
+    // are discarded (callers all over the app do this)".
+    //
+    // Someone knew, wrote it down, and made the behaviour permanent by
+    // DESCRIBING it rather than preventing it. This rule is the enforcement
+    // that comment should have been. It cost a real bug to learn: M7's
+    // `setResponsiveTime` compiled, passed every unit test, and did nothing.
+    //
+    // Type-aware linting is off here (see the header), so this cannot follow a
+    // node through a variable — it matches the SHAPES instead. That means false
+    // positives on legitimate node construction, which is why the known files
+    // carry file-level disables with a stated reason rather than the rule being
+    // narrowed until it catches nothing.
+    //
+    // The correct write is `defaultSceneGraph.writeProp(nodeId, componentId,
+    // key, value)`. See src/core/template/responsiveTimeStore.ts.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['**/*.test.{ts,tsx}', '**/__tests__/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'AssignmentExpression[left.object.property.name="props"]',
+          message:
+            'F11: assigning into `.props` mutates a COPY and is silently discarded. Use defaultSceneGraph.writeProp(). If this object is a plain literal or a clone, disable this rule for the file with a reason.',
+        },
+        {
+          selector: 'UnaryExpression[operator="delete"] > MemberExpression[object.property.name="props"]',
+          message:
+            'F11: deleting from `.props` mutates a COPY and is silently discarded. Use defaultSceneGraph.writeProp(id, cid, key, undefined).',
+        },
+        {
+          selector: 'CallExpression[callee.property.name="push"][callee.object.property.name="components"]',
+          message:
+            'F11: `components.push()` mutates a COPY and is silently discarded. Use the SceneGraph API to attach a component.',
+        },
+      ],
+    },
+  },
+  {
     // Tests reach into singletons and cast freely to set up state.
     files: ['**/*.test.{ts,tsx}', '**/__tests__/**', 'jest.setup.ts'],
     rules: {

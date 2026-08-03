@@ -481,6 +481,21 @@ the code.
    predicate was correct everywhere, which proves the refactor was necessary
    rather than merely working.
 
+### The sharpest example: a comment where an enforcement should be
+
+`SceneGraph.ts:154` documents that `get components()` returns a copy **so that**
+`node.components.find(...).props.x = …` writes are discarded — and adds "callers
+all over the app do this".
+
+Someone knew. They wrote it down. And writing it down is what made it permanent:
+a comment describes a hazard, it does not prevent one. The behaviour then cost a
+real bug (M7's `setResponsiveTime`, which compiled, passed every test, and did
+nothing) and left ~118 unclassified call sites behind it.
+
+The lint rule added for F11 is the enforcement that comment should have been.
+**When you find yourself documenting a footgun, ask whether the same effort
+spent on a rule would have removed it instead.**
+
 **As a review lens:** ask of anything new — *who else reads this value, and what
 makes them agree?* If the answer is "we keep them in sync", that is the bug, not
 the mitigation. F10's suspected mechanism was found by asking exactly that.
