@@ -38,6 +38,7 @@ import {
   dragEffectTo,
   effectPropPath,
   effectParam,
+  resolveChannelColor,
   type Effect,
   type EffectDef,
   type EffectParamDef,
@@ -76,14 +77,13 @@ function EffectParamRow({
     const animated = defaultAnimation.isAnimated(nodeId, `${chPrefix}_r`);
     // The canonical keyframe axis — what buildSnapshot samples for this node.
     const layerT = compToKeyframeTime(nodeId, time);
-    const displayed = (() => {
-      if (!animated) return String(value);
-      const r = defaultAnimation.sample(nodeId, `${chPrefix}_r`, layerT) ?? 255;
-      const g = defaultAnimation.sample(nodeId, `${chPrefix}_g`, layerT) ?? 255;
-      const b = defaultAnimation.sample(nodeId, `${chPrefix}_b`, layerT) ?? 255;
-      const alpha = defaultAnimation.sample(nodeId, `${chPrefix}_a`, layerT) ?? 1;
-      return Color.toHex({ r, g, b, a: alpha });
-    })();
+    // Same rule the RENDERER uses (resolveEffectParams calls the same helper):
+    // an unanimated channel falls back to the stored colour's channel, not to a
+    // constant. Two implementations of this disagreed, and the swatch was the
+    // one that lied.
+    const displayed = animated
+      ? resolveChannelColor(String(value), (s) => defaultAnimation.sample(nodeId, `${chPrefix}${s}`, layerT))
+      : String(value);
     const writeChannels = (hex: string, editLabel: string): void => {
       const c = Color.fromHex(hex);
       runAnimEdit(editLabel, () => {

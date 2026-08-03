@@ -5,6 +5,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { defaultAnimation } from '@motion/animation';
 import { useSceneRevision } from '@stores/sceneStore';
+import { resolveChannelColor } from '@core/effects/effects';
 
 
 import { InspectorRow } from '@components/Inspector';
@@ -40,14 +41,16 @@ export function ColorKfRow({
   // writing at the raw comp time collapses keyframes on any moved/trimmed clip.
   const layerT = compToKeyframeTime(nodeId, time);
 
-  const displayColor = useMemo(() => {
-    if (!animated) return value;
-    const r = defaultAnimation.sample(nodeId, rProp, layerT) ?? 255;
-    const g = defaultAnimation.sample(nodeId, gProp, layerT) ?? 255;
-    const b = defaultAnimation.sample(nodeId, bProp, layerT) ?? 255;
-    const aVal = defaultAnimation.sample(nodeId, aProp, layerT) ?? 1;
-    return Color.toHex({ r, g, b, a: aVal });
-  }, [animated, nodeId, rProp, gProp, bProp, aProp, layerT, value]);
+  // An unanimated channel falls back to the STORED colour's channel — the same
+  // rule the renderer uses. The old `?? 255` invented white for any channel
+  // without a track (and was in 0..255 besides, a scale these tracks never
+  // used), so a partially-keyframed colour showed as something nothing drew.
+  const displayColor = useMemo(
+    () => (animated
+      ? resolveChannelColor(value, (s) => defaultAnimation.sample(nodeId, `${propPrefix}${s}`, layerT))
+      : value),
+    [animated, nodeId, propPrefix, layerT, value],
+  );
 
   const onChange = (hex: string): void => {
     if (animated) {

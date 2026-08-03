@@ -815,23 +815,72 @@ export function effectPropPath(effectId: string, paramKey?: string): string {
   return paramKey === undefined ? `effect.${effectId}` : `effect.${effectId}.${paramKey}`;
 }
 
-/** Hex → [r,g,b (0..255), a (0..1)] — the channel convention the `_r/_g/_b/_a`
- *  keyframe tracks use (matches ColorKfRow / Color.fromHex). Shared with the
- *  particle-config resolver, which animates its colors the same way. */
+/**
+ * Hex → [r, g, b, a], each 0..1 — the channel convention the `_r/_g/_b/_a`
+ * keyframe tracks actually store.
+ *
+ * It used to return r/g/b in 0..255 while claiming in this very comment to
+ * "match ColorKfRow / Color.fromHex". It did not: `Color.fromHex` is 0..1, and
+ * EVERY writer of these tracks goes through it — ColorKfRow for fill/stroke,
+ * EffectStack for an effect's colour, LayerStylesControls for a layer style's,
+ * and the particle and Glass colour rows. So the picker stored 1.0 for full red
+ * and this function's twin, `channelsToColor`, read that 1.0 as one 255th of
+ * red and emitted `#010000`.
+ *
+ * The visible bug: every ANIMATED colour on an effect, a layer style, a particle
+ * config or Glass rendered near-black at every frame, whatever colour you
+ * picked — and near-black on a drop shadow reads as "the colour keyframes do
+ * nothing", which is how it was reported. The fill/stroke/text tracks were never
+ * affected, because buildSnapshot reads those through `Color.toHex` (0..1) and
+ * never came through here. Two readers, one track format, different units.
+ *
+ * 0..1 is the direction to converge on because it is what every writer already
+ * emits and what the other reader already assumes; the alternative would have
+ * meant changing four writers instead of one reader.
+ */
 export function parseColorChannels(hex: string): [number, number, number, number] {
   let h = hex.trim().replace(/^#/, '');
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
   if (h.length === 6) h += 'ff';
-  if (h.length !== 8 || /[^0-9a-fA-F]/.test(h)) return [255, 255, 255, 1];
+  if (h.length !== 8 || /[^0-9a-fA-F]/.test(h)) return [1, 1, 1, 1];
   const n = Number.parseInt(h, 16);
-  return [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, (n & 0xff) / 255];
+  return [((n >>> 24) & 0xff) / 255, ((n >>> 16) & 0xff) / 255, ((n >>> 8) & 0xff) / 255, (n & 0xff) / 255];
 }
 
-/** [r,g,b (0..255), a (0..1)] → #rrggbb / #rrggbbaa. */
+/**
+ * Recompose a colour from its `_r/_g/_b/_a` channel tracks, over the STORED
+ * colour — the single rule for "what colour is this at time t".
+ *
+ * The fallback per channel is the stored colour's own channel, never a constant.
+ * A channel with no track means "unanimated", which means "whatever was
+ * authored"; defaulting it to 255 invents a colour nobody chose. The inspector
+ * did exactly that — a shadow whose red channel alone carried keyframes showed
+ * as near-white in the swatch while it rendered near-black, and editing the
+ * swatch then wrote those invented channels back as real keyframes.
+ *
+ * Exported so the Inspector's colour rows and `resolveEffectParams` share one
+ * implementation rather than two that agree until they don't.
+ */
+export function resolveChannelColor(
+  storedHex: string,
+  sample: (suffix: '_r' | '_g' | '_b' | '_a') => number | undefined,
+): string {
+  const base = parseColorChannels(storedHex);
+  return channelsToColor(
+    sample('_r') ?? base[0],
+    sample('_g') ?? base[1],
+    sample('_b') ?? base[2],
+    sample('_a') ?? base[3],
+  );
+}
+
+/** [r,g,b,a] each 0..1 → #rrggbb / #rrggbbaa. The exact inverse of
+ *  {@link parseColorChannels}, and the same scale as `Color.toHex`. */
 export function channelsToColor(r: number, g: number, b: number, a: number): string {
-  const c = (v: number): string => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+  const c = (v: number): string =>
+    Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
   const base = `#${c(r)}${c(g)}${c(b)}`;
-  return a >= 1 ? base : `${base}${c(a * 255)}`;
+  return a >= 1 ? base : `${base}${c(a)}`;
 }
 
 /**
@@ -863,15 +912,10 @@ export function resolveEffectParams(
       // pattern fill/stroke colors use (`fill_r`…): `effect.<id>.<key>_r/g/b/a`.
       // Any sampled channel overrides that channel of the stored color.
       if (p.type === 'color') {
-        const r = sample(effectPropPath(e.id, `${p.key}_r`));
-        const g = sample(effectPropPath(e.id, `${p.key}_g`));
-        const b = sample(effectPropPath(e.id, `${p.key}_b`));
-        const alpha = sample(effectPropPath(e.id, `${p.key}_a`));
-        if (r !== undefined || g !== undefined || b !== undefined || alpha !== undefined) {
-          const base = parseColorChannels(String(params[p.key] ?? p.default ?? '#ffffff'));
-          params[p.key] = channelsToColor(
-            r ?? base[0], g ?? base[1], b ?? base[2], alpha ?? base[3],
-          );
+        const ch = (suffix: '_r' | '_g' | '_b' | '_a'): number | undefined =>
+          sample(effectPropPath(e.id, `${p.key}${suffix}`));
+        if (ch('_r') !== undefined || ch('_g') !== undefined || ch('_b') !== undefined || ch('_a') !== undefined) {
+          params[p.key] = resolveChannelColor(String(params[p.key] ?? p.default ?? '#ffffff'), ch);
           touched = true;
         }
       }
