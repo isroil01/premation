@@ -1929,7 +1929,11 @@ export function buildSnapshot(
         const base = pathPoints && pathPoints.length > 1
           ? pathPoints.map((p) => ({ x: p.x, y: p.y }))
           : shapeOutline(layer.primitive, layerW, layerH, 48, dense);
-        layer.pathPoints = applyPathOp(base, true, op).map((p) => corner(p.x, p.y));
+        // Roughen's wiggle rides the layer's OWN time — the same axis `a` was
+        // sampled on (valuesOf → remapOf). Handing it comp `t` would leave the
+        // noise running at wall-clock speed while the keyframes it animates
+        // alongside obey time remapping and stretch.
+        layer.pathPoints = applyPathOp(base, true, op, remapOf(node.id)(t)).map((p) => corner(p.x, p.y));
         layer.primitive = 'path';
       }
     }

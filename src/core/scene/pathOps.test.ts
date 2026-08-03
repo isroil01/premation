@@ -159,3 +159,69 @@ describe('roughen', () => {
     expect(applyPathOp(sq, true, rough)).toHaveLength(12);
   });
 });
+
+// ── Wiggle Paths: the temporal half of roughen ──────────────────────
+//
+// These assert INVARIANTS rather than pinning coordinates. A frozen golden
+// here would pass just as happily on a wiggle that jumps discontinuously or
+// runs at the wrong rate — both of which look like plausible noise in a still.
+describe('roughen over time (Wiggle Paths)', () => {
+  const { roughen } = require('./pathOps');
+  const sq: Pt[] = [
+    { x: -10, y: -10 }, { x: 10, y: -10 }, { x: 10, y: 10 }, { x: -10, y: 10 },
+  ];
+  const maxDelta = (a: readonly Pt[], b: readonly Pt[]): number => {
+    let d = 0;
+    for (let i = 0; i < a.length; i++) d = Math.max(d, Math.hypot(a[i]!.x - b[i]!.x, a[i]!.y - b[i]!.y));
+    return d;
+  };
+
+  it('phase 0 is byte-identical to the pre-temporal output', () => {
+    // The back-compat contract: an old project has no wigglesPerSecond, reads
+    // as 0, and must render exactly what it always did.
+    expect(roughen(sq, true, 3, 4, 0, 0)).toEqual(roughen(sq, true, 3, 4));
+  });
+
+  it('a zero wiggle rate makes the outline independent of time', () => {
+    const op: PathOp = { type: 'roughen', amount: 3, detail: 4, wigglesPerSecond: 0 };
+    expect(applyPathOp(sq, true, op, 9.75)).toEqual(applyPathOp(sq, true, op, 0));
+  });
+
+  it('a non-zero wiggle rate makes the outline move', () => {
+    const op: PathOp = { type: 'roughen', amount: 3, detail: 4, wigglesPerSecond: 2 };
+    expect(maxDelta(applyPathOp(sq, true, op, 0), applyPathOp(sq, true, op, 0.25))).toBeGreaterThan(0);
+  });
+
+  it('is deterministic across calls at the same time (preview ≡ export)', () => {
+    const op: PathOp = { type: 'roughen', amount: 4, detail: 3, wigglesPerSecond: 3, seed: 7 };
+    expect(applyPathOp(sq, true, op, 1.37)).toEqual(applyPathOp(sq, true, op, 1.37));
+  });
+
+  it('is continuous — no snap between noise fields', () => {
+    // Straddle a whole-numbered phase boundary, where a naive implementation
+    // would swap noise fields outright. The step across it must be no larger
+    // than a comparable step just inside one field.
+    const op: PathOp = { type: 'roughen', amount: 5, detail: 4, wigglesPerSecond: 1 };
+    const eps = 1e-3;
+    const across = maxDelta(applyPathOp(sq, true, op, 1 - eps), applyPathOp(sq, true, op, 1 + eps));
+    const within = maxDelta(applyPathOp(sq, true, op, 1.4), applyPathOp(sq, true, op, 1.4 + 2 * eps));
+    expect(across).toBeLessThanOrEqual(Math.max(within, eps) * 10);
+  });
+
+  it('never displaces further than Size, at any phase', () => {
+    // The amplitude bound is what stops an animated wiggle from tearing a
+    // shape apart at some phase the eye never checks.
+    const amount = 6;
+    const base = roughen(sq, true, 0.0000001, 4, 0, 0); // same subdivision, ~undisplaced
+    for (const phase of [0, 0.3, 0.5, 1.7, 12.25]) {
+      const out = roughen(sq, true, amount, 4, phase, 0);
+      expect(maxDelta(base, out)).toBeLessThanOrEqual(amount + 1e-6);
+    }
+  });
+
+  it('different seeds decorrelate two otherwise identical layers', () => {
+    const a = roughen(sq, true, 4, 4, 0.5, 0);
+    const b = roughen(sq, true, 4, 4, 0.5, 99);
+    expect(maxDelta(a, b)).toBeGreaterThan(0);
+  });
+});

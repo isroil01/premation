@@ -34,7 +34,9 @@ const TYPES: { id: PathOpType; label: string }[] = [
   { id: 'pucker', label: 'Pucker & Bloat' },
   { id: 'twist', label: 'Twist' },
   { id: 'offset', label: 'Offset Paths' },
-  { id: 'roughen', label: 'Roughen' },
+  // AE's name for this operator. The stored id stays `roughen` so existing
+  // projects keep loading — the label is what was wrong, not the data.
+  { id: 'roughen', label: 'Wiggle Paths' },
 ];
 
 /** Per-operator labels for the two numeric params (detail is unused by some). */
@@ -171,6 +173,29 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           value={op.detail}
           min={paramMin(op.type, 'detail')}
         />
+      )}
+      {/* Roughen is the only temporal operator: the others are a pure function
+          of the outline, so a wiggle rate would be a dead control on them. */}
+      {op.type === 'roughen' && (
+        <>
+          <ParamRow
+            nodeId={nodeId}
+            param="wigglesPerSecond"
+            label="Wiggles/Second"
+            value={op.wigglesPerSecond ?? 0}
+            min={0}
+          />
+          <div className={styles.paramRow}>
+            <div />
+            <span className={styles.paramLabel}>Random Seed</span>
+            <ValueField
+              value={op.seed ?? 0}
+              onChange={(v) => updatePathOp(nodeId, { seed: Math.round(v) })}
+              min={0}
+              aria-label="Random Seed"
+            />
+          </div>
+        </>
       )}
     </div>
   );

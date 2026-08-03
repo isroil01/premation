@@ -8,6 +8,7 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
+import { Dropdown } from '@components/Dropdown';
 
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -22,7 +23,14 @@ import {
   repeaterPropPath,
   type Repeater,
   type RepeaterParam,
+  type RepeaterComposite,
 } from '@core/scene/repeater';
+
+/** AE's stacking choice. `above` is this renderer's historical behaviour. */
+const COMPOSITE: { id: RepeaterComposite; label: string }[] = [
+  { id: 'above', label: 'Above' },
+  { id: 'below', label: 'Below' },
+];
 import styles from './TextAnimatorControls.module.css';
 import { Checkbox } from '@components/Checkbox';
 
@@ -103,6 +111,28 @@ export function RepeaterControls({ nodeId }: { nodeId: string }): JSX.Element | 
         </button>
       </div>
       <ParamRow nodeId={nodeId} param="copies" label="Copies" value={rep.copies} min={1} max={200} step={1} />
+      <ParamRow nodeId={nodeId} param="offset" label="Offset" value={rep.offset ?? 0} step={0.1} />
+      <div className={styles.selectorRow}>
+        <span className={styles.paramLabel}>Composite</span>
+        <Dropdown
+          placement="left-start"
+          trigger={
+            <button type="button" className={styles.pick}>
+              <span>{rep.composite === 'below' ? 'Below' : 'Above'}</span>
+              <Icon name="chevron-down" size={11} />
+            </button>
+          }
+          items={COMPOSITE.map((c) => ({
+            type: 'item' as const,
+            id: c.id,
+            label: c.label,
+            icon: (rep.composite ?? 'above') === c.id ? 'check' : undefined,
+            onSelect: () => updateRepeater(nodeId, { composite: c.id }),
+          }))}
+        />
+      </div>
+      <ParamRow nodeId={nodeId} param="anchorX" label="Anchor X" value={rep.anchorX ?? 0} unit="px" />
+      <ParamRow nodeId={nodeId} param="anchorY" label="Anchor Y" value={rep.anchorY ?? 0} unit="px" />
       <ParamRow nodeId={nodeId} param="offsetX" label="Position X" value={rep.offsetX} unit="px" />
       <ParamRow nodeId={nodeId} param="offsetY" label="Position Y" value={rep.offsetY} unit="px" />
       <ParamRow nodeId={nodeId} param="offsetRotation" label="Rotation" value={rep.offsetRotation} unit="°" />
