@@ -34,6 +34,8 @@ import type { Effect } from './effects';
 import { effectNumber, paramsOf } from './effects';
 import { applyKeyData, chokeAlpha, softenAlpha } from './keylight';
 import { waveWarpData, turbulentDisplaceData } from './warp';
+import { blurRgba, radialBlurData, blurDimensions } from './blurs';
+import { mosaicData, findEdgesData, roughenEdgesData } from './stylize';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -51,6 +53,17 @@ const CANVAS2D_ONLY = new Set<string>([
   'directional-blur',
   'linear-wipe',
   'transform',
+  // Blur family. The generic `blur` is a CSS filter and stays OFF this list —
+  // it needs no bake and should keep the cheap path. These three each express
+  // something a CSS filter cannot (per-axis dimensions, an iteration count, a
+  // centre of rotation), so they are real pixel passes and force the bake.
+  'gaussian-blur',
+  'fast-box-blur',
+  'radial-blur',
+  // Stylize family — all three are per-pixel passes with no shader form.
+  'mosaic',
+  'find-edges',
+  'roughen-edges',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -177,7 +190,136 @@ export function applyCanvas2dEffect(
       return applyWaveWarp(oc, w, h, e);
     case 'turbulent-displace':
       return applyTurbulentDisplace(oc, w, h, e);
+    case 'gaussian-blur':
+      return applyGaussianBlur(oc, w, h, e);
+    case 'fast-box-blur':
+      return applyFastBoxBlur(oc, w, h, e);
+    case 'radial-blur':
+      return applyRadialBlur(oc, w, h, e);
+    case 'mosaic':
+      return applyMosaic(oc, w, h, e);
+    case 'find-edges':
+      return applyFindEdges(oc, w, h, e);
+    case 'roughen-edges':
+      return applyRoughenEdges(oc, w, h, e);
   }
+}
+
+// ── Stylize family (kernels in stylize.ts) ─────────────────────────
+
+function applyMosaic(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  img.data.set(mosaicData(
+    img.data, w, h,
+    effectNumber(e, 'horizontalBlocks'),
+    effectNumber(e, 'verticalBlocks'),
+    bool(e, 'sharpColors', false),
+  ));
+  oc.putImageData(img, 0, 0);
+}
+
+function applyFindEdges(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const edges = findEdgesData(img.data, w, h, bool(e, 'invert', true));
+
+  // Blend With Original is AE's own mix-back control, and it is worth having
+  // because Find Edges at full strength discards the layer entirely — the
+  // useful looks are almost all partial.
+  const blend = Math.max(0, Math.min(100, effectNumber(e, 'blendWithOriginal'))) / 100;
+  if (blend > 0) {
+    const src = img.data;
+    for (let i = 0; i < src.length; i += 4) {
+      edges[i] = edges[i]! * (1 - blend) + src[i]! * blend;
+      edges[i + 1] = edges[i + 1]! * (1 - blend) + src[i + 1]! * blend;
+      edges[i + 2] = edges[i + 2]! * (1 - blend) + src[i + 2]! * blend;
+    }
+  }
+  img.data.set(edges);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyRoughenEdges(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const border = Math.max(0, effectNumber(e, 'border'));
+  if (border <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const out = roughenEdgesData(
+    img.data, w, h,
+    border,
+    effectNumber(e, 'scale'),
+    effectNumber(e, 'complexity'),
+    effectNumber(e, 'evolution'),
+    effectNumber(e, 'seed'),
+  );
+
+  // Edge Sharpness hardens the chewed alpha toward a cut: 0 leaves the noise
+  // soft, higher values push partial alpha to the extremes. Applied here rather
+  // than in the kernel so the kernel stays a pure noise-bite.
+  const sharp = Math.max(0, effectNumber(e, 'edgeSharpness'));
+  if (sharp > 0) {
+    for (let i = 3; i < out.length; i += 4) {
+      const a = out[i]! / 255;
+      out[i] = Math.round(255 * Math.min(1, Math.max(0, (a - 0.5) * (1 + sharp * 2) + 0.5)));
+    }
+  }
+  img.data.set(out);
+  oc.putImageData(img, 0, 0);
+}
+
+// ── Blur family (kernels in blurs.ts) ──────────────────────────────
+//
+// All three share the same shape: pull the pixels, transform, put them back.
+// The arithmetic lives in `blurs.ts` so it can be asserted numerically without
+// a DOM — these wrappers only marshal.
+
+/** Gaussian Blur — three box passes, which converge on a true Gaussian. */
+function applyGaussianBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = Math.max(0, effectNumber(e, 'blurriness'));
+  if (radius <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  blurRgba(img.data, w, h, radius, {
+    dimensions: blurDimensions(effectNumber(e, 'dimensions')),
+    // Fixed at 3, not exposed: this effect IS "the Gaussian one". Exposing the
+    // count would make it Fast Box Blur with a different label.
+    iterations: 3,
+    repeatEdge: bool(e, 'repeatEdge', true),
+  });
+  oc.putImageData(img, 0, 0);
+}
+
+/** Fast Box Blur — the same kernel with the iteration count exposed. */
+function applyFastBoxBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = Math.max(0, effectNumber(e, 'blurRadius'));
+  if (radius <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  blurRgba(img.data, w, h, radius, {
+    dimensions: blurDimensions(effectNumber(e, 'dimensions')),
+    iterations: effectNumber(e, 'iterations'),
+    repeatEdge: bool(e, 'repeatEdge', true),
+  });
+  oc.putImageData(img, 0, 0);
+}
+
+/** Radial Blur — spin or zoom about a centre offset from the layer's middle. */
+function applyRadialBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  if (amount === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const out = radialBlurData(
+    img.data, w, h,
+    amount,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    effectNumber(e, 'blurType') === 1 ? 'zoom' : 'spin',
+    effectNumber(e, 'quality'),
+  );
+  img.data.set(out);
+  oc.putImageData(img, 0, 0);
 }
 
 // ── Wave Warp / Turbulent Displace: backward-mapped distortions (warp.ts) ──

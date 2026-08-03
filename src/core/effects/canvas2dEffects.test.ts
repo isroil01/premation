@@ -5,6 +5,8 @@
  * hex parser and the capability classification.
  */
 
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { parseHex, sharpenData, addNoiseData, isCanvas2dOnlyEffect } from './canvas2dEffects';
 import { EFFECT_DEFS } from './effects';
 
@@ -127,5 +129,38 @@ describe('classification', () => {
       expect(d.css({})).toBe('');
       expect(d.params.length).toBeGreaterThan(0);
     }
+  });
+
+  /**
+   * Every effect that FORCES a bake must have something to draw once it happens.
+   *
+   * WHY THIS EXISTS. `applyCanvas2dEffect` is a switch with no `default`, so an
+   * effect listed in `CANVAS2D_ONLY` but missing its `case` falls straight
+   * through and returns — silently. The layer still pays for the entire CPU
+   * round-trip (that list is precisely what forces the bake), the effect appears
+   * in the stack, its parameters animate and keyframe, and nothing is drawn.
+   *
+   * Worse than an unimplemented effect, because every signal the user has says
+   * it works. It is also the same shape as the two bugs the wiring audit found:
+   * a registration and its consumer drifting apart, with nothing checking they
+   * still meet. Read from SOURCE rather than by invoking the function — invoking
+   * it needs a canvas and would only prove the types the test remembered to pass.
+   *
+   * IF THIS FAILS, either add the `case` or take the type off `CANVAS2D_ONLY`.
+   */
+  test('every Canvas2D-only effect has a dispatch case in applyCanvas2dEffect', () => {
+    const src = readFileSync(resolve(__dirname, 'canvas2dEffects.ts'), 'utf8');
+    const body = src.slice(src.indexOf('export function applyCanvas2dEffect'));
+    const dispatched = new Set(
+      [...body.matchAll(/case\s+'([a-z0-9-]+)'\s*:/g)].map((m) => m[1]!),
+    );
+
+    // Guards the guard: an empty set satisfies the subset check vacuously.
+    expect(dispatched.size).toBeGreaterThan(10);
+
+    const missing = EFFECT_DEFS
+      .filter((d) => isCanvas2dOnlyEffect(d.type) && !dispatched.has(d.type))
+      .map((d) => d.type);
+    expect(missing).toEqual([]);
   });
 });
