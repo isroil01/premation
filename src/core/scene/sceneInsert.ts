@@ -28,9 +28,18 @@ import { trimPropPath, defaultTrim } from '@core/scene/trimPath';
 import { sanitizeSvg } from '@core/svg/svgSanitize';
 import { scanSvgCapabilities, isAnimatedSvg, svgCapabilityWarnings, type SvgCapabilities } from '@core/svg/svgCapabilities';
 import { makeSvgComponent } from '@core/svg/svgLayer';
+import { setContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 
 
 let seq = 0;
+
+/** Turn Continuous Rasterization on for new vector layers by default.
+ *  Soft zoom under camera moves is the #1 tell of "not AE-finished" logo/type
+ *  work; requiring users to find the switch meant most comps stayed soft. */
+function enableContinuousRasterByDefault(nodeId: string): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (node && supportsContinuousRaster(node)) setContinuousRaster(nodeId, true);
+}
 
 export { activeCompRootId } from './activeComp';
 import { activeCompRootId, activeCompSize } from './activeComp';
@@ -284,6 +293,7 @@ export function insertSvgLayer(
 
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
+  enableContinuousRasterByDefault(node.id);
   bumpScene();
 
   // Sanitizing can REMOVE content, so it is a fidelity change and has to be
@@ -676,6 +686,7 @@ export function insertShape(shape: ShapeKind, name: string, pos?: { x: number; y
 
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
+  enableContinuousRasterByDefault(node.id);
   bumpScene();
 }
 
@@ -739,6 +750,7 @@ export function insertPathNode(
   });
   defaultSceneGraph.addChild(rootId, node);
   bumpScene();
+  enableContinuousRasterByDefault(node.id);
   return node.id;
 }
 
@@ -780,6 +792,7 @@ export function insertText(name: string, fontSize = 32, fontWeight = 400, extraP
   }
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
+  enableContinuousRasterByDefault(node.id);
   bumpScene();
 }
 
