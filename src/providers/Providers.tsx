@@ -82,6 +82,7 @@ import { activeCompSize } from '@core/scene/activeComp';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
+import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -461,6 +462,16 @@ function buildProjectCommands(): ReadonlyArray<Command> {
   return [
     // "New Composition…" was removed — compositions are created from the
     // dashboard (one project per composition), so there's no in-editor add path.
+    {
+      // The Composition menu had no "New Composition…" while the dialog was
+      // live in the Project panel — a working feature with no menu home. This
+      // is that home; the Project panel's button calls the same dialog.
+      id: asCommandId('comp.new'),
+      label: 'New Composition…',
+      icon: 'component',
+      enabled: () => true,
+      execute: () => openNewCompositionDialog(),
+    },
     {
       id: asCommandId('comp.settings'),
       label: 'Composition Settings…',

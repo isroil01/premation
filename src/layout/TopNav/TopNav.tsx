@@ -40,6 +40,7 @@ import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { customPrompt } from '@components/Modal/Dialogs';
+import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
 
@@ -502,14 +503,23 @@ export function TopNav(): JSX.Element {
     <div className={styles.root} ref={containerRef}>
       <div className={styles.toolRow} role="toolbar" aria-label="Tools">
         <div className={styles.inner}>
-          <IconButton
-            aria-label="Back to Dashboard"
-            size="md"
-            className={styles.back}
-            onClick={() => navigate('/')}
-          >
-            <Icon name="arrow-left" size={18} />
-          </IconButton>
+          {/*
+            Only where there IS a dashboard. `/` redirects to /dashboard in the
+            server edition and to /editor in the local one — so in the local
+            edition this arrow navigated the user back to the page they were
+            already on. An affordance that does nothing is worse than no
+            affordance: it reads as a broken button, not an absent feature.
+          */}
+          {cloudProjectsEnabled() && (
+            <IconButton
+              aria-label="Back to Dashboard"
+              size="md"
+              className={styles.back}
+              onClick={() => navigate('/')}
+            >
+              <Icon name="arrow-left" size={18} />
+            </IconButton>
+          )}
 
           {!isElectron && <AppMenuButton />}
           <span className={styles.toolDivider} aria-hidden />
