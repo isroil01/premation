@@ -33,12 +33,7 @@ import {
   resolveChord,
   findChordConflict,
 } from '@core/commands/shortcutOverrides';
-import {
-  listLayouts,
-  applyLayout,
-  saveCurrentLayout,
-  deleteLayout,
-} from '@core/layout/workspaceLayouts';
+import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { getThemeManager } from '@core/services/coreServices';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -158,33 +153,42 @@ function ShortcutsTab(): JSX.Element {
   );
 }
 
+/**
+ * Reads the SAME workspace list as the TopNav Workspaces dropdown.
+ *
+ * It used to read `core/layout/workspaceLayouts` — a second, parallel system
+ * with its own four presets and its own settings key. A layout saved here never
+ * appeared in the toolbar dropdown and vice versa, and both shipped a preset
+ * called "Default". That module is gone; anything saved under its key is
+ * migrated in by `migrateLegacyLayouts`.
+ */
 function WorkspacesTab(): JSX.Element {
   const [, force] = useState(0);
   const [name, setName] = useState('');
-  const layouts = listLayouts();
+  const manager = getWorkspaceManager();
+  const layouts = manager.listWorkspaces();
 
-  const apply = (n: string): void => { applyLayout(n); };
   const save = (): void => {
     const n = name.trim();
     if (!n) return;
-    saveCurrentLayout(n);
+    manager.saveCurrentWorkspace(n);
     setName('');
     force((v) => v + 1);
   };
-  const remove = (n: string): void => { deleteLayout(n); force((v) => v + 1); };
+  const remove = (id: string): void => { manager.deleteWorkspace(id); force((v) => v + 1); };
 
   return (
     <div className={styles.tabBody}>
       <div className={styles.list}>
         {layouts.map((l) => (
-          <div key={l.name} className={styles.row}>
+          <div key={l.id} className={styles.row}>
             <span className={styles.rowLabel}>
               {l.name}{l.builtin ? <span className={styles.badge}>preset</span> : null}
             </span>
             <div className={styles.rowRight}>
-              <Button variant="secondary" size="sm" onClick={() => apply(l.name)}>Apply</Button>
+              <Button variant="secondary" size="sm" onClick={() => manager.applyWorkspace(l.id)}>Apply</Button>
               {!l.builtin ? (
-                <button type="button" className={styles.miniBtn} title="Delete" onClick={() => remove(l.name)}>✕</button>
+                <button type="button" className={styles.miniBtn} title="Delete" onClick={() => remove(l.id)}>✕</button>
               ) : null}
             </div>
           </div>

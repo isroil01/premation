@@ -77,7 +77,10 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'motion',      title: 'Graph',     icon: 'graph-value', region: 'rightInspector', weight: 1.4, closable: false },
   { id: 'presets',     title: 'Presets',   icon: 'keyframe',    region: 'rightInspector', weight: 1,   closable: false },
   { id: 'history',     title: 'History',   icon: 'history',     region: 'rightInspector', weight: 0.8, closable: true, onDemand: true },
-  { id: 'renderQueue', title: 'Render',    icon: 'queue',       region: 'rightInspector', weight: 0.7, closable: false, onDemand: true },
+  // `closable: true` like every other on-demand panel. It was the one exception,
+  // so PanelHeader drew no ✕ and the only way to dismiss it was F6 or the Window
+  // menu — for a panel that opens on demand and is empty most of the time.
+  { id: 'renderQueue', title: 'Render',    icon: 'queue',       region: 'rightInspector', weight: 0.7, closable: true, onDemand: true },
   // Third-party plugin UI. On demand because it is empty until a plugin with a
   // panel is running — it opens itself when one calls `motion.ui.openPanel()`,
   // when the user picks it from the Plugins menu, or from the manager's Open

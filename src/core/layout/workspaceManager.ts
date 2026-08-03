@@ -157,6 +157,75 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
   },
 ];
 
+/**
+ * The settings key of the workspace system this one replaced.
+ *
+ * `core/layout/workspaceLayouts.ts` was a SECOND, parallel implementation:
+ * four built-in presets of its own, its own user list under this key, and
+ * exactly one consumer (Customize ▸ Workspaces) — while the TopNav dropdown
+ * used this manager. A layout saved from one never appeared in the other, and
+ * both shipped a preset called "Default".
+ *
+ * That module is deleted. Anything a user saved under this key would have gone
+ * with it, so it is migrated here rather than orphaned.
+ */
+const LEGACY_SETTINGS_KEY = 'workspaceLayouts';
+const LEGACY_MIGRATED_KEY = 'workspace.legacyLayoutsMigrated';
+
+/** The old `WorkspaceLayout` shape — no `id`, keyed by `name`. */
+interface LegacyLayout {
+  name: string;
+  builtin?: boolean;
+  regions: Partial<Record<RegionId, { size: number; collapsed: boolean }>>;
+  panelOrder?: Record<RegionId, ReadonlyArray<string>>;
+  activePanelByRegion?: Partial<Record<RegionId, string>>;
+  leftSidebarPosition?: 'left' | 'right';
+  rightInspectorPosition?: 'left' | 'right';
+  timelinePosition?: 'bottom' | 'top';
+}
+
+/**
+ * Fold any layouts saved under the old key into this manager's list, once.
+ *
+ * Idempotent by a flag rather than by clearing the source: if a user rolls back
+ * to a build that still has the old system, their layouts are still there.
+ * Name collisions keep the EXISTING entry — this manager's own saves are the
+ * newer of the two systems, so they win.
+ *
+ * Runs lazily off `getUserWorkspaces` rather than at module scope, because
+ * `getSettingsManager()` throws before `Application.boot()` — the same trap
+ * that reset the AI provider on every launch (see aiProviderStore).
+ */
+export function migrateLegacyLayouts(): void {
+  const settings = getSettingsManager();
+  if (settings.get<boolean>(LEGACY_MIGRATED_KEY, false)) return;
+
+  const legacy = settings.get<LegacyLayout[]>(LEGACY_SETTINGS_KEY, []);
+  const existing = settings.get<WorkspaceSnapshot[]>(SETTINGS_KEY, []);
+
+  if (Array.isArray(legacy) && legacy.length > 0) {
+    const taken = new Set(existing.map((w) => w.name));
+    const carried = legacy
+      .filter((l) => l && !l.builtin && typeof l.name === 'string' && !taken.has(l.name))
+      .map<WorkspaceSnapshot>((l, i) => ({
+        id: `migrated-${i}-${l.name.replace(/\W+/g, '-').toLowerCase()}`,
+        name: l.name,
+        builtin: false,
+        regions: l.regions ?? {},
+        ...(l.panelOrder ? { panelOrder: l.panelOrder } : {}),
+        ...(l.activePanelByRegion ? { activePanelByRegion: l.activePanelByRegion } : {}),
+        ...(l.leftSidebarPosition ? { leftSidebarPosition: l.leftSidebarPosition } : {}),
+        ...(l.rightInspectorPosition ? { rightInspectorPosition: l.rightInspectorPosition } : {}),
+        ...(l.timelinePosition ? { timelinePosition: l.timelinePosition } : {}),
+      }));
+    if (carried.length > 0) {
+      settings.set<WorkspaceSnapshot[]>(SETTINGS_KEY, [...existing, ...carried]);
+    }
+  }
+
+  settings.set<boolean>(LEGACY_MIGRATED_KEY, true);
+}
+
 export class WorkspaceManager {
   private static instance: WorkspaceManager;
 
@@ -174,6 +243,7 @@ export class WorkspaceManager {
 
   public getUserWorkspaces(): WorkspaceSnapshot[] {
     try {
+      migrateLegacyLayouts();
       return getSettingsManager().get<WorkspaceSnapshot[]>(SETTINGS_KEY, []);
     } catch {
       return [];

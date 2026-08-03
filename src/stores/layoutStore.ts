@@ -124,6 +124,25 @@ export interface PanelRegistration {
 
 export type LayoutMap = Record<RegionId, RegionState>;
 
+/**
+ * The shape `applyWorkspaceLayout` consumes.
+ *
+ * Declared HERE rather than imported from the workspace module, so the store
+ * does not depend on whichever layer happens to own workspace persistence this
+ * month. `WorkspaceSnapshot` in `core/layout/workspaceManager` is a superset and
+ * satisfies it structurally. It previously pointed at `workspaceLayouts.ts`,
+ * which was one of two competing workspace systems and has since been deleted.
+ */
+export interface WorkspaceLayoutInput {
+  name: string;
+  regions: Partial<Record<RegionId, { size: number; collapsed: boolean }>>;
+  panelOrder?: Record<RegionId, ReadonlyArray<string>>;
+  activePanelByRegion?: Partial<Record<RegionId, string>>;
+  leftSidebarPosition?: 'left' | 'right';
+  rightInspectorPosition?: 'left' | 'right';
+  timelinePosition?: 'bottom' | 'top';
+}
+
 interface LayoutActions {
   registerPanel(panel: PanelRegistration): void;
   unregisterPanel(panelId: string): void;
@@ -142,7 +161,7 @@ interface LayoutActions {
   toggleRegion(region: RegionId): void;
   setCollapsed(region: RegionId, collapsed: boolean): void;
   /** Apply a saved workspace layout (region sizes + collapsed states + tab assignments). */
-  applyWorkspaceLayout(layout: import('@core/layout/workspaceLayouts').WorkspaceLayout): void;
+  applyWorkspaceLayout(layout: WorkspaceLayoutInput): void;
   resetLayout(): void;
   setLeftSidebarPosition(pos: 'left' | 'right'): void;
   setRightInspectorPosition(pos: 'left' | 'right'): void;
