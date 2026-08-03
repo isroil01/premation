@@ -93,33 +93,40 @@ function blendScene(mode: string): Scene {
 }
 
 /**
- * NOT SHIPPED — see F10. Kept as source, deliberately not registered.
+ * REGISTERED as of the F10/F12 fix. (Was parked; see the history below.)
  *
- * This is the scene that would prove Alpha Add does the one thing it exists for:
- * two 50%-alpha rectangles abutting along a shared edge. Under standard alpha
- * (as + ad − as·ad) two touching 50% edges resolve to 75%, leaving a visible
- * seam down the join; Alpha Add sums them and closes it to 100%.
+ * This is the scene that proves Alpha Add does the one thing it exists for:
+ * two 50%-alpha rectangles sharing a strip. Under standard alpha
+ * (as + ad − as·ad) two 50% coverages resolve to 75% (191), leaving the join
+ * visibly lighter than solid; Alpha Add sums them to 100% (255).
+ *
+ * The rectangles OVERLAP by 10px rather than merely touching. As first written
+ * they abutted exactly at x=150, which leaves no pixel where both layers
+ * contribute — so there was nothing for Alpha Add to sum, and the scene
+ * measured 128 across the field with a coverage dip to 108 at the join. It
+ * would have rendered, looked plausible, and certified nothing. That went
+ * unnoticed because F10 meant the scene could never be run at all; fixing the
+ * determinism bug is what made the scene's own defect visible.
+ *
+ * 255 is the load-bearing number: two 50% coverages can only reach full opacity
+ * by ADDITION. Standard alpha cannot exceed 191 here, so the value alone
+ * distinguishes the two composite rules without needing a control render.
  *
  * Demonstrating that requires a TRANSPARENT comp, because over an opaque
  * background the read-back alpha is 255 everywhere and the scene would render,
  * look plausible, and certify nothing.
  *
- * And on a transparent comp the existing determinism gate fires:
- *
- *   blend-alpha-add-seam#0 [webgl2] double-render bytes differ
- *   blend-alpha-add-seam#0 [webgpu] double-render bytes differ
- *
- * That is NOT Alpha Add — swapping the mode to `multiply` reproduces it exactly.
- * Any advanced-blend mode over a transparent comp renders non-deterministically
- * on both backends. Registering this scene would put a flaky test in the gate,
- * and blessing it would bless one arbitrary sample of a non-deterministic
- * output. Both are worse than the coverage gap.
- *
- * Re-register it once F10 is fixed; the scene itself is believed correct.
+ * On a transparent comp this scene used to trip the determinism gate on both
+ * backends, which is what F10 recorded and why it sat here unregistered. The
+ * cause was never Alpha Add: `EffectPass` blitted the scene target onto the
+ * surface with source-over while `ClearPass` cleared the scene target instead
+ * of the surface, so any partial alpha in the final composite accumulated
+ * against the previous frame. Fixed by making that blit replace rather than
+ * blend — see EffectPass.ts.
  */
-export const alphaAddSeamPending: Scene = defineScene({
+export const alphaAddSeamScene: Scene = defineScene({
   id: 'blend-alpha-add-seam',
-  description: 'Alpha Add closes the seam where two 50%-alpha rectangles abut. (Pending F10.)',
+  description: 'Alpha Add closes the seam where two 50%-alpha rectangles abut.',
   size: SIZE,
   comp: { width: 320, height: 220, background: '#101014', transparent: true },
   fps: 30,
@@ -132,9 +139,10 @@ export const alphaAddSeamPending: Scene = defineScene({
       transform: { width: 120, height: 140 },
       style: { fill: '#ffffff', opacity: 50 },
     }));
+    // Spans 140..260, so it overlaps the left rect's 30..150 across 140..150.
     graph.addNode(node('r', {
       kind: 'shape',
-      position: { x: 210, y: 110 },
+      position: { x: 200, y: 110 },
       transform: { width: 120, height: 140 },
       style: { fill: '#ffffff', opacity: 50 },
     }));
@@ -143,31 +151,19 @@ export const alphaAddSeamPending: Scene = defineScene({
 });
 
 /**
- * The Matte family (M8c) — NOT REGISTERED. See F12, which extends F10.
+ * The Matte family (M8c). Registered as of the F10/F12 fix.
  *
- * These four scenes are believed correct and the shader branch behind them is
- * unit-tested, but all four fail the harness's own determinism gate on BOTH
- * backends:
+ * These four were the scenes that widened F10 into F12: they use an OPAQUE comp
+ * (#101014) and still failed the determinism gate, because the transparency was
+ * produced by the blend itself rather than supplied by the comp. That ruled out
+ * "transparent comp" as the trigger and pointed at partial alpha in the final
+ * composite, which is what led to the EffectPass source-over blit.
  *
- *   blend-stencil-alpha#0     [webgl2] double-render bytes differ
- *   blend-silhouette-luma#0   [webgpu] double-render bytes differ
- *
- * That is not the matte maths. Forcing `matteFactor` to return 1.0 for mode 31
- * — same branch, same dispatch, but producing no transparency — makes
- * `blend-stencil-alpha` deterministic and drops it from the failure list while
- * the other three keep failing. So the trigger is the advanced-blend path
- * handling TRANSPARENT pixels, exactly as F10 records for Alpha Add.
- *
- * F12 is that F10 is broader than it was written. F10 says "over a transparent
- * comp"; these scenes have an OPAQUE comp (#101014) and the transparency is
- * produced by the blend itself. The condition is not the comp's alpha, it is
- * whether the advanced-blend path has transparency to carry at all — which
- * makes every Matte mode structurally affected, since punching alpha holes in
- * the backdrop is the entire point of them.
- *
- * Registering these would put four flaky tests in the gate; blessing them would
- * bless one arbitrary sample of a non-deterministic output. Both are worse than
- * the coverage gap. Re-register once F10/F12 is fixed.
+ * They are a strong regression test for that fix precisely because the two
+ * variants stress different amounts of it: the Alpha modes leave partial alpha
+ * only on the ellipse's anti-aliased rim (~1250 px), while the Luma modes scale
+ * the whole interior by the matte's brightness and so leave ~25 700 px partial.
+ * A partial fix that only settled the rim would still fail the Luma pair.
  *
  * The generator is kept separate from MODES for a second reason that still
  * holds: an ordinary blend is judged on the colour INSIDE the ellipse, whereas
@@ -211,7 +207,7 @@ function matteScene(mode: string): Scene {
   });
 }
 
-/** Deliberately NOT in `blendModeScenes` — see the F12 note above. */
-export const matteModeScenesPending: Scene[] = MATTE_MODES.map(matteScene);
+/** Registered via registry.ts alongside `blendModeScenes`. */
+export const matteModeScenes: Scene[] = MATTE_MODES.map(matteScene);
 
 export const blendModeScenes: Scene[] = MODES.map(blendScene);
