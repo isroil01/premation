@@ -47,9 +47,10 @@ import type { KeyChord } from '@app-types/common';
 // once-per-machine errand that needs room to explain the options, so it lives
 // on the Settings page (Dashboard → Settings → Assistant), not in a dialog
 // you have to dismiss to get back to your work.
+import { AiSettingsSection } from './AiSettingsSection';
 import styles from './CustomizeDialog.module.css';
 
-type Tab = 'shortcuts' | 'tabs' | 'appearance';
+type Tab = 'shortcuts' | 'tabs' | 'appearance' | 'ai';
 
 /** Modifier-only keydowns aren't a chord — keep listening until a real key. */
 function isModifierKey(key: string): boolean {
@@ -467,10 +468,18 @@ const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'tabs', label: 'Workspaces' },
   { id: 'appearance', label: 'Appearance' },
+  // AI setup used to live ONLY on the dashboard settings page, and the
+  // assistant panel linked to it with `#/dashboard?tab=settings`. The local
+  // edition does not register a /dashboard route at all, so that link fell
+  // through the router's catch-all straight back to the editor — leaving the
+  // OSS build, whose headline is "the full editor, with your own API key",
+  // with nowhere to put the key. The editor now owns this surface in both
+  // editions; the dashboard card still renders the same component.
+  { id: 'ai', label: 'AI' },
 ];
 
-function Customize(): JSX.Element {
-  const [tab, setTab] = useState<Tab>('shortcuts');
+function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): JSX.Element {
+  const [tab, setTab] = useState<Tab>(initialTab);
   return (
     <div className={styles.root}>
       <div className={styles.tabs} role="tablist">
@@ -489,12 +498,29 @@ function Customize(): JSX.Element {
       </div>
       {tab === 'shortcuts' ? <ShortcutsTab />
         : tab === 'tabs' ? <WorkspacesTab />
+        : tab === 'ai' ? <div className={styles.section}><AiSettingsSection /></div>
         : <AppearanceTab />}
     </div>
   );
 }
 
-/** Open the Customize dialog. */
-export function openCustomizeDialog(): void {
-  openModal({ id: 'customize', title: 'Customize', size: 'lg', render: () => <Customize /> });
+/**
+ * Open the Customize dialog, optionally on a specific tab.
+ *
+ * The fixed modal id means a second call REPLACES the open dialog rather than
+ * stacking one — so "Open AI settings" from the assistant panel switches tabs
+ * even when Customize is already up.
+ */
+export function openCustomizeDialog(initialTab?: Tab): void {
+  openModal({
+    id: 'customize',
+    title: 'Customize',
+    size: 'lg',
+    render: () => <Customize {...(initialTab ? { initialTab } : {})} />,
+  });
+}
+
+/** Deep link for the assistant's "Connect an AI provider" banner. */
+export function openAiSettings(): void {
+  openCustomizeDialog('ai');
 }

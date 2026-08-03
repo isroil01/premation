@@ -124,6 +124,22 @@
   text-decoration: none;
 }
 
+/* The settings deep link is a <button>, not an <a>: it opens an in-app modal
+   rather than navigating, and the route it used to point at does not exist in
+   every edition. Styled to read as the link it replaces. */
+.keyBannerLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+
+.keyBannerLink:hover {
+  text-decoration: underline;
+}
+
 /* First-run heads-up: the assistant is early and only does simple actions. */
 .betaNotice {
   display: flex;

@@ -20,6 +20,7 @@ import type { GatewayProviderId, AiProviderId } from '@core/api/client';
 import { processImageFile, type PendingImage } from '@core/ai/imageAttachment';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAiChatContext } from './AiChatContext';
+import { openAiSettings } from '@layout/Settings/CustomizeDialog';
 import styles from './AiChatPanel.module.css';
 
 /** BYOK providers offered in the picker, in display order. */
@@ -370,7 +371,14 @@ export function AiChatPanel(): JSX.Element {
               ) : (
                 <>
                   Connect an AI provider to start.{' '}
-                  <a href="#/dashboard?tab=settings">Open AI settings →</a>
+                  {/* Was `#/dashboard?tab=settings` — a route the local edition
+                      never registers, so this bounced off the router's
+                      catch-all back to the editor and the OSS build had no way
+                      to enter a key at all. Opens the in-editor tab now, which
+                      exists in both editions. */}
+                  <button type="button" className={styles.keyBannerLink} onClick={() => openAiSettings()}>
+                    Open AI settings →
+                  </button>
                 </>
               )}
             </div>
