@@ -87,6 +87,7 @@ import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace } from '@core/scene/facePicking';
 import { compSizeOf } from '@core/composition/compSizes';
+import { customPrompt } from '@components/Modal/Dialogs';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
@@ -1377,11 +1378,18 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
   const renameNode = (): void => {
     const n = defaultSceneGraph.getNode(id);
     if (!n) return;
-    const newName = window.prompt('Rename layer:', n.name);
-    if (newName && newName.trim()) {
-      n.name = newName.trim();
+    void (async () => {
+      const newName = await customPrompt('Rename Layer', 'Give this layer a new name.', n.name, {
+        confirmLabel: 'Rename',
+      });
+      if (!newName?.trim()) return;
+      // Re-read: the dialog is async now, so the node could have been deleted
+      // while it was open. The old synchronous prompt could not have this gap.
+      const live = defaultSceneGraph.getNode(id);
+      if (!live) return;
+      live.name = newName.trim();
       bumpScene();
-    }
+    })();
   };
   return [
     { id: 'rename', label: 'Rename…', onSelect: renameNode },

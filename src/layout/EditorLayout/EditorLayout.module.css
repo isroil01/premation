@@ -36,6 +36,50 @@
   overflow: hidden;
 }
 
+/* ── Detached-panel placeholder ────────────────────────────────────
+   Shown in a pane whose panel has been popped into its own window. It is a
+   real empty state, so it gets the same type scale, tokens and control
+   sizing as the rest of the chrome rather than an ad-hoc inline style. */
+.detached {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  height: 100%;
+  background: var(--color-surface-1);
+  color: var(--color-text-tertiary);
+}
+
+/* The timeline is a short pane, so its placeholder lays out on one line. */
+.detachedRow {
+  flex-direction: row;
+  gap: var(--space-5);
+}
+
+.detachedLabel {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.detachedAction {
+  height: var(--control-height-md);
+  padding: 0 var(--space-5);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.detachedAction:hover { background: var(--color-primary-hover); }
+.detachedAction:active { background: var(--color-primary-active); }
+
 .timelinePane {
   width: 100%;
   height: 100%;

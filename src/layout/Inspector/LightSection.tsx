@@ -60,7 +60,6 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>Light</h4>
       <div className={styles.inlineRows}>
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Type</span>
@@ -143,7 +142,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <button
                   type="button"
                   onClick={() => { setPoiX(undefined); setPoiY(undefined); setPoiZ(undefined); }}
-                  style={{ height: 20, padding: '0 8px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer' }}
+                  style={{ height: 20, padding: '0 8px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Remove target (aim by angle)
                 </button>
@@ -158,7 +157,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <button
                   type="button"
                   onClick={() => { setPoiX(compWidth / 2); setPoiY(compHeight / 2); setPoiZ(0); }}
-                  style={{ height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer' }}
+                  style={{ height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Add target
                 </button>

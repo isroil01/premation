@@ -26,8 +26,10 @@
   width: 100%;
 }
 
+/* Horizontal padding matches the accordion trigger's gutter below it, so the
+   search field and every section name share one left edge. */
 .searchRow {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--color-divider);
   background: var(--color-panel);
   flex: none;
@@ -47,6 +49,30 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
+}
+
+/* Explanatory copy inside an inspector section (e.g. what a null object is).
+   Replaces per-section inline styles that each picked their own colour. */
+.sectionNote {
+  margin: 0;
+  padding: var(--space-1) 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+/* Footer of the Pre-composition section: child count + "Enter group". */
+.groupMeta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.groupCount {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .rowAction {
@@ -129,8 +155,8 @@
 }
 
 .assetItem:hover {
-  background: var(--color-surface-2, #202020);
-  border-color: var(--color-border-subtle, #333);
+  background: var(--color-surface-2);
+  border-color: var(--color-border-subtle);
 }
 
 .assetIcon {
@@ -161,8 +187,8 @@
 }
 
 .assetName {
-  font-size: var(--font-size-sm, 12px);
-  color: var(--color-text-secondary, #ccc);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -171,8 +197,8 @@
 
 .assetMeta {
   font-size: 10px;
-  color: var(--color-text-tertiary, #777);
-  font-family: var(--font-family-mono, monospace);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
   margin-top: 1px;
 }
 
@@ -193,7 +219,7 @@
   display: grid;
   place-items: center;
   border-radius: 4px;
-  transition: all 0.1s ease;
+  transition: var(--motion-hover-transition);
 }
 
 .actionButton:hover {
@@ -272,17 +298,17 @@
 .toolBtn:hover {
   color: var(--color-text-primary);
   background: var(--color-surface-3);
-  border-color: var(--color-primary, #2988ff);
+  border-color: var(--color-primary);
 }
 .toolBtnPrimary {
   composes: toolBtn;
-  background: var(--color-primary, #2988ff);
-  color: var(--color-primary-foreground, #fff);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
   border-color: transparent;
 }
 .toolBtnPrimary:hover {
-  background: var(--color-primary-hover, #3a98ff);
-  color: var(--color-primary-foreground, #fff);
+  background: var(--color-primary-hover);
+  color: var(--color-primary-foreground);
   border-color: transparent;
 }
 
@@ -303,7 +329,7 @@
   font: inherit;
   cursor: pointer;
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 .crumb:hover { color: var(--color-text-primary); background: var(--color-hover); }
 .crumbCurrent { color: var(--color-text-primary); font-weight: 600; cursor: default; }
@@ -315,12 +341,12 @@
   cursor: pointer;
 }
 .folderItem.dropActive {
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15));
-  border-color: var(--color-primary, #2988ff);
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
 }
 .folderIcon {
   composes: assetIcon;
-  color: var(--color-primary, #2988ff);
+  color: var(--color-primary);
 }
 
 /* ── Libraries panel ─────────────────────────────────────── */
@@ -425,11 +451,11 @@
   flex-shrink: 0;
 }
 .libChipPro {
-  font-size: 8px;
+  font-size: var(--font-size-micro);
   font-weight: 800;
   letter-spacing: 0.06em;
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: rgba(139, 92, 246, 0.2);
   color: #a78bfa;
   border: 1px solid rgba(139, 92, 246, 0.35);
@@ -496,7 +522,7 @@
   cursor: pointer;
   width: 100%;
   font-family: inherit;
-  transition: all 0.15s ease;
+  transition: var(--motion-hover-transition);
   text-align: left;
   overflow: hidden;
 }
@@ -511,7 +537,7 @@
 .presetPreview {
   width: 52px;
   height: 52px;
-  background: var(--color-surface-0, #141416);
+  background: var(--color-surface-0);
   border-radius: 6px;
   display: flex;
   align-items: center;

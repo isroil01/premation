@@ -269,7 +269,12 @@ export class CompositionPass extends RenderPass {
     const { viewport, services } = ctx;
     const cmds = into ?? new CommandBuffer();
     const blend = blendOverride ?? 'normal';
-    const smp = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
+    // AE's per-layer Quality switch. 'draft' samples NEAREST — being visibly
+    // rougher and cheaper IS the feature. Cached under its own resource key so
+    // the two samplers coexist instead of thrashing one slot.
+    const smp = () => (r.sampling === 'nearest'
+      ? services.resources.sampler('nearest-clamp', { min: 'nearest', mag: 'nearest', addressU: 'clamp', addressV: 'clamp' })
+      : services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' }));
     const uv = r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 };
     const mvp = mvpFor(viewport, modelOverride ?? r.modelMatrix);
     const isSolid = r.kind === 'rect' || r.kind === 'path' || r.kind === 'group';

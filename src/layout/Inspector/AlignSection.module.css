@@ -9,7 +9,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-dimmed);
+  color: var(--color-text-tertiary);
   margin-bottom: 8px;
 }
 
@@ -20,21 +20,21 @@
 }
 
 .button {
-  background: var(--color-surface-hover);
+  background: var(--color-hover);
   border: 1px solid transparent;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   border-radius: 4px;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.1s ease;
+  transition: var(--motion-hover-transition);
 }
 
 .button:hover:not(:disabled) {
-  background: var(--color-surface-active);
-  color: var(--color-text-bright);
+  background: var(--color-active);
+  color: var(--color-text-primary);
 }
 
 .button:disabled {
@@ -59,7 +59,7 @@
 
 .targetToggles {
   display: flex;
-  background: var(--color-surface-3, rgba(255, 255, 255, 0.03));
+  background: var(--color-surface-3);
   border-radius: 4px;
   padding: 2px;
   gap: 1px;
@@ -73,21 +73,21 @@
   align-items: center;
   gap: 4px;
   padding: 3px 8px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  color: var(--color-text-dimmed);
+  color: var(--color-text-tertiary);
   font-size: 10px;
   font-weight: 500;
-  transition: all 0.1s;
+  transition: var(--motion-hover-transition);
 }
 
 .targetBtn:hover {
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
 
 .targetBtnActive {
   composes: targetBtn;
-  background: var(--color-surface-active, rgba(255, 255, 255, 0.1));
-  color: var(--color-text-bright);
+  background: var(--color-active);
+  color: var(--color-text-primary);
 }
 

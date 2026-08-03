@@ -238,7 +238,6 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
 
   return (
     <>
-      <div className={styles.sectionTitle}>Layer styles</div>
 
       {/* GLOBAL LIGHT — one direction for every style in the composition that
           opts in. This is what a layer style has and the equivalent effect does

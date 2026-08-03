@@ -82,6 +82,7 @@ import { activeCompSize } from '@core/scene/activeComp';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
+import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -119,6 +120,19 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'ellipse', label: 'Ellipse Tool', chord: { key: 'q', shift: true } },
     { tool: 'puppet-pin', label: 'Puppet Position Pin Tool', chord: { key: 'p', meta: true } },
     { tool: 'bone', label: 'Bone Tool', chord: { key: 'b', meta: true } },
+    // These seven had a toolbar button and NO command, so they were absent from
+    // the Command Palette and — the part that actually bit — could not be given
+    // a shortcut in Customize…, while their siblings above could. No default
+    // chords: every sensible key is taken by the tools above or by a property
+    // reveal, and inventing collisions is worse than leaving them unbound. The
+    // point is that they are now bindable at all.
+    { tool: 'pencil', label: 'Pencil Tool' },
+    { tool: 'curvature', label: 'Curvature Pen Tool' },
+    { tool: 'line', label: 'Line Segment Tool' },
+    { tool: 'polygon', label: 'Polygon Tool' },
+    { tool: 'star', label: 'Star Tool' },
+    { tool: 'mask-rect', label: 'Rectangle Mask Tool' },
+    { tool: 'mask-ellipse', label: 'Ellipse Mask Tool' },
   ];
   // Every tool used 'crosshair', so the palette/menus showed eleven identical
   // icons — give each tool its actual glyph.
@@ -137,6 +151,15 @@ function buildToolCommands(): ReadonlyArray<Command> {
     ellipse: 'circle',
     'puppet-pin': 'puppet-pin',
     bone: 'bone',
+    // Match the toolbar glyphs (see TopNav's PEN_TOOLS / SHAPE_TOOLS /
+    // MASK_TOOLS) so a tool looks the same wherever it is offered.
+    pencil: 'pencil',
+    curvature: 'curvature',
+    line: 'line',
+    polygon: 'polygon',
+    star: 'star',
+    'mask-rect': 'mask-square',
+    'mask-ellipse': 'mask-circle',
   };
   return tools.map(({ tool, label, chord }) => ({
     id: asCommandId(`tool.${tool}`),
@@ -462,6 +485,16 @@ function buildProjectCommands(): ReadonlyArray<Command> {
     // "New Composition…" was removed — compositions are created from the
     // dashboard (one project per composition), so there's no in-editor add path.
     {
+      // The Composition menu had no "New Composition…" while the dialog was
+      // live in the Project panel — a working feature with no menu home. This
+      // is that home; the Project panel's button calls the same dialog.
+      id: asCommandId('comp.new'),
+      label: 'New Composition…',
+      icon: 'component',
+      enabled: () => true,
+      execute: () => openNewCompositionDialog(),
+    },
+    {
       id: asCommandId('comp.settings'),
       label: 'Composition Settings…',
       shortcut: { key: 'k', meta: true },
@@ -683,10 +716,10 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'New Project',
       shortcut: { key: 'n', meta: true },
       enabled: () => true,
-      execute: () => {
+      execute: async () => {
         // Cmd+N is one key away from Cmd+B/Cmd+M. Without this, a slip
         // replaces the document with no way back.
-        if (!confirmDiscardChanges('Create a new project')) return;
+        if (!await confirmDiscardChanges('Create a new project')) return;
         getProjectManager().newProject('Untitled');
         bumpScene();
         notify('New project created', 'success');
@@ -700,7 +733,7 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: async () => {
         // Asked before the file picker, not after: a user who has decided not
         // to lose their work should not first have to choose a file.
-        if (!confirmDiscardChanges('Open another project')) return;
+        if (!await confirmDiscardChanges('Open another project')) return;
         // Local-first: `.motion` is a directory bundle → use the native folder
         // picker. In the browser build `chooseBundleDir` returns null, so this
         // falls through to the normal file open.
@@ -813,8 +846,8 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       id: asCommandId(ProjectCommands.Close),
       label: 'Close Project',
       enabled: () => true,
-      execute: () => {
-        if (!confirmDiscardChanges('Close the project')) return;
+      execute: async () => {
+        if (!await confirmDiscardChanges('Close the project')) return;
         getProjectManager().close();
         bumpScene();
         notify('Project closed', 'info');

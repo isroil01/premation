@@ -10,16 +10,16 @@
   padding: 7px 14px;
   font-size: 0.76rem;
   line-height: 1.3;
-  color: var(--color-text-primary, #fff);
-  background: color-mix(in srgb, var(--color-warning, #f5a524) 16%, var(--color-surface-1, #0d0d0d));
-  border-bottom: 1px solid color-mix(in srgb, var(--color-warning, #f5a524) 45%, transparent);
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-warning) 16%, var(--color-surface-1));
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
   /* Above the editor chrome, so it is never scrolled away from a locked doc. */
   flex: none;
   z-index: 5;
 }
 
 .icon {
-  color: var(--color-warning, #f5a524);
+  color: var(--color-warning);
   flex: none;
 }
 
@@ -43,7 +43,7 @@
   font-size: 0.74rem;
   font-weight: 500;
   padding: 4px 11px;
-  border-radius: var(--radius-control, 6px);
+  border-radius: var(--radius-control);
   cursor: pointer;
   white-space: nowrap;
   border: 1px solid transparent;
@@ -57,17 +57,17 @@
 /* Export is the neutral, always-available way out — quieter than Subscribe. */
 .export {
   background: transparent;
-  border-color: color-mix(in srgb, var(--color-text-primary, #fff) 25%, transparent);
-  color: var(--color-text-primary, #fff);
+  border-color: color-mix(in srgb, var(--color-text-primary) 25%, transparent);
+  color: var(--color-text-primary);
 }
 
 .export:not(:disabled):hover {
-  background: color-mix(in srgb, var(--color-text-primary, #fff) 10%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
 }
 
 /* The plan CTA — the one the business wants, so it carries the accent. */
 .primary {
-  background: var(--color-accent, #2988ff);
+  background: var(--color-accent);
   color: #fff;
 }
 

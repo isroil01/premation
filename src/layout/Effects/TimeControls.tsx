@@ -29,7 +29,6 @@ export function TimeControls({ nodeId }: { nodeId: string }): JSX.Element {
 
   return (
     <>
-      <div className={styles.sectionTitle}>Time</div>
 
       <div className={styles.maskControls}>
         <label className={styles.maskField}>

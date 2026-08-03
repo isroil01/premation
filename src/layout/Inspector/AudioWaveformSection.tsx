@@ -117,7 +117,7 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
           style={{
             marginTop: 6, height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600,
             background: 'var(--color-surface-3)', color: 'var(--color-text-secondary)',
-            border: '1px solid var(--color-border)', borderRadius: 3, cursor: 'pointer', alignSelf: 'flex-start',
+            border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer', alignSelf: 'flex-start',
           }}
         >
           Remove Audio Waveform

@@ -76,10 +76,10 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
           aria-pressed={pickMode}
           style={{
             height: 18, padding: '0 6px', marginRight: 'auto', marginLeft: 8,
-            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9,
+            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
             background: pickMode ? 'var(--color-accent)' : 'var(--color-surface-0)',
             color: pickMode ? '#fff' : 'var(--color-text-tertiary)',
-            border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer',
+            border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer',
           }}
         >
           <Icon name="mouse-pointer" size={9} /> Pick
@@ -89,7 +89,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
             type="button"
             onClick={() => clearNodeFaceMaterials(nodeId)}
             title="Back to one colour for the whole object"
-            style={{ height: 18, padding: '0 6px', fontSize: 9, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer' }}
+            style={{ height: 18, padding: '0 6px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
           >
             Reset
           </button>
@@ -113,7 +113,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
             className={styles.row}
             title={hint}
             style={picked
-              ? { background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', borderRadius: 3, boxShadow: 'inset 2px 0 0 var(--color-accent)' }
+              ? { background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', borderRadius: 4, boxShadow: 'inset 2px 0 0 var(--color-accent)' }
               : undefined}
           >
             <span className={styles.label} style={{ fontSize: 11, fontWeight: picked ? 600 : undefined }}>{label}</span>

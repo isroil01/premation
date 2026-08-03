@@ -127,6 +127,6 @@
 
 .error {
   font-size: var(--font-size-xs);
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   padding: var(--space-2) var(--space-1);
 }

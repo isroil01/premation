@@ -127,6 +127,14 @@ export interface Renderable {
    * simply unblurred, which is what clear glass looks like.
    */
   glass?: RenderableGlass;
+  /**
+   * AE's per-layer Quality/Sampling switch: 'nearest' samples this layer's
+   * texture with NEAREST instead of linear — faster, and visibly blocky when
+   * the layer is scaled up. Absent = linear, the default everywhere else.
+   *
+   * Only meaningful for textured kinds; a solid rect samples nothing.
+   */
+  sampling?: 'nearest' | 'linear';
   /** Fill/tint color (rect, text). */
   color?: Color;
   /** SDF geometry for solid shapes (rounded-rect / ellipse). */

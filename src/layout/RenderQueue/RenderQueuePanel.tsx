@@ -22,6 +22,7 @@ import {
   type RenderJob,
 } from '@stores/renderQueueStore';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
+import { customConfirm } from '@components/Modal/Dialogs';
 import styles from './RenderQueuePanel.module.css';
 
 const FORMAT_LABEL: Record<OutputFormat, string> = {
@@ -76,6 +77,27 @@ export function RenderQueuePanel(): JSX.Element {
   const chooseOutputDir = useRenderQueueStore((s) => s.chooseOutputDir);
 
   const [showDialog, setShowDialog] = useState(false);
+
+  /**
+   * Confirm before aborting. `pauseAll` disposes the sink, which kills ffmpeg
+   * and removes the staging directory — a 40-minute render is gone and restarts
+   * from frame 0. Only asks when a job is actually mid-flight; stopping an
+   * idle-but-running queue has nothing to lose.
+   */
+  const confirmStop = (): void => {
+    void (async () => {
+      const active = jobs.some((j) => j.status === 'rendering');
+      if (active) {
+        const ok = await customConfirm(
+          'Stop rendering?',
+          'The job in progress will be discarded and restarts from the beginning next time — there is no resume.',
+          { confirmLabel: 'Stop rendering', isDanger: true },
+        );
+        if (!ok) return;
+      }
+      pauseAll();
+    })();
+  };
 
   const handleAddJob = (settings: OutputSettings) => {
     setShowDialog(false);
@@ -146,15 +168,25 @@ export function RenderQueuePanel(): JSX.Element {
           <span className={styles.statusBadge}>Stopped</span>
         )}
 
+        {/*
+          "Stop", not "Pause".
+
+          `pauseAll` aborts: it kills the running ffmpeg child and deletes its
+          staging directory. There is no resume — pressing Render All afterwards
+          restarts every job from frame 0. The button said "Pause", so a user
+          freeing the CPU for ten minutes lost the render instead, and only
+          found out later. Real pause/resume is a separate piece of work; until
+          it exists the control must say what it does.
+        */}
         <button
           type="button"
           className={styles.toolbarBtnPrimary}
-          onClick={isRunning ? pauseAll : startAll}
+          onClick={isRunning ? confirmStop : startAll}
           disabled={jobs.length === 0}
-          title={isRunning ? 'Pause render queue' : 'Render all queued'}
+          title={isRunning ? 'Stop rendering — discards progress on the current job' : 'Render all queued'}
         >
-          <Icon name={isRunning ? 'pause' : 'play'} size={12} />
-          {isRunning ? 'Pause' : 'Render All'}
+          <Icon name={isRunning ? 'stop' : 'play'} size={12} />
+          {isRunning ? 'Stop' : 'Render All'}
         </button>
 
         <button type="button" className={styles.toolbarBtnDanger} onClick={clearFinished} disabled={doneCount === 0}>

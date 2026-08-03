@@ -1,7 +1,11 @@
 /**
  * OnboardingOverlay — the first-run tour.
- * A centered card sequence over a dim scrim; Back / Next / Skip. The first
- * step offers the "Coming from After Effects?" shortcut import.
+ * A centered card sequence over a dim scrim; Back / Next / Skip.
+ *
+ * There is no "Coming from After Effects?" shortcut import, despite what this
+ * docstring used to promise — no such control was ever built here. It is also
+ * moot: `AE_PRESET` in shortcutOverrides IS the default keymap, so an AE user's
+ * muscle memory already works without importing anything.
  */
 
 import { createPortal } from 'react-dom';

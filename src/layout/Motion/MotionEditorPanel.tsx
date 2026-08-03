@@ -292,7 +292,13 @@ export function MotionEditorPanel(): JSX.Element {
     : null;
 
   if (!primary) {
-    return <EmptyState icon="keyframe" message="Select a layer to edit its motion." />;
+    return (
+      <EmptyState
+        icon="graph-value"
+        title="No selection"
+        message="Select a layer to shape its keyframe curves and motion path."
+      />
+    );
   }
   if (!prop) {
     return (

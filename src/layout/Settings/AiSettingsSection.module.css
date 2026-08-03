@@ -9,7 +9,7 @@
 
 .intro {
   font-size: 0.75rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   line-height: 1.45;
   margin: 0;
 }
@@ -29,14 +29,14 @@
   gap: 4px;
   padding: 12px 14px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border-subtle, #1a1a1a);
+  border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-2);
   cursor: pointer;
   transition: border-color 160ms ease, background-color 160ms ease, transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .choice:hover:not(:disabled) {
-  border-color: var(--color-accent, #2988ff);
+  border-color: var(--color-accent);
   transform: translateY(-1px);
 }
 
@@ -46,8 +46,8 @@
 }
 
 .choiceOn {
-  border-color: var(--color-accent, #2988ff);
-  background: color-mix(in srgb, var(--color-accent, #2988ff) 10%, transparent);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
 .choice:active:not(:disabled) {
@@ -65,7 +65,7 @@
 
 .choiceDesc {
   font-size: 0.72rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   line-height: 1.4;
 }
 
@@ -76,14 +76,14 @@
   text-transform: uppercase;
   padding: 2px 6px;
   border-radius: 999px;
-  border: 1px solid var(--color-border-strong, #333);
-  color: var(--color-text-secondary, #a6a6a6);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 
 .badgeOn {
-  border-color: var(--color-accent, #2988ff);
-  color: var(--color-accent, #2988ff);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 /* Provider key rows. */
@@ -100,7 +100,7 @@
   gap: 12px;
   padding: 10px 14px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border-subtle, #1a1a1a);
+  border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-2);
   transition: border-color 160ms ease, background-color 160ms ease;
 }
@@ -111,8 +111,8 @@
 }
 
 .rowOn {
-  border-color: var(--color-accent, #2988ff);
-  background: color-mix(in srgb, var(--color-accent, #2988ff) 6%, var(--color-surface-0));
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface-0));
 }
 
 .rowInfo {
@@ -135,20 +135,20 @@
 }
 
 .lockIconInactive {
-  color: var(--color-text-tertiary, #666);
+  color: var(--color-text-tertiary);
 }
 
 .hint {
   font-size: 0.68rem;
   font-weight: 400;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .notConnectedHint {
   font-size: 0.68rem;
   font-weight: 400;
-  color: var(--color-text-tertiary, #666);
+  color: var(--color-text-tertiary);
 }
 
 .rowRight {
@@ -172,7 +172,7 @@
 
 .input:focus,
 .select:focus {
-  border-color: var(--color-accent, #2988ff);
+  border-color: var(--color-accent);
 }
 
 .input {
@@ -184,11 +184,11 @@
   align-items: center;
   gap: 6px;
   font-size: 0.7rem;
-  color: var(--color-accent, #3b82f6);
+  color: var(--color-accent);
   font-weight: 600;
   white-space: nowrap;
   padding: 2px 6px;
-  background: color-mix(in srgb, var(--color-accent, #3b82f6) 10%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   border-radius: 4px;
 }
 
@@ -210,7 +210,7 @@
 /* How the key is protected — quieter than the intro, it is reassurance not instruction. */
 .subtle {
   font-size: 0.7rem;
-  color: var(--color-text-tertiary, #7e7e7e);
+  color: var(--color-text-tertiary);
   line-height: 1.4;
   margin: -6px 0 0;
 }
@@ -222,26 +222,26 @@
   margin: 0;
   padding: 8px 10px;
   border-radius: var(--radius-surface);
-  border: 1px solid color-mix(in srgb, var(--color-warning, #f5a524) 40%, transparent);
-  background: color-mix(in srgb, var(--color-warning, #f5a524) 10%, transparent);
-  color: var(--color-text-primary, #fff);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-text-primary);
 }
 
 .error {
   font-size: 0.74rem;
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   margin: 0;
 }
 
 .links {
   font-size: 0.7rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   margin-top: 4px;
   line-height: 1.4;
 }
 
 .links a {
-  color: var(--color-accent, #3b82f6);
+  color: var(--color-accent);
   text-decoration: none;
   font-weight: 500;
 }

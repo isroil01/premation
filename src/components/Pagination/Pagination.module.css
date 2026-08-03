@@ -3,37 +3,37 @@
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: var(--space-4, 10px);
-  padding: var(--space-4, 10px) var(--space-2, 4px) var(--space-1, 2px);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-2) var(--space-1);
 }
 
 /* The count is the point of the control — it is the only thing on screen that
    says the list continues past what is rendered. */
 .count {
   font-size: 0.72rem;
-  color: var(--color-text-tertiary, #7e7e7e);
+  color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: var(--space-5, 12px);
+  gap: var(--space-5);
   margin-left: auto;
 }
 
 .sizeLabel {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3, 6px);
+  gap: var(--space-3);
   font-size: 0.72rem;
-  color: var(--color-text-tertiary, #7e7e7e);
+  color: var(--color-text-tertiary);
 }
 
 .sizeSelect {
   height: 24px;
-  padding: 0 var(--space-3, 6px);
-  border-radius: var(--radius-control, 4px);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
   border: 1px solid var(--color-border-strong);
   background: var(--color-surface-2);
   color: var(--color-text-primary);
@@ -59,15 +59,15 @@
   justify-content: center;
   min-width: 24px;
   height: 24px;
-  padding: 0 var(--space-2, 5px);
-  border-radius: var(--radius-control, 4px);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-control);
   border: 1px solid transparent;
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition: var(--motion-hover-transition, background 120ms ease);
+  transition: var(--motion-hover-transition);
 }
 
 .page:hover:not(:disabled),
@@ -93,14 +93,14 @@
 .pageActive:hover:not(:disabled) {
   background: var(--color-primary);
   border-color: transparent;
-  color: var(--color-primary-foreground, #fff);
+  color: var(--color-primary-foreground);
   font-weight: 600;
 }
 
 .gap {
   min-width: 16px;
   text-align: center;
-  color: var(--color-text-tertiary, #7e7e7e);
+  color: var(--color-text-tertiary);
   font-size: 0.72rem;
   user-select: none;
 }

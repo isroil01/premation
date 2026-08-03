@@ -305,7 +305,6 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>Transform</h4>
 
       <div className={styles.inlineRows}>
         {!isCamera && (

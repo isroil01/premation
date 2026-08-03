@@ -142,7 +142,6 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <div className={styles.title}>Audio</div>
         {clipTimings.length > 1 ? (
           <div className={styles.clipBadge} title="This layer's bar was split — editing the clip under the playhead">
             Clip {activeIndex + 1}/{clipTimings.length}

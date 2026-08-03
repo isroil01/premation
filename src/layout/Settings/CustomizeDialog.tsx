@@ -33,12 +33,7 @@ import {
   resolveChord,
   findChordConflict,
 } from '@core/commands/shortcutOverrides';
-import {
-  listLayouts,
-  applyLayout,
-  saveCurrentLayout,
-  deleteLayout,
-} from '@core/layout/workspaceLayouts';
+import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { getThemeManager } from '@core/services/coreServices';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -47,9 +42,10 @@ import type { KeyChord } from '@app-types/common';
 // once-per-machine errand that needs room to explain the options, so it lives
 // on the Settings page (Dashboard → Settings → Assistant), not in a dialog
 // you have to dismiss to get back to your work.
+import { AiSettingsSection } from './AiSettingsSection';
 import styles from './CustomizeDialog.module.css';
 
-type Tab = 'shortcuts' | 'tabs' | 'appearance';
+type Tab = 'shortcuts' | 'tabs' | 'appearance' | 'ai';
 
 /** Modifier-only keydowns aren't a chord — keep listening until a real key. */
 function isModifierKey(key: string): boolean {
@@ -157,33 +153,42 @@ function ShortcutsTab(): JSX.Element {
   );
 }
 
+/**
+ * Reads the SAME workspace list as the TopNav Workspaces dropdown.
+ *
+ * It used to read `core/layout/workspaceLayouts` — a second, parallel system
+ * with its own four presets and its own settings key. A layout saved here never
+ * appeared in the toolbar dropdown and vice versa, and both shipped a preset
+ * called "Default". That module is gone; anything saved under its key is
+ * migrated in by `migrateLegacyLayouts`.
+ */
 function WorkspacesTab(): JSX.Element {
   const [, force] = useState(0);
   const [name, setName] = useState('');
-  const layouts = listLayouts();
+  const manager = getWorkspaceManager();
+  const layouts = manager.listWorkspaces();
 
-  const apply = (n: string): void => { applyLayout(n); };
   const save = (): void => {
     const n = name.trim();
     if (!n) return;
-    saveCurrentLayout(n);
+    manager.saveCurrentWorkspace(n);
     setName('');
     force((v) => v + 1);
   };
-  const remove = (n: string): void => { deleteLayout(n); force((v) => v + 1); };
+  const remove = (id: string): void => { manager.deleteWorkspace(id); force((v) => v + 1); };
 
   return (
     <div className={styles.tabBody}>
       <div className={styles.list}>
         {layouts.map((l) => (
-          <div key={l.name} className={styles.row}>
+          <div key={l.id} className={styles.row}>
             <span className={styles.rowLabel}>
               {l.name}{l.builtin ? <span className={styles.badge}>preset</span> : null}
             </span>
             <div className={styles.rowRight}>
-              <Button variant="secondary" size="sm" onClick={() => apply(l.name)}>Apply</Button>
+              <Button variant="secondary" size="sm" onClick={() => manager.applyWorkspace(l.id)}>Apply</Button>
               {!l.builtin ? (
-                <button type="button" className={styles.miniBtn} title="Delete" onClick={() => remove(l.name)}>✕</button>
+                <button type="button" className={styles.miniBtn} title="Delete" onClick={() => remove(l.id)}>✕</button>
               ) : null}
             </div>
           </div>
@@ -195,6 +200,15 @@ function WorkspacesTab(): JSX.Element {
       </div>
     </div>
   );
+}
+
+/** The accent the active theme is currently painting with, read from the token. */
+function themeAccentColor(): string {
+  if (typeof window === 'undefined') return '#2988ff';
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue('--color-primary')
+    .trim();
+  return v || '#2988ff';
 }
 
 function AppearanceTab(): JSX.Element {
@@ -227,7 +241,14 @@ function AppearanceTab(): JSX.Element {
       <div className={styles.row}>
         <span className={styles.rowLabel}>Accent color</span>
         <div className={styles.rowRight}>
-          <ColorPicker value={accent || '#2b7eff'} onChange={applyAccent} aria-label="Accent color" />
+          {/*
+            With no custom accent set the swatch must show the accent actually
+            in force, which is the active theme's --color-primary. This used to
+            fall back to a hardcoded #2b7eff — a blue the app uses nowhere — so
+            the picker opened misreporting the current colour. Read the token
+            rather than keeping a second, drifting copy of the value here.
+          */}
+          <ColorPicker value={accent || themeAccentColor()} onChange={applyAccent} aria-label="Accent color" />
           <Button variant="ghost" size="sm" onClick={() => applyAccent('')} disabled={!accent}>Reset</Button>
         </div>
       </div>
@@ -451,10 +472,18 @@ const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'tabs', label: 'Workspaces' },
   { id: 'appearance', label: 'Appearance' },
+  // AI setup used to live ONLY on the dashboard settings page, and the
+  // assistant panel linked to it with `#/dashboard?tab=settings`. The local
+  // edition does not register a /dashboard route at all, so that link fell
+  // through the router's catch-all straight back to the editor — leaving the
+  // OSS build, whose headline is "the full editor, with your own API key",
+  // with nowhere to put the key. The editor now owns this surface in both
+  // editions; the dashboard card still renders the same component.
+  { id: 'ai', label: 'AI' },
 ];
 
-function Customize(): JSX.Element {
-  const [tab, setTab] = useState<Tab>('shortcuts');
+function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): JSX.Element {
+  const [tab, setTab] = useState<Tab>(initialTab);
   return (
     <div className={styles.root}>
       <div className={styles.tabs} role="tablist">
@@ -473,12 +502,29 @@ function Customize(): JSX.Element {
       </div>
       {tab === 'shortcuts' ? <ShortcutsTab />
         : tab === 'tabs' ? <WorkspacesTab />
+        : tab === 'ai' ? <div className={styles.section}><AiSettingsSection /></div>
         : <AppearanceTab />}
     </div>
   );
 }
 
-/** Open the Customize dialog. */
-export function openCustomizeDialog(): void {
-  openModal({ id: 'customize', title: 'Customize', size: 'lg', render: () => <Customize /> });
+/**
+ * Open the Customize dialog, optionally on a specific tab.
+ *
+ * The fixed modal id means a second call REPLACES the open dialog rather than
+ * stacking one — so "Open AI settings" from the assistant panel switches tabs
+ * even when Customize is already up.
+ */
+export function openCustomizeDialog(initialTab?: Tab): void {
+  openModal({
+    id: 'customize',
+    title: 'Customize',
+    size: 'lg',
+    render: () => <Customize {...(initialTab ? { initialTab } : {})} />,
+  });
+}
+
+/** Deep link for the assistant's "Connect an AI provider" banner. */
+export function openAiSettings(): void {
+  openCustomizeDialog('ai');
 }

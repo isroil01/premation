@@ -112,7 +112,6 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>Particles</h4>
       <div className={styles.inlineRows}>
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Emitter</span>

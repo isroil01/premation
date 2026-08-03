@@ -1,24 +1,34 @@
+/*
+ * Status bar — the last band in the frame.
+ *
+ * Every value here used to be a raw hex that bypassed the theme: #161616
+ * background, a #242424 seam that matches no border token, and #555 text.
+ * That text measured 2.3:1 against its own background, well under the WCAG AA
+ * floor of 4.5:1, which is why the bar read as permanently disabled. The
+ * secondary text token clears AA at this size and still sits quietly below
+ * the panel content it summarises.
+ */
 .root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  height: 22px;
-  padding: 0 12px;
-  background: #161616;
-  border-top: 1px solid #242424;
+  gap: var(--space-6);
+  height: var(--bar-height-status);
+  padding: 0 var(--space-5);
+  background: var(--color-statusbar);
+  border-top: 1px solid var(--color-border-strong);
   flex: none;
-  font-size: 11px;
-  color: #555;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-sans);
   user-select: none;
-  letter-spacing: 0.02em;
+  letter-spacing: var(--letter-spacing-wide);
 }
 
 .group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
 }
 

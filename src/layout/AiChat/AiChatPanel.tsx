@@ -15,11 +15,12 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import ReactMarkdown from 'react-markdown';
 import { Icon } from '@components/Icon';
 import { useAiProviderStore } from '@stores/aiProviderStore';
-import { aiEnabled } from '@core/config/edition';
+
 import type { GatewayProviderId, AiProviderId } from '@core/api/client';
 import { processImageFile, type PendingImage } from '@core/ai/imageAttachment';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAiChatContext } from './AiChatContext';
+import { openAiSettings } from '@layout/Settings/CustomizeDialog';
 import styles from './AiChatPanel.module.css';
 
 /** BYOK providers offered in the picker, in display order. */
@@ -347,30 +348,30 @@ export function AiChatPanel(): JSX.Element {
       ) : (
         /* ── Thread ───────────────────────────────────────────────── */
         <div className={styles.thread} ref={threadRef}>
-          {/* The local edition has no gateway at all, so there is nothing to
-              wait for and no setup the user could complete. Say so plainly and
-              stop — the branches below are about WHICH provider to connect,
-              which is not the question here. */}
-          {!aiEnabled() ? (
-            <div className={styles.keyBanner}>
-              <strong>The AI assistant is coming soon.</strong>
-              <br />
-              This edition runs entirely on your machine. Generating motion needs a model
-              provider, which is not wired up yet — everything else in the editor works
-              offline.
-            </div>
-          ) : null}
+          {/* A "the AI assistant is coming soon" banner used to render here
+              under `!aiEnabled()`. That predicate is `() => true` now — both
+              editions are BYOK, they differ only in where the key lives — so
+              the banner was unreachable, and its claim ("not wired up yet") had
+              become false. Removed rather than left as a branch that reads like
+              a live state. */}
           {/* Only once the gateway has actually answered. Before that we do not
               know, and guessing "no key" is what made this read as a setup
               prompt that ignored the keys the user had already saved. */}
-          {aiEnabled() && !ready && aiVerified && (
+          {!ready && aiVerified && (
             <div className={styles.keyBanner}>
               {anyProviderReady ? (
                 <>Pick a connected provider in the model menu below to start.</>
               ) : (
                 <>
                   Connect an AI provider to start.{' '}
-                  <a href="#/dashboard?tab=settings">Open AI settings →</a>
+                  {/* Was `#/dashboard?tab=settings` — a route the local edition
+                      never registers, so this bounced off the router's
+                      catch-all back to the editor and the OSS build had no way
+                      to enter a key at all. Opens the in-editor tab now, which
+                      exists in both editions. */}
+                  <button type="button" className={styles.keyBannerLink} onClick={() => openAiSettings()}>
+                    Open AI settings →
+                  </button>
                 </>
               )}
             </div>
@@ -721,17 +722,15 @@ export function AiChatPanel(): JSX.Element {
             <textarea
               className={styles.textarea}
               placeholder={
-                !aiEnabled()
-                  ? 'Coming soon'
-                  : ready || !aiVerified
-                    ? 'Create a cinematic trailer for my brand…'
-                    : anyProviderReady
-                      ? 'Pick a connected provider below'
-                      : 'Connect an AI provider first'
+                ready || !aiVerified
+                  ? 'Create a cinematic trailer for my brand…'
+                  : anyProviderReady
+                    ? 'Pick a connected provider below'
+                    : 'Connect an AI provider first'
               }
               value={value}
               rows={2}
-              disabled={busy || !aiEnabled()}
+              disabled={busy}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={onKeyDown}
               onPaste={(e) => {
@@ -865,11 +864,9 @@ export function AiChatPanel(): JSX.Element {
                 <button
                   type="button"
                   className={styles.neonSendBtn}
-                  title={!aiEnabled() ? 'Coming soon' : busy ? 'Stop' : 'Send prompt'}
+                  title={busy ? 'Stop' : 'Send prompt'}
                   onClick={busy ? cancel : send}
-                  disabled={
-                    !aiEnabled() || (!busy && !value.trim() && pendingImages.length === 0)
-                  }
+                  disabled={!busy && !value.trim() && pendingImages.length === 0}
                 >
                   <Icon name={busy ? 'stop' : 'arrow-up'} size={15} />
                 </button>

@@ -10,8 +10,8 @@
 .navTabs {
   display: flex;
   align-items: center;
-  background: color-mix(in srgb, var(--color-surface-2, #181a20) 90%, #000 10%);
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  background: color-mix(in srgb, var(--color-surface-2) 90%, #000 10%);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   padding: 3px;
   gap: 3px;
@@ -32,7 +32,7 @@
   border-radius: 6px;
   background: transparent;
   border: 1px solid transparent;
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  color: var(--color-text-secondary);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -45,13 +45,13 @@
 }
 
 .navTab:hover:not(.navTabActive) {
-  color: var(--color-text-primary, #ffffff);
+  color: var(--color-text-primary);
   background: rgba(255, 255, 255, 0.06);
 }
 
 .navTabActive {
-  background: var(--color-primary, #2b7eff) !important;
-  border-color: var(--color-primary, #2b7eff) !important;
+  background: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
   color: #ffffff !important;
   font-weight: 600;
   box-shadow: 0 2px 10px rgba(43, 126, 255, 0.35);
@@ -70,8 +70,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: color-mix(in srgb, var(--color-surface-1, #16171b) 70%, transparent);
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.07));
+  background: color-mix(in srgb, var(--color-surface-1) 70%, transparent);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   padding: 12px 14px;
   width: 100%;
@@ -83,7 +83,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary, rgba(255, 255, 255, 0.45));
+  color: var(--color-text-tertiary);
 }
 
 .row {
@@ -112,7 +112,7 @@
 .fieldLabel {
   font-size: 10px;
   font-weight: 600;
-  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  color: var(--color-text-muted);
 }
 
 .chips {
@@ -126,11 +126,11 @@
 .chipOn {
   padding: 4px 10px;
   border-radius: 6px;
-  background: var(--color-surface-1, #1a1b20);
+  background: var(--color-surface-1);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.75));
+  color: var(--color-text-secondary);
   font-size: 11px;
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
   cursor: pointer;
@@ -154,9 +154,9 @@
 /* ── Segmented Control Tabs (Solid / Linear / Radial) ─ */
 .segmentedControl {
   display: flex;
-  background: var(--color-surface-0, #121316);
+  background: var(--color-surface-0);
   padding: 3px;
-  border-radius: 7px;
+  border-radius: var(--radius-xl);
   border: 1px solid rgba(255, 255, 255, 0.08);
   gap: 3px;
   width: 100%;
@@ -170,10 +170,10 @@
   min-width: 0;
   height: 28px;
   padding: 0 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-lg);
   background: transparent;
   border: 1px solid transparent;
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  color: var(--color-text-secondary);
   font-size: 11px;
   font-weight: 600;
   font-family: inherit;
@@ -195,7 +195,7 @@
 }
 
 .segmentBtnActive {
-  background: var(--color-surface-2, #24262d) !important;
+  background: var(--color-surface-2) !important;
   border-color: rgba(56, 189, 248, 0.35) !important;
   color: #38bdf8 !important;
   font-weight: 600;
@@ -210,16 +210,16 @@
 /* ── Custom Select ── */
 .selectInput {
   width: 100%;
-  background: var(--color-surface-1, #1a1b20);
+  background: var(--color-surface-1);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  color: var(--color-text-primary, #ffffff);
+  color: var(--color-text-primary);
   font-size: 11px;
   font-weight: 500;
   padding: 5px 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   outline: none;
-  transition: all 120ms ease;
+  transition: var(--motion-hover-transition);
   box-sizing: border-box;
 }
 
@@ -228,7 +228,7 @@
 }
 
 .selectInput:focus {
-  border-color: var(--color-primary, #2b7eff);
+  border-color: var(--color-primary);
 }
 
 /* ── Color Selector Card Rows ────────────────────────────────── */
@@ -238,7 +238,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  background: var(--color-surface-1, #1a1b20);
+  background: var(--color-surface-1);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 6px;
   width: 100%;
@@ -248,7 +248,7 @@
 .colorCardLabel {
   font-size: 11px;
   font-weight: 600;
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.8));
+  color: var(--color-text-secondary);
 }
 
 .stopsContainer {
@@ -256,7 +256,7 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--color-surface-1, #1a1b20);
+  background: var(--color-surface-1);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 6px;
   width: 100%;
@@ -286,7 +286,7 @@
 .hint {
   margin: 0;
   font-size: 11px;
-  color: var(--color-text-muted, rgba(255, 255, 255, 0.45));
+  color: var(--color-text-muted);
   line-height: 1.4;
 }
 
@@ -304,13 +304,13 @@
 /* Responsive Time (M7) */
 .hint {
   margin: 6px 0 10px;
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
-  color: var(--color-text-tertiary, #8a8a8a);
+  color: var(--color-text-tertiary);
 }
 .readout {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12.5px;
-  color: var(--color-text-primary, #e8e8e8);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
   padding: 5px 0;
 }

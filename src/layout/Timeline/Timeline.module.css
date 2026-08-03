@@ -18,7 +18,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-timeline-bg, var(--color-surface-0));
+  background: var(--color-timeline-bg);
   overflow: hidden;
   user-select: none;
 }
@@ -48,7 +48,7 @@
   height: 4px;
 }
 .trackHeaderScroller::-webkit-scrollbar-track {
-  background: var(--color-surface-0, #151516);
+  background: var(--color-surface-0);
 }
 .trackHeaderScroller::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
@@ -71,17 +71,17 @@
   height: 4px;
 }
 .lanes::-webkit-scrollbar-track {
-  background: var(--color-surface-0, #151516);
+  background: var(--color-surface-0);
 }
 .lanes::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
   border-radius: 0;
 }
 .lanes::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-dimmed, #555);
+  background: var(--color-text-muted);
 }
 .lanes::-webkit-scrollbar-corner {
-  background: var(--color-surface-0, #151516);
+  background: var(--color-surface-0);
 }
 
 .lanesInner {
@@ -125,7 +125,8 @@
   left: 5px;
   font-size: var(--font-size-xs);
   line-height: 1;
-  color: var(--color-text-tertiary);
+  /* The ruler band is a raised surface; tertiary reads at 3.76:1 on it. */
+  color: var(--color-text-secondary);
   font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -204,7 +205,7 @@
   height: 15px;
   padding: 0;
   border: none;
-  border-radius: var(--radius-sm, 3px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
@@ -213,12 +214,12 @@
 
 .clipMute:hover {
   opacity: 1;
-  background: color-mix(in srgb, var(--color-bg-elevated, #000) 55%, transparent);
+  background: color-mix(in srgb, var(--color-surface-raised) 55%, transparent);
 }
 
 .clipMute[aria-pressed='true'] {
   opacity: 1;
-  color: var(--color-danger, #e2564d);
+  color: var(--color-danger);
 }
 
 /* Clip trim handles — the leftmost/rightmost strip of a clip. */
@@ -555,7 +556,7 @@
   flex: none;
   width: 16px;
   font-family: var(--font-family-mono);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-secondary);
   text-align: right;
@@ -619,7 +620,7 @@
   white-space: nowrap;
   max-width: 100%;
   text-align: left;
-  transition: transform var(--motion-duration-fast, 120ms) var(--motion-ease-standard, ease);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .timelineSelectTrigger:hover {
@@ -972,10 +973,10 @@
 
 .categoryBadge {
   font-family: var(--font-family-mono);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   padding: 1px 5px;
-  border-radius: 9px;
+  border-radius: var(--radius-full);
   background: var(--color-surface-3);
   color: var(--color-text-tertiary);
   margin-left: 4px;
@@ -1085,7 +1086,7 @@
 .cacheBar {
   position: absolute;
   height: 3px;
-  background: var(--color-success, #34d399);
+  background: var(--color-success);
   opacity: 0.8;
   pointer-events: none;
   z-index: 2;
@@ -1210,7 +1211,7 @@
   top: 0;
   z-index: 0;
   pointer-events: none;
-  background: color-mix(in srgb, var(--color-black, #000) 22%, transparent);
+  background: color-mix(in srgb, var(--color-slate-1000) 22%, transparent);
   border-left: 1px solid var(--color-border-strong);
   box-sizing: border-box;
 }
@@ -1230,8 +1231,8 @@
 }
 
 .kfSnapPlayhead {
-  background: var(--color-timeline-playhead, #ff3b30);
-  box-shadow: 0 0 4px color-mix(in srgb, var(--color-timeline-playhead, #ff3b30) 70%, transparent);
+  background: var(--color-timeline-playhead);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-timeline-playhead) 70%, transparent);
 }
 
 .kfSnapKeyframe {

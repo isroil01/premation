@@ -13,7 +13,6 @@
  *   EllipseTool — drag to create an ellipse
  *   PenTool — click to place path points, double-click to finish
  *   TextTool — click to place a text box
- *   CameraTool — navigate (drag-pan) without touching the scene
  */
 
 import type { Rect } from '../math/Rect';
@@ -1222,30 +1221,11 @@ function anchorWorld(node: { worldMatrix: Mat.Mat2D; anchor?: Vec2 }): Vec2 {
   return Mat.apply(node.worldMatrix, node.anchor ?? { x: 0, y: 0 });
 }
 
-// ── Camera (viewport navigation) ───────────────────────────────────
-export class CameraTool implements Tool {
-  readonly id = 'camera';
-  readonly label = 'Camera';
-  readonly shortcut = 'c';
-  readonly cursor = 'grab' as const;
-
-  private popCursor: (() => void) | null = null;
-
-  onDragStart(_e: ToolDragEvent, ctx: ToolContext): void {
-    this.popCursor = ctx.cursor.pushOverride('grabbing');
-  }
-
-  onDrag(e: ToolDragEvent, ctx: ToolContext): void {
-    ctx.camera.panByScreen(e.deltaScreen.x, e.deltaScreen.y);
-    ctx.requestRender();
-  }
-
-  onDragEnd(_e: ToolDragEvent, ctx: ToolContext): void {
-    this.popCursor?.();
-    this.popCursor = null;
-    ctx.requestRender();
-  }
-}
+// The CameraTool that used to live here is deleted. It was registered in the
+// engine and unreachable from the app: no 'camera' member in the UI Tool
+// union, no TOOL_MAP entry. Viewport navigation is served by guidesStore
+// cameraTool (orbit/pan/dolly) plus the space-drag transport, so this was a
+// second implementation of the same idea that nothing could select.
 
 /** Which outline a handle belongs to: the layer's geometry, or one of its masks. */
 interface OutlineRef {
@@ -1443,7 +1423,6 @@ export function createBuiltinTools(): Tool[] {
     new BrushTool(),
     new CurvatureTool(),
     new TextTool(),
-    new CameraTool(),
   ];
 }
 

@@ -174,7 +174,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                       setPoiY(compHeight / 2);
                       setPoiZ(0);
                     }}
-                    style={{ height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer' }}
+                    style={{ height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                   >
                     Enable target (two-node camera)
                   </button>
@@ -201,7 +201,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                     setPoiY(undefined);
                     setPoiZ(undefined);
                   }}
-                  style={{ height: 20, padding: '0 8px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 3, cursor: 'pointer' }}
+                  style={{ height: 20, padding: '0 8px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Remove target (free camera)
                 </button>
@@ -240,7 +240,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
               background: 'var(--color-surface-0)',
               color: 'var(--color-text-secondary)',
               border: '1px solid var(--color-border-subtle)',
-              borderRadius: 3,
+              borderRadius: 4,
               cursor: 'pointer',
             }}
           >
@@ -270,7 +270,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                 background: 'var(--color-primary-subtle)',
                 color: 'var(--color-primary)',
                 border: '1px solid var(--color-primary)',
-                borderRadius: 3,
+                borderRadius: 4,
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
