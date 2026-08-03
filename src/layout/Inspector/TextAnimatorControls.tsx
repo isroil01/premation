@@ -655,7 +655,6 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
   return (
     <div className={styles.root}>
       <div className={styles.head}>
-        <span className={styles.title}>Text Animators</span>
         <button
           type="button"
           className={styles.add}

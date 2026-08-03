@@ -39,18 +39,10 @@ interface UIState {
   activeTool: Tool;
   /** Whether the user is currently dragging. */
   isDragging: boolean;
-  /** ID of the panel currently focused (for keyboard routing). */
-  focusedPanelId: string | null;
   /** Generic "toast"-style notifications. */
   notifications: ReadonlyArray<Notification>;
-  /** Mouse position in screen coords, updated by the app shell. */
-  pointer: { x: number; y: number };
   /** Snap-to-grid / snap-to-object enabled. */
   snap: boolean;
-  /** Show grid overlay in the workspace canvas. */
-  showGrid: boolean;
-  /** Show rulers along the workspace edges. */
-  showRulers: boolean;
   /** Whether the graph editor is currently open. */
   graphEditorOpen: boolean;
   /** Whether the global Shy layers toggle is active. */
@@ -69,13 +61,9 @@ export interface Notification {
 interface UIActions {
   setActiveTool(tool: Tool): void;
   setDragging(isDragging: boolean): void;
-  setFocusedPanel(id: string | null): void;
-  setPointer(x: number, y: number): void;
   notify(notification: Omit<Notification, 'id' | 'createdAt'>): string;
   dismissNotification(id: string): void;
   toggleSnap(): void;
-  toggleGrid(): void;
-  toggleRulers(): void;
   setGraphEditorOpen(open: boolean): void;
   setGlobalShy(open: boolean): void;
 }
@@ -87,12 +75,8 @@ export const useUIStore = create<UIStore>()(
     immer((set) => ({
       activeTool: 'select',
       isDragging: false,
-      focusedPanelId: null,
       notifications: [],
-      pointer: { x: 0, y: 0 },
       snap: true,
-      showGrid: false,
-      showRulers: false,
       graphEditorOpen: false,
       globalShy: false,
 
@@ -103,15 +87,6 @@ export const useUIStore = create<UIStore>()(
       setDragging: (isDragging) =>
         set((s) => {
           s.isDragging = isDragging;
-        }),
-      setFocusedPanel: (id) =>
-        set((s) => {
-          s.focusedPanelId = id;
-        }),
-      setPointer: (x, y) =>
-        set((s) => {
-          s.pointer.x = x;
-          s.pointer.y = y;
         }),
       notify: (n) => {
         const id = `n_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -136,14 +111,6 @@ export const useUIStore = create<UIStore>()(
       toggleSnap: () =>
         set((s) => {
           s.snap = !s.snap;
-        }),
-      toggleGrid: () =>
-        set((s) => {
-          s.showGrid = !s.showGrid;
-        }),
-      toggleRulers: () =>
-        set((s) => {
-          s.showRulers = !s.showRulers;
         }),
       setGraphEditorOpen: (open) =>
         set((s) => {

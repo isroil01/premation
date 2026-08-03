@@ -1,3 +1,7 @@
+/* eslint-disable no-restricted-syntax -- TODO(F11): SUSPECTED DEFECT, NOT YET VERIFIED.
+ * Same shape as toolHandlers.ts — getNode() then in-place `.props` writes and
+ * `components.push()`, both of which land in a throwaway copy
+ * (SceneGraph.ts:154). Pending F11's audit. Fix = writeProp(). */
 /**
  * Motion recipes (Phase B & C) — After Effects-level 3D animation procedures, encoded.
  *

@@ -4,8 +4,13 @@ import {
   maskSegments,
   readNodeMask,
   type LayerMask,
+  type MaskMode,
+  type MaskPath,
   maskModeToComposite,
   maskModeStartsFull,
+  activeMaskPaths,
+  hasActiveMaskPaths,
+  paintMaskMatte,
 } from './mask';
 import type { SceneNode } from '@core/types';
 
@@ -115,5 +120,127 @@ describe('mask modes — lighten / darken / difference', () => {
     // Six distinct modes must not collapse onto fewer than five operations
     // (add/source-over is the only default, and nothing else may share it).
     expect(new Set(ops).size).toBe(modes.length);
+  });
+});
+
+// ── M2: mask mode `none` ─────────────────────────────────────────────
+//
+// A `none` mask is geometry, not coverage. The invariant under test throughout:
+// adding a `none` path to a stack must not change a single pixel of the matte.
+//
+// SCOPE OF THESE TESTS — read before trusting a green run. They assert the
+// COMPOSITING SEQUENCE (which op, which alpha, which filter, in what order),
+// not pixels. `Path2D` is stubbed out because jsdom has none, so path geometry
+// is never rasterized and never compared. Green here means "a `none` mask
+// issues no drawing commands and does not perturb the commands around it" — it
+// does NOT mean "masks are pixel-correct". Pixel correctness for masks lives in
+// packages/render-tests (real Chromium, golden images); if you change mask
+// GEOMETRY rather than mask sequencing, these tests will not catch you.
+
+// jsdom has no Path2D. These tests assert the drawing SEQUENCE (which composite
+// op, which alpha, which filter, in what order) rather than geometry, so a
+// no-op stub is sufficient and keeps the test free of a canvas backend.
+beforeAll(() => {
+  if (typeof (globalThis as { Path2D?: unknown }).Path2D === 'undefined') {
+    (globalThis as { Path2D?: unknown }).Path2D = class {
+      rect(): void {}
+      moveTo(): void {}
+      bezierCurveTo(): void {}
+      closePath(): void {}
+    };
+  }
+});
+
+/** Records the canvas calls that decide the matte, so a jsdom test can assert
+ *  the drawing SEQUENCE without a real rasterizer. */
+function recordingCtx(): { ctx: CanvasRenderingContext2D; calls: string[] } {
+  const calls: string[] = [];
+  // State in a closure rather than on the object, so the mock needs no
+  // structural type of its own.
+  const state = { op: 'source-over', alpha: 1, filter: 'none' };
+  const ctx = {
+    set globalCompositeOperation(v: string) { state.op = v; },
+    get globalCompositeOperation() { return state.op; },
+    set globalAlpha(v: number) { state.alpha = v; },
+    get globalAlpha() { return state.alpha; },
+    set filter(v: string) { state.filter = v; },
+    get filter() { return state.filter; },
+    fillStyle: '',
+    save: () => { calls.push('save'); },
+    restore: () => { calls.push('restore'); },
+    fillRect: (x: number, y: number, w: number, h: number) => { calls.push(`fillRect(${x},${y},${w},${h})`); },
+    fill: (_p: unknown, rule: string) => {
+      calls.push(`fill[${state.op},a=${state.alpha},f=${state.filter},${rule}]`);
+    },
+  } as unknown as CanvasRenderingContext2D;
+  return { ctx, calls };
+}
+
+const pathOf = (mode: MaskMode, id: string = mode): MaskPath => ({ ...rectangleMask(100, 100), id, mode });
+const paint = (paths: MaskPath[]): string[] => {
+  const { ctx, calls } = recordingCtx();
+  paintMaskMatte(ctx, { paths }, 100, 100);
+  return calls;
+};
+
+describe('mask mode `none`', () => {
+  it('is not treated as a leading subtractive mode', () => {
+    // Without the explicit exclusion, `none` would fall through the
+    // `!== add && !== lighten` test and fill the frame — changing the picture.
+    expect(maskModeStartsFull('none')).toBe(false);
+  });
+
+  it('keeps maskModeToComposite total without inventing behaviour', () => {
+    expect(maskModeToComposite('none')).toBe('source-over');
+  });
+
+  it('activeMaskPaths drops none, keeps everything else', () => {
+    const paths = [pathOf('none'), pathOf('add'), pathOf('subtract')];
+    expect(activeMaskPaths({ paths }).map((p) => p.mode)).toEqual(['add', 'subtract']);
+  });
+
+  it('hasActiveMaskPaths is false only when every path is none', () => {
+    expect(hasActiveMaskPaths({ paths: [pathOf('none'), pathOf('none', 'n2')] })).toBe(false);
+    expect(hasActiveMaskPaths({ paths: [pathOf('none'), pathOf('add')] })).toBe(true);
+    expect(hasActiveMaskPaths({ paths: [] })).toBe(false);
+    expect(hasActiveMaskPaths(undefined)).toBe(false);
+  });
+
+  it('an all-none stack leaves the layer UNMASKED, not invisible', () => {
+    // The failure this guards: filtering none out naively leaves zero paths, the
+    // matte comes out empty, and the layer vanishes — which is the one thing a
+    // mode called "none" must never do.
+    const calls = paint([pathOf('none'), pathOf('none', 'n2')]);
+    expect(calls).toEqual(['fillRect(-50,-50,100,100)']);
+    expect(calls.some((c) => c.startsWith('fill['))).toBe(false);
+  });
+
+  it('does not draw a none path sitting among active ones', () => {
+    const calls = paint([pathOf('add'), pathOf('none'), pathOf('subtract')]);
+    const fills = calls.filter((c) => c.startsWith('fill['));
+    expect(fills).toHaveLength(2);
+    expect(fills[0]).toContain('source-over');
+    expect(fills[1]).toContain('destination-out');
+  });
+
+  it('a LEADING none does not change how the stack starts', () => {
+    // The subtle one. `[none, add]` must start from an empty matte exactly like
+    // `[add]`; if `none` were consulted for maskModeStartsFull it would prefill
+    // the frame and the Add mask would stop cutting anything.
+    expect(paint([pathOf('none'), pathOf('add')])).toEqual(paint([pathOf('add')]));
+  });
+
+  it('a leading none preserves the full-frame start of a following subtract', () => {
+    expect(paint([pathOf('none'), pathOf('subtract')])).toEqual(paint([pathOf('subtract')]));
+    expect(paint([pathOf('subtract')])[0]).toBe('fillRect(-50,-50,100,100)');
+  });
+
+  it('inserting a none path anywhere is a no-op on the matte', () => {
+    const base = [pathOf('add'), pathOf('darken')];
+    const baseline = paint(base);
+    for (let i = 0; i <= base.length; i++) {
+      const withNone = [...base.slice(0, i), pathOf('none'), ...base.slice(i)];
+      expect(paint(withNone)).toEqual(baseline);
+    }
   });
 });

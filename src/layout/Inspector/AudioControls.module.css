@@ -49,7 +49,7 @@
 .hint {
   text-transform: none;
   letter-spacing: 0;
-  font-weight: var(--font-weight-regular, 400);
+  font-weight: var(--font-weight-regular);
   font-size: 10px;
   color: var(--color-text-tertiary);
   opacity: 0.75;
@@ -83,13 +83,13 @@
 }
 
 .trimEdge {
-  stroke: var(--color-border-strong, var(--color-border));
+  stroke: var(--color-border-strong);
   stroke-width: 1;
   opacity: 0.9;
 }
 
 .playhead {
-  stroke: var(--color-accent, #0099ff);
+  stroke: var(--color-accent);
   stroke-width: 1.5;
 }
 
@@ -144,7 +144,7 @@
 }
 
 .convertBtn:hover {
-  background: var(--color-surface-3, var(--color-surface-2));
+  background: var(--color-surface-3);
   border-color: var(--color-border);
 }
 
@@ -172,7 +172,7 @@
 .panelDesc code {
   font-size: 10px;
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--color-surface-2);
 }
 
@@ -223,7 +223,7 @@
 }
 
 .segOn {
-  background: var(--color-surface-0, var(--color-surface-1));
+  background: var(--color-surface-0);
   color: var(--color-text-primary);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
 }
@@ -241,7 +241,7 @@
 }
 
 .warn {
-  color: var(--color-warning, #f59e0b);
+  color: var(--color-warning);
 }
 
 .panelActions {

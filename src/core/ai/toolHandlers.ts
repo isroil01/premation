@@ -1,3 +1,10 @@
+/* eslint-disable no-restricted-syntax -- TODO(F11): SUSPECTED DEFECT, NOT YET VERIFIED.
+ * These handlers do `defaultSceneGraph.getNode(id)` and then write into
+ * `component.props` in place. SceneGraph returns a fresh copy per read
+ * (SceneGraph.ts:154), so those writes are very likely discarded and these AI
+ * tools may be silent no-ops. Deliberately not fixed here: establishing which
+ * sites are live defects is F11's audit, and a blind rewrite of 10 call sites
+ * with no test coverage would be worse than the bug. Fix = writeProp(). */
 /**
  * The handlers behind the tool schemas.
  *
@@ -67,7 +74,7 @@ import {
 import { selectScene } from './sceneWindow';
 import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, CAMERA_PROPS, isAnimatableProp } from './toolContext';
 import { setNodeBlend } from '@core/effects/blendMode';
-import { setNodeMatte } from '@core/effects/matte';
+import { setNodeMatte, readMatte } from '@core/effects/matte';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
 import { CRAFT_HANDLERS } from './craftHandlers';
 
@@ -327,7 +334,7 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
     locked?: boolean;
     motionBlur?: boolean;
     blendMode?: string;
-    matte?: { mode: 'alpha' | 'luma' | 'alpha-inv' | 'luma-inv'; sourceId?: string };
+    matte?: { mode: string; inverted?: boolean; sourceId?: string } | string;
     removeMatte?: boolean;
   };
   if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
@@ -384,10 +391,13 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
     applied.push(`blendMode=${i.blendMode}`);
   }
   if (i.removeMatte && node) {
-    setNodeMatte(i.nodeId, 'none');
+    setNodeMatte(i.nodeId, undefined);
     applied.push('removeMatte');
   } else if (i.matte !== undefined && node) {
-    setNodeMatte(i.nodeId, i.matte);
+    // readMatte normalises whatever the model sent: the 1.2.0 {mode,inverted}
+    // shape or the legacy four-value spelling. Tolerating both means the tool
+    // schema and the prompt do not need a flag day.
+    setNodeMatte(i.nodeId, readMatte(i.matte));
     applied.push(`matte=${JSON.stringify(i.matte)}`);
   }
 
@@ -1244,16 +1254,17 @@ const setPuppetPinKeyframes: AiTool['handler'] = (input, ctx) => {
   };
 };
 
-import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
 
 const mergePathsHandler: AiTool['handler'] = (input, ctx) => {
   const i = input as { op: MergeOp; nodeIds: string[] };
   const missing = i.nodeIds.filter((id) => !ctx.scene.has(id));
   if (missing.length > 0) return fail(`Unknown nodeId(s): ${missing.join(', ')}`);
   useSelectionStore.getState().set(i.nodeIds);
-  const resultIds = mergeSelectedPaths(i.op);
+  // Live merge keeps sources animatable — the designed-motion default.
+  const resultIds = liveMergeSelectedPaths(i.op);
   if (resultIds.length === 0) return fail(`Failed to apply merge operation '${i.op}' on layers.`);
-  return ok(`Applied merge operation '${i.op}'. Generated node(s): ${resultIds.join(', ')}.`, { resultIds });
+  return ok(`Applied live merge '${i.op}'. Result: ${resultIds.join(', ')}. Sources stay editable.`, { resultIds });
 };
 
 const setTrimPathHandler: AiTool['handler'] = (input, ctx) => {

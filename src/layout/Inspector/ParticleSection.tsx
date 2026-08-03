@@ -17,6 +17,7 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { ColorKfRow } from './ColorKfRow';
+import { writeTransformProps } from '@core/scene/transformWrite';
 import styles from './TransformSection.module.css';
 
 export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -33,13 +34,13 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
   const set = <K extends keyof ParticleConfig>(key: K, value: ParticleConfig[K]): void => {
     defaultSceneGraph.setParticle(nodeId, { ...cfg, [key]: value });
-    const transformComp = node.components.find((c) => c.type === 'Transform');
-    if (transformComp) {
-      if (key === 'emitterWidth' && typeof value === 'number') {
-        defaultSceneGraph.writeProp(nodeId, transformComp.id, 'width', value);
-      } else if (key === 'emitterHeight' && typeof value === 'number') {
-        defaultSceneGraph.writeProp(nodeId, transformComp.id, 'height', value);
-      }
+    // The emitter box mirrors the layer's Transform size. Routed through
+    // writeTransformProps so an emitter on a layer with animated width/height
+    // keyframes rather than taking a base write the renderer discards.
+    if (key === 'emitterWidth' && typeof value === 'number') {
+      writeTransformProps(nodeId, [{ prop: 'width', value }], 'Emitter Width');
+    } else if (key === 'emitterHeight' && typeof value === 'number') {
+      writeTransformProps(nodeId, [{ prop: 'height', value }], 'Emitter Height');
     }
     bumpScene();
   };
@@ -112,7 +113,6 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>Particles</h4>
       <div className={styles.inlineRows}>
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Emitter</span>

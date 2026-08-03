@@ -6,6 +6,7 @@
  */
 
 import { BuiltinCommands } from '@core/commands/Command';
+import { cloudProjectsEnabled } from '@core/config/edition';
 
 /** Project-lifecycle command ids (registered against ProjectManager at boot). */
 export const ProjectCommands = {
@@ -31,6 +32,17 @@ export interface MenuItemModel {
   /** Overrides the command's label. */
   label?: string;
   separator?: boolean;
+  /**
+   * Hide the item entirely when this returns false. Evaluated per render by
+   * `useAppMenuGroups`, which also collapses the separators left behind.
+   *
+   * For EDITION differences, not for enabled/disabled state — a command that
+   * exists but cannot run right now should stay visible and grey out, which is
+   * what `Command.enabled` already does. This is for entries whose command is
+   * never registered in this build, and which would otherwise sit permanently
+   * disabled next to items that work.
+   */
+  visible?: () => boolean;
 }
 
 export interface MenuGroupModel {
@@ -55,7 +67,13 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: 'file.export', label: 'Export…' },
       { separator: true },
-      { commandId: 'file.versionHistory', label: 'Version History…' },
+      // Registered ONLY under `cloudProjectsEnabled()` (see Providers) —
+      // snapshots live on the backend, keyed by project id. The registration
+      // comment says it stays unregistered locally so there is no
+      // "permanently-disabled menu item next to a feature that does work"…
+      // but this model is static, so the disabled item appeared anyway. Same
+      // predicate on both sides now, which is what that intent required.
+      { commandId: 'file.versionHistory', label: 'Version History…', visible: cloudProjectsEnabled },
       { separator: true },
       { commandId: ProjectCommands.Close, label: 'Close Project' },
     ],
@@ -82,8 +100,12 @@ export const APP_MENU: MenuGroupModel[] = [
     id: 'composition',
     label: 'Composition',
     items: [
-      // "New Composition…" removed — compositions (and their size) are created
-      // only from the dashboard, one project per composition.
+      // "New Composition…" was removed on the rationale that compositions are
+      // created only from the dashboard, one project per composition. That is
+      // no longer true: `openNewCompositionDialog` is live in the Project panel
+      // and the whole dialog is built, so the menu was simply missing an entry
+      // for a working feature.
+      { commandId: 'comp.new', label: 'New Composition…' },
       { commandId: 'comp.settings', label: 'Composition Settings…' },
       { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
@@ -178,7 +200,7 @@ export const APP_MENU: MenuGroupModel[] = [
     items: [
       { commandId: 'help.tour', label: 'Take a Tour' },
       { separator: true },
-      { commandId: ProjectCommands.About, label: 'About Motion Editor' },
+      { commandId: ProjectCommands.About, label: 'About Premation' },
     ],
   },
 ];

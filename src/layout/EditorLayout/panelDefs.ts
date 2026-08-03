@@ -14,6 +14,7 @@
 
 import type { IconName } from '@components/Icon';
 import type { RegionId } from '@stores/layoutStore';
+import { isPanelAvailable } from '@core/config/panelAvailability';
 
 export interface PanelDef {
   id: string;
@@ -53,11 +54,26 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'scene',       title: 'Scene',     icon: 'layers',      region: 'leftSidebar', weight: 10,  closable: false },
   { id: 'assets',      title: 'Assets',    icon: 'image',       region: 'leftSidebar', weight: 8,   closable: false },
   { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
+  // Server edition only — see PANEL_AVAILABILITY. The local (OSS) edition does
+  // not ship the assistant, so the panel is absent from the registry rather than
+  // rendered empty: a tab that opens onto "not available in this edition" is a
+  // worse answer than no tab. `getAllPanelRenderers` drops the renderer too.
   { id: 'ai',          title: 'AI',        icon: 'ai',          region: 'leftSidebar', weight: 4,   closable: false },
   { id: 'project',     title: 'Project',   icon: 'folder-open', region: 'leftSidebar', weight: 3,   closable: true, onDemand: true },
   // ── Right inspector ──────────────────────────────────────────────
-  { id: 'properties',  title: 'Transform', icon: 'move',        region: 'rightInspector', weight: 5,   closable: false },
-  { id: 'style',       title: 'Style',     icon: 'brush',       region: 'rightInspector', weight: 4,   closable: false },
+  /**
+   * Merged 2026-08-03: `style` (Style) and `misc` (Settings) folded into this
+   * one panel. All three were an accordion of property sections for the
+   * selected layer, so the split only ever made the user guess which tab owned
+   * the property they wanted — and each carried its own search box that could
+   * not see the other two. It is titled "Properties" rather than "Transform"
+   * now, because transform is one section of it, not the whole thing.
+   *
+   * The panels below stay separate deliberately: they are editors and modes
+   * (a curve graph, an effect stack, a rig, a render queue) rather than
+   * properties of the current selection.
+   */
+  { id: 'properties',  title: 'Properties', icon: 'sliders-h',  region: 'rightInspector', weight: 5,   closable: false },
   { id: 'rig',         title: 'Rigging',   icon: 'bone',        region: 'rightInspector', weight: 3.5, closable: false },
   { id: 'effects',     title: 'Effects',   icon: 'zap',         region: 'rightInspector', weight: 3,   closable: false },
   // The graph editor + EXPRESSION editor. Its renderer has always existed in
@@ -65,9 +81,11 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // openPanel('motion') — so the entire expressions feature had no way in.
   { id: 'motion',      title: 'Graph',     icon: 'graph-value', region: 'rightInspector', weight: 1.4, closable: false },
   { id: 'presets',     title: 'Presets',   icon: 'keyframe',    region: 'rightInspector', weight: 1,   closable: false },
-  { id: 'misc',        title: 'Settings',  icon: 'settings',    region: 'rightInspector', weight: 0,   closable: false },
   { id: 'history',     title: 'History',   icon: 'history',     region: 'rightInspector', weight: 0.8, closable: true, onDemand: true },
-  { id: 'renderQueue', title: 'Render',    icon: 'queue',       region: 'rightInspector', weight: 0.7, closable: false, onDemand: true },
+  // `closable: true` like every other on-demand panel. It was the one exception,
+  // so PanelHeader drew no ✕ and the only way to dismiss it was F6 or the Window
+  // menu — for a panel that opens on demand and is empty most of the time.
+  { id: 'renderQueue', title: 'Render',    icon: 'queue',       region: 'rightInspector', weight: 0.7, closable: true, onDemand: true },
   // Third-party plugin UI. On demand because it is empty until a plugin with a
   // panel is running — it opens itself when one calls `motion.ui.openPanel()`,
   // when the user picks it from the Plugins menu, or from the manager's Open
@@ -80,6 +98,28 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // half-present feature is worse than an absent one.
 ];
 
+/**
+ * The panels this build actually has.
+ *
+ * Everything that REGISTERS or OFFERS a panel must read this rather than
+ * `PANEL_DEFS` — registration, the Window menu, the workspace presets. Call it
+ * at use time; caching the result in a module constant reintroduces exactly the
+ * boot-order bug the `available` predicate exists to avoid.
+ */
+export function availablePanelDefs(): readonly PanelDef[] {
+  return PANEL_DEFS.filter((p) => isPanelAvailable(p.id));
+}
+
+/**
+ * Look up a panel by id, INCLUDING ones this edition does not offer.
+ *
+ * Deliberately unfiltered. This resolves the title and icon of a panel that is
+ * already open — including in a pop-out window, which never runs the
+ * registration effect — so a persisted layout from a server-edition build that
+ * still lists `ai` renders a correctly-labelled panel instead of a raw id. The
+ * gate belongs at the point of registration and offering, not at the point of
+ * naming something already on screen.
+ */
 export function panelDef(id: string): PanelDef | undefined {
   return PANEL_DEFS.find((p) => p.id === id);
 }

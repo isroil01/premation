@@ -30,6 +30,8 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readResponsiveTime } from '@core/template/responsiveTimeStore';
+import { stretchedToAuthored } from '@core/template/responsiveTime';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { isPrecomp } from '@core/scene/precomp';
@@ -320,6 +322,16 @@ export class TimelineController {
   /** Frame rate of the timeline that owns a node's clips. */
   fpsForNode(nodeId: string): number {
     return this.registryForNode(nodeId)?.timeline.getFrameRate().fps ?? this.fps;
+  }
+
+  /** The composition that OWNS a node's clips — its parent when that parent is
+   *  a registered comp, else the active comp. Same resolution fpsForNode and
+   *  durationFramesForNode already use, exposed so the responsive-time map can
+   *  read the right comp's config for a node nested in a precomp. */
+  compIdForNode(nodeId: string): string {
+    const parentId = defaultSceneGraph.getNode(nodeId)?.parent;
+    if (parentId && this.registries.has(parentId)) return parentId;
+    return this.activeCompId;
   }
 
   /** Duration (frames) of the timeline that owns a node's clips. */
@@ -1006,6 +1018,22 @@ function foldPrecompChain(nodeId: string, compTime: number): number {
 }
 
 /**
+ * Fold the owning composition's responsive-time stretch, if it has one.
+ *
+ * Costs one property lookup on the miss path, which is every non-template comp
+ * and therefore essentially every sample.
+ */
+function applyResponsiveTime(nodeId: string, compTime: number): number {
+  const controller = getTimelineController();
+  const cfg = readResponsiveTime(controller.compIdForNode(nodeId));
+  if (!cfg) return compTime;
+  const fps = controller.fpsForNode(nodeId);
+  const target = controller.durationFramesForNode(nodeId) / (fps || 1);
+  if (!(target > 0)) return compTime;
+  return stretchedToAuthored(compTime, cfg.authoredDurationSec, target, cfg.protectedRegions);
+}
+
+/**
  * Composition time → the axis `nodeId`'s keyframes are stored on. This is,
  * step for step, what `buildSnapshot`'s `remapOf` hands the animation engine:
  *
@@ -1028,6 +1056,15 @@ function foldPrecompChain(nodeId: string, compTime: number): number {
 export function compToKeyframeTime(nodeId: string, compTime: number, prop?: string): number {
   const controller = getTimelineController();
   const src = srcIdOf(nodeId);
+  // 0 — RESPONSIVE TIME (M7). Stretched comp time -> authored comp time, so
+  // protected regions keep their authored duration and only the unprotected
+  // remainder absorbs a duration change.
+  //
+  // Composed into THIS function rather than added as a parallel path,
+  // deliberately: this is the only axis keyframes are sampled on, and a second
+  // one would let keyframes and the clip bar drift apart. Everything below
+  // continues to work in authored time and needs no knowledge of the stretch.
+  compTime = applyResponsiveTime(nodeId, compTime);
   // The OWNING comp's fps — a node nested in a precomp keeps its clips in the
   // precomp's timeline, which may run at a different rate than the active tab.
   const fps = controller.fpsForNode(src);

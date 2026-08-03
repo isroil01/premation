@@ -18,24 +18,40 @@
 
 import type { Effect } from './effects';
 import { effectCss } from './effects';
+import { paintMaskMatte, type LayerMask, type MaskPath } from '@core/effects/mask';
 import { isLutEffect, buildChannelLut, applyChannelLut } from './colorLut';
 import { isCanvas2dProcedural, applyProceduralEffect } from './proceduralCanvas2d';
-import { isCanvas2dOnlyEffect, applyCanvas2dEffect, withStyleSilhouette } from './canvas2dEffects';
+import {
+  isCanvas2dOnlyEffect,
+  hasCanvas2dImplementation,
+  applyCanvas2dEffect,
+  withStyleSilhouette,
+} from './canvas2dEffects';
 import { isColorEffect, effectColorMatrix, applyColorMatrixImage } from './effectColorMatrix';
 
 /** True when an effect has NO GPU shader form and must be CPU-baked into the
- *  layer texture for the GPU backend (the Canvas2D-only generator/pixel-pass
- *  family: Fill, Stroke, 4-Colour Gradient, Beam, Sharpen, Noise, Keylight,
- *  Wave Warp, Turbulent Displace). CSS/LUT/colour-matrix/procedural effects
- *  all have GPU forms and are handled by shaders, so they are NOT baked here. */
+ *  layer texture for the GPU backend (interior styles, warps, keylight, beam,
+ *  four-color gradient, directional blur, …). Fill / Stroke / Sharpen / Noise
+ *  have CompositionPass materials and are NOT baked here. CSS/LUT/colour-matrix
+ *  /procedural effects also have GPU forms. */
 export function isGpuUnbakeableEffect(type: string): boolean {
   return isCanvas2dOnlyEffect(type);
 }
 
-/** Does this layer's enabled effect stack contain anything the GPU can't draw
- *  natively (so the GPU path must CPU-bake the whole layer)? */
+/**
+ * Does this layer's enabled effect stack contain anything the GPU can't draw
+ * natively (so the GPU path must CPU-bake the whole layer)?
+ *
+ * A MASK-SCOPED effect counts regardless of its type (M6). The GPU effect chain
+ * has no notion of a per-effect scope, so handing it a scoped effect would apply
+ * that effect to the WHOLE layer — a blur meant for one region blurring
+ * everything, which looks like a plausible design choice rather than a bug.
+ * Scoping is honoured only in the bake, so requesting it forces the bake.
+ */
 export function effectsNeedCpuBake(effects: ReadonlyArray<Effect> | undefined): boolean {
-  return !!effects?.some((e) => e.enabled !== false && isGpuUnbakeableEffect(e.type));
+  return !!effects?.some(
+    (e) => e.enabled !== false && (isGpuUnbakeableEffect(e.type) || !!e.maskId),
+  );
 }
 
 /**
@@ -52,27 +68,69 @@ export function layerNeedsCpuBake(
   return effectsNeedCpuBake(effects) || (fillOpacity !== undefined && fillOpacity < 1);
 }
 
+/** The minimum a caller must know about a layer to answer "is it baked?". */
+export interface BakeSubject {
+  kind: string;
+  effects?: ReadonlyArray<Effect>;
+  fillOpacity?: number;
+}
+
 /**
- * Should an IMAGE layer's texture be baked through the effect chain?
+ * THE single source of truth for "is this layer baked?" (M5b / F6).
+ *
+ * ── Why this exists ──────────────────────────────────────────────────
+ * Bake ownership was expressed by three predicates that a caller had to CHOOSE
+ * between, and the correct choice depends on the layer's KIND:
+ *
+ *   vector (shape/text)   layerNeedsCpuBake   — effects OR fill opacity
+ *   image / video         imageNeedsCpuBake   — effects only
+ *   neither               effectsNeedCpuBake  — the narrow term
+ *
+ * Choosing wrong is not a crash. It is two sides of the pipeline disagreeing
+ * about who owns the effect chain, and the symptom is that the chain runs TWICE.
+ * That shipped: `snapshotToFrameScene` gated on `effectsNeedCpuBake` while
+ * `Canvas2DVectorRasterizer` gated on `layerNeedsCpuBake`, and because fill
+ * opacity alone triggers a bake with no effect requiring it, the grade, LUT,
+ * mask and spatial effects were applied by both sides. The render-test scene
+ * `fill-opacity-zero-stroke` caught it only by luck of which commits landed
+ * together — correct at HEAD, wrong mid-branch, correct again by accident.
+ *
+ * Three call sites kept in step by attention IS the defect. This function takes
+ * the LAYER and dispatches internally, so there is no choice left to get wrong.
+ * Prefer it everywhere. The narrower predicates stay exported for the places
+ * that genuinely need one term (cache-signature construction) and for tests.
+ *
+ * Fill opacity deliberately does NOT apply to image/video — it is a shape-fill
+ * concept. That asymmetry used to be implicit in which function a caller
+ * happened to reach for; it is now stated once, here.
+ */
+export function layerIsBaked(layer: BakeSubject): boolean {
+  if (layer.kind === 'image' || layer.kind === 'video') {
+    return imageNeedsCpuBake(layer.kind, layer.effects);
+  }
+  return layerNeedsCpuBake(layer.effects, layer.fillOpacity);
+}
+
+/**
+ * Should an IMAGE or VIDEO layer's texture be baked through the effect chain?
  *
  * Shapes and text rasterize themselves, so a Canvas2D-only effect just joins
- * their draw. An image arrives as a decoded bitmap and used to be uploaded
+ * their draw. An image/video arrives as decoded pixels and used to be uploaded
  * untouched, so those effects — Inner Shadow, Inner Glow, Satin, Bevel, and the
- * rest of the Canvas2D-only family — silently did NOTHING on a photo, in 2D and
+ * rest of the Canvas2D-only family — silently did NOTHING on footage, in 2D and
  * 3D alike. They are not GPU-expressible, so the only way to render them is to
  * take the same canvas round-trip the vector path takes.
  *
- * VIDEO is excluded, deliberately: a per-frame canvas round-trip through the
- * whole chain, forever. The vector path can cache on a content signature; a
- * video frame changes every frame by definition.
+ * VIDEO used to be excluded (per-frame bake cost). That made every interior
+ * style and warp a silent no-op on moving footage — the exact failure mode this
+ * codebase keeps deleting. Baking is keyed by source time + effect signature so
+ * paused scrubbing still hits cache; playback pays the cost only when styles
+ * that need it are present.
  *
  * A MASK is baked first, exactly as the vector path bakes it — interior styles
  * shape themselves from the layer's silhouette, and for a masked layer that
  * silhouette is the MASKED one, so the order is load-bearing rather than
- * incidental. This used to be an exclusion: masked image layers silently got no
- * interior styles at all, which is the one shape of limitation this codebase
- * keeps deleting, because the control accepts the value and quietly does
- * nothing. The GPU mask is dropped for a baked layer so the mask is applied
+ * incidental. The GPU mask is dropped for a baked layer so the mask is applied
  * once, not twice.
  *
  * Both the renderer backend (which requests the bake) and the snapshot adapter
@@ -83,7 +141,7 @@ export function imageNeedsCpuBake(
   kind: string,
   effects: ReadonlyArray<Effect> | undefined,
 ): boolean {
-  return kind === 'image' && effectsNeedCpuBake(effects);
+  return (kind === 'image' || kind === 'video') && effectsNeedCpuBake(effects);
 }
 
 /**
@@ -103,6 +161,8 @@ export function applyEffectChain(
   effects: ReadonlyArray<Effect> | undefined,
   scratch: (w: number, h: number) => HTMLCanvasElement,
   fillOpacity = 1,
+  /** The layer's mask stack, for effects that carry a `maskId` scope (M6). */
+  masks?: LayerMask,
 ): void {
   const off = oc.canvas;
   let pending: string[] = [];
@@ -180,9 +240,85 @@ export function applyEffectChain(
     pending = [];
   };
 
+  /**
+   * Composite `after` (currently in `oc`) back over `before`, weighted by the
+   * mask's coverage — the M6 scoped-effect blend.
+   *
+   * out = before·(1−cov) + after·cov, done with canvas ops rather than a pixel
+   * loop so feather and per-mask opacity come through as real partial coverage.
+   *
+   * At cov = 0 the output is `before` BYTE-IDENTICAL, alpha included. That is
+   * the invariant that makes this an effect mask and not a second layer mask:
+   * it decides where the effect applies, never where the layer exists.
+   */
+  const compositeScoped = (before: HTMLCanvasElement, path: MaskPath): void => {
+    const cov = scratch(w, h);
+    const cc = cov.getContext('2d');
+    if (!cc) return;
+    cc.setTransform(1, 0, 0, 1, 0, 0);
+    cc.clearRect(0, 0, w, h);
+    // Mask points are in layer-local CENTRED space; the bake canvas is
+    // top-left origin, so shift by half. Painted as a single-path stack so the
+    // path's own feather and opacity are the coverage — that is what makes a
+    // soft mask give a soft effect edge rather than a hard cut of a soft one.
+    cc.translate(w / 2, h / 2);
+    paintMaskMatte(cc, { paths: [{ ...path, mode: 'add' }] }, w, h);
+
+    // after ∩ coverage
+    const after = scratch(w, h);
+    const ac = after.getContext('2d');
+    if (!ac) return;
+    ac.setTransform(1, 0, 0, 1, 0, 0);
+    ac.clearRect(0, 0, w, h);
+    ac.drawImage(oc.canvas, 0, 0);
+    ac.globalCompositeOperation = 'destination-in';
+    ac.drawImage(cov, 0, 0);
+
+    // before minus coverage, then add the masked after
+    oc.setTransform(1, 0, 0, 1, 0, 0);
+    oc.globalCompositeOperation = 'source-over';
+    oc.filter = 'none';
+    oc.clearRect(0, 0, w, h);
+    oc.drawImage(before, 0, 0);
+    oc.globalCompositeOperation = 'destination-out';
+    oc.drawImage(cov, 0, 0);
+    oc.globalCompositeOperation = 'source-over';
+    oc.drawImage(after, 0, 0);
+  };
+
+  const snapshot = (): HTMLCanvasElement => {
+    const c = scratch(w, h);
+    const cx = c.getContext('2d');
+    if (cx) {
+      cx.setTransform(1, 0, 0, 1, 0, 0);
+      cx.clearRect(0, 0, w, h);
+      cx.drawImage(oc.canvas, 0, 0);
+    }
+    return c;
+  };
+
   const runChain = (): void => {
   for (const e of effects ?? []) {
     if (e.enabled === false) continue;
+    // ── Effect-scoped mask (M6) ──
+    // Everything queued before this must LAND first, or the scoped composite
+    // would capture a `before` that is missing the effects above it and then
+    // replay them through the mask.
+    const scope = e.maskId ? masks?.paths.find((p) => p.id === e.maskId) : undefined;
+    if (scope) {
+      flushCss();
+      const before = snapshot();
+      applyOne(e);
+      flushCss();
+      compositeScoped(before, scope);
+      continue;
+    }
+    applyOne(e);
+  }
+  flushCss();
+  };
+
+  function applyOne(e: Effect): void {
     if (isLutEffect(e.type)) {
       flushCss();
       const lut = buildChannelLut([e]);
@@ -205,7 +341,13 @@ export function applyEffectChain(
       } else if (isCanvas2dProcedural(e.type)) {
         flushCss();
         applyProceduralEffect(oc, w, h, e);
-      } else if (isCanvas2dOnlyEffect(e.type)) {
+      } else if (hasCanvas2dImplementation(e.type)) {
+        // NOT `isCanvas2dOnlyEffect`: Fill / Stroke / Sharpen / Noise have GPU
+        // materials and so do not force a bake, but once a layer is baked for
+        // any other reason its GPU effect list is dropped entirely and this is
+        // the only place left that can draw them. Gating on "forces a bake"
+        // instead of "can be drawn" made all four no-op on every layer that
+        // also carried an interior style.
         flushCss();
         applyCanvas2dEffect(oc, w, h, e);
       }
@@ -213,8 +355,6 @@ export function applyEffectChain(
       // no Canvas2D form and is skipped here.
     }
   }
-  flushCss();
-  };
 
   // The silhouette is installed for the whole chain, not per effect: a stack can
   // interleave generators with pixel passes, and every generator in it must shape

@@ -1,5 +1,6 @@
 import { snapshotToFrameScene, layerToRenderable, viewToCamera } from './snapshotToFrameScene';
 import type { RenderSnapshot, RenderLayer } from './RenderBackend';
+import { BLEND_MODES } from '@core/effects/blendMode';
 import { Renderer, NullBackend, type Mat3 } from '@motion/renderer';
 
 function layer(over: Partial<RenderLayer> = {}): RenderLayer {
@@ -106,7 +107,7 @@ describe('snapshotToFrameScene', () => {
     // pixels are available to build the matte for the matted layer.
     const scene = snapshotToFrameScene(snapshot([
       layer({ id: 'src', isMatteSource: true }),
-      layer({ id: 'matted', matte: 'alpha' }),
+      layer({ id: 'matted', matte: { mode: 'alpha', inverted: false } }),
     ]));
     expect(scene.renderables.map((r) => r.id)).toEqual(['src', 'matted']);
     const src = scene.renderables.find((r) => r.id === 'src')!;
@@ -154,7 +155,7 @@ describe('snapshotToFrameScene', () => {
       layer({ id: 's', kind: 'shape' }),
       layer({ id: 'p', kind: 'shape', primitive: 'path', pathPoints: [{ x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 }] }),
       layer({ id: 'm', kind: 'shape', mask: { paths: [{ id: 'm1', points: [], inverted: false, mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0 }] } }),
-      layer({ id: 'c', kind: 'shape', matte: 'alpha' }),
+      layer({ id: 'c', kind: 'shape', matte: { mode: 'alpha', inverted: false } }),
       layer({ id: 't', kind: 'text' }),
       layer({ id: 'i', kind: 'image' }),
       layer({ id: 'v', kind: 'video' }),
@@ -198,6 +199,26 @@ describe('snapshotToFrameScene', () => {
     expect(r!.advancedBlend).toBe(1);
     const [o] = snapshotToFrameScene(snapshot([layer({ blend: 'overlay' })])).renderables;
     expect(o!.advancedBlend).toBe(3);
+  });
+
+  test('routes the Matte family through the combine, at its own ids', () => {
+    // These ids are a WIRE FORMAT shared with two shader dialects. Pinning them
+    // here is what stops a renumber from silently turning Stencil Alpha into
+    // Silhouette Luma — both of which render a perfectly plausible picture.
+    const id = (blend: string): number | undefined =>
+      snapshotToFrameScene(snapshot([layer({ blend: blend as never })])).renderables[0]!.advancedBlend;
+    expect(id('stencil-alpha')).toBe(31);
+    expect(id('stencil-luma')).toBe(32);
+    expect(id('silhouette-alpha')).toBe(33);
+    expect(id('silhouette-luma')).toBe(34);
+  });
+
+  test('every blend mode maps to a distinct combine id', () => {
+    // One id serving two modes is invisible until someone compares two renders.
+    const ids = BLEND_MODES
+      .map((b) => snapshotToFrameScene(snapshot([layer({ blend: b.mode })])).renderables[0]!.advancedBlend ?? 0)
+      .filter((n) => n > 0);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   test('keeps a fixed-function blend mode on the renderable blend field', () => {
@@ -429,6 +450,26 @@ describe('Accepts-Lights routing (per-fragment vs per-quad fold)', () => {
     const r = layerToRenderable(lit3d({ shade3d: undefined }));
     expect(r.threeD?.shade).toBeUndefined();
     expect(r.color!.r).toBeCloseTo(0.5, 5);
+  });
+
+  /**
+   * AE's per-layer Quality switch.
+   *
+   * This shipped WRITE-ONLY: stored on `fx`, carried into the snapshot, folded
+   * into the CONTENT HASH — and read by no renderer, so flipping it busted the
+   * layer's texture cache and redrew a byte-identical image. These are the
+   * behavioural half of the guard; `__tests__/contentHashReaders.test.ts` is
+   * the structural half that catches the whole class.
+   */
+  describe('per-layer draft quality → sampling', () => {
+    test("quality 'draft' asks the compositor for nearest sampling", () => {
+      expect(layerToRenderable(layer({ kind: 'image', quality: 'draft' })).sampling).toBe('nearest');
+    });
+
+    test('the default (best) leaves sampling unset, i.e. linear', () => {
+      expect(layerToRenderable(layer({ kind: 'image' })).sampling).toBeUndefined();
+      expect(layerToRenderable(layer({ kind: 'image', quality: undefined })).sampling).toBeUndefined();
+    });
   });
 
   test('scene passthrough: lights3d + camera eye reach the FrameScene', () => {

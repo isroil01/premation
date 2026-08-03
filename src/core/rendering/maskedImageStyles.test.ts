@@ -34,8 +34,10 @@ describe('imageNeedsCpuBake', () => {
     expect(imageNeedsCpuBake('image', undefined)).toBe(false);
   });
 
-  it('never bakes VIDEO — a per-frame round-trip with nothing cacheable', () => {
-    expect(imageNeedsCpuBake('video', innerShadow)).toBe(false);
+  it('bakes VIDEO carrying Canvas2D-only styles (same contract as image)', () => {
+    // Previously excluded for cost; that made interior styles a silent no-op on
+    // footage. Bake is keyed by source time so scrubbing still caches.
+    expect(imageNeedsCpuBake('video', innerShadow)).toBe(true);
   });
 
   it('leaves shapes and text alone — they rasterize themselves', () => {

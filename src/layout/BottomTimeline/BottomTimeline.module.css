@@ -10,13 +10,15 @@
   overflow: hidden;
 }
 
-/* ── Header / transport bar ──────────────────────────────────────── */
+/* ── Header / transport bar ────────────────────────────────────────
+   Sized to --bar-height-tool (36px) rather than an arbitrary 38px, so it
+   agrees with the top tool row down the editor's vertical axis. */
 .header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 38px;
-  padding: 0 8px;
+  gap: var(--space-3);
+  height: var(--bar-height-tool);
+  padding: 0 var(--space-4);
   background: color-mix(in srgb, var(--color-surface-2) 85%, transparent);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -36,27 +38,32 @@
 }
 
 
-/* ── Timecode ──────────────────────────────────────────────────────── */
+/* ── Timecode ────────────────────────────────────────────────────────
+   The timecode and the search field sit side by side at the same height but
+   carried different corner radii (4px vs 6px). Both now take the control
+   radius, so the row reads as one set of controls instead of two. */
 .timecode {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
   background: var(--color-surface-3);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   font-family: var(--font-family-mono);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
+  letter-spacing: var(--letter-spacing-wide);
   color: var(--color-text-primary);
   cursor: default;
   white-space: nowrap;
-  height: 24px;
+  height: var(--control-height-md);
   box-sizing: border-box;
-  margin-right: 4px;
-  transition: all 120ms ease;
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
   flex-shrink: 0;
 }
 
@@ -67,10 +74,15 @@
 }
 
 .timecodeTotal {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: var(--font-family-mono);
-  color: var(--color-text-muted);
-  font-weight: 400;
+  /*
+   * Not --color-text-muted. That token is documented as "decorative / icons
+   * only, never body", and on the raised timecode chip it measured 1.83:1 —
+   * this is the composition's duration, which is data the user reads.
+   */
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
 }
 
 /* ── Timeline Search/Filter Bar ────────────────────────────────────── */
@@ -78,17 +90,18 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   background: var(--color-surface-3);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 0 8px;
-  height: 24px;
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-4);
+  height: var(--control-height-md);
   flex: 0 0 160px;
   min-width: 100px;
   max-width: 220px;
-  margin: 0 4px;
-  transition: all 120ms ease;
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
   flex-shrink: 0;
 }
 
@@ -114,7 +127,7 @@
   border: none;
   outline: none;
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   padding: 0;
   width: 100%;
 }
@@ -152,9 +165,9 @@
 
 /* Play button — matches editor toolbar design vibe */
 button.play {
-  border-radius: 6px;
-  width: 30px;
-  height: 30px;
+  border-radius: var(--radius-control);
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
   background: var(--color-primary);
   color: var(--color-primary-foreground);
   border: none;
@@ -195,7 +208,7 @@ button.play:hover {
   letter-spacing: 0.02em;
   text-transform: none;
   cursor: pointer;
-  transition: all 120ms ease;
+  transition: var(--motion-hover-transition);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -259,7 +272,7 @@ button.play:hover {
   color: var(--color-text-secondary);
   cursor: pointer;
   text-align: center;
-  transition: all 120ms ease;
+  transition: var(--motion-hover-transition);
   letter-spacing: 0.02em;
 }
 .zoomLabel:hover:not(:disabled) {
@@ -289,7 +302,7 @@ button.play:hover {
   cursor: pointer;
   font-size: 11px;
   font-family: var(--font-family-sans);
-  transition: all 120ms ease;
+  transition: var(--motion-hover-transition);
 }
 .rowHeightBtn:hover {
   background: var(--color-surface-0);
@@ -351,14 +364,14 @@ button.play:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 20px;
-  padding: 0 6px;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
   background: transparent;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--motion-duration-fast, 120ms) var(--motion-ease-standard, ease);
+  transition: var(--motion-hover-transition);
   white-space: nowrap;
 }
 .interpBtn:hover {
@@ -426,7 +439,7 @@ button.play:hover {
   width: 14px;
   height: 14px;
   margin-left: 2px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
   font-size: 12px;
   line-height: 1;
@@ -449,8 +462,8 @@ button.play:hover {
 .tlGripBtn {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
   border: none;
   background: transparent;
   color: var(--color-text-muted);
@@ -509,7 +522,7 @@ button.play:hover {
   font: inherit;
   font-size: 11px;
   padding: 5px 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: background-color 100ms ease, color 100ms ease;
   white-space: nowrap;
@@ -533,7 +546,7 @@ button.play:hover {
 .compBtn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2, 6px);
+  gap: var(--space-2);
   padding: 3px 10px;
   border-radius: 4px;
   background: var(--color-surface-3);

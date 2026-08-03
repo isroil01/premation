@@ -36,15 +36,16 @@ import { EffectPass } from './EffectPass';
  * Scaling a layer to 200% does not double its shadow's blur.
  *
  * The one exception is the CPU-bake path: effects with no GPU shader form
- * (`isCanvas2dOnlyEffect` — Fill, Stroke, Beam, Sharpen, Noise, Keylight, the
- * warps) are baked into the layer's texture in LOCAL space, i.e. before
- * transform, and therefore DO scale with it. That inconsistency is real and
- * predates this comment; it is documented rather than fixed here because
- * changing it would alter existing renders.
+ * (`isCanvas2dOnlyEffect` — Beam, Keylight, warps, interior styles, …) are
+ * baked into the layer's texture in LOCAL space, i.e. before transform, and
+ * therefore DO scale with it. Fill / Stroke / Sharpen / Noise have GPU
+ * materials and run after transform like blur/glow. That split is intentional.
  */
 export const LAYER_TARGET = 'layer-target';
 export const BLUR_TARGET1 = 'blur-target1';
 export const BLUR_TARGET2 = 'blur-target2';
+/** Extra ping-pong slot for multi-lobe optical bloom (glow core / wide). */
+export const BLUR_TARGET3 = 'blur-target3';
 export const MATTE_TARGET = 'matte-target';
 /**
  * Half-resolution ping-pong targets for the backdrop blur behind frosted glass.
@@ -233,7 +234,7 @@ interface ListState {
 export class CompositionPass extends RenderPass {
   readonly name = 'composition';
   override get writes() {
-    return [EffectPass.activeColorTarget, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, MATTE_TARGET, ...PRECOMP_TARGETS];
+    return [EffectPass.activeColorTarget, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, ...PRECOMP_TARGETS];
   }
   override readonly after = ['background'];
 
@@ -268,7 +269,12 @@ export class CompositionPass extends RenderPass {
     const { viewport, services } = ctx;
     const cmds = into ?? new CommandBuffer();
     const blend = blendOverride ?? 'normal';
-    const smp = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
+    // AE's per-layer Quality switch. 'draft' samples NEAREST — being visibly
+    // rougher and cheaper IS the feature. Cached under its own resource key so
+    // the two samplers coexist instead of thrashing one slot.
+    const smp = () => (r.sampling === 'nearest'
+      ? services.resources.sampler('nearest-clamp', { min: 'nearest', mag: 'nearest', addressU: 'clamp', addressV: 'clamp' })
+      : services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' }));
     const uv = r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 };
     const mvp = mvpFor(viewport, modelOverride ?? r.modelMatrix);
     const isSolid = r.kind === 'rect' || r.kind === 'path' || r.kind === 'group';
@@ -324,7 +330,9 @@ export class CompositionPass extends RenderPass {
     ctx: RenderPassContext,
     effects: readonly RenderableEffect[],
     inputTex: TextureHandle,
-    pool: readonly [string, string, string],
+    /** Ping-pong targets. Need ≥3 (cur + 2 scratch); a 4th enables optical
+     *  bloom's wide lobe (BLUR_TARGET3). */
+    pool: readonly [string, string, string, ...string[]],
     byId: ReadonlyMap<string, Renderable>,
     selfId: string,
     space?: FxSpace,
@@ -352,15 +360,21 @@ export class CompositionPass extends RenderPass {
     let curName = pool[0];
 
     for (const effect of effects) {
-      const free = pool.filter((n) => n !== curName) as [string, string];
+      const free = pool.filter((n) => n !== curName);
       const f0 = free[0];
       const f1 = free[1];
+      // Need two scratch targets to blur; without them skip the spatial pass.
+      if (!f0 || !f1) continue;
+      // Optional third slot (BLUR_TARGET3) for optical bloom's wide lobe.
 
       if (effect.type === 'blur' || effect.type === 'glow' || effect.type === 'drop-shadow') {
-        const rPx = effect.radiusPx;
+        // Glow gets a slightly wider mid kernel; the wide lobe (below) is a
+        // separate pass into BLUR_TARGET3 so optical bloom has real falloff.
+        const rPx = effect.type === 'glow' ? effect.radiusPx * 1.15 : effect.radiusPx;
         // Zero radius/softness: the un-blurred layer IS the source (a hard glow
         // ring / hard-edged shadow) — never skip the composite.
         let blurredTex = curTex;
+        let wideTex: TextureHandle | null = null;
         if (rPx > 0) {
           // Horizontal (cur → f1)
           const blur1Cmds = new CommandBuffer();
@@ -389,6 +403,36 @@ export class CompositionPass extends RenderPass {
             const vTex = texOf(f0);
             if (vTex) blurredTex = vTex;
           }
+
+          // Optical wide lobe: second separable blur at ~2.2× into the third
+          // free target (BLUR_TARGET3). Only when the pool has it and the glow
+          // is large enough to read the difference.
+          const f2 = free[2] as string | undefined;
+          if (effect.type === 'glow' && f2 && rPx >= 6) {
+            const wideR = rPx * 2.2;
+            const wH = new CommandBuffer();
+            wH.add({
+              batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
+              uniforms: packBlur(mvp, targetUv, 1.0 / viewport.pixelSize.width, 0, wideR * kx),
+              texture: curTex, sampler: clampSampler(),
+            });
+            const encWH = beginViewportPass(ctx, 'glowWideH', writeAttachment(ctx, f1, Color.transparent()));
+            services.quad.execute(encWH, wH);
+            encWH.end();
+            const whTex = texOf(f1);
+            if (whTex) {
+              const wV = new CommandBuffer();
+              wV.add({
+                batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
+                uniforms: packBlur(mvp, targetUv, 0, 1.0 / viewport.pixelSize.height, wideR * ky),
+                texture: whTex, sampler: clampSampler(),
+              });
+              const encWV = beginViewportPass(ctx, 'glowWideV', writeAttachment(ctx, f2, Color.transparent()));
+              services.quad.execute(encWV, wV);
+              encWV.end();
+              wideTex = texOf(f2);
+            }
+          }
         }
         // Composite into f1 (distinct from the blurred result in f0 and — for
         // rPx = 0 — from the original in curName, since f1 ≠ curName).
@@ -399,7 +443,22 @@ export class CompositionPass extends RenderPass {
           // emitSilhouette, not emitTextured: the glow is the blurred ALPHA
           // filled with the glow colour. Tinting instead returned
           // layerRGB × glowRGB — see silhouetteOf in shaders/builtin.ts.
-          emitSilhouette(compCmds, mvp, effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), 1, 'screen', blurredTex, clampSampler(), targetUv);
+          //
+          // Two-lobe optical bloom: a wide soft pedestal (when the pool has a
+          // third slot) under the mid halo. Reads as light rather than as a
+          // CSS ring.
+          //
+          // The mid lobe is emitted ONCE. It used to go out twice, at 0.7 and
+          // then 1.0, described as "mid halo + bright core" — but both draws
+          // sampled the SAME blurred texture, so it was not a core, just the
+          // one halo screened over itself. Screen is not idempotent, so that
+          // roughly doubled the strength of every glow in every existing
+          // project. A real core would need a third, tighter blur.
+          const glowColor = effect.color ?? Color.fromHex('rgba(120,180,255,0.9)');
+          if (wideTex) {
+            emitSilhouette(compCmds, mvp, glowColor, 0.4, 'screen', wideTex, clampSampler(), targetUv);
+          }
+          emitSilhouette(compCmds, mvp, glowColor, 1, 'screen', blurredTex, clampSampler(), targetUv);
           emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
         } else {
           // The shadow copy is the whole buffer shifted. In screen space that
@@ -557,7 +616,7 @@ export class CompositionPass extends RenderPass {
   ): TextureHandle | null {
     if (!r.effects || r.effects.length === 0) return srcTex;
     const { services } = ctx;
-    const res = this.runEffectsChain(ctx, r.effects, srcTex, [dest, BLUR_TARGET1, BLUR_TARGET2], byId, r.id, space);
+    const res = this.runEffectsChain(ctx, r.effects, srcTex, [dest, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3], byId, r.id, space);
     if (res.name === dest) return res.tex;
     // Settle the result into `dest` (scratch targets are reused immediately after).
     const clampSampler = services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
@@ -1008,10 +1067,38 @@ export class CompositionPass extends RenderPass {
           const inv = r.matte.inverted ? 1 : 0;
           const mode = { m: [luma, inv, 0, 0, 0, 0, 0, 0, 0], offset: [0, 0, 0] };
           emitMatteCombine(mainCmds, screenMvp(), r.blend, mattedTex, clampSampler(), matteTex, mode, targetUv);
+        } else {
+          // The matte could not be built. Almost always: the source is a precomp
+          // and prepareIsolatedPrecomp refused because nesting exceeded
+          // MAX_PRECOMP_DEPTH.
+          //
+          // The layer still draws — never silently vanish authored work — but it
+          // draws UNMATTED, which is a materially different picture: a layer
+          // that should be cut to a shape renders whole. That used to happen with
+          // no signal at all, which is the worst available outcome, because the
+          // result looks finished. Now it is stated and the host decides:
+          // preview warns and keeps the frame, export refuses it.
+          ctx.services.diagnostics.push({
+            code: 'matte-source-unavailable',
+            layerId: r.id,
+            detail:
+              `Track matte on "${r.id}" could not be built from source "${r.matte.sourceId}" — `
+              + `the layer rendered WITHOUT its matte. A precomp matte source nested deeper `
+              + `than ${MAX_PRECOMP_DEPTH} levels cannot be isolated.`,
+          });
         }
         return;
       }
-      // No source resolved — fall through and draw the layer normally.
+      // Source id present but no such renderable in this frame. Same class, same
+      // reporting: draw the layer, and say what was lost.
+      ctx.services.diagnostics.push({
+        code: 'matte-source-unavailable',
+        layerId: r.id,
+        detail:
+          `Track matte on "${r.id}" references source "${r.matte.sourceId}", which is not `
+          + `present in this composition — the layer rendered WITHOUT its matte.`,
+      });
+      // Fall through and draw the layer normally.
     }
 
     if (r.adjustment) {
@@ -1044,7 +1131,7 @@ export class CompositionPass extends RenderPass {
       const effects = r.effects;
       let finalTex = belowTex;
       if (effects && effects.length > 0) {
-        const res = this.runEffectsChain(ctx, effects, belowTex, [LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2], byId, r.id);
+        const res = this.runEffectsChain(ctx, effects, belowTex, [LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3], byId, r.id);
         finalTex = res.tex;
       }
       const applyCmds = new CommandBuffer();
@@ -1341,12 +1428,14 @@ export class CompositionPass extends RenderPass {
     // Now process each effect
     for (const effect of r.effects!) {
       if (effect.type === 'blur' || effect.type === 'glow' || effect.type === 'drop-shadow') {
-        const rPx = effect.radiusPx;
+        // Mid kernel slightly wider for glow; wide lobe uses BLUR_TARGET3.
+        const rPx = effect.type === 'glow' ? effect.radiusPx * 1.15 : effect.radiusPx;
         // Zero radius/softness: the un-blurred layer IS the source (a hard
         // glow ring / hard-edged shadow). `continue`-ing here skipped the
         // WHOLE composite, so a layer whose only effect had softness 0
         // disappeared entirely on the GPU backend.
         let blur2Tex = layerTex;
+        let wideTex: TextureHandle | null = null;
         if (rPx > 0) {
           // Horizontal blur (LAYER_TARGET -> BLUR_TARGET1)
           const blur1Cmds = new CommandBuffer();
@@ -1390,6 +1479,32 @@ export class CompositionPass extends RenderPass {
           const blurred = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET2)!);
           if (!blurred) continue;
           blur2Tex = blurred;
+
+          if (effect.type === 'glow' && rPx >= 6) {
+            const wideR = rPx * 2.2;
+            const wH = new CommandBuffer();
+            wH.add({
+              batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
+              uniforms: packBlur(screenMvp(), targetUv, 1.0 / viewport.pixelSize.width, 0, wideR),
+              texture: layerTex, sampler: clampSampler(),
+            });
+            const encWH = beginViewportPass(ctx, 'glowWideH', writeAttachment(ctx, BLUR_TARGET1, Color.transparent()));
+            services.quad.execute(encWH, wH);
+            encWH.end();
+            const whTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET1)!);
+            if (whTex) {
+              const wV = new CommandBuffer();
+              wV.add({
+                batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
+                uniforms: packBlur(screenMvp(), targetUv, 0, 1.0 / viewport.pixelSize.height, wideR),
+                texture: whTex, sampler: clampSampler(),
+              });
+              const encWV = beginViewportPass(ctx, 'glowWideV', writeAttachment(ctx, BLUR_TARGET3, Color.transparent()));
+              services.quad.execute(encWV, wV);
+              encWV.end();
+              wideTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET3)!) ?? null;
+            }
+          }
         }
 
         // Composite to the out target
@@ -1402,14 +1517,21 @@ export class CompositionPass extends RenderPass {
             targetUv
           );
         } else if (effect.type === 'glow') {
-          // Add glow — the blurred ALPHA filled with the glow colour (see
-          // emitSilhouette; a tint would return layerRGB × glowRGB).
+          // Two-lobe optical bloom — a wide soft pedestal under the mid halo.
+          // The mid lobe is emitted ONCE; see the twin in runEffectsChain for
+          // why the second "bright core" draw of the same texture was wrong.
+          const glowColor = effect.color ?? Color.fromHex('rgba(120,180,255,0.9)');
+          if (wideTex) {
+            emitSilhouette(
+              mainCmds, screenMvp(),
+              glowColor, r.opacity * 0.4, 'screen', wideTex,
+              clampSampler(), targetUv
+            );
+          }
           emitSilhouette(
-            mainCmds,
-            screenMvp(),
-            effect.color ?? Color.fromHex('rgba(120,180,255,0.9)'), r.opacity, 'screen', blur2Tex,
-            clampSampler(),
-            targetUv
+            mainCmds, screenMvp(),
+            glowColor, r.opacity, 'screen', blur2Tex,
+            clampSampler(), targetUv
           );
           // Add original layer
           emitTextured(

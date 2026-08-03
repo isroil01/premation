@@ -44,10 +44,25 @@
   --color-splitter-hover:    var(--color-selection);
 
   /* ── Text ─────────────────────────────────────────────────────── */
-  /* Neutral off-whites (zero blue). AA-checked on surface-1 (#171718). */
+  /*
+   * Neutral off-whites (zero blue).
+   *
+   * Re-checked 2026-08-03 against the surfaces actually in use. The previous
+   * note claimed "AA-checked on surface-1 (#171718)", but surface-1 was later
+   * lightened to #232323 and the text ramp was never re-measured — so the
+   * check was stale AND the old tertiary (#7e7e7e) failed even against the
+   * surface it named:
+   *
+   *            panel #232323   header #1d1d1d   frame #161616
+   *   #7e7e7e      3.87            4.15            4.46      ← all under AA
+   *   #8c8c8c      4.67            5.01            5.38      ← passes
+   *
+   * Tertiary carries real labels (units, counts, hints), so it has to clear
+   * 4.5:1. Anything genuinely decorative uses --color-text-muted instead.
+   */
   --color-text-primary:      #e1e1e1;
   --color-text-secondary:    #a6a6a6;
-  --color-text-tertiary:     #7e7e7e;  /* AA floor — never below 13px text */
+  --color-text-tertiary:     #8c8c8c;  /* AA on panel/header/frame — see above */
   --color-text-muted:        #5a5a5a;  /* decorative / icons only, never body */
   --color-text-inverse:      #161616;
   --color-text-on-accent:    #ffffff;

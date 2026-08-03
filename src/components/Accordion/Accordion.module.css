@@ -13,6 +13,13 @@
   overflow: hidden;
 }
 
+/* The hairline separates one section from the NEXT, so the last one has
+   nothing to separate — it only drew a line across the empty space below the
+   final section. */
+.item:last-child {
+  border-bottom: none;
+}
+
 .disabled {
   opacity: 0.5;
 }
@@ -27,8 +34,10 @@
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  height: 32px;
-  padding: 0 12px;
+  /* A section header band inside a panel — same height as the panel headers
+     above it, so section rows and panel chrome share one horizontal rhythm. */
+  height: var(--bar-height-panel);
+  padding: 0 var(--space-5);
   background: transparent;
   border: none;
   color: var(--color-text-secondary);
@@ -43,7 +52,7 @@
 }
 
 .trigger:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-hover);
   color: var(--color-text-primary);
 }
 
@@ -83,10 +92,12 @@
 }
 
 .panel {
-  padding: 10px 12px 12px 12px;
+  /* Aligned to the trigger's 12px gutter so labels inside a section line up
+     with the section's own name rather than sitting a couple of pixels off. */
+  padding: var(--space-4) var(--space-5) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-4);
   background: transparent;
 }
 

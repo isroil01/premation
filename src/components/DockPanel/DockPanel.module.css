@@ -109,10 +109,10 @@
   border-radius: 0;
 }
 .content::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-dimmed, #555);
+  background: var(--color-text-muted);
 }
 .content::-webkit-scrollbar-track {
-  background: var(--color-surface-0, #151516);
+  background: var(--color-surface-0);
 }
 
 /* Drag-to-reorder wrapper for each vertical tab icon. */
@@ -171,14 +171,14 @@
   position: absolute;
   left: 110%;
   top: 0;
-  z-index: var(--z-index-popover, 1360);
+  z-index: var(--z-index-popover);
   min-width: 180px;
   background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid var(--color-border-strong);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-lg, 8px);
+  border-radius: var(--radius-lg);
   padding: 4px;
   list-style: none;
   margin: 0;
@@ -208,9 +208,9 @@
   background: transparent;
   color: var(--color-text-secondary);
   font: inherit;
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   padding: 5px 8px;
-  border-radius: 5px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: background-color 100ms ease, color 100ms ease;
   white-space: nowrap;

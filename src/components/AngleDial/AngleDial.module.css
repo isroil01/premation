@@ -21,7 +21,7 @@
 }
 
 .dial:focus-visible {
-  box-shadow: var(--shadow-focus-ring, 0 0 0 2px var(--color-primary));
+  box-shadow: var(--shadow-focus-ring);
 }
 
 .dragging {
@@ -30,12 +30,12 @@
 
 .dragging .needle,
 .dial:hover .needle {
-  stroke: var(--color-primary-hover, var(--color-primary));
+  stroke: var(--color-primary-hover);
 }
 
 .ring {
   fill: var(--color-surface-1);
-  stroke: var(--color-field-border, var(--color-border));
+  stroke: var(--color-field-border);
   stroke-width: 1;
 }
 
@@ -58,7 +58,7 @@
 /* Revolutions badge ("1x") — only rendered past the first full turn. */
 .turns {
   font-family: var(--font-family-mono);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-tertiary);
   user-select: none;

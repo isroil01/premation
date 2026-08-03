@@ -30,6 +30,7 @@ import {
 } from '@core/plugins/registry';
 import { showPluginPanel } from './PluginPanel';
 import { downloadStarterPlugin } from './starterPlugin';
+import { customAlert, customConfirm } from '@components/Modal/Dialogs';
 import styles from './PluginsModal.module.css';
 
 /** Re-render on any runtime change (start, stop, crash, command registered). */
@@ -92,7 +93,7 @@ function ConsentSheet({
       ...(publisherKey ? { publisherKey } : {}),
     });
     setBusy(false);
-    if (err) { window.alert(err); return; }
+    if (err) { void customAlert('Could not install plugin', err, { isDanger: true }); return; }
     onDone();
   };
 
@@ -490,9 +491,14 @@ function PluginRow({
   const [open, setOpen] = useState<'none' | 'log' | 'perms'>('none');
 
   const confirmRemove = (): void => {
-    if (window.confirm(`Uninstall “${manifest.name}”? Anything it added to your project stays.`)) {
-      pluginHost.uninstall(manifest.id);
-    }
+    void (async () => {
+      const ok = await customConfirm(
+        'Uninstall plugin',
+        `Uninstall “${manifest.name}”? Anything it added to your project stays.`,
+        { confirmLabel: 'Uninstall', isDanger: true },
+      );
+      if (ok) pluginHost.uninstall(manifest.id);
+    })();
   };
 
   return (
@@ -672,7 +678,8 @@ export function PluginsManager({ close }: { close: () => void }): JSX.Element {
   const applyUpdate = useCallback(async (entry: InstalledPlugin, update: RegistryUpdate) => {
     const pinned = entry.publisherKey;
     if (!pinned) {
-      window.alert(
+      void customAlert(
+        'No publisher key',
         `"${entry.manifest.name}" was installed from a local file, so there is no publisher key to check `
         + 'an update against. Install it from the registry to get verified updates.',
       );
@@ -681,7 +688,7 @@ export function PluginsManager({ close }: { close: () => void }): JSX.Element {
     try {
       const { bytes } = await fetchRegistryPackage(entry.manifest.id, update.latestVersion, pinned);
       const result = readPluginZip(bytes);
-      if (!result.pkg) { window.alert(result.errors.join('\n')); return; }
+      if (!result.pkg) { void customAlert('Update package is not readable', result.errors.join('\n'), { isDanger: true }); return; }
 
       const asksForMore = result.pkg.manifest.permissions.some((p) => !entry.granted.includes(p));
       if (asksForMore) {
@@ -691,10 +698,10 @@ export function PluginsManager({ close }: { close: () => void }): JSX.Element {
         return;
       }
       const err = pluginHost.install(result.pkg, entry.granted, { source: 'registry', publisherKey: pinned });
-      if (err) { window.alert(err); return; }
+      if (err) { void customAlert('Could not install update', err, { isDanger: true }); return; }
       setUpdates((cur) => cur.filter((u) => u.id !== entry.manifest.id));
     } catch (err) {
-      window.alert((err as Error).message);
+      void customAlert('Update failed', (err as Error).message, { isDanger: true });
     }
   }, []);
 
@@ -713,9 +720,10 @@ export function PluginsManager({ close }: { close: () => void }): JSX.Element {
     if (!target) return;
 
     const { pkg, errors } = await readPluginFolder(files);
-    if (!pkg) { window.alert(`Could not read that folder:\n\n${errors.join('\n')}`); return; }
+    if (!pkg) { void customAlert('Could not read that folder', errors.join('\n'), { isDanger: true }); return; }
     if (pkg.manifest.id !== target.manifest.id) {
-      window.alert(
+      void customAlert(
+        'Wrong plugin',
         `That folder contains "${pkg.manifest.id}", not "${target.manifest.id}".\n\n`
         + 'Install it from the drop zone instead.',
       );
@@ -726,7 +734,7 @@ export function PluginsManager({ close }: { close: () => void }): JSX.Element {
     if (asksForMore) { setPending({ pkg, source: 'folder' }); return; }
 
     const err = pluginHost.install(pkg, target.granted, { source: 'folder' });
-    if (err) window.alert(err);
+    if (err) void customAlert('Could not reload plugin', err, { isDanger: true });
   }, []);
 
   if (pending) {

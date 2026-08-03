@@ -1,17 +1,25 @@
-/* IconButton — Premium, flat style icons */
+/*
+ * IconButton — flat, icon-only control.
+ *
+ * Its size ladder is IDENTICAL to Button's. It used to run 18/22/26/30/38
+ * against Button's 18/22/28/34/42, so `size="md"` meant 26px here and 28px
+ * there — put the two side by side in a toolbar, as the chrome does
+ * constantly, and they simply did not line up. A named size must mean one
+ * height across the whole app or every row built from both drifts.
+ */
 
 .root {
   --ib-bg:        transparent;
-  --ib-bg-hover:  rgba(255, 255, 255, 0.07);
+  --ib-bg-hover:  var(--color-hover);
   --ib-bg-active: var(--color-primary-subtle);
   --ib-fg:        var(--color-text-secondary);
 
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
   background: var(--ib-bg);
   color: var(--ib-fg);
   border: 1px solid transparent;
@@ -59,7 +67,7 @@
   --ib-bg-hover:  var(--color-primary-hover);
   --ib-bg-active: var(--color-primary-active);
   --ib-fg:        var(--color-primary-foreground);
-  border-color:   rgba(0, 0, 0, 0.25);
+  border-color:   var(--color-black-a24);
 }
 
 .root[data-variant="primary"]:hover:not(:disabled) {
@@ -68,16 +76,17 @@
 }
 
 .root[data-variant="danger"] {
-  --ib-bg-hover:  rgba(244, 63, 94, 0.12);
+  --ib-bg-hover:  color-mix(in srgb, var(--color-danger) 12%, transparent);
   --ib-fg:        var(--color-danger);
 }
 
 .root[data-variant="danger"]:hover:not(:disabled) {
-  border-color: rgba(244, 63, 94, 0.2);
+  border-color: color-mix(in srgb, var(--color-danger) 20%, transparent);
 }
 
+/* Heights match Button's ladder exactly — see the note at the top. */
 .root[data-size="xs"] { width: 18px; height: 18px; }
 .root[data-size="sm"] { width: 22px; height: 22px; }
-.root[data-size="md"] { width: 26px; height: 26px; }
-.root[data-size="lg"] { width: 30px; height: 30px; }
-.root[data-size="xl"] { width: 38px; height: 38px; }
+.root[data-size="md"] { width: 28px; height: 28px; }
+.root[data-size="lg"] { width: 34px; height: 34px; }
+.root[data-size="xl"] { width: 42px; height: 42px; }

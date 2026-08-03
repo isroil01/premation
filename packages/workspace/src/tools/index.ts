@@ -28,6 +28,5 @@ export {
   drawToolOptions,
   CurvatureTool,
   TextTool,
-  CameraTool,
   createBuiltinTools,
 } from './builtin';

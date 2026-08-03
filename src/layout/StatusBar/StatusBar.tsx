@@ -1,10 +1,12 @@
 /**
  * StatusBar — bottom strip for app-wide status indicators.
  *
- * Slots: left, center, right. Each accepts arbitrary content (chips, text,
- * small buttons). The current implementation is purely presentational; the
- * timeline engine will push playhead time / FPS into a center chip via the
- * workspace store.
+ * Slots: left, center, right, each taking arbitrary content (chips, text, small
+ * buttons). Purely a layout shell; App.tsx fills all three with live state —
+ * dirty indicator, layer and selection counts, playhead, zoom.
+ *
+ * (The previous docstring said the timeline engine "will push" that content in,
+ * future tense, long after it had.)
  */
 
 import type { ReactNode } from 'react';

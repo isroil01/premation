@@ -8,6 +8,12 @@
  * Every operator is a pure point→point function (unit-tested); buildSnapshot
  * generates the base outline, applies the op, and hands the result to the
  * renderer as a path.
+ *
+ * One operator is temporal: Roughen (AE's Wiggle Paths) takes a time and
+ * re-randomizes at `wigglesPerSecond`, cross-fading between whole-numbered
+ * noise fields so the outline travels rather than snaps. Its noise is a pure
+ * hash of (point, time bucket, seed) — no Math.random — so preview, export and
+ * a scrub back to the same frame all produce the same shape.
  */
 
 import type { Pt } from './trimPath';
@@ -23,15 +29,28 @@ export interface PathOp {
   amount: number;
   /** Zig-Zag ridges per edge, or Round-Corners arc steps. */
   detail: number;
+  /**
+   * Roughen only — how many times per second the displacement re-randomizes
+   * (AE's Wiggles/Second). 0 freezes the noise, which is what every operator
+   * did before this existed, so an old project loads pixel-identical.
+   */
+  wigglesPerSecond?: number;
+  /** Roughen only — decorrelates two layers that would otherwise wiggle alike. */
+  seed?: number;
 }
 
-export const PATHOP_PARAMS = ['amount', 'detail'] as const;
+/**
+ * The keyframeable parameters. `wigglesPerSecond` is here so the wiggle can
+ * spin up and settle; `seed` deliberately is NOT — interpolating a seed
+ * scrubs through unrelated noise fields instead of animating anything.
+ */
+export const PATHOP_PARAMS = ['amount', 'detail', 'wigglesPerSecond'] as const;
 export type PathOpParam = (typeof PATHOP_PARAMS)[number];
 export function pathOpPropPath(param: PathOpParam): string {
   return `pathop.${param}`;
 }
 export function defaultPathOp(): PathOp {
-  return { type: 'zigzag', amount: 20, detail: 4 };
+  return { type: 'zigzag', amount: 20, detail: 4, wigglesPerSecond: 0, seed: 0 };
 }
 
 const DEG = Math.PI / 180;
@@ -227,7 +246,14 @@ export function offsetPath(pts: readonly Pt[], closed: boolean, amount: number):
  * (stable across frames, so animating amount wobbles smoothly instead of
  * boiling). AE's Roughen Edges, the vector version. Pure.
  */
-export function roughen(pts: readonly Pt[], closed: boolean, amount: number, detail: number): Pt[] {
+export function roughen(
+  pts: readonly Pt[],
+  closed: boolean,
+  amount: number,
+  detail: number,
+  phase = 0,
+  seed = 0,
+): Pt[] {
   const n = pts.length;
   if (n < 2 || amount === 0) return [...pts];
   const sub = Math.max(1, Math.min(10, Math.round(detail)));
@@ -243,10 +269,25 @@ export function roughen(pts: readonly Pt[], closed: boolean, amount: number, det
   }
   if (!closed) dense.push(pts[n - 1]!);
   const m = dense.length;
-  const rnd = (i: number): number => {
-    let h = (i + 1) * 374761393;
+  // Deterministic hash — no Math.random, so preview and export agree and a
+  // scrub back to the same frame redraws the same shape. Mixing the time
+  // bucket `k` and `seed` in here (rather than perturbing the index) keeps
+  // neighbouring points uncorrelated at every instant.
+  const hash = (i: number, k: number): number => {
+    let h = (i + 1) * 374761393 + k * 668265263 + seed * 2246822519;
     h = (h ^ (h >>> 13)) * 1274126177;
     return (((h ^ (h >>> 16)) >>> 0) / 4294967296) * 2 - 1;
+  };
+  // Smoothly cross-fade between whole-numbered noise fields so the outline
+  // travels between random configurations instead of snapping between them.
+  // `phase` is already time × wiggles-per-second, so phase 0 (the default and
+  // every pre-existing project) collapses to exactly the old static hash.
+  const k0 = Math.floor(phase);
+  const frac = phase - k0;
+  const smooth = frac * frac * (3 - 2 * frac);
+  const rnd = (i: number): number => {
+    if (smooth === 0) return hash(i, k0);
+    return hash(i, k0) + (hash(i, k0 + 1) - hash(i, k0)) * smooth;
   };
   return dense.map((p, i) => {
     const prev = dense[(i - 1 + m) % m]!;
@@ -259,8 +300,17 @@ export function roughen(pts: readonly Pt[], closed: boolean, amount: number, det
   });
 }
 
-/** Apply the configured operator to an outline. Pure. */
-export function applyPathOp(pts: readonly Pt[], closed: boolean, op: PathOp): Pt[] {
+/**
+ * Apply the configured operator to an outline. Pure.
+ *
+ * `timeSec` is the layer's OWN time — the same axis the operator's animated
+ * params were sampled on. Passing comp time here would desync the wiggle from
+ * its own keyframes on any time-remapped or stretched layer.
+ *
+ * Wiggles-per-second is folded into a phase here and nowhere else: one reader,
+ * so the inspector's number and the rendered motion cannot disagree.
+ */
+export function applyPathOp(pts: readonly Pt[], closed: boolean, op: PathOp, timeSec = 0): Pt[] {
   switch (op.type) {
     case 'zigzag':
       return zigzag(pts, closed, op.amount, op.detail);
@@ -273,7 +323,7 @@ export function applyPathOp(pts: readonly Pt[], closed: boolean, op: PathOp): Pt
     case 'offset':
       return offsetPath(pts, closed, op.amount);
     case 'roughen':
-      return roughen(pts, closed, op.amount, op.detail);
+      return roughen(pts, closed, op.amount, op.detail, timeSec * (op.wigglesPerSecond ?? 0), op.seed ?? 0);
     default:
       return [...pts];
   }
@@ -302,7 +352,16 @@ export function readPathOpConfig(node: SceneNode): PathOp | null {
   // and Twist could be selected but never read back — the dropdown snapped
   // straight back and `applyPathOp`'s pucker/twist branches were unreachable.
   const type: PathOpType = isPathOpType(o.type) ? o.type : d.type;
-  return { type, amount: num(o.amount, d.amount), detail: num(o.detail, d.detail) };
+  // Missing wigglesPerSecond/seed default to 0 — a project authored before the
+  // temporal wiggle existed keeps its frozen noise rather than starting to move
+  // on load. Optional-with-zero-default is why this needs no schema migration.
+  return {
+    type,
+    amount: num(o.amount, d.amount),
+    detail: num(o.detail, d.detail),
+    wigglesPerSecond: Math.max(0, num(o.wigglesPerSecond, 0)),
+    seed: num(o.seed, 0),
+  };
 }
 
 export function hasPathOp(node: SceneNode): boolean {
@@ -314,7 +373,15 @@ export function resolvePathOp(node: SceneNode, av: Map<string, number> | undefin
   const base = readPathOpConfig(node);
   if (!base) return null;
   const v = (p: PathOpParam, fb: number): number => av?.get(pathOpPropPath(p)) ?? fb;
-  return { type: base.type, amount: v('amount', base.amount), detail: v('detail', base.detail) };
+  return {
+    type: base.type,
+    amount: v('amount', base.amount),
+    detail: v('detail', base.detail),
+    // Animated wiggles-per-second is clamped the same way the static read is,
+    // so a keyframe that dips below zero cannot run the noise backwards.
+    wigglesPerSecond: Math.max(0, v('wigglesPerSecond', base.wigglesPerSecond ?? 0)),
+    seed: base.seed ?? 0,
+  };
 }
 
 export function setPathOp(nodeId: string, op: PathOp | null): void {

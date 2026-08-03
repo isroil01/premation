@@ -17,6 +17,7 @@ import type { RenderTargetHandle, TextureFormat } from '../gpu/types';
 import type { FrameInfo } from '../core/Frame';
 import type { FrameScene } from '../scene/FrameScene';
 import type { Viewport } from '../viewport/Viewport';
+import type { RenderDiagnostics } from '../core/renderer/RenderDiagnostics';
 import type { CommandBuffer } from '../commands/DrawCommand';
 import type { QuadRenderer } from '../pipeline/QuadRenderer';
 import type { MaterialSystem } from '../shaders/Material';
@@ -34,6 +35,10 @@ export interface RenderServices {
   colorFormat: TextureFormat;
   /** A reusable command buffer, cleared between passes. */
   commands: CommandBuffer;
+  /** Per-frame sink for compositing operations the renderer could not honour.
+   *  Passes STATE what happened; the host decides (warn in preview, fail on
+   *  export). See core/renderer/RenderDiagnostics.ts. */
+  diagnostics: RenderDiagnostics;
 }
 
 export interface RenderPassContext {

@@ -39,6 +39,8 @@ import { hasTextComponent } from '@core/text/textAnimators';
 import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { customPrompt } from '@components/Modal/Dialogs';
+import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
 
@@ -214,10 +216,17 @@ function buildWorkspaceItems(): DropdownItem[] {
     label: 'Save Current Workspace…',
     icon: 'download',
     onSelect: () => {
-      const name = window.prompt('Enter a name for your custom workspace layout:');
-      if (!name) return;
-      getWorkspaceManager().saveCurrentWorkspace(name);
-      useUIStore.getState().notify({ level: 'success', message: `Saved workspace “${name}”`, durationMs: 2600 });
+      void (async () => {
+        const name = await customPrompt(
+          'Save Workspace',
+          'Name this layout. It will appear in this menu and in Customize ▸ Workspaces.',
+          '',
+          { placeholder: 'My layout', confirmLabel: 'Save' },
+        );
+        if (!name?.trim()) return;
+        getWorkspaceManager().saveCurrentWorkspace(name.trim());
+        useUIStore.getState().notify({ level: 'success', message: `Saved workspace “${name.trim()}”`, durationMs: 2600 });
+      })();
     },
   });
   items.push({
@@ -494,15 +503,23 @@ export function TopNav(): JSX.Element {
     <div className={styles.root} ref={containerRef}>
       <div className={styles.toolRow} role="toolbar" aria-label="Tools">
         <div className={styles.inner}>
-          <IconButton
-            aria-label="Back to Dashboard"
-            size="lg"
-            className={styles.back}
-            style={{ marginRight: 8, marginLeft: 4 }}
-            onClick={() => navigate('/')}
-          >
-            <Icon name="arrow-left" size={18} />
-          </IconButton>
+          {/*
+            Only where there IS a dashboard. `/` redirects to /dashboard in the
+            server edition and to /editor in the local one — so in the local
+            edition this arrow navigated the user back to the page they were
+            already on. An affordance that does nothing is worse than no
+            affordance: it reads as a broken button, not an absent feature.
+          */}
+          {cloudProjectsEnabled() && (
+            <IconButton
+              aria-label="Back to Dashboard"
+              size="md"
+              className={styles.back}
+              onClick={() => navigate('/')}
+            >
+              <Icon name="arrow-left" size={18} />
+            </IconButton>
+          )}
 
           {!isElectron && <AppMenuButton />}
           <span className={styles.toolDivider} aria-hidden />

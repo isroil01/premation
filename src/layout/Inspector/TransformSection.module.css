@@ -9,7 +9,7 @@
   text-transform: uppercase;
   color: var(--color-text-tertiary);
   margin: 0 0 var(--space-3) 0;
-  letter-spacing: var(--letter-spacing-uppercase, 0.5px);
+  letter-spacing: var(--letter-spacing-uppercase);
 }
 
 .control {
@@ -31,18 +31,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
+  transition: var(--motion-hover-transition);
 }
 
 .stopwatch:hover {
   color: var(--color-text-primary);
-  background: var(--color-hover, rgba(255, 255, 255, 0.04));
-  border-color: var(--color-field-border, rgba(255, 255, 255, 0.08));
+  background: var(--color-hover);
+  border-color: var(--color-field-border);
 }
 
 .stopwatchOn {
-  color: var(--color-primary, #2988ff) !important;
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15)) !important;
+  color: var(--color-primary) !important;
+  background: var(--color-primary-subtle) !important;
   border-color: rgba(41, 136, 255, 0.3) !important;
 }
 
@@ -61,7 +61,7 @@
 .textInput {
   width: 100%;
   background: var(--color-surface-1);
-  border: 1px solid var(--color-field-border, var(--color-border));
+  border: 1px solid var(--color-field-border);
   color: var(--color-text-primary);
   font-size: var(--font-size-xs);
   padding: var(--space-2) var(--space-3);
@@ -84,7 +84,7 @@
 .colorInput {
   width: 100%;
   height: 24px;
-  border: 1px solid var(--color-field-border, var(--color-border));
+  border: 1px solid var(--color-field-border);
   border-radius: 4px;
   padding: 0;
   background: none;
@@ -142,18 +142,18 @@
   align-items: center;
   gap: var(--space-2);
   background: var(--color-surface-1);
-  border: 1px solid var(--color-field-border, var(--color-border));
+  border: 1px solid var(--color-field-border);
   border-radius: 4px;
   padding: 3px 8px;
   cursor: pointer;
-  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
+  transition: var(--motion-hover-transition);
   width: 100%;
   height: 24px;
 }
 
 .colorPickerWrapper:hover {
   border-color: var(--color-text-tertiary);
-  background: var(--color-hover, rgba(255, 255, 255, 0.04));
+  background: var(--color-hover);
 }
 
 .colorSwatch {
@@ -167,7 +167,7 @@
 
 .colorHex {
   font-size: 11px;
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
   color: var(--color-text-secondary);
   user-select: none;
 }
@@ -259,7 +259,7 @@
 .cellValue {
   font-size: 11px;
   color: var(--color-text-primary);
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -277,7 +277,7 @@
 
 /* ── Popover Dropdown Styling ── */
 .popoverContent {
-  background: var(--color-surface-2, #1e2027);
+  background: var(--color-surface-2);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 12px;
@@ -328,7 +328,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: all 0.1s ease;
+  transition: var(--motion-hover-transition);
 }
 
 .resetBtn:hover {
@@ -347,14 +347,14 @@
   justify-content: center;
   color: var(--color-text-tertiary);
   border-radius: 4px;
-  transition: all 150ms ease;
+  transition: var(--motion-hover-transition);
 }
 
 .lockBtn:hover {
   color: var(--color-text-primary);
-  background: var(--color-hover, rgba(255, 255, 255, 0.04));
+  background: var(--color-hover);
 }
 
 .lockBtnActive {
-  color: var(--color-primary, #2988ff);
+  color: var(--color-primary);
 }

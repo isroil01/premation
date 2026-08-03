@@ -47,7 +47,7 @@ import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
 import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
-import { PANEL_DEFS } from '@layout/EditorLayout/panelDefs';
+import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineClip } from '@layout/Timeline';
 import type { TrackId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -170,37 +170,19 @@ function EditorShellInner(): JSX.Element {
   // Enable responsive UI auto-collapsing behaviors
   useResponsiveLayout();
 
-  // Context-aware auto-switching inspector panel on selection
-  const lastSelectedNodeRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (selectedIds.length === 0) {
-      lastSelectedNodeRef.current = null;
-      return;
-    }
-    const primaryId = selectedIds[0];
-    if (!primaryId || primaryId === lastSelectedNodeRef.current) return;
-    lastSelectedNodeRef.current = primaryId;
-
-    const node = defaultSceneGraph.getNode(primaryId as any);
-    if (!node) return;
-    const kind = readNodeKind(node);
-
-    // Only ever open a tab the current one CANNOT serve — never move the user off
-    // a tab that still applies.
-    //
-    // This used to force 'style' for text and 'properties' for everything else on
-    // every selection change, so reading Transform and clicking a text layer
-    // yanked you to Style; adjusting a fill and clicking the next shape yanked you
-    // back. Both target tabs are valid for both kinds, so the switch was pure
-    // disruption. Kinds with a genuinely dedicated home (camera/light live in
-    // Settings) are the only case worth acting on, and only when the active tab
-    // has nothing to show for them.
-    const active = useLayoutStore.getState().activePanelByRegion.rightInspector;
-    const NEEDS_SETTINGS = kind === 'camera' || kind === 'light' || kind === 'particle';
-    if (NEEDS_SETTINGS && active !== 'misc') {
-      useLayoutStore.getState().openPanel('misc');
-    }
-  }, [selectedIds]);
+  /*
+   * There is deliberately no auto-switching of the inspector tab on selection.
+   *
+   * There used to be: selecting a camera, light or particle layer force-opened
+   * the Settings tab, because those layers' controls lived there and the tab
+   * you were on would otherwise show you nothing. Before that it was worse —
+   * it switched between Transform and Style on every selection change, so
+   * reading a transform and clicking a text layer yanked you to Style.
+   *
+   * Both were workarounds for one thing: the selected layer's properties were
+   * split across three tabs. They are one panel now, so every layer kind's
+   * controls are already on screen and there is nothing to switch to.
+   */
 
   // Register the default panels exactly once.
   useEffect(() => {
@@ -209,8 +191,13 @@ function EditorShellInner(): JSX.Element {
     // EditorShell, so it never runs this effect and used to show a raw id.
     // On-demand panels are registered (so menus/shortcuts can open them) then
     // closed unless a persisted layout already had them open.
+    // `availablePanelDefs()`, not PANEL_DEFS: a panel its edition does not offer
+    // must never be registered. That is the gate, not a cosmetic filter — the
+    // dock renders `panelOrder.map(id => panels[id]).filter(Boolean)`, so an id
+    // left over in a PERSISTED layout (or written by a workspace preset) draws
+    // nothing at all once it is absent from the registry.
     const openBefore = new Set(Object.values(useLayoutStore.getState().panelOrder).flat());
-    for (const p of PANEL_DEFS) {
+    for (const p of availablePanelDefs()) {
       registerPanel({ id: p.id, title: p.title, icon: p.icon, region: p.region, weight: p.weight, closable: p.closable });
       if (p.onDemand && !openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
     }
@@ -1138,7 +1125,7 @@ function EditorShellInner(): JSX.Element {
                 >
                   <Icon name="layers" size={11} style={{ color: 'var(--color-text-tertiary)' }} />
                   <span style={{ fontWeight: 500 }}>{activeTitle ?? 'Untitled'}</span>
-                  <span style={{ fontFamily: 'var(--font-family-mono)', fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
+                  <span style={{ fontFamily: 'var(--font-family-mono)', fontSize: '10px', color: 'var(--color-text-secondary)' }}>
                     {compWidth}×{compHeight} · {compFps}fps
                   </span>
                   {activeDirty ? (
@@ -1174,8 +1161,8 @@ function EditorShellInner(): JSX.Element {
                     Search
                     <kbd style={{
                       fontFamily: 'var(--font-family-mono)', fontSize: 10,
-                      padding: '0 4px', borderRadius: 3, background: 'var(--color-surface-3)',
-                      color: 'var(--color-text-tertiary)',
+                      padding: '0 4px', borderRadius: 4, background: 'var(--color-surface-3)',
+                      color: 'var(--color-text-secondary)',
                     }}>⌘⇧P</kbd>
                   </button>
                   <span style={{ opacity: 0.4 }}>·</span>

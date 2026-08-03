@@ -69,7 +69,6 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
   return (
     <div className={styles.root}>
       <div className={styles.head}>
-        <span className={styles.title}>Shape Effects</span>
         <Dropdown
           placement="left-start"
           trigger={

@@ -119,7 +119,7 @@ export function parseManifest(raw: unknown): ManifestResult {
     errors.push('"apiVersion" must be a whole number ≥ 1.');
   } else if (apiVersion > HOST_API_VERSION) {
     errors.push(
-      `This plugin needs host API ${apiVersion}; this version of Motion Editor provides ${HOST_API_VERSION}. Update the app.`,
+      `This plugin needs host API ${apiVersion}; this version of Premation provides ${HOST_API_VERSION}. Update the app.`,
     );
   }
 

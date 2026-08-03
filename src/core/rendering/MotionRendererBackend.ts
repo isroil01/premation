@@ -26,7 +26,7 @@ import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
-import { imageNeedsCpuBake } from '@core/effects/effectBake';
+import { layerIsBaked } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
 import { markGpuOwned } from './canvasOwnership';
@@ -83,6 +83,10 @@ export class MotionRendererBackend implements RenderBackend {
    * Proven by: src/core/rendering/backendResolvedKind.test.ts.
    */
   resolvedKind: RendererBackendKind | null = null;
+  /** Diagnostics from the most recent renderFrame (M8a). */
+  private frameDiagnostics: ReadonlyArray<{ code: string; detail: string; layerId?: string }> = [];
+  /** Details already surfaced, so a 60fps viewport reports each once. */
+  private readonly reportedDiagnostics = new Set<string>();
   readonly readyPromise: Promise<void>;
   /**
    * True when EVERY init attempt (preferred tier + fallbacks + retry) failed.
@@ -527,7 +531,7 @@ export class MotionRendererBackend implements RenderBackend {
               // into the bitmap or they render nothing at all on a photo. Gated
               // by the SAME predicate the snapshot adapter uses to withhold
               // them from the GPU, so they cannot both apply.
-              const bakeImg = imageNeedsCpuBake(layer.kind, layer.effects)
+              const bakeImg = layerIsBaked(layer)
                 ? {
                     effects: layer.effects!,
                     width: layer.width,
@@ -540,7 +544,25 @@ export class MotionRendererBackend implements RenderBackend {
                 : undefined;
               this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource, bakeImg);
             } else if (layer.kind === 'video' && layer.src) {
-              if (layer.frameBlend) {
+              const bakeVid = layerIsBaked(layer)
+                ? {
+                    effects: layer.effects!,
+                    width: layer.width,
+                    height: layer.height,
+                    fillOpacity: layer.fillOpacity,
+                    ...(layer.mask && layer.mask.paths.length > 0 ? { mask: layer.mask } : {}),
+                  }
+                : undefined;
+              if (bakeVid) {
+                // Canvas2D-only styles on footage: bake the current frame so
+                // interior styles / warps are not silent no-ops. Frame Mix is
+                // skipped while baking — both brackets would need the same
+                // round-trip and the style is the reason we are here.
+                const key = `asset:${layer.id}`;
+                activeKeys.add(key);
+                const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
+                this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid);
+              } else if (layer.frameBlend) {
                 // Frame Mix: feed both bracket frames. Cache hits upload the
                 // exact decoded canvases; misses queue a decode (onChange →
                 // re-render) and fall back to element-seeked frames near each
@@ -726,7 +748,25 @@ export class MotionRendererBackend implements RenderBackend {
     vp.overlays.safeArea = ov?.safeArea ?? false;
     vp.overlays.rulers = ov?.rulers ?? false;
 
-    this.renderer.render(vp, snapshotToFrameScene(snapshot));
+    const result = this.renderer.render(vp, snapshotToFrameScene(snapshot));
+
+    // Preview half of the M8a split: keep the frame, but say what it is not.
+    // Deduped by detail — a 60fps viewport would otherwise emit the same notice
+    // every frame for as long as the layer is on screen.
+    this.frameDiagnostics = result.diagnostics;
+    for (const d of result.diagnostics) {
+      if (this.reportedDiagnostics.has(d.detail)) continue;
+      this.reportedDiagnostics.add(d.detail);
+      getEventBus().emit('EngineError', {
+        engine: `motion-${this.resolvedKind ?? this.preferred}`,
+        role: this.role,
+        error: new Error(d.detail),
+      });
+    }
+  }
+
+  lastFrameDiagnostics(): ReadonlyArray<{ code: string; detail: string; layerId?: string }> {
+    return this.frameDiagnostics;
   }
 
   setExactMediaTiming(on: boolean): void {

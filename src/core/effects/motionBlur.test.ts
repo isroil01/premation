@@ -1,4 +1,4 @@
-import { motionBlurSampleTimes, readNodeMotionBlur } from './motionBlur';
+import { motionBlurSampleTimes, adaptiveMotionBlurSamples, readNodeMotionBlur } from './motionBlur';
 import type { SceneNode } from '@core/types';
 
 function nodeWithFx(props?: Record<string, unknown>): SceneNode {
@@ -64,6 +64,22 @@ describe('motionBlurSampleTimes', () => {
   test('adaptiveSampleLimit caps effective samples when requested samples exceed limit', () => {
     const times = motionBlurSampleTimes(1, 60, 180, 32, -90, 8);
     expect(times).toHaveLength(8);
+  });
+});
+
+describe('adaptiveMotionBlurSamples', () => {
+  test('keeps the base count when travel is tiny', () => {
+    expect(adaptiveMotionBlurSamples(8, 0)).toBe(8);
+    expect(adaptiveMotionBlurSamples(8, 1)).toBe(8);
+  });
+
+  test('raises samples with on-screen travel', () => {
+    expect(adaptiveMotionBlurSamples(8, 40)).toBe(20);
+    expect(adaptiveMotionBlurSamples(8, 200, 32)).toBe(32);
+  });
+
+  test('never drops below the configured base', () => {
+    expect(adaptiveMotionBlurSamples(16, 2)).toBe(16);
   });
 });
 

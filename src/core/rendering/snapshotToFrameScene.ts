@@ -23,48 +23,38 @@ import { Matrix4Math } from '@motion/scene';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
 import { isLutEffect } from '@core/effects/colorLut';
-import { getMatteMode } from '@core/effects/matte';
-import { effectNumber, effectParam, withAlpha } from '@core/effects/effects';
-import { effectsNeedCpuBake, layerNeedsCpuBake, imageNeedsCpuBake } from '@core/effects/effectBake';
+import { readMatte } from '@core/effects/matte';
+import { effectNumber, effectParam, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
+import { layerIsBaked } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
 /**
- * Map a layer blend mode to the renderer's portable `BlendMode` union. The live
- * Canvas2D path renders the full AE set natively; the GPU union is narrower, so
- * modes without a direct GPU op fall back to their nearest family member
- * (dodge→screen, burn→multiply, light variants→overlay, HSL modes→normal) until
- * per-mode GPU shaders land. Keep this in sync with `gpuSafe` in blendMode.ts.
+ * Map a layer blend mode to the renderer's portable `BlendMode` union.
+ *
+ * Reachable only for `normal` and `add`. Every other mode composites through
+ * BLEND_COMBINE, and `advancedBlendId() > 0` forces `blend: 'normal'` at each
+ * call site — so the old "nearest family member" fallbacks (dodge→screen,
+ * HSL→normal, …) described behaviour that had already stopped happening. Deleted
+ * rather than left as a comment describing a dead path.
  */
 export function layerBlendToGpu(mode: LayerBlendMode | undefined): BlendMode {
-  switch (mode) {
-    case 'multiply': return 'multiply';
-    case 'screen': return 'screen';
-    case 'overlay': return 'overlay';
-    case 'add': return 'add';
-    case 'darken': return 'darken';
-    case 'lighten': return 'lighten';
-    case 'color-dodge': return 'screen';   // brighten family
-    case 'color-burn': return 'multiply';  // darken family
-    case 'hard-light':
-    case 'soft-light': return 'overlay';   // contrast family
-    case 'difference': return 'subtract';
-    case 'exclusion': return 'screen';
-    case 'hue':
-    case 'saturation':
-    case 'color':
-    case 'luminosity':                     // no GPU HSL op yet
-    case 'normal':
-    default: return 'normal';
-  }
+  return mode === 'add' ? 'add' : 'normal';
 }
 
 /**
- * Advanced blend-mode id (1..15) for modes fixed-function GL can't do correctly
- * (they need the backdrop as a shader input). 0 = a mode the fixed-function
- * `blend` path handles (normal/add). Multiply/screen/darken/lighten ARE routed
- * through the combine too, because the fixed-function versions mishandle source
- * alpha. Ids match the BLEND_COMBINE shader's mode selector (builtin.ts).
+ * Advanced blend-mode id for modes that need the backdrop as a shader input.
+ * 0 = handled by the fixed-function `blend` path (normal / add only).
+ *
+ * Multiply/screen/darken/lighten are routed through the combine too, because the
+ * fixed-function versions mishandle source alpha.
+ *
+ * These ids are a WIRE FORMAT between this file and two shader dialects. Never
+ * renumber an existing id; only append. 1-11 separable, 12-15 non-separable HSL,
+ * 16-26 separable (M1), 27-28 whole-colour compare (M1). The separable range is
+ * deliberately NON-CONTIGUOUS, which is why the shader dispatches by family
+ * rather than by a `>=` threshold — a threshold would sweep 16-26 into the
+ * non-separable branch.
  */
 function advancedBlendId(mode: LayerBlendMode | undefined): number {
   switch (mode) {
@@ -83,6 +73,28 @@ function advancedBlendId(mode: LayerBlendMode | undefined): number {
     case 'saturation': return 13;
     case 'color': return 14;
     case 'luminosity': return 15;
+    // ── M1 ──
+    case 'linear-burn': return 16;
+    case 'linear-dodge': return 17;
+    case 'linear-light': return 18;
+    case 'vivid-light': return 19;
+    case 'pin-light': return 20;
+    case 'hard-mix': return 21;
+    case 'subtract': return 22;
+    case 'divide': return 23;
+    case 'classic-color-burn': return 24;
+    case 'classic-color-dodge': return 25;
+    case 'classic-difference': return 26;
+    case 'darker-color': return 27;
+    case 'lighter-color': return 28;
+    // ── M4 (Utility): these write alpha, handled past the composite line ──
+    case 'alpha-add': return 29;
+    case 'luminescent-premul': return 30;
+    // ── M8c (Matte): these DISCARD the source colour and scale the backdrop ──
+    case 'stencil-alpha': return 31;
+    case 'stencil-luma': return 32;
+    case 'silhouette-alpha': return 33;
+    case 'silhouette-luma': return 34;
     default: return 0; // normal / add → simple fixed-function blend
   }
 }
@@ -312,12 +324,24 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   return { shape: 'rounded', radiusPx: layer.cornerRadius ?? 0, width: layer.width, height: layer.height };
 }
 
-// effectsNeedCpuBake imported for both needsShapeRaster and layerToRenderable.
-function extractSpatialEffects(layer: RenderLayer): import('@motion/renderer').RenderableEffect[] | undefined {
+// layerNeedsCpuBake is shared by needsShapeRaster and layerToRenderable, which
+// must agree with Canvas2DVectorRasterizer about who owns the effect chain.
+/**
+ * @param onlyGpuOnly restrict the output to effects the CPU bake CANNOT draw
+ *   (Displace, Motion Tile). For a baked layer: the bake owns everything else,
+ *   so handing the GPU the full list would double-apply it — but these two have
+ *   neither a CSS form nor a Canvas2D case, so the bake skips them and dropping
+ *   them here too made them vanish entirely.
+ */
+function extractSpatialEffects(
+  layer: RenderLayer,
+  onlyGpuOnly = false,
+): import('@motion/renderer').RenderableEffect[] | undefined {
   if (!layer.effects || layer.effects.length === 0) return undefined;
   const spatial: import('@motion/renderer').RenderableEffect[] = [];
   for (const e of layer.effects) {
     if (e.enabled === false) continue;
+    if (onlyGpuOnly && !isGpuOnlyEffect(e.type)) continue;
     // Read each effect's own params. Glow's colour, Drop Shadow's angle and
     // Gradient Ramp's endpoints were hardcoded here and unreachable from the UI.
     const n = (k: string): number => effectNumber(e, k);
@@ -427,7 +451,7 @@ export function needsShapeRaster(layer: RenderLayer): boolean {
   // A shape carrying a Canvas2D-only effect is CPU-baked (content + mask +
   // full effect chain) into its `path:` texture — those effects have no GPU
   // shader form and otherwise silently no-op.
-  if (layerNeedsCpuBake(layer.effects, layer.fillOpacity)) return true;
+  if (layerIsBaked(layer)) return true;
   return false;
 }
 
@@ -520,13 +544,18 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // dropped to avoid double-applying. A track matte is a compositing
   // relationship, not baked, so it survives. (Image/video are not baked:
   // dynamic/large content; those still route to Canvas2D.)
-  const cpuBaked = (layer.kind === 'shape' || layer.kind === 'text') && effectsNeedCpuBake(layer.effects);
-  // An IMAGE bakes too, when its stack contains something the GPU cannot draw.
-  // The bake has already applied the colour grade, any LUT, AND the mask — the
-  // mask first, so interior styles shape themselves from the masked silhouette
-  // — so none of the three may run again here.
-  const imgBaked = imageNeedsCpuBake(layer.kind, layer.effects);
-  const baked = cpuBaked || imgBaked;
+  // `layerNeedsCpuBake`, NOT `effectsNeedCpuBake` — the SAME predicate
+  // Canvas2DVectorRasterizer gates its bake on. They must agree or the two
+  // sides disagree about who owns the effect chain and it is applied twice:
+  // fill opacity alone sends a layer down the bake path, and gating this side
+  // on the effects term only meant the grade, LUT, mask and spatial effects
+  // were baked into the texture AND handed to the GPU on top of it.
+  // ONE predicate, kind-dispatched internally (M5b). This site used to pick
+  // between two by hand and pick wrong; see layerIsBaked for what that cost.
+  // Whichever branch it takes, the bake has already applied the colour grade,
+  // any LUT, AND the mask — the mask first, so interior styles shape themselves
+  // from the masked silhouette — so none of the three may run again here.
+  const baked = layerIsBaked(layer);
   // Per-quad Lambert gain (Accepts Lights): folded into the draw tint on the
   // affine fallback. Renderables that take the depth-tested group path get the
   // gain UNfolded and carry per-fragment shade data instead (decided after
@@ -544,6 +573,10 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
+    // AE's per-layer Quality switch. Only emitted for 'draft' — the linear
+    // default is what every other layer already gets, and emitting it
+    // explicitly would churn the renderable for no behavioural change.
+    ...(layer.quality === 'draft' ? { sampling: 'nearest' as const } : {}),
     color: textured ? Color.white() : gradedSolidColor(layer),
     // Texture-backed kinds resolve via the provider
     ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),
@@ -561,7 +594,14 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(matteOf(layer) ? { matte: matteOf(layer)! } : {}),
     ...(textured ? { colorMatrix: baked ? undefined : texturedColorMatrix(layer) } : { sdf: sdfFor(layer) }),
     ...(motionSamples ? { motionSamples } : {}),
-    effects: baked ? undefined : extractSpatialEffects(layer),
+    // A baked layer carries content + mask + the whole drawable chain in its
+    // texture, so the GPU must not re-apply any of it. The exception is the
+    // GPU-ONLY pair (Displace, Motion Tile): the bake has no form for them and
+    // skips them, so they are passed through here rather than lost. They land
+    // AFTER the baked result regardless of their position in the stack — a real
+    // ordering compromise, but a displaced layer beats a silently undisplaced
+    // one, and stack order is already exact on the unbaked path.
+    effects: baked ? extractSpatialEffects(layer, true) : extractSpatialEffects(layer),
     ...(layer.deformedMesh ? { deformedMesh: normalizeDeformedMesh(layer.deformedMesh, layer.width, layer.height, pad) } : {}),
     // True-3D placement for the depth-tested GPU path. Only meaningful for a
     // layer whose 2D model came from the projected affine (`layer.matrix`) —
@@ -629,7 +669,7 @@ export function precompNeedsIsolation(layer: RenderLayer): boolean {
   if (!layer.precompLayers || layer.precompLayers.length === 0) return false;
   if (layer.blend && layer.blend !== 'normal') return true;
   if (layer.mask && layer.mask.paths.length > 0) return true;
-  if (getMatteMode(layer.matte) && layer.matteSourceId) return true;
+  if (readMatte(layer.matte) && layer.matteSourceId) return true;
   if (layer.isMatteSource) return true;
   if (layer.effects && layer.effects.length > 0) return true;
   if (layer.opacity < 1 && layer.precompLayers.filter((l) => l.visible).length > 1) return true;
@@ -709,14 +749,19 @@ function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpa
   };
 }
 
-/** Parse a layer's track matte into the renderable's matte descriptor, or null
- *  when it has no matte (or its source wasn't resolved). */
+/**
+ * Parse a layer's track matte into the renderable's matte descriptor, or null
+ * when it has no matte (or its source wasn't resolved).
+ *
+ * This used to translate four enum values into `{mode, inverted}` here, which
+ * meant the renderer had always been on the two-field model while storage and UI
+ * were not. Since 1.2.0 the stored shape IS the descriptor, so the translation
+ * is gone and only the source-resolution guard remains.
+ */
 function matteOf(layer: RenderLayer): { mode: 'alpha' | 'luma'; inverted: boolean; sourceId: string } | null {
-  const mode = getMatteMode(layer.matte);
-  if (!mode || !layer.matteSourceId) return null;
-  const luma = mode === 'luma' || mode === 'luma-inv';
-  const inverted = mode === 'alpha-inv' || mode === 'luma-inv';
-  return { mode: luma ? 'luma' : 'alpha', inverted, sourceId: layer.matteSourceId };
+  const m = readMatte(layer.matte);
+  if (!m || !layer.matteSourceId) return null;
+  return { mode: m.mode, inverted: m.inverted, sourceId: layer.matteSourceId };
 }
 
 /** True when a layer carries an enabled per-channel LUT colour effect. */

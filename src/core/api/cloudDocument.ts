@@ -20,6 +20,7 @@ import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurS
 import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
+import { migrateDocument } from '@core/project/migrations';
 
 export interface EditorDocument {
   version: string;
@@ -49,9 +50,24 @@ export function captureDocument(): EditorDocument {
   };
 }
 
-/** Restore all subsystems from a full document. Tolerant of partial documents. */
+/**
+ * Restore all subsystems from a full document. Tolerant of partial documents.
+ *
+ * This is the ONE place a foreign document becomes live state — the bundle path
+ * (BundleRepository → decodeBundle), local version history (VersionStore), the
+ * cloud API and legacy single-file reads all arrive here. That is why the
+ * version migration runs at the top: it covers every entry point with one call,
+ * and it throws BEFORE the first subsystem restore, so a document this build
+ * cannot understand fails whole rather than half-populating the scene graph.
+ */
 export function restoreDocument(doc: EditorDocument): void {
   if (!doc) return;
+
+  // Throws DocumentVersionError for a newer-than-us document or an uncovered
+  // version gap. Deliberately not caught here — the caller must surface it, as
+  // silently opening an empty project is indistinguishable from losing the work.
+  const migrated = migrateDocument(doc);
+  doc = migrated;
 
   // Scene first: the timeline reconciles its clips against the node tree, and
   // comps must exist before the timeline reads their frame rate.

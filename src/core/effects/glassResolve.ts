@@ -12,6 +12,7 @@
 
 import type { GlassStyle } from './layerStyles';
 import { defaultGlassStyle } from './layerStyles';
+import { parseColorChannels, channelsToColor } from '@core/effects/effects';
 
 /** Prop-path a glass parameter animates under. */
 export function glassPropPath(param: keyof GlassStyle): string {
@@ -27,6 +28,35 @@ export const GLASS_PARAMS = [
   'grain',
 ] as const;
 export type GlassParam = (typeof GLASS_PARAMS)[number];
+
+/** Colour glass parameters. Animated through decomposed `_r/_g/_b/_a` channel
+ *  tracks (`glass.tintColor_r`…), exactly as effect and layer-style colours are
+ *  — these two were the last colours in the app a stopwatch could not touch. */
+export const GLASS_COLOR_PARAMS = ['tintColor', 'rimColor'] as const;
+export type GlassColorParam = (typeof GLASS_COLOR_PARAMS)[number];
+
+/**
+ * A glass colour at this frame: the stored hex unless its channel tracks say
+ * otherwise. Any single sampled channel overrides just that channel, so keying
+ * only the red track leaves green and blue where the user left them.
+ */
+function resolveGlassColor(
+  param: GlassColorParam,
+  stored: string | undefined,
+  av: Map<string, number> | undefined,
+  fallback: string,
+): string {
+  const base = stored ?? fallback;
+  if (!av) return base;
+  const path = glassPropPath(param);
+  const r = av.get(`${path}_r`);
+  const g = av.get(`${path}_g`);
+  const b = av.get(`${path}_b`);
+  const a = av.get(`${path}_a`);
+  if (r === undefined && g === undefined && b === undefined && a === undefined) return base;
+  const ch = parseColorChannels(base);
+  return channelsToColor(r ?? ch[0], g ?? ch[1], b ?? ch[2], a ?? ch[3]);
+}
 
 /** Every field resolved to a concrete number, ready for the renderable. */
 export interface ResolvedGlass {
@@ -72,12 +102,12 @@ export function resolveGlass(
   return {
     blur: Math.max(0, val('blur', style.blur)),
     saturation: Math.max(0, val('saturation', style.saturation)),
-    tintColor: style.tintColor ?? d.tintColor,
+    tintColor: resolveGlassColor('tintColor', style.tintColor, av, d.tintColor),
     tintOpacity: clamp01(val('tintOpacity', style.tintOpacity)),
     refraction: val('refraction', style.refraction),
     edgeWidth: Math.max(0, val('edgeWidth', style.edgeWidth)),
     chromaticAberration: val('chromaticAberration', style.chromaticAberration),
-    rimColor: style.rimColor ?? d.rimColor,
+    rimColor: resolveGlassColor('rimColor', style.rimColor, av, d.rimColor),
     rimOpacity: clamp01(val('rimOpacity', style.rimOpacity)),
     rimWidth: Math.max(0, val('rimWidth', style.rimWidth)),
     rimAngle,

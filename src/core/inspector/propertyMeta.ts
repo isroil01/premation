@@ -29,6 +29,12 @@
  */
 
 import { EFFECT_DEFS, getNodeEffects, type EffectParamDef } from '@core/effects/effects';
+import {
+  LAYER_STYLE_EFFECT_TYPE,
+  LAYER_STYLE_LABEL,
+  styleKeyFromEffectId,
+  styleFieldForParam,
+} from '@core/effects/layerStyles';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readAnimatorData } from '@core/text/textAnimators';
@@ -352,6 +358,16 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
   if (!effectId) return null;
 
   const def = (() => {
+    // A LAYER STYLE's effect is synthesised per frame by layerStylesToEffects
+    // and never stored on the node, so getNodeEffects cannot find it. Resolve it
+    // by style key instead — otherwise these fall through to the key-matching
+    // fallback below, which would describe a Bevel's `size` using whichever
+    // effect happens to declare a `size` first.
+    const styleKey = styleKeyFromEffectId(effectId);
+    if (styleKey) {
+      const type = LAYER_STYLE_EFFECT_TYPE[styleKey];
+      return type ? EFFECT_DEFS.find((d) => d.type === type) : undefined;
+    }
     if (!nodeId) return undefined;
     const fx = getNodeEffects(nodeId).find((e) => e.id === effectId);
     return fx ? EFFECT_DEFS.find((d) => d.type === fx.type) : undefined;
@@ -368,7 +384,22 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
 
   if (def) {
     const p = def.params.find((q) => q.key === key);
-    if (p) return fromEffectParam(path, def.label, p);
+    if (p) {
+      // A LAYER STYLE is named for the style the user switched on, and for the
+      // FIELD they edited — not for the effect it happens to compile to. Left
+      // to the effect's own naming, Outer Glow's Size read "Glow Radius" and
+      // Gradient Overlay's Opacity read "Gradient Ramp Blend".
+      const styleKey = styleKeyFromEffectId(effectId);
+      if (styleKey) {
+        const styleLabel = LAYER_STYLE_LABEL[styleKey] ?? titleCase(styleKey);
+        const field = styleFieldForParam(styleKey, key);
+        return {
+          ...fromEffectParam(path, styleLabel, p),
+          label: `${styleLabel} ${field ? titleCase(field) : p.label}`,
+        };
+      }
+      return fromEffectParam(path, def.label, p);
+    }
   }
 
   // No node context (or a stale effect id): match the key across all effects.

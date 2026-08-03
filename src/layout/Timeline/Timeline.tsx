@@ -32,6 +32,7 @@ import { Icon, type IconName } from '@components/Icon';
 import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
 import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
 import { snapKeyframeGroup, type SnapTarget } from './keyframeSnap';
+import { scaleSelection, scaleGrip } from './keyframeTimeScale';
 import { ValueField } from '@components/ValueField';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
@@ -44,7 +45,8 @@ import type {
   TimelineClip,
 } from './TimelineModel';
 import { Dropdown } from '@components/Dropdown';
-import { BLEND_MODES, type LayerBlendMode } from '@core/effects/blendMode';
+import { type LayerBlendMode } from '@core/effects/blendMode';
+import { blendDropdownItems, blendModeLabel } from '@layout/Inspector/blendMenu';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { eligibleParents, parentOfNode } from '@core/scene/parenting';
@@ -61,6 +63,7 @@ import { audioEngine } from '@core/audio/AudioEngine';
 import { waveformPath, peaksInRange } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
 import { LABEL_COLORS } from '@core/scene/labelColor';
+import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
 
 const RULER_HEIGHT_DEFAULT = 26;
 const TRACK_HEIGHT_DEFAULT = 30;
@@ -740,7 +743,14 @@ function Timeline({
   useEffect(() => {
     syncKfSelection(selectedKfIds);
   }, [selectedKfIds, syncKfSelection]);
-  const activeKf = useRef<{ ids: string[]; times: Map<string, number>; startX: number; moved: boolean } | null>(null);
+  const activeKf = useRef<{
+    ids: string[];
+    times: Map<string, number>;
+    startX: number;
+    moved: boolean;
+    /** Which keyframe the pointer went down on — the grip for Alt time-scaling. */
+    grabbedId: string;
+  } | null>(null);
   const [kfPreview, setKfPreview] = useState<Map<string, number>>(new Map());
 
   // Build a lookup from keyframe id → time across all visible tracks
@@ -773,9 +783,26 @@ function Timeline({
       const t = id === kf.id ? kf.time : (kfTimeById.get(id) ?? 0);
       times.set(id, t);
     }
-    activeKf.current = { ids: [...nextSel], times, startX: e.clientX, moved: false };
+    activeKf.current = { ids: [...nextSel], times, startX: e.clientX, moved: false, grabbedId: kf.id };
 
     setKfPreview(new Map());
+  }, [selectedKfIds, kfTimeById]);
+
+  /**
+   * Which selected keyframes are an END of the selection, and so act as the
+   * grip for Alt time-scaling. Computed once over the whole selection because
+   * a row only sees its own keyframes and the selection spans rows.
+   */
+  const scaleGripIds = useMemo<Set<string>>(() => {
+    const out = new Set<string>();
+    if (selectedKfIds.size < 2) return out;
+    const times = new Map<string, number>();
+    for (const id of selectedKfIds) {
+      const t = kfTimeById.get(id);
+      if (t !== undefined) times.set(id, t);
+    }
+    for (const id of times.keys()) if (scaleGrip(times, id)) out.add(id);
+    return out;
   }, [selectedKfIds, kfTimeById]);
 
   /** What the in-flight drag is snapped to — drives the indicator line. */
@@ -790,6 +817,20 @@ function Timeline({
       d.moved = true;
       const dtSec = dx / pps;
       const frameDur = 1 / (model.frameRate || 30);
+
+      // Alt on an END of a multi-selection is AE's time-scale gesture: the
+      // group stretches about its opposite end instead of sliding. Everywhere
+      // else — a single keyframe, or an interior one — Alt keeps its existing
+      // meaning of "free the drag from snapping", because there is no span to
+      // scale in those cases and the two readings can never both apply.
+      if (e.altKey) {
+        const scaled = scaleSelection(d.times, d.grabbedId, dtSec, frameDur);
+        if (scaled) {
+          setKfSnap(null);
+          setKfPreview(scaled);
+          return;
+        }
+      }
 
       // Snap to the playhead, then to other keyframes, then to the frame grid.
       // Alt frees the drag entirely. The dragged keys are excluded from the
@@ -1016,7 +1057,7 @@ function Timeline({
                   same glyphs in its column head — five unlabeled dots were
                   unguessable for new users). */}
               <Icon name="shy" size={9} title="Shy" />
-              <span className={styles.fxText} title="Effects" style={{ fontSize: 8 }}>fx</span>
+              <span className={styles.fxText} title="Effects" style={{ fontSize: 10 }}>fx</span>
               <Icon name="motion-blur" size={9} title="Motion Blur" />
               <Icon name="adjustment" size={9} title="Adjustment Layer" />
               <Icon name="3d" size={9} title="3D Layer" />
@@ -1317,6 +1358,7 @@ function Timeline({
                     pps={pps}
                     kfPreview={kfPreview}
                     selectedKfIds={selectedKfIds}
+                    scaleGripIds={scaleGripIds}
                     onKeyframeDown={onKeyframeDown}
                     onKeyframeContextMenu={onKeyframeContextMenu}
                   />
@@ -1598,18 +1640,10 @@ const TrackHeader = memo(function TrackHeader({
     ? parentOptions.find((o) => o.id === currentParent)?.name ?? 'Parent'
     : 'None';
 
-  const currentMatteMode = typeof track.matteMode === 'object' && track.matteMode !== null
-    ? track.matteMode.mode
-    : track.matteMode || 'none';
-
-  const MATTE_LABELS: Record<string, string> = {
-    none: 'None',
-    alpha: 'Alpha Matte',
-    'alpha-inv': 'Alpha Inv Matte',
-    luma: 'Luma Matte',
-    'luma-inv': 'Luma Inv Matte',
-  };
-  const currentMatteLabel = MATTE_LABELS[currentMatteMode] ?? 'None';
+  // Option id + label come from the SHARED menu, not a second hardcoded copy of
+  // the four labels. This row and the inspector used to each own their own list.
+  const currentMatteOption = matteOptionId(track.matteMode);
+  const currentMatteLabel = MATTE_SHORT_LABEL[currentMatteOption] ?? 'None';
 
   const parentItems = [
     {
@@ -1775,16 +1809,13 @@ const TrackHeader = memo(function TrackHeader({
           placement="bottom-start"
           trigger={
             <button type="button" className={styles.timelineSelectTrigger} aria-label="Layer Blend Mode">
-              {BLEND_MODES.find((b) => b.mode === track.blendMode)?.label ?? 'Normal'}
+              {blendModeLabel(track.blendMode as LayerBlendMode | undefined)}
             </button>
           }
-          items={BLEND_MODES.map((b) => ({
-            type: 'item',
-            id: b.mode,
-            label: b.label,
-            icon: b.mode === track.blendMode ? ('check' as const) : undefined,
-            onSelect: () => onBlendModeChange?.(b.mode as LayerBlendMode),
-          }))}
+          items={blendDropdownItems(
+            track.blendMode as LayerBlendMode | undefined,
+            (m) => onBlendModeChange?.(m),
+          )}
         />
       </div>
 
@@ -1796,18 +1827,14 @@ const TrackHeader = memo(function TrackHeader({
               {currentMatteLabel}
             </button>
           }
-          items={[
-            { value: 'none', label: 'None' },
-            { value: 'alpha', label: 'Alpha' },
-            { value: 'alpha-inv', label: 'Alpha Inv' },
-            { value: 'luma', label: 'Luma' },
-            { value: 'luma-inv', label: 'Luma Inv' },
-          ].map((m) => ({
+          items={MATTE_OPTIONS.map((m) => ({
             type: 'item',
-            id: m.value,
-            label: m.label,
-            icon: m.value === currentMatteMode ? ('check' as const) : undefined,
-            onSelect: () => onMatteChange?.(m.value as any),
+            id: m.id,
+            label: MATTE_SHORT_LABEL[m.id] ?? m.label,
+            icon: m.id === currentMatteOption ? ('check' as const) : undefined,
+            // Carries an explicit matte source across a mode change; dropping it
+            // would silently re-point the matte at the layer above.
+            onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
           }))}
         />
       </div>
@@ -2196,6 +2223,7 @@ const Keyframes = memo(function Keyframes({
   pps,
   kfPreview,
   selectedKfIds,
+  scaleGripIds,
   onKeyframeDown,
   onKeyframeContextMenu,
 }: {
@@ -2203,6 +2231,8 @@ const Keyframes = memo(function Keyframes({
   pps: number;
   kfPreview: Map<string, number>;
   selectedKfIds: Set<string>;
+  /** Keyframes that are an END of the current multi-selection — the Alt grips. */
+  scaleGripIds: Set<string>;
   onKeyframeDown: (kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
 }): JSX.Element {
@@ -2232,7 +2262,9 @@ const Keyframes = memo(function Keyframes({
               e.preventDefault();
               onKeyframeContextMenu?.(kf.id, e.clientX, e.clientY);
             }}
-            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options`}
+            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options${
+              scaleGripIds.has(kf.id) ? ', Alt+drag to scale the selection in time' : ''
+            }`}
           >
             {!kf.roving && (
               <svg className={styles.keyframeGlyph} viewBox="0 0 12 12" aria-hidden focusable="false">

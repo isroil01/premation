@@ -95,3 +95,44 @@ describe('glassPropPath', () => {
     expect(glassPropPath('chromaticAberration')).toBe('glass.chromaticAberration');
   });
 });
+
+/**
+ * Glass COLOURS were the last colours in the app a stopwatch could not touch:
+ * `resolveGlass` read tintColor/rimColor straight off the style, so a track on
+ * them was never sampled. They animate through the same decomposed channel
+ * tracks that effect and layer-style colours use.
+ */
+describe('resolveGlass — animated colours', () => {
+  const av = (entries: Record<string, number>): Map<string, number> =>
+    new Map(Object.entries(entries));
+
+  it('samples tint colour from its channel tracks', () => {
+    const style = { ...defaultGlassStyle(), tintColor: '#000000' };
+    const g = resolveGlass(style, av({
+      'glass.tintColor_r': 255, 'glass.tintColor_g': 0, 'glass.tintColor_b': 0,
+    }))!;
+    expect(g.tintColor.toLowerCase()).toMatch(/^#ff0000/);
+  });
+
+  it('samples rim colour independently of tint', () => {
+    const style = { ...defaultGlassStyle(), rimColor: '#000000', tintColor: '#123456' };
+    const g = resolveGlass(style, av({ 'glass.rimColor_b': 255 }))!;
+    expect(g.rimColor.toLowerCase()).toMatch(/^#0000ff/);
+    // Untracked colour is untouched.
+    expect(g.tintColor.toLowerCase()).toBe('#123456');
+  });
+
+  it('a partially keyed colour keeps its other channels', () => {
+    // Keying only red must not reset green and blue to zero.
+    const style = { ...defaultGlassStyle(), tintColor: '#20406080' };
+    const g = resolveGlass(style, av({ 'glass.tintColor_r': 255 }))!;
+    const hex = g.tintColor.toLowerCase();
+    expect(hex.slice(0, 3)).toBe('#ff');
+    expect(hex.slice(3, 7)).toBe('4060');
+  });
+
+  it('falls back to the stored colour with no tracks', () => {
+    const g = resolveGlass({ ...defaultGlassStyle(), tintColor: '#abcdef' }, av({ 'glass.blur': 5 }))!;
+    expect(g.tintColor.toLowerCase()).toBe('#abcdef');
+  });
+});

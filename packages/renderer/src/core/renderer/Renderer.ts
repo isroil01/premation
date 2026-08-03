@@ -17,6 +17,7 @@ import { CommandBuffer } from '../../commands/DrawCommand';
 import { DefaultTextureProvider, type TextureProvider } from '../../resources/TextureProvider';
 import { RenderGraph } from '../../rendergraph/RenderGraph';
 import { buildDefaultGraph, EffectPass, SCENE_COLOR_TARGET } from '../../rendergraph/passes';
+import { RenderDiagnostics, type RenderDiagnostic } from './RenderDiagnostics';
 import { SURFACE, type RenderServices } from '../../rendergraph/RenderPass';
 import { Viewport, type ViewportOptions } from '../../viewport/Viewport';
 import type { FrameScene } from '../../scene/FrameScene';
@@ -43,6 +44,10 @@ export interface FrameResult {
   resources: ResourceManagerStats;
   /** Resources disposed by GC at the end of this frame. */
   collected: number;
+  /** Compositing operations the renderer could not honour this frame. Empty on
+   *  the overwhelmingly common path. The HOST decides what to do with them:
+   *  preview warns and keeps the frame, export must refuse it. */
+  diagnostics: RenderDiagnostic[];
 }
 
 export class Renderer {
@@ -57,6 +62,8 @@ export class Renderer {
   private readonly textures: TextureProvider;
   private readonly graph: RenderGraph;
   private readonly services: RenderServices;
+  /** Drained by the host each frame — see FrameResult.diagnostics. */
+  readonly diagnostics = new RenderDiagnostics();
   private readonly viewports = new Map<number, Viewport>();
   private readonly now: () => number;
   private readonly log: Logger;
@@ -90,6 +97,7 @@ export class Renderer {
       textures: this.textures,
       colorFormat: this.colorFormat,
       commands: this.commands,
+      diagnostics: this.diagnostics,
     };
   }
 
@@ -174,7 +182,7 @@ export class Renderer {
     const frame = this.beginFrame(timeMs);
     this.renderViewport(viewport, scene, frame);
     const collected = this.endFrame();
-    return { frame, resources: this.resources.stats(), collected };
+    return { frame, resources: this.resources.stats(), collected, diagnostics: this.diagnostics.drain() };
   }
 
   resize(width: number, height: number, devicePixelRatio = this.devicePixelRatio): void {

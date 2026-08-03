@@ -2,12 +2,12 @@
 
 
 
-# Motion Editor
+# Premation
 
-A desktop motion-graphics application. Compositions, layers, keyframes, a graph
-editor, 3D space with cameras and lights, effects, masks and mattes, per-glyph
-text animators, mesh rigging, particles, and a deterministic export pipeline —
-built on a GPU render engine that runs on WebGPU or WebGL2.
+An open-source motion editor for the desktop. Compositions, layers, keyframes, a
+graph editor, 3D space with cameras and lights, effects, masks and mattes,
+per-glyph text animators, mesh rigging, particles, and a deterministic export
+pipeline — built on a GPU render engine that runs on WebGPU or WebGL2.
 
 It is modelled on After Effects' Classic 3D workflow: if you know AE, the tools,
 the panel layout and most of the keyboard shortcuts are already where you expect
@@ -55,7 +55,7 @@ backend service is not.
 | Projects | on disk, `.motion` bundle | cloud, with autosave |
 | Assets | on disk, content-addressed | cloud library |
 | Export | local ffmpeg | local ffmpeg |
-| AI assistant | *coming soon* (disabled) | via the hosted gateway |
+| AI assistant | not included | via the hosted gateway |
 | Billing / sync / plugin registry | absent | available |
 
 **The local edition is the one to build from this repository.** It makes no
@@ -178,12 +178,22 @@ The editor contains a complete AI layer: **62 tools** it can call, an agent loop
 a deterministic "caster" pipeline that assembles motion from a hand-authored
 technique library, and a self-critique pass.
 
-**In the local edition it is disabled and reads "coming soon."** Model calls
-currently route through the hosted gateway, which holds the API key — so there
-is nothing for an offline build to talk to. Wiring up bring-your-own-key so the
-assistant runs against your own provider account is on the
-[roadmap](ROADMAP.md), and is the single most useful contribution available
-right now.
+**The local edition does not include it.** Not "disabled pending work" — the
+surface is absent: no panel in the sidebar, no commands, no settings tab, and no
+AI IPC registered in the desktop shell at all.
+
+That is a distribution decision, not a technical limit, and the previous wording
+here implied the opposite — so it is worth being exact. The bring-your-own-key
+path exists and works: the shell holds provider keys in the OS keystore and makes
+the model call from the main process, which is how a desktop build reaches a
+provider without the key ever entering renderer scope. None of that code was
+removed. `aiEnabled()` in `src/core/config/edition.ts` is the entire gate.
+
+What it means for a build from this repository: **it makes no network requests at
+all.** The API layer refuses to send, and the one piece of code here that
+contacts a third-party host — the provider proxy — is never registered. That
+guarantee now holds in the main process rather than resting on the UI declining
+to offer a button.
 
 Everything else in the editor works fully offline.
 
@@ -288,7 +298,7 @@ source is right — and a PR fixing the document is very welcome.
 
 ## License
 
-Copyright © Motion Editor contributors.
+Copyright © Premation contributors.
 
 Licensed under the **GNU Affero General Public License v3.0 only**. The full text
 is in [LICENSE](LICENSE).

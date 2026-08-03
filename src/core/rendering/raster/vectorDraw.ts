@@ -17,7 +17,7 @@ import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import { trimPolyline, type Pt } from '@core/scene/trimPath';
 import { effectNumber } from '@core/effects/effects';
-import { effectsNeedCpuBake } from '@core/effects/effectBake';
+import { layerIsBaked } from '@core/effects/effectBake';
 
 function clamp01(n: number): number {
   return n < 0 ? 0 : n > 1 ? 1 : n;
@@ -33,22 +33,33 @@ const MAX_EFFECT_PAD = 256;
 /**
  * How far a CPU-BAKED effect chain paints outside the layer's own box.
  *
- * This only applies to chains that `effectsNeedCpuBake` sends down the Canvas2D
- * path — one Canvas2D-only effect (Fill / Stroke / Beam / Sharpen / Noise /
- * Wave Warp / Turbulent Displace / Keylight / 4-Colour Gradient) forces the
- * WHOLE stack, blurs and shadows included, to bake into the layer's raster.
- * `applyEffectChain` then runs inside a canvas sized to the layer box, so every
- * halo is sliced off flat at the texture edge instead of fading out — measured
- * on a blurred star: 567 border pixels still carrying ink.
+ * This only applies to chains that go down the Canvas2D path — one Canvas2D-only
+ * effect (Beam / Keylight / 4-Colour Gradient / the warps / the interior styles)
+ * forces the WHOLE stack, blurs and shadows included, to bake into the layer's
+ * raster. `applyEffectChain` then runs inside a canvas sized to the layer box,
+ * so every halo is sliced off flat at the texture edge instead of fading out —
+ * measured on a blurred star: 567 border pixels still carrying ink.
  *
  * A pure-GPU stack does NOT need this. Those effects run in CompositionPass
  * over a viewport-sized LAYER_TARGET, so their halos already have room; padding
  * them would only grow textures for nothing.
+ *
+ * Gated on `layerIsBaked` — the SAME predicate Canvas2DVectorRasterizer
+ * bakes on and `snapshotToFrameScene` drops GPU effects on. All three must
+ * agree. Asking the narrower `effectsNeedCpuBake` here meant a layer baked for
+ * FILL OPACITY alone got no padding at all, so its stroke ring was clipped
+ * square at the layer box (golden scene: fill-opacity-zero-stroke).
  */
 function bakedEffectSpread(layer: RenderLayer): number {
-  if (!effectsNeedCpuBake(layer.effects)) return 0;
+  if (!layerIsBaked(layer)) return 0;
+  // `layerIsBaked` is true for FILL OPACITY alone, and such a layer has no
+  // effect stack at all — the exact shape that used to crash `applyEffectChain`
+  // (`for (const e of undefined)`). Fading spreads nothing anyway, so an absent
+  // or empty stack is zero padding, not an iteration.
+  const effects = layer.effects;
+  if (!effects || effects.length === 0) return 0;
   let spread = 0;
-  for (const e of layer.effects!) {
+  for (const e of effects) {
     if (e.enabled === false) continue;
     let s = 0;
     switch (e.type) {

@@ -6,7 +6,10 @@
 .head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* The section's name is the accordion row above; this strip carries only the
+     add-control, which keeps the right edge it already had under
+     space-between. */
+  justify-content: flex-end;
   margin-bottom: var(--space-2);
 }
 
@@ -111,16 +114,16 @@
   color: var(--color-text-tertiary);
   cursor: pointer;
   flex: none;
-  transition: all var(--motion-duration-fast, 160ms) var(--motion-ease-standard, ease-out);
+  transition: var(--motion-hover-transition);
 }
 .stopwatch:hover {
   color: var(--color-text-primary);
-  background: var(--color-hover, rgba(255, 255, 255, 0.04));
-  border-color: var(--color-field-border, rgba(255, 255, 255, 0.08));
+  background: var(--color-hover);
+  border-color: var(--color-field-border);
 }
 .stopwatchOn {
-  color: var(--color-primary, #2988ff) !important;
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15)) !important;
+  color: var(--color-primary) !important;
+  background: var(--color-primary-subtle) !important;
   border-color: rgba(41, 136, 255, 0.3) !important;
 }
 

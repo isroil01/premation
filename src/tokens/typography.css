@@ -15,7 +15,15 @@
     "IBM Plex Mono", "SF Mono", "Cascadia Code", Consolas, monospace;
 
   /* Spec scale: Display 36 · Heading 24 · Section 20 · Body 14 ·
-     Label 13 · Caption 12 · Tiny 11 */
+     Label 13 · Caption 12 · Tiny 11 · Micro 10 */
+
+  /* Micro is the FLOOR. Nothing in the product renders below 10px.
+     It exists for one job only: uppercase, letter-spaced chrome labels and
+     badges (WebGPU, RGB, fx, the switch-column glyphs) where the caps height
+     and tracking carry legibility that lowercase at this size would not. Never
+     use it for sentence-case text, values, or anything the user has to read
+     rather than recognise. Body copy starts at --font-size-xs. */
+  --font-size-micro: 10px; /* Micro — uppercase chrome labels only */
   --font-size-xs:   11px;  /* Tiny */
   --font-size-sm:   12px;  /* Caption */
   --font-size-md:   13px;  /* Label */

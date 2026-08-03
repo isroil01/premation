@@ -107,11 +107,11 @@ export function EditorLayout({
   const viewportPane = (
     <div className={styles.workspacePane} key="viewport">
       {isViewportExternal ? (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.6)', gap: 12 }}>
+          <div className={styles.detached}>
             <Icon name="export" size={24} />
-            <span style={{ fontSize: 13, fontWeight: 500 }}>Preview Canvas is open in an external window</span>
-            <button onClick={() => dockPanel('viewport')} style={{ padding: '6px 16px', background: 'var(--color-primary, #2b7eff)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-              Re-dock Preview to Main Window
+            <span className={styles.detachedLabel}>Preview Canvas is open in an external window</span>
+            <button className={styles.detachedAction} onClick={() => dockPanel('viewport')}>
+              Re-dock preview
             </button>
           </div>
         ) : (
@@ -148,11 +148,11 @@ export function EditorLayout({
   const timelinePane = (
     <div className={styles.timelinePane} key="timeline">
       {isTimelineExternal ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.6)', gap: 12, background: 'var(--color-surface-2, #181819)' }}>
+          <div className={`${styles.detached} ${styles.detachedRow}`}>
             <Icon name="export" size={16} />
-            <span style={{ fontSize: 12 }}>Timeline is open in an external window</span>
-            <button onClick={() => dockPanel('timeline')} style={{ padding: '4px 12px', background: 'var(--color-primary, #2b7eff)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
-              Re-dock Timeline
+            <span className={styles.detachedLabel}>Timeline is open in an external window</span>
+            <button className={styles.detachedAction} onClick={() => dockPanel('timeline')}>
+              Re-dock timeline
             </button>
           </div>
         ) : (

@@ -124,7 +124,7 @@
 
 .conflict {
   font-size: var(--font-size-xs);
-  color: var(--color-danger, #f43f5e);
+  color: var(--color-danger);
 }
 
 .saveRow {

@@ -1,4 +1,4 @@
-import { mergeSelectedPaths } from '@core/scene/mergePaths';
+import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
@@ -87,6 +87,7 @@ import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace } from '@core/scene/facePicking';
 import { compSizeOf } from '@core/composition/compSizes';
+import { customPrompt } from '@components/Modal/Dialogs';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
@@ -276,13 +277,24 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   const motionBlurRef = useRef({ enabled: mbEnabled && !draft, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps });
   motionBlurRef.current = { enabled: mbEnabled && !draft, shutterAngle: mbShutter, shutterPhase: mbPhase, samples: mbSamples, adaptiveSampleLimit: mbLimit, fps: activeFps };
 
+  // Bumps when canvas/stage refs weren't ready on the first effect tick so we
+  // can re-enter attach instead of leaving the viewport spinner forever.
+  const [attachTick, setAttachTick] = useState(0);
+
   // ── Backend attach + size + render loop (once) ─────────────────────
   useEffect(() => {
     const controller = getWorkspaceController();
     const content = contentCanvasRef.current;
     const overlay = overlayCanvasRef.current;
     const stage = stageRef.current;
-    if (!content || !overlay || !stage) return;
+    // Refs can briefly be null if this effect races the first paint (tab
+    // switch / Suspense). A bare `return` left ready=false forever because the
+    // effect deps (ref objects) never change.
+    if (!content || !overlay || !stage) {
+      if (attachTick >= 30) return;
+      const retry = requestAnimationFrame(() => setAttachTick((t) => t + 1));
+      return () => cancelAnimationFrame(retry);
+    }
 
     const backend = createRenderBackend();
     backend.attach(content);
@@ -541,7 +553,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       backend.dispose();
       backendRef.current = null;
     };
-  }, [contentCanvasRef, overlayCanvasRef, stageRef]);
+  }, [contentCanvasRef, overlayCanvasRef, stageRef, attachTick]);
 
   // ── Channel Filter Effect ──────────────────────────────────────────
   const channel = useGuidesStore((s) => s.channel);
@@ -1366,11 +1378,18 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
   const renameNode = (): void => {
     const n = defaultSceneGraph.getNode(id);
     if (!n) return;
-    const newName = window.prompt('Rename layer:', n.name);
-    if (newName && newName.trim()) {
-      n.name = newName.trim();
+    void (async () => {
+      const newName = await customPrompt('Rename Layer', 'Give this layer a new name.', n.name, {
+        confirmLabel: 'Rename',
+      });
+      if (!newName?.trim()) return;
+      // Re-read: the dialog is async now, so the node could have been deleted
+      // while it was open. The old synchronous prompt could not have this gap.
+      const live = defaultSceneGraph.getNode(id);
+      if (!live) return;
+      live.name = newName.trim();
       bumpScene();
-    }
+    })();
   };
   return [
     { id: 'rename', label: 'Rename…', onSelect: renameNode },
@@ -1419,10 +1438,15 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
             id: 'merge-paths',
             label: 'Merge Paths',
             children: [
-              { id: 'merge-union', label: 'Union (Add)', onSelect: () => mergeSelectedPaths('union') },
-              { id: 'merge-subtract', label: 'Subtract', onSelect: () => mergeSelectedPaths('subtract') },
-              { id: 'merge-intersect', label: 'Intersect', onSelect: () => mergeSelectedPaths('intersect') },
-              { id: 'merge-exclude', label: 'Exclude (XOR)', onSelect: () => mergeSelectedPaths('exclude') },
+              { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => liveMergeSelectedPaths('union') },
+              { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => liveMergeSelectedPaths('subtract') },
+              { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
+              { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
+              { id: 'merge-sep', label: '—', disabled: true },
+              { id: 'merge-union', label: 'Bake Union', onSelect: () => mergeSelectedPaths('union') },
+              { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => mergeSelectedPaths('subtract') },
+              { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => mergeSelectedPaths('intersect') },
+              { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => mergeSelectedPaths('exclude') },
             ],
           },
         ]

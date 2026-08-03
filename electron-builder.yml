@@ -104,26 +104,50 @@ nsis:
   allowToChangeInstallationDirectory: true
 
 mac:
-  target: dmg
+  target:
+    - target: dmg
+      arch: [arm64, x64]
   category: public.app-category.graphics-design
-  # Per-arch, unlike the other two: an arm64 build does not run on an Intel Mac
-  # at all, and a user who downloads the wrong one sees "the application is
-  # damaged" — which reads as a corrupt download, not a wrong architecture.
+  # Per-arch, deliberately: an arm64 build does not run on an Intel Mac at all,
+  # and a user who downloads the wrong one sees "the application is damaged" —
+  # which reads as a corrupt download rather than a wrong architecture. Both
+  # arches are built in ONE job so they share a latest-mac.yml.
   artifactName: Premation-macOS-${arch}.${ext}
+  # ── Gatekeeper requirements ──
+  # hardenedRuntime is REQUIRED for notarization; without it notarytool rejects
+  # the submission outright. The entitlements below are the minimum an Electron
+  # app needs to keep working under it — the JIT/unsigned-memory pair, because V8
+  # generates code at runtime and the hardened runtime forbids that by default.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # electron-builder signs every nested binary, framework and helper it finds.
+  # Missed components are the single most common notarization rejection, so this
+  # is left ON rather than narrowed for build speed.
+  notarize: false # handled explicitly in CI via notarytool; see .github/workflows/release.yml
 
-linux:
-  target: AppImage
-  category: Graphics
-  artifactName: Premation.${ext}
+# LINUX IS DELIBERATELY UNSUPPORTED — not overlooked.
+# Removed rather than commented out so nobody re-enables a target nobody tests.
+# See RELEASING.md "Platform support" for the reasoning and what re-adding costs.
 
 # ── Signing ───────────────────────────────────────────────────────────────────
-# Unset, and that has consequences worth stating plainly:
+# Credentials come from CI SECRETS ONLY. Nothing here, nothing in the repo.
 #
-#  • Windows: SmartScreen warns on an unsigned installer ("unrecognised app").
-#    It still installs, and auto-update still works. Fixed by an EV/OV code
-#    signing certificate (CSC_LINK + CSC_KEY_PASSWORD).
-#  • macOS: unsigned is worse than a warning. Gatekeeper blocks the app, and
-#    Squirrel.Mac REFUSES to apply an update it cannot verify — which is why
-#    electron/updater.ts keeps macOS auto-update behind a flag. Fixed by an
-#    Apple Developer ID plus notarization.
-#  • Linux: AppImage needs neither.
+# electron-builder picks signing up from the environment:
+#   macOS    CSC_LINK / CSC_KEY_PASSWORD  → Developer ID Application .p12
+#   Windows  CSC_LINK / CSC_KEY_PASSWORD  → code-signing cert
+# and CSC_IDENTITY_AUTO_DISCOVERY=false disables signing entirely.
+#
+# The release workflow FAILS if an artifact comes out unsigned. It does not fall
+# back to publishing unsigned — an unsigned artifact reaching users is the thing
+# the whole pipeline exists to prevent, and "publish anyway" is how that happens
+# at 2am.
+#
+# What unsigned costs, stated plainly:
+#  • macOS — Gatekeeper BLOCKS the app. Since Sequoia there is no Control-click
+#    override; the user must go to System Settings ▸ Privacy & Security. And
+#    Squirrel.Mac refuses updates it cannot verify, which is why
+#    electron/updater.ts keeps macOS auto-update behind a flag.
+#  • Windows — SmartScreen warns ("Windows protected your PC"). It still
+#    installs via "More info ▸ Run anyway", and auto-update still works.

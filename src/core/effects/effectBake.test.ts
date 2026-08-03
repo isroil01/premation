@@ -6,16 +6,46 @@
  */
 
 import { isGpuUnbakeableEffect, effectsNeedCpuBake, applyEffectChain, layerNeedsCpuBake } from './effectBake';
+import { hasCanvas2dImplementation } from './canvas2dEffects';
 import type { Effect } from './effects';
 
 describe('bake predicates', () => {
-  it('flags only the Canvas2D-only generator/pixel family', () => {
-    for (const t of ['fill', 'stroke', 'four-color-gradient', 'beam', 'sharpen', 'noise', 'keylight', 'wave-warp', 'turbulent-displace']) {
+  it('flags only the effects the GPU cannot draw at all', () => {
+    for (const t of ['four-color-gradient', 'beam', 'keylight', 'wave-warp', 'turbulent-displace',
+      'inner-shadow', 'inner-glow', 'satin', 'bevel', 'directional-blur', 'linear-wipe', 'transform']) {
       expect(isGpuUnbakeableEffect(t)).toBe(true);
     }
-    // These have GPU forms → NOT baked.
-    for (const t of ['blur', 'glow', 'brightness', 'levels', 'curves', 'tint', 'gradient-ramp', 'fractal-noise', 'displacement-map']) {
+    // These have GPU forms → they never FORCE a bake.
+    for (const t of ['blur', 'glow', 'brightness', 'levels', 'curves', 'tint', 'gradient-ramp',
+      'fractal-noise', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise']) {
       expect(isGpuUnbakeableEffect(t)).toBe(false);
+    }
+  });
+
+  /**
+   * "Forces a bake" and "can be drawn by the bake" are different questions.
+   *
+   * Fill / Stroke / Sharpen / Noise answer NO to the first (they have GPU
+   * materials) and YES to the second. Collapsing the two made them fall through
+   * BOTH routes on any layer baked for another reason — the layer's GPU effect
+   * list is dropped wholesale when baked, so the bake was their last chance and
+   * it skipped them. Symptom: a Color Overlay or Stroke layer style vanished the
+   * moment an Inner Shadow was enabled on the same layer.
+   */
+  it('separates "forces a bake" from "the bake can draw it"', () => {
+    for (const t of ['fill', 'stroke', 'sharpen', 'noise']) {
+      expect(isGpuUnbakeableEffect(t)).toBe(false);
+      expect(hasCanvas2dImplementation(t)).toBe(true);
+    }
+    // Anything that forces a bake must also be drawable by it.
+    for (const t of ['inner-shadow', 'inner-glow', 'satin', 'bevel', 'beam', 'keylight',
+      'wave-warp', 'turbulent-displace', 'four-color-gradient', 'directional-blur',
+      'linear-wipe', 'transform']) {
+      expect(hasCanvas2dImplementation(t)).toBe(true);
+    }
+    // GPU-only and CSS/LUT effects are drawn by other branches of the chain.
+    for (const t of ['displacement-map', 'motion-tile', 'blur', 'levels']) {
+      expect(hasCanvas2dImplementation(t)).toBe(false);
     }
   });
 
@@ -41,8 +71,37 @@ describe('bake predicates', () => {
     expect(effectsNeedCpuBake(undefined)).toBe(false);
     expect(effectsNeedCpuBake([])).toBe(false);
     expect(effectsNeedCpuBake([{ id: 'a', type: 'blur', params: { amount: 5 } } as Effect])).toBe(false);
-    expect(effectsNeedCpuBake([{ id: 'a', type: 'fill', enabled: false, params: {} } as Effect])).toBe(false);
-    expect(effectsNeedCpuBake([{ id: 'a', type: 'fill', params: { color: '#ff0000', opacity: 100 } } as Effect])).toBe(true);
+    expect(effectsNeedCpuBake([{ id: 'a', type: 'satin', enabled: false, params: {} } as Effect])).toBe(false);
+    expect(effectsNeedCpuBake([{ id: 'a', type: 'satin', params: { size: 8 } } as Effect])).toBe(true);
+    // Fill has a GPU material, so on its own it must NOT drag the layer onto
+    // the CPU — that was the whole point of giving it one.
+    expect(effectsNeedCpuBake([{ id: 'a', type: 'fill', params: { color: '#ff0000', opacity: 100 } } as Effect])).toBe(false);
+  });
+
+  /**
+   * The combined stack: an interior style forces the bake, and Fill must still
+   * land. Verified on pixels because the predicates alone cannot show that the
+   * chain actually dispatched to the Fill case.
+   */
+  it('applies Fill inside a bake forced by an interior style', () => {
+    const mk = (w: number, h: number): HTMLCanvasElement => {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      return c;
+    };
+    const ctx = mk(16, 16).getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(0, 0, 16, 16);
+    const stack = [
+      { id: 'f', type: 'fill', params: { color: '#ff0000', opacity: 100 } },
+      { id: 's', type: 'inner-shadow', params: { distance: 6, angle: 135, softness: 8, color: '#000000', opacity: 55 } },
+    ] as Effect[];
+    expect(effectsNeedCpuBake(stack)).toBe(true);
+    applyEffectChain(ctx, 16, 16, stack, mk);
+    const px = ctx.getImageData(8, 8, 1, 1).data;
+    expect(px[0]).toBeGreaterThan(128); // recoloured red…
+    expect(px[1]).toBeLessThan(128);    // …and the original green is gone
   });
 });
 

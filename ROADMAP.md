@@ -25,29 +25,6 @@ Pre-1.0. Expect rough edges in the UI and occasional breaking changes to the
 
 ## Now
 
-### Bring-your-own-key AI
-
-**The biggest gap, and the best contribution available.**
-
-The AI layer is complete — 62 tools, an agent loop, a deterministic "caster"
-pipeline built on a hand-authored technique library, and a self-critique pass.
-It is disabled in the local edition for one reason: model calls go through a
-hosted gateway that holds the API key, so an offline build has nothing to talk
-to.
-
-What needs to happen:
-
-1. Turn the single call site in `streamTurn` (`src/core/ai/AgentLoop.ts`) into an
-   injectable transport, with a local implementation alongside the gateway one.
-2. Perform the provider call in the **Electron main process**, not the renderer.
-   Two reasons: the renderer CSP allows only `'self'` and localhost, and the key
-   must never enter renderer scope where plugin code lives.
-3. Store the key with `safeStorage` / the OS keychain.
-4. Flip `aiEnabled()` in `src/core/config/edition.ts` for the local edition.
-
-Everything downstream of that transport — tools, caster, critique, undo
-transactions — already runs locally and needs no changes.
-
 ### A local project browser
 
 The local edition opens straight into the editor because the existing dashboard
@@ -106,6 +83,21 @@ storage layer.
   metered AI service and the encrypted sync vault are a separate closed service.
   The local edition is designed to need none of them, and that is the intended
   shape — not a temporary state.
+- **Shipping the AI assistant in the local edition.** This section used to open
+  with "Bring-your-own-key AI — the biggest gap, and the best contribution
+  available", followed by a four-step plan. All four steps were completed: the
+  transport in `streamTurn` is injectable, the provider call happens in the
+  Electron main process, keys are stored with `safeStorage` in the OS keystore,
+  and `aiEnabled()` was flipped.
+
+  It has since been flipped back, deliberately. The local edition does not ship
+  the assistant — no panel, no commands, no settings tab, and no AI IPC
+  registered in the shell. The machinery all still exists and is unchanged; what
+  changed is the decision about what the open-source build includes. Worth
+  stating plainly so nobody rebuilds it: the work is done, the gate is one line
+  in `src/core/config/edition.ts`, and the local build's no-network guarantee is
+  now enforced in the main process rather than by the UI declining to offer a
+  button.
 
 ---
 

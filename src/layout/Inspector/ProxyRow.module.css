@@ -25,8 +25,8 @@
 
 /* A proxy silently in use looks like a quality bug, so this one is loud. */
 .inUse {
-  border-color: var(--color-warning, #d08a2c);
-  color: var(--color-warning, #d08a2c);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
 }
 
 .generating {
@@ -34,8 +34,8 @@
 }
 
 .failed {
-  border-color: var(--color-danger, #c2453f);
-  color: var(--color-danger, #c2453f);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .detail {

@@ -5,7 +5,7 @@ import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled } from '@core/scene/threeD';
-import { moveAnchorCompensated } from '@core/scene/anchor';
+import { setAnchor } from '@core/scene/anchor';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
@@ -305,7 +305,6 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>Transform</h4>
 
       <div className={styles.inlineRows}>
         {!isCamera && (
@@ -314,11 +313,27 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
               { prop: 'anchorX', value: anchorXVal },
               { prop: 'anchorY', value: anchorYVal },
             ]))}
+            {/*
+              AE semantics: typing an anchor value MOVES the layer.
+
+              Anchor Point is a coordinate in the layer's own space and Position
+              says where that point sits in the parent, so moving the anchor
+              inside the layer shifts the content by −R·S·Δanchor. Compensating
+              here is what the Pan Behind tool (Y) is for, and it is a separate
+              gesture in AE precisely because the two are different intentions.
+
+              These rows used to call `moveAnchorCompensated`, which was neither
+              AE nor self-consistent: `renderAnimPropInner` routes ANIMATED
+              properties straight to `setKeyframe` and never calls this writer,
+              so the compensation silently vanished the moment the anchor
+              carried a track. One field, three behaviours, decided by keyframe
+              state that has nothing to do with anchoring.
+            */}
             {renderAnimPropInner('anchorX', anchorXVal, (v) => {
-              moveAnchorCompensated(nodeId, v, anchorYVal);
+              setAnchor(nodeId, v, anchorYVal);
             })}
             {renderAnimPropInner('anchorY', anchorYVal, (v) => {
-              moveAnchorCompensated(nodeId, anchorXVal, v);
+              setAnchor(nodeId, anchorXVal, v);
             })}
             {is3D && renderAnimPropInner('anchorZ', anchorZVal, (v) => setAnchorZ(v))}
           </>

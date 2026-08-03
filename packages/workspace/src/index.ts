@@ -136,7 +136,6 @@ export {
   drawToolOptions,
   CurvatureTool,
   TextTool,
-  CameraTool,
   createBuiltinTools,
   type Tool,
   type ToolContext,

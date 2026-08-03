@@ -8,7 +8,7 @@
 
 .intro {
   font-size: 0.75rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   line-height: 1.45;
   margin: 0;
 }
@@ -24,9 +24,9 @@
   margin: 0;
   padding: 9px 11px;
   border-radius: var(--radius-surface);
-  border: 1px solid color-mix(in srgb, var(--color-warning, #f5a524) 40%, transparent);
-  background: color-mix(in srgb, var(--color-warning, #f5a524) 10%, transparent);
-  color: var(--color-text-primary, #fff);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-text-primary);
 }
 
 /*
@@ -41,12 +41,12 @@
   gap: 10px;
   padding: 11px 12px;
   border-radius: var(--radius-surface);
-  border: 1px solid color-mix(in srgb, var(--color-accent, #2988ff) 35%, transparent);
-  background: color-mix(in srgb, var(--color-accent, #2988ff) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
 }
 
 .calloutIcon {
-  color: var(--color-accent, #2988ff);
+  color: var(--color-accent);
   flex: none;
   margin-top: 2px;
 }
@@ -59,11 +59,11 @@
   flex: 1;
   font-size: 0.74rem;
   line-height: 1.4;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .calloutBody strong {
-  color: var(--color-text-primary, #fff);
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
@@ -72,7 +72,7 @@
   gap: 18px;
   flex-wrap: wrap;
   font-size: 0.72rem;
-  color: var(--color-text-tertiary, #7e7e7e);
+  color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -89,13 +89,13 @@
   gap: 10px;
   padding: 14px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border-subtle, #1a1a1a);
+  border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-2);
 }
 
 .planCurrent {
-  border-color: var(--color-accent, #2988ff);
-  background: color-mix(in srgb, var(--color-accent, #2988ff) 8%, transparent);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
 }
 
 .planHead {
@@ -112,7 +112,7 @@
 
 .planPrice {
   font-size: 0.78rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .currentTag {
@@ -122,8 +122,8 @@
   text-transform: uppercase;
   padding: 2px 6px;
   border-radius: 999px;
-  border: 1px solid var(--color-accent, #3b82f6);
-  color: var(--color-accent, #3b82f6);
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
   white-space: nowrap;
 }
 
@@ -141,12 +141,12 @@
   align-items: flex-start;
   gap: 6px;
   font-size: 0.73rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   line-height: 1.35;
 }
 
 .featureTick {
-  color: var(--color-accent, #3b82f6);
+  color: var(--color-accent);
   flex: none;
   margin-top: 1px;
 }
@@ -158,21 +158,21 @@
 
 .note {
   font-size: 0.7rem;
-  color: var(--color-text-tertiary, #7e7e7e);
+  color: var(--color-text-tertiary);
   margin: 0;
   line-height: 1.4;
 }
 
 .error {
   font-size: 0.74rem;
-  color: var(--color-danger, #f87171);
+  color: var(--color-danger);
   margin: 0;
 }
 
 /* Confirmation of something that worked — a resend, a successful resync. */
 .notice {
   font-size: 0.74rem;
-  color: var(--color-success, #4ade80);
+  color: var(--color-success);
   margin: 0;
   line-height: 1.4;
 }

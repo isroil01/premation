@@ -2,58 +2,47 @@ import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { BLEND_MODES, getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
-import { MATTE_OPTIONS, getNodeMatte, setNodeMatte, getMatteMode, getMatteSourceId } from '@core/effects/matte';
+import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
+import { blendDropdownItems, blendModeLabel } from './blendMenu';
+import { getNodeMatte, setNodeMatte } from '@core/effects/matte';
+import { MATTE_OPTIONS, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
 import styles from '../Effects/EffectsPanel.module.css';
 
 export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element {
   useSceneRevision((s) => s.rev);
 
   const blend = getNodeBlend(nodeId);
-  const blendLabel = BLEND_MODES.find((b) => b.mode === blend)?.label ?? 'Normal';
-  const blendItems: DropdownItem[] = BLEND_MODES.map((b) => ({
-    type: 'item',
-    id: b.mode,
-    label: b.label,
-    icon: b.mode === blend ? 'check' : undefined,
-    onSelect: () => setNodeBlend(nodeId, b.mode),
-  }));
+  const blendLabel = blendModeLabel(blend);
+  const blendItems: DropdownItem[] = blendDropdownItems(blend, (m) => setNodeBlend(nodeId, m));
 
   const matte = getNodeMatte(nodeId);
-  const currentMode = getMatteMode(matte) ?? 'none';
-  const currentSourceId = getMatteSourceId(matte);
-  
+  const currentOption = matteOptionId(matte);
+  const currentSourceId = matte?.sourceId;
+
   const node = defaultSceneGraph.getNode(nodeId);
   const siblings = node && node.parent ? defaultSceneGraph.getChildren(node.parent).filter(n => n.id !== nodeId) : [];
 
-  const matteLabel = MATTE_OPTIONS.find((m) => m.value === currentMode)?.label ?? 'No matte';
+  const matteLabel = MATTE_OPTIONS.find((m) => m.id === currentOption)?.label ?? 'No matte';
   const matteItems: DropdownItem[] = MATTE_OPTIONS.map((m) => ({
     type: 'item',
-    id: m.value,
+    id: m.id,
     label: m.label,
-    icon: m.value === currentMode ? 'check' : undefined,
-    onSelect: () => {
-      if (m.value === 'none') {
-        setNodeMatte(nodeId, 'none');
-      } else {
-        setNodeMatte(nodeId, currentSourceId ? { mode: m.value, sourceId: currentSourceId } : m.value);
-      }
-    },
+    icon: m.id === currentOption ? 'check' : undefined,
+    // applyMatteOption carries the explicit source across a mode change.
+    onSelect: () => setNodeMatte(nodeId, applyMatteOption(matte, m.id)),
   }));
 
-  const sourceLabel = currentSourceId && currentMode !== 'none'
+  const sourceLabel = currentSourceId && matte
     ? siblings.find(s => s.id === currentSourceId)?.name ?? 'Layer Above'
     : 'Layer Above';
 
   const sourceItems: DropdownItem[] = [
-    { 
-      type: 'item', 
-      id: 'layer-above', 
-      label: 'Layer Above (Default)', 
-      icon: !currentSourceId ? 'check' : undefined, 
-      onSelect: () => {
-        if (currentMode !== 'none') setNodeMatte(nodeId, currentMode);
-      }
+    {
+      type: 'item',
+      id: 'layer-above',
+      label: 'Layer Above (Default)',
+      icon: !currentSourceId ? 'check' : undefined,
+      onSelect: () => setNodeMatte(nodeId, setMatteSource(matte, undefined)),
     },
     { type: 'separator' },
     ...siblings.map(s => ({
@@ -61,9 +50,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
       id: s.id,
       label: s.name || s.id,
       icon: (s.id === currentSourceId ? 'check' : undefined) as "check" | undefined,
-      onSelect: () => {
-        if (currentMode !== 'none') setNodeMatte(nodeId, { mode: currentMode, sourceId: s.id });
-      }
+      onSelect: () => setNodeMatte(nodeId, setMatteSource(matte, s.id)),
     }))
   ];
 
@@ -97,7 +84,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
         />
       </div>
 
-      {currentMode !== 'none' && (
+      {matte && (
         <div className={styles.blendRow}>
           <span className={styles.blendLabel}>Matte Source</span>
           <Dropdown

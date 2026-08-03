@@ -13,6 +13,7 @@
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
+import { writeTransformProps } from '@core/scene/transformWrite';
 
 const DEG = Math.PI / 180;
 export const ANCHOR_PROPS = ['anchorX', 'anchorY'] as const;
@@ -50,9 +51,19 @@ export function setAnchorEnabled(nodeId: string, on: boolean): void {
 }
 
 /**
- * Pan-behind: set the anchor to (ax, ay) and compensate the layer position so
- * the content does not move. Position shifts by R·S·(Δanchor), matching how the
+ * AE's Pan Behind (Y): set the anchor to (ax, ay) and compensate Position so the
+ * content does not move. Position shifts by R·S·(Δanchor), matching how the
  * renderer places `content_world = position + R·S·(local − anchor)`.
+ *
+ * This is the CANVAS-TOOL semantic, not the numeric one. Typing an anchor value
+ * in the Inspector moves the layer (see `setAnchor`), exactly as in AE — which
+ * is the whole reason Pan Behind exists as a separate tool.
+ *
+ * All four writes go through `writeTransformProps`, so each lands as a keyframe
+ * when its property is animated. They used to be raw `writeProp` calls: on a
+ * layer with animated Position the compensation was silently discarded (the
+ * renderer reads animated values first) and the layer JUMPED by the
+ * compensation amount — precisely the error pan-behind exists to prevent.
  */
 export function moveAnchorCompensated(nodeId: string, ax: number, ay: number): void {
   const node = defaultSceneGraph.getNode(nodeId);
@@ -67,11 +78,43 @@ export function moveAnchorCompensated(nodeId: string, ax: number, ay: number): v
   const day = ay - oldAy;
   const wdx = dax * sx * Math.cos(rot) - day * sy * Math.sin(rot);
   const wdy = dax * sx * Math.sin(rot) + day * sy * Math.cos(rot);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'anchorX', ax);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'anchorY', ay);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'x', num(t.props.x) + wdx);
-  defaultSceneGraph.writeProp(nodeId, t.id, 'y', num(t.props.y) + wdy);
-  bumpScene();
+  writeTransformProps(
+    nodeId,
+    [
+      { prop: 'anchorX', value: ax },
+      { prop: 'anchorY', value: ay },
+      { prop: 'x', value: num(t.props.x) + wdx },
+      { prop: 'y', value: num(t.props.y) + wdy },
+    ],
+    'Pan Behind',
+  );
+}
+
+/**
+ * AE's NUMERIC anchor edit: move the pivot within the layer and leave Position
+ * alone — so the layer MOVES on screen.
+ *
+ * This surprises everyone once, and it is what After Effects does. Anchor Point
+ * is a coordinate in the layer's own space; Position says where that point sits
+ * in the parent. Move the anchor inside the layer and the content shifts by
+ * −R·S·Δanchor. `moveAnchorCompensated` above is the compensated variant, bound
+ * to the Pan Behind tool.
+ *
+ * The Inspector's anchor fields used to call the compensated version, which was
+ * neither AE nor internally consistent: compensation was skipped whenever the
+ * anchor itself carried a track (that path writes a keyframe and never reached
+ * this module), so one field had three behaviours depending on which properties
+ * happened to be animated.
+ */
+export function setAnchor(nodeId: string, ax: number, ay: number): void {
+  writeTransformProps(
+    nodeId,
+    [
+      { prop: 'anchorX', value: ax },
+      { prop: 'anchorY', value: ay },
+    ],
+    'Set Anchor Point',
+  );
 }
 
 /** Pure world-delta for a pan-behind, exposed for testing. */

@@ -16,7 +16,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 30px;
+  height: var(--bar-height-menu);
   padding: 0 var(--space-2) 0 var(--space-3);
 }
 
@@ -34,7 +34,7 @@
 
 .menuDivider {
   width: 1px;
-  height: 16px;
+  height: var(--space-6);
   margin: 0 var(--space-1);
   background: var(--color-border-subtle);
 }
@@ -87,7 +87,7 @@
 .action {
   gap: var(--space-2);
   padding-inline: var(--space-3);
-  height: 26px;
+  height: var(--control-height-sm);
 }
 
 /* Active-tool hint at the right end of the tool row. */
@@ -103,11 +103,11 @@
 .toolRow {
   display: flex;
   align-items: center;
-  min-height: 36px;
+  min-height: var(--bar-height-tool);
   height: auto;
-  padding: 4px var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background: transparent;
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .inner {
@@ -115,7 +115,7 @@
   align-items: center;
   flex-wrap: nowrap;
   width: 100%;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .zoomGroup {
@@ -128,8 +128,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 30px;
-  padding: 0 8px;
+  height: var(--control-height-lg);
+  padding: 0 var(--space-4);
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
   border: 1px solid transparent;
@@ -146,8 +146,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 30px;
-  padding: 0 8px;
+  height: var(--control-height-lg);
+  padding: 0 var(--space-4);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: var(--motion-hover-transition);
@@ -159,19 +159,19 @@
 .toolGroup {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .toolDivider {
   width: 1px;
-  height: 18px;
+  height: var(--space-6);
   margin: 0;
   background: var(--color-border-subtle);
 }
 
 .tool {
-  width: 30px;
-  height: 30px;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
   display: grid;
   place-items: center;
   border-radius: var(--radius-md);
@@ -193,8 +193,8 @@
 
 /* Active tool — background color only, no border, no bottom line */
 .toolActive {
-  width: 30px;
-  height: 30px;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
   display: grid;
   place-items: center;
   border-radius: var(--radius-md);
@@ -227,7 +227,7 @@
 
 .layoutToggle[data-active]:hover {
   background: transparent !important;
-  color: var(--color-primary-hover, var(--color-primary)) !important;
+  color: var(--color-primary-hover) !important;
   border: none !important;
 }
 

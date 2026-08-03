@@ -16,13 +16,13 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  background: var(--color-workspace, #1e1e1e);
+  background: var(--color-workspace);
   outline: none;
   overflow: hidden;
 }
 
 .root:focus-visible {
-  outline: 1px solid var(--color-primary, #2988ff);
+  outline: 1px solid var(--color-primary);
   outline-offset: -1px;
 }
 
@@ -38,15 +38,15 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  background: var(--color-pasteboard, var(--color-workspace, #1e1e1e));
+  background: var(--color-pasteboard);
 }
 
 .loadingSpinner {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  border: 3px solid var(--color-border, rgba(255, 255, 255, 0.18));
-  border-top-color: var(--color-primary, #2988ff);
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
   animation: workspaceSpin 0.7s linear infinite;
 }
 
@@ -65,9 +65,9 @@
   max-width: 360px;
   padding: 16px 20px;
   border-radius: 8px;
-  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.18));
-  background: var(--color-surface, rgba(30, 30, 30, 0.92));
-  color: var(--color-text, #e8e8ea);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
   font-size: 12px;
   line-height: 1.5;
   text-align: center;
@@ -78,7 +78,7 @@
 }
 
 .renderError span {
-  color: var(--color-text-muted, rgba(255, 255, 255, 0.6));
+  color: var(--color-text-muted);
 }
 
 /*
@@ -91,7 +91,7 @@
   inset: 0;
   overflow: hidden;
   /* Premium radial gradient void centered on the composition, fading to true slate-950 */
-  background: radial-gradient(circle at center, #242426 0%, var(--color-slate-950, #0b0b0c) 100%);
+  background: radial-gradient(circle at center, #242426 0%, var(--color-slate-950) 100%);
 }
 
 /* Transparent-mode: show checkerboard beneath the comp.
@@ -151,9 +151,9 @@
 .overlayBR,
 .overlayBC {
   position: absolute;
-  z-index: var(--z-index-overlay, 50);
+  z-index: var(--z-index-overlay);
   display: flex;
-  gap: var(--space-2, 4px);
+  gap: var(--space-2);
   pointer-events: none;
 }
 
@@ -188,7 +188,7 @@
   border: 1px solid var(--color-border-strong);
   backdrop-filter: blur(4px);
   font-size: 10px;
-  font-family: 'Inter', system-ui, monospace;
+  font-family: var(--font-family-mono);
   color: var(--color-text-muted);
   letter-spacing: 0.04em;
 }

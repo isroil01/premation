@@ -30,7 +30,7 @@ import { create } from 'zustand';
 import { deletePersisted, readPersisted, writePersisted } from '@core/settings/persistedValue';
 import { ADAPTERS, type ProviderId } from '@motion/ai-tools';
 import { onSessionChange } from '@core/api/session';
-import { aiEnabled } from '@core/config/edition';
+
 import {
   fetchKeyStatuses,
   forgetKey,
@@ -304,23 +304,26 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
     return models[provider] || ADAPTERS[provider].defaultModel;
   },
 
+  // The `if (!aiEnabled()) return false` short-circuits that used to open
+  // `ready`, `anyReady`, `refreshModels` and `refreshStatus` are gone, and stay
+  // gone now that `aiEnabled()` is edition-gated again. The reason changed: they
+  // were removed because the predicate had stopped discriminating anything, and
+  // they are not coming back because the gate now happens ABOVE this store —
+  // the local edition never mounts a surface that reaches it. Re-adding them
+  // here would put an edition check on the wrong side of the boundary, where it
+  // answers "false" to a caller that only exists when it would be true.
+  // Readiness is whether a provider is actually usable, which is what these say.
   ready: () => {
-    // Nothing is runnable in the local edition — the gateway that holds the key
-    // does not exist. Answering false here is what puts every AI affordance in
-    // its disabled "coming soon" state, since they all already ask this.
-    if (!aiEnabled()) return false;
     const { provider, status, motion } = get();
     return isUsable(provider, status, motion);
   },
 
   anyReady: () => {
-    if (!aiEnabled()) return false;
     const { status, motion } = get();
     return FALLBACK_ORDER.some((p) => isUsable(p, status, motion));
   },
 
   refreshModels: async () => {
-    if (!aiEnabled()) return;
     if (!isAuthenticated()) return;
     try {
       const { models } = await api.getAiModels();
@@ -359,7 +362,6 @@ export const useAiProviderStore = create<AiProviderState>((set, get) => ({
   },
 
   refreshStatus: async (opts) => {
-    if (!aiEnabled()) return;
     // Only the SERVER edition needs a session to answer this. Gating the local
     // edition on `isAuthenticated()` would mean its key status could never load
     // at all — there is no account to be authenticated against — so the panel

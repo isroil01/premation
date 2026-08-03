@@ -1,42 +1,78 @@
-# Cut a release: build installers for Windows, macOS and Linux, and attach them
-# to a GitHub release that users download from — and that installed apps read to
+# Cut a release: build SIGNED installers for Windows and macOS and attach them to
+# a GitHub release that users download from — and that installed apps read to
 # discover updates.
-#
-# How to use it:
 #
 #   npm run release:patch        # bumps package.json, commits, tags v0.1.1
 #   git push --follow-tags       # <- this is what starts the workflow
 #
-# Then in GitHub ▸ Releases: a DRAFT release is waiting with the installers
-# attached. Write the notes, press Publish. No installed app sees the update
-# until you do — that is the point of the draft (electron-builder.yml:
+# Then in GitHub ▸ Releases a DRAFT is waiting. Write the notes, press Publish.
+# No installed app sees the update until you do (electron-builder.yml:
 # `releaseType: draft`).
 #
-# The tag is the trigger, but package.json is the source of truth: electron-builder
-# reads the version from there and writes it into latest.yml. If the two disagree,
-# the release is called v1.2.3 while the update metadata says 1.2.2 and every
-# client either misses the update or installs it forever. The `verify` job below
-# refuses to build in that case.
+# ── RELEASE POLICY, enforced below rather than documented ────────────────────
+#  1. Releases come from `main` ONLY. A tag that is not an ancestor of `main`
+#     fails the pipeline. No release from `dev` or a feature branch.
+#  2. Flow: feature branch → dev → main → tag → release.
+#  3. Artifacts are built from the TAGGED COMMIT, never a working tree.
+#  4. Signing is CONDITIONAL, and the path taken is always stated in the output:
+#       secrets present -> sign, notarize, staple, verify. A build that FAILS
+#                          verification does not publish. No fallback.
+#       secrets absent  -> build and publish UNSIGNED, clearly labelled.
+#
+# The distinction that matters: "we chose not to sign" and "we tried to sign and
+# it broke" must never produce the same artifact. The first is a decision; the
+# second is a defect being shipped. Hence — skipping is allowed, FAILING is not.
+#
+# TEMPORARY ACCOMMODATION (2026-08-03): macOS ships unsigned while the Apple
+# Developer Program membership is pending. EXPIRY: when the Developer ID
+# certificate lands, populate the secrets and this path stops being taken on its
+# own — no code change needed. See RELEASING.md "Unsigned macOS distribution".
 name: release
 
 on:
   push:
     tags:
       - 'v*'
-  # Manual runs are for rehearsing the build. They produce no release, so a dry
-  # run can never publish something half-finished.
+  # Manual runs rehearse the build. They produce no release, so a dry run can
+  # never publish something half-finished.
   workflow_dispatch:
 
-# The release job needs to create a release and upload assets to it.
 permissions:
   contents: write
 
 jobs:
   verify:
-    name: Verify tag, types and tests
+    name: Verify tag, branch, types and tests
     runs-on: ubuntu-latest
+    outputs:
+      # Consumed by every conditional in `build`. Computed once, in one place,
+      # so the two platforms cannot disagree about what was decided.
+      signMac: ${{ steps.signing.outputs.mac }}
+      signWin: ${{ steps.signing.outputs.win }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the ancestry check needs `main`, and a shallow clone
+          # would make every tag look unreachable from it.
+          fetch-depth: 0
+
+      # ── POLICY GATE 1: the tag must be on `main` ──
+      #
+      # A tag pushed from `dev` or a feature branch builds and publishes exactly
+      # as convincingly as a real release — the installer is real, the update
+      # manifest is real, and users get it. Nothing downstream can tell the
+      # difference, so this is the only place that can refuse.
+      - name: Tag must be an ancestor of main
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of main."
+            echo "::error::Releases are cut from main only. Flow: feature -> dev -> main -> tag."
+            echo "::error::Merge to main first, then tag the merge commit."
+            exit 1
+          fi
+          echo "OK: $GITHUB_REF_NAME is on main."
 
       - uses: actions/setup-node@v4
         with:
@@ -45,6 +81,11 @@ jobs:
 
       - run: npm ci
 
+      # ── POLICY GATE 2: tag matches package.json ──
+      # electron-builder reads the version from package.json and writes it into
+      # latest.yml. If the two disagree the release is called v1.2.3 while the
+      # update metadata says 1.2.2, and every client either misses the update or
+      # installs it forever.
       - name: Tag matches package.json version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -53,13 +94,57 @@ jobs:
           echo "tag=$TAG package.json=$PKG"
           if [ "$TAG" != "$PKG" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG."
-            echo "::error::Auto-update reads the version from package.json — bump it with 'npm run release:patch' rather than tagging by hand."
+            echo "::error::Bump with 'npm run release:patch' rather than tagging by hand."
             exit 1
           fi
 
-      # Shipping a build that does not typecheck or whose tests fail is more
-      # expensive than shipping late: every user who installs it has to be
-      # updated again.
+      # ── GATE 3 IS NOW A DECISION, NOT A FAILURE ──
+      #
+      # Reports which path the release will take, per platform, and says so
+      # loudly either way. A release must never be ambiguous about whether it
+      # was signed — an unsigned artifact is acceptable while we have no
+      # certificate; an unsigned artifact nobody realised was unsigned is not.
+      - name: Decide signing path
+        id: signing
+        env:
+          MAC_CSC: ${{ secrets.MAC_CSC_LINK }}
+          MAC_PW: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PW: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC: ${{ secrets.WIN_CSC_LINK }}
+          WIN_PW: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          mac=true
+          for v in MAC_CSC MAC_PW APPLE_ID APPLE_PW APPLE_TEAM; do
+            [ -z "${!v}" ] && mac=false
+          done
+          win=true
+          for v in WIN_CSC WIN_PW; do
+            [ -z "${!v}" ] && win=false
+          done
+          echo "mac=$mac" >> "$GITHUB_OUTPUT"
+          echo "win=$win" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Signing path"
+            echo ""
+            if [ "$mac" = true ]; then
+              echo "- **macOS: SIGNED** — will sign, notarize, staple and verify."
+            else
+              echo "- **macOS: UNSIGNED** — no Developer ID secrets. Gatekeeper will block the app;"
+              echo "  users must allow it via System Settings ▸ Privacy & Security."
+            fi
+            if [ "$win" = true ]; then
+              echo "- **Windows: SIGNED** — will sign and verify the RFC-3161 timestamp."
+            else
+              echo "- **Windows: UNSIGNED** — SmartScreen will warn; installs via More info ▸ Run anyway."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          [ "$mac" = true ] || echo "::warning::macOS artifacts will be UNSIGNED (accommodation dated 2026-08-03; see RELEASING.md)."
+          [ "$win" = true ] || echo "::warning::Windows artifacts will be UNSIGNED."
+
       - run: npm run typecheck
       - run: npx tsc -p electron/tsconfig.json --noEmit
       - run: npm test -- --ci
@@ -69,23 +154,20 @@ jobs:
     needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
-      # One platform failing should not cancel installers that are already built.
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             name: Windows
-            # NSIS installer → MotionEditor-Setup-Windows.exe
-            args: --win
+            args: --win            # NSIS → Premation-Setup-Windows.exe
           - os: macos-latest
             name: macOS
-            # BOTH architectures in ONE job, deliberately: two separate jobs would
-            # each publish their own latest-mac.yml and the second would overwrite
-            # the first, leaving one architecture unable to update.
+            # BOTH architectures in ONE job, deliberately: two jobs would each
+            # publish their own latest-mac.yml and the second would overwrite the
+            # first, leaving one architecture unable to update.
             args: --mac --x64 --arm64
-          - os: ubuntu-latest
-            name: Linux
-            args: --linux
+          # LINUX IS DELIBERATELY ABSENT — removed, not commented out.
+          # See RELEASING.md "Platform support".
 
     steps:
       - uses: actions/checkout@v4
@@ -98,12 +180,6 @@ jobs:
       - run: npm ci
 
       - name: Build renderer and main process
-        # VITE_BACKEND_ORIGIN is what makes this a client of your deployed server:
-        # it becomes the API base URL AND the shell's CSP connect-src. A repo
-        # Actions VARIABLE overrides; otherwise the committed .env.production
-        # supplies it. Export only when non-empty — loadEnv gives process.env
-        # precedence, so an unconditional empty env var would ERASE the
-        # .env.production value and the build would fall back to localhost:4000.
         shell: bash
         run: |
           if [ -n "${{ vars.VITE_BACKEND_ORIGIN }}" ]; then export VITE_BACKEND_ORIGIN="${{ vars.VITE_BACKEND_ORIGIN }}"; fi
@@ -115,28 +191,151 @@ jobs:
         shell: bash
         run: echo "::warning::VITE_BACKEND_ORIGIN is not set — these installers point at http://localhost:4000."
 
-      - name: Package and publish
-        # `--publish always` on a tag uploads to the draft release; on a manual
-        # run there is no tag, so we package without publishing instead.
+      # ── Package + sign ──
+      # electron-builder reads CSC_LINK / CSC_KEY_PASSWORD from the environment.
+      # Notarization is done explicitly below rather than by electron-builder, so
+      # submission, stapling and verification are separate inspectable steps.
+      - name: Package (SIGNED)
+        if: ${{ (matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signing is not configured. See the note at the end of
-          # electron-builder.yml for what that costs on each platform.
+          CSC_LINK: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+        run: npx electron-builder ${{ matrix.args }} --publish never
+
+      # CSC_IDENTITY_AUTO_DISCOVERY=false is set EXPLICITLY here rather than left
+      # to an empty CSC_LINK. On macOS, electron-builder will otherwise find a
+      # certificate in the runner keychain and sign with whatever it happens to
+      # be — producing an artifact signed by an identity nobody chose. Skipping
+      # has to be as deliberate as signing.
+      - name: Package (UNSIGNED — no certificate configured)
+        if: ${{ (matrix.os == 'macos-latest' && needs.verify.outputs.signMac != 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin != 'true') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npx electron-builder ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        run: |
+          echo "::warning::Building ${{ matrix.name }} UNSIGNED — no signing certificate is configured."
+          npx electron-builder ${{ matrix.args }} --publish never
+
+      # ── macOS: notarize, then STAPLE ──
+      # Stapling matters more than it looks. Without the ticket attached, a
+      # machine that is offline — or behind a filter that blocks Apple's
+      # verification endpoints — cannot check the notarization and Gatekeeper
+      # blocks the app, on a build that IS notarized.
+      - name: Notarize and staple (macOS)
+        if: ${{ matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          for dmg in release/**/*.dmg; do
+            echo "-- notarizing $dmg"
+            xcrun notarytool submit "$dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+            xcrun stapler staple "$dmg"
+          done
+
+      # ── FAIL-CLOSED VERIFICATION, before upload ──
+      # Without this the pipeline can succeed with a silently unsigned build:
+      # electron-builder does NOT fail when CSC_LINK is empty, it just skips
+      # signing and carries on.
+      # Runs ONLY on the signed path. Its job is to catch a signing attempt that
+      # silently produced nothing — electron-builder exits 0 when signing is
+      # skipped, so without this a broken certificate looks like a clean build.
+      - name: Verify macOS artifacts are signed, notarized and stapled
+        if: ${{ matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true' }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          found=0
+          for dmg in release/**/*.dmg; do
+            found=1
+            echo "-- verifying $dmg"
+            spctl -a -vvv --type install "$dmg"   # rejects unsigned/improperly signed
+            xcrun stapler validate "$dmg"          # rejects a missing ticket
+          done
+          [ "$found" = 1 ] || { echo "::error::No .dmg produced"; exit 1; }
+
+      - name: Verify Windows artifacts are signed and timestamped
+        if: ${{ matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true' }}
+        shell: pwsh
+        run: |
+          $found = $false
+          Get-ChildItem -Path release -Recurse -Filter *.exe | ForEach-Object {
+            $found = $true
+            Write-Host "-- verifying $($_.FullName)"
+            $sig = Get-AuthenticodeSignature $_.FullName
+            Write-Host "   status: $($sig.Status)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Error "Unsigned or invalid signature: $($_.Name) [$($sig.Status)]"
+              exit 1
+            }
+            # A signature without a timestamp stops validating the day the
+            # certificate expires, retroactively breaking every build shipped.
+            if (-not $sig.TimeStamperCertificate) {
+              Write-Error "Signature is not RFC-3161 timestamped: $($_.Name)"
+              exit 1
+            }
+          }
+          if (-not $found) { Write-Error "No .exe produced"; exit 1 }
+
+      # Publish only AFTER verification passed (when it ran), and only on a tag.
+      - name: Publish to the draft release (SIGNED)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && ((matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true')) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+        run: npx electron-builder ${{ matrix.args }} --publish always
+
+      - name: Publish to the draft release (UNSIGNED)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && ((matrix.os == 'macos-latest' && needs.verify.outputs.signMac != 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin != 'true')) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npx electron-builder ${{ matrix.args }} --publish always
+
+      # The release is a DRAFT, so a human writes the notes before anyone can
+      # download this. Putting the unsigned warning in the job summary is how
+      # that human finds out — the alternative is discovering it from a user.
+      - name: State the signing outcome
+        if: always()
+        shell: bash
+        run: |
+          SIGNED='${{ (matrix.os == 'macos-latest' && needs.verify.outputs.signMac) || needs.verify.outputs.signWin }}'
+          if [ "$SIGNED" = "true" ]; then
+            echo "### ${{ matrix.name }}: SIGNED and verified" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### ${{ matrix.name }}: **UNSIGNED**"
+              echo ""
+              echo "Add this to the release notes before publishing:"
+              echo ""
+              if [ "${{ matrix.os }}" = "macos-latest" ]; then
+                echo "> macOS: this build is not signed or notarized. macOS will refuse to open it"
+                echo "> on first launch. Go to **System Settings > Privacy & Security**, find the"
+                echo "> blocked app, and choose **Open Anyway**. Control-clicking the app does NOT"
+                echo "> work on macOS Sequoia or later."
+              else
+                echo "> Windows: this build is not signed. SmartScreen will show"
+                echo "> \"Windows protected your PC\" — choose **More info > Run anyway**."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload installers as workflow artifacts
-        # So a manual (untagged) run still gives you something to test, and so a
-        # tagged run keeps a copy independent of the release.
         uses: actions/upload-artifact@v4
         with:
-          name: installers-${{ matrix.name }}
-          # Output lands in a versioned subfolder (electron-builder.yml:
-          # directories.output = release/${version}), so the globs must recurse.
+          name: installers-${{ matrix.name }}${{ ((matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true')) && '-signed' || '-UNSIGNED' }}
           path: |
             release/**/*.exe
             release/**/*.dmg
-            release/**/*.AppImage
             release/**/*.yml
             release/**/*.blockmap
           if-no-files-found: error
