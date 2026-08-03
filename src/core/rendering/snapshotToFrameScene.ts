@@ -573,6 +573,10 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
+    // AE's per-layer Quality switch. Only emitted for 'draft' — the linear
+    // default is what every other layer already gets, and emitting it
+    // explicitly would churn the renderable for no behavioural change.
+    ...(layer.quality === 'draft' ? { sampling: 'nearest' as const } : {}),
     color: textured ? Color.white() : gradedSolidColor(layer),
     // Texture-backed kinds resolve via the provider
     ...(isCustomPath ? { textureKey: `path:${layer.id}` } : {}),

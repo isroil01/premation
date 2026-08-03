@@ -1,8 +1,22 @@
 /**
- * Per-layer quality (AE's Quality/Sampling switch). 'best' antialiases and
- * bilinear-samples; 'draft' turns sampling off (nearest-neighbour) for a faster,
- * rougher preview of that layer. Stored on the `fx` component like the other
- * per-layer switches; the renderer reads it to toggle `imageSmoothingEnabled`.
+ * Per-layer quality (AE's Quality/Sampling switch). 'best' bilinear-samples;
+ * 'draft' samples nearest-neighbour for a faster, rougher preview of that
+ * layer. Stored on the `fx` component like the other per-layer switches.
+ *
+ * WHERE IT IS ACTUALLY READ. This docstring used to claim "the renderer reads
+ * it to toggle `imageSmoothingEnabled`", and no such reader existed — every
+ * `imageSmoothingEnabled` site in the repo hardcodes `true`. Meanwhile the
+ * value WAS folded into the content hash, so toggling the switch invalidated
+ * the layer's cached texture and re-rasterized a byte-identical image. Strictly
+ * worse than the field not existing.
+ *
+ * The real chain, as of the wiring-audit fix:
+ *   buildSnapshot        → RenderLayer.quality
+ *   snapshotToFrameScene → Renderable.sampling = 'nearest'
+ *   CompositionPass      → nearest-clamp sampler instead of linear-clamp
+ *
+ * `src/core/rendering/__tests__/contentHashReaders.test.ts` fails if any
+ * content-hash field loses its reader again, this one included.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';

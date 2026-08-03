@@ -452,6 +452,26 @@ describe('Accepts-Lights routing (per-fragment vs per-quad fold)', () => {
     expect(r.color!.r).toBeCloseTo(0.5, 5);
   });
 
+  /**
+   * AE's per-layer Quality switch.
+   *
+   * This shipped WRITE-ONLY: stored on `fx`, carried into the snapshot, folded
+   * into the CONTENT HASH — and read by no renderer, so flipping it busted the
+   * layer's texture cache and redrew a byte-identical image. These are the
+   * behavioural half of the guard; `__tests__/contentHashReaders.test.ts` is
+   * the structural half that catches the whole class.
+   */
+  describe('per-layer draft quality → sampling', () => {
+    test("quality 'draft' asks the compositor for nearest sampling", () => {
+      expect(layerToRenderable(layer({ kind: 'image', quality: 'draft' })).sampling).toBe('nearest');
+    });
+
+    test('the default (best) leaves sampling unset, i.e. linear', () => {
+      expect(layerToRenderable(layer({ kind: 'image' })).sampling).toBeUndefined();
+      expect(layerToRenderable(layer({ kind: 'image', quality: undefined })).sampling).toBeUndefined();
+    });
+  });
+
   test('scene passthrough: lights3d + camera eye reach the FrameScene', () => {
     const cam = {
       view: IDENTITY_W3D, projection: IDENTITY_W3D,
