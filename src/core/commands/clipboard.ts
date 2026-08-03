@@ -1,3 +1,7 @@
+/* eslint-disable no-restricted-syntax -- F11: SAFE, verified.
+ * Mutates `JSON.parse(JSON.stringify(original))` — a deep clone made at
+ * clipboard.ts:98 — not a live graph node. Nudging the pasted copy by 20px is
+ * applied before the clone is inserted. */
 /**
  * Edit ▸ Cut / Copy / Paste for keyframes and layers.
  *

@@ -1,3 +1,6 @@
+/* eslint-disable no-restricted-syntax -- F11: SAFE, verified.
+ * Mutates a `structuredClone(doc)` — migrations must be pure, and the clone is
+ * taken precisely so the caller's document is untouched. Never a graph node. */
 /**
  * 1.1.0 → 1.2.0 — track matte becomes `{ mode, inverted }`.
  *

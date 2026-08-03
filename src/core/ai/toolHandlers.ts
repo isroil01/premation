@@ -1,3 +1,10 @@
+/* eslint-disable no-restricted-syntax -- TODO(F11): SUSPECTED DEFECT, NOT YET VERIFIED.
+ * These handlers do `defaultSceneGraph.getNode(id)` and then write into
+ * `component.props` in place. SceneGraph returns a fresh copy per read
+ * (SceneGraph.ts:154), so those writes are very likely discarded and these AI
+ * tools may be silent no-ops. Deliberately not fixed here: establishing which
+ * sites are live defects is F11's audit, and a blind rewrite of 10 call sites
+ * with no test coverage would be worse than the bug. Fix = writeProp(). */
 /**
  * The handlers behind the tool schemas.
  *

@@ -1,3 +1,8 @@
+/* eslint-disable no-restricted-syntax -- F11: SAFE, verified.
+ * `restore` walks `file.nodes` from a parsed ProjectFile BEFORE anything is
+ * loaded into the graph, so these are plain objects. (The legacy positional-matte
+ * fixup here predates the versioned migrations in core/project/migrations and
+ * could move there.) */
 /**
  * sceneProjectIO — bridges the ProjectManager to the scene graph document.
  *

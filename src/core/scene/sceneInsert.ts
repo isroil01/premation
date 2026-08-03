@@ -1,3 +1,11 @@
+/* eslint-disable no-restricted-syntax -- TODO(F11): UNCLASSIFIED, the largest cluster (99).
+ * This file both CONSTRUCTS node literals before `addNode` (legitimate — the
+ * object is not yet in the graph) and, in places, reads a node back with
+ * getNode() and mutates it (not legitimate). Layer insertion demonstrably
+ * works, so either the dangerous sites are compensated for elsewhere or they
+ * are writing values that happen to match the defaults. Which is which is
+ * exactly what F11's audit is for; suppressed wholesale rather than guessed at
+ * one line at a time. */
 /**
  * sceneInsert — shared "add a primitive to the composition" action, so the
  * insert controls can live anywhere (top tool bar, command palette, …) without

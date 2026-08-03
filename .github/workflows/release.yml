@@ -14,11 +14,19 @@
 #     fails the pipeline. No release from `dev` or a feature branch.
 #  2. Flow: feature branch → dev → main → tag → release.
 #  3. Artifacts are built from the TAGGED COMMIT, never a working tree.
-#  4. An unsigned artifact is not publishable. If signing or notarization fails,
-#     the release fails — there is no unsigned fallback.
+#  4. Signing is CONDITIONAL, and the path taken is always stated in the output:
+#       secrets present -> sign, notarize, staple, verify. A build that FAILS
+#                          verification does not publish. No fallback.
+#       secrets absent  -> build and publish UNSIGNED, clearly labelled.
 #
-# Rule 4 is the one worth restating: the tempting move at 2am is to publish
-# unsigned "just this once", and the point of the pipeline is that it cannot.
+# The distinction that matters: "we chose not to sign" and "we tried to sign and
+# it broke" must never produce the same artifact. The first is a decision; the
+# second is a defect being shipped. Hence — skipping is allowed, FAILING is not.
+#
+# TEMPORARY ACCOMMODATION (2026-08-03): macOS ships unsigned while the Apple
+# Developer Program membership is pending. EXPIRY: when the Developer ID
+# certificate lands, populate the secrets and this path stops being taken on its
+# own — no code change needed. See RELEASING.md "Unsigned macOS distribution".
 name: release
 
 on:
@@ -36,6 +44,11 @@ jobs:
   verify:
     name: Verify tag, branch, types and tests
     runs-on: ubuntu-latest
+    outputs:
+      # Consumed by every conditional in `build`. Computed once, in one place,
+      # so the two platforms cannot disagree about what was decided.
+      signMac: ${{ steps.signing.outputs.mac }}
+      signWin: ${{ steps.signing.outputs.win }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,11 +98,14 @@ jobs:
             exit 1
           fi
 
-      # ── POLICY GATE 3: signing credentials must exist ──
-      # Checked BEFORE the long build, so a missing secret fails in seconds
-      # rather than after two platform builds have run.
-      - name: Signing credentials are configured
-        if: startsWith(github.ref, 'refs/tags/v')
+      # ── GATE 3 IS NOW A DECISION, NOT A FAILURE ──
+      #
+      # Reports which path the release will take, per platform, and says so
+      # loudly either way. A release must never be ambiguous about whether it
+      # was signed — an unsigned artifact is acceptable while we have no
+      # certificate; an unsigned artifact nobody realised was unsigned is not.
+      - name: Decide signing path
+        id: signing
         env:
           MAC_CSC: ${{ secrets.MAC_CSC_LINK }}
           MAC_PW: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
@@ -99,16 +115,35 @@ jobs:
           WIN_CSC: ${{ secrets.WIN_CSC_LINK }}
           WIN_PW: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: |
-          missing=""
-          for v in MAC_CSC MAC_PW APPLE_ID APPLE_PW APPLE_TEAM WIN_CSC WIN_PW; do
-            [ -z "${!v}" ] && missing="$missing $v"
+          mac=true
+          for v in MAC_CSC MAC_PW APPLE_ID APPLE_PW APPLE_TEAM; do
+            [ -z "${!v}" ] && mac=false
           done
-          if [ -n "$missing" ]; then
-            echo "::error::Missing signing secrets:$missing"
-            echo "::error::A release cannot publish unsigned artifacts. See RELEASING.md 'Code signing'."
-            exit 1
-          fi
-          echo "OK: all signing secrets present."
+          win=true
+          for v in WIN_CSC WIN_PW; do
+            [ -z "${!v}" ] && win=false
+          done
+          echo "mac=$mac" >> "$GITHUB_OUTPUT"
+          echo "win=$win" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Signing path"
+            echo ""
+            if [ "$mac" = true ]; then
+              echo "- **macOS: SIGNED** — will sign, notarize, staple and verify."
+            else
+              echo "- **macOS: UNSIGNED** — no Developer ID secrets. Gatekeeper will block the app;"
+              echo "  users must allow it via System Settings ▸ Privacy & Security."
+            fi
+            if [ "$win" = true ]; then
+              echo "- **Windows: SIGNED** — will sign and verify the RFC-3161 timestamp."
+            else
+              echo "- **Windows: UNSIGNED** — SmartScreen will warn; installs via More info ▸ Run anyway."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          [ "$mac" = true ] || echo "::warning::macOS artifacts will be UNSIGNED (accommodation dated 2026-08-03; see RELEASING.md)."
+          [ "$win" = true ] || echo "::warning::Windows artifacts will be UNSIGNED."
 
       - run: npm run typecheck
       - run: npx tsc -p electron/tsconfig.json --noEmit
@@ -160,12 +195,27 @@ jobs:
       # electron-builder reads CSC_LINK / CSC_KEY_PASSWORD from the environment.
       # Notarization is done explicitly below rather than by electron-builder, so
       # submission, stapling and verification are separate inspectable steps.
-      - name: Package and sign
+      - name: Package (SIGNED)
+        if: ${{ (matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
         run: npx electron-builder ${{ matrix.args }} --publish never
+
+      # CSC_IDENTITY_AUTO_DISCOVERY=false is set EXPLICITLY here rather than left
+      # to an empty CSC_LINK. On macOS, electron-builder will otherwise find a
+      # certificate in the runner keychain and sign with whatever it happens to
+      # be — producing an artifact signed by an identity nobody chose. Skipping
+      # has to be as deliberate as signing.
+      - name: Package (UNSIGNED — no certificate configured)
+        if: ${{ (matrix.os == 'macos-latest' && needs.verify.outputs.signMac != 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin != 'true') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          echo "::warning::Building ${{ matrix.name }} UNSIGNED — no signing certificate is configured."
+          npx electron-builder ${{ matrix.args }} --publish never
 
       # ── macOS: notarize, then STAPLE ──
       # Stapling matters more than it looks. Without the ticket attached, a
@@ -173,7 +223,7 @@ jobs:
       # verification endpoints — cannot check the notarization and Gatekeeper
       # blocks the app, on a build that IS notarized.
       - name: Notarize and staple (macOS)
-        if: matrix.os == 'macos-latest'
+        if: ${{ matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -195,8 +245,11 @@ jobs:
       # Without this the pipeline can succeed with a silently unsigned build:
       # electron-builder does NOT fail when CSC_LINK is empty, it just skips
       # signing and carries on.
+      # Runs ONLY on the signed path. Its job is to catch a signing attempt that
+      # silently produced nothing — electron-builder exits 0 when signing is
+      # skipped, so without this a broken certificate looks like a clean build.
       - name: Verify macOS artifacts are signed, notarized and stapled
-        if: matrix.os == 'macos-latest'
+        if: ${{ matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true' }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -210,7 +263,7 @@ jobs:
           [ "$found" = 1 ] || { echo "::error::No .dmg produced"; exit 1; }
 
       - name: Verify Windows artifacts are signed and timestamped
-        if: matrix.os == 'windows-latest'
+        if: ${{ matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true' }}
         shell: pwsh
         run: |
           $found = $false
@@ -232,19 +285,54 @@ jobs:
           }
           if (-not $found) { Write-Error "No .exe produced"; exit 1 }
 
-      # Publish only AFTER verification passed, and only on a tag.
-      - name: Publish to the draft release
-        if: startsWith(github.ref, 'refs/tags/v')
+      # Publish only AFTER verification passed (when it ran), and only on a tag.
+      - name: Publish to the draft release (SIGNED)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && ((matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true')) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
         run: npx electron-builder ${{ matrix.args }} --publish always
 
+      - name: Publish to the draft release (UNSIGNED)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && ((matrix.os == 'macos-latest' && needs.verify.outputs.signMac != 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin != 'true')) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npx electron-builder ${{ matrix.args }} --publish always
+
+      # The release is a DRAFT, so a human writes the notes before anyone can
+      # download this. Putting the unsigned warning in the job summary is how
+      # that human finds out — the alternative is discovering it from a user.
+      - name: State the signing outcome
+        if: always()
+        shell: bash
+        run: |
+          SIGNED='${{ (matrix.os == 'macos-latest' && needs.verify.outputs.signMac) || needs.verify.outputs.signWin }}'
+          if [ "$SIGNED" = "true" ]; then
+            echo "### ${{ matrix.name }}: SIGNED and verified" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### ${{ matrix.name }}: **UNSIGNED**"
+              echo ""
+              echo "Add this to the release notes before publishing:"
+              echo ""
+              if [ "${{ matrix.os }}" = "macos-latest" ]; then
+                echo "> macOS: this build is not signed or notarized. macOS will refuse to open it"
+                echo "> on first launch. Go to **System Settings > Privacy & Security**, find the"
+                echo "> blocked app, and choose **Open Anyway**. Control-clicking the app does NOT"
+                echo "> work on macOS Sequoia or later."
+              else
+                echo "> Windows: this build is not signed. SmartScreen will show"
+                echo "> \"Windows protected your PC\" — choose **More info > Run anyway**."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload installers as workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: installers-${{ matrix.name }}
+          name: installers-${{ matrix.name }}${{ ((matrix.os == 'macos-latest' && needs.verify.outputs.signMac == 'true') || (matrix.os == 'windows-latest' && needs.verify.outputs.signWin == 'true')) && '-signed' || '-UNSIGNED' }}
           path: |
             release/**/*.exe
             release/**/*.dmg

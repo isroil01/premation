@@ -160,7 +160,40 @@ that is why it feels slow.
 
 ---
 
-## 5. Code signing
+## 5. Unsigned macOS distribution — ACCOMMODATION, dated
+
+**Started:** 2026-08-03
+**Expires:** when the Apple Developer Program membership and Developer ID
+certificate land.
+**How it ends:** populate the five macOS secrets. The workflow switches paths on
+its own — there is no code to revert, and nothing to remember.
+
+macOS ships **unsigned and un-notarized**, publicly, not as a beta. Gatekeeper
+will block it on first launch and the user must allow it via **System Settings ▸
+Privacy & Security**. This is a decision, not an oversight, and the release notes
+must say so — the workflow prints the exact wording into its job summary so
+whoever publishes the draft can paste it.
+
+This is the **fifth** instance of a pattern this project keeps catching: a
+temporary accommodation with no expiry condition. The previous four were
+`CSC_IDENTITY_AUTO_DISCOVERY: false` hardcoded to make CI pass, six dead OneDrive
+paths in `launch.json`, the stale right-click install advice below, and the
+landing site's Linux row. Each was reasonable when made and wrong six months
+later, because nothing said when it should stop.
+
+**So this one has an expiry written into it, and the mechanism enforces it
+rather than a person remembering.** If you find yourself extending this section
+rather than deleting it, that is the pattern winning again.
+
+What the pipeline does NOT do is treat "we chose not to sign" and "signing broke"
+as the same thing. Skipping is allowed and announced; *failing* still fails the
+release. That distinction is the whole design — an unsigned artifact is
+acceptable while we have no certificate, but an unsigned artifact nobody noticed
+is not.
+
+---
+
+## 6. Code signing
 
 **The macOS "not allowed" error users report is Gatekeeper blocking an unsigned,
 unnotarized app. It is not a bug in the build — it is a missing signing
@@ -242,7 +275,7 @@ without one retroactively invalidates every build the day the cert lapses.
 
 ---
 
-## 6. Release policy — enforced, not just documented
+## 7. Release policy — enforced, not just documented
 
 1. **Releases are cut from `main` only.** No release, tag or published artifact
    from `dev` or a feature branch.
@@ -256,7 +289,7 @@ builds and publishes exactly as convincingly as a real release — same installe
 same update manifest, same users — and nothing downstream can tell the
 difference. CI is the only place that can refuse.
 
-## 7. Checklist
+## 8. Checklist
 
 - [ ] `VITE_BACKEND_ORIGIN` set as a repo variable, pointing at the deployed backend
 - [ ] `npm run release:patch` (never edit the version by hand)
