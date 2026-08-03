@@ -18,6 +18,15 @@ with high confidence but were not reproduced in a running build.
 
 ---
 
+> **RESOLVED 2026-08-03** on `fix/wiring-audit`. 25 of 27 items fixed, 2
+> withdrawn as **wrong** (see §Resolution). Every fix landed with a guard —
+> 8 new test files, 1 lint rule pair, and one type change that makes the bad
+> state unrepresentable. **#23 deferred**, unchanged, by direction.
+>
+> Two audit findings did not survive verification, which is the point of
+> verifying: `preferenceStore.setMany` and `projectStore.breadcrumbPath` are
+> both LIVE. See §Resolution for what the original scan got wrong.
+
 ## Headline
 
 The command layer is in good shape. **All 63 app-menu items resolve to a registered command**, the
@@ -404,3 +413,86 @@ Cheapest-first, and each is independent of the others:
 **#22 (`CameraTool`)** needs a decision before it can be sized: it is a second implementation of
 camera navigation, and the `guidesStore` one is the live path. Deleting it is probably correct, but
 confirm nothing in the engine's own tests depends on it first.
+
+---
+
+## Resolution (2026-08-03)
+
+Branch `fix/wiring-audit`, merged to `dev`. Working rule for the whole run:
+**verify the item is still broken before touching it, and land every fix with a
+guard.** Both rules earned their keep — see the two withdrawn items below.
+
+### The two systemic guards, built first
+
+| | What it does |
+|---|---|
+| **G1** `src/core/rendering/__tests__/contentHashReaders.test.ts` | Parses `contentHash.ts` and asserts **every** field folded into the hash has a dot-access reader in the pixel path. Went **red on `quality` and nothing else** before #5, green after. A field added to the hash is enrolled automatically — it cannot be forgotten. |
+| **G2** the F11 lint rule | **Already landed** in `eslint.config.js` (three selectors, baselined disables). Verified live, not re-implemented. |
+
+### Per item
+
+| # | State | Fix | Guard |
+|---|---|---|---|
+| 1 | fixed | 3 `window.prompt` → `customPrompt` | lint bans prompt/alert/confirm in `src/` |
+| 2 | fixed | `AiSettingsSection` mounted in Customize ▸ AI; banner opens it in-app | `editionReachability.test.ts` — `src/layout` may not link edition-gated routes |
+| 3 | fixed | "Dock Bottom Timeline" removed | `panelDocking.test.ts` — dock targets ⊆ DockPanel hosts |
+| 4 | fixed | Pause → **Stop**, danger confirm mid-render | none (labelling; noted in commit) |
+| 5 | fixed | reader implemented: `RenderLayer.quality` → `Renderable.sampling` → nearest sampler | **G1** + `snapshotToFrameScene.test.ts` |
+| 6, 8, 9, 10, 11, 22 | deleted | gizmo snapping, workspace lock, float surface, workspace JSON IO, `monitorId`, `CameraTool` | `deadLayoutState.test.ts` (10 symbols + `PlacementMode` cannot express `'floating'`) |
+| 7 | **finished, not deleted** | `useGizmo3d` already read `gizmo3dAxisMode`; added the L/W/V control | asserted in `deadLayoutState.test.ts` |
+| 12 | fixed | `workspaceLayouts.ts` deleted, CustomizeDialog → manager, **migration** | `workspaceMigration.test.ts` — 6 cases against literal pre-change fixtures |
+| 13, 19 | deleted | `uiStore.showGrid`/`showRulers`, `focusedPanelId`, `setPointer`, `allowGroup` | `deadLayoutState.test.ts` |
+| 14, 18, 25 | fixed | New Composition… added; Version History edition-gated; Back-to-Dashboard hidden | `menuModel.test.ts` — visible ⇔ registered, per edition |
+| 15, 26 | fixed | 5 stale docstrings corrected **after** the code decisions | — |
+| 16 | fixed | `confirmDiscard` + 9 PluginsModal sites → `customConfirm`/`customAlert` | same lint rule as #1 |
+| 17 | fixed | gate reads `aiRunsThroughBackend()`, not the now-constant `aiEnabled()`; 8 dead branches removed | `directorEditionGate.test.ts` — pins **both** editions |
+| 21 | fixed | 7 tools registered as commands | `toolCommands.test.ts` — toolbar ⊆ commands |
+| 27 | fixed | `renderQueue` → `closable: true` | — |
+| 23 | **deferred** | Tool Options covers 5 of 21 tools | by direction — unfinished, not broken |
+
+### Two findings that were WRONG
+
+Both were reported as dead and are not. Deleting either would have caused a
+regression, and only checking before cutting caught them:
+
+- **`preferenceStore.setMany`** — called at `preferenceStore.ts:209`, on the
+  boot path. The original scan excluded the store's own file when counting
+  callers, so an internal-but-live caller read as zero.
+- **`projectStore.breadcrumbPath`** — the audit said "written by `openTab`,
+  never rendered". True about rendering, wrong about *use*: `openTab` reads
+  `breadcrumbPath[length - 2]` to inherit the parent comp's size/fps, so a
+  precomp opens at the project's real dimensions. Deleting it would have opened
+  every precomp at the wrong size.
+
+**The lesson generalises:** "no callers outside its own module" is not the same
+as "no callers", and "nothing renders it" is not the same as "nothing reads it".
+
+### Verified at runtime, not just compiled
+
+Local edition (`VITE_EDITION=local`) at `dev:local`, driven through the DOM
+(screenshots time out in this app; measure via JS):
+
+- **#7** clicking **W** flips `aria-pressed` L→W — the store the gizmo reads
+  actually changes. It rendered *and* worked, which are different claims.
+- **#18** File menu has **no** Version History (Sync is correctly grey — an
+  `enabled` state, not a registration gap).
+- **#14** Composition ▸ **New Composition…** present and enabled.
+- **#25** no Back-to-Dashboard button; no `#/dashboard` links anywhere.
+- **#2** Customize ▸ **AI** renders three provider key inputs
+  (`sk-ant-…`, `sk-…`, `AIza…`) — previously unreachable in this edition.
+- **#1** Save Current Workspace opens the in-app prompt and saves.
+- **#12** …and that workspace then appears in **Customize ▸ Workspaces**,
+  beside the manager's 8 presets. Two lists became one. This is the single
+  most valuable check of the run.
+- **#21** both mask tools now resolve in the Command Palette.
+
+Zero console errors, zero server errors. Suite **510 suites / 5955 tests**
+green (from 503 / 5889). `tsc --noEmit` clean. **`npm run render-tests` gate
+green** — the new sampler regressed no golden, and 18 previously-divergent
+scenes now match exactly.
+
+### Version
+
+`0.2.0`. #12 was the only schema change in the run, as predicted — the
+migration is idempotent via a flag and leaves the legacy key intact, so rolling
+back to a build with the old workspace system still finds its data.
