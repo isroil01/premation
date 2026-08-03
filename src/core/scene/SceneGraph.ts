@@ -537,9 +537,14 @@ export class SceneGraph {
     this.setFx(nodeId, 'trim', trim);
   }
 
-  /** Store the layer's path-operator config on its `fx` (undefined clears it). */
-  setPathOp(nodeId: ID, op: unknown): void {
-    this.setFx(nodeId, 'pathOp', op);
+  /**
+   * Store the layer's path-operator CHAIN on its `fx` (undefined clears it).
+   *
+   * Replaced the single `pathOp` slot in document version 1.3.0. The old key is
+   * no longer written; `v1_2_0_to_v1_3_0` converts it on load.
+   */
+  setPathOps(nodeId: ID, ops: unknown): void {
+    this.setFx(nodeId, 'pathOps', ops);
   }
 
   /** Flag a group as a precomp (composite its subtree as one unit). */

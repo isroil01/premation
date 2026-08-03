@@ -12,7 +12,7 @@ import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readRepeaterConfig, setRepeater, defaultRepeater } from '@core/scene/repeater';
-import { readPathOpConfig, setPathOp, defaultPathOp } from '@core/scene/pathOps';
+import { addPathOp, readPathOps } from '@core/scene/pathOps';
 import { readTrimConfig, setTrim, defaultTrim } from '@core/scene/trimPath';
 import { readNodeAudioWaveform, setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
 import { RepeaterControls } from './RepeaterControls';
@@ -27,7 +27,6 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
   if (!node || readNodeKind(node) !== 'shape') return null;
 
   const hasRepeater = !!readRepeaterConfig(node);
-  const hasPathOp = !!readPathOpConfig(node);
   const hasTrim = !!readTrimConfig(node);
   const hasAudioWave = !!readNodeAudioWaveform(node);
 
@@ -37,8 +36,11 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
       id: 'add-pathop',
       label: 'Path Operator',
       icon: 'pen',
-      disabled: hasPathOp,
-      onSelect: () => setPathOp(nodeId, defaultPathOp()),
+      // Deliberately NOT disabled once one exists. Operators chain, so adding a
+      // second is the feature — this was `disabled: hasPathOp` when `fx.pathOp`
+      // was a single slot, and leaving it would have kept the ceiling in the UI
+      // after the model lost it.
+      onSelect: () => addPathOp(nodeId),
     },
     {
       type: 'item',
@@ -80,7 +82,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
           items={items}
         />
       </div>
-      {!hasRepeater && !hasPathOp && !hasTrim && !hasAudioWave && (
+      {!hasRepeater && readPathOps(node).length === 0 && !hasTrim && !hasAudioWave && (
         <div className={styles.empty}>Fan into copies, deform, trim the outline, or draw an audio waveform.</div>
       )}
       <PathOpControls nodeId={nodeId} />

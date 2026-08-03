@@ -86,7 +86,7 @@ describe('buildSnapshot — path operator', () => {
   it('turns a shape into a deformed path (zig-zag adds points)', () => {
     const graph = new SceneGraph();
     graph.addNode(shape('rect'));
-    graph.setPathOp('rect', { type: 'zigzag', amount: 10, detail: 3 });
+    graph.setPathOps('rect', [{ id: 'o1', type: 'zigzag', amount: 10, detail: 3 }]);
     const layer = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP).layers[0]!;
     expect(layer.primitive).toBe('path');
     // rect outline (4 pts) zig-zagged at 3 segments/edge → 12 anchors
@@ -96,7 +96,7 @@ describe('buildSnapshot — path operator', () => {
   it('leaves the shape a primitive when the op is none', () => {
     const graph = new SceneGraph();
     graph.addNode(shape('rect'));
-    graph.setPathOp('rect', { type: 'none', amount: 10, detail: 3 });
+    graph.setPathOps('rect', [{ id: 'o1', type: 'none', amount: 10, detail: 3 }]);
     const layer = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP).layers[0]!;
     expect(layer.primitive).not.toBe('path');
     expect(layer.pathPoints).toBeUndefined();
