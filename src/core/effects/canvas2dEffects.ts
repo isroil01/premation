@@ -40,6 +40,9 @@ import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
 import {
   simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
 } from './keyingEffects';
+import {
+  venetianBlindsData, gradientWipeData, cardWipeData, cardWipeDirection, luminanceMapFrom,
+} from './transitions';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -80,6 +83,10 @@ const CANVAS2D_ONLY = new Set<string>([
   'simple-choker',
   'linear-color-key',
   'shift-channels',
+  // Transition family — alpha-only reveals, like the existing `linear-wipe`.
+  'venetian-blinds',
+  'gradient-wipe',
+  'card-wipe',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -228,7 +235,62 @@ export function applyCanvas2dEffect(
       return applyLinearColorKey(oc, w, h, e);
     case 'shift-channels':
       return applyShiftChannels(oc, w, h, e);
+    case 'venetian-blinds':
+      return applyVenetianBlinds(oc, w, h, e);
+    case 'gradient-wipe':
+      return applyGradientWipe(oc, w, h, e);
+    case 'card-wipe':
+      return applyCardWipe(oc, w, h, e);
   }
+}
+
+// ── Transition family (kernels in transitions.ts) ──────────────────
+
+function applyVenetianBlinds(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  venetianBlindsData(
+    img.data, w, h,
+    completion / 100,
+    effectNumber(e, 'direction'),
+    effectNumber(e, 'width'),
+    effectNumber(e, 'feather'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyGradientWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  // The map is the layer's OWN luminance — see the effect def for why there is
+  // no map-layer picker on this path.
+  gradientWipeData(
+    img.data,
+    luminanceMapFrom(img.data),
+    completion / 100,
+    effectNumber(e, 'softness') / 100,
+    bool(e, 'invertGradient', false),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyCardWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  cardWipeData(
+    img.data, w, h,
+    completion / 100,
+    effectNumber(e, 'rows'),
+    effectNumber(e, 'columns'),
+    cardWipeDirection(effectNumber(e, 'flipOrder')),
+  );
+  oc.putImageData(img, 0, 0);
 }
 
 // ── Keying family (kernels in keyingEffects.ts) ────────────────────

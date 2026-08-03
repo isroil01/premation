@@ -64,7 +64,11 @@ export type EffectType =
   | 'set-matte'
   | 'simple-choker'
   | 'linear-color-key'
-  | 'shift-channels';
+  | 'shift-channels'
+  // ── Transition family ──
+  | 'venetian-blinds'
+  | 'gradient-wipe'
+  | 'card-wipe';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -631,6 +635,54 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'takeRedFrom', label: 'Take Red From', type: 'number', min: 0, max: 6, precision: 0, default: 1 },
       { key: 'takeGreenFrom', label: 'Take Green From', type: 'number', min: 0, max: 6, precision: 0, default: 2 },
       { key: 'takeBlueFrom', label: 'Take Blue From', type: 'number', min: 0, max: 6, precision: 0, default: 3 },
+    ],
+    css: () => '',
+  },
+
+  // ── Transition family ──────────────────────────────────────────────
+  //
+  // All three are alpha-only reveals driven by `completion`, matching the
+  // existing `linear-wipe`: one keyframe 0 → 100 is the whole effect, and every
+  // other parameter is a static look choice. They ERASE rather than composite —
+  // what shows through underneath is the compositor's business.
+  {
+    type: 'venetian-blinds',
+    label: 'Venetian Blinds',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'direction', label: 'Direction', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 1, max: 500, default: 30 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'gradient-wipe',
+    label: 'Gradient Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      // NO "Gradient Layer" control, deliberately. AE lets you nominate another
+      // layer as the map; this runs on the Canvas2D bake path, which is handed
+      // one layer's buffer and cannot reach a sibling — the same wall Set Matte
+      // hit. Shipping the control anyway would give a picker that persists,
+      // keyframes and does nothing, which is precisely the failure this codebase
+      // keeps finding. The wipe is driven by the LAYER'S OWN luminance, which is
+      // also AE's behaviour when no map is chosen, so pairing it with a Ramp or
+      // Fractal Noise below it in the stack gives the full effect.
+      { key: 'softness', label: 'Transition Softness', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'invertGradient', label: 'Invert Gradient', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'card-wipe',
+    label: 'Card Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'rows', label: 'Rows', type: 'number', min: 1, max: 100, precision: 0, default: 6 },
+      { key: 'columns', label: 'Columns', type: 'number', min: 1, max: 100, precision: 0, default: 8 },
+      // 0 right, 1 left, 2 down, 3 up, 4 radial. A number so it keyframes.
+      { key: 'flipOrder', label: 'Flip Order', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
     ],
     css: () => '',
   },

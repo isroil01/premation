@@ -86,6 +86,9 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   'simple-choker': 'Keying',
   'linear-color-key': 'Keying',
   'shift-channels': 'Keying',
+  'venetian-blinds': 'Transition',
+  'gradient-wipe': 'Transition',
+  'card-wipe': 'Transition',
   // Color Correction
   brightness: 'Color Correction',
   contrast: 'Color Correction',
