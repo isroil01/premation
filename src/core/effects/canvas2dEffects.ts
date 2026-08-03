@@ -34,6 +34,7 @@ import type { Effect } from './effects';
 import { effectNumber, paramsOf } from './effects';
 import { applyKeyData, chokeAlpha, softenAlpha } from './keylight';
 import { waveWarpData, turbulentDisplaceData } from './warp';
+import { blurRgba, radialBlurData, blurDimensions } from './blurs';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -51,6 +52,13 @@ const CANVAS2D_ONLY = new Set<string>([
   'directional-blur',
   'linear-wipe',
   'transform',
+  // Blur family. The generic `blur` is a CSS filter and stays OFF this list —
+  // it needs no bake and should keep the cheap path. These three each express
+  // something a CSS filter cannot (per-axis dimensions, an iteration count, a
+  // centre of rotation), so they are real pixel passes and force the bake.
+  'gaussian-blur',
+  'fast-box-blur',
+  'radial-blur',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -177,7 +185,67 @@ export function applyCanvas2dEffect(
       return applyWaveWarp(oc, w, h, e);
     case 'turbulent-displace':
       return applyTurbulentDisplace(oc, w, h, e);
+    case 'gaussian-blur':
+      return applyGaussianBlur(oc, w, h, e);
+    case 'fast-box-blur':
+      return applyFastBoxBlur(oc, w, h, e);
+    case 'radial-blur':
+      return applyRadialBlur(oc, w, h, e);
   }
+}
+
+// ── Blur family (kernels in blurs.ts) ──────────────────────────────
+//
+// All three share the same shape: pull the pixels, transform, put them back.
+// The arithmetic lives in `blurs.ts` so it can be asserted numerically without
+// a DOM — these wrappers only marshal.
+
+/** Gaussian Blur — three box passes, which converge on a true Gaussian. */
+function applyGaussianBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = Math.max(0, effectNumber(e, 'blurriness'));
+  if (radius <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  blurRgba(img.data, w, h, radius, {
+    dimensions: blurDimensions(effectNumber(e, 'dimensions')),
+    // Fixed at 3, not exposed: this effect IS "the Gaussian one". Exposing the
+    // count would make it Fast Box Blur with a different label.
+    iterations: 3,
+    repeatEdge: bool(e, 'repeatEdge', true),
+  });
+  oc.putImageData(img, 0, 0);
+}
+
+/** Fast Box Blur — the same kernel with the iteration count exposed. */
+function applyFastBoxBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = Math.max(0, effectNumber(e, 'blurRadius'));
+  if (radius <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  blurRgba(img.data, w, h, radius, {
+    dimensions: blurDimensions(effectNumber(e, 'dimensions')),
+    iterations: effectNumber(e, 'iterations'),
+    repeatEdge: bool(e, 'repeatEdge', true),
+  });
+  oc.putImageData(img, 0, 0);
+}
+
+/** Radial Blur — spin or zoom about a centre offset from the layer's middle. */
+function applyRadialBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  if (amount === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const out = radialBlurData(
+    img.data, w, h,
+    amount,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    effectNumber(e, 'blurType') === 1 ? 'zoom' : 'spin',
+    effectNumber(e, 'quality'),
+  );
+  img.data.set(out);
+  oc.putImageData(img, 0, 0);
 }
 
 // ── Wave Warp / Turbulent Displace: backward-mapped distortions (warp.ts) ──

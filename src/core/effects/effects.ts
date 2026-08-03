@@ -47,7 +47,11 @@ export type EffectType =
   | 'directional-blur'
   | 'linear-wipe'
   | 'transform'
-  | 'posterize-time';
+  | 'posterize-time'
+  // ── Blur family ──
+  | 'gaussian-blur'
+  | 'fast-box-blur'
+  | 'radial-blur';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -411,6 +415,53 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'Posterize Time',
     params: [
       { key: 'frameRate', label: 'Frame Rate', type: 'number', unit: 'fps', min: 1, max: 120, default: 12 },
+    ],
+    css: () => '',
+  },
+
+  // ── Blur family ────────────────────────────────────────────────────
+  //
+  // The generic `blur` above stays: it is the CSS-filter one, it renders on
+  // every backend without a bake, and it is what the simple case should use.
+  // These three are the AE effects by name, and each does something `blur`
+  // cannot — per-axis dimensions, an iteration count, or a centre.
+  {
+    type: 'gaussian-blur',
+    label: 'Gaussian Blur',
+    params: [
+      { key: 'blurriness', label: 'Blurriness', type: 'number', unit: 'px', min: 0, max: 500, default: 10 },
+      // Stored as a number so it can be keyframed like everything else — 0 both,
+      // 1 horizontal, 2 vertical. A string would not animate.
+      { key: 'dimensions', label: 'Blur Dimensions', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'repeatEdge', label: 'Repeat Edge Pixels', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'fast-box-blur',
+    label: 'Fast Box Blur',
+    params: [
+      { key: 'blurRadius', label: 'Blur Radius', type: 'number', unit: 'px', min: 0, max: 500, default: 10 },
+      { key: 'iterations', label: 'Iterations', type: 'number', min: 1, max: 10, precision: 0, default: 1 },
+      { key: 'dimensions', label: 'Blur Dimensions', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'repeatEdge', label: 'Repeat Edge Pixels', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'radial-blur',
+    label: 'Radial Blur',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', min: -360, max: 360, default: 10 },
+      // 0 spin, 1 zoom. Same reasoning as Blur Dimensions above.
+      { key: 'blurType', label: 'Type', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+      // OFFSETS from the layer centre, not absolute coordinates. AE's default
+      // centre is the middle of the layer, and an absolute pair would default to
+      // (0,0) — the top-left corner — which spins the layer around a point off
+      // its own edge and looks broken out of the box.
+      { key: 'centerX', label: 'Centre X offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'quality', label: 'Quality', type: 'number', min: 2, max: 64, precision: 0, default: 16 },
     ],
     css: () => '',
   },
