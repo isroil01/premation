@@ -469,6 +469,79 @@ The check is cheap (`run.mjs --scene <id>`) and the failure mode is invisible
 without it. It also produces the right commit message for free: "reverting ONLY
 these files fails exactly these scenes."
 
+## 2c. F10 — diagnosis, and why it is M1 unfinished
+
+**M1 shipped 13 blend modes. On a transparent comp — which is how most
+compositions start — those modes render non-deterministically.** That is not a
+prerequisite for a later milestone; it is the feature not being finished. It also
+threatens the one hard rule set at the start, because nondeterministic output
+means preview and export can disagree.
+
+### What is established, by measurement
+
+| | |
+|---|---|
+| **Trigger** | A **transparent comp** AND at least one **advanced-blend** layer. Both are required. |
+| **Not the trigger** | Not mode-specific — first seen on `alpha-add`, reproduces identically on `multiply`. Not the transparent comp alone: the same scene with **normal** blend is fully deterministic. |
+| **Not scene ordering** | Reproduces with `--scene blend-alpha-add-seam` in isolation, so it is not contamination from a previously-rendered scene. |
+| **Shape** | **Accumulating, not alternating.** Renders 1v2, 2v3, 3v4 *and* 1v3 all differ. A two-state flip would have made 1v3 identical. |
+| **Magnitude** | 33 600 pixels — **exactly the union of the two rectangles** (2 × 120×140). `maxDelta 64` = 255 − 191, precisely the gap between "Alpha Add applied" and "not applied". |
+| **Per backend** | WebGPU: alpha channel only (`r/g/b/a = 0/0/0/33600`). WebGL2: all four channels equally — the expected consequence of premultiplied storage when alpha moves. |
+
+### Blast radius — the golden set has NOT been lying
+
+Instrumenting the gate to *report* instead of throw, then running the full suite,
+found **exactly one affected scene: the unregistered `blend-alpha-add-seam`.**
+No committed golden uses transparent-comp + advanced-blend, so nothing in the
+reference set has been passing by luck. This is a genuinely new input
+combination, not a long-standing hole.
+
+### Hypothesis tested and KILLED
+
+The predicted signature of an uninitialised/unsynchronised `SCENE_COLOR_TARGET`
+read was: results vary with prior target contents, and stabilise if the target is
+explicitly cleared before the first blend. Both halves fail.
+
+- `ClearPass` **already clears** `EffectPass.activeColorTarget` every frame.
+- Adding an explicit `Color.transparent()` clear at the top of
+  `CompositionPass.execute` **did not stabilise** the scene — and broke
+  `effect-blur` / `effect-glow`, which legitimately read that target.
+
+So it is not a missing clear.
+
+### Where the evidence points, unconfirmed
+
+The advanced-blend path (`CompositionPass.ts:1275-1299`) already avoids the
+obvious self-sample: it copies the backdrop to `MATTE_TARGET` before combining
+("can't sample a target while writing it"). The remaining suspect is the
+interaction between `EffectPass.activeColorTarget` — a **mutable static shared by
+every Renderer instance** — and `RenderGraph.compile()`, which is **memoized**
+while `ClearPass.writes` / `BackgroundPass.writes` are *getters* reading that
+static. Pass ORDER can therefore be compiled against one target name while
+execution routes to another, and `graph.invalidate()` fires only when
+`effectPass.enabled` flips, not when the target changes.
+
+Stated as a suspect, not a conclusion. It has not been confirmed.
+
+### Why it is parked rather than fixed
+
+Confirming and fixing this means changing pass ordering or target routing on the
+advanced-blend path — the path 30+ committed goldens depend on. That is an L, and
+the timebox says park it with the diagnosis written down rather than open it
+mid-run.
+
+### M-F10 — Fix advanced-blend determinism on transparent comps · **L** · scheduled
+
+- **Prerequisite for M5.** M5's entire subject is pipeline determinism; building
+  that harness on top of a known-nondeterministic path would produce a gate that
+  cannot distinguish its own noise from the bug it is hunting.
+- **Acceptance:** `blend-alpha-add-seam` re-registered (it is written and kept as
+  `alphaAddSeamPending` in `harness/scenes/blendModes.ts`), deterministic across
+  four consecutive renders on both backends, and Alpha Add's seam closure
+  demonstrated at 255 rather than 191.
+- **Watch for:** any change here re-blesses advanced-blend goldens. Apply
+  revert-and-verify (§2a) per golden.
+
 ## 2b. Findings logged, not fixed
 
 Catalogued rather than absorbed.
@@ -479,12 +552,42 @@ Catalogued rather than absorbed.
 | **F4** | **The local test suite silently ran 13 fewer test files than a clean checkout** — 392 vs 405 discovered, ~533 tests, including `editorBoot.smoke.test.tsx`. Files present on disk and tracked at HEAD; jest returned nothing even when pointed directly at them. Not a cache issue. Same directories `git stash` failed on with "Permission denied". | **Process, high** | **RESOLVED 2026-08-03** — repo moved `OneDrive/Desktop/motion-editor` → `C:\Users\isroi\dev\motion-editor`. Discovery now 405/405; full suite 488 suites / 5739 passing / 0 failures. |
 | **F6** | **Bake ownership is expressed by more than one predicate and they can disagree.** `snapshotToFrameScene` gated on `effectsNeedCpuBake`, the rasterizer on `layerNeedsCpuBake`; fill opacity alone triggers a bake without any effect requiring it, so both sides claimed the chain and effects applied twice. Third instance of the family (after ea47497 "which side may bake" and b814e3a "what the bake can draw"). `fill-opacity-zero-stroke` was correct at HEAD, wrong mid-branch, correct again by luck of commit order — no golden would have caught it one commit earlier. | Correctness, class | **SCHEDULED as M5b**, before M6 — `hasActiveMaskPaths` is about to become a fourth gate. Fix is one `layerIsBaked()` source of truth, not three sites kept in sync by attention. |
 | **F7** | **Bisect hazard in this branch's range:** `vectorDraw.ts` alone makes `fill-opacity-zero-stroke` *worse* (9.572%) than not applying it at all; only the coupled set (`layerStyles` + `vectorDraw` + `paint/fill`) passes. Anyone bisecting b814e3a would land on a commit that looks like the culprit and is not. | Process | Recorded in b814e3a's message. No fix — the coupling is real, the note is the mitigation. |
-| **F10** | **Any advanced-blend mode over a TRANSPARENT comp renders non-deterministically, on both backends.** The existing double-render gate fires: `double-render bytes differ` for webgl2 *and* webgpu. Not mode-specific — first seen with `alpha-add`, reproduces identically with `multiply`. Advanced blend samples SCENE_COLOR_TARGET; the suspicion is an uninitialised or unsynchronised read of that target when the comp starts fully transparent, but that is a hypothesis, not a diagnosis. **Consequence:** Alpha Add's defining property (seam closure) cannot currently be gated — proving it needs a transparent comp, and the scene is written and left UNREGISTERED (`alphaAddSeamPending` in `harness/scenes/blendModes.ts`) rather than shipped flaky or blessed from one arbitrary sample. | **Correctness, high** | **STOPPED THE RUN** per condition 3. Needs its own investigation before M5, since M5's whole subject is determinism and this is a live counter-example. |
+| **F10** | **Advanced blend + transparent comp = accumulating non-determinism, both backends.** See the full diagnosis in §2c. | **Correctness, high** | **PARKED as real work — see M-F10 below.** Diagnosed, not fixed: the fix touches the advanced-blend path that 30+ goldens depend on. |
 | **F9** | The three Classic blend modes (`classic-color-burn`, `classic-color-dodge`, `classic-difference`) ship as **compatibility aliases**, not distinct maths. The Classic branches were written as the unclamped forms; the output clamp collapses them onto the modern ones. Verified by rendering both and comparing, which is how the intent was found to be wrong. | Fidelity gap | Documented in `blendMode.ts` and the shader. Closing it needs AE's actual pre-7.0 formulas, which we do not have. |
 | **F8** | `add` and `linear-dodge` are the same operation in AE but take different code paths here — `add` uses fixed-function additive blending on premultiplied values, `linear-dodge` goes through BLEND_COMBINE. Measured divergence: 218/2367 sampled pixels, **peak 1 level**. Rounding, not semantics. | Cosmetic | Routing `add` through the combine would unify them and re-bless one golden. Not done; the difference is below perceptual threshold. |
 | **F5** | `bevelWorkingBuffer.test.ts:119` asserts `expect(capped.ms).toBeLessThan(full.ms)` — **a wall-clock performance assertion inside a correctness suite**. Failed once under full-suite load, then green 3/3. It will flake on any loaded machine, and CI is a loaded machine. Compounded by F4: it only ever ran in environments not used locally, so F4 was hiding *failures*, not just tests. | Test integrity | Assert the invariant it proxies for (bounded work / buffer size), or move it to a benchmark that does not gate a merge. **Filed, not fixed.** |
 | **F2** | Render gates test `mask.paths.length > 0`; an all-`none` stack therefore still runs one redundant full-frame matte fill. Correct output, wasted pass. | Perf, minor | Move gates to `hasActiveMaskPaths` when that path is next touched (M6). |
 | **F3** | Precomp targets are the heaviest in the graph (viewport × `rgba16float` × depth × MSAA 4, ×4). No test asserts a memory ceiling. | Perf, unmeasured | Consider a cheaper 2D-only pool for stencil scopes; measure first. |
+
+## 2d. DECISION D3 — templates are deliberately de-scoped
+
+**Recorded as a decision rather than allowed to happen by omission.**
+
+Templates were roughly a quarter of the original brief: exposed field kinds,
+media replacement, nested reuse, packaging, **responsive/protected time**, and
+data binding. What remains scheduled is **M7 (protected time regions)** — the one
+that makes a lower-third reusable at any length, and the only template item the
+audit found genuinely missing rather than already built.
+
+Everything else from that section either **already existed** (exposed fields,
+media slots with author-set fit policy, self-contained `.motion` packaging,
+nested precomp reuse, animation presets — see audit §3 D) or is now in §3 below
+(dropdown field kind, CSV/JSON data binding).
+
+**The reasoning:** the audit set out to find gaps across four areas and found the
+template system was the healthiest of them, while compositing correctness turned
+out to hold the real defects — three faces of one bake-ownership bug (ea47497,
+b814e3a, 8e56bd0), a live silent-wrong-matte (F1/M8b), and now F10. Effort
+followed the defects.
+
+**The cost, stated plainly:** templates are the part of the brief about what
+users *see* and reach for, rather than what is true underneath. Data binding in
+particular is a feature nobody has, not a bug anybody has. Deferring it is a
+judgement that correctness outranks reach for this round — defensible, but it
+should be revisited deliberately after M7, not left to erode further.
+
+**This decision needs re-affirming, not re-deriving, if the plan is picked up
+later.**
 
 ## 3. Not scheduled
 
