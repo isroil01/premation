@@ -120,6 +120,19 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'ellipse', label: 'Ellipse Tool', chord: { key: 'q', shift: true } },
     { tool: 'puppet-pin', label: 'Puppet Position Pin Tool', chord: { key: 'p', meta: true } },
     { tool: 'bone', label: 'Bone Tool', chord: { key: 'b', meta: true } },
+    // These seven had a toolbar button and NO command, so they were absent from
+    // the Command Palette and — the part that actually bit — could not be given
+    // a shortcut in Customize…, while their siblings above could. No default
+    // chords: every sensible key is taken by the tools above or by a property
+    // reveal, and inventing collisions is worse than leaving them unbound. The
+    // point is that they are now bindable at all.
+    { tool: 'pencil', label: 'Pencil Tool' },
+    { tool: 'curvature', label: 'Curvature Pen Tool' },
+    { tool: 'line', label: 'Line Segment Tool' },
+    { tool: 'polygon', label: 'Polygon Tool' },
+    { tool: 'star', label: 'Star Tool' },
+    { tool: 'mask-rect', label: 'Rectangle Mask Tool' },
+    { tool: 'mask-ellipse', label: 'Ellipse Mask Tool' },
   ];
   // Every tool used 'crosshair', so the palette/menus showed eleven identical
   // icons — give each tool its actual glyph.
@@ -138,6 +151,15 @@ function buildToolCommands(): ReadonlyArray<Command> {
     ellipse: 'circle',
     'puppet-pin': 'puppet-pin',
     bone: 'bone',
+    // Match the toolbar glyphs (see TopNav's PEN_TOOLS / SHAPE_TOOLS /
+    // MASK_TOOLS) so a tool looks the same wherever it is offered.
+    pencil: 'pencil',
+    curvature: 'curvature',
+    line: 'line',
+    polygon: 'polygon',
+    star: 'star',
+    'mask-rect': 'mask-square',
+    'mask-ellipse': 'mask-circle',
   };
   return tools.map(({ tool, label, chord }) => ({
     id: asCommandId(`tool.${tool}`),
