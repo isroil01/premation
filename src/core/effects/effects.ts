@@ -68,6 +68,23 @@ export interface Effect {
   /** When false the effect stays in the stack but contributes nothing. */
   enabled?: boolean;
   /**
+   * Scope this effect to one of the layer's mask paths (M6).
+   *
+   * The mask's FEATHER drives the effect's edge falloff and its OPACITY drives
+   * the effect's intensity, so a soft-edged mask gives a soft-edged effect
+   * rather than a hard cut-out of a soft effect.
+   *
+   * An effect mask must NOT modify layer alpha — that is the invariant that
+   * separates it from an ordinary mask. Outside the mask the layer is returned
+   * BYTE-IDENTICAL to what it was before the effect ran, alpha included; the
+   * mask decides where the effect applies, never where the layer exists.
+   *
+   * Reference a path whose own `mode` is `'none'`, or the path will also cut the
+   * layer — mode `none` exists precisely so a path can be geometry without being
+   * a cut (see mask.ts).
+   */
+  maskId?: string;
+  /**
    * @deprecated The pre-multi-param single scalar. Still READ, so projects
    * saved before this change keep their look — `readNodeEffects` migrates it
    * into `params` under the effect's primary key. Never written.

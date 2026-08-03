@@ -59,7 +59,40 @@ function matteScene(id: string, mode: string, description: string): Scene {
   });
 }
 
+/**
+ * M6 — an effect scoped to a mask region.
+ *
+ * The subject is a comp-filling gradient carrying ONE mask path in mode `none`
+ * (geometry, not a cut — see mask.ts) covering the left half, and a strong
+ * hue-rotate scoped to it.
+ *
+ * What the image must show, and what a golden alone would not tell you:
+ *   • the LEFT half is hue-shifted, the RIGHT half is not — the scope works;
+ *   • the layer's ALPHA is uniform across BOTH halves — the effect mask decided
+ *     where the effect applies and did NOT cut the layer. That is the invariant
+ *     separating an effect mask from a second layer mask, and it is the thing
+ *     most likely to regress silently, because a cut layer over a dark comp
+ *     still looks like a plausible picture.
+ */
+function effectScopedMaskScene(): Scene {
+  return scene(
+    'effect-scoped-mask',
+    'Hue-rotate scoped to a left-half mask; layer alpha must stay uniform.',
+    (graph) => {
+      gradientContent(graph, 'm');
+      graph.setMask('m', {
+        paths: [{ ...rectangleMask(160, 220), id: 'scope', mode: 'none', points: rectangleMask(160, 220).points.map((pt) => ({ ...pt, x: pt.x - 80 })) }],
+      });
+      graph.setEffects('m', [
+        { id: 'fx', type: 'hue-rotate', params: { amount: 160 }, maskId: 'scope' },
+      ]);
+    },
+  );
+}
+
 export const compositedScenes: Scene[] = [
+  effectScopedMaskScene(),
+
   matteScene('matte-alpha', 'alpha', 'Alpha track matte (ellipse source over gradient).'),
   matteScene('matte-alpha-inv', 'alpha-inv', 'Inverted alpha track matte.'),
   matteScene('matte-luma', 'luma', 'Luma track matte (white→black gradient source).'),
