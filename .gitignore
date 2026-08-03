@@ -13,6 +13,9 @@ release/
 # a file under a directory that is itself ignored.)
 build/*
 !build/icon.png
+# Required at BUILD time for notarization — not an artifact. Without it the mac
+# build has no hardened-runtime entitlements and notarytool rejects the app.
+!build/entitlements.mac.plist
 .vite/
 
 # Test / coverage

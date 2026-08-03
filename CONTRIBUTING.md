@@ -123,6 +123,30 @@ Use the issue templates. What actually helps:
 Do not file security vulnerabilities as public issues — see
 [SECURITY.md](SECURITY.md).
 
+## Branches and releases
+
+**Releases are cut from `main` only.** Nothing is released, tagged or published
+from `dev` or a feature branch.
+
+    feature branch  →  dev  →  main  →  tag  →  release
+
+`.github/workflows/release.yml` enforces this: a tag that is not an ancestor of
+`main` fails the pipeline before anything is built. That gate exists because a
+tag pushed from `dev` produces a release indistinguishable from a real one — the
+installer works, the update manifest is valid, and installed apps take the
+update. Nothing downstream can catch it, so CI has to.
+
+Two more things the release pipeline refuses:
+
+- **A tag whose version disagrees with `package.json`.** electron-builder writes
+  the package version into `latest.yml`, so a mismatch means every client either
+  misses the update or reinstalls it forever.
+- **An unsigned artifact.** If signing or notarization fails, the release fails.
+  There is no unsigned fallback — see `RELEASING.md` § Code signing.
+
+Platform targets are **Windows and macOS**. Linux is deliberately unsupported;
+see RELEASING.md § Platform support before adding it back.
+
 ## Licensing your contribution
 
 This project is licensed under the **GNU AGPL v3.0**. By submitting a

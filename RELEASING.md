@@ -144,26 +144,126 @@ later. No re-download from the website, no manual uninstall.
 
 Escape hatches: `MOTION_DISABLE_UPDATES=1` turns it off. Dev builds never check.
 
-### Signing — read before your first public release
+### Platform support — Windows and macOS only
 
-| Platform | Unsigned consequence |
-| --- | --- |
-| **Windows** | SmartScreen warns ("unrecognised app"). Installs fine, auto-update works. Fix: OV/EV certificate via `CSC_LINK` + `CSC_KEY_PASSWORD`. |
-| **macOS** | Gatekeeper **blocks** the app, and Squirrel.Mac **refuses** updates it cannot verify. Auto-update is therefore off on macOS until signed — `electron/updater.ts` keeps it behind `MOTION_ENABLE_MAC_UPDATES=1`. Fix: Apple Developer ID + notarization. |
-| **Linux** | AppImage needs neither. |
+Linux is **deliberately unsupported**, not overlooked. The AppImage target was
+removed from `electron-builder.yml` and the release matrix rather than commented
+out, so nobody re-enables a target nobody tests. Re-adding it costs: a third
+build runner, a third update channel (`latest-linux.yml`) to keep in sync, and a
+platform none of us runs day to day — which is how a target rots into shipping
+broken builds that look fine in CI.
 
-macOS users can still install manually (right-click ▸ Open), but they will not get
-automatic updates. That is the one gap in this pipeline, and it costs an Apple
-Developer account to close.
+macOS ships **both architectures** (`arm64` and `x64`) from one job, sharing a
+single `latest-mac.yml`. Shipping x64-only and letting Apple Silicon users find
+out is not an option: Rosetta runs it, badly, and the user has no way to know
+that is why it feels slow.
 
 ---
 
-## 5. Checklist
+## 5. Code signing
+
+**The macOS "not allowed" error users report is Gatekeeper blocking an unsigned,
+unnotarized app. It is not a bug in the build — it is a missing signing
+pipeline.**
+
+The workflow now refuses to publish an unsigned artifact. `electron-builder` does
+NOT fail when `CSC_LINK` is empty — it silently skips signing and carries on — so
+the verification steps after packaging are what actually hold the line.
+
+### What you need to obtain
+
+| Secret | What it is | Where from |
+| --- | --- | --- |
+| `MAC_CSC_LINK` | base64 of the **Developer ID Application** `.p12` | Apple Developer Program ($99/yr) → Certificates |
+| `MAC_CSC_KEY_PASSWORD` | password for that `.p12` | set when exporting from Keychain |
+| `APPLE_ID` | the Apple ID that owns the membership | — |
+| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password, **not** the account password | appleid.apple.com → Sign-In and Security |
+| `APPLE_TEAM_ID` | 10-character team identifier | Apple Developer → Membership |
+| `WIN_CSC_LINK` | base64 of the Windows code-signing cert | see Windows below |
+| `WIN_CSC_KEY_PASSWORD` | its password | — |
+
+All are **CI secrets**. Never in the repo, never in build config.
+
+If we ship a `.pkg` later, that additionally needs a **Developer ID Installer**
+certificate — the Application one cannot sign an installer package.
+
+### macOS — required, do this first
+
+1. Apple Developer Program membership → **Developer ID Application** certificate.
+2. Sign with **hardened runtime** (mandatory for notarization) and a secure
+   timestamp. Every embedded binary, framework and helper must be signed —
+   missed components are the most common notarization rejection, which is why
+   `electron-builder.yml` leaves deep signing on rather than narrowing it for
+   build speed. Entitlements are in `build/entitlements.mac.plist`; each one is
+   there because the hardened runtime otherwise breaks V8 or Electron's own
+   frameworks.
+3. Submit with `xcrun notarytool submit --wait`.
+4. **Staple** the ticket with `xcrun stapler staple`. Skipping this is the subtle
+   failure: a machine that is offline, or behind a filter that blocks Apple's
+   verification endpoints, cannot check notarization and Gatekeeper blocks a
+   build that *is* notarized.
+5. Verify with `spctl -a -vvv` (`--type install` for a `.pkg`) **on a clean
+   machine, after downloading through a browser**. Testing a locally-built
+   artifact skips the quarantine attribute and proves nothing.
+
+> **macOS Sequoia removed the Control-click ▸ Open override for unsigned
+> software.** Users must now go to **System Settings ▸ Privacy & Security** and
+> allow it there. Any instruction telling users to right-click or Control-click
+> to open is wrong on current macOS, and worse than saying nothing — it sends
+> them somewhere the option no longer exists. Do not reintroduce it.
+
+### Windows — after macOS
+
+SmartScreen shows "Windows protected your PC" on an unsigned executable. Less
+severe than macOS — there is still a **More info ▸ Run anyway** path — but it
+costs installs.
+
+Before planning, **check eligibility for Azure Trusted Signing** (~$9.99/month,
+no hardware token). It is limited to verified businesses and self-employed
+individuals in the US, Canada, EU and UK. If we do not qualify, the path is a
+traditional **OV certificate** from a CA (~$200–400/yr, hardware token or HSM).
+
+**Do not buy EV for SmartScreen reasons.** The instant-bypass behaviour was
+removed in 2024; EV now builds reputation exactly like OV. Reputation starts at
+zero either way and accrues from real download telemetry, so **signing will not
+remove the warning on day one** — plan for a warning window on the first
+release regardless of certificate type.
+
+Always timestamp (RFC 3161) so signatures stay valid after the certificate
+expires. The workflow asserts the timestamp is present, because a signature
+without one retroactively invalidates every build the day the cert lapses.
+
+### What unsigned costs today
+
+| Platform | Consequence |
+| --- | --- |
+| **macOS** | Gatekeeper **blocks** the app. Squirrel.Mac also refuses updates it cannot verify, which is why `electron/updater.ts` keeps macOS auto-update behind `MOTION_ENABLE_MAC_UPDATES=1`. |
+| **Windows** | SmartScreen warns. Installs via "Run anyway"; auto-update works. |
+
+---
+
+## 6. Release policy — enforced, not just documented
+
+1. **Releases are cut from `main` only.** No release, tag or published artifact
+   from `dev` or a feature branch.
+2. **Flow:** feature branch → `dev` → `main` → tag → release.
+3. **Artifacts are built from the tagged commit**, never from a working tree.
+4. **A release tag that is not an ancestor of `main` fails the pipeline.**
+
+Gate 1 in `.github/workflows/release.yml` enforces (1) and (4) with
+`git merge-base --is-ancestor`. This matters because a tag pushed from `dev`
+builds and publishes exactly as convincingly as a real release — same installer,
+same update manifest, same users — and nothing downstream can tell the
+difference. CI is the only place that can refuse.
+
+## 7. Checklist
 
 - [ ] `VITE_BACKEND_ORIGIN` set as a repo variable, pointing at the deployed backend
 - [ ] `npm run release:patch` (never edit the version by hand)
 - [ ] `git push --follow-tags`
-- [ ] Workflow green on all three platforms
+- [ ] Tag is on `main` (the workflow refuses otherwise)
+- [ ] Workflow green on both platforms
+- [ ] macOS artifact verified with `spctl` and `stapler validate` on a clean machine, downloaded via a browser
 - [ ] Installed the Windows build on a clean machine and confirmed it reaches the backend
 - [ ] Release notes written, then **Publish release**
 - [ ] Verified an older install offers the update and applies it
