@@ -146,11 +146,17 @@ describe('propertyMeta — decomposed colour channels', () => {
     expect(propertyLabel('stroke_a')).toBe('Stroke Color Alpha');
   });
 
-  it('ranges RGB 0..255 and alpha 0..1', () => {
-    expect(resolvePropertyMeta('fill_g').max).toBe(255);
-    const alpha = resolvePropertyMeta('fill_a');
-    expect(alpha.max).toBe(1);
-    expect(alpha.step).toBeLessThan(1);
+  it('ranges every channel 0..1 — the scale the tracks are stored in', () => {
+    // This asserted 255 for RGB, which no writer and no reader ever used: the
+    // tracks are written by `Color.fromHex` and read back in 0..1, so the row
+    // described a range 255× wider than the values in it. See
+    // core/effects/colorChannelUnits.test.ts for the end-to-end round-trip.
+    for (const path of ['fill_r', 'fill_g', 'fill_b', 'fill_a', 'stroke_r']) {
+      const m = resolvePropertyMeta(path);
+      expect(m.min).toBe(0);
+      expect(m.max).toBe(1);
+      expect(m.step).toBeLessThan(1);
+    }
   });
 
   it('resolves an effect colour channel through its effect', () => {

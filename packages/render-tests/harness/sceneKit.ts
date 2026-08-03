@@ -112,6 +112,24 @@ export interface SceneMeta {
    * PNG whose only job is to duplicate the scene it is checking.
    */
   fidelityOnly?: boolean;
+  /**
+   * This scene's frames MUST NOT be identical to each other.
+   *
+   * The assertion for keyframeable properties, and the one that was missing
+   * everywhere: a scene declares two frames with two clearly different
+   * keyframed values, and the runner requires the rendered pixels to differ.
+   * Not that the track exists, not that sampling returns the right number —
+   * those hold in every version of the "it doesn't animate" bug. Only a
+   * frame-to-frame pixel diff says the chain reached the compositor.
+   *
+   * Pairs naturally with `fidelityOnly`: the claim is about this scene's own
+   * two frames, so it needs no blessed reference to check.
+   */
+  animates?: boolean;
+  /** Fraction of pixels that must CHANGE between consecutive frames for an
+   *  `animates` scene (default 0.002 = 0.2%). Raise for a property whose visible
+   *  effect is genuinely small; never lower it to nothing. */
+  animatesMinChange?: number;
 }
 
 export interface Scene extends SceneMeta {

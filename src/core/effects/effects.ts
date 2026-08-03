@@ -47,11 +47,43 @@ export type EffectType =
   | 'directional-blur'
   | 'linear-wipe'
   | 'transform'
-  | 'posterize-time';
+  | 'posterize-time'
+  // ── Blur family ──
+  | 'gaussian-blur'
+  | 'fast-box-blur'
+  | 'radial-blur'
+  // ── Stylize family ──
+  | 'mosaic'
+  | 'find-edges'
+  | 'roughen-edges'
+  // ── Colour family ──
+  | 'exposure'
+  | 'vibrance'
+  | 'colorama'
+  // ── Matte / keying family ──
+  | 'set-matte'
+  | 'simple-choker'
+  | 'linear-color-key'
+  | 'shift-channels'
+  // ── Transition family ──
+  | 'venetian-blinds'
+  | 'gradient-wipe'
+  | 'card-wipe'
+  // ── Generate / Text families ──
+  | 'lens-flare'
+  | 'numbers'
+  | 'timecode'
+  | 'audio-spectrum';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
-export type EffectParamValue = number | string | boolean | CurvePoints;
+/**
+ * `readonly number[]` is for params RESOLVED AT SNAPSHOT TIME rather than
+ * authored — Audio Spectrum's band magnitudes, which `buildSnapshot` computes
+ * from the referenced audio layer and writes here so the drawing kernel stays a
+ * pure function of its params. Not something a user types.
+ */
+export type EffectParamValue = number | string | boolean | CurvePoints | readonly number[];
 export type EffectParams = Readonly<Record<string, EffectParamValue>>;
 
 export interface Effect {
@@ -97,7 +129,13 @@ export interface EffectParamDef {
   label: string;
   /** 'layer' = a reference to another layer in the comp (stored as its node id,
    *  '' = unset). Rendered as a layer dropdown in the effect stack UI. */
-  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer';
+  /**
+   * `'resolved'` is a param the RENDER PIPELINE fills in, not the user — Audio
+   * Spectrum's band magnitudes. It deliberately has no inspector control: the
+   * value is derived from another layer every frame, so an editor for it would
+   * be a field whose input is overwritten before it is ever read.
+   */
+  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved';
   unit?: string;
   min?: number;
   max?: number;
@@ -235,6 +273,42 @@ const TEMPORAL = new Set<string>(['echo', 'posterize-time']);
 
 export function isTemporalEffect(type: string): boolean {
   return TEMPORAL.has(type);
+}
+
+/**
+ * TIME-DEPENDENT effects: their DRAWN OUTPUT depends on the clock.
+ *
+ * A different thing from `TEMPORAL` above, and the distinction is the whole
+ * reason both sets exist. A temporal effect changes WHEN the layer is sampled;
+ * these draw something that differs frame to frame at a fixed sample. Echo is
+ * the first kind, Timecode the second.
+ *
+ * ── Why this needs its own set, and why it is small ─────────────────────────
+ *
+ * The Canvas2D bake is cached by CONTENT HASH, which digests the effect stack.
+ * That is what makes this workable without touching the cache: the resolved
+ * time is written INTO the effect's params at snapshot time (see
+ * `resolveEffectParams`), so the hash varies per frame for exactly the layers
+ * carrying one of these — and for nothing else.
+ *
+ * Which is also why membership is expensive and the set must stay small. Adding
+ * a type here opts every layer using it out of raster caching entirely: it
+ * re-bakes every frame, by construction. That is correct for a timecode
+ * burn-in, whose pixels genuinely differ each frame, and would be ruinous for
+ * anything whose output is usually static.
+ */
+const TIME_DEPENDENT: ReadonlyMap<string, string> = new Map<string, string>([
+  // type → the param the resolved layer time is written into.
+  ['timecode', 'time'],
+]);
+
+export function isTimeDependentEffect(type: string): boolean {
+  return TIME_DEPENDENT.has(type);
+}
+
+/** The param a time-dependent effect receives the clock through, if any. */
+export function timeParamFor(type: string): string | undefined {
+  return TIME_DEPENDENT.get(type);
 }
 
 /** An effect's params filled in from its definition's defaults. */
@@ -411,6 +485,353 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'Posterize Time',
     params: [
       { key: 'frameRate', label: 'Frame Rate', type: 'number', unit: 'fps', min: 1, max: 120, default: 12 },
+    ],
+    css: () => '',
+  },
+
+  // ── Blur family ────────────────────────────────────────────────────
+  //
+  // The generic `blur` above stays: it is the CSS-filter one, it renders on
+  // every backend without a bake, and it is what the simple case should use.
+  // These three are the AE effects by name, and each does something `blur`
+  // cannot — per-axis dimensions, an iteration count, or a centre.
+  {
+    type: 'gaussian-blur',
+    label: 'Gaussian Blur',
+    params: [
+      { key: 'blurriness', label: 'Blurriness', type: 'number', unit: 'px', min: 0, max: 500, default: 10 },
+      // Stored as a number so it can be keyframed like everything else — 0 both,
+      // 1 horizontal, 2 vertical. A string would not animate.
+      { key: 'dimensions', label: 'Blur Dimensions', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'repeatEdge', label: 'Repeat Edge Pixels', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'fast-box-blur',
+    label: 'Fast Box Blur',
+    params: [
+      { key: 'blurRadius', label: 'Blur Radius', type: 'number', unit: 'px', min: 0, max: 500, default: 10 },
+      { key: 'iterations', label: 'Iterations', type: 'number', min: 1, max: 10, precision: 0, default: 1 },
+      { key: 'dimensions', label: 'Blur Dimensions', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'repeatEdge', label: 'Repeat Edge Pixels', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'radial-blur',
+    label: 'Radial Blur',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', min: -360, max: 360, default: 10 },
+      // 0 spin, 1 zoom. Same reasoning as Blur Dimensions above.
+      { key: 'blurType', label: 'Type', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+      // OFFSETS from the layer centre, not absolute coordinates. AE's default
+      // centre is the middle of the layer, and an absolute pair would default to
+      // (0,0) — the top-left corner — which spins the layer around a point off
+      // its own edge and looks broken out of the box.
+      { key: 'centerX', label: 'Centre X offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'quality', label: 'Quality', type: 'number', min: 2, max: 64, precision: 0, default: 16 },
+    ],
+    css: () => '',
+  },
+
+  // ── Stylize family ─────────────────────────────────────────────────
+  {
+    type: 'mosaic',
+    label: 'Mosaic',
+    params: [
+      // COUNTS across the layer, as in AE — not a cell size in px. That is what
+      // makes the effect resolution-independent: the same numbers give the same
+      // look at 1080p and 4K.
+      { key: 'horizontalBlocks', label: 'Horizontal Blocks', type: 'number', min: 1, max: 500, precision: 0, default: 20 },
+      { key: 'verticalBlocks', label: 'Vertical Blocks', type: 'number', min: 1, max: 500, precision: 0, default: 20 },
+      { key: 'sharpColors', label: 'Sharp Colors', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'find-edges',
+    label: 'Find Edges',
+    params: [
+      // Default TRUE: AE's default output is dark edges on white, and that is
+      // the look the effect's name means to people. The un-inverted form reads
+      // as a different effect.
+      { key: 'invert', label: 'Invert', type: 'checkbox', default: true },
+      { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'roughen-edges',
+    label: 'Roughen Edges',
+    params: [
+      { key: 'border', label: 'Border', type: 'number', unit: 'px', min: 0, max: 200, default: 12 },
+      { key: 'edgeSharpness', label: 'Edge Sharpness', type: 'number', min: 0, max: 10, default: 1 },
+      { key: 'scale', label: 'Scale', type: 'number', unit: '%', min: 1, max: 1000, default: 100 },
+      { key: 'complexity', label: 'Complexity', type: 'number', min: 1, max: 6, precision: 0, default: 2 },
+      // Keyframe this to churn the noise. Wall-clock time is deliberately never
+      // read by any effect in this module — motion comes from a keyframe, which
+      // is what keeps them deterministic and scrub-stable.
+      { key: 'evolution', label: 'Evolution', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 9999, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+
+  // ── Colour family ──────────────────────────────────────────────────
+  //
+  // Exposure is a LUT effect (see colorLut.ts), NOT a Canvas2D pixel pass: it is
+  // a per-channel transfer function, so it renders on both backends with no
+  // bake. Vibrance and Colorama read all three channels to decide what to do
+  // with a pixel, which no per-channel table can express, so those two are
+  // pixel passes.
+  {
+    type: 'exposure',
+    label: 'Exposure',
+    params: [
+      // STOPS, like a camera — +1 doubles the light. That multiplicative
+      // behaviour is the whole reason to reach for this over Brightness, which
+      // is additive and washes the blacks up off zero.
+      { key: 'exposure', label: 'Exposure', type: 'number', unit: 'stops', min: -20, max: 20, precision: 2, default: 0 },
+      { key: 'offset', label: 'Offset', type: 'number', min: -1, max: 1, precision: 3, default: 0 },
+      { key: 'gammaCorrection', label: 'Gamma Correction', type: 'number', min: 0.01, max: 10, precision: 2, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'vibrance',
+    label: 'Vibrance',
+    params: [
+      // Weighted by how far the pixel already is from grey, which is what makes
+      // it different from Saturation and what protects skin tones.
+      { key: 'vibrance', label: 'Vibrance', type: 'number', min: -100, max: 100, default: 30 },
+      { key: 'saturation', label: 'Saturation', type: 'number', min: -100, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'colorama',
+    label: 'Colorama',
+    params: [
+      // Index into COLORAMA_PALETTES. A number so it can be keyframed, and the
+      // indices are STABLE — new palettes go on the end, because inserting into
+      // the middle would silently re-map every saved project.
+      { key: 'palette', label: 'Output Cycle', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+      // The signature control: one keyframe here cycles the palette through the
+      // image. The cycle wraps, so the animation loops seamlessly.
+      { key: 'phaseShift', label: 'Phase Shift', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
+      { key: 'cycleRepetitions', label: 'Cycle Repetitions', type: 'number', min: 0.1, max: 20, precision: 2, default: 1 },
+      { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Matte / keying family ──────────────────────────────────────────
+  //
+  // Set Matte is the one with structural reach, and is NOT a Canvas2D pass: it
+  // reads ANOTHER LAYER's pixels, which the bake chain's `(oc, w, h, effect)`
+  // signature cannot express at all. It follows the `displacement-map`
+  // precedent — a GPU material with the source layer bound as a second texture.
+  {
+    type: 'set-matte',
+    label: 'Set Matte',
+    params: [
+      { key: 'matteLayerId', label: 'Take Matte From Layer', type: 'layer', default: '' },
+      // Checkboxes, and they MUST be read as booleans — `effectNumber` returns 0
+      // for one, so reading these through it gives a control that persists,
+      // keyframes, and does nothing. See snapshotToFrameScene.
+      { key: 'useLuminance', label: 'Use Luminance', type: 'checkbox', default: false },
+      { key: 'invert', label: 'Invert Matte', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+    // A real shader pass with no CSS or Canvas2D equivalent — the bake chain is
+    // handed one layer's buffer and could not reach the matte layer even in
+    // principle. Marking it means the UI SAYS it does nothing on the Canvas2D
+    // backend rather than offering it as though it worked, which is the whole
+    // reason this flag exists. It also satisfies the EFFECT_DEFS classification
+    // test, which is what caught the omission.
+    gpuOnly: true,
+  },
+  {
+    type: 'simple-choker',
+    label: 'Simple Choker',
+    params: [
+      // Positive chokes the matte inward, negative spreads it outward. The
+      // control people reach for immediately after any key, to eat the fringe.
+      { key: 'chokeAmount', label: 'Choke Matte', type: 'number', unit: 'px', min: -50, max: 50, precision: 1, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'linear-color-key',
+    label: 'Linear Color Key',
+    params: [
+      { key: 'keyColor', label: 'Key Color', type: 'color', default: '#00ff00' },
+      // 0 = RGB distance, 1 = hue, 2 = chroma. A number so it can be keyframed.
+      { key: 'matchOn', label: 'Match Colors', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'tolerance', label: 'Matching Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'softness', label: 'Matching Softness', type: 'number', unit: '%', min: 0, max: 100, default: 10 },
+      // AE's Key Colors / Keep Colors. Keeping only what matched is how this
+      // effect gets used as a selective colour isolator.
+      { key: 'keepMatched', label: 'Keep Matched Instead', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'shift-channels',
+    label: 'Shift Channels',
+    params: [
+      // Each output channel picks a SOURCE: 0 alpha, 1 red, 2 green, 3 blue,
+      // 4 luminance, 5 full-on, 6 full-off. The defaults are the identity.
+      { key: 'takeAlphaFrom', label: 'Take Alpha From', type: 'number', min: 0, max: 6, precision: 0, default: 0 },
+      { key: 'takeRedFrom', label: 'Take Red From', type: 'number', min: 0, max: 6, precision: 0, default: 1 },
+      { key: 'takeGreenFrom', label: 'Take Green From', type: 'number', min: 0, max: 6, precision: 0, default: 2 },
+      { key: 'takeBlueFrom', label: 'Take Blue From', type: 'number', min: 0, max: 6, precision: 0, default: 3 },
+    ],
+    css: () => '',
+  },
+
+  // ── Transition family ──────────────────────────────────────────────
+  //
+  // All three are alpha-only reveals driven by `completion`, matching the
+  // existing `linear-wipe`: one keyframe 0 → 100 is the whole effect, and every
+  // other parameter is a static look choice. They ERASE rather than composite —
+  // what shows through underneath is the compositor's business.
+  {
+    type: 'venetian-blinds',
+    label: 'Venetian Blinds',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'direction', label: 'Direction', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 1, max: 500, default: 30 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'gradient-wipe',
+    label: 'Gradient Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      // NO "Gradient Layer" control, deliberately. AE lets you nominate another
+      // layer as the map; this runs on the Canvas2D bake path, which is handed
+      // one layer's buffer and cannot reach a sibling — the same wall Set Matte
+      // hit. Shipping the control anyway would give a picker that persists,
+      // keyframes and does nothing, which is precisely the failure this codebase
+      // keeps finding. The wipe is driven by the LAYER'S OWN luminance, which is
+      // also AE's behaviour when no map is chosen, so pairing it with a Ramp or
+      // Fractal Noise below it in the stack gives the full effect.
+      { key: 'softness', label: 'Transition Softness', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'invertGradient', label: 'Invert Gradient', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'card-wipe',
+    label: 'Card Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'rows', label: 'Rows', type: 'number', min: 1, max: 100, precision: 0, default: 6 },
+      { key: 'columns', label: 'Columns', type: 'number', min: 1, max: 100, precision: 0, default: 8 },
+      // 0 right, 1 left, 2 down, 3 up, 4 radial. A number so it keyframes.
+      { key: 'flipOrder', label: 'Flip Order', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Generate / Text families ───────────────────────────────────────
+  {
+    type: 'lens-flare',
+    label: 'Lens Flare',
+    params: [
+      { key: 'centerX', label: 'Flare Centre X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Flare Centre Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'brightness', label: 'Flare Brightness', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'scale', label: 'Scale', type: 'number', min: 0.05, max: 5, precision: 2, default: 1 },
+      { key: 'color', label: 'Flare Colour', type: 'color', default: '#ffd9a0' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'numbers',
+    label: 'Numbers',
+    params: [
+      // The VALUE is a keyframeable parameter, which is what makes this a real
+      // counter: two keyframes and it counts. It deliberately does not read the
+      // composition clock — see `timecode` below for why that is a much larger
+      // change than it looks.
+      { key: 'value', label: 'Value', type: 'number', min: -1e9, max: 1e9, precision: 3, default: 0 },
+      { key: 'decimals', label: 'Decimal Places', type: 'number', min: 0, max: 10, precision: 0, default: 0 },
+      { key: 'padTo', label: 'Pad To Digits', type: 'number', min: 0, max: 20, precision: 0, default: 0 },
+      { key: 'useCommas', label: 'Thousands Separator', type: 'checkbox', default: false },
+      { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'positionY', label: 'Position Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 1, max: 800, default: 48 },
+      { key: 'color', label: 'Fill Colour', type: 'color', default: '#ffffff' },
+      { key: 'showBox', label: 'Composite On Box', type: 'checkbox', default: false },
+      { key: 'boxColor', label: 'Box Colour', type: 'color', default: '#000000' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'timecode',
+    label: 'Timecode',
+    params: [
+      /**
+       * Follows the layer's own clock by default — the burn-in case, and what
+       * anyone adding a Timecode expects.
+       *
+       * The mechanism is worth knowing because it constrains what else can join
+       * it: the resolved time is written into `time` at SNAPSHOT time
+       * (`resolveEffectParams`), so everything below stays a pure function of
+       * params. That keeps preview and export identical, and it makes the
+       * content hash vary per frame for this layer — which is correct here, and
+       * is also why `TIME_DEPENDENT` must stay a very short list: membership
+       * opts a layer out of raster caching by construction.
+       *
+       * Turn the follow off and `time` becomes an ordinary keyframeable value,
+       * for an offset readout or a countdown.
+       */
+      { key: 'followCompTime', label: 'Follow Timeline', type: 'checkbox', default: true },
+      { key: 'time', label: 'Time', type: 'number', unit: 's', min: -86400, max: 86400, precision: 3, default: 0 },
+      { key: 'fps', label: 'Frame Rate', type: 'number', unit: 'fps', min: 1, max: 240, precision: 0, default: 24 },
+      { key: 'dropFrame', label: 'Drop Frame', type: 'checkbox', default: false },
+      { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'positionY', label: 'Position Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 1, max: 800, default: 40 },
+      { key: 'color', label: 'Fill Colour', type: 'color', default: '#ffffff' },
+      { key: 'showBox', label: 'Composite On Box', type: 'checkbox', default: true },
+      { key: 'boxColor', label: 'Box Colour', type: 'color', default: '#000000' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'audio-spectrum',
+    label: 'Audio Spectrum',
+    params: [
+      // The referenced audio layer. Unset → a silent (all-zero) spectrum rather
+      // than an error, so the effect is inert while the user is still choosing.
+      { key: 'audioLayerId', label: 'Audio Layer', type: 'layer', default: '' },
+      { key: 'bands', label: 'Frequency Bands', type: 'number', min: 1, max: 128, precision: 0, default: 32 },
+      { key: 'startFreq', label: 'Start Frequency', type: 'number', unit: 'Hz', min: 20, max: 20000, precision: 0, default: 40 },
+      { key: 'endFreq', label: 'End Frequency', type: 'number', unit: 'Hz', min: 20, max: 20000, precision: 0, default: 16000 },
+      { key: 'maxHeight', label: 'Maximum Height', type: 'number', unit: 'px', min: 1, max: 4000, default: 200 },
+      { key: 'thickness', label: 'Thickness', type: 'number', unit: 'px', min: 1, max: 200, default: 8 },
+      // 0 bars, 1 line, 2 mirrored bars.
+      { key: 'displayMode', label: 'Display Mode', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'insideColor', label: 'Inside Colour', type: 'color', default: '#00e5ff' },
+      { key: 'outsideColor', label: 'Outside Colour', type: 'color', default: '#0066ff' },
+      /**
+       * RESOLVED, not authored. `buildSnapshot` writes the analysed band
+       * magnitudes here (see core/audio/audioSpectrum.ts) so the drawing kernel
+       * stays a pure function of its params — which is what keeps preview and
+       * export identical and makes the content hash meaningful.
+       *
+       * Hidden from the inspector by `type: 'number'` being absent: it has no
+       * declared control, so nothing renders an editor for it.
+       */
+      { key: 'magnitudes', label: 'Magnitudes (resolved)', type: 'resolved', default: [] },
     ],
     css: () => '',
   },
@@ -717,23 +1138,72 @@ export function effectPropPath(effectId: string, paramKey?: string): string {
   return paramKey === undefined ? `effect.${effectId}` : `effect.${effectId}.${paramKey}`;
 }
 
-/** Hex → [r,g,b (0..255), a (0..1)] — the channel convention the `_r/_g/_b/_a`
- *  keyframe tracks use (matches ColorKfRow / Color.fromHex). Shared with the
- *  particle-config resolver, which animates its colors the same way. */
+/**
+ * Hex → [r, g, b, a], each 0..1 — the channel convention the `_r/_g/_b/_a`
+ * keyframe tracks actually store.
+ *
+ * It used to return r/g/b in 0..255 while claiming in this very comment to
+ * "match ColorKfRow / Color.fromHex". It did not: `Color.fromHex` is 0..1, and
+ * EVERY writer of these tracks goes through it — ColorKfRow for fill/stroke,
+ * EffectStack for an effect's colour, LayerStylesControls for a layer style's,
+ * and the particle and Glass colour rows. So the picker stored 1.0 for full red
+ * and this function's twin, `channelsToColor`, read that 1.0 as one 255th of
+ * red and emitted `#010000`.
+ *
+ * The visible bug: every ANIMATED colour on an effect, a layer style, a particle
+ * config or Glass rendered near-black at every frame, whatever colour you
+ * picked — and near-black on a drop shadow reads as "the colour keyframes do
+ * nothing", which is how it was reported. The fill/stroke/text tracks were never
+ * affected, because buildSnapshot reads those through `Color.toHex` (0..1) and
+ * never came through here. Two readers, one track format, different units.
+ *
+ * 0..1 is the direction to converge on because it is what every writer already
+ * emits and what the other reader already assumes; the alternative would have
+ * meant changing four writers instead of one reader.
+ */
 export function parseColorChannels(hex: string): [number, number, number, number] {
   let h = hex.trim().replace(/^#/, '');
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
   if (h.length === 6) h += 'ff';
-  if (h.length !== 8 || /[^0-9a-fA-F]/.test(h)) return [255, 255, 255, 1];
+  if (h.length !== 8 || /[^0-9a-fA-F]/.test(h)) return [1, 1, 1, 1];
   const n = Number.parseInt(h, 16);
-  return [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, (n & 0xff) / 255];
+  return [((n >>> 24) & 0xff) / 255, ((n >>> 16) & 0xff) / 255, ((n >>> 8) & 0xff) / 255, (n & 0xff) / 255];
 }
 
-/** [r,g,b (0..255), a (0..1)] → #rrggbb / #rrggbbaa. */
+/**
+ * Recompose a colour from its `_r/_g/_b/_a` channel tracks, over the STORED
+ * colour — the single rule for "what colour is this at time t".
+ *
+ * The fallback per channel is the stored colour's own channel, never a constant.
+ * A channel with no track means "unanimated", which means "whatever was
+ * authored"; defaulting it to 255 invents a colour nobody chose. The inspector
+ * did exactly that — a shadow whose red channel alone carried keyframes showed
+ * as near-white in the swatch while it rendered near-black, and editing the
+ * swatch then wrote those invented channels back as real keyframes.
+ *
+ * Exported so the Inspector's colour rows and `resolveEffectParams` share one
+ * implementation rather than two that agree until they don't.
+ */
+export function resolveChannelColor(
+  storedHex: string,
+  sample: (suffix: '_r' | '_g' | '_b' | '_a') => number | undefined,
+): string {
+  const base = parseColorChannels(storedHex);
+  return channelsToColor(
+    sample('_r') ?? base[0],
+    sample('_g') ?? base[1],
+    sample('_b') ?? base[2],
+    sample('_a') ?? base[3],
+  );
+}
+
+/** [r,g,b,a] each 0..1 → #rrggbb / #rrggbbaa. The exact inverse of
+ *  {@link parseColorChannels}, and the same scale as `Color.toHex`. */
 export function channelsToColor(r: number, g: number, b: number, a: number): string {
-  const c = (v: number): string => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+  const c = (v: number): string =>
+    Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
   const base = `#${c(r)}${c(g)}${c(b)}`;
-  return a >= 1 ? base : `${base}${c(a * 255)}`;
+  return a >= 1 ? base : `${base}${c(a)}`;
 }
 
 /**
@@ -745,12 +1215,38 @@ export function resolveEffectParams(
   effects: ReadonlyArray<Effect>,
   /** Sample an animated value by prop path, or undefined when not keyframed. */
   sample: (propPath: string) => number | undefined,
+  /**
+   * The layer's own time, in seconds, for TIME-DEPENDENT effects (Timecode).
+   *
+   * Resolved into the effect's params HERE rather than read from a clock deeper
+   * down, and that placement is the design. Everything below this point — the
+   * bake chain, the Canvas2D kernels, the content hash — stays a pure function
+   * of the effect's params, which is what keeps preview and export identical and
+   * keeps scrubbing back to a frame reproducible. A kernel that read the clock
+   * itself would break all three at once.
+   *
+   * It is the LAYER's time (post time-remap), not comp time, so a timecode
+   * burn-in on a remapped or stretched layer reads the frame the layer is
+   * actually showing — the same axis Roughen's wiggle rides.
+   *
+   * Optional so the many callers that have no clock (tests, the effect
+   * clipboard, presets) are unaffected.
+   */
+  layerTimeSec?: number,
 ): Effect[] {
   return effects.map((e) => {
     const def = DEF.get(e.type);
     if (!def) return e;
     const params: Record<string, EffectParamValue> = { ...paramsOf(e) };
     let touched = false;
+
+    // Time first, so an explicit keyframe on the same param still wins below.
+    // A user who keyframes the readout has overridden the clock on purpose.
+    const timeParam = timeParamFor(e.type);
+    if (timeParam !== undefined && layerTimeSec !== undefined && params.followCompTime !== false) {
+      params[timeParam] = layerTimeSec;
+      touched = true;
+    }
 
     for (const p of def.params) {
       if (p.type === 'number') {
@@ -765,15 +1261,10 @@ export function resolveEffectParams(
       // pattern fill/stroke colors use (`fill_r`…): `effect.<id>.<key>_r/g/b/a`.
       // Any sampled channel overrides that channel of the stored color.
       if (p.type === 'color') {
-        const r = sample(effectPropPath(e.id, `${p.key}_r`));
-        const g = sample(effectPropPath(e.id, `${p.key}_g`));
-        const b = sample(effectPropPath(e.id, `${p.key}_b`));
-        const alpha = sample(effectPropPath(e.id, `${p.key}_a`));
-        if (r !== undefined || g !== undefined || b !== undefined || alpha !== undefined) {
-          const base = parseColorChannels(String(params[p.key] ?? p.default ?? '#ffffff'));
-          params[p.key] = channelsToColor(
-            r ?? base[0], g ?? base[1], b ?? base[2], alpha ?? base[3],
-          );
+        const ch = (suffix: '_r' | '_g' | '_b' | '_a'): number | undefined =>
+          sample(effectPropPath(e.id, `${p.key}${suffix}`));
+        if (ch('_r') !== undefined || ch('_g') !== undefined || ch('_b') !== undefined || ch('_a') !== undefined) {
+          params[p.key] = resolveChannelColor(String(params[p.key] ?? p.default ?? '#ffffff'), ch);
           touched = true;
         }
       }

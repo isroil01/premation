@@ -331,6 +331,78 @@ async function gateFidelityTwins(scenes) {
 }
 
 /**
+ * Animation gate: a scene's own frames must DIFFER from one another.
+ *
+ * Every other gate here asks "do these pixels match something?". This one asks
+ * the opposite, and it is the assertion that was missing across the whole
+ * keyframe system: a scene declares two frames with two clearly different
+ * keyframed values, and the render must actually change between them.
+ *
+ * Why it has to be pixels. "Keyframes on style properties do not animate" was
+ * reported against a chain in which the stopwatch wrote the right prop path, the
+ * sampler read it, the emit gate honoured it and the renderable carried the
+ * sampled value — every intermediate check passes in every version of that bug,
+ * including the versions where the compositor serves a cached texture from the
+ * first frame forever. Only the frame-to-frame diff separates "the value was
+ * computed" from "the value was drawn".
+ *
+ * Compared against the scene's own output, so these scenes need no blessed
+ * reference PNG (`fidelityOnly`) and nothing to eyeball.
+ */
+async function gateAnimatedFrames(scenes) {
+  const animated = scenes.filter((s) => s.animates);
+  if (animated.length === 0) return { animFail: 0, animChecked: 0 };
+
+  let animFail = 0;
+  let animChecked = 0;
+  const failures = [];
+
+  for (const s of animated) {
+    if (s.frames.length < 2) {
+      animFail++;
+      failures.push({ id: s.id, reason: 'declares `animates` but renders a single frame' });
+      continue;
+    }
+    const minChange = s.animatesMinChange ?? 0.002;
+    for (let i = 1; i < s.frames.length; i++) {
+      const label = `${s.id}#${s.frames[i - 1]}→${s.frames[i]}`;
+      const a = await readPngSafe(path.join(ACTUAL, GATE_BACKEND, s.id, `${s.frames[i - 1]}.png`));
+      const b = await readPngSafe(path.join(ACTUAL, GATE_BACKEND, s.id, `${s.frames[i]}.png`));
+      if (!a || !b) {
+        animFail++;
+        failures.push({ id: label, reason: 'frame not rendered' });
+        continue;
+      }
+      // Two BLANK frames differ from nothing, and would sail through a naive
+      // "not identical" test the moment the subject stopped rendering at all.
+      if (isUniform(a) && isUniform(b)) {
+        animFail++;
+        failures.push({ id: label, reason: 'both frames are blank — the subject rendered nothing' });
+        continue;
+      }
+      animChecked++;
+      // `compareFrames` reports the fraction of pixels that DIFFER; here that
+      // fraction is the thing required to be large, not small.
+      const { ratio } = compareFrames(a, b, { tolerance: 0 });
+      if (ratio < minChange) {
+        animFail++;
+        failures.push({
+          id: label,
+          reason: `only ${pct(ratio)} of pixels changed (need ${pct(minChange)}) — the keyframes did not reach the render`,
+        });
+      }
+    }
+  }
+
+  process.stdout.write('\n' + dim('  animation gate (a keyframe must change the pixels):\n'));
+  process.stdout.write(
+    (animFail === 0 ? green : red)(`  · ${animChecked - failures.length}/${animChecked} frame-pair(s) actually animate\n`),
+  );
+  for (const f of failures) process.stdout.write(red(`  · ${f.id} — ${f.reason}\n`));
+  return { animFail, animChecked };
+}
+
+/**
  * The semantics gate for the PRODUCT's backend.
  *
  * Runs verify-alpha against the WebGPU actuals. This is the gate that can fail
@@ -512,6 +584,7 @@ async function main() {
 
   const { parityFail, parityKnownGap, parityResolved } = await compareAll(scenes);
   const { fidelityFail } = await gateFidelityTwins(scenes);
+  const { animFail } = await gateAnimatedFrames(scenes);
   const alphaFail = await gateAlphaSemantics(scenes, backends);
   const stylesFail = await gateSemantics(
     scenes, backends, 'verify-3d-styles.mjs', 'three-d-drop-shadow',
@@ -536,12 +609,13 @@ async function main() {
     if (backend !== GATE_BACKEND) await reportSecondaryBackend(scenes, backend);
   }
 
-  if (parityFail === 0 && fidelityFail === 0 && alphaFail === 0 && stylesFail === 0) {
+  if (parityFail === 0 && fidelityFail === 0 && animFail === 0 && alphaFail === 0 && stylesFail === 0) {
     process.stdout.write(green(`\n✓ gate green — unified engine output matches golden expectations.\n`));
     process.exit(0);
   }
   process.stdout.write(
     red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}, ` +
+      `properties that stopped animating: ${animFail}, ` +
       `alpha semantics: ${alphaFail}, 3D-style semantics: ${stylesFail}.\n`) +
       dim(`  artifacts: ${path.join(ARTIFACTS, 'diff')}\n`),
   );

@@ -23,6 +23,7 @@ import { svgScenes } from './svg';
 import { glassScenes } from './glass';
 import { rigScenes } from './rig';
 import { alphaInterpScenes } from './alphaInterp';
+import { keyframeFamilyScenes } from './keyframeFamilies';
 
 export const SCENES: Scene[] = [
   // Anchors + fill probes.
@@ -50,4 +51,5 @@ export const SCENES: Scene[] = [
   ...svgScenes,
   ...glassScenes,
   ...alphaInterpScenes,
+  ...keyframeFamilyScenes,
 ];

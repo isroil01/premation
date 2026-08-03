@@ -23,12 +23,82 @@ function grade(effects: Effect[], rgb: [number, number, number]): [number, numbe
 }
 
 describe('isLutEffect', () => {
-  it('classifies levels, curves and posterize, not css/matrix effects', () => {
+  it('classifies levels, curves, posterize and exposure, not css/matrix effects', () => {
     expect(isLutEffect('levels')).toBe(true);
     expect(isLutEffect('curves')).toBe(true);
     expect(isLutEffect('posterize')).toBe(true);
+    expect(isLutEffect('exposure')).toBe(true);
     expect(isLutEffect('brightness')).toBe(false);
     expect(isLutEffect('blur')).toBe(false);
+  });
+
+  it('excludes the colour effects that need all three channels at once', () => {
+    // Vibrance weights its boost by the pixel's existing saturation, and
+    // Colorama maps luminance into a palette — neither is a per-channel
+    // transfer function, so neither can be a LUT. Adding one here would not
+    // fail to compile; it would silently render a different effect.
+    expect(isLutEffect('vibrance')).toBe(false);
+    expect(isLutEffect('colorama')).toBe(false);
+  });
+});
+
+describe('exposure', () => {
+  const exposure = (params: Record<string, number>): Effect => ({
+    id: 'ex',
+    type: 'exposure',
+    params: { exposure: 0, offset: 0, gammaCorrection: 1, ...params },
+  });
+
+  it('is a no-op at its defaults', () => {
+    expect(grade([exposure({})], [10, 128, 240])).toEqual([10, 128, 240]);
+  });
+
+  it('is measured in STOPS — +1 doubles the light', () => {
+    // The reason to have this beside Brightness. Multiplicative, so it behaves
+    // like a camera; the additive control cannot express this.
+    expect(grade([exposure({ exposure: 1 })], [60, 0, 0])[0]).toBe(120);
+    expect(grade([exposure({ exposure: -1 })], [120, 0, 0])[0]).toBe(60);
+  });
+
+  it('leaves black at black under gain alone', () => {
+    // Multiplicative gain has a fixed point at zero. If black lifts here, the
+    // offset is being applied before the gain.
+    expect(grade([exposure({ exposure: 3 })], [0, 0, 0])).toEqual([0, 0, 0]);
+  });
+
+  it('offset lifts black, because it applies AFTER the gain', () => {
+    expect(grade([exposure({ offset: 0.2 })], [0, 0, 0])[0]).toBe(51);
+  });
+
+  it('clips at white rather than wrapping', () => {
+    expect(grade([exposure({ exposure: 6 })], [200, 200, 200])).toEqual([255, 255, 255]);
+  });
+
+  it('survives a negative offset without producing NaN', () => {
+    // Math.pow of a negative base with a fractional exponent is NaN, which
+    // clamps to a BLACK FRAME rather than an error. Reachable from the
+    // inspector with any negative offset, so the clamp must precede the gamma.
+    const out = grade([exposure({ offset: -0.5, gammaCorrection: 2.2 })], [10, 10, 10]);
+    expect(out.every((v) => Number.isFinite(v))).toBe(true);
+    expect(out).toEqual([0, 0, 0]);
+  });
+
+  it('survives gamma 0 without dividing by zero', () => {
+    // Also reachable from the inspector; 1/0 is Infinity and a table of NaN.
+    const out = grade([exposure({ gammaCorrection: 0 })], [128, 128, 128]);
+    expect(out.every((v) => Number.isFinite(v))).toBe(true);
+  });
+
+  it('brightens midtones at gamma > 1 while pinning both ends', () => {
+    expect(grade([exposure({ gammaCorrection: 2 })], [128, 0, 0])[0]).toBeGreaterThan(128);
+    expect(grade([exposure({ gammaCorrection: 2 })], [0, 0, 0])[0]).toBe(0);
+    expect(grade([exposure({ gammaCorrection: 2 })], [255, 0, 0])[0]).toBe(255);
+  });
+
+  it('composes with the other LUT effects in stack order', () => {
+    // Composition is what the shared table buys; it must hold for a new member.
+    const stack = [exposure({ exposure: 1 }), levels({ inputBlack: 0, inputWhite: 255, gamma: 1, outputBlack: 0, outputWhite: 128 })];
+    expect(grade(stack, [60, 60, 60])[0]).toBe(60);
   });
 });
 

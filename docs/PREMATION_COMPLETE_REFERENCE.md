@@ -52,7 +52,7 @@ Premation is a **desktop motion-design and animation editor** modelled on **Afte
 
 The one-paragraph version:
 
-> You create a composition, stack layers in it (shapes, text, images, video, audio, SVG, Lottie, nested comps, cameras, lights, nulls, adjustment layers, particles), animate any numeric property with keyframes on a timeline, shape those keyframes in a bezier graph editor or drive them with expressions, composite the stack with 36 blend modes / masks / track mattes / 10 layer styles / 38 effects, flip layers into a shared 3D space with real cameras, lights and shadows, deform them with bone or puppet rigs — and then export the exact frames you saw in the viewport, because the viewport and the exporter run the *same* GPU render graph.
+> You create a composition, stack layers in it (shapes, text, images, video, audio, SVG, Lottie, nested comps, cameras, lights, nulls, adjustment layers, particles), animate any numeric property with keyframes on a timeline, shape those keyframes in a bezier graph editor or drive them with expressions, composite the stack with 36 blend modes / masks / track mattes / 10 layer styles / 58 effects, flip layers into a shared 3D space with real cameras, lights and shadows, deform them with bone or puppet rigs — and then export the exact frames you saw in the viewport, because the viewport and the exporter run the *same* GPU render graph.
 
 **Three things that define the product's shape:**
 
@@ -448,7 +448,7 @@ Plus, alongside the stack: **colour LUT** support, **canvas2d-only** effect path
 | **Offset Paths** | ✅ | |
 | **Wiggle Paths** | ✅ | Spatial displacement along the normal, **plus** the time term added in `61fc1fc` (was frozen — seeded by point index only) |
 | Zig Zag, Round Corners, Pucker & Bloat, Twist | ✅ | |
-| **Path operator stacking** | ⚠️ | `fx.pathOp` is a **single slot** — one operator per node, not AE's chainable contents list. Same single-slot shape for `trim`, `rep`, `textPath` |
+| **Path operator stacking** | ✅ | **Fixed (schema 1.3.0).** `fx.pathOps` is an ordered array applied top-down, as AE's contents list is; operators carry a stable id so keyframes survive a reorder. `trim`, `rep` and `textPath` are still single-slot — same shape, not yet the same fix |
 | Wiggle Transform (shape operator) | ❌ | Absent. Note the *expression* `wiggle()` is fully implemented — different feature |
 | Multi-paint (multiple fills/strokes) | ✅ | With opacity stops |
 
@@ -1567,7 +1567,7 @@ Two audits were run on 2026-08-03. This section merges them and updates both aga
 | **Pipeline-determinism gate** | The existing gate re-renders from the *same snapshot object*, so it covers renderFrame → GPU → readback but is structurally blind to the front half. A stochastic source sampled into the snapshot would pass every time. Dissolve is the first mode that needs this |
 | **Variable-width mask feather** | Feather is a single scalar per path; `MaskPoint` carries only x/y + handles. Uniform feather *is* implemented and rendered |
 | **Wiggle Transform** (shape operator) | No implementation. The *expression* `wiggle()` is complete — different feature |
-| **Chainable path-operator stack** | `fx.pathOp` is a single slot; AE's shape contents list chains. Same single-slot shape for `trim`, `rep`, `textPath` |
+| ~~**Chainable path-operator stack**~~ | ✅ **Done (schema 1.3.0).** `fx.pathOps` chains and reorders; the migration re-keys the keyframe tracks onto the new operator ids, which is the half that would otherwise silently drop every path-operator animation. `trim`, `rep` and `textPath` remain single-slot |
 | **3D gizmo snapping** | `guidesStore.gizmo3dSnapping` has zero readers and zero writers outside the store; `toggleGizmo3dSnapping` has no caller |
 | **Local project browser** | The local edition opens straight into the editor. The SQLite local index and the version store both exist and are tested; the home surface that would use them doesn't |
 | **Continuous rasterization** | The one remaining gap in the composition-boundary work |
@@ -1706,13 +1706,13 @@ Worth stating because the plans repeatedly under-read the build:
 
 ### 17.4 Where it loses, plainly
 
-1. **Effect breadth** — 38 vs AE's 400+. This is the single biggest practical gap for a working motion designer.
+1. **Effect breadth** — 58 vs AE's 400+, after the Aug-2026 breadth pass added all twenty it set out to (blur, stylize, colour, keying, transition, generate/text). The count still misleads: nobody uses 400, and the twenty were picked by what real work reaches for. The last two — Timecode and Audio Spectrum — needed a mechanism rather than a shader: their output depends on the clock, so the resolved values are written into the effect's params at snapshot time, which makes the content hash vary per frame for those layers and no others. See `TIME_DEPENDENT` in `effects.ts`; membership opts a layer out of raster caching by construction, so the set is meant to stay tiny.
 2. **Ecosystem** — no plugin market, no tutorials, no template marketplace, no community, no hiring pool.
 3. **Maturity** — pre-1.0, with a documented list of half-crossed seams (§16.2) and breaking `.motion` format changes still expected before 1.0.
 4. **No motion tracking / rotoscoping** — a hard blocker for a large class of VFX work.
 5. **No collaboration** — deliberate, but it *is* a loss against Rive/Jitter/Figma-adjacent workflows.
 6. **No local project browser** yet in the OSS edition.
-7. **Chainable shape operators** — AE's contents list is a real workflow, and single-slot operators are a visible ceiling.
+7. ~~**Chainable shape operators**~~ — done for path operators (schema 1.3.0). `trim`, `rep` and `textPath` still hold the single-slot shape, so the ceiling has moved rather than gone.
 
 ---
 
@@ -1742,7 +1742,7 @@ motion-editor/
 │   │   ├── scene/               scene graph, parenting, anchor, 3D, extrusion, faces,
 │   │   │                        materials, lights, camera3d, trim, repeater, pathOps,
 │   │   │                        mergePaths, compInstance, layerTime, imageSequence
-│   │   ├── effects/             38 effects, 36 blend modes, 10 layer styles, masks,
+│   │   ├── effects/             58 effects, 36 blend modes, 10 layer styles, masks,
 │   │   │                        mattes, adjustment, motion blur, keylight, LUT, echo
 │   │   ├── animation/           presets (15+18+6+5), assistants, clipboard, easing,
 │   │   │                        expression controls, preset preview
