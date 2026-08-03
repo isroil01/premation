@@ -10,6 +10,7 @@
 
 import { useState } from 'react';
 import { Icon } from '@components/Icon';
+import { ResponsiveTimeSection } from './ResponsiveTimeSection';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { Switch } from '@components/Switch';
@@ -27,7 +28,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { FPS_PRESETS, MAX_DURATION } from '@core/composition/presets';
 import styles from './CompositionSettingsDialog.module.css';
 
-type TabId = 'general' | 'background' | 'grid';
+type TabId = 'general' | 'background' | 'grid' | 'time';
 
 function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   const s = useCompositionStore();
@@ -118,6 +119,16 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         >
           <Icon name="grid" size={13} />
           Grid & Guides
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'time'}
+          className={`${styles.navTab} ${activeTab === 'time' ? styles.navTabActive : ''}`}
+          onClick={() => setActiveTab('time')}
+        >
+          <Icon name="keyframe" size={13} />
+          Time
         </button>
       </div>
 
@@ -409,6 +420,9 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
             </div>
           </>
         )}
+
+        {/* TAB 4: TIME — responsive/protected regions (M7) */}
+        {activeTab === 'time' && <ResponsiveTimeSection />}
       </div>
 
       <div className={styles.footer}>

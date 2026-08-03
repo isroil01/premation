@@ -55,11 +55,15 @@ export function setResponsiveTime(
   config: ResponsiveTimeConfig | undefined,
 ): void {
   const node = defaultSceneGraph.getNode(rootId);
-  const meta = node?.components[0];
-  if (!meta) return;
-  const props = meta.props as Record<string, unknown>;
-  if (config) props[PROP] = config;
-  else delete props[PROP];
+  const componentId = node?.components[0]?.id;
+  if (!componentId) return;
+  // MUST go through `writeProp`. `getNode` hands back a copy, so mutating
+  // `component.props` in place is silently discarded — the value never reaches
+  // the graph, `readResponsiveTime` keeps returning undefined, and the control
+  // looks like it does nothing. Caught by driving the real UI, not by types:
+  // the in-place version compiled and passed every unit test, because the tests
+  // mocked the graph with a plain object that DOES retain mutations.
+  defaultSceneGraph.writeProp(rootId, componentId, PROP, config ?? undefined);
   bumpScene();
 }
 

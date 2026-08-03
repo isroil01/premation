@@ -12,6 +12,9 @@ import {
   normalizeRegions,
   protectedTotal,
   effectiveDuration,
+  clampRegionEdge,
+  proposeRegion,
+  MIN_REGION_SEC,
   type ProtectedRegion,
 } from './responsiveTime';
 
@@ -138,5 +141,77 @@ describe('effectiveDuration', () => {
   it('floors at the protected total', () => {
     // 0.6 + 0.6 is 1.1999999999999997 in binary floating point.
     expect(effectiveDuration(AUTHORED, 1, REGIONS)).toBeCloseTo(1.2, 9);
+  });
+});
+
+describe('clampRegionEdge — the invalid state is never constructed', () => {
+  const R = [
+    { startSec: 0, endSec: 1 },
+    { startSec: 2, endSec: 3 },
+  ];
+
+  it('a start cannot cross its own end', () => {
+    // Dragged past the end, it stops MIN_REGION_SEC short — the region survives
+    // the drag instead of collapsing to nothing.
+    expect(clampRegionEdge(R, 0, 'start', 5, 10)).toBeCloseTo(1 - MIN_REGION_SEC, 9);
+  });
+
+  it('an end cannot cross its own start', () => {
+    expect(clampRegionEdge(R, 0, 'end', -5, 10)).toBeCloseTo(0 + MIN_REGION_SEC, 9);
+  });
+
+  it('a start cannot cross the PREVIOUS region', () => {
+    // Region 1 dragged left past region 0 stops at region 0's end. Without this
+    // the two would overlap, normalizeRegions would MERGE them, and the user
+    // would still see two handles for one region.
+    expect(clampRegionEdge(R, 1, 'start', 0.2, 10)).toBeCloseTo(1 + MIN_REGION_SEC, 9);
+  });
+
+  it('an end cannot cross the NEXT region', () => {
+    expect(clampRegionEdge(R, 0, 'end', 9, 10)).toBeCloseTo(2 - MIN_REGION_SEC, 9);
+  });
+
+  it('is bounded by the composition', () => {
+    expect(clampRegionEdge(R, 0, 'start', -99, 10)).toBe(0);
+    expect(clampRegionEdge(R, 1, 'end', 99, 10)).toBe(10);
+  });
+
+  it('leaves a valid move alone', () => {
+    expect(clampRegionEdge(R, 1, 'start', 1.5, 10)).toBe(1.5);
+  });
+
+  it('any clamped drag still normalises to the SAME region count', () => {
+    // The property the clamp exists for: no sequence of clamped edits can make
+    // normalizeRegions merge two regions into one.
+    for (const proposed of [-10, 0, 0.5, 1, 1.5, 2, 2.5, 3, 5, 20]) {
+      for (const idx of [0, 1]) {
+        for (const edge of ['start', 'end'] as const) {
+          const v = clampRegionEdge(R, idx, edge, proposed, 10);
+          const next = R.map((r, i) => (i === idx ? { ...r, [`${edge}Sec`]: v } : r));
+          expect(normalizeRegions(next as never, 10)).toHaveLength(2);
+        }
+      }
+    }
+  });
+});
+
+describe('proposeRegion', () => {
+  it('places a new region in the largest free gap', () => {
+    const made = proposeRegion([{ startSec: 0, endSec: 1 }], 10);
+    expect(made).not.toBeNull();
+    expect(made!.startSec).toBeCloseTo(1 + MIN_REGION_SEC, 9);
+    expect(made!.endSec).toBeGreaterThan(made!.startSec);
+  });
+
+  it('returns NULL rather than a zero-width region when there is no room', () => {
+    // A control that appears to work and produces nothing is worse than one
+    // that is visibly unavailable.
+    expect(proposeRegion([{ startSec: 0, endSec: 10 }], 10)).toBeNull();
+  });
+
+  it('never proposes something that would merge with an existing region', () => {
+    const existing = [{ startSec: 0, endSec: 2 }, { startSec: 8, endSec: 10 }];
+    const made = proposeRegion(existing, 10)!;
+    expect(normalizeRegions([...existing, made], 10)).toHaveLength(3);
   });
 });

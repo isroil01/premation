@@ -11,9 +11,31 @@ jest.mock('@stores/sceneStore', () => ({ bumpScene: jest.fn() }));
 interface FakeNode { id: string; components: Array<{ id: string; type: string; props: Record<string, unknown> }> }
 const nodes = new Map<string, FakeNode>();
 
+/**
+ * The mock must model `writeProp`, not just `getNode`.
+ *
+ * An earlier version returned live node objects and had no writeProp, so a store
+ * that MUTATED `component.props` in place passed every test here — and did
+ * nothing in the real app, because the real graph hands back a COPY. The bug was
+ * caught by driving the actual UI, not by this suite. Modelling the write API is
+ * what makes the suite able to catch it next time.
+ */
 jest.mock('@core/scene/DefaultSceneGraph', () => ({
   __esModule: true,
-  default: { getNode: (id: string) => nodes.get(id) },
+  default: {
+    // Hand back a COPY, exactly as the real graph does, so an in-place mutation
+    // is discarded here too.
+    getNode: (id: string) => {
+      const n = nodes.get(id);
+      return n ? { ...n, components: n.components.map((c) => ({ ...c, props: { ...c.props } })) } : undefined;
+    },
+    writeProp: (nodeId: string, componentId: string, key: string, value: unknown) => {
+      const c = nodes.get(nodeId)?.components.find((x) => x.id === componentId);
+      if (!c) return;
+      if (value === undefined) delete c.props[key];
+      else c.props[key] = value;
+    },
+  },
 }));
 jest.mock('@core/scene/activeComp', () => ({ activeCompRootId: () => 'root' }));
 
