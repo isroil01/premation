@@ -6,9 +6,11 @@
  * The renderer's passes call `get(key)` synchronously mid-frame, but image decode
  * is async, so the flow is:
  *   1. Each frame, MotionRendererBackend feeds current sources via `setImage`.
- *   2. `get` returns the decoded texture once ready, else a shared 1×1 white
- *      placeholder (so a box still shows while loading — matching Canvas2D — and
- *      no textured layer ever silently vanishes).
+ *   2. `get` returns the decoded texture once ready, else a shared 1×1
+ *      TRANSPARENT placeholder — an undecoded layer draws nothing rather than a
+ *      box. It used to be opaque white, which made every layer whose clip starts
+ *      partway into the timeline flash a white rectangle on its first frame
+ *      (see `placeholder()`).
  *   3. When a decode completes we flip the entry to ready and fire `onChange`,
  *      which the app turns into a re-render so the real pixels appear next frame.
  *
@@ -55,6 +57,18 @@ interface MaskEntry {
 export type ImageLoader = (src: string, fillColor?: string, premultipliedFile?: boolean) => Promise<ImageBitmap>;
 
 const RASTER_MAX = 4096;
+
+/**
+ * How many decoded images to keep alive after they leave the visible set.
+ *
+ * The point is to survive a playhead crossing a layer's start/end — see
+ * `retain`. Sized for "a composition's worth of images the user is scrubbing
+ * around", not for a whole project: past this the oldest is freed, so a long
+ * timeline full of stills still has a ceiling. Each parked entry holds one
+ * decoded bitmap and one GPU texture, so the bound is what keeps this a cache
+ * rather than a leak.
+ */
+const MAX_PARKED_IMAGES = 32;
 
 /**
  * Decode options for EVERY bitmap that becomes a GPU texture.
@@ -493,7 +507,13 @@ export class AppTextureProvider implements TextureProvider {
   private readonly particleEntries = new Map<string, ParticleEntry>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
-  private hasInitWhite = false;
+  /** One-shot init for the transparent placeholder — see `placeholder()`. */
+  private hasInitTransparent = false;
+  /**
+   * Decoded images that have fallen out of the visible set but are NOT yet
+   * freed — see `retain`. Insertion-ordered, so the oldest is evicted first.
+   */
+  private readonly parkedImages = new Map<string, ImageEntry>();
   /** Device px per comp unit for THIS frame (view.scale × dpr). Vector rasters
    *  are sized at their box × resolutionTier(scale) × supersample, so a 4K
    *  export re-rasters at native instead of upscaling a viewport-res texture.
@@ -1024,12 +1044,52 @@ export class AppTextureProvider implements TextureProvider {
    * memory until explicitly closed. Deleting a layer while scrubbing therefore
    * stranded a texture, a decoder and a bitmap every time.
    */
-  retain(activeKeys: ReadonlySet<string>): void {
+  retain(
+    activeKeys: ReadonlySet<string>,
+    /** `releaseParked` frees the grace cache too — teardown only. See dispose. */
+    opts: { releaseParked?: boolean } = {},
+  ): void {
+    // ── IMAGE entries get a grace period. Everything below does not. ─────────
+    //
+    // `activeKeys` is the set of layers visible on THIS FRAME, which is not the
+    // same question as "still in the project" — and treating it as such is what
+    // made a layer whose clip starts at, say, 2s re-decode its image every
+    // single time the playhead crossed 2s. Off-time → evicted → back on-time →
+    // decode from scratch → placeholder. The flash was not a one-off on first
+    // load; it repeated on every pass and every scrub.
+    //
+    // A frame-accurate eviction is still wanted for genuinely removed layers
+    // (the stranded texture/decoder/bitmap this method was written to fix), so
+    // the answer is a bounded grace rather than keeping everything: an image
+    // that falls out of the active set is parked, and only actually freed once
+    // enough OTHER images have taken its place. Scrubbing over a start point
+    // therefore costs nothing, while deleting layers still reclaims memory.
+    //
+    // Only images are parked. Video entries own a decoder pipeline and live
+    // listeners, and text/mask/path/gradient entries are cheap to rebuild — for
+    // those, prompt release remains the right trade.
     for (const [key, entry] of [...this.entries]) {
-      if (activeKeys.has(key)) continue;
-      this.resources.freeTexture(`img:${entry.src}`);
-      entry.bitmap?.close();
-      this.entries.delete(key);
+      if (activeKeys.has(key)) {
+        this.parkedImages.delete(key);
+        continue;
+      }
+      // Re-park (delete + set) so the insertion order is true LRU.
+      this.parkedImages.delete(key);
+      this.parkedImages.set(key, entry);
+    }
+    const ceiling = opts.releaseParked ? 0 : MAX_PARKED_IMAGES;
+    while (this.parkedImages.size > ceiling) {
+      const oldest = this.parkedImages.keys().next();
+      if (oldest.done) break;
+      const key = oldest.value;
+      const entry = this.parkedImages.get(key)!;
+      this.parkedImages.delete(key);
+      // Only free if it has not come back into use since being parked.
+      if (!activeKeys.has(key)) {
+        this.resources.freeTexture(`img:${entry.src}`);
+        entry.bitmap?.close();
+        this.entries.delete(key);
+      }
     }
     for (const key of this.textEntries.keys()) {
       if (!activeKeys.has(key)) this.textEntries.delete(key);
@@ -1079,9 +1139,17 @@ export class AppTextureProvider implements TextureProvider {
     if (entry.poolKey) this.resources.freeTexture(entry.poolKey);
   }
 
-  /** Release every retained GPU/media resource. Call before dropping the provider. */
+  /**
+   * Release every retained GPU/media resource. Call before dropping the provider.
+   *
+   * `releaseParked` is what makes this a real teardown: `retain` deliberately
+   * PARKS images rather than freeing them, so that a playhead crossing a layer's
+   * start does not re-decode. On dispose there is no later frame to park for,
+   * and skipping it would strand a bitmap and a texture per parked image —
+   * reintroducing exactly the leak `retain`'s docstring was written about.
+   */
   dispose(): void {
-    this.retain(new Set());
+    this.retain(new Set(), { releaseParked: true });
   }
 
   /**
@@ -1217,18 +1285,51 @@ export class AppTextureProvider implements TextureProvider {
     this.onChange?.();
   }
 
+  /**
+   * What a not-yet-decoded image or video draws: NOTHING.
+   *
+   * ── This used to be `texture:white`, and that WAS the bug ──────────────────
+   *
+   * A layer whose clip starts partway into the timeline is not in the snapshot
+   * until it becomes visible, so its source is registered — and its decode
+   * begins — on the very frame it appears. Handing back an opaque white 1×1 in
+   * the meantime meant every such layer flashed a white rectangle before its
+   * picture arrived. Most visible on icons and logos: small, light, and usually
+   * sitting on a dark composition.
+   *
+   * The old rationale was "so a box still shows while loading, and no textured
+   * layer ever silently vanishes". That is a developer-facing convenience with a
+   * user-facing artifact — showing the WRONG pixels is worse than showing none,
+   * and for the frame or two it lasts a white box is indistinguishable from a
+   * real white layer.
+   *
+   * ── Why `texture:white` could not simply be recoloured ─────────────────────
+   *
+   * It has a second, legitimate consumer: `CompositionPass` binds it as the
+   * identity texture for SOLID layers, where the solid's colour is multiplied
+   * against it (`isSolid && !tex`). Turning that transparent would multiply
+   * every solid layer to nothing. Two unrelated roles had been collapsed onto
+   * one texture — the same shape as the bake-vs-GPU predicate pair — so they get
+   * one texture each.
+   *
+   * Transparent BLACK, not transparent white: this pipeline is premultiplied, so
+   * zero coverage means all four channels zero.
+   */
   private placeholder(): ResolvedTexture {
     const texture = this.resources.texture(
-      'texture:white',
-      { label: 'white', width: 1, height: 1, format: 'rgba8unorm' },
+      'texture:transparent',
+      { label: 'transparent', width: 1, height: 1, format: 'rgba8unorm' },
       true,
     );
-    if (!this.hasInitWhite) {
-      const data = new Uint8Array([255, 255, 255, 255]);
+    if (!this.hasInitTransparent) {
+      const data = new Uint8Array([0, 0, 0, 0]);
       this.resources.writeTexture(texture, { type: 'buffer', data, width: 1, height: 1 });
-      this.hasInitWhite = true;
+      this.hasInitTransparent = true;
     }
-    return { texture, sampler: this.sampler(), ready: true };
+    // `ready: false` is the honest answer and costs nothing — no renderer pass
+    // reads this field today. Reporting `true` would make the flag a lie the
+    // moment something starts to.
+    return { texture, sampler: this.sampler(), ready: false };
   }
 
   private sampler(): SamplerHandle {

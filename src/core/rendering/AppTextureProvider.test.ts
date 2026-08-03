@@ -1,8 +1,14 @@
 /**
  * AppTextureProvider (S2) — resolves image assets to real GPU textures, with a
- * white-placeholder fallback while a decode is in flight. Tested headlessly with
- * an injected loader (no real image decode) against a NullBackend-backed
+ * TRANSPARENT placeholder while a decode is in flight. Tested headlessly with an
+ * injected loader (no real image decode) against a NullBackend-backed
  * ResourceManager, which records texture creation.
+ *
+ * The placeholder used to be opaque WHITE, which made every layer whose clip
+ * starts partway into the timeline flash a white rectangle on the frame it
+ * appeared — such a layer is absent from the snapshot until then, so its decode
+ * only begins once it is already on screen. The `placeholder` block below
+ * asserts the actual pixel bytes, not just which key was asked for.
  */
 
 import { ResourceManager, NullBackend } from '@motion/renderer';
@@ -40,12 +46,88 @@ function setup(
   return { provider, backend };
 }
 
+/**
+ * A backend that records what was actually written into each texture, so the
+ * placeholder can be asserted by its PIXEL rather than by the key it asked for.
+ * `NullBackend.writeTexture` is a no-op, so nothing else can see the bytes —
+ * and the bytes are the entire bug.
+ */
+class RecordingBackend extends NullBackend {
+  readonly writes: Array<{ label?: string; data?: Uint8Array }> = [];
+  private labels = new Map<number, string | undefined>();
+
+  override createTexture(desc: Parameters<NullBackend['createTexture']>[0]): ReturnType<NullBackend['createTexture']> {
+    const h = super.createTexture(desc);
+    this.labels.set(h.id, (desc as { label?: string }).label);
+    return h;
+  }
+
+  override writeTexture(
+    texture: Parameters<NullBackend['writeTexture']>[0],
+    source: Parameters<NullBackend['writeTexture']>[1],
+  ): void {
+    const s = source as { type?: string; data?: Uint8Array };
+    this.writes.push({
+      label: this.labels.get(texture.id),
+      ...(s.type === 'buffer' && s.data ? { data: s.data } : {}),
+    });
+  }
+}
+
+describe('the loading placeholder', () => {
+  /**
+   * The regression guard for the white flash.
+   *
+   * A layer starting at, say, 2s is not in the snapshot before then, so it
+   * registers its source and begins decoding on the frame it becomes visible.
+   * Whatever this returns is therefore drawn full-size, in place of the picture,
+   * for as long as the decode takes. Opaque white made that a visible flash;
+   * transparent makes it nothing.
+   */
+  it('writes a fully TRANSPARENT pixel, never an opaque one', () => {
+    const backend = new RecordingBackend();
+    const resources = new ResourceManager(backend);
+    resources.beginFrame(1);
+    const provider = new AppTextureProvider(resources, {});
+
+    provider.get('asset:not-decoded-yet');
+
+    const write = backend.writes.find((w) => w.data?.length === 4);
+    expect(write).toBeDefined();
+    // RGBA, premultiplied — zero coverage is all four channels zero.
+    expect(Array.from(write!.data!)).toEqual([0, 0, 0, 0]);
+    // Specifically NOT the old opaque white.
+    expect(Array.from(write!.data!)).not.toEqual([255, 255, 255, 255]);
+  });
+
+  it('does not reuse `texture:white`, which solid layers need opaque', () => {
+    // That key is CompositionPass's identity texture for solid layers, where the
+    // solid's colour is multiplied against it. Recolouring it to fix this bug
+    // would have multiplied every solid layer to nothing. Two roles, two
+    // textures — asserted by label so a future merge cannot quietly re-collapse
+    // them.
+    const backend = new RecordingBackend();
+    const resources = new ResourceManager(backend);
+    resources.beginFrame(1);
+    const provider = new AppTextureProvider(resources, {});
+
+    provider.get('asset:not-decoded-yet');
+
+    const labels = backend.writes.map((w) => w.label);
+    expect(labels).toContain('transparent');
+    expect(labels).not.toContain('white');
+  });
+});
+
 describe('AppTextureProvider', () => {
-  it('returns a ready white placeholder for an unknown key', () => {
+  it('returns a placeholder for an unknown key, reported as NOT ready', () => {
     const { provider } = setup();
     const tex = provider.get('asset:missing');
     expect(tex).not.toBeNull();
-    expect(tex!.ready).toBe(true);
+    // Not ready, because it genuinely is not. This claimed `true` before; no
+    // renderer pass reads the flag today, so the lie was free — right up until
+    // something starts reading it.
+    expect(tex!.ready).toBe(false);
   });
 
   it('shows the placeholder before a decode resolves, the real texture after', async () => {
@@ -133,15 +215,74 @@ describe('AppTextureProvider', () => {
     expect(provider.get('asset:a')!.texture.id).toBe(placeholderId);
   });
 
-  it('retain() forgets keys no longer in the scene', async () => {
-    const { provider } = setup(async () => fakeBitmap());
-    provider.setImage('asset:a', 'blob:a');
-    provider.setImage('asset:b', 'blob:b');
-    await flush();
-    const realA = provider.get('asset:a')!.texture.id;
-    provider.retain(new Set(['asset:b']));
-    // 'a' is forgotten → back to placeholder; 'b' still real.
-    expect(provider.get('asset:a')!.texture.id).not.toBe(realA);
+  /**
+   * `retain` gives IMAGES a grace period, and that is load-bearing rather than
+   * an optimisation.
+   *
+   * The active set is the layers visible on THIS FRAME, which is not the same
+   * question as "still in the project". Freeing on that basis meant a layer
+   * whose clip starts at 2s was evicted whenever the playhead sat before 2s and
+   * re-decoded from scratch every time it crossed — so the loading placeholder
+   * reappeared on every pass and every scrub, not just on first load.
+   */
+  describe('retain()', () => {
+    it('KEEPS a briefly-inactive image, so scrubbing over a clip start does not re-decode', async () => {
+      const { provider } = setup(async () => fakeBitmap());
+      provider.setImage('asset:a', 'blob:a');
+      provider.setImage('asset:b', 'blob:b');
+      await flush();
+      const realA = provider.get('asset:a')!.texture.id;
+
+      // The playhead moves off 'a' — one frame without it, as when scrubbing
+      // back before its clip starts.
+      provider.retain(new Set(['asset:b']));
+
+      // Still the real texture, NOT the placeholder: coming back is free.
+      expect(provider.get('asset:a')!.texture.id).toBe(realA);
+    });
+
+    it('still frees it once enough other images have displaced it', async () => {
+      const { provider } = setup(async () => fakeBitmap());
+      provider.setImage('asset:a', 'blob:a');
+      await flush();
+      const realA = provider.get('asset:a')!.texture.id;
+
+      // Push 'a' out of the bounded grace cache. The bound is what keeps this a
+      // cache rather than a leak — a long timeline of stills has a ceiling.
+      for (let i = 0; i < 40; i++) {
+        provider.setImage(`asset:filler${i}`, `blob:filler${i}`);
+      }
+      await flush();
+      for (let i = 0; i < 40; i++) {
+        provider.retain(new Set([`asset:filler${i}`]));
+      }
+
+      expect(provider.get('asset:a')!.texture.id).not.toBe(realA);
+    });
+
+    it('dispose() releases the parked images too', async () => {
+      // Otherwise the grace cache becomes the very leak retain() was written to
+      // fix: on teardown there is no later frame to park for.
+      const { provider } = setup(async () => fakeBitmap());
+      provider.setImage('asset:a', 'blob:a');
+      await flush();
+      const realA = provider.get('asset:a')!.texture.id;
+
+      provider.retain(new Set()); // parked, not freed
+      provider.dispose();
+
+      expect(provider.get('asset:a')!.texture.id).not.toBe(realA);
+    });
+
+    it('still forgets non-image entries immediately', async () => {
+      // Video owns a decoder pipeline and live listeners; text/mask/path are
+      // cheap to rebuild. Only images are worth parking.
+      const { provider } = setup();
+      provider.setText('text:t', { text: 'Hello', fontSize: 48, color: '#ffffff', width: 300, height: 80 });
+      const realText = provider.get('text:t')!.texture.id;
+      provider.retain(new Set());
+      expect(provider.get('text:t')!.texture.id).not.toBe(realText);
+    });
   });
 
   describe('text rasterization', () => {
