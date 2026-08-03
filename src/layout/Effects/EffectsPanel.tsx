@@ -76,6 +76,9 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   'gaussian-blur': 'Blur & Sharpen',
   'fast-box-blur': 'Blur & Sharpen',
   'radial-blur': 'Blur & Sharpen',
+  mosaic: 'Stylize',
+  'find-edges': 'Stylize',
+  'roughen-edges': 'Stylize',
   // Color Correction
   brightness: 'Color Correction',
   contrast: 'Color Correction',

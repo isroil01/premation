@@ -51,7 +51,11 @@ export type EffectType =
   // ── Blur family ──
   | 'gaussian-blur'
   | 'fast-box-blur'
-  | 'radial-blur';
+  | 'radial-blur'
+  // ── Stylize family ──
+  | 'mosaic'
+  | 'find-edges'
+  | 'roughen-edges';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -462,6 +466,49 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'centerX', label: 'Centre X offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'centerY', label: 'Centre Y offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'quality', label: 'Quality', type: 'number', min: 2, max: 64, precision: 0, default: 16 },
+    ],
+    css: () => '',
+  },
+
+  // ── Stylize family ─────────────────────────────────────────────────
+  {
+    type: 'mosaic',
+    label: 'Mosaic',
+    params: [
+      // COUNTS across the layer, as in AE — not a cell size in px. That is what
+      // makes the effect resolution-independent: the same numbers give the same
+      // look at 1080p and 4K.
+      { key: 'horizontalBlocks', label: 'Horizontal Blocks', type: 'number', min: 1, max: 500, precision: 0, default: 20 },
+      { key: 'verticalBlocks', label: 'Vertical Blocks', type: 'number', min: 1, max: 500, precision: 0, default: 20 },
+      { key: 'sharpColors', label: 'Sharp Colors', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'find-edges',
+    label: 'Find Edges',
+    params: [
+      // Default TRUE: AE's default output is dark edges on white, and that is
+      // the look the effect's name means to people. The un-inverted form reads
+      // as a different effect.
+      { key: 'invert', label: 'Invert', type: 'checkbox', default: true },
+      { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'roughen-edges',
+    label: 'Roughen Edges',
+    params: [
+      { key: 'border', label: 'Border', type: 'number', unit: 'px', min: 0, max: 200, default: 12 },
+      { key: 'edgeSharpness', label: 'Edge Sharpness', type: 'number', min: 0, max: 10, default: 1 },
+      { key: 'scale', label: 'Scale', type: 'number', unit: '%', min: 1, max: 1000, default: 100 },
+      { key: 'complexity', label: 'Complexity', type: 'number', min: 1, max: 6, precision: 0, default: 2 },
+      // Keyframe this to churn the noise. Wall-clock time is deliberately never
+      // read by any effect in this module — motion comes from a keyframe, which
+      // is what keeps them deterministic and scrub-stable.
+      { key: 'evolution', label: 'Evolution', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 9999, precision: 0, default: 1 },
     ],
     css: () => '',
   },
