@@ -46,7 +46,10 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import styles from './EffectsPanel.module.css';
 
+// AE menu order — `None` leads, because it is the "this path does not cut"
+// option rather than a variant of the set operations below it.
 const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
+  { mode: 'none', label: 'None' },
   { mode: 'add', label: 'Add' },
   { mode: 'subtract', label: 'Subtract' },
   { mode: 'intersect', label: 'Intersect' },
