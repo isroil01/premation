@@ -91,15 +91,15 @@ export interface RegionState {
   maxSize: number;
 }
 
-export type PlacementMode = 'docked' | 'floating' | 'external';
-
-export interface FloatingBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  zIndex: number;
-}
+/**
+ * Where a panel lives. There is deliberately no 'floating' member: nothing ever
+ * rendered a floating placement, no UI could produce one (the panel menu
+ * offers Pop Out and two dock targets, never Float), and the whole floating
+ * surface — floatPanel / setFloatingBounds / bringFloatingToFront /
+ * floatingBounds / floatingPanels — was removed in the wiring audit. Keeping
+ * the member would keep a state the renderer cannot draw expressible.
+ */
+export type PlacementMode = 'docked' | 'external';
 
 export interface PanelRegistration {
   /** Unique id within the app. */
@@ -108,7 +108,7 @@ export interface PanelRegistration {
   region: RegionId;
   /** The panel's default region as declared at registration. */
   homeRegion?: RegionId;
-  /** Placement mode: docked in a region, floating in-app, or external OS pop-out. */
+  /** Placement mode: docked in a region, or external OS pop-out. */
   placement?: PlacementMode;
   /** Display title (also used as default tab label). */
   title: string;
@@ -118,12 +118,6 @@ export interface PanelRegistration {
   weight?: number;
   /** Whether the panel may be closed by the user. */
   closable?: boolean;
-  /** Whether multiple panels may share this region (creates tabs). */
-  allowGroup?: boolean;
-  /** Floating bounds (px) when placement === 'floating'. */
-  floatingBounds?: FloatingBounds;
-  /** Monitor identifier when placement === 'external' or assigned to second display. */
-  monitorId?: string;
   /** Whether panel is pinned in place. */
   pinned?: boolean;
 }
@@ -140,21 +134,13 @@ interface LayoutActions {
   reorderPanel(panelId: string, toIndex: number): void;
   /** Move a panel tab to a new region and index. */
   movePanel(panelId: string, toRegion: RegionId, toIndex: number): void;
-  /** Float a panel inside the editor workspace. */
-  floatPanel(panelId: string, bounds?: Partial<FloatingBounds>): void;
-  /** Redock a floating/external panel into a region. */
+  /** Redock an external panel into a region. */
   dockPanel(panelId: string, toRegion?: RegionId): void;
   /** Mark panel for external OS window pop-out. */
-  popoutPanel(panelId: string, monitorId?: string): void;
-  /** Update in-app floating panel geometry. */
-  setFloatingBounds(panelId: string, bounds: Partial<FloatingBounds>): void;
-  /** Bring floating panel to top of Z stack. */
-  bringFloatingToFront(panelId: string): void;
+  popoutPanel(panelId: string): void;
   setRegionSize(region: RegionId, size: number): void;
   toggleRegion(region: RegionId): void;
   setCollapsed(region: RegionId, collapsed: boolean): void;
-  /** Lock workspace layout to prevent accidental panel dragging. */
-  setWorkspaceLocked(locked: boolean): void;
   /** Apply a saved workspace layout (region sizes + collapsed states + tab assignments). */
   applyWorkspaceLayout(layout: import('@core/layout/workspaceLayouts').WorkspaceLayout): void;
   resetLayout(): void;
@@ -169,8 +155,6 @@ export interface LayoutStore {
   regions: LayoutMap;
   /** Order of panels within their region (for tab stacking). */
   panelOrder: Record<RegionId, ReadonlyArray<string>>;
-  /** List of currently floating panel IDs. */
-  floatingPanels: ReadonlyArray<string>;
   /** List of currently externally popped-out panel IDs. */
   externalPanels: ReadonlyArray<string>;
   /** The currently active panel per region (for tab focus). */
@@ -178,8 +162,6 @@ export interface LayoutStore {
   leftSidebarPosition: 'left' | 'right';
   rightInspectorPosition: 'left' | 'right';
   timelinePosition: 'bottom' | 'top';
-  /** True when workspace layout is locked against dragging/moving. */
-  workspaceLocked: boolean;
 }
 
 const DEFAULT_REGIONS: LayoutMap = {
@@ -211,13 +193,11 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       centerWorkspace: [],
       bottomTimeline: [],
     },
-    floatingPanels: [],
     externalPanels: [],
     activePanelByRegion: (_persisted?.activePanelByRegion ?? {}) as Partial<Record<RegionId, string>>,
     leftSidebarPosition: _persisted?.leftSidebarPosition ?? 'left',
     rightInspectorPosition: _persisted?.rightInspectorPosition ?? 'right',
     timelinePosition: _persisted?.timelinePosition ?? 'bottom',
-    workspaceLocked: false,
 
     registerPanel: (panel) =>
       set((s) => {
@@ -258,7 +238,6 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         if (!p) return;
         delete s.panels[panelId];
         s.panelOrder[p.region] = s.panelOrder[p.region].filter((id) => id !== panelId);
-        s.floatingPanels = s.floatingPanels.filter((id) => id !== panelId);
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
         if (s.activePanelByRegion[p.region] === panelId) {
           s.activePanelByRegion[p.region] = s.panelOrder[p.region][0];
@@ -283,7 +262,6 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         const p = s.panels[panelId];
         if (!p) return;
         s.panelOrder[p.region] = s.panelOrder[p.region].filter((id) => id !== panelId);
-        s.floatingPanels = s.floatingPanels.filter((id) => id !== panelId);
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
         if (s.activePanelByRegion[p.region] === panelId) {
           s.activePanelByRegion[p.region] = s.panelOrder[p.region][0];
@@ -294,7 +272,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     togglePanel: (panelId) => {
       const p = get().panels[panelId];
       if (!p) return;
-      if (get().panelOrder[p.region].includes(panelId) || get().floatingPanels.includes(panelId)) {
+      if (get().panelOrder[p.region].includes(panelId)) {
         get().closePanel(panelId);
       } else {
         get().openPanel(panelId);
@@ -323,7 +301,6 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         
         const fromRegion = panel.region;
         panel.placement = 'docked';
-        s.floatingPanels = s.floatingPanels.filter((id) => id !== panelId);
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
 
         if (fromRegion === toRegion) {
@@ -353,27 +330,6 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       getEventBus().emit('LayoutChanged', undefined);
     },
 
-    /**
-     * There are no in-window floating panels — this docks instead.
-     *
-     * "Detach a panel" is served by pop-out windows, which are live-synced to the
-     * editor and work across monitors. Nothing renders `placement: 'floating'`.
-     *
-     * This must not be a no-op, though: `floating` can still arrive from an old
-     * persisted layout or an imported workspace, and with no host to render it
-     * that panel would appear NOWHERE. Docking is the safe landing.
-     */
-    floatPanel: (panelId) =>
-      set((s) => {
-        const panel = s.panels[panelId];
-        if (!panel) return;
-        panel.placement = 'docked';
-        panel.region = panel.homeRegion ?? panel.region ?? 'leftSidebar';
-        s.floatingPanels = s.floatingPanels.filter((id) => id !== panelId);
-        s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
-        getEventBus().emit('LayoutChanged', undefined);
-      }),
-
     dockPanel: (panelId, toRegion) =>
       set((s) => {
         const panel = s.panels[panelId];
@@ -381,7 +337,6 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         const targetRegion = toRegion ?? panel.homeRegion ?? 'leftSidebar';
         panel.placement = 'docked';
         panel.region = targetRegion;
-        s.floatingPanels = s.floatingPanels.filter((id) => id !== panelId);
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
         if (!s.panelOrder[targetRegion].includes(panelId)) {
           s.panelOrder[targetRegion].push(panelId);
@@ -390,40 +345,17 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         getEventBus().emit('LayoutChanged', undefined);
       }),
 
-    popoutPanel: (panelId, monitorId) =>
+    // No `monitorId` parameter: nothing enumerates monitors, so every caller
+    // passed undefined and the field could only ever be set by hand-editing an
+    // imported workspace. Multi-monitor targeting is not a feature here.
+    popoutPanel: (panelId) =>
       set((s) => {
         const panel = s.panels[panelId];
         if (!panel) return;
         panel.placement = 'external';
-        if (monitorId) panel.monitorId = monitorId;
         if (!s.externalPanels.includes(panelId)) {
           s.externalPanels.push(panelId);
         }
-        s.floatingPanels = s.floatingPanels.filter((id) => id !== panelId);
-        getEventBus().emit('LayoutChanged', undefined);
-      }),
-
-    setFloatingBounds: (panelId, bounds) =>
-      set((s) => {
-        const panel = s.panels[panelId];
-        if (!panel || !panel.floatingBounds) return;
-        panel.floatingBounds = {
-          ...panel.floatingBounds,
-          ...bounds,
-        };
-      }),
-
-    bringFloatingToFront: (panelId) =>
-      set((s) => {
-        const panel = s.panels[panelId];
-        if (!panel || !panel.floatingBounds) return;
-        const maxZ = Math.max(100, ...Object.values(s.panels).map((p) => p.floatingBounds?.zIndex ?? 100));
-        panel.floatingBounds.zIndex = maxZ + 1;
-      }),
-
-    setWorkspaceLocked: (locked) =>
-      set((s) => {
-        s.workspaceLocked = locked;
         getEventBus().emit('LayoutChanged', undefined);
       }),
 

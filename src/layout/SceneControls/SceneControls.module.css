@@ -64,3 +64,13 @@
   border: 1px solid color-mix(in srgb, var(--color-amber-500) 30%, transparent);
   margin-left: 4px;
 }
+
+/* Local / World / View axis space. A letter rather than an icon: the three
+   differ only in orientation, and three near-identical axis glyphs would be
+   harder to tell apart than L / W / V. */
+.axisGlyph {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}

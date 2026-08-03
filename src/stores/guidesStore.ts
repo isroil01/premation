@@ -162,8 +162,6 @@ interface GuidesStore extends GuidesSettings {
   gizmo3dState: Gizmo3dState;
   /** 3D Design Space Axis Mode (Local, World, View). */
   gizmo3dAxisMode: Gizmo3dAxisMode;
-  /** 3D Snapping toggle. */
-  gizmo3dSnapping: boolean;
   /** Ground Grid (3D Floor) toggle. */
   groundGridVisible: boolean;
   /**
@@ -209,7 +207,6 @@ interface GuidesStore extends GuidesSettings {
   setActiveViewPane: (pane: Camera3dMode | null) => void;
   setGizmo3dState: (state: Gizmo3dState) => void;
   setGizmo3dAxisMode: (mode: Gizmo3dAxisMode) => void;
-  toggleGizmo3dSnapping: () => void;
   toggleGroundGridVisible: () => void;
   toggleDraft3d: () => void;
   setCameraTool: (tool: CameraTool) => void;
@@ -257,7 +254,6 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
   motionPathDots: 'small',
   gizmo3dState: 'universal',
   gizmo3dAxisMode: 'local',
-  gizmo3dSnapping: false,
   groundGridVisible: true,
   draft3d: false,
   cameraTool: 'none',
@@ -294,7 +290,6 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
   setActiveViewPane: (pane) => set({ activeViewPane: pane }),
   setGizmo3dState: (state) => set({ gizmo3dState: state }),
   setGizmo3dAxisMode: (mode) => set({ gizmo3dAxisMode: mode }),
-  toggleGizmo3dSnapping: () => set((s) => ({ gizmo3dSnapping: !s.gizmo3dSnapping })),
   toggleGroundGridVisible: () => set((s) => ({ groundGridVisible: !s.groundGridVisible })),
   toggleDraft3d: () => set((s) => ({ draft3d: !s.draft3d })),
   setCameraTool: (tool) => set({ cameraTool: tool }),
@@ -360,7 +355,7 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
           return `${v.yaw},${v.pitch},${v.distance ?? '-'},${v.poi ? `${v.poi.x},${v.poi.y},${v.poi.z}` : '-'}`;
         })()
       : '-';
-    return `${s.rulers ? 1 : 0}${s.grid ? 1 : 0}:${s.gridSpacing}/${s.gridSubdivisions}/${s.gridStyle}:${s.proportionalGrid ? 1 : 0}${s.proportionalColumns}x${s.proportionalRows}:${s.gridColor}:${s.safeArea ? 1 : 0}:${s.camera3dMode}:${cv}:${s.viewLayout}:${s.secondaryViewMode}:${s.quadViewModes.join(',')}:${s.channel}:${s.motionPathVisible ? 1 : 0}:${s.motionPathDots}:${s.gizmo3dState}:${s.gizmo3dAxisMode}:${s.gizmo3dSnapping ? 1 : 0}:${s.groundGridVisible ? 1 : 0}:${s.draft3d ? 1 : 0}:${roi}`;
+    return `${s.rulers ? 1 : 0}${s.grid ? 1 : 0}:${s.gridSpacing}/${s.gridSubdivisions}/${s.gridStyle}:${s.proportionalGrid ? 1 : 0}${s.proportionalColumns}x${s.proportionalRows}:${s.gridColor}:${s.safeArea ? 1 : 0}:${s.camera3dMode}:${cv}:${s.viewLayout}:${s.secondaryViewMode}:${s.quadViewModes.join(',')}:${s.channel}:${s.motionPathVisible ? 1 : 0}:${s.motionPathDots}:${s.gizmo3dState}:${s.gizmo3dAxisMode}:${s.groundGridVisible ? 1 : 0}:${s.draft3d ? 1 : 0}:${roi}`;
   },
 }));
 

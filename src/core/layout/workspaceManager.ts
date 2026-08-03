@@ -1,6 +1,11 @@
 /**
- * WorkspaceManager — engine for managing workspace presets, user custom workspaces,
- * workspace JSON export/import, and automatic monitor layout matching.
+ * WorkspaceManager — built-in workspace presets, the user's saved layouts, and
+ * applying either to the layout store.
+ *
+ * The docstring used to also advertise "workspace JSON export/import, and
+ * automatic monitor layout matching". Export/import existed with zero callers
+ * and no UI; monitor matching never existed at all. Both are gone rather than
+ * left as claims — see the wiring audit.
  */
 
 import { useLayoutStore, type RegionId } from '@stores/layoutStore';
@@ -13,8 +18,7 @@ export interface WorkspaceSnapshot {
   regions: Partial<Record<RegionId, { size: number; collapsed: boolean }>>;
   panelOrder?: Record<RegionId, ReadonlyArray<string>>;
   activePanelByRegion?: Partial<Record<RegionId, string>>;
-  floatingPanels?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
-  externalPanels?: Array<{ id: string; monitorId?: string }>;
+  externalPanels?: Array<{ id: string }>;
   leftSidebarPosition?: 'left' | 'right';
   rightInspectorPosition?: 'left' | 'right';
   timelinePosition?: 'bottom' | 'top';
@@ -124,8 +128,8 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 180, collapsed: false },
     },
     externalPanels: [
-      { id: 'viewport', monitorId: '2' },
-      { id: 'timeline', monitorId: '2' },
+      { id: 'viewport' },
+      { id: 'timeline' },
     ],
   },
   {
@@ -138,7 +142,7 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 260, collapsed: true },
     },
     externalPanels: [
-      { id: 'presentation', monitorId: '2' },
+      { id: 'presentation' },
     ],
   },
   {
@@ -194,14 +198,7 @@ export class WorkspaceManager {
       leftSidebarPosition: store.leftSidebarPosition,
       rightInspectorPosition: store.rightInspectorPosition,
       timelinePosition: store.timelinePosition,
-      floatingPanels: store.floatingPanels.map((pId) => {
-        const bounds = store.panels[pId]?.floatingBounds;
-        return { id: pId, x: bounds?.x ?? 100, y: bounds?.y ?? 100, width: bounds?.width ?? 360, height: bounds?.height ?? 480 };
-      }),
-      externalPanels: store.externalPanels.map((pId) => ({
-        id: pId,
-        monitorId: store.panels[pId]?.monitorId,
-      })),
+      externalPanels: store.externalPanels.map((pId) => ({ id: pId })),
     };
 
     const existing = this.getUserWorkspaces().filter((w) => w.name !== name);
@@ -231,17 +228,10 @@ export class WorkspaceManager {
       timelinePosition: target.timelinePosition,
     });
 
-    // Apply floating panels if defined
-    if (target.floatingPanels) {
-      for (const fp of target.floatingPanels) {
-        store.floatPanel(fp.id, { x: fp.x, y: fp.y, width: fp.width, height: fp.height });
-      }
-    }
-
     // Apply external popouts if defined
     if (target.externalPanels) {
       for (const ep of target.externalPanels) {
-        store.popoutPanel(ep.id, ep.monitorId);
+        store.popoutPanel(ep.id);
       }
     }
 
@@ -259,28 +249,6 @@ export class WorkspaceManager {
     } catch { /* noop */ }
   }
 
-  public exportWorkspaceJSON(workspaceId: string): string {
-    const target = this.listWorkspaces().find((w) => w.id === workspaceId);
-    if (!target) throw new Error('Workspace not found');
-    return JSON.stringify(target, null, 2);
-  }
-
-  public importWorkspaceJSON(jsonString: string): WorkspaceSnapshot {
-    const parsed = JSON.parse(jsonString) as WorkspaceSnapshot;
-    if (!parsed.name || !parsed.regions) {
-      throw new Error('Invalid workspace JSON schema');
-    }
-    parsed.id = `imported-${Date.now()}`;
-    parsed.builtin = false;
-    parsed.createdAt = Date.now();
-
-    const existing = this.getUserWorkspaces();
-    try {
-      getSettingsManager().set<WorkspaceSnapshot[]>(SETTINGS_KEY, [...existing, parsed]);
-    } catch { /* noop */ }
-
-    return parsed;
-  }
 }
 
 export const getWorkspaceManager = (): WorkspaceManager => WorkspaceManager.getInstance();

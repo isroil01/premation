@@ -23,9 +23,12 @@ interface PanelHeaderProps {
 }
 
 export function PanelHeader({ panelId, title, icon, closable = true, isPopout = false }: PanelHeaderProps): JSX.Element {
+  // `workspaceLocked` used to gate the options button. It was read here and
+  // nowhere else, and `setWorkspaceLocked` had no caller at all — no menu item,
+  // no command, no button — so the flag was permanently false and this was a
+  // gate on a switch that did not exist. Both are removed.
   const {
     panels,
-    workspaceLocked,
     closePanel,
     dockPanel,
     popoutPanel,
@@ -78,7 +81,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
             (the three "Dock …" items act on a store with no registered panels),
             so the whole menu goes away and the header becomes title-only.
             Closing the window is the OS/window control's job. */}
-        {!workspaceLocked && !isPopout && (
+        {!isPopout && (
           <button
             type="button"
             className={styles.actionBtn}
