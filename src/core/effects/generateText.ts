@@ -165,6 +165,76 @@ export function formatTimecode(
   return `${negative ? '-' : ''}${p2(hh)}:${p2(mm)}:${p2(ss)}${sep}${p2(frames)}`;
 }
 
+/**
+ * Audio Spectrum — draw the band magnitudes.
+ *
+ * Takes the magnitudes as data. The ANALYSIS happens in `buildSnapshot` (see
+ * core/audio/audioSpectrum.ts), because reaching the referenced audio layer
+ * needs the scene and the audio engine, and pulling those into a drawing kernel
+ * would break the one property every effect here has: it is a pure function of
+ * its params, which is what makes preview and export produce identical pixels.
+ *
+ * Colour ramps from `insideColor` at the base to `outsideColor` at the peak, so
+ * a tall bar reads as hotter — the convention every spectrum analyser uses.
+ */
+export function drawAudioSpectrum(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  magnitudes: readonly number[],
+  opts: {
+    maxHeight: number;
+    thickness: number;
+    mode: 'bars' | 'line' | 'mirrored';
+    insideColor: string;
+    outsideColor: string;
+  },
+): void {
+  const n = magnitudes.length;
+  if (n === 0) return;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const baseY = opts.mode === 'mirrored' ? h / 2 : h;
+  const step = w / n;
+  const barW = Math.max(1, Math.min(step * 0.9, opts.thickness));
+
+  if (opts.mode === 'line') {
+    ctx.strokeStyle = opts.insideColor;
+    ctx.lineWidth = Math.max(1, opts.thickness * 0.25);
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = i * step + step / 2;
+      const y = baseY - magnitudes[i]! * opts.maxHeight;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  for (let i = 0; i < n; i++) {
+    const m = magnitudes[i]!;
+    const x = i * step + (step - barW) / 2;
+    const barH = Math.max(0, m * opts.maxHeight);
+    if (barH <= 0) continue;
+
+    const g = ctx.createLinearGradient(0, baseY, 0, baseY - barH);
+    g.addColorStop(0, opts.insideColor);
+    g.addColorStop(1, opts.outsideColor);
+    ctx.fillStyle = g;
+
+    ctx.fillRect(x, baseY - barH, barW, barH);
+    // Mirrored draws the same bar downward from the centre line, which is the
+    // look people mean by "audio spectrum" more often than the grounded form.
+    if (opts.mode === 'mirrored') ctx.fillRect(x, baseY, barW, barH);
+  }
+  ctx.restore();
+}
+
 /** Draw a string with optional fill and stroke, positioned in the layer box. */
 export function drawTextReadout(
   ctx: CanvasRenderingContext2D,

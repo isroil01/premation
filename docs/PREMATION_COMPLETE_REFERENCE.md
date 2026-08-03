@@ -52,7 +52,7 @@ Premation is a **desktop motion-design and animation editor** modelled on **Afte
 
 The one-paragraph version:
 
-> You create a composition, stack layers in it (shapes, text, images, video, audio, SVG, Lottie, nested comps, cameras, lights, nulls, adjustment layers, particles), animate any numeric property with keyframes on a timeline, shape those keyframes in a bezier graph editor or drive them with expressions, composite the stack with 36 blend modes / masks / track mattes / 10 layer styles / 57 effects, flip layers into a shared 3D space with real cameras, lights and shadows, deform them with bone or puppet rigs — and then export the exact frames you saw in the viewport, because the viewport and the exporter run the *same* GPU render graph.
+> You create a composition, stack layers in it (shapes, text, images, video, audio, SVG, Lottie, nested comps, cameras, lights, nulls, adjustment layers, particles), animate any numeric property with keyframes on a timeline, shape those keyframes in a bezier graph editor or drive them with expressions, composite the stack with 36 blend modes / masks / track mattes / 10 layer styles / 58 effects, flip layers into a shared 3D space with real cameras, lights and shadows, deform them with bone or puppet rigs — and then export the exact frames you saw in the viewport, because the viewport and the exporter run the *same* GPU render graph.
 
 **Three things that define the product's shape:**
 
@@ -1706,7 +1706,7 @@ Worth stating because the plans repeatedly under-read the build:
 
 ### 17.4 Where it loses, plainly
 
-1. **Effect breadth** — 57 vs AE's 400+, after the Aug-2026 breadth pass added 19 (blur, stylize, colour, keying, transition, generate/text). The count still misleads: nobody uses 400, and the twenty chosen were picked by what real work reaches for. Audio Spectrum is the one deferred — it needs per-frame FFT of a nominated audio layer, so it wants the comp clock AND cross-layer resolution.
+1. **Effect breadth** — 58 vs AE's 400+, after the Aug-2026 breadth pass added all twenty it set out to (blur, stylize, colour, keying, transition, generate/text). The count still misleads: nobody uses 400, and the twenty were picked by what real work reaches for. The last two — Timecode and Audio Spectrum — needed a mechanism rather than a shader: their output depends on the clock, so the resolved values are written into the effect's params at snapshot time, which makes the content hash vary per frame for those layers and no others. See `TIME_DEPENDENT` in `effects.ts`; membership opts a layer out of raster caching by construction, so the set is meant to stay tiny.
 2. **Ecosystem** — no plugin market, no tutorials, no template marketplace, no community, no hiring pool.
 3. **Maturity** — pre-1.0, with a documented list of half-crossed seams (§16.2) and breaking `.motion` format changes still expected before 1.0.
 4. **No motion tracking / rotoscoping** — a hard blocker for a large class of VFX work.
@@ -1742,7 +1742,7 @@ motion-editor/
 │   │   ├── scene/               scene graph, parenting, anchor, 3D, extrusion, faces,
 │   │   │                        materials, lights, camera3d, trim, repeater, pathOps,
 │   │   │                        mergePaths, compInstance, layerTime, imageSequence
-│   │   ├── effects/             57 effects, 36 blend modes, 10 layer styles, masks,
+│   │   ├── effects/             58 effects, 36 blend modes, 10 layer styles, masks,
 │   │   │                        mattes, adjustment, motion blur, keylight, LUT, echo
 │   │   ├── animation/           presets (15+18+6+5), assistants, clipboard, easing,
 │   │   │                        expression controls, preset preview

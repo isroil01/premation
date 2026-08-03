@@ -72,11 +72,18 @@ export type EffectType =
   // ── Generate / Text families ──
   | 'lens-flare'
   | 'numbers'
-  | 'timecode';
+  | 'timecode'
+  | 'audio-spectrum';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
-export type EffectParamValue = number | string | boolean | CurvePoints;
+/**
+ * `readonly number[]` is for params RESOLVED AT SNAPSHOT TIME rather than
+ * authored — Audio Spectrum's band magnitudes, which `buildSnapshot` computes
+ * from the referenced audio layer and writes here so the drawing kernel stays a
+ * pure function of its params. Not something a user types.
+ */
+export type EffectParamValue = number | string | boolean | CurvePoints | readonly number[];
 export type EffectParams = Readonly<Record<string, EffectParamValue>>;
 
 export interface Effect {
@@ -122,7 +129,13 @@ export interface EffectParamDef {
   label: string;
   /** 'layer' = a reference to another layer in the comp (stored as its node id,
    *  '' = unset). Rendered as a layer dropdown in the effect stack UI. */
-  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer';
+  /**
+   * `'resolved'` is a param the RENDER PIPELINE fills in, not the user — Audio
+   * Spectrum's band magnitudes. It deliberately has no inspector control: the
+   * value is derived from another layer every frame, so an editor for it would
+   * be a field whose input is overwritten before it is ever read.
+   */
+  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved';
   unit?: string;
   min?: number;
   max?: number;
@@ -260,6 +273,42 @@ const TEMPORAL = new Set<string>(['echo', 'posterize-time']);
 
 export function isTemporalEffect(type: string): boolean {
   return TEMPORAL.has(type);
+}
+
+/**
+ * TIME-DEPENDENT effects: their DRAWN OUTPUT depends on the clock.
+ *
+ * A different thing from `TEMPORAL` above, and the distinction is the whole
+ * reason both sets exist. A temporal effect changes WHEN the layer is sampled;
+ * these draw something that differs frame to frame at a fixed sample. Echo is
+ * the first kind, Timecode the second.
+ *
+ * ── Why this needs its own set, and why it is small ─────────────────────────
+ *
+ * The Canvas2D bake is cached by CONTENT HASH, which digests the effect stack.
+ * That is what makes this workable without touching the cache: the resolved
+ * time is written INTO the effect's params at snapshot time (see
+ * `resolveEffectParams`), so the hash varies per frame for exactly the layers
+ * carrying one of these — and for nothing else.
+ *
+ * Which is also why membership is expensive and the set must stay small. Adding
+ * a type here opts every layer using it out of raster caching entirely: it
+ * re-bakes every frame, by construction. That is correct for a timecode
+ * burn-in, whose pixels genuinely differ each frame, and would be ruinous for
+ * anything whose output is usually static.
+ */
+const TIME_DEPENDENT: ReadonlyMap<string, string> = new Map<string, string>([
+  // type → the param the resolved layer time is written into.
+  ['timecode', 'time'],
+]);
+
+export function isTimeDependentEffect(type: string): boolean {
+  return TIME_DEPENDENT.has(type);
+}
+
+/** The param a time-dependent effect receives the clock through, if any. */
+export function timeParamFor(type: string): string | undefined {
+  return TIME_DEPENDENT.get(type);
 }
 
 /** An effect's params filled in from its definition's defaults. */
@@ -730,21 +779,22 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'Timecode',
     params: [
       /**
-       * `time` is an explicit, KEYFRAMEABLE parameter — this does not follow the
-       * composition clock, and that is a deliberate limit rather than an
-       * oversight.
+       * Follows the layer's own clock by default — the burn-in case, and what
+       * anyone adding a Timecode expects.
        *
-       * Reading comp time here would mean feeding it into the Canvas2D bake
-       * chain, whose output is cached by CONTENT HASH. A time-varying effect
-       * that is not in the hash renders once and freezes; putting time in the
-       * hash defeats the raster cache for the whole layer on every frame. That
-       * is a change to the caching model, not to an effect, and it is the same
-       * wall Audio Spectrum hit.
+       * The mechanism is worth knowing because it constrains what else can join
+       * it: the resolved time is written into `time` at SNAPSHOT time
+       * (`resolveEffectParams`), so everything below stays a pure function of
+       * params. That keeps preview and export identical, and it makes the
+       * content hash vary per frame for this layer — which is correct here, and
+       * is also why `TIME_DEPENDENT` must stay a very short list: membership
+       * opts a layer out of raster caching by construction.
        *
-       * Two keyframes give a running timecode, which is honest and works. The
-       * label says so.
+       * Turn the follow off and `time` becomes an ordinary keyframeable value,
+       * for an offset readout or a countdown.
        */
-      { key: 'time', label: 'Time (keyframe this)', type: 'number', unit: 's', min: -86400, max: 86400, precision: 3, default: 0 },
+      { key: 'followCompTime', label: 'Follow Timeline', type: 'checkbox', default: true },
+      { key: 'time', label: 'Time', type: 'number', unit: 's', min: -86400, max: 86400, precision: 3, default: 0 },
       { key: 'fps', label: 'Frame Rate', type: 'number', unit: 'fps', min: 1, max: 240, precision: 0, default: 24 },
       { key: 'dropFrame', label: 'Drop Frame', type: 'checkbox', default: false },
       { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
@@ -753,6 +803,35 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'color', label: 'Fill Colour', type: 'color', default: '#ffffff' },
       { key: 'showBox', label: 'Composite On Box', type: 'checkbox', default: true },
       { key: 'boxColor', label: 'Box Colour', type: 'color', default: '#000000' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'audio-spectrum',
+    label: 'Audio Spectrum',
+    params: [
+      // The referenced audio layer. Unset → a silent (all-zero) spectrum rather
+      // than an error, so the effect is inert while the user is still choosing.
+      { key: 'audioLayerId', label: 'Audio Layer', type: 'layer', default: '' },
+      { key: 'bands', label: 'Frequency Bands', type: 'number', min: 1, max: 128, precision: 0, default: 32 },
+      { key: 'startFreq', label: 'Start Frequency', type: 'number', unit: 'Hz', min: 20, max: 20000, precision: 0, default: 40 },
+      { key: 'endFreq', label: 'End Frequency', type: 'number', unit: 'Hz', min: 20, max: 20000, precision: 0, default: 16000 },
+      { key: 'maxHeight', label: 'Maximum Height', type: 'number', unit: 'px', min: 1, max: 4000, default: 200 },
+      { key: 'thickness', label: 'Thickness', type: 'number', unit: 'px', min: 1, max: 200, default: 8 },
+      // 0 bars, 1 line, 2 mirrored bars.
+      { key: 'displayMode', label: 'Display Mode', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'insideColor', label: 'Inside Colour', type: 'color', default: '#00e5ff' },
+      { key: 'outsideColor', label: 'Outside Colour', type: 'color', default: '#0066ff' },
+      /**
+       * RESOLVED, not authored. `buildSnapshot` writes the analysed band
+       * magnitudes here (see core/audio/audioSpectrum.ts) so the drawing kernel
+       * stays a pure function of its params — which is what keeps preview and
+       * export identical and makes the content hash meaningful.
+       *
+       * Hidden from the inspector by `type: 'number'` being absent: it has no
+       * declared control, so nothing renders an editor for it.
+       */
+      { key: 'magnitudes', label: 'Magnitudes (resolved)', type: 'resolved', default: [] },
     ],
     css: () => '',
   },
@@ -1136,12 +1215,38 @@ export function resolveEffectParams(
   effects: ReadonlyArray<Effect>,
   /** Sample an animated value by prop path, or undefined when not keyframed. */
   sample: (propPath: string) => number | undefined,
+  /**
+   * The layer's own time, in seconds, for TIME-DEPENDENT effects (Timecode).
+   *
+   * Resolved into the effect's params HERE rather than read from a clock deeper
+   * down, and that placement is the design. Everything below this point — the
+   * bake chain, the Canvas2D kernels, the content hash — stays a pure function
+   * of the effect's params, which is what keeps preview and export identical and
+   * keeps scrubbing back to a frame reproducible. A kernel that read the clock
+   * itself would break all three at once.
+   *
+   * It is the LAYER's time (post time-remap), not comp time, so a timecode
+   * burn-in on a remapped or stretched layer reads the frame the layer is
+   * actually showing — the same axis Roughen's wiggle rides.
+   *
+   * Optional so the many callers that have no clock (tests, the effect
+   * clipboard, presets) are unaffected.
+   */
+  layerTimeSec?: number,
 ): Effect[] {
   return effects.map((e) => {
     const def = DEF.get(e.type);
     if (!def) return e;
     const params: Record<string, EffectParamValue> = { ...paramsOf(e) };
     let touched = false;
+
+    // Time first, so an explicit keyframe on the same param still wins below.
+    // A user who keyframes the readout has overridden the clock on purpose.
+    const timeParam = timeParamFor(e.type);
+    if (timeParam !== undefined && layerTimeSec !== undefined && params.followCompTime !== false) {
+      params[timeParam] = layerTimeSec;
+      touched = true;
+    }
 
     for (const p of def.params) {
       if (p.type === 'number') {

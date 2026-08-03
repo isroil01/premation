@@ -43,7 +43,7 @@ import {
 import {
   venetianBlindsData, gradientWipeData, cardWipeData, cardWipeDirection, luminanceMapFrom,
 } from './transitions';
-import { drawLensFlare, formatNumber, formatTimecode, drawTextReadout } from './generateText';
+import { drawLensFlare, formatNumber, formatTimecode, drawTextReadout, drawAudioSpectrum } from './generateText';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -92,6 +92,7 @@ const CANVAS2D_ONLY = new Set<string>([
   'lens-flare',
   'numbers',
   'timecode',
+  'audio-spectrum',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -252,7 +253,32 @@ export function applyCanvas2dEffect(
       return applyNumbers(oc, w, h, e);
     case 'timecode':
       return applyTimecode(oc, w, h, e);
+    case 'audio-spectrum':
+      return applyAudioSpectrum(oc, w, h, e);
   }
+}
+
+/**
+ * Audio Spectrum.
+ *
+ * The magnitudes are RESOLVED by buildSnapshot from the referenced audio layer
+ * (core/audio/audioSpectrum.ts). This kernel never touches the scene or the
+ * audio engine, which is what keeps it a pure function of its params — and what
+ * makes preview and export produce identical pixels.
+ */
+function applyAudioSpectrum(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const raw = paramsOf(e).magnitudes;
+  const magnitudes = Array.isArray(raw) ? (raw as number[]) : [];
+  if (magnitudes.length === 0) return;
+
+  const modeN = effectNumber(e, 'displayMode');
+  drawAudioSpectrum(oc, w, h, magnitudes, {
+    maxHeight: effectNumber(e, 'maxHeight'),
+    thickness: effectNumber(e, 'thickness'),
+    mode: modeN === 1 ? 'line' : modeN === 2 ? 'mirrored' : 'bars',
+    insideColor: str(e, 'insideColor', '#00e5ff'),
+    outsideColor: str(e, 'outsideColor', '#0066ff'),
+  });
 }
 
 // ── Generate / Text (kernels in generateText.ts) ───────────────────
