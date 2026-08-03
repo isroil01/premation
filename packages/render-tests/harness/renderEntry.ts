@@ -48,6 +48,9 @@ interface SceneManifestEntry {
   fidelityException?: string;
   /** True when this scene exists only to BE a twin (no committed reference). */
   fidelityOnly?: boolean;
+  /** True when this scene's own frames must DIFFER from each other (see sceneKit). */
+  animates?: boolean;
+  animatesMinChange?: number;
 }
 
 declare global {
@@ -244,6 +247,8 @@ async function main(): Promise<void> {
         fidelityTolerance: s.fidelityTolerance,
         fidelityException: s.fidelityException,
         fidelityOnly: s.fidelityOnly,
+        animates: s.animates,
+        animatesMinChange: s.animatesMinChange,
       })),
     );
     const failures: string[] = [];
