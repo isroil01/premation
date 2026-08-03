@@ -578,6 +578,20 @@ No committed golden uses transparent-comp + advanced-blend, so nothing in the
 reference set has been passing by luck. This is a genuinely new input
 combination, not a long-standing hole.
 
+> **Re-measured after F12 widened the trigger.** The conclusion above was scoped
+> to "transparent comp + advanced blend" and did not automatically survive that
+> widening, so the sweep was re-run: report-instead-of-throw, **four** renders
+> per scene, full suite, with the parked scenes registered. Affected set: the
+> four Matte scenes plus `blend-alpha-add-seam`. **Still no committed golden.**
+>
+> The four renders were what named the cause. Differing pixels were exactly
+> those with FRACTIONAL resulting alpha — ~1 250 for the Alpha modes (the
+> ellipse's anti-aliased rim alone), ~25 700 for the Luma modes (the whole
+> interior, scaled by the matte's brightness). Consecutive diffs shrank
+> (1247 → 1133 → 1008) while 1v3 and 1v4 stayed pinned at the 1v2 value:
+> converging, never returning. Feedback, not noise — which pointed straight at
+> a destination that is read as well as written.
+
 ### Hypothesis tested and KILLED
 
 The predicted signature of an uninitialised/unsynchronised `SCENE_COLOR_TARGET`
@@ -612,17 +626,49 @@ advanced-blend path — the path 30+ committed goldens depend on. That is an L, 
 the timebox says park it with the diagnosis written down rather than open it
 mid-run.
 
-### M-F10 — Fix advanced-blend determinism on transparent comps · **L** · scheduled
+### M-F10 — Fix advanced-blend determinism · ~~**L** · scheduled~~ · **DONE** (S)
 
-- **Prerequisite for M5.** M5's entire subject is pipeline determinism; building
-  that harness on top of a known-nondeterministic path would produce a gate that
-  cannot distinguish its own noise from the bug it is hunting.
-- **Acceptance:** `blend-alpha-add-seam` re-registered (it is written and kept as
-  `alphaAddSeamPending` in `harness/scenes/blendModes.ts`), deterministic across
-  four consecutive renders on both backends, and Alpha Add's seam closure
-  demonstrated at 255 rather than 191.
-- **Watch for:** any change here re-blesses advanced-blend goldens. Apply
-  revert-and-verify (§2a) per golden.
+**Fixed.** `EffectPass` blitted the offscreen scene target onto the SURFACE with
+source-over, while `ClearPass.writes` is `[EffectPass.activeColorTarget]` — so
+when that pass is enabled the per-frame clear goes to `SCENE_COLOR_TARGET` and
+**nothing clears the surface**, which that blit is the only writer of. Any
+partial alpha in the finished frame therefore mixed in the previous frame and
+converged toward opacity. Opaque frames were unaffected, since source-over at
+a = 1 is a replace — which is why it survived this long. The blit now replaces.
+
+Sized L on the assumption that it meant changing pass ordering or target
+routing on the path 30+ goldens depend on. It did not: the routing was always
+correct, the destination simply was never cleared. One line, plus the
+explanation.
+
+**The trigger row above is wrong** and is corrected by F12: it is not "a
+transparent comp AND an advanced blend". Stencil and Silhouette reproduce it on
+a fully OPAQUE comp, because scaling the backdrop's coverage is what they do.
+The condition is *any partial alpha surviving to the surface* on a path where
+the surface is never cleared. A transparent comp was simply the most common way
+to get there.
+
+The suspect recorded in "Where the evidence points" — `activeColorTarget` as a
+mutable static behind a memoized `compile()` — **is not implicated**. Killed the
+same way the missing-clear hypothesis was.
+
+- **Acceptance — met.** All five parked scenes registered (four Matte +
+  `blend-alpha-add-seam`), byte-identical across four consecutive renders on
+  both backends, gate green. Alpha Add's seam closure demonstrated at **255**.
+- **Blast radius, re-measured** at the wider characterisation: still exactly the
+  parked scenes. **No committed golden was affected**, and none was re-blessed —
+  only the five new ones, each verified on its defining properties first
+  (`scripts/verify-matte-modes.mjs`).
+- **Found in passing:** the seam scene did not demonstrate its own claim. Its
+  rectangles abutted exactly, so no pixel had both layers contributing and there
+  was nothing for Alpha Add to sum — it measured 128 with a coverage dip to 108.
+  They now overlap by 10 px. Invisible until the determinism fix let the scene
+  run at all.
+- **F13, logged not fixed:** the two backends read back under different
+  conventions. WebGL2 reads the drawing buffer (premultiplied); the WebGPU path
+  goes through `drawImage` + `getImageData` (unpremultiplied). Same engine
+  output, different encoding — worth confirming how much of the standing
+  webgpu-vs-webgl2 parity gap on partial-alpha scenes this accounts for.
 
 ## 2b. Findings logged, not fixed
 
