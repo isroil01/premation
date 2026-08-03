@@ -307,14 +307,32 @@ function boundsOf(m: Mat3): { x: number; y: number; width: number; height: numbe
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-/** Flat colour for the GPU SDF (non-textured) path: the layer's solid fill.
- *  Gradient / multi-stop fills force a rasterized texture via needsShapeRaster,
- *  so a non-solid fill never reaches the SDF path — the old "first gradient
- *  stop" fallback here was dead and has been removed (engine-unification Ph2;
- *  gradients are now fully rasterized, never flattened to one stop). */
+/**
+ * Flat colour for the GPU SDF (non-textured) path: the layer's solid fill.
+ *
+ * `layer.fill` is the RESOLVED answer and the only one to read. buildSnapshot
+ * already applies the whole precedence chain to it — Style fill, then a solid
+ * `fillPaint` from the Fill & Stroke panel, then the animated `fill_r/_g/_b/_a`
+ * channels on top — so re-consulting `fillPaint` here does not add information,
+ * it discards the last step of that chain.
+ *
+ * Which is what it did: this used to return `p.color` whenever the paint was
+ * solid, and essentially every shape carries a solid paint. So a keyframed fill
+ * colour resolved correctly into `layer.fill`, reached this function, and was
+ * thrown away for the stored paint — the shape rendered its authored colour at
+ * every frame while the Inspector, the timeline and the snapshot all agreed it
+ * was animating. The Canvas2D raster path never had the bug: `fillStyleFor`
+ * returns its `fallback` (this same `layer.fill`) for a solid paint and only
+ * builds a gradient otherwise. Two resolutions of one precedence rule.
+ *
+ * Gradient / multi-stop fills force a rasterized texture via needsShapeRaster,
+ * so a non-solid paint never reaches the SDF path at all; `p.color` survives
+ * only as the fallback for a layer that somehow carries a paint and no `fill`.
+ */
 function representativeColor(layer: RenderLayer): string {
+  if (layer.fill) return layer.fill;
   const p = layer.fillPaint;
-  return !p || p.type !== 'solid' ? (layer.fill ?? '#000000') : p.color;
+  return p && p.type === 'solid' ? p.color : '#000000';
 }
 
 /** The layer's solid fill graded by its colour effects (brightness/contrast/…),
