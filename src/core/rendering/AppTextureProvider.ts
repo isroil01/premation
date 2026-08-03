@@ -862,6 +862,71 @@ export class AppTextureProvider implements TextureProvider {
   }
 
   /**
+   * Seek + upload a video frame WITH a Canvas2D-only effect chain baked in.
+   *
+   * Same seek contract as `setVideo`, then drawImage → applyEffectChain →
+   * `setFrame`. Signature includes source time so paused scrubbing caches;
+   * playback pays per unique frame only when styles need the bake.
+   */
+  setVideoBaked(key: string, src: string, timeSec: number, bake: ImageBakeSpec): void {
+    // Ensure the element is seeked via the normal path (creates entry, seeks).
+    this.setVideo(key, src, timeSec);
+    const entry = this.videoEntries.get(key);
+    if (!entry || entry.video.readyState < HAVE_CURRENT_DATA || !entry.hasSeeked) return;
+    const v = entry.video;
+    const w = v.videoWidth || 0;
+    const h = v.videoHeight || 0;
+    if (!(w > 0) || !(h > 0)) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(v, 0, 0);
+      const k = bake.width > 0 ? w / bake.width : 1;
+      if (bake.mask && bake.mask.paths.length > 0) {
+        const matte = document.createElement('canvas');
+        matte.width = w;
+        matte.height = h;
+        const mc = matte.getContext('2d');
+        if (mc) {
+          const ky = bake.height > 0 ? h / bake.height : 1;
+          mc.setTransform(k, 0, 0, ky, w / 2, h / 2);
+          paintMaskMatte(mc, bake.mask, bake.width, bake.height);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalCompositeOperation = 'destination-in';
+          ctx.drawImage(matte, 0, 0);
+          ctx.globalCompositeOperation = 'source-over';
+        }
+      }
+      applyEffectChain(
+        ctx,
+        w,
+        h,
+        scaleEffectLengths(bake.effects, k),
+        (sw, sh) => {
+          const c = document.createElement('canvas');
+          c.width = sw;
+          c.height = sh;
+          return c;
+        },
+        bake.fillOpacity ?? 1,
+      );
+      const fxSig = bake.effects.map((e) => `${e.type}:${e.enabled !== false ? 1 : 0}:${JSON.stringify(e.params ?? {})}`).join('|');
+      const maskSig = bake.mask ? `:m${bake.mask.paths.length}` : '';
+      // Frame entries win over video entries in get(), so the baked canvas is
+      // what the compositor samples while the video element stays alive for the
+      // next seek.
+      this.setFrame(key, canvas, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}`);
+    } catch {
+      /* leave the raw video upload from setVideo in place */
+    }
+  }
+
+  /**
    * Upload an externally-rasterized canvas under `key` (decoded video frames
    * for Frame Mix). The signature dedupes uploads — pass the source time so a
    * new frame re-uploads and a repeat render doesn't.
