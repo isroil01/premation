@@ -68,7 +68,11 @@ export type EffectType =
   // ── Transition family ──
   | 'venetian-blinds'
   | 'gradient-wipe'
-  | 'card-wipe';
+  | 'card-wipe'
+  // ── Generate / Text families ──
+  | 'lens-flare'
+  | 'numbers'
+  | 'timecode';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -683,6 +687,72 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'columns', label: 'Columns', type: 'number', min: 1, max: 100, precision: 0, default: 8 },
       // 0 right, 1 left, 2 down, 3 up, 4 radial. A number so it keyframes.
       { key: 'flipOrder', label: 'Flip Order', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Generate / Text families ───────────────────────────────────────
+  {
+    type: 'lens-flare',
+    label: 'Lens Flare',
+    params: [
+      { key: 'centerX', label: 'Flare Centre X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Flare Centre Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'brightness', label: 'Flare Brightness', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'scale', label: 'Scale', type: 'number', min: 0.05, max: 5, precision: 2, default: 1 },
+      { key: 'color', label: 'Flare Colour', type: 'color', default: '#ffd9a0' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'numbers',
+    label: 'Numbers',
+    params: [
+      // The VALUE is a keyframeable parameter, which is what makes this a real
+      // counter: two keyframes and it counts. It deliberately does not read the
+      // composition clock — see `timecode` below for why that is a much larger
+      // change than it looks.
+      { key: 'value', label: 'Value', type: 'number', min: -1e9, max: 1e9, precision: 3, default: 0 },
+      { key: 'decimals', label: 'Decimal Places', type: 'number', min: 0, max: 10, precision: 0, default: 0 },
+      { key: 'padTo', label: 'Pad To Digits', type: 'number', min: 0, max: 20, precision: 0, default: 0 },
+      { key: 'useCommas', label: 'Thousands Separator', type: 'checkbox', default: false },
+      { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'positionY', label: 'Position Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 1, max: 800, default: 48 },
+      { key: 'color', label: 'Fill Colour', type: 'color', default: '#ffffff' },
+      { key: 'showBox', label: 'Composite On Box', type: 'checkbox', default: false },
+      { key: 'boxColor', label: 'Box Colour', type: 'color', default: '#000000' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'timecode',
+    label: 'Timecode',
+    params: [
+      /**
+       * `time` is an explicit, KEYFRAMEABLE parameter — this does not follow the
+       * composition clock, and that is a deliberate limit rather than an
+       * oversight.
+       *
+       * Reading comp time here would mean feeding it into the Canvas2D bake
+       * chain, whose output is cached by CONTENT HASH. A time-varying effect
+       * that is not in the hash renders once and freezes; putting time in the
+       * hash defeats the raster cache for the whole layer on every frame. That
+       * is a change to the caching model, not to an effect, and it is the same
+       * wall Audio Spectrum hit.
+       *
+       * Two keyframes give a running timecode, which is honest and works. The
+       * label says so.
+       */
+      { key: 'time', label: 'Time (keyframe this)', type: 'number', unit: 's', min: -86400, max: 86400, precision: 3, default: 0 },
+      { key: 'fps', label: 'Frame Rate', type: 'number', unit: 'fps', min: 1, max: 240, precision: 0, default: 24 },
+      { key: 'dropFrame', label: 'Drop Frame', type: 'checkbox', default: false },
+      { key: 'positionX', label: 'Position X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'positionY', label: 'Position Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 1, max: 800, default: 40 },
+      { key: 'color', label: 'Fill Colour', type: 'color', default: '#ffffff' },
+      { key: 'showBox', label: 'Composite On Box', type: 'checkbox', default: true },
+      { key: 'boxColor', label: 'Box Colour', type: 'color', default: '#000000' },
     ],
     css: () => '',
   },

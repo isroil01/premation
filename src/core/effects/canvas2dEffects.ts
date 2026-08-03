@@ -43,6 +43,7 @@ import {
 import {
   venetianBlindsData, gradientWipeData, cardWipeData, cardWipeDirection, luminanceMapFrom,
 } from './transitions';
+import { drawLensFlare, formatNumber, formatTimecode, drawTextReadout } from './generateText';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -87,6 +88,10 @@ const CANVAS2D_ONLY = new Set<string>([
   'venetian-blinds',
   'gradient-wipe',
   'card-wipe',
+  // Generate / Text — these DRAW rather than transform, like `beam` above.
+  'lens-flare',
+  'numbers',
+  'timecode',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -241,7 +246,65 @@ export function applyCanvas2dEffect(
       return applyGradientWipe(oc, w, h, e);
     case 'card-wipe':
       return applyCardWipe(oc, w, h, e);
+    case 'lens-flare':
+      return applyLensFlare(oc, w, h, e);
+    case 'numbers':
+      return applyNumbers(oc, w, h, e);
+    case 'timecode':
+      return applyTimecode(oc, w, h, e);
   }
+}
+
+// ── Generate / Text (kernels in generateText.ts) ───────────────────
+//
+// Positions are OFFSETS from the layer centre, as with radial blur: absolute
+// coordinates would default to the top-left corner and put every readout
+// half off its own layer on the first add.
+
+function applyLensFlare(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawLensFlare(
+    oc, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    effectNumber(e, 'brightness') / 100,
+    effectNumber(e, 'scale'),
+    str(e, 'color', '#ffd9a0'),
+  );
+}
+
+function applyNumbers(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const text = formatNumber(
+    effectNumber(e, 'value'),
+    effectNumber(e, 'decimals'),
+    bool(e, 'useCommas', false),
+    effectNumber(e, 'padTo'),
+  );
+  drawTextReadout(oc, w, h, text, {
+    x: w / 2 + effectNumber(e, 'positionX'),
+    y: h / 2 + effectNumber(e, 'positionY'),
+    size: effectNumber(e, 'size'),
+    color: str(e, 'color', '#ffffff'),
+    align: 'center',
+    showBox: bool(e, 'showBox', false),
+    boxColor: str(e, 'boxColor', '#000000'),
+  });
+}
+
+function applyTimecode(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const text = formatTimecode(
+    effectNumber(e, 'time'),
+    effectNumber(e, 'fps'),
+    bool(e, 'dropFrame', false),
+  );
+  drawTextReadout(oc, w, h, text, {
+    x: w / 2 + effectNumber(e, 'positionX'),
+    y: h / 2 + effectNumber(e, 'positionY'),
+    size: effectNumber(e, 'size'),
+    color: str(e, 'color', '#ffffff'),
+    align: 'center',
+    showBox: bool(e, 'showBox', true),
+    boxColor: str(e, 'boxColor', '#000000'),
+  });
 }
 
 // ── Transition family (kernels in transitions.ts) ──────────────────

@@ -89,6 +89,9 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   'venetian-blinds': 'Transition',
   'gradient-wipe': 'Transition',
   'card-wipe': 'Transition',
+  'lens-flare': 'Generate',
+  numbers: 'Generate',
+  timecode: 'Generate',
   // Color Correction
   brightness: 'Color Correction',
   contrast: 'Color Correction',
