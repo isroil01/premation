@@ -3,7 +3,26 @@
 **Date:** 2026-08-03
 **Branch:** `docs/feature-audit` off `dev` @ `5e672a7`
 **Scope:** the remaining AE feature set, excluding motion tracking (out of scope by direction).
-**Method:** code only. Per instruction, no `.md` was consulted — including `docs/COMPOSITING_PLAN.md`. The M-numbers below (M5 / M8c / M9 / M7) were re-derived from source and from commit subjects, not read from the plan. See *Caveat on the M-numbers* at the end.
+**Method:** code only. `docs/COMPOSITING_PLAN.md` was not consulted; the M-numbers below (M5 / M8c / M9 / M7) were re-derived from source and commit subjects.
+
+> **Corrected 2026-08-03, after reading the plan.** Two of the reconstructions
+> were wrong, both in the same direction — they under-read what was already
+> decided.
+>
+> 1. **M5's gate is scoped as PIPELINE determinism, not preview≡export.** The
+>    plan (§0, "A byte-identical determinism gate exists") records that the
+>    harness already re-renders for byte-identical output, but from the *same
+>    snapshot object* — so it gates the back half (renderFrame → GPU → readback)
+>    and is structurally blind to the front half. A Dissolve seeded from
+>    wall-clock would be sampled once into that snapshot and pass every time.
+>    M5 is therefore "extend the existing gate from renderer-determinism to
+>    pipeline-determinism", a smaller job than building one. Every use of
+>    "preview ≡ export" below is that narrower reading and should be read as
+>    pipeline determinism instead.
+> 2. **M-F10 was already scheduled as M5's prerequisite**, for the same reason
+>    this audit later re-derived. That conclusion converged; it was not new.
+>
+> The classification table and sizing are unaffected — they came from the code.
 
 ---
 
@@ -173,8 +192,8 @@ Landed on `dev`, in ranking order:
 | 1 | Temporal Wiggle Paths | ✅ merged |
 | 2 | Keyframe selection time-scale | ✅ merged |
 | 3 | Repeater param completeness | ✅ merged |
-| 4 | M8c Stencil / Silhouette | ⚠️ shipped and unit-tested; pixel gate blocked by F12 |
-| 5 | M5 Dissolve + determinism gate | **blocked on F10/F12 — do not start** |
+| 4 | M8c Stencil / Silhouette | ✅ merged; pixel gate green, all four scenes registered |
+| 5 | M5 Dissolve + determinism gate | **UNBLOCKED** — F10/F12 fixed |
 
 M8c cost an M, not the L the estimate implied: the "compositing-group boundary"
 it was said to need already existed. The advanced-blend path renders the layer
@@ -182,47 +201,54 @@ to one target, copies the accumulated backdrop to another, and overwrites the
 group's out target with a function of the two — the exact topology a stencil
 needs — and precomps already isolate into their own target.
 
-### F12 — F10 is broader than recorded (new finding, logged not fixed)
+### F12 — F10 is broader than recorded · **FIXED**
 
-F10 records that an advanced blend mode "over a transparent comp" renders
-non-deterministically on both backends. That understates it.
+F10 recorded the trigger as "a transparent comp AND an advanced-blend layer,
+both required". The four Matte scenes use an **opaque** comp and failed anyway,
+because the transparency is produced *by the blend itself*. That ruled the comp
+out and pointed at partial alpha in the final composite.
 
-The four Matte scenes use an **opaque** comp (`#101014`) and still fail the
-harness's double-render determinism gate on both WebGL2 and WebGPU. The
-transparency is produced *by the blend itself*, not supplied by the comp.
+**Cause, confirmed.** `EffectPass` blits the offscreen scene target onto the
+SURFACE with source-over, but `ClearPass.writes` is
+`[EffectPass.activeColorTarget]` — so when that pass is enabled the per-frame
+clear goes to `SCENE_COLOR_TARGET` and nothing clears the surface, which the
+blit is the only writer of. Partial alpha therefore mixed in the previous frame
+and converged toward opacity. Opaque frames were unaffected, since source-over
+at a = 1 is a replace. The blit now replaces. Fixed in `EffectPass.ts`.
 
-Verified by revert-and-verify, not inferred: forcing `matteFactor` to return
-`1.0` for mode 31 — identical branch, identical dispatch, but emitting no
-transparency — makes `blend-stencil-alpha` deterministic and drops it from the
-failure list, while the other three continue to fail. The probe was reverted.
+The suspect carried over from the original diagnosis — `activeColorTarget` as a
+mutable static behind a memoized `compile()` — **is not implicated**. Routing was
+correct throughout; the destination was simply never cleared.
 
-The real condition is **whether the advanced-blend path has any transparency to
-carry**, which makes every Matte mode structurally affected: punching alpha
-holes in the backdrop is what they are for.
+**Blast radius, re-measured** at the wider characterisation (report-not-throw,
+four renders per scene, full suite, parked scenes registered): the four Matte
+scenes plus `blend-alpha-add-seam`. **No committed golden affected**, and none
+re-blessed — only the five new ones, each verified on its defining properties
+first via the new `scripts/verify-matte-modes.mjs`.
 
-Consequences:
+Sized **L**, cost **S**. The L assumed changing pass ordering or target routing
+on a path 30+ goldens depend on.
 
-- The four Matte render scenes are written and kept as source but **not
-  registered** (`matteModeScenesPending` in
-  `packages/render-tests/harness/scenes/blendModes.ts`) — the same call F10
-  already made for Alpha Add. The gate is green.
-- **M5 is blocked, and the audit's dependency graph was wrong about it.** The
-  audit treated M5's preview≡export determinism gate as new infrastructure worth
-  building for its own sake. But a determinism contract cannot be built on a
-  path that is not deterministic *against itself*, and Dissolve is both
-  stochastic and alpha-producing, so it lands squarely inside F12's failure
-  region. F10/F12 is a prerequisite for M5, not a consequence of it.
+### Two things the fix made visible
 
-**Recommended next step: fix F10/F12, not build M5.** One fix unblocks M5, the
-four Matte scenes, and the pending Alpha Add seam scene.
+- **The seam scene did not demonstrate its own claim.** Its rectangles abutted
+  exactly, so no pixel had both layers contributing and Alpha Add had nothing to
+  sum — it measured 128 with a coverage *dip* to 108, never the 191-vs-255
+  distinction it exists to show. They now overlap by 10 px and the overlap reads
+  255. Undetectable while F10 meant the scene could never run.
+- **F13 (logged, not fixed):** the backends read back under different
+  conventions. WebGL2 reads the drawing buffer and yields premultiplied bytes;
+  the WebGPU path goes through `drawImage` + `getImageData`, which
+  unpremultiplies. Same engine output, different encoding — the verifier detects
+  which it has rather than assuming. Worth checking how much of the standing
+  webgpu-vs-webgl2 parity gap on partial-alpha scenes this accounts for.
 
-### Minor finding (not fixed)
+### `BLEND_MODES.group` · **FIXED**
 
-`BLEND_MODES` documents its `group` field as "load bearing for the picker's
-section headers", but neither consumer — `CompositingControls.tsx:15` nor the
-timeline Mode column at `Timeline.tsx:1814` — reads `group`; both flat-map the
-table. The careful AE group ordering is currently invisible in the UI.
-Cosmetic, and out of scope for this run.
+Documented as "load bearing for the picker's section headers" and read by
+neither consumer — both flat-mapped the table, so the AE ordering was invisible.
+Both pickers now build from one place (`blendMenu.ts`), headers included, tested
+against the table so a section cannot go missing silently.
 
 ---
 

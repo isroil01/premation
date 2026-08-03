@@ -9,7 +9,7 @@ import solidFill from './solidFill';
 import linearGradientFill from './linearGradientFill';
 import { shapeScenes } from './shapes';
 import { strokeScenes } from './strokes';
-import { blendModeScenes } from './blendModes';
+import { blendModeScenes, matteModeScenes, alphaAddSeamScene } from './blendModes';
 import { effectScenes } from './effects';
 import { compositedScenes } from './composited';
 import { interiorStyleScenes } from './interiorStyles';
@@ -33,6 +33,10 @@ export const SCENES: Scene[] = [
   ...shapeScenes,
   ...strokeScenes,
   ...blendModeScenes,
+  // Registered as of the F10/F12 fix. Both families produce partial alpha in
+  // the final composite, which is precisely what used to accumulate.
+  ...matteModeScenes,
+  alphaAddSeamScene,
   ...effectScenes,
   ...compositedScenes,
   ...interiorStyleScenes,
