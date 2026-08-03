@@ -316,6 +316,50 @@ const lightPool: GraphicDevice = {
   },
 };
 
+/**
+ * A starburst of radiating strokes — broadcast / sports energy without imagery.
+ *
+ * Built as one thin rect + a rotational repeater so it stays cheap and editable.
+ */
+const starburst: GraphicDevice = {
+  id: 'device.starburst',
+  intent: 'Radiating hairline rays from a corner or mid-frame anchor.',
+  vocabularies: ['hard', 'soft'],
+  emit(ctx, seed) {
+    const rng = mulberry32(seed);
+    const u = unit(ctx);
+    const id = `${ctx.idPrefix}_starburst`;
+    const len = Math.round(Math.min(ctx.width, ctx.height) * pick(rng, [0.28, 0.38, 0.48]));
+    const copies = pick(rng, [10, 14, 18]);
+    const at = place(ctx.grid, pick(rng, [0.12, 0.5, 0.88]), pick(rng, [0.14, 0.5, 0.86]));
+    return [
+      { name: 'create_layer', args: { id, kind: 'shape', shape: 'rect', name: 'Starburst', x: at.x, y: at.y, width: Math.max(2, Math.round(u * 1.5)), height: len } },
+      { name: 'update_layer', args: { nodeId: id, fill: ctx.pack.palette.line, opacity: MAX_DEVICE_OPACITY, cornerRadius: 0, anchorY: -50 } },
+      { name: 'add_repeater', args: { nodeId: id, copies, rotation: 360 / copies, startOpacity: 100, endOpacity: 100 } },
+    ];
+  },
+};
+
+/**
+ * One decisive diagonal slash across the frame — editorial punctuation.
+ */
+const diagonalSlash: GraphicDevice = {
+  id: 'device.diagonal_slash',
+  intent: 'A single thick diagonal bar cutting the frame, low opacity.',
+  vocabularies: ['hard', 'clipped', 'soft'],
+  emit(ctx, seed) {
+    const rng = mulberry32(seed);
+    const u = unit(ctx);
+    const id = `${ctx.idPrefix}_slash`;
+    const thick = Math.round(pick(rng, [18, 28, 42]) * u);
+    const at = place(ctx.grid, 0.5, 0.5);
+    return [
+      { name: 'create_layer', args: { id, kind: 'shape', shape: 'rect', name: 'Slash', x: at.x, y: at.y, width: Math.round(ctx.width * 1.4), height: thick } },
+      { name: 'update_layer', args: { nodeId: id, fill: ctx.pack.palette.accent, opacity: Math.round(MAX_DEVICE_OPACITY * 0.85), rotation: pick(rng, [-28, -18, 18, 28]), cornerRadius: 0 } },
+    ];
+  },
+};
+
 export const GRAPHIC_DEVICES: readonly GraphicDevice[] = [
   halftoneField,
   drawnArc,
@@ -324,6 +368,8 @@ export const GRAPHIC_DEVICES: readonly GraphicDevice[] = [
   diagonalHatch,
   registrationMark,
   lightPool,
+  starburst,
+  diagonalSlash,
 ];
 
 /**
