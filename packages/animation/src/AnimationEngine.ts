@@ -56,6 +56,21 @@ export type SourceRectProvider = (
   extents: boolean,
 ) => import('./expressions').SourceRect | undefined;
 
+/**
+ * A layer's layer-local → composition placement at a time — see
+ * `setLayerSpaceProvider`. Backs `toComp` / `toWorld` / `fromComp` /
+ * `fromWorld`.
+ *
+ * `name` is null for the layer the expression is ON, or another layer's NAME,
+ * matching how `layer(name, prop)` addresses layers. `self` is that node's id,
+ * so the provider can resolve the null case without the engine having to.
+ */
+export type LayerSpaceProvider = (
+  self: string,
+  name: string | null,
+  t: number,
+) => import('./expressions').LayerSpace | undefined;
+
 export type LayerInfoProvider = (nodeId: string) => {
   name: string;
   width: number;
@@ -141,6 +156,9 @@ export class AnimationEngine {
   /** Layer metadata provider for `thisLayer`. */
   private sourceRectProvider: SourceRectProvider = () => undefined;
 
+  /** Layer placement provider for the coordinate-space functions. */
+  private layerSpaceProvider: LayerSpaceProvider = () => undefined;
+
   private layerInfoProvider: LayerInfoProvider = () => ({
     name: 'Layer',
     width: 1920,
@@ -199,6 +217,19 @@ export class AnimationEngine {
    */
   setSourceRectProvider(provider: SourceRectProvider): void {
     this.sourceRectProvider = provider;
+  }
+
+  /**
+   * Supplies the coordinate-space functions with a layer's placement.
+   *
+   * Defaults to undefined for the same reason `sourceRectProvider` does, and
+   * the consequence here is stronger: with no provider the host THROWS a stated
+   * error rather than converting. An unwired provider that silently returned
+   * identity would make `toComp` report its input back as the answer, which is
+   * correct-looking for a layer at the origin and wrong for every other one.
+   */
+  setLayerSpaceProvider(provider: LayerSpaceProvider): void {
+    this.layerSpaceProvider = provider;
   }
 
   /** All property tracks for a node. */
@@ -535,6 +566,8 @@ export class AnimationEngine {
       // Does need one — measuring content bounds requires the scene graph and,
       // for text, a DOM measuring context, neither of which belongs in here.
       sourceRectAt: (tt, extents) => this.sourceRectProvider(nodeId, tt, extents),
+      // Same reason: composing a layer's world matrix needs the scene graph.
+      spaceAt: (name, tt) => this.layerSpaceProvider(nodeId, name, tt),
       // Per-(node, prop) noise phase so `wiggle` on x and y move
       // independently (AE) — still deterministic run to run.
       propSeed: stringSeed(`${nodeId}:${prop}`),

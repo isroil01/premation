@@ -40,6 +40,8 @@ export type {
   TokenKind,
   SyntaxToken,
   LoopMode,
+  LayerSpace,
+  SourceRect,
 } from './expressions';
 
 // The raw parser/evaluator, for callers that need their own scope rather than
