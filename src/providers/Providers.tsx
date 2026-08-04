@@ -1108,6 +1108,30 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           if (nodeId === null) return undefined;
           return layerSpaceAt(nodeId, t, { width: comp.width, height: comp.height });
         });
+        /**
+         * `marker.*` — comp and layer markers.
+         *
+         * Goes through `getMarkers` / `getLayerMarkers` rather than reading
+         * `timeline.markers` directly, deliberately. `getLayerMarkers` is the
+         * ONE place that undoes the layer-relative storage (via
+         * `toAbsoluteTime`), and a second copy of that conversion here is the
+         * §2·0 shape: two readers of one rule, nothing forcing them to agree,
+         * and a discrepancy that shows up only on a trimmed or slid layer.
+         *
+         * `label` maps to `name` because that is the field the app's marker
+         * commands fill; `comment` is the note. Both are exposed so a
+         * `marker.key("...")` lookup works whichever one the user typed into.
+         */
+        defaultAnimation.setMarkerProvider((nodeId, scope) => {
+          const ctrl = getTimelineController();
+          const src = scope === 'comp' ? ctrl.getMarkers() : ctrl.getLayerMarkers(nodeId);
+          return src.map((m) => ({
+            time: m.time,
+            duration: m.duration,
+            name: m.label,
+            comment: m.comment,
+          }));
+        });
         // Keyframe edits refresh the timeline tracks + inspector + viewport.
         track(getEventBus().on('AnimationChanged', () => { bumpScene(); }));
 

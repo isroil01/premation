@@ -77,6 +77,20 @@ export type LayerInfoProvider = (nodeId: string) => {
   height: number;
 };
 
+/**
+ * Markers for `marker.*` — see `setMarkerProvider`.
+ *
+ * `scope: 'layer'` asks for `nodeId`'s own markers; `'comp'` ignores `nodeId`
+ * and asks for the composition's. Both must be in COMPOSITION seconds, which
+ * for layer markers means the host has already undone the layer-relative
+ * storage — the engine cannot do that conversion because it does not know
+ * where a layer starts.
+ */
+export type MarkerProvider = (
+  nodeId: string,
+  scope: 'comp' | 'layer',
+) => readonly import('./expressions').ExprMarkerData[];
+
 /** Which vector component a decomposed track reads from an `[x, y, z]`
  *  expression return. Unknown props read component 0. */
 function componentIndexOf(prop: PropPath): number {
@@ -166,6 +180,13 @@ export class AnimationEngine {
   });
 
   /**
+   * Defaults to NO markers rather than throwing, unlike `layerSpaceProvider`.
+   * An empty marker list is an ordinary state — most comps have none — so
+   * `marker.numKeys === 0` is the honest answer here, not a missing wire.
+   */
+  private markerProvider: MarkerProvider = () => [];
+
+  /**
    * Bind the change sink (the app maps this onto its EventBus 'AnimationChanged'
    * so the render cache, timeline, inspector and history stay in sync).
    */
@@ -230,6 +251,19 @@ export class AnimationEngine {
    */
   setLayerSpaceProvider(provider: LayerSpaceProvider): void {
     this.layerSpaceProvider = provider;
+  }
+
+  /**
+   * Bind `marker.*` to the timeline's markers.
+   *
+   * The engine holds keyframes, not markers — markers live on the timeline
+   * (`packages/timeline`), which the engine has no reference to and should
+   * not grow one. Same separation as `sourceRectProvider` and
+   * `layerSpaceProvider`: the host owns the lookup, the engine owns the AE
+   * semantics built on top of it.
+   */
+  setMarkerProvider(provider: MarkerProvider): void {
+    this.markerProvider = provider;
   }
 
   /** All property tracks for a node. */
@@ -568,6 +602,8 @@ export class AnimationEngine {
       sourceRectAt: (tt, extents) => this.sourceRectProvider(nodeId, tt, extents),
       // Same reason: composing a layer's world matrix needs the scene graph.
       spaceAt: (name, tt) => this.layerSpaceProvider(nodeId, name, tt),
+      // And again: markers belong to the timeline, not to the engine.
+      markersAt: (which) => this.markerProvider(nodeId, which),
       // Per-(node, prop) noise phase so `wiggle` on x and y move
       // independently (AE) — still deterministic run to run.
       propSeed: stringSeed(`${nodeId}:${prop}`),
