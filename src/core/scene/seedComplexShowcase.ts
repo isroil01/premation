@@ -20,8 +20,7 @@ import { defaultAnimation } from '@motion/animation';
 import { bezierCorner as corner } from '@motion/workspace';
 import { addEffect, getNodeEffects, effectPropPath, type EffectType } from '@core/effects/effects';
 import { setRepeater, repeaterPropPath } from './repeater';
-import { setTrim, trimPropPath } from './trimPath';
-import { setPathOps, pathOpPropPath } from './pathOps';
+import { addTrimOp, setPathOps, pathOpPropPath } from './pathOps';
 import { setPrecomp } from './precomp';
 import { set3DEnabled } from './threeD';
 import { setNodeBlend } from '@core/effects/blendMode';
@@ -175,9 +174,9 @@ export function buildComplexShowcase(): { root: string; layerCount: number; ids:
     { x: -520, y: 120 }, { x: -180, y: 40 }, { x: 160, y: 150 }, { x: 520, y: 30 },
   ];
   const swoosh = add(node('swoosh', 'Swoosh', 'shape', CX, CY + 300, [geom('swoosh', swooshPts), styleStroke('swoosh', '#ff2b7e', 12)]));
-  setTrim(swoosh, { start: 0, end: 0, offset: 0 });
-  kf(swoosh, trimPropPath('end'), [[0, 0], [1, 0], [2.6, 100, 'easeInOut']]);
-  kf(swoosh, trimPropPath('offset'), [[3, 0], [DUR, 40, 'linear']]);
+  const swooshTrim = addTrimOp(swoosh, { start: 0, end: 0, offset: 0 });
+  kf(swoosh, pathOpPropPath(swooshTrim, 'end'), [[0, 0], [1, 0], [2.6, 100, 'easeInOut']]);
+  kf(swoosh, pathOpPropPath(swooshTrim, 'offset'), [[3, 0], [DUR, 40, 'linear']]);
 
   // 6 ── Title: typewriter-style reveal via letter-spacing + slide/fade in.
   const title = add(node('title', 'Title', 'text', CX, CY - 260, [textComp('title', 'MOTION ENGINE', 150)]));

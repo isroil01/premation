@@ -228,8 +228,20 @@ export function rasterPadding(layer: RenderLayer): number {
       for (const p of run.points) {
         // Handles too: a bezier bulges toward them, so an anchor inside the box
         // with a handle outside it still paints outside.
-        const xs = [p.x, p.x + (p.inX ?? 0), p.x + (p.outX ?? 0)];
-        const ys = [p.y, p.y + (p.inY ?? 0), p.y + (p.outY ?? 0)];
+        //
+        // Handles are ABSOLUTE positions, not offsets — `inX` equals `x` for a
+        // corner (BezierPoint.ts:7), which is what `shapePath` relies on when it
+        // hands them straight to `bezierCurveTo`. This read them as offsets and
+        // computed `x + inX`, doubling every corner's coordinate: a point at
+        // x=126 measured as 252, so a 220px-wide layer padded 151px instead of
+        // 25 and rasterized a 522² texture where 270² was enough — 3.7× the
+        // pixels, on every shape carrying a path operator. Every other reader in
+        // the codebase (mask.ts, mergePaths.ts, rig/mesh.ts, lottieImport.ts,
+        // lottiePreview.ts) already treated them as absolute; this was the lone
+        // outlier. Over-padding is only transparent margin, so it never showed
+        // up as a wrong image — see F17.
+        const xs = [p.x, p.inX ?? p.x, p.outX ?? p.x];
+        const ys = [p.y, p.inY ?? p.y, p.outY ?? p.y];
         for (const x of xs) escape = Math.max(escape, Math.abs(x) - hw);
         for (const y of ys) escape = Math.max(escape, Math.abs(y) - hh);
       }

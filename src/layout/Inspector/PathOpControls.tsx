@@ -38,7 +38,28 @@ const TYPES: { id: PathOpType; label: string }[] = [
   // AE's name for this operator. The stored id stays `roughen` so existing
   // projects keep loading — the label is what was wrong, not the data.
   { id: 'roughen', label: 'Wiggle Paths' },
+  // Trim is an operator like any other since document version 1.4.0. It had its
+  // own inspector section and its own fixed slot after the chain, which made its
+  // position unchangeable — and the position is exactly what matters: trimming
+  // by arc length cuts a ruffled outline somewhere quite different from where it
+  // cuts the smooth one it was built from.
+  { id: 'trim', label: 'Trim Paths' },
 ];
+
+/** The rows a given operator actually has. One list, read by the card. */
+function paramsFor(type: PathOpType): ReadonlyArray<{ param: PathOpParam; label: string; unit?: string }> {
+  if (type === 'trim') {
+    return [
+      { param: 'start', label: 'Start', unit: '%' },
+      { param: 'end', label: 'End', unit: '%' },
+      { param: 'offset', label: 'Offset', unit: '%' },
+    ];
+  }
+  const { amount, detail } = paramLabels(type);
+  const rows: Array<{ param: PathOpParam; label: string }> = [{ param: 'amount', label: amount }];
+  if (detail) rows.push({ param: 'detail', label: detail });
+  return rows;
+}
 
 /** Per-operator labels for the two numeric params (detail is unused by some). */
 function paramLabels(type: PathOpType): { amount: string; detail: string | null } {
@@ -79,6 +100,8 @@ function ParamRow({
   label,
   value,
   min,
+  max,
+  unit,
 }: {
   nodeId: string;
   /** Which operator in the chain this row edits. Keyframes are id-scoped. */
@@ -87,6 +110,8 @@ function ParamRow({
   label: string;
   value: number;
   min?: number;
+  max?: number;
+  unit?: string;
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
@@ -119,7 +144,7 @@ function ParamRow({
           />
         </div>
       <span className={styles.paramLabel}>{label}</span>
-      <ValueField value={display} onChange={onChange} min={min} aria-label={label} />
+      <ValueField value={display} onChange={onChange} min={min} max={max} unit={unit} aria-label={label} />
     </div>
   );
 }
@@ -156,7 +181,7 @@ function PathOpCard({
     <div className={styles.root}>
       <div className={styles.head}>
         <span className={styles.title}>
-          {count > 1 ? `${index + 1}. ${typeLabel}` : 'Path Operator'}
+          {count > 1 ? `${index + 1}. ${typeLabel}` : typeLabel}
         </span>
         {index > 0 && (
           <button
@@ -190,37 +215,38 @@ function PathOpCard({
           <Icon name="minus" size={12} />
         </button>
       </div>
-      <div className={styles.selectorRow}>
-        <span className={styles.paramLabel}>Type</span>
-        <Dropdown
-          placement="left-start"
-          trigger={
-            <button type="button" className={styles.pick}>
-              <span>{typeLabel}</span>
-              <Icon name="chevron-down" size={11} />
-            </button>
-          }
-          items={items}
-        />
-      </div>
-      <ParamRow
-        nodeId={nodeId}
-        opId={op.id}
-        param="amount"
-        label={paramLabels(op.type).amount}
-        value={op.amount}
-        min={paramMin(op.type, 'amount')}
-      />
-      {paramLabels(op.type).detail && (
+      {/* No type picker on a Trim card. Retyping a trim into a Zig-Zag would
+          silently reinterpret its start/end/offset as amount/detail, and there
+          is no sensible value to carry across — Trim is chosen when it is
+          added, from the same Add menu as everything else. */}
+      {op.type !== 'trim' && (
+        <div className={styles.selectorRow}>
+          <span className={styles.paramLabel}>Type</span>
+          <Dropdown
+            placement="left-start"
+            trigger={
+              <button type="button" className={styles.pick}>
+                <span>{typeLabel}</span>
+                <Icon name="chevron-down" size={11} />
+              </button>
+            }
+            items={items}
+          />
+        </div>
+      )}
+      {paramsFor(op.type).map((row) => (
         <ParamRow
+          key={row.param}
           nodeId={nodeId}
           opId={op.id}
-          param="detail"
-          label={paramLabels(op.type).detail!}
-          value={op.detail}
-          min={paramMin(op.type, 'detail')}
+          param={row.param}
+          label={row.label}
+          value={(op[row.param] ?? 0) as number}
+          min={row.unit === '%' ? -100 : paramMin(op.type, row.param)}
+          max={row.unit === '%' ? 200 : undefined}
+          unit={row.unit}
         />
-      )}
+      ))}
       {/* Roughen is the only temporal operator: the others are a pure function
           of the outline, so a wiggle rate would be a dead control on them. */}
       {op.type === 'roughen' && (

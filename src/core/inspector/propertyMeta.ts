@@ -225,10 +225,10 @@ const STATIC: Record<string, MetaSpec> = {
   // Stroke
   strokeWidth: { ...PX('Stroke Width', 'stroke', ORDER.stroke), min: 0, defaultValue: 4 },
 
-  // Trim paths (percent of path length; offset wraps, so it is unbounded)
-  'trim.start': PCT('Trim Start', 'trim', ORDER.trim),
-  'trim.end': PCT('Trim End', 'trim', ORDER.trim),
-  'trim.offset': { ...DEG('Trim Offset', 'trim', ORDER.trim), unit: '%', type: 'percent' },
+  // Trim paths — matched by the `pathop.<id>.<param>` resolver below, not by a
+  // literal key, since document version 1.4.0 made trim a chain entry with an
+  // id-scoped keyframe path. Listing `trim.start` here would be a label for a
+  // property path nothing writes any more.
 
   // Repeater
   'rep.copies': {
@@ -410,6 +410,69 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
   return {
     path, label: titleCase(key), group: 'effects', type: 'number', unit: '',
     step: 1, precision: 0, defaultValue: 0, resettable: true, order: ORDER.effects,
+  };
+}
+
+/**
+ * `pathop.<opId>.<param>` — one path-operator parameter.
+ *
+ * Operators are id-scoped, so their keyframe paths carry an opaque id and the
+ * static table cannot name them. Without this every path-op row in the timeline
+ * and the graph editor read as "Pathop Op3 K4Xn Amount". Trim made it matter:
+ * it used to have literal `trim.start` / `trim.end` / `trim.offset` entries and
+ * proper labels, and folding it into the chain would have TAKEN THOSE AWAY.
+ *
+ * The label follows the operator's TYPE, so a Round Corners card's `amount`
+ * reads "Radius" in the timeline exactly as it does in the inspector.
+ */
+const PATHOP_TYPE_LABEL: Record<string, string> = {
+  zigzag: 'Zig-Zag', roundCorners: 'Round Corners', pucker: 'Pucker & Bloat',
+  twist: 'Twist', offset: 'Offset Paths', roughen: 'Wiggle Paths', trim: 'Trim Paths',
+  none: 'Path Operator',
+};
+const PATHOP_PARAM_LABEL: Record<string, Record<string, string>> = {
+  roundCorners: { amount: 'Radius', detail: 'Steps' },
+  pucker: { amount: 'Amount' },
+  twist: { amount: 'Angle' },
+  offset: { amount: 'Offset' },
+  roughen: { amount: 'Size', detail: 'Detail' },
+  zigzag: { amount: 'Amount', detail: 'Ridges' },
+};
+const PATHOP_PERCENT_PARAMS = new Set(['start', 'end', 'offset']);
+
+function resolvePathOpParam(path: string, nodeId?: string): PropertyMeta | null {
+  const m = /^pathop\.([^.]+)\.(.+)$/.exec(path);
+  if (!m) return null;
+  const [, opId, param] = m;
+  if (!opId || !param) return null;
+
+  let type = 'none';
+  if (nodeId) {
+    const node = defaultSceneGraph.getNode(nodeId);
+    const ops = (node?.components.find((c) => c.type === 'fx')?.props as
+      | { pathOps?: Array<{ id?: string; type?: string }> }
+      | undefined)?.pathOps;
+    type = ops?.find((o) => o.id === opId)?.type ?? 'none';
+  }
+  const label = PATHOP_PARAM_LABEL[type]?.[param] ?? titleCase(param);
+  // Trim's three are percentages of path length; `offset` wraps, so the range
+  // is deliberately wider than 0..100 — that is how a chase runs past the end.
+  const pct = type === 'trim' && PATHOP_PERCENT_PARAMS.has(param);
+  return {
+    path,
+    label: `${PATHOP_TYPE_LABEL[type] ?? 'Path Operator'} ${label}`,
+    // The existing 'trim' group is the shape-geometry bucket — it was named for
+    // its only occupant. Every path operator belongs in it now that trim is one
+    // of them; renaming the group would be churn in every consumer for nothing.
+    group: 'trim',
+    type: pct ? 'percent' : 'number',
+    unit: pct ? '%' : '',
+    ...(pct ? { min: -100, max: 200 } : {}),
+    step: 1,
+    precision: pct ? 1 : 2,
+    defaultValue: param === 'end' ? 100 : 0,
+    resettable: true,
+    order: ORDER.trim,
   };
 }
 
@@ -614,6 +677,7 @@ const RESOLVERS: ReadonlyArray<(path: string, nodeId?: string) => PropertyMeta |
   resolveColorChannel,
   resolveTextAnimator,
   resolveEffectParam,
+  resolvePathOpParam,
 ];
 
 // ── Public API ──────────────────────────────────────────────────────

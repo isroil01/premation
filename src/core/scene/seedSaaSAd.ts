@@ -20,7 +20,7 @@ import { SCENE_KIND_PROP } from './seedDefaultScene';
 import { defaultAnimation } from '@motion/animation';
 import { bezierCorner as corner } from '@motion/workspace';
 import { addEffect, getNodeEffects, effectPropPath, type EffectType } from '@core/effects/effects';
-import { setTrim, trimPropPath } from './trimPath';
+import { addTrimOp, pathOpPropPath } from './pathOps';
 import { setPrecomp } from './precomp';
 import { setNodeBlend } from '@core/effects/blendMode';
 import { bumpScene } from '@stores/sceneStore';
@@ -264,8 +264,8 @@ function sceneProduct(): void {
   const ringPts: Pt[] = [];
   for (let i = 0; i <= 40; i++) { const a = (i / 40) * Math.PI * 2; ringPts.push({ x: CX - 250 + Math.cos(a) * 70, y: CY - 10 + Math.sin(a) * 70 }); }
   const ring = geomPath(s, nid('ring'), ringPts, C.primary, 14);
-  setTrim(ring, { start: 0, end: 0, offset: 0 });
-  kf(ring, trimPropPath('end'), [[4.4, 0], [5.6, 100, 'easeInOut']]);
+  const ringTrim = addTrimOp(ring, { start: 0, end: 0, offset: 0 });
+  kf(ring, pathOpPropPath(ringTrim, 'end'), [[4.4, 0], [5.6, 100, 'easeInOut']]);
   const dot = mk(s, nid('dot'), 'shape', CX - 250, CY - 10, { w: 44, h: 44, fill: C.cyan });
   kf(dot, 'scaleX', [[5.4, 0, 'easeOut'], [5.7, 1.2], [5.9, 1]]); kf(dot, 'scaleY', [[5.4, 0, 'easeOut'], [5.7, 1.2], [5.9, 1]]);
   const mark = txt(s, nid('mark'), 'Nova', CX + 20, CY - 10, 130, 800, C.ink, 'left');
@@ -317,8 +317,8 @@ function sceneBenefits(): void {
   // line chart draw-on (trim) over the bars area
   const lp: Pt[] = [{ x: CX + 120, y: CY + 120 }, { x: CX + 300, y: CY + 40 }, { x: CX + 460, y: CY + 90 }, { x: CX + 640, y: CY - 60 }];
   const line = geomPath(s, nid('line'), lp, C.cyan, 8);
-  setTrim(line, { start: 0, end: 0, offset: 0 });
-  kf(line, trimPropPath('end'), [[18.4, 0], [19.6, 100, 'easeInOut']]);
+  const lineTrim = addTrimOp(line, { start: 0, end: 0, offset: 0 });
+  kf(line, pathOpPropPath(lineTrim, 'end'), [[18.4, 0], [19.6, 100, 'easeInOut']]);
   fx(line, 'glow' as EffectType);
   txt(s, nid('big'), '99.9%', CX + 380, CY - 150, 84, 800, C.cyan, 'center');
   void panel;

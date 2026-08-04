@@ -32,7 +32,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { detectImageSequence } from '@core/scene/imageSequence';
-import { trimPropPath, defaultTrim } from '@core/scene/trimPath';
+import { addTrimOp, pathOpPropPath } from '@core/scene/pathOps';
 import { sanitizeSvg } from '@core/svg/svgSanitize';
 import { scanSvgCapabilities, isAnimatedSvg, svgCapabilityWarnings, type SvgCapabilities } from '@core/svg/svgCapabilities';
 import { makeSvgComponent } from '@core/svg/svgLayer';
@@ -472,12 +472,12 @@ function writeSvgAnimation(
   write('scaleX', anim.scaleX, (v) => v);
   write('scaleY', anim.scaleY, (v) => v);
   write('opacity', anim.opacity, (v) => v);
-  // Draw-on (stroke-dashoffset) arrives as trim-END percent. The animated
-  // values only apply where a trim CONFIG exists on the layer (resolveTrim
-  // returns null otherwise), so the base config is written alongside.
+  // Draw-on (stroke-dashoffset) arrives as trim-END percent. Keyframes are
+  // scoped to the trim ENTRY, so the entry has to exist before the track can
+  // name it — `addTrimOp` returns the id for exactly that reason.
   if (anim.trimEnd) {
-    defaultSceneGraph.setTrimPath(nodeId, defaultTrim());
-    write(trimPropPath('end'), anim.trimEnd, (v) => v);
+    const trimId = addTrimOp(nodeId, { start: 0, end: 100, offset: 0 });
+    write(pathOpPropPath(trimId, 'end'), anim.trimEnd, (v) => v);
   }
 }
 

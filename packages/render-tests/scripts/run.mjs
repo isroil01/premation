@@ -480,7 +480,17 @@ async function compareAll(scenes) {
         });
       }
 
-      if (isExpectPass) {
+      // A scene that produced NO IMAGE is never an accepted gap.
+      //
+      // `known-divergent` + a stated cause means "these pixels differ for a
+      // reason we wrote down". It cannot mean "there are no pixels": a stated
+      // cause describes a comparison, and no comparison happened. Routing a
+      // missing frame through the gap bucket is exactly how
+      // `shape-path-op-zigzag` stayed green while its `build` threw for months
+      // — the divergence prose added to PREVENT silent suppression was the
+      // thing doing the suppressing.
+      const noImage = !actual;
+      if (isExpectPass || noImage) {
         if (!result.pass) {
           parityFail++;
         }
