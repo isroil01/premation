@@ -1127,6 +1127,46 @@ the boundary at exactly 1 asserted rather than assumed.
 |---|---|---|---|
 | **F19** | **RESOLVED by decision, 2026-08-05 — option (a) taken, and shipped.** ~~The fold-in cannot satisfy "existing documents render identically", and no lossless migration exists.~~ The diagnosis stands and is unchanged: copies were placed in COMP space (`x: px + c.dx`), so a repeated layer's arrangement stayed axis-aligned however the layer was rotated; folding bakes them into LAYER-LOCAL geometry, after which the layer transform turns and scales the whole group. What changed is the verdict, not the analysis. The comp-space model was an artifact of where the copies were emitted rather than a feature anyone chose, and preserving it would mean permanently carrying a wrong model to protect documents that were rendering wrong. So the semantic change is ACCEPTED and announced (§2b-septies), the migration claims what is true rather than losslessness, and the pixel gate's blindness was closed FIRST: `shape-repeater-rotated-layer` and `shape-repeater-scaled-layer` were blessed against the old behaviour one commit ahead of the fold, so the re-bless is the evidence. Measured on those two goldens: 23.4% and 20.9% of pixels moved, and `shape-repeater` — the untransformed scene — stayed pixel-identical, which is the claim. Option (b) was not taken: making the operator read the layer transform would break the chain's contract that operators are pure point-to-point functions, and would still behave badly under non-uniform scale. | **Closed — shipped as an announced behaviour change** | Document version 1.5.0. See §2b-septies. |
 
+## 2b-decies. 2026-08-05 — the interaction layer has FIVE point-drag mechanisms
+
+Surveyed before building the effect-handle overlay, because "which of these is
+the mechanism?" is a cheaper question than "how do I build a sixth?".
+
+| Overlay | Hit-test | Zoom-invariant | Projection | Write path | Undo |
+|---|---|---|---|---|---|
+| Transform gizmo | numeric, SCREEN space, `HANDLE_PICK_RADIUS = 9` | yes, by construction | `camera.worldToScreen` | WorkspaceCommand → ports | command |
+| Direct Selection (mask, anchor) | numeric, WORLD space, `screenDistanceToWorld(9)` | yes, converts the constant | same | `UpdateMaskPath` → `setMaskPoints` | command |
+| Device handles (camera, light) | numeric, COMP space, tolerance arg | yes, caller passes | `Project3D.projectPoint` + `parentWorldMatrixAt` | **`applyNodePropsKeyframed`** | merge key |
+| Puppet pins | **DOM** — `onPointerDown` per SVG element | yes, element drawn at fixed px | own `localToScreen` | `defaultAnimation.setKeyframe` direct | `beginAnimEdit()` txn |
+| Bone / skeleton | **DOM**, same | yes | **byte-identical copy** of puppet's | own | own |
+
+**Three duplications, one of which is load-bearing.**
+
+1. `localToScreen` / `screenToLocal` are byte-identical in `PuppetOverlay` and
+   `BoneOverlay`. Textbook §2·0, low severity only because both are correct
+   today.
+2. "How close is close enough" is `HANDLE_PICK_RADIUS = 9` in the engine, a
+   `tolerance` argument in `deviceHandles`, and a "12px tolerance" in
+   `SceneGeometryOverlay`'s comment. Three numbers for one idea.
+3. **The autokey rule has two incompatible definitions** — see F22.
+
+**Is one general enough to extend? No, and the reasons are specific.**
+`applyNodePropsKeyframed` is the right RULE but is welded to the Transform
+component (`if (!transComp) return`) and cannot express `effect.<id>.<param>`.
+`deviceHandles` is the right SHAPE — collect → hit-test → drag, pure, in core,
+unit-tested — but its `DeviceHandle` is specialised to camera/light with a
+hardcoded prop triple. `SelectTool.pickHandle` is the right HIT-TEST but lives
+inside a tool and is tied to selection-bounds handles.
+
+So the honest outcome was: copy `deviceHandles`' shape, generalise the write
+rule rather than the writer, and reuse `layerSpaceAt` for projection rather than
+adding a third `localToScreen`. Not a sixth overlay, and not an extension of any
+one of the five either.
+
+| # | Finding | Severity | Proposed |
+|---|---|---|---|
+| **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | Decide whether effect params should honour Auto-Keyframe. If yes, `writeEffectParams` is now the single place to change. |
+
 ## 2b-nonies. 2026-08-05 — Bezier Warp, and a guard that covered nothing
 
 Corner Pin's generalisation: four cubic edges, a Coons patch interior, and a

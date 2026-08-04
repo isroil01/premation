@@ -56,6 +56,7 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { FocusBreadcrumb } from '@layout/focus/FocusBreadcrumb';
 import { TextEditOverlay } from './TextEditOverlay';
 import { PuppetOverlay } from './PuppetOverlay';
+import { EffectHandleOverlay } from './EffectHandleOverlay';
 import { BoneOverlay } from './BoneOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
 import { AxisWidgetOverlay } from './AxisWidgetOverlay';
@@ -338,6 +339,7 @@ export function WorkspaceViewport({
           {/* On-canvas text editor — screen coords match the canvas' own space. */}
           <TextEditOverlay />
           <PuppetOverlay />
+          <EffectHandleOverlay />
           <BoneOverlay />
           {/* Mounts for the whole 3D SCENE, not for the selection: the ground
               plane and comp frame are how you orient yourself in a side view,
