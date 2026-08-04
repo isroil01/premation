@@ -36,7 +36,7 @@ import { defaultAnimation } from '@motion/animation';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { getNodeEffects, effectPropPath } from '@core/effects/effects';
 import { readGeometry } from '@core/workspace/geometry';
-import { layerSpaceAt } from '@core/scene/layerSpace';
+import { layerScreenMapping } from './layerScreen';
 import {
   collectEffectHandles,
   hitTestEffectHandle,
@@ -92,31 +92,36 @@ export function EffectHandleOverlay(): JSX.Element | null {
 
   const camera = getWorkspaceController().ws.camera;
 
-  /** effect-param space → screen px. */
+  /**
+   * effect-param space ↔ screen px, over the SHARED layer↔screen mapping.
+   *
+   * This used to compose `layerSpaceAt` + camera inline, which was a second
+   * copy of what the rig overlays now use. All this adds on top is the
+   * effect-space half-box offset, which is genuinely its own concern — the rig
+   * overlays work in layer-local coordinates directly.
+   */
+  const mapping = useMemo(
+    () => (nodeId ? layerScreenMapping(nodeId, time, comp, camera) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
+    [nodeId, time, comp.width, comp.height, useSceneRevision((s) => s.rev)],
+  );
+
   const toScreen = useMemo(() => {
-    if (!nodeId || !geom) return null;
-    const space = layerSpaceAt(nodeId, time, { width: comp.width, height: comp.height });
-    if (!space) return null;
+    if (!mapping || !geom) return null;
     return (p: HandlePoint): HandlePoint => {
       const local = effectToLayer(p, geom.width, geom.height);
-      const [cx, cy] = space.toComp([local.x, local.y]);
-      return camera.worldToScreen({ x: cx, y: cy });
+      return mapping.localToScreen(local.x, local.y);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-  }, [nodeId, geom?.width, geom?.height, time, comp.width, comp.height, useSceneRevision((s) => s.rev)]);
+  }, [mapping, geom?.width, geom?.height]);
 
-  /** screen px → effect-param space. The exact inverse of `toScreen`. */
+  /** The exact inverse of `toScreen`. */
   const fromScreen = useMemo(() => {
-    if (!nodeId || !geom) return null;
-    const space = layerSpaceAt(nodeId, time, { width: comp.width, height: comp.height });
-    if (!space) return null;
+    if (!mapping || !geom) return null;
     return (p: HandlePoint): HandlePoint => {
-      const world = camera.screenToWorld({ x: p.x, y: p.y });
-      const [lx, ly] = space.fromComp([world.x, world.y]);
-      return layerToEffect({ x: lx, y: ly }, geom.width, geom.height);
+      const l = mapping.screenToLocal(p.x, p.y);
+      return layerToEffect({ x: l.x, y: l.y }, geom.width, geom.height);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-  }, [nodeId, geom?.width, geom?.height, time, comp.width, comp.height, useSceneRevision((s) => s.rev)]);
+  }, [mapping, geom?.width, geom?.height]);
 
   // Pointer plumbing. A CAPTURE-phase listener on the stage would fight the
   // layer gizmo; instead the SVG sits above it and claims the event only when a

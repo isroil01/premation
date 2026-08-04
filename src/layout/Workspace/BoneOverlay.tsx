@@ -2,10 +2,12 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { layerScreenMapping } from './layerScreen';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry, worldMatrix } from '@core/workspace/geometry';
+import { readGeometry } from '@core/workspace/geometry';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
 import { bumpScene } from '@stores/sceneStore';
@@ -25,22 +27,6 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { useAssetStore } from '@stores/assetStore';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
 import { nextRigId, usedRigIds } from '@core/rig/rigIds';
-
-function worldToLocal(m: any, w: { x: number; y: number }): { x: number; y: number } {
-  const det = m.a * m.d - m.b * m.c;
-  if (Math.abs(det) < 1e-6) return { x: 0, y: 0 };
-  const invA = m.d / det;
-  const invB = -m.b / det;
-  const invC = -m.c / det;
-  const invD = m.a / det;
-  const invE = (m.c * m.f - m.d * m.e) / det;
-  const invF = (m.b * m.e - m.a * m.f) / det;
-  return {
-    x: invA * w.x + invC * w.y + invE,
-    y: invB * w.x + invD * w.y + invF,
-  };
-}
-
 
 /**
  * Pointer capture is a nicety, not a precondition: it keeps a drag alive when
@@ -65,6 +51,7 @@ export function BoneOverlay(): JSX.Element | null {
   const selectedNodeId = useSelectionStore((s) => s.ids[0]);
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
+  const comp = useCompositionStore((s) => s.comp());
 
   const [selectedBoneId, setSelectedBoneId] = useState<string | null>(null);
   const [hoveredBoneId, setHoveredBoneId] = useState<string | null>(null);
@@ -167,20 +154,18 @@ export function BoneOverlay(): JSX.Element | null {
     node.id, geom.width, geom.height, pad, meshRig, silhouette, coverage,
   );
 
-  const m = worldMatrix(geom);
   const controller = getWorkspaceController();
   const camera = controller.ws.camera;
 
-  const localToScreen = (lx: number, ly: number) => {
-    const wx = m.a * lx + m.c * ly + m.e;
-    const wy = m.b * lx + m.d * ly + m.f;
-    return camera.worldToScreen({ x: wx, y: wy });
-  };
-
-  const screenToLocal = (sx: number, sy: number) => {
-    const world = camera.screenToWorld({ x: sx, y: sy });
-    return worldToLocal(m, world);
-  };
+  // ONE projection, shared with PuppetOverlay and the effect-handle overlay.
+  // This pair was byte-identical to Puppet's and built on `worldMatrix(geom)`,
+  // which composes only THIS node's transform — so bones and IK handles drew at
+  // the unparented position on any parented layer (F23).
+  const mapping = layerScreenMapping(node.id, time, comp, camera);
+  const localToScreen = (lx: number, ly: number) =>
+    mapping ? mapping.localToScreen(lx, ly) : { x: lx, y: ly };
+  const screenToLocal = (sx: number, sy: number) =>
+    mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
   // Canonical keyframe axis — the same forward map buildSnapshot samples.
   const layerT = compToKeyframeTime(node.id, time);

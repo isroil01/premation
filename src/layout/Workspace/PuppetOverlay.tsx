@@ -2,10 +2,12 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { layerScreenMapping } from './layerScreen';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry, worldMatrix } from '@core/workspace/geometry';
+import { readGeometry } from '@core/workspace/geometry';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, PuppetPin } from '@core/rig/puppet';
 import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
@@ -30,22 +32,6 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
 import { upsertDataKeyframe, dataPathTangents, setDataSpatialTangent } from '@motion/animation';
 import { bumpScene } from '@stores/sceneStore';
-
-// Invert 2D affine matrix mapping
-function worldToLocal(m: any, w: { x: number; y: number }): { x: number; y: number } {
-  const det = m.a * m.d - m.b * m.c;
-  if (Math.abs(det) < 1e-6) return { x: 0, y: 0 };
-  const invA = m.d / det;
-  const invB = -m.b / det;
-  const invC = -m.c / det;
-  const invD = m.a / det;
-  const invE = (m.c * m.f - m.d * m.e) / det;
-  const invF = (m.b * m.e - m.a * m.f) / det;
-  return {
-    x: invA * w.x + invC * w.y + invE,
-    y: invB * w.x + invD * w.y + invF,
-  };
-}
 
 /** Radius (screen px) of the advanced-pin gizmo ring. */
 const GIZMO_R = 26;
@@ -79,6 +65,7 @@ export function PuppetOverlay(): JSX.Element | null {
   const selectedNodeId = useSelectionStore((s) => s.ids[0]);
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
+  const comp = useCompositionStore((s) => s.comp());
 
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [hoveredPinId, setHoveredPinId] = useState<string | null>(null);
@@ -156,20 +143,21 @@ export function PuppetOverlay(): JSX.Element | null {
     paint: node.components.find((c) => c.type === 'Paint')?.props.paint,
   };
   const pad = rasterPadding(dummyLayer);
-  const m = worldMatrix(geom);
   const controller = getWorkspaceController();
   const camera = controller.ws.camera;
 
-  const localToScreen = (lx: number, ly: number) => {
-    const wx = m.a * lx + m.c * ly + m.e;
-    const wy = m.b * lx + m.d * ly + m.f;
-    return camera.worldToScreen({ x: wx, y: wy });
-  };
-
-  const screenToLocal = (sx: number, sy: number) => {
-    const world = camera.screenToWorld({ x: sx, y: sy });
-    return worldToLocal(m, world);
-  };
+  // ONE projection, shared with BoneOverlay and the effect-handle overlay.
+  //
+  // This was a local pair built on `worldMatrix(geom)`, byte-identical to
+  // BoneOverlay's, and it composed only THIS node's transform — so on a
+  // parented layer the pins drew at the unparented position while the artwork
+  // rendered at the parented one (F23). `layerScreenMapping` goes through
+  // `layerSpaceAt`, which walks the chain and handles 3D.
+  const mapping = layerScreenMapping(node.id, time, comp, camera);
+  const localToScreen = (lx: number, ly: number) =>
+    mapping ? mapping.localToScreen(lx, ly) : { x: lx, y: ly };
+  const screenToLocal = (sx: number, sy: number) =>
+    mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
   // Canonical keyframe axis — the same forward map buildSnapshot samples.
   const layerT = compToKeyframeTime(node.id, time);
