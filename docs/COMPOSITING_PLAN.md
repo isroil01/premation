@@ -1487,6 +1487,40 @@ one of the five either.
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
 
+## 2b-quinquiesdecies. 2026-08-06 — Motion Sketch, and a reduction that is wrong by default
+
+**The eleventh instance, in a new form: not the feature, the ENGINE.** Motion
+Sketch genuinely did not exist. `core/rig/puppetSketch.ts` did, and it holds the
+entire sample→keyframe reduction — Douglas–Peucker on the spatial path, time
+thinning, same-instant collapse, easing of the survivors — written for Puppet
+Sketch, tested in `rig/phase3.test.ts`, wired to `PuppetOverlay`, and completely
+generic: it operates on `{x, y, t}` and knows nothing about pins.
+
+Worth distinguishing from the previous ten. Those were "the thing you are about
+to build is already there". This is "the *hard part* of the thing you are about
+to build is already there, under a name that does not mention it". The search
+that finds it is not `grep -i "motion sketch"` — that correctly returns nothing.
+It is noticing that `puppetSketch` in the rig folder is a general algorithm with
+a domain-specific filename.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| **F28** | **A spatial reduction is the WRONG DEFAULT for motion capture, and `tolerance: 0` does not turn it off.** Douglas–Peucker keeps a point when its distance from the chord between its neighbours exceeds the tolerance. A stationary hold is exactly collinear, so every sample of it sits at distance 0 and is dropped *at any tolerance including zero* — the test is `distance > tol`. A layer held still for a second and then moved reduces to two keyframes: a straight drift across the whole take, with the pause gone. For Puppet Sketch that is an acceptable trade (pins are dragged continuously). For Motion Sketch the timing IS the content. | **Correctness, would-have-shipped** | **FIXED before shipping.** The shared engine gained `simplify: false` (additive — `phase3.test.ts` stays green through the whole break set), and Motion Sketch defaults to one keyframe per frame as AE does, with smoothing as an opt-in. Both halves asserted: the default preserves a 21-sample hold, smoothing reduces it to 2. The cost is a fact the suite holds, not a warning in a comment. |
+| **F29** | **`moveNodes` only keyframes when Auto-Keyframe is on or the layer already has an x/y track** (`ports.ts:874`), so an armed Motion Sketch on a FRESH layer recorded nothing at all — the commonest case, failing silently with an empty take and no error. An armed recording now always keyframes, which is the same intent as a lit stopwatch. | **Wiring, live** | **FIXED** |
+
+**F29 is rule 5·0 earning its place.** The unit tests are complete and correct
+about the reduction, the capture speed, the splice and the two-track fan-out —
+and every one of them passes with the recorder never fed, because they build
+their own sample arrays. The header of `motionSketch.test.ts` says so in
+advance. It took driving the real command in the running app to see zero samples
+come back, and the fix is in a file the tests never touch.
+
+**Also worth noting: this is adjacent to F22 but not it.** F22 is about whether
+effect params should honour the Auto-Keyframe preference. F29 is not a change to
+what Auto-Keyframe means — it is that an explicit "record this path" request
+implies keyframes regardless, the same way dragging a property with a lit
+stopwatch does. F22 stays untouched and undecided on timing.
+
 ## 2b-quaterdecies. 2026-08-06 — the lint gate, and why the RATIO is the argument
 
 **42 errors, one of them real. That ratio is the case for the gate, and it is a
