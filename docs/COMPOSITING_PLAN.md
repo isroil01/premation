@@ -731,9 +731,54 @@ The **repeater** is a different answer: see F16.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
-| **F15** | **The `shape-path-op-zigzag` golden has not exercised a path operator since schema 1.3.0.** The harness scene calls `graph.setPathOp('z', …)` (`render-tests/harness/scenes/shapes.ts:89`), but `SceneGraph` renamed that method to `setPathOps` in `85aa8ac` and nothing updated the scene. Every run since then logs `TypeError: n.setPathOp is not a function` and renders a **plain stroked rect**. The scene is marked `known-divergent`, so its failure is not gated and the error scrolls past. The `pathEscapePadding` proof it cites as evidence is therefore **inert at the pixel level** — the unit test still pins the arithmetic, but no golden confirms it. Not fixed here: repairing it re-blesses a golden for a reason unrelated to trim, which is exactly the attribution mistake this work was told to avoid. | **Test integrity, high** | Rename to `setPathOps` with an array, re-bless `shape-path-op-zigzag`, and confirm the new pixels show a zigzag. Consider failing the run on `[render-fails]` even for `known-divergent` scenes — a scene that did not BUILD is not a scene with an accepted visual gap. |
-| **F16** | **The repeater cannot fold into `fx.pathOps` without losing `offsetOpacity`.** Copies are emitted as N `RenderLayer`s sharing one geometry and differing by transform deltas. Making a repeater card's POSITION in the chain meaningful requires baking the copies into geometry — now expressible as N subpaths — but a `Subpath` carries no paint, so per-copy **opacity** (and any future per-copy fill) has nowhere to live. Folding it in as-is would ship a reorder control that works while silently dropping a parameter users already animate (`rep.offsetOpacity` is keyframeable). | **Design, blocking Phase 3b** | Either add per-run paint to the render contract first — a strictly larger change than the subpath lift — or fold in `trim` alone and leave the repeater on its fixed final position, documented as such. Do **not** ship a repeater card whose arrows move a control that cannot carry its own parameters. |
-| **F17** | **`rasterPadding` reads bezier handles as RELATIVE; every other consumer reads them as ABSOLUTE.** `BezierPoint.inX/outX` are documented absolute ("Equal to (x,y) for a corner", `packages/workspace/src/math/BezierPoint.ts:7`) and `shapePath` passes them straight to `ctx.bezierCurveTo`. `rasterPadding` computes `p.x + (p.inX ?? 0)` (`raster/vectorDraw.ts:225`), which for a corner doubles the coordinate and over-pads by the point's own distance from the origin. Harmless today — over-padding is transparent margin — but it is two readers of one field disagreeing on its units (§2·0), and the `pathEscapePadding` suite was authored to the wrong convention (`inX: 0`), so it pins the bug rather than catching it. Carried through the subpath lift **verbatim**, deliberately: correcting it shrinks the raster and would perturb `shape-path-op-zigzag`, whose reference was blessed with the over-pad — and see F15 for why that scene cannot currently confirm anything. | **Correctness, latent** | Fix after F15, so the golden that measures path escape is actually measuring a path operator when the padding changes. |
+| **F15** | **FIXED.** **The `shape-path-op-zigzag` golden had not exercised a path operator since schema 1.3.0.** The harness scene calls `graph.setPathOp('z', …)` (`render-tests/harness/scenes/shapes.ts:89`), but `SceneGraph` renamed that method to `setPathOps` in `85aa8ac` and nothing updated the scene. Every run since then logs `TypeError: n.setPathOp is not a function` and renders a **plain stroked rect**. The scene is marked `known-divergent`, so its failure is not gated and the error scrolls past. The `pathEscapePadding` proof it cites as evidence is therefore **inert at the pixel level** — the unit test still pins the arithmetic, but no golden confirms it. Not fixed here: repairing it re-blesses a golden for a reason unrelated to trim, which is exactly the attribution mistake this work was told to avoid. | **Test integrity, high** | Rename to `setPathOps` with an array, re-bless `shape-path-op-zigzag`, and confirm the new pixels show a zigzag. Consider failing the run on `[render-fails]` even for `known-divergent` scenes — a scene that did not BUILD is not a scene with an accepted visual gap. |
+| **F16** | **STILL BLOCKING, and Phase 3a shipped without it.** **The repeater cannot fold into `fx.pathOps` without losing `offsetOpacity`.** Copies are emitted as N `RenderLayer`s sharing one geometry and differing by transform deltas. Making a repeater card's POSITION in the chain meaningful requires baking the copies into geometry — now expressible as N subpaths — but a `Subpath` carries no paint, so per-copy **opacity** (and any future per-copy fill) has nowhere to live. Folding it in as-is would ship a reorder control that works while silently dropping a parameter users already animate (`rep.offsetOpacity` is keyframeable). | **Design, blocking Phase 3b** | Either add per-run paint to the render contract first — a strictly larger change than the subpath lift — or fold in `trim` alone and leave the repeater on its fixed final position, documented as such. Do **not** ship a repeater card whose arrows move a control that cannot carry its own parameters. |
+| **F17** | **FIXED.** **`rasterPadding` read bezier handles as RELATIVE; every other consumer reads them as ABSOLUTE.** `BezierPoint.inX/outX` are documented absolute ("Equal to (x,y) for a corner", `packages/workspace/src/math/BezierPoint.ts:7`) and `shapePath` passes them straight to `ctx.bezierCurveTo`. `rasterPadding` computes `p.x + (p.inX ?? 0)` (`raster/vectorDraw.ts:225`), which for a corner doubles the coordinate and over-pads by the point's own distance from the origin. Harmless today — over-padding is transparent margin — but it is two readers of one field disagreeing on its units (§2·0), and the `pathEscapePadding` suite was authored to the wrong convention (`inX: 0`), so it pins the bug rather than catching it. Carried through the subpath lift **verbatim**, deliberately: correcting it shrinks the raster and would perturb `shape-path-op-zigzag`, whose reference was blessed with the over-pad — and see F15 for why that scene cannot currently confirm anything. | **Correctness, latent** | Fix after F15, so the golden that measures path escape is actually measuring a path operator when the padding changes. |
+
+## 2b-quater. Closed 2026-08-04 — F15, F17 and Phase 3a
+
+**F15 — the dead golden.** Corrected from how it was first written up: the
+scene did not render "a plain rect", it rendered **nothing**, and its committed
+reference was a correct zigzag all along. `build` threw, no frame was written,
+and `!actual` was routed by `gpuParity: 'known-divergent'` into the
+ACCEPTED-GAP bucket — the `divergence` prose that exists to stop silent
+suppression was the thing suppressing it. Two guards landed, and the guards
+matter more than the golden: a pre-flight pass builds every scene before
+anything renders and aborts the run on any throw, and the comparator no longer
+lets a missing frame count as an accepted gap whatever its `gpuParity` says.
+Verified in that order — with the guard in and the scene still broken, the run
+fails loudly. No re-bless was needed; the repaired scene reproduces its
+existing reference exactly, which also retired its stale `known-divergent`
+marking. Swept the other 21 `graph.*` setup calls: `setPathOp` was the only
+one that did not exist.
+
+**F17 — the handle convention.** Fixed, and pixel-identical afterwards, which
+is the proof it was correct rather than merely different: nothing was ever
+being clipped, the raster was simply 3.74× larger than needed (522² where 270²
+suffices, on every shape carrying a path operator). Not a §2·0 with a split
+population — `mask.ts`, `mergePaths.ts`, `rig/mesh.ts`, `lottieImport.ts`,
+`lottiePreview.ts` and `shapePath` all already read them as absolute, and
+`rasterPadding` was the lone outlier. Its test was the other half of the bug:
+it built points with `inX: 0`, a handle pinned at the origin rather than a
+corner, so it pinned the defect instead of catching it. That evidence only
+exists because F15 landed first — run against the broken scene, "green" would
+have meant "rendered nothing, twice".
+
+**Phase 3a — trim folds in (document 1.4.0).** Shipped complete: model, chain
+currency rewritten to run lists, migration with its own version bump, the
+`pathop.<id>.<param>` property-meta resolver, and the inspector card with
+working reorder — `TrimPathControls.tsx` deleted in the same commit. The two
+new goldens `shape-trim-then-zigzag` / `shape-zigzag-then-trim` differ by
+**2.012%** of the frame, so the arrows are live in pixels. The three existing
+trim goldens still match exactly, which is the evidence the fold preserved
+output.
+
+**The repeater deliberately did NOT fold in.** F16 is unchanged and still
+blocking: copies are separate layers sharing one geometry, and a `Subpath`
+carries no paint, so baking them into geometry to make position meaningful
+drops per-copy `offsetOpacity` — which is keyframeable today. Inert controls
+waste time; a dropped parameter destroys work without telling the user. It
+waits behind per-run paint.
 
 ## 2d. DECISION D3 — templates are deliberately de-scoped
 
