@@ -67,6 +67,8 @@ import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { measureTextNodeBoxes } from '@core/text/measureText';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioPlaybackBridge } from '@core/audio/useAudioPlayback';
 import { controlValue } from '@core/animation/expressionControls';
@@ -1042,6 +1044,46 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             width: typeof w === 'number' ? w : comp.width,
             height: typeof h === 'number' ? h : comp.height,
           };
+        });
+        /**
+         * `sourceRectAtTime` — a layer's CONTENT bounds, not its box.
+         *
+         * For TEXT this is the whole value of the function: the box is whatever
+         * the user dragged, while the bounds are where the glyphs actually are,
+         * and an auto-sizing plate needs the second. `measureTextNodeBoxes`
+         * already does the real measurement (it is what buildSnapshot uses), so
+         * this is a lookup rather than an estimate — `estimateNodeBounds` in
+         * anchor.ts is deliberately NOT used here, because for text it returns a
+         * hardcoded 300×50.
+         *
+         * The time argument is honoured through `evaluateNode(nodeId, t)`, which
+         * resolves the node's animated props at `t` before measuring. Without
+         * that, a plate behind text whose size or tracking is animated would
+         * measure the playhead's bounds while sitting on another frame.
+         *
+         * Non-text layers have no ink/font distinction, so they report their
+         * transform box and `extents` makes no difference — stated here rather
+         * than silently returning the same thing twice.
+         */
+        defaultAnimation.setSourceRectProvider((nodeId, t, extents) => {
+          const node = defaultSceneGraph.getNode(nodeId);
+          if (!node) return undefined;
+          if (readNodeKind(node) === 'text') {
+            const overrides: Record<string, unknown> = {};
+            for (const [prop, v] of defaultAnimation.evaluateNode(nodeId, t)) overrides[prop] = v;
+            const boxes = measureTextNodeBoxes(node, overrides);
+            if (boxes) {
+              // extents → the FONT box (stable per font and line count);
+              // default → the glyph INK box (tight, what a plate wants).
+              const b = extents ? boxes.font : boxes.ink;
+              return { top: b.top, left: b.left, width: b.width, height: b.height };
+            }
+          }
+          const tr = node.components.find((c) => c.type === 'Transform');
+          const w = tr?.props.width;
+          const h = tr?.props.height;
+          if (typeof w !== 'number' || typeof h !== 'number') return undefined;
+          return { top: -h / 2, left: -w / 2, width: w, height: h };
         });
         // Keyframe edits refresh the timeline tracks + inspector + viewport.
         track(getEventBus().on('AnimationChanged', () => { bumpScene(); }));

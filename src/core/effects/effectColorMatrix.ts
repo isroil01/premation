@@ -31,14 +31,15 @@ export const IDENTITY_COLOR_MATRIX: ColorMatrix = {
   offset: [0, 0, 0],
 };
 
-/** Effect types that are expressible as an affine color transform. */
-const COLOR_EFFECTS: ReadonlySet<EffectType> = new Set<EffectType>([
-  'brightness', 'contrast', 'saturate', 'grayscale', 'sepia', 'hue-rotate', 'invert', 'hue-saturation',
-  'tint', 'channel-mixer',
-]);
-
+/**
+ * Effect types expressible as an affine colour transform.
+ *
+ * Answered by the builder table itself (see `COLOR_MATRIX_BUILDERS` below), so
+ * "is this a colour effect" and "what matrix does it produce" are one lookup
+ * and can never drift apart.
+ */
 export function isColorEffect(type: EffectType): boolean {
-  return COLOR_EFFECTS.has(type);
+  return COLOR_MATRIX_BUILDERS.has(type);
 }
 
 type M3 = ColorMatrix['m'];
@@ -108,38 +109,56 @@ function scaleMatrix(b: number): M3 {
  * Hue/Saturation's hue + saturation + lightness — compose here on the GPU path
  * the same way they do as a CSS filter string on Canvas2D.
  */
-function effectToMatrix(effect: Effect): ColorMatrix {
-  const type = effect.type;
-  const amt = effectNumber(effect, primaryParamKey(type) ?? 'amount');
-  switch (type) {
-    case 'brightness':
-      return { m: scaleMatrix(amt / 100), offset: [0, 0, 0] };
-    case 'contrast': {
+/**
+ * Every effect expressible as an affine colour transform, mapped to the builder
+ * that produces it. `amt` is the effect's primary parameter, resolved once.
+ *
+ * ── Why a Map and not a Set beside a switch ─────────────────────────────────
+ *
+ * This used to be `COLOR_EFFECTS` (a Set, consulted by `effectColorMatrix` and
+ * exported as `isColorEffect`) plus a `switch` in a separate function ending in
+ * `default: return IDENTITY_COLOR_MATRIX`. Two tables, nothing joining them: a
+ * type added to the Set but not the switch passed the membership check, hit the
+ * default, and contributed an identity matrix. In the browser, in the stack,
+ * parameters animating, changing nothing.
+ *
+ * That is the third instance of one defect shape in this subsystem — after
+ * `CANVAS2D_ONLY` vs `applyCanvas2dEffect` and `LUT_EFFECTS` vs `tableFor` —
+ * so it is fixed structurally rather than with a third behavioural guard.
+ * Membership IS the dispatch table now: `isColorEffect` asks the same Map that
+ * supplies the builder, so registering an effect without giving it a matrix is
+ * no longer something you can express. The `default` arm is gone because it has
+ * become unreachable.
+ *
+ * The two pairs in this subsystem that were already safe both work this way —
+ * `GPU_ONLY_EFFECTS` derives from `EFFECT_DEFS`, and `TIME_DEPENDENT` is a Map
+ * whose membership is its data. This follows them.
+ */
+const COLOR_MATRIX_BUILDERS: ReadonlyMap<EffectType, (effect: Effect, amt: number) => ColorMatrix> =
+  new Map<EffectType, (effect: Effect, amt: number) => ColorMatrix>([
+    ['brightness', (_e, amt) => ({ m: scaleMatrix(amt / 100), offset: [0, 0, 0] })],
+    ['contrast', (_e, amt) => {
       const c = amt / 100;
       const o = 0.5 * (1 - c);
       return { m: [c, 0, 0, 0, c, 0, 0, 0, c], offset: [o, o, o] };
-    }
-    case 'saturate':
-      return { m: saturateMatrix(amt / 100), offset: [0, 0, 0] };
-    case 'grayscale':
-      return { m: saturateMatrix(1 - amt / 100), offset: [0, 0, 0] };
-    case 'sepia':
-      return { m: sepiaMatrix(amt / 100), offset: [0, 0, 0] };
-    case 'hue-rotate':
-      return { m: hueRotateMatrix(amt), offset: [0, 0, 0] };
-    case 'hue-saturation': {
+    }],
+    ['saturate', (_e, amt) => ({ m: saturateMatrix(amt / 100), offset: [0, 0, 0] })],
+    ['grayscale', (_e, amt) => ({ m: saturateMatrix(1 - amt / 100), offset: [0, 0, 0] })],
+    ['sepia', (_e, amt) => ({ m: sepiaMatrix(amt / 100), offset: [0, 0, 0] })],
+    ['hue-rotate', (_e, amt) => ({ m: hueRotateMatrix(amt), offset: [0, 0, 0] })],
+    ['hue-saturation', (effect) => {
       // Hue rotate, then saturation, then lightness — matching the CSS order.
       const hue = hueRotateMatrix(effectNumber(effect, 'hue'));
       const sat = saturateMatrix((100 + effectNumber(effect, 'saturation')) / 100);
       const light = scaleMatrix((100 + effectNumber(effect, 'lightness')) / 100);
       return { m: mul(light, mul(sat, hue)), offset: [0, 0, 0] };
-    }
-    case 'invert': {
+    }],
+    ['invert', (_e, amt) => {
       const i = amt / 100;
       const k = 1 - 2 * i;
       return { m: [k, 0, 0, 0, k, 0, 0, 0, k], offset: [i, i, i] };
-    }
-    case 'tint': {
+    }],
+    ['tint', (effect, amt) => {
       // Map black→mapBlack and white→mapWhite along luminance, then blend by amount.
       const b = hex01(effectParam(effect, 'mapBlack') ?? '#000000');
       const w = hex01(effectParam(effect, 'mapWhite') ?? '#ffffff');
@@ -152,8 +171,8 @@ function effectToMatrix(effect: Effect): ColorMatrix {
       // final = (1−a)·I + a·tint; offset = a·mapBlack
       const m = I3.map((v, i) => v * (1 - a) + tint[i]! * a) as M3;
       return { m, offset: [b[0] * a, b[1] * a, b[2] * a] };
-    }
-    case 'channel-mixer': {
+    }],
+    ['channel-mixer', (effect) => {
       // Per-output-channel weighted mix (percentages; 100 = full contribution).
       const p = (k: string): number => effectNumber(effect, k) / 100;
       const rr = p('redRed'), rg = p('redGreen'), rb = p('redBlue');
@@ -164,11 +183,8 @@ function effectToMatrix(effect: Effect): ColorMatrix {
         ? [rr, rg, rb, rr, rg, rb, rr, rg, rb]
         : [rr, rg, rb, gr, gg, gb, br, bg, bb];
       return { m, offset: [p('redConst'), p('greenConst'), p('blueConst')] };
-    }
-    default:
-      return IDENTITY_COLOR_MATRIX;
-  }
-}
+    }],
+  ]);
 
 /**
  * Compose the (enabled) color effects of a stack, in order, into one transform.
@@ -179,8 +195,13 @@ export function effectColorMatrix(effects: ReadonlyArray<Effect>): ColorMatrix {
   let offset: [number, number, number] = [0, 0, 0];
   let touched = false;
   for (const e of effects) {
-    if (e.enabled === false || !COLOR_EFFECTS.has(e.type)) continue;
-    const { m: em, offset: eo } = effectToMatrix(e);
+    if (e.enabled === false) continue;
+    const build = COLOR_MATRIX_BUILDERS.get(e.type);
+    // The membership test and the dispatch are now the SAME lookup, so they
+    // cannot disagree — there is no arm left where an effect is "a colour
+    // effect" but has no matrix.
+    if (!build) continue;
+    const { m: em, offset: eo } = build(e, effectNumber(e, primaryParamKey(e.type) ?? 'amount'));
     m = mul(em, m);
     offset = [
       em[0] * offset[0] + em[1] * offset[1] + em[2] * offset[2] + eo[0],

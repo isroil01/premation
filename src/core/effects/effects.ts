@@ -68,6 +68,14 @@ export type EffectType =
   | 'twirl'
   | 'spherize'
   | 'corner-pin'
+  // ── Generate family, round two ──
+  | 'checkerboard'
+  | 'grid'
+  | 'cell-pattern'
+  // ── Noise family ──
+  | 'turbulent-noise'
+  | 'add-grain'
+  | 'median'
   // ── Matte / keying family ──
   | 'set-matte'
   | 'simple-choker'
@@ -1039,6 +1047,107 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'bottomRightY', label: 'Bottom Right Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'bottomLeftX', label: 'Bottom Left X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'bottomLeftY', label: 'Bottom Left Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Generate family, round two ──────────────────────────────────────
+  //
+  // All three composite with 'source-atop', so the pattern fills the layer's
+  // own alpha rather than covering it with a rectangle — a checkerboard inside
+  // your text, not over it. Same choice `proceduralCanvas2d` made for Gradient
+  // Ramp, matched deliberately so the family behaves alike.
+  {
+    type: 'checkerboard',
+    label: 'Checkerboard',
+    params: [
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 1, max: 2000, default: 32 },
+      { key: 'height', label: 'Height', type: 'number', unit: 'px', min: 1, max: 2000, default: 32 },
+      // Shifts the lattice, not the layer — keyframe it to slide the pattern
+      // underneath static content.
+      { key: 'anchorX', label: 'Anchor X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'anchorY', label: 'Anchor Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'colorA', label: 'Color A', type: 'color', default: '#000000' },
+      { key: 'colorB', label: 'Color B', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'grid',
+    label: 'Grid',
+    params: [
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 1, max: 2000, default: 48 },
+      { key: 'height', label: 'Height', type: 'number', unit: 'px', min: 1, max: 2000, default: 48 },
+      { key: 'anchorX', label: 'Anchor X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'anchorY', label: 'Anchor Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'thickness', label: 'Border', type: 'number', unit: 'px', min: 0, max: 200, default: 2 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  // Cell Pattern: Worley (cellular) noise. `membrane` switches between the two
+  // readings of the same field — F1 gives blobs, F2−F1 gives the crystalline
+  // look. They look nothing alike, so exposing one without the other would ship
+  // half the effect.
+  {
+    type: 'cell-pattern',
+    label: 'Cell Pattern',
+    params: [
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 2, max: 500, default: 40 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: -1000, max: 1000, precision: 2, default: 0 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 1, max: 500, default: 100 },
+      { key: 'membrane', label: 'Crystalline', type: 'checkbox', default: false },
+      { key: 'invert', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+
+  // ── Noise family ─────────────────────────────────────────────────────
+  //
+  // Turbulent Noise is NOT a preset of Fractal Noise: it sums the ABSOLUTE
+  // value of each octave, and folding at zero creases the field wherever it
+  // changes sign. Those creases are the wispy filaments, and no Fractal Noise
+  // setting produces them.
+  {
+    type: 'turbulent-noise',
+    label: 'Turbulent Noise',
+    params: [
+      { key: 'scale', label: 'Scale', type: 'number', unit: 'px', min: 1, max: 2000, default: 80 },
+      { key: 'complexity', label: 'Complexity', type: 'number', min: 1, max: 8, precision: 0, default: 4 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: -1000, max: 1000, precision: 2, default: 0 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 1, max: 500, default: 120 },
+      { key: 'brightness', label: 'Brightness', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'invert', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  // Add Grain is not the existing `noise` effect with a new label: grain is
+  // luminance-dependent (peaking in the midtones, vanishing at both ends) and
+  // has a SIZE. Uniform noise has neither, which is why it reads as digital
+  // dirt rather than film.
+  {
+    type: 'add-grain',
+    label: 'Add Grain',
+    params: [
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 30 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 0.1, max: 20, precision: 2, default: 1 },
+      // 0 = monochrome grain (the film default); 100 = independent per channel.
+      { key: 'saturation', label: 'Saturation', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'seed', label: 'Seed', type: 'number', min: 0, max: 10000, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  // Median is a RANK filter, which is why it sits beside the blurs rather than
+  // among them: it removes speckle while leaving edges sharp, and no linear
+  // filter can do both. Radius capped at 8 (17×17, 289 samples/pixel) so it
+  // cannot lock up the bake.
+  {
+    type: 'median',
+    label: 'Median',
+    params: [
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 8, precision: 0, default: 2 },
     ],
     css: () => '',
   },

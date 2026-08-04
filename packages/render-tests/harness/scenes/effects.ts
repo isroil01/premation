@@ -98,6 +98,24 @@ const EFFECTS: EffectSpec[] = [
   // Asymmetric offsets on all four corners: a symmetric pin would still be an
   // affine map, and would pass even if the projective solve collapsed to one.
   { type: 'corner-pin', params: { topLeftX: 40, topLeftY: 18, topRightX: -25, topRightY: 35, bottomRightX: -12, bottomRightY: -30, bottomLeftX: 30, bottomLeftY: -10 } },
+  // ── Generate + Noise, round two ────────────────────────────────────
+  // All six force the CPU bake, so both backends composite the same baked
+  // result and these are expect-pass.
+  //
+  // Non-zero anchors on the two lattice generators: the anchor is modular, so a
+  // scene at 0 would render identically whether the offset were wired or
+  // dropped entirely.
+  { type: 'checkerboard', params: { width: 28, height: 22, anchorX: 9, anchorY: 5, colorA: '#101828', colorB: '#f5c451', opacity: 100 } },
+  { type: 'grid', params: { width: 34, height: 26, anchorX: 7, anchorY: 11, thickness: 3, color: '#7fe7ff', opacity: 100 } },
+  // Crystalline ON, so the scene exercises the F2−F1 branch. With it off this
+  // would render the blob field and pass even if `membrane` were ignored.
+  { type: 'cell-pattern', params: { size: 34, evolution: 2.5, contrast: 140, membrane: true, invert: false } },
+  { type: 'turbulent-noise', params: { scale: 60, complexity: 4, evolution: 1.5, contrast: 150, brightness: 10, invert: false } },
+  // Grain on the gradient subject: its response varies across the ellipse, so
+  // the golden captures the luminance dependence and not just "some noise".
+  { type: 'add-grain', params: { intensity: 80, size: 2, saturation: 0, seed: 3 } },
+  // `median` is deliberately NOT here — it needs a noisy subject to do anything
+  // at all. See `medianDenoiseScene` below.
 ];
 
 function effectScene(spec: EffectSpec): Scene {
@@ -217,4 +235,59 @@ const displacementMapLayerScene: Scene = defineScene({
   },
 });
 
-export const effectScenes: Scene[] = [...EFFECTS.map(effectScene), displacementMapLayerScene];
+/**
+ * Median, on a subject that actually has something to denoise.
+ *
+ * ── Why this scene exists separately ────────────────────────────────────────
+ *
+ * Median first went in as an ordinary entry in EFFECTS, and its blessed
+ * reference came back visually IDENTICAL to the ungraded gradient ellipse. That
+ * is correct behaviour — a rank filter over a smooth gradient has no outliers to
+ * discard — and it makes for a worthless golden: the scene would have passed
+ * whether the filter ran, no-oped, or was deleted. A dead scene of exactly the
+ * F15 kind, produced not by a broken call this time but by testing a denoiser on
+ * material with no noise in it.
+ *
+ * Stacking Add Grain BEFORE Median gives the filter real speckle to remove, so
+ * the golden records the removal. Break the median and the grain survives, which
+ * moves a large fraction of the frame's pixels — a failure the diff cannot miss.
+ *
+ * The stack order is the test: these two are the only effects on the layer, and
+ * reversing them would grain the smoothed image instead of smoothing the grained
+ * one, which is a visibly different picture.
+ */
+const medianDenoiseScene: Scene = defineScene({
+  id: 'effect-median-denoise',
+  description: 'Median removing Add Grain speckle from a gradient ellipse (grain applied first).',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'expect-pass',
+  build(graph) {
+    graph.addNode(node('subj', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 220, height: 170, shapeType: 'ellipse' },
+      style: { fill: '#000' },
+    }));
+    graph.setFill('subj', {
+      type: 'linear',
+      angle: 30,
+      stops: [
+        { id: 'a', offset: 0, color: '#2b3cff' },
+        { id: 'b', offset: 1, color: '#ff7a1a' },
+      ],
+    } as never);
+    graph.setEffects('subj', [
+      { id: 'grain', type: 'add-grain', params: { intensity: 90, size: 1, saturation: 0, seed: 7 } },
+      { id: 'med', type: 'median', params: { radius: 3 } },
+    ]);
+  },
+});
+
+export const effectScenes: Scene[] = [
+  ...EFFECTS.map(effectScene),
+  displacementMapLayerScene,
+  medianDenoiseScene,
+];
