@@ -676,7 +676,7 @@ Catalogued rather than absorbed.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
-| **F14** | **Trim Paths does not trim — it only trims the stroke.** `buildSnapshot.ts:1986` writes `layer.trim = segs`, and that field has exactly two non-test readers: the content-hash cache key (`contentHash.ts:52`) and `strokeTrimmed`, called only inside the stroke branch (`Canvas2DVectorRasterizer.ts:458`). The fill runs `shapePath → ctx.fill()` **unconditionally**, above it and independent of it (`Canvas2DVectorRasterizer.ts:445-452`). AE's Trim Paths cuts **the path itself**, so the fill follows the trim. Ours is wrong against AE for **any filled shape**, today, in shipped builds — and a new shape layer defaults to a solid fill (`#2B7EFF`), so this is the common case, not an edge one. Found while deciding whether `trim` folds into `fx.pathOps`. **This is a correctness defect, not a missing feature** — "trim doesn't fold into the stack" and "trim doesn't trim fills" get prioritised very differently, and the second is the true one. | **Correctness, live** | Fix = the multi-subpath prerequisite: lift `Pt[][]` — already produced by `trimPolyline` (`trimPath.ts:191`), the only such producer, currently consumed entirely inside `strokeTrimmed` and never escaping into the render contract — into `RenderLayer`, and teach the **rasterizer, content hash, hit-testing and bbox** about subpath lists. **The fix and the `trim`/`rep` fold-in prerequisite are the same work**; one change unblocks both. **Deliberately breaks byte-identity** for filled+trimmed shapes, so it ships as an announced **behaviour change with a release note**, not a silent migration — same treatment as the curves interpolation change and F1's error surfacing (M8b). Design context: `PREMATION_COMPLETE_REFERENCE.md` §17.5. |
+| **F14** | **FIXED (multi-subpath geometry).** ~~Trim Paths does not trim — it only trims the stroke.~~ `buildSnapshot.ts:1986` writes `layer.trim = segs`, and that field has exactly two non-test readers: the content-hash cache key (`contentHash.ts:52`) and `strokeTrimmed`, called only inside the stroke branch (`Canvas2DVectorRasterizer.ts:458`). The fill runs `shapePath → ctx.fill()` **unconditionally**, above it and independent of it (`Canvas2DVectorRasterizer.ts:445-452`). AE's Trim Paths cuts **the path itself**, so the fill follows the trim. Ours is wrong against AE for **any filled shape**, today, in shipped builds — and a new shape layer defaults to a solid fill (`#2B7EFF`), so this is the common case, not an edge one. Found while deciding whether `trim` folds into `fx.pathOps`. **This is a correctness defect, not a missing feature** — "trim doesn't fold into the stack" and "trim doesn't trim fills" get prioritised very differently, and the second is the true one. | **Correctness, live** | Fix = the multi-subpath prerequisite: lift `Pt[][]` — already produced by `trimPolyline` (`trimPath.ts:191`), the only such producer, currently consumed entirely inside `strokeTrimmed` and never escaping into the render contract — into `RenderLayer`, and teach the **rasterizer, content hash, hit-testing and bbox** about subpath lists. **The fix and the `trim`/`rep` fold-in prerequisite are the same work**; one change unblocks both. **Deliberately breaks byte-identity** for filled+trimmed shapes, so it ships as an announced **behaviour change with a release note**, not a silent migration — same treatment as the curves interpolation change and F1's error surfacing (M8b). Design context: `PREMATION_COMPLETE_REFERENCE.md` §17.5. |
 | **F1** | A precomp used as a **matte source** beyond the depth cap renders the matted layer **UNMATTED, silently** (`CompositionPass.ts:1057` → `:1068`). Pre-existing, unrelated to stencil, same severity class as the risk D2 exists to prevent. | Correctness, latent | **SCHEDULED as M8b (S)**, immediately after the M8a mechanism it shares. Not folded into stencil work, where it would be invisible in review. |
 | **F4** | **The local test suite silently ran 13 fewer test files than a clean checkout** — 392 vs 405 discovered, ~533 tests, including `editorBoot.smoke.test.tsx`. Files present on disk and tracked at HEAD; jest returned nothing even when pointed directly at them. Not a cache issue. Same directories `git stash` failed on with "Permission denied". | **Process, high** | **RESOLVED 2026-08-03** — repo moved `OneDrive/Desktop/motion-editor` → `C:\Users\isroi\dev\motion-editor`. Discovery now 405/405; full suite 488 suites / 5739 passing / 0 failures. |
 | **F6** | **Bake ownership is expressed by more than one predicate and they can disagree.** `snapshotToFrameScene` gated on `effectsNeedCpuBake`, the rasterizer on `layerNeedsCpuBake`; fill opacity alone triggers a bake without any effect requiring it, so both sides claimed the chain and effects applied twice. Third instance of the family (after ea47497 "which side may bake" and b814e3a "what the bake can draw"). `fill-opacity-zero-stroke` was correct at HEAD, wrong mid-branch, correct again by luck of commit order — no golden would have caught it one commit earlier. | Correctness, class | **SCHEDULED as M5b**, before M6 — `hasActiveMaskPaths` is about to become a fourth gate. Fix is one `layerIsBaked()` source of truth, not three sites kept in sync by attention. |
@@ -688,6 +688,52 @@ Catalogued rather than absorbed.
 | **F5** | `bevelWorkingBuffer.test.ts:119` asserts `expect(capped.ms).toBeLessThan(full.ms)` — **a wall-clock performance assertion inside a correctness suite**. Failed once under full-suite load, then green 3/3. It will flake on any loaded machine, and CI is a loaded machine. Compounded by F4: it only ever ran in environments not used locally, so F4 was hiding *failures*, not just tests. | Test integrity | Assert the invariant it proxies for (bounded work / buffer size), or move it to a benchmark that does not gate a merge. **Filed, not fixed.** |
 | **F2** | Render gates test `mask.paths.length > 0`; an all-`none` stack therefore still runs one redundant full-frame matte fill. Correct output, wasted pass. | Perf, minor | Move gates to `hasActiveMaskPaths` when that path is next touched (M6). |
 | **F3** | Precomp targets are the heaviest in the graph (viewport × `rgba16float` × depth × MSAA 4, ×4). No test asserts a memory ceiling. | Perf, unmeasured | Consider a cheaper 2D-only pool for stencil scopes; measure first. |
+
+## 2b-bis. Release note — Trim Paths cuts the path (F14, FIXED)
+
+**Behaviour change. Filled + trimmed shapes look different after this build.**
+
+Trim Paths used to trim only the **stroke**: `layer.trim` was read inside the
+rasterizer's stroke loop and the fill traced the whole shape above it,
+unconditionally. AE cuts the path itself and the fill follows, so any filled
+shape with a trim was wrong — and a new shape layer defaults to a solid fill
+(`#2B7EFF`), so it was wrong for the common case, not an edge one.
+
+What changes on screen:
+
+  * A **filled** trimmed shape now shows the trimmed region, closed implicitly
+    from the trim's end back to its start — the wedge AE draws. It used to show
+    the whole fill with a partial outline drawn over it.
+  * A trim whose window is **empty** (`start >= end`) now draws nothing. It used
+    to draw the entire fill: the stroke rendered no arcs and the fill ignored
+    the trim, so "trim it all away" showed a solid shape.
+  * **Stroke-only** shapes (no fill, or a fully transparent one) are unaffected.
+
+Nothing in the document changes — `fx.trim` is untouched, there is no schema
+bump and no migration. This is entirely a render-time fix, so re-opening an old
+project simply renders it correctly. Announced rather than silent, on the same
+grounds as the curves-interpolation change and F1's error surfacing (M8b).
+
+**Known gap, unchanged by this work:** a rect's **rounded corners are not
+sampled** into the trim outline — the cut follows the four hard corners. That
+was already true when only the stroke was trimmed; the fill now inherits it.
+See `outlinePolyline` in `raster/vectorDraw.ts`.
+
+**Phase 3 gate — measured, not assumed.** Folding `trim` into `fx.pathOps` was
+blocked on whether reorder arrows would be inert. They are not: at a 37% trim,
+moving a trim card past **every one of the six operators** changes the geometry
+(zigzag, roundCorners, pucker, twist, offset, roughen). The one equal case —
+zigzag at exactly 50% of a rect — is a coincidence of trimming precisely at a
+vertex, not a property. Measured in the running app against the real modules.
+The **repeater** is a different answer: see F16.
+
+## 2b-ter. Found while fixing F14 — logged, not fixed
+
+| # | Finding | Severity | Proposed |
+|---|---|---|---|
+| **F15** | **The `shape-path-op-zigzag` golden has not exercised a path operator since schema 1.3.0.** The harness scene calls `graph.setPathOp('z', …)` (`render-tests/harness/scenes/shapes.ts:89`), but `SceneGraph` renamed that method to `setPathOps` in `85aa8ac` and nothing updated the scene. Every run since then logs `TypeError: n.setPathOp is not a function` and renders a **plain stroked rect**. The scene is marked `known-divergent`, so its failure is not gated and the error scrolls past. The `pathEscapePadding` proof it cites as evidence is therefore **inert at the pixel level** — the unit test still pins the arithmetic, but no golden confirms it. Not fixed here: repairing it re-blesses a golden for a reason unrelated to trim, which is exactly the attribution mistake this work was told to avoid. | **Test integrity, high** | Rename to `setPathOps` with an array, re-bless `shape-path-op-zigzag`, and confirm the new pixels show a zigzag. Consider failing the run on `[render-fails]` even for `known-divergent` scenes — a scene that did not BUILD is not a scene with an accepted visual gap. |
+| **F16** | **The repeater cannot fold into `fx.pathOps` without losing `offsetOpacity`.** Copies are emitted as N `RenderLayer`s sharing one geometry and differing by transform deltas. Making a repeater card's POSITION in the chain meaningful requires baking the copies into geometry — now expressible as N subpaths — but a `Subpath` carries no paint, so per-copy **opacity** (and any future per-copy fill) has nowhere to live. Folding it in as-is would ship a reorder control that works while silently dropping a parameter users already animate (`rep.offsetOpacity` is keyframeable). | **Design, blocking Phase 3b** | Either add per-run paint to the render contract first — a strictly larger change than the subpath lift — or fold in `trim` alone and leave the repeater on its fixed final position, documented as such. Do **not** ship a repeater card whose arrows move a control that cannot carry its own parameters. |
+| **F17** | **`rasterPadding` reads bezier handles as RELATIVE; every other consumer reads them as ABSOLUTE.** `BezierPoint.inX/outX` are documented absolute ("Equal to (x,y) for a corner", `packages/workspace/src/math/BezierPoint.ts:7`) and `shapePath` passes them straight to `ctx.bezierCurveTo`. `rasterPadding` computes `p.x + (p.inX ?? 0)` (`raster/vectorDraw.ts:225`), which for a corner doubles the coordinate and over-pads by the point's own distance from the origin. Harmless today — over-padding is transparent margin — but it is two readers of one field disagreeing on its units (§2·0), and the `pathEscapePadding` suite was authored to the wrong convention (`inX: 0`), so it pins the bug rather than catching it. Carried through the subpath lift **verbatim**, deliberately: correcting it shrinks the raster and would perturb `shape-path-op-zigzag`, whose reference was blessed with the over-pad — and see F15 for why that scene cannot currently confirm anything. | **Correctness, latent** | Fix after F15, so the golden that measures path escape is actually measuring a path operator when the padding changes. |
 
 ## 2d. DECISION D3 — templates are deliberately de-scoped
 

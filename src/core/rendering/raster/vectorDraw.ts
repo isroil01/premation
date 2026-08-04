@@ -15,7 +15,8 @@
 import type { RenderLayer } from '../RenderBackend';
 import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
-import { trimPolyline, type Pt } from '@core/scene/trimPath';
+import type { Pt } from '@core/scene/trimPath';
+import { layerSubpaths, hasPathGeometry } from './subpaths';
 import { effectNumber } from '@core/effects/effects';
 import { layerIsBaked } from '@core/effects/effectBake';
 
@@ -214,18 +215,24 @@ export function rasterPadding(layer: RenderLayer): number {
   // inked extent came out 238px against the reference's 262px, losing 22% of
   // the stroke's pixels. Reading the resolved points covers every operator
   // (and any future one) instead of special-casing Zigzag's parameter.
-  const pts = layer.pathPoints;
-  if (pts && pts.length > 0) {
+  //
+  // Every RUN is measured, not just the first: a trim that wraps past the end of
+  // the path produces two arcs, and the one that escapes the box is as likely to
+  // be the second as the first.
+  const runs = layerSubpaths(layer);
+  if (runs.length > 0) {
     const hw = layer.width / 2;
     const hh = layer.height / 2;
     let escape = 0;
-    for (const p of pts) {
-      // Handles too: a bezier bulges toward them, so an anchor inside the box
-      // with a handle outside it still paints outside.
-      const xs = [p.x, p.x + (p.inX ?? 0), p.x + (p.outX ?? 0)];
-      const ys = [p.y, p.y + (p.inY ?? 0), p.y + (p.outY ?? 0)];
-      for (const x of xs) escape = Math.max(escape, Math.abs(x) - hw);
-      for (const y of ys) escape = Math.max(escape, Math.abs(y) - hh);
+    for (const run of runs) {
+      for (const p of run.points) {
+        // Handles too: a bezier bulges toward them, so an anchor inside the box
+        // with a handle outside it still paints outside.
+        const xs = [p.x, p.x + (p.inX ?? 0), p.x + (p.outX ?? 0)];
+        const ys = [p.y, p.y + (p.inY ?? 0), p.y + (p.outY ?? 0)];
+        for (const x of xs) escape = Math.max(escape, Math.abs(x) - hw);
+        for (const y of ys) escape = Math.max(escape, Math.abs(y) - hh);
+      }
     }
     if (escape > 0) {
       const total = Math.min(MAX_GLYPH_PAD, escape + strokeOvershoot);
@@ -273,7 +280,17 @@ export function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: Stroke, 
   ctx.setLineDash(stroke.dash.length ? stroke.dash : []);
 }
 
-/** Sample the layer's fill outline into a polyline (for trim stroking). */
+/**
+ * Sample the layer's fill outline into a polyline — the input Trim Paths cuts.
+ *
+ * Called from `buildSnapshot`, not from the draw loop: trim resolves to
+ * geometry now, so the sampling happens once per frame when the snapshot is
+ * built rather than once per stroke when it is drawn.
+ *
+ * Known gap: a rect's rounded corners are NOT sampled — the outline is the four
+ * hard corners. That was already true when only the stroke was trimmed; the fill
+ * now inherits it, so a trimmed rounded rect cuts along the square outline.
+ */
 export function outlinePolyline(layer: RenderLayer): { pts: Pt[]; closed: boolean } {
   const w = layer.width;
   const h = layer.height;
@@ -286,8 +303,14 @@ export function outlinePolyline(layer: RenderLayer): { pts: Pt[]; closed: boolea
     }
     return { pts, closed: true };
   }
-  if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 1) {
-    return { pts: layer.pathPoints.map((p) => ({ x: p.x, y: p.y })), closed: layer.pathOpen !== true };
+  // The FIRST run only. This function samples an outline in order to trim it,
+  // and a layer that already carries multiple runs has already been cut — there
+  // is nothing left for it to sample. (Phase 2 removes the trim-time caller
+  // entirely; the text-on-a-path caller still wants one continuous outline.)
+  const runs = layerSubpaths(layer);
+  if (layer.primitive === 'path' && runs.length > 0 && runs[0]!.points.length > 1) {
+    const first = runs[0]!;
+    return { pts: first.points.map((p) => ({ x: p.x, y: p.y })), closed: first.open !== true };
   }
   return {
     pts: [
@@ -300,22 +323,6 @@ export function outlinePolyline(layer: RenderLayer): { pts: Pt[]; closed: boolea
   };
 }
 
-/** Stroke only the trim-path visible arcs of the shape outline (MG-C). */
-export function strokeTrimmed(ctx: CanvasRenderingContext2D, layer: RenderLayer, stroke: Stroke): void {
-  const { pts, closed } = outlinePolyline(layer);
-  const subs = trimPolyline(pts, closed, layer.trim ?? []);
-  ctx.save();
-  applyStrokeStyle(ctx, stroke);
-  for (const sub of subs) {
-    if (sub.length < 2) continue;
-    ctx.beginPath();
-    ctx.moveTo(sub[0]!.x, sub[0]!.y);
-    for (let i = 1; i < sub.length; i++) ctx.lineTo(sub[i]!.x, sub[i]!.y);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
 /** Trace the layer's fill outline (centred at 0,0) without painting it. */
 export function shapePath(ctx: CanvasRenderingContext2D, layer: RenderLayer): void {
   const w = layer.width;
@@ -323,27 +330,35 @@ export function shapePath(ctx: CanvasRenderingContext2D, layer: RenderLayer): vo
   if (layer.primitive === 'ellipse') {
     ctx.beginPath();
     ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
-  } else if (layer.primitive === 'path' && layer.pathPoints && layer.pathPoints.length > 0) {
+  } else if (layer.primitive === 'path' && hasPathGeometry(layer)) {
+    // ONE Canvas path built from every run. Sub-paths in a single `beginPath`
+    // is how both operations want it: `fill()` treats the runs as one region
+    // (nonzero winding, so a hole cut the opposite way is a hole), and
+    // `stroke()` draws each run independently. Calling beginPath per run would
+    // give the stroke the same result and the fill a different one.
     ctx.beginPath();
-    const pts = layer.pathPoints;
-    // Open strokes (line / freehand pencil) stop at the last point; closed
-    // shapes wrap the final segment back to the first and close.
-    const open = layer.pathOpen === true;
-    // Move to first anchor
-    ctx.moveTo(pts[0]!.x, pts[0]!.y);
-    // Draw cubic bezier segments: each segment uses outgoing handle of current point
-    // and incoming handle of next point
-    const lastSeg = open ? pts.length - 1 : pts.length;
-    for (let i = 0; i < lastSeg; i++) {
-      const curr = pts[i]!;
-      const next = pts[(i + 1) % pts.length]!;
-      ctx.bezierCurveTo(
-        curr.outX, curr.outY,   // outgoing handle of current
-        next.inX,  next.inY,    // incoming handle of next
-        next.x,    next.y,      // next anchor
-      );
+    for (const run of layerSubpaths(layer)) {
+      const pts = run.points;
+      if (pts.length === 0) continue;
+      // Open runs (line / freehand pencil / a trimmed arc) stop at the last
+      // point; closed shapes wrap the final segment back to the first and close.
+      const open = run.open === true;
+      // Move to first anchor
+      ctx.moveTo(pts[0]!.x, pts[0]!.y);
+      // Draw cubic bezier segments: each segment uses outgoing handle of current point
+      // and incoming handle of next point
+      const lastSeg = open ? pts.length - 1 : pts.length;
+      for (let i = 0; i < lastSeg; i++) {
+        const curr = pts[i]!;
+        const next = pts[(i + 1) % pts.length]!;
+        ctx.bezierCurveTo(
+          curr.outX, curr.outY,   // outgoing handle of current
+          next.inX,  next.inY,    // incoming handle of next
+          next.x,    next.y,      // next anchor
+        );
+      }
+      if (!open) ctx.closePath();
     }
-    if (!open) ctx.closePath();
   } else {
     roundRect(ctx, -w / 2, -h / 2, w, h, layer.cornerRadius ?? 0);
   }

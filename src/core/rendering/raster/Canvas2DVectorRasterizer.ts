@@ -16,7 +16,6 @@ import {
   fillStyleFor,
   shapePath,
   strokeShape,
-  strokeTrimmed,
 } from './vectorDraw';
 import { textCssFont } from '../AppTextureProvider';
 
@@ -455,8 +454,11 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     const strokeStack =
       layer.strokes && layer.strokes.length > 0 ? layer.strokes : layer.stroke ? [layer.stroke] : [];
     for (const s of strokeStack) {
-      if (layer.trim) strokeTrimmed(ctx, layer, s);
-      else strokeShape(ctx, s, () => shapePath(ctx, layer), layer.width, layer.height);
+      // No trim branch. Trim is baked into the layer's geometry by
+      // buildSnapshot, so the ordinary trace already describes the cut path —
+      // which is the point: the fill above traces the SAME path and now follows
+      // the trim, as it does in AE.
+      strokeShape(ctx, s, () => shapePath(ctx, layer), layer.width, layer.height);
     }
 
     if (layer.paint) {

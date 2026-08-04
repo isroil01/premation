@@ -1776,9 +1776,18 @@ path ops → trim → repeater emit). A future migration therefore appends **tri
 immediately after the existing chain** and **the repeater last**, which
 reproduces today's evaluation exactly for every existing document.
 
-> **This decision is not the whole story.** Trim's stroke-only implementation is
-> a live correctness defect against AE independent of any stacking work — logged
-> as **F14**, not as a missing feature. See `COMPOSITING_PLAN.md` §2b.
+> **F14 is FIXED.** Trim's stroke-only implementation was a live correctness
+> defect against AE independent of any stacking work. Trim now CUTS the path in
+> `buildSnapshot` and emits the visible arcs as `RenderLayer.subpaths`, so the
+> fill follows it; `layer.trim` and `strokeTrimmed` are gone. Release note and
+> the measured Phase-3 gate: `COMPOSITING_PLAN.md` §2b-bis.
+>
+> **The fold-in gate is now answered, and the two operators answer differently.**
+> Moving a TRIM card past any of the six path operators changes the rendered
+> geometry, so its reorder arrows would be live — worth shipping. A REPEATER card
+> would not be: copies are separate layers sharing one geometry, and baking them
+> into subpaths to make position meaningful drops per-copy opacity, which a
+> `Subpath` cannot carry. See F16 in `COMPOSITING_PLAN.md` §2b-ter.
 
 ---
 

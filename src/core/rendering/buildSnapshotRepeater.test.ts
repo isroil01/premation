@@ -4,6 +4,7 @@ import { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { Repeater } from '@core/scene/repeater';
+import { assertSinglePathSource } from './raster/subpaths';
 
 const COMP = { width: 800, height: 600, background: '#101014' };
 
@@ -64,21 +65,61 @@ describe('buildSnapshot — shape repeater', () => {
   });
 });
 
-describe('buildSnapshot — trim path', () => {
-  it('threads a partial trim onto the layer as visible arcs', () => {
+/**
+ * Trim CUTS the path — it does not annotate the stroke (F14).
+ *
+ * The old contract was `layer.trim = [[lo,hi]]`, an array the rasterizer read
+ * inside its stroke loop and nowhere else; the fill traced the whole shape above
+ * it, unconditionally. These assert the replacement: the arcs come back as
+ * geometry, so fill and stroke read the same cut path.
+ */
+describe('buildSnapshot — trim path cuts geometry', () => {
+  function trimmed(trim: { start: number; end: number; offset: number }) {
     const graph = new SceneGraph();
     graph.addNode(shape('rect'));
-    graph.setTrimPath('rect', { start: 0, end: 50, offset: 0 });
-    const layers = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP).layers;
-    expect(layers[0]!.trim).toEqual([[0, 0.5]]);
+    graph.setTrimPath('rect', trim);
+    return buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP).layers[0]!;
+  }
+
+  it('replaces the shape with the trimmed run, as an OPEN path', () => {
+    const layer = trimmed({ start: 0, end: 50, offset: 0 });
+    expect(layer.primitive).toBe('path');
+    expect(layer.subpaths).toHaveLength(1);
+    expect(layer.subpaths![0]!.open).toBe(true);
+    // Half the outline of a rect: the run spans the top edge and the right edge,
+    // so it ends diagonally opposite where it started.
+    const run = layer.subpaths![0]!.points;
+    expect(run.length).toBeGreaterThan(1);
+    expect({ x: run[0]!.x, y: run[0]!.y }).toEqual({ x: -110, y: -110 });
+    expect({ x: run[run.length - 1]!.x, y: run[run.length - 1]!.y }).toEqual({ x: 110, y: 110 });
   });
 
-  it('omits trim when it covers the full range (no-op)', () => {
-    const graph = new SceneGraph();
-    graph.addNode(shape('rect'));
-    graph.setTrimPath('rect', { start: 0, end: 100, offset: 0 });
-    const layers = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP).layers;
-    expect(layers[0]!.trim).toBeUndefined();
+  it('clears pathPoints — the two geometry fields are mutually exclusive', () => {
+    const layer = trimmed({ start: 0, end: 50, offset: 0 });
+    expect(layer.pathPoints).toBeUndefined();
+    expect(() => assertSinglePathSource(layer)).not.toThrow();
+  });
+
+  it('an OFFSET that wraps past the end yields TWO runs', () => {
+    // The case the single-polyline contract could not express at all, and the
+    // reason trim could never cut geometry before this.
+    const layer = trimmed({ start: 0, end: 50, offset: 75 });
+    expect(layer.subpaths).toHaveLength(2);
+    expect(layer.subpaths!.every((s) => s.open === true)).toBe(true);
+  });
+
+  it('leaves the shape completely alone when the trim covers the full range', () => {
+    const layer = trimmed({ start: 0, end: 100, offset: 0 });
+    expect(layer.subpaths).toBeUndefined();
+    expect(layer.primitive).toBe('rect');
+    expect(layer.visible).toBe(true);
+  });
+
+  it('an EMPTY window draws nothing — not the untrimmed shape', () => {
+    // The old behaviour: `trim = []` stroked no arcs and the fill drew the whole
+    // rect regardless, so "trim everything away" showed a solid rectangle.
+    const layer = trimmed({ start: 50, end: 50, offset: 0 });
+    expect(layer.visible).toBe(false);
   });
 });
 
