@@ -40,6 +40,16 @@ const LUT_EFFECTS: ReadonlySet<EffectType> = new Set<EffectType>([
   'curves',
   'posterize',
   'exposure',
+  // Lumetri qualifies on the SHAPE rule above, which is worth spelling out
+  // because "eight controls including a white balance" does not sound like a
+  // per-channel table. Every one of its controls is:
+  //   • exposure / contrast / highlights / shadows / whites / blacks — one tone
+  //     transfer applied identically to all three channels;
+  //   • temperature / tint — a constant per-channel GAIN, which is the textbook
+  //     case of channel-independent.
+  // Nothing in it reads a second channel to decide what to do with the first,
+  // so it renders on both backends with no bake, like the other four.
+  'lumetri',
 ]);
 
 export function isLutEffect(type: EffectType): boolean {
@@ -134,39 +144,181 @@ function posterizeTable(levels: number): Uint8Array {
   return t;
 }
 
-/** Read a Curves effect's control points from its params (or a default ramp). */
-function curvePoints(effect: Effect): [number, number][] {
-  const raw = (effect.params as Record<string, unknown> | undefined)?.points;
-  if (Array.isArray(raw)) {
-    const pts = raw
-      .filter((p): p is [number, number] => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === 'number'))
-      .map((p) => [p[0], p[1]] as [number, number]);
-    if (pts.length >= 2) return pts;
-  }
-  return [[0, 0], [255, 255]];
+/**
+ * Read one Curves control-point param, or null when it would not change
+ * anything.
+ *
+ * Null covers BOTH "absent or malformed" and "still the identity ramp", and
+ * conflating them is deliberate: `defaultParams` fills all four curve params
+ * in, so an untouched per-channel curve arrives as a real, well-formed
+ * `[[0,0],[255,255]]` and a presence check would never skip it. The identity
+ * check is what makes the ordinary case — an RGB curve and three untouched
+ * channels — cost what it did before the channels existed.
+ */
+function curvePoints(effect: Effect, key: string): [number, number][] | null {
+  const raw = (effect.params as Record<string, unknown> | undefined)?.[key];
+  if (!Array.isArray(raw)) return null;
+  const pts = raw
+    .filter((p): p is [number, number] => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === 'number'))
+    .map((p) => [p[0], p[1]] as [number, number]);
+  if (pts.length < 2) return null;
+  const isIdentityRamp =
+    pts.length === 2 &&
+    pts[0]![0] === 0 && pts[0]![1] === 0 &&
+    pts[1]![0] === 255 && pts[1]![1] === 255;
+  return isIdentityRamp ? null : pts;
 }
 
-/** The single-channel table for one LUT effect, or null if it isn't one. */
-function tableFor(effect: Effect): Uint8Array | null {
+/**
+ * Curves, per channel.
+ *
+ * The composite curve (`points`) runs FIRST on all three, then each channel's
+ * own curve composes on top of that channel's result — the same order AE uses,
+ * and the reason it is the only order that behaves: a per-channel curve is
+ * authored against what the composite already did, so running it first would
+ * make the composite silently re-grade the correction you just made.
+ *
+ * A channel with no curve of its own is left at the composite's output rather
+ * than reset to identity.
+ */
+function curvesTables(effect: Effect): ChannelLut {
+  const composite = curvePoints(effect, 'points');
+  const base = composite ? curvesTable(composite) : identityTable();
+  const perChannel = (key: string): Uint8Array => {
+    const pts = curvePoints(effect, key);
+    if (!pts) return base;
+    const own = curvesTable(pts);
+    const out = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) out[i] = own[base[i]!]!;
+    return out;
+  };
+  return {
+    r: perChannel('redPoints'),
+    g: perChannel('greenPoints'),
+    b: perChannel('bluePoints'),
+  };
+}
+
+/** The same table on all three channels — the shape most LUT effects have. */
+function uniform(t: Uint8Array): ChannelLut {
+  return { r: t, g: t, b: t };
+}
+
+/**
+ * The per-channel tables for one LUT effect, or null if it isn't one.
+ *
+ * Returns a TRIPLE rather than a single table because two members genuinely
+ * differ per channel: Curves (per-channel curves) and Lumetri (white balance).
+ * The other three return the same table three times via `uniform`, which costs
+ * nothing — `buildChannelLut` composes three tables either way.
+ */
+function tableFor(effect: Effect): ChannelLut | null {
   if (effect.type === 'levels') {
-    return levelsTable(
+    return uniform(levelsTable(
       effectNumber(effect, 'inputBlack'),
       effectNumber(effect, 'inputWhite'),
       effectNumber(effect, 'gamma'),
       effectNumber(effect, 'outputBlack'),
       effectNumber(effect, 'outputWhite'),
-    );
+    ));
   }
-  if (effect.type === 'curves') return curvesTable(curvePoints(effect));
-  if (effect.type === 'posterize') return posterizeTable(effectNumber(effect, 'levels'));
+  if (effect.type === 'curves') return curvesTables(effect);
+  if (effect.type === 'posterize') return uniform(posterizeTable(effectNumber(effect, 'levels')));
   if (effect.type === 'exposure') {
-    return exposureTable(
+    return uniform(exposureTable(
       effectNumber(effect, 'exposure'),
       effectNumber(effect, 'offset'),
       effectNumber(effect, 'gammaCorrection'),
-    );
+    ));
   }
+  if (effect.type === 'lumetri') return lumetriTables(effect);
   return null;
+}
+
+/**
+ * A tone-range weight: 1 at `edge`, falling to ~0 over `width`.
+ *
+ * Gaussian rather than linear so the four tone controls overlap smoothly and a
+ * Shadows push does not leave a visible seam where its influence stops.
+ */
+function toneWeight(x: number, edge: 0 | 1, width: number): number {
+  const d = (edge === 0 ? x : 1 - x) / width;
+  return Math.exp(-d * d);
+}
+
+/**
+ * Lumetri "Basic Correction", as per-channel transfer tables.
+ *
+ * The chain, in the order it must run:
+ *
+ *   1. white balance   a per-channel gain (temperature warms R / cools B, tint
+ *                      trades G against magenta). FIRST, because everything
+ *                      after it is a tone decision that should be made on
+ *                      already-neutral material — which is exactly why a
+ *                      colourist sets WB before touching exposure.
+ *   2. exposure        multiplicative, in STOPS (2^n), like Exposure's gain.
+ *   3. contrast        a pivot around mid-grey, so it tilts rather than lifts.
+ *   4. tone ranges     shadows / highlights (wide) and blacks / whites (narrow)
+ *                      as additive, weighted pushes.
+ *
+ * ── What this is NOT ────────────────────────────────────────────────────────
+ *
+ * Premiere's Lumetri computes Highlights/Shadows against a pixel's LUMINANCE,
+ * which needs all three channels and would disqualify this from the LUT family
+ * entirely. This applies the same tone transfer per channel instead. On neutral
+ * and near-neutral material the two agree; on a heavily saturated pixel this
+ * one moves the dominant channel further than a luma-weighted version would,
+ * which reads as a slight saturation shift alongside the tone move.
+ *
+ * That trade is deliberate and is the reason the effect is worth having here:
+ * the luma-accurate version costs every layer carrying it a full CPU bake, and
+ * this is a grading control people leave switched on for the whole comp. If the
+ * exact Premiere response is ever needed it belongs as a SEPARATE pixel-pass
+ * effect, not as a change here — moving this out of `LUT_EFFECTS` would silently
+ * make every existing project that uses it slower.
+ */
+function lumetriTables(effect: Effect): ChannelLut {
+  const exposure = effectNumber(effect, 'exposure');
+  const contrast = effectNumber(effect, 'contrast');
+  const highlights = effectNumber(effect, 'highlights') / 100;
+  const shadows = effectNumber(effect, 'shadows') / 100;
+  const whites = effectNumber(effect, 'whites') / 100;
+  const blacks = effectNumber(effect, 'blacks') / 100;
+  const temperature = effectNumber(effect, 'temperature') / 100;
+  const tint = effectNumber(effect, 'tint') / 100;
+
+  const gain = Math.pow(2, exposure);
+  const k = 1 + contrast / 100;
+  // ±0.3 at full deflection: enough to correct a badly-lit plate, not so much
+  // that the slider's usable range is its first fifth.
+  const wb: [number, number, number] = [
+    1 + 0.3 * temperature,
+    1 - 0.3 * tint,
+    1 - 0.3 * temperature,
+  ];
+
+  const build = (channelGain: number): Uint8Array => {
+    const t = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) {
+      let x = (i / 255) * channelGain * gain;
+      x = x < 0 ? 0 : x > 1 ? 1 : x;
+      x = (x - 0.5) * k + 0.5;
+      x = x < 0 ? 0 : x > 1 ? 1 : x;
+      // Additive, weighted by where the input sits. Scaled by 0.5 so ±100 is a
+      // strong correction rather than a clipped frame.
+      x += 0.5 * (
+        shadows * toneWeight(x, 0, 0.35) +
+        blacks * toneWeight(x, 0, 0.15) +
+        highlights * toneWeight(x, 1, 0.35) +
+        whites * toneWeight(x, 1, 0.15)
+      );
+      x = x < 0 ? 0 : x > 1 ? 1 : x;
+      t[i] = clamp255(Math.round(x * 255));
+    }
+    return t;
+  };
+
+  return { r: build(wb[0]), g: build(wb[1]), b: build(wb[2]) };
 }
 
 /**
@@ -217,13 +369,13 @@ export function buildChannelLut(effects: ReadonlyArray<Effect>): ChannelLut | nu
 
   const lut: ChannelLut = { r: identityTable(), g: identityTable(), b: identityTable() };
   for (const e of active) {
-    const table = tableFor(e);
-    if (!table) continue;
-    // Compose: later effects look up the previous effect's output.
+    const tables = tableFor(e);
+    if (!tables) continue;
+    // Compose: later effects look up the previous effect's output, per channel.
     for (let i = 0; i < 256; i++) {
-      lut.r[i] = table[lut.r[i]!]!;
-      lut.g[i] = table[lut.g[i]!]!;
-      lut.b[i] = table[lut.b[i]!]!;
+      lut.r[i] = tables.r[lut.r[i]!]!;
+      lut.g[i] = tables.g[lut.g[i]!]!;
+      lut.b[i] = tables.b[lut.b[i]!]!;
     }
   }
   return lut;

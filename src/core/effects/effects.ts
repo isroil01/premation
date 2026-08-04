@@ -60,6 +60,14 @@ export type EffectType =
   | 'exposure'
   | 'vibrance'
   | 'colorama'
+  | 'lumetri'
+  | 'selective-color'
+  | 'shadow-highlight'
+  // ── Distort family ──
+  | 'bulge'
+  | 'twirl'
+  | 'spherize'
+  | 'corner-pin'
   // ── Matte / keying family ──
   | 'set-matte'
   | 'simple-choker'
@@ -877,7 +885,161 @@ export const EFFECT_DEFS: EffectDef[] = [
   {
     type: 'curves',
     label: 'Curves',
-    params: [{ key: 'points', label: 'Curve', type: 'curve', default: [[0, 0], [255, 255]] }],
+    // Composite first, then the three channels — the order `curvesTables`
+    // composes them in, and the order the inspector should read top to bottom.
+    // A channel left at its identity ramp is skipped, so the common case (an
+    // RGB curve and nothing else) costs exactly what it did before.
+    params: [
+      { key: 'points', label: 'RGB', type: 'curve', default: [[0, 0], [255, 255]] },
+      { key: 'redPoints', label: 'Red', type: 'curve', default: [[0, 0], [255, 255]] },
+      { key: 'greenPoints', label: 'Green', type: 'curve', default: [[0, 0], [255, 255]] },
+      { key: 'bluePoints', label: 'Blue', type: 'curve', default: [[0, 0], [255, 255]] },
+    ],
+    css: () => '',
+  },
+
+  // Lumetri Basic Correction: the eight controls a colourist reaches for first,
+  // in one effect. A per-channel LUT (see colorLut.ts for why all eight qualify),
+  // so it costs no bake on either backend — which matters for this one more than
+  // most, because it is switched on for the whole comp and left there.
+  {
+    type: 'lumetri',
+    label: 'Lumetri Color',
+    params: [
+      { key: 'exposure', label: 'Exposure', type: 'number', unit: 'stops', min: -5, max: 5, precision: 2, default: 0 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'highlights', label: 'Highlights', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'shadows', label: 'Shadows', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'whites', label: 'Whites', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'blacks', label: 'Blacks', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'temperature', label: 'Temperature', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'tint', label: 'Tint', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // Selective Colour: shift the CMYK make-up of ONE colour range per instance.
+  //
+  // AE keeps all nine ranges inside one effect behind a dropdown that swaps the
+  // visible sliders. This param model is flat and the inspector generates rows
+  // straight from `params`, so nine ranges in one effect would mean 36 sliders
+  // stacked in a column — every one of them live, only four of them meaningful.
+  // One range per instance instead: stack two copies to grade two ranges, which
+  // is also what makes each range's four values independently keyframeable.
+  {
+    type: 'selective-color',
+    label: 'Selective Color',
+    params: [
+      // 0 reds, 1 yellows, 2 greens, 3 cyans, 4 blues, 5 magentas,
+      // 6 whites, 7 neutrals, 8 blacks. A number so it keyframes.
+      { key: 'range', label: 'Colors', type: 'number', min: 0, max: 8, precision: 0, default: 0 },
+      { key: 'cyan', label: 'Cyan', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'magenta', label: 'Magenta', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'yellow', label: 'Yellow', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'black', label: 'Black', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'absolute', label: 'Absolute', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+
+  // Shadow/Highlight: a LOCAL tone correction — how far a pixel moves depends
+  // on its neighbourhood's brightness, not its own. Spatial, so it can never be
+  // a LUT and always forces the bake.
+  {
+    type: 'shadow-highlight',
+    label: 'Shadow/Highlight',
+    params: [
+      { key: 'shadowAmount', label: 'Shadow Amount', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'highlightAmount', label: 'Highlight Amount', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 200, default: 30 },
+      { key: 'tonalWidth', label: 'Tonal Width', type: 'number', unit: '%', min: 1, max: 100, default: 50 },
+    ],
+    css: () => '',
+  },
+
+  // ── Distort family ─────────────────────────────────────────────────
+  //
+  // Radii are in LAYER pixels, not percentages, and are declared `px` so
+  // `scaleEffectLengths` carries them through the raster-scale bake. A
+  // percentage radius would resize with the layer, which is wrong for a control
+  // meant to sit over a fixed feature of the image.
+  //
+  // Centres are OFFSETS FROM THE LAYER CENTRE, for the same reason Corner Pin's
+  // corners are offsets — see the long note there. The static default table
+  // cannot see the layer, so an absolute centre would default to 0,0, putting
+  // every new Bulge in the top-left corner with most of its disc off the layer.
+  // Offsetting from the centre makes the default the useful one.
+  {
+    type: 'bulge',
+    label: 'Bulge',
+    params: [
+      { key: 'centerX', label: 'Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 120 },
+      // Negative pinches. The pair in one control is how AE presents it, and it
+      // keyframes through zero cleanly — which two separate controls would not.
+      { key: 'height', label: 'Bulge Height', type: 'number', unit: '%', min: -100, max: 100, default: 50 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'twirl',
+    label: 'Twirl',
+    params: [
+      { key: 'centerX', label: 'Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 120 },
+      // Beyond ±360 deliberately: a multi-turn twirl is a real look, and
+      // clamping at one turn would make the keyframed spin stop dead.
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', min: -1440, max: 1440, default: 90 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'spherize',
+    label: 'Spherize',
+    params: [
+      { key: 'centerX', label: 'Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 120 },
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: -100, max: 100, default: 60 },
+    ],
+    css: () => '',
+  },
+  // Corner Pin: a PROJECTIVE map, which is what separates it from the Transform
+  // effect — that one is affine and can never produce perspective.
+  //
+  // ── Why these are OFFSETS and not absolute positions ──────────────────────
+  //
+  // AE states corner pins as absolute points, which it can do because it seeds
+  // them from the layer's size when you apply the effect. This param model has
+  // a STATIC default table that cannot see the layer, so absolute positions
+  // would all have to default to 0 — a quad collapsed to a point, i.e. a layer
+  // that vanishes the instant the effect is added.
+  //
+  // The obvious patch is a sentinel ("all eight zero means untouched"), and it
+  // is a trap: the moment the user drags ONE corner off zero the other seven
+  // are still zero, the sentinel stops applying, and the layer collapses
+  // anyway. Worse, it makes 0 mean two different things depending on its
+  // neighbours.
+  //
+  // Offsets from the natural rectangle remove the problem rather than manage
+  // it. Zero is genuinely the identity, every value means exactly one thing,
+  // and each corner is independently keyframeable from a resting state — which
+  // absolute positions seeded at apply time never would be.
+  {
+    type: 'corner-pin',
+    label: 'Corner Pin',
+    params: [
+      { key: 'topLeftX', label: 'Top Left X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topLeftY', label: 'Top Left Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightX', label: 'Top Right X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightY', label: 'Top Right Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightX', label: 'Bottom Right X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightY', label: 'Bottom Right Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftX', label: 'Bottom Left X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftY', label: 'Bottom Left Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+    ],
     css: () => '',
   },
 
