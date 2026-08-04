@@ -26,6 +26,7 @@ import {
   type PathOpType,
   type PathOpParam,
 } from '@core/scene/pathOps';
+import type { RepeaterComposite } from '@core/scene/repeater';
 import styles from './TextAnimatorControls.module.css';
 import { Checkbox } from '@components/Checkbox';
 
@@ -44,10 +45,35 @@ const TYPES: { id: PathOpType; label: string }[] = [
   // by arc length cuts a ruffled outline somewhere quite different from where it
   // cuts the smooth one it was built from.
   { id: 'trim', label: 'Trim Paths' },
+  // Folded in for the same reason Trim was, and the reason is stronger here.
+  // The Repeater applies a per-copy SCALE, and every operator in the chain
+  // measures its effect in absolute px — zigzag's amplitude, Round Corners'
+  // radius, Offset Path's distance. Scaling before an operator changes the
+  // ratio between the two; scaling after it does not. So the position genuinely
+  // changes the picture, which a fixed slot after the chain could not express.
+  { id: 'repeater', label: 'Repeater' },
 ];
 
+/** AE's stacking choice. `above` is this renderer's historical behaviour. */
+const COMPOSITE: { id: RepeaterComposite; label: string }[] = [
+  { id: 'above', label: 'Above' },
+  { id: 'below', label: 'Below' },
+];
+
+interface ParamSpec {
+  param: PathOpParam;
+  label: string;
+  unit?: string;
+  /** Explicit bounds/granularity, when the type alone does not imply them. */
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Signed parameter — suppresses the default non-negative floor. */
+  signed?: boolean;
+}
+
 /** The rows a given operator actually has. One list, read by the card. */
-function paramsFor(type: PathOpType): ReadonlyArray<{ param: PathOpParam; label: string; unit?: string }> {
+function paramsFor(type: PathOpType): ReadonlyArray<ParamSpec> {
   if (type === 'trim') {
     return [
       { param: 'start', label: 'Start', unit: '%' },
@@ -55,8 +81,29 @@ function paramsFor(type: PathOpType): ReadonlyArray<{ param: PathOpParam; label:
       { param: 'offset', label: 'Offset', unit: '%' },
     ];
   }
+  if (type === 'repeater') {
+    // Same rows, same labels and the same order the Repeater section had, so
+    // the fold is a move rather than a redesign. `offset` is the ladder Offset
+    // — AE's, shifting which rung copy 0 starts on — sharing the param slot
+    // with Trim's, which is safe because an operator is exactly one type.
+    // Bounds and steps carried over verbatim: a ladder that cannot be nudged in
+    // hundredths is a scale field that jumps from 1 to 2, and the positions,
+    // rotation and anchors are all signed — a repeater marching left is as
+    // ordinary as one marching right.
+    return [
+      { param: 'copies', label: 'Copies', min: 1, max: 200, step: 1 },
+      { param: 'offset', label: 'Offset', step: 0.1, signed: true },
+      { param: 'anchorX', label: 'Anchor X', unit: 'px', signed: true },
+      { param: 'anchorY', label: 'Anchor Y', unit: 'px', signed: true },
+      { param: 'offsetX', label: 'Position X', unit: 'px', signed: true },
+      { param: 'offsetY', label: 'Position Y', unit: 'px', signed: true },
+      { param: 'offsetRotation', label: 'Rotation', unit: '°', signed: true },
+      { param: 'offsetScale', label: 'Scale', min: 0, step: 0.02 },
+      { param: 'offsetOpacity', label: 'Opacity', min: 0, max: 1, step: 0.02 },
+    ];
+  }
   const { amount, detail } = paramLabels(type);
-  const rows: Array<{ param: PathOpParam; label: string }> = [{ param: 'amount', label: amount }];
+  const rows: ParamSpec[] = [{ param: 'amount', label: amount }];
   if (detail) rows.push({ param: 'detail', label: detail });
   return rows;
 }
@@ -101,6 +148,7 @@ function ParamRow({
   value,
   min,
   max,
+  step,
   unit,
 }: {
   nodeId: string;
@@ -111,6 +159,7 @@ function ParamRow({
   value: number;
   min?: number;
   max?: number;
+  step?: number;
   unit?: string;
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
@@ -144,7 +193,7 @@ function ParamRow({
           />
         </div>
       <span className={styles.paramLabel}>{label}</span>
-      <ValueField value={display} onChange={onChange} min={min} max={max} unit={unit} aria-label={label} />
+      <ValueField value={display} onChange={onChange} min={min} max={max} step={step} unit={unit} aria-label={label} />
     </div>
   );
 }
@@ -215,11 +264,11 @@ function PathOpCard({
           <Icon name="minus" size={12} />
         </button>
       </div>
-      {/* No type picker on a Trim card. Retyping a trim into a Zig-Zag would
-          silently reinterpret its start/end/offset as amount/detail, and there
-          is no sensible value to carry across — Trim is chosen when it is
-          added, from the same Add menu as everything else. */}
-      {op.type !== 'trim' && (
+      {/* No type picker on a Trim or Repeater card. Retyping either into a
+          Zig-Zag would silently reinterpret its own parameters as
+          amount/detail, and there is no sensible value to carry across — both
+          are chosen when added, from the same Add menu as everything else. */}
+      {op.type !== 'trim' && op.type !== 'repeater' && (
         <div className={styles.selectorRow}>
           <span className={styles.paramLabel}>Type</span>
           <Dropdown
@@ -234,6 +283,31 @@ function PathOpCard({
           />
         </div>
       )}
+      {/* Composite is the Repeater's one DISCRETE parameter, so it is a picker
+          rather than a numeric row and carries no stopwatch — interpolating it
+          would mean a frame where the copies are halfway between in front of
+          and behind the original. */}
+      {op.type === 'repeater' && (
+        <div className={styles.selectorRow}>
+          <span className={styles.paramLabel}>Composite</span>
+          <Dropdown
+            placement="left-start"
+            trigger={
+              <button type="button" className={styles.pick}>
+                <span>{op.composite === 'below' ? 'Below' : 'Above'}</span>
+                <Icon name="chevron-down" size={11} />
+              </button>
+            }
+            items={COMPOSITE.map((c) => ({
+              type: 'item' as const,
+              id: c.id,
+              label: c.label,
+              icon: (op.composite ?? 'above') === c.id ? 'check' : undefined,
+              onSelect: () => updatePathOp(nodeId, op.id, { composite: c.id }),
+            }))}
+          />
+        </div>
+      )}
       {paramsFor(op.type).map((row) => (
         <ParamRow
           key={row.param}
@@ -242,8 +316,9 @@ function PathOpCard({
           param={row.param}
           label={row.label}
           value={(op[row.param] ?? 0) as number}
-          min={row.unit === '%' ? -100 : paramMin(op.type, row.param)}
-          max={row.unit === '%' ? 200 : undefined}
+          min={row.min ?? (row.signed ? undefined : row.unit === '%' ? -100 : paramMin(op.type, row.param))}
+          max={row.max ?? (row.unit === '%' ? 200 : undefined)}
+          step={row.step}
           unit={row.unit}
         />
       ))}

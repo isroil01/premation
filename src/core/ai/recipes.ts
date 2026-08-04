@@ -14,8 +14,7 @@
 import type { ToolContext } from '@motion/ai-tools';
 import { set3DEnabled } from '@core/scene/threeD';
 import { PHYSICS, type Bezier, type MotionStyle } from './design';
-import { defaultRepeater, setRepeater } from '@core/scene/repeater';
-import { addPathOp, defaultPathOp, newPathOpId } from '@core/scene/pathOps';
+import { addPathOp, defaultPathOp, newPathOpId, updateRepeaterOp } from '@core/scene/pathOps';
 import { activeSceneWindow, nextSceneElementStart, beginSceneWindow } from './sceneWindow';
 import { applyEntrance, nonUniformStagger, type EntranceArchetype } from './archetypes';
 
@@ -665,15 +664,14 @@ export function recipeRadialBurst(
   set3DEnabled(id, true);
 
   // A ring, not a stack. Three things have to be true at once and only one of
-  // them used to be: the write has to reach the engine (`setRepeater`, not a
-  // `.props` assignment into a copy `getNode` rebuilt for this read), the field
-  // names have to be the ones `readRepeaterConfig` reads (`offsetRotation`, not
-  // `rotation`), and the per-copy rotation has to pivot about a RADIUS — at
-  // anchorX 0 every copy spins about its own origin and all N land on the
-  // same 16px dot.
+  // them used to be: the write has to reach the engine (`updateRepeaterOp`, not
+  // a `.props` assignment into a copy `getNode` rebuilt for this read), the
+  // field names have to be the ones the repeater OPERATOR reads
+  // (`offsetRotation`, not `rotation`), and the per-copy rotation has to pivot
+  // about a RADIUS — at anchorX 0 every copy spins about its own origin and all
+  // N land on the same 16px dot.
   const radius = 42;
-  setRepeater(id, {
-    ...defaultRepeater(),
+  updateRepeaterOp(id, {
     copies,
     offsetX: 0,
     offsetY: 0,

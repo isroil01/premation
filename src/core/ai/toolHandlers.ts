@@ -36,10 +36,10 @@ import { isRiggableKind } from '@core/scene/rigLogo';
 import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
 import { readNodePuppet } from '@core/rig/puppet';
 import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
-import { updateRepeater } from '@core/scene/repeater';
+
 import {
   addPathOp, defaultPathOp, newPathOpId, readPathOps, readTrimOp,
-  ensureTrimOp, updatePathOp, pathOpPropPath, type PathOp,
+  ensureTrimOp, updatePathOp, updateRepeaterOp, pathOpPropPath, type PathOp,
 } from '@core/scene/pathOps';
 
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
@@ -1364,10 +1364,10 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
   const start = i.startOpacity ?? 100;
   const end = i.endOpacity ?? start;
 
-  // Field-for-field into the vocabulary `readRepeaterConfig` actually reads.
+  // Field-for-field into the vocabulary the repeater OPERATOR actually reads.
   // The old shape shared exactly ONE name with it (`copies`), so even a write
   // that had landed would have produced N identical stacked copies.
-  updateRepeater(i.nodeId, {
+  const repOpId = updateRepeaterOp(i.nodeId, {
     copies,
     offsetX: i.positionX ?? 0,
     offsetY: i.positionY ?? 0,
@@ -1382,7 +1382,13 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
   return ok(
     `Repeater on '${i.nodeId}': ${copies} copies, ${i.rotation ?? 0}° apart` +
       (closes ? ' (a closed ring)' : '') +
-      `. Animate 'repeater.copies' or 'repeater.offset' to build it on.` +
+      // The REAL keyframe paths, id-scoped like every other operator's. This
+      // advertised 'repeater.copies' / 'repeater.offset', which were never
+      // property paths this app has understood — a caller following the advice
+      // wrote a track nothing samples. Same reason `set_path_op` returns
+      // `pathop.<id>.amount` rather than a friendly name.
+      `. Animate '${pathOpPropPath(repOpId, 'copies')}' or ` +
+      `'${pathOpPropPath(repOpId, 'offset')}' to build it on.` +
       (closes && !i.anchorX
         ? ` NOTE: anchorX is 0, so every copy pivots about its own origin and the ring has no radius — set anchorX to the radius you want.`
         : ''),

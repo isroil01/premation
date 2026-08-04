@@ -230,16 +230,10 @@ const STATIC: Record<string, MetaSpec> = {
   // id-scoped keyframe path. Listing `trim.start` here would be a label for a
   // property path nothing writes any more.
 
-  // Repeater
-  'rep.copies': {
-    label: 'Copies', group: 'repeater', type: 'number', unit: '',
-    min: 1, max: 200, step: 1, precision: 0, defaultValue: 6, resettable: true, order: ORDER.repeater,
-  },
-  'rep.offsetX': PX('Repeater Position X', 'repeater', ORDER.repeater),
-  'rep.offsetY': PX('Repeater Position Y', 'repeater', ORDER.repeater),
-  'rep.offsetRotation': DEG('Repeater Rotation', 'repeater', ORDER.repeater),
-  'rep.offsetScale': { ...MULT('Repeater Scale', 'repeater', ORDER.repeater), min: 0, step: 0.02 },
-  'rep.offsetOpacity': { ...MULT('Repeater Opacity', 'repeater', ORDER.repeater), min: 0, max: 1, step: 0.02 },
+  // Repeater — same story as trim, one version later. Document 1.5.0 made it a
+  // chain entry with an id-scoped keyframe path, so it is matched by the
+  // `pathop.<id>.<param>` resolver below. The five literal `rep.*` keys that
+  // used to live here were labels for property paths nothing writes any more.
 
   // Time
   timeRemap: {
@@ -428,7 +422,7 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
 const PATHOP_TYPE_LABEL: Record<string, string> = {
   zigzag: 'Zig-Zag', roundCorners: 'Round Corners', pucker: 'Pucker & Bloat',
   twist: 'Twist', offset: 'Offset Paths', roughen: 'Wiggle Paths', trim: 'Trim Paths',
-  none: 'Path Operator',
+  repeater: 'Repeater', none: 'Path Operator',
 };
 const PATHOP_PARAM_LABEL: Record<string, Record<string, string>> = {
   roundCorners: { amount: 'Radius', detail: 'Steps' },
@@ -437,8 +431,36 @@ const PATHOP_PARAM_LABEL: Record<string, Record<string, string>> = {
   offset: { amount: 'Offset' },
   roughen: { amount: 'Size', detail: 'Detail' },
   zigzag: { amount: 'Amount', detail: 'Ridges' },
+  // The repeater's, matching the labels the inspector card shows — a timeline
+  // row reading "Repeater Offsetrotation" is what titleCase would have given.
+  repeater: {
+    copies: 'Copies', offset: 'Offset', anchorX: 'Anchor X', anchorY: 'Anchor Y',
+    offsetX: 'Position X', offsetY: 'Position Y', offsetRotation: 'Rotation',
+    offsetScale: 'Scale', offsetOpacity: 'Opacity',
+  },
 };
 const PATHOP_PERCENT_PARAMS = new Set(['start', 'end', 'offset']);
+
+/**
+ * Bounds and granularity for the repeater's parameters, carried over from the
+ * `rep.*` table this replaced.
+ *
+ * Without them a Scale row steps by 1 — from 1 straight to 2, skipping every
+ * value anyone would use — and Opacity would drag past its own range. The
+ * defaults matter too: a reset has to land on the no-op value (scale and
+ * opacity 1), not on 0, which would make "reset" mean "make it disappear".
+ */
+const REPEATER_PARAM_META: Record<string, { unit?: string; min?: number; max?: number; step?: number; precision?: number; defaultValue?: number }> = {
+  copies: { min: 1, max: 200, step: 1, precision: 0, defaultValue: 6 },
+  offset: { step: 0.1, precision: 2, defaultValue: 0 },
+  anchorX: { unit: 'px' },
+  anchorY: { unit: 'px' },
+  offsetX: { unit: 'px', defaultValue: 80 },
+  offsetY: { unit: 'px' },
+  offsetRotation: { unit: '°' },
+  offsetScale: { min: 0, step: 0.02, precision: 2, defaultValue: 1 },
+  offsetOpacity: { min: 0, max: 1, step: 0.02, precision: 2, defaultValue: 1 },
+};
 
 function resolvePathOpParam(path: string, nodeId?: string): PropertyMeta | null {
   const m = /^pathop\.([^.]+)\.(.+)$/.exec(path);
@@ -458,13 +480,19 @@ function resolvePathOpParam(path: string, nodeId?: string): PropertyMeta | null 
   // Trim's three are percentages of path length; `offset` wraps, so the range
   // is deliberately wider than 0..100 — that is how a chase runs past the end.
   const pct = type === 'trim' && PATHOP_PERCENT_PARAMS.has(param);
+  // The repeater's rows keep the bounds they had as `rep.*` entries. Spread
+  // LAST so they win over the generic defaults below, which is the whole point.
+  const rep = type === 'repeater' ? REPEATER_PARAM_META[param] : undefined;
   return {
     path,
     label: `${PATHOP_TYPE_LABEL[type] ?? 'Path Operator'} ${label}`,
     // The existing 'trim' group is the shape-geometry bucket — it was named for
     // its only occupant. Every path operator belongs in it now that trim is one
     // of them; renaming the group would be churn in every consumer for nothing.
-    group: 'trim',
+    // The repeater keeps its OWN group, which it already had as `rep.*`: it
+    // fans a shape into copies rather than deforming one outline, and the two
+    // read as different sections of the inspector.
+    group: type === 'repeater' ? 'repeater' : 'trim',
     type: pct ? 'percent' : 'number',
     unit: pct ? '%' : '',
     ...(pct ? { min: -100, max: 200 } : {}),
@@ -472,7 +500,8 @@ function resolvePathOpParam(path: string, nodeId?: string): PropertyMeta | null 
     precision: pct ? 1 : 2,
     defaultValue: param === 'end' ? 100 : 0,
     resettable: true,
-    order: ORDER.trim,
+    order: type === 'repeater' ? ORDER.repeater : ORDER.trim,
+    ...rep,
   };
 }
 

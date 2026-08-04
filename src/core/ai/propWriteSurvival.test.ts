@@ -39,8 +39,7 @@ import { createToolContext } from './toolContext';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { readRepeaterConfig } from '@core/scene/repeater';
-import { readTrimOp } from '@core/scene/pathOps';
+import { readTrimOp, readRepeaterOp } from '@core/scene/pathOps';
 import { readPathOps } from '@core/scene/pathOps';
 import type { SceneNode } from '@core/types';
 
@@ -122,7 +121,7 @@ describe('a mutating tool\'s write survives a read-back', () => {
   });
 
   describe('add_repeater', () => {
-    it('lands in the field names readRepeaterConfig actually reads', async () => {
+    it('lands in the field names the repeater OPERATOR actually reads', async () => {
       defaultSceneGraph.addChild('comp_root', node('dot', 'shape'));
       const res = await registry().execute(
         'add_repeater',
@@ -140,7 +139,7 @@ describe('a mutating tool\'s write survives a read-back', () => {
       );
       expect(res.ok).toBe(true);
 
-      const rep = readRepeaterConfig(back('dot'));
+      const rep = readRepeaterOp(back('dot'));
       expect(rep).not.toBeNull();
       expect(rep!.copies).toBe(12);
       // Every one of these was dropped to its default before the fix, because the
@@ -161,8 +160,8 @@ describe('a mutating tool\'s write survives a read-back', () => {
         { nodeId: 'ring', copies: 8, rotation: 45, positionX: 40 },
         ctx(),
       );
-      const rep = readRepeaterConfig(back('ring'))!;
-      expect(rep.copies * rep.offsetRotation).toBe(360);
+      const rep = readRepeaterOp(back('ring'))!;
+      expect(rep.copies! * rep.offsetRotation!).toBe(360);
     });
   });
 
