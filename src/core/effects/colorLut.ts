@@ -34,26 +34,45 @@ export interface ChannelLut {
  * strength depends on the pixel's existing saturation, which needs all three
  * channels — which is why that one is a pixel pass despite also being "a colour
  * effect". Getting that wrong gives an effect that is subtly not the effect.
+ *
+ * ── Membership IS the builder table ─────────────────────────────────────────
+ *
+ * This was a Set beside a separate `tableFor` if-chain that fell through to
+ * `return null`. A type in the Set but missing from the chain reported
+ * `needs.colorLut`, animated its parameters, and rendered nothing. Lumetri
+ * would have been the first to hit it; last run guarded that behaviourally,
+ * and this replaces the guard with a shape where the bug cannot be written.
  */
-const LUT_EFFECTS: ReadonlySet<EffectType> = new Set<EffectType>([
-  'levels',
-  'curves',
-  'posterize',
-  'exposure',
-  // Lumetri qualifies on the SHAPE rule above, which is worth spelling out
-  // because "eight controls including a white balance" does not sound like a
-  // per-channel table. Every one of its controls is:
-  //   • exposure / contrast / highlights / shadows / whites / blacks — one tone
-  //     transfer applied identically to all three channels;
-  //   • temperature / tint — a constant per-channel GAIN, which is the textbook
-  //     case of channel-independent.
-  // Nothing in it reads a second channel to decide what to do with the first,
-  // so it renders on both backends with no bake, like the other four.
-  'lumetri',
-]);
+const LUT_BUILDERS: ReadonlyMap<EffectType, (effect: Effect) => ChannelLut> =
+  new Map<EffectType, (effect: Effect) => ChannelLut>([
+    ['levels', (e) => uniform(levelsTable(
+      effectNumber(e, 'inputBlack'),
+      effectNumber(e, 'inputWhite'),
+      effectNumber(e, 'gamma'),
+      effectNumber(e, 'outputBlack'),
+      effectNumber(e, 'outputWhite'),
+    ))],
+    ['curves', (e) => curvesTables(e)],
+    ['posterize', (e) => uniform(posterizeTable(effectNumber(e, 'levels')))],
+    ['exposure', (e) => uniform(exposureTable(
+      effectNumber(e, 'exposure'),
+      effectNumber(e, 'offset'),
+      effectNumber(e, 'gammaCorrection'),
+    ))],
+    // Lumetri qualifies on the SHAPE rule above, which is worth spelling out
+    // because "eight controls including a white balance" does not sound like a
+    // per-channel table. Every one of its controls is:
+    //   • exposure / contrast / highlights / shadows / whites / blacks — one tone
+    //     transfer applied identically to all three channels;
+    //   • temperature / tint — a constant per-channel GAIN, which is the textbook
+    //     case of channel-independent.
+    // Nothing in it reads a second channel to decide what to do with the first,
+    // so it renders on both backends with no bake, like the other four.
+    ['lumetri', (e) => lumetriTables(e)],
+  ]);
 
 export function isLutEffect(type: EffectType): boolean {
-  return LUT_EFFECTS.has(type);
+  return LUT_BUILDERS.has(type);
 }
 
 function clamp255(v: number): number {
@@ -205,37 +224,6 @@ function uniform(t: Uint8Array): ChannelLut {
 }
 
 /**
- * The per-channel tables for one LUT effect, or null if it isn't one.
- *
- * Returns a TRIPLE rather than a single table because two members genuinely
- * differ per channel: Curves (per-channel curves) and Lumetri (white balance).
- * The other three return the same table three times via `uniform`, which costs
- * nothing — `buildChannelLut` composes three tables either way.
- */
-function tableFor(effect: Effect): ChannelLut | null {
-  if (effect.type === 'levels') {
-    return uniform(levelsTable(
-      effectNumber(effect, 'inputBlack'),
-      effectNumber(effect, 'inputWhite'),
-      effectNumber(effect, 'gamma'),
-      effectNumber(effect, 'outputBlack'),
-      effectNumber(effect, 'outputWhite'),
-    ));
-  }
-  if (effect.type === 'curves') return curvesTables(effect);
-  if (effect.type === 'posterize') return uniform(posterizeTable(effectNumber(effect, 'levels')));
-  if (effect.type === 'exposure') {
-    return uniform(exposureTable(
-      effectNumber(effect, 'exposure'),
-      effectNumber(effect, 'offset'),
-      effectNumber(effect, 'gammaCorrection'),
-    ));
-  }
-  if (effect.type === 'lumetri') return lumetriTables(effect);
-  return null;
-}
-
-/**
  * A tone-range weight: 1 at `edge`, falling to ~0 over `width`.
  *
  * Gaussian rather than linear so the four tone controls overlap smoothly and a
@@ -364,13 +352,16 @@ function exposureTable(stops: number, offset: number, gamma: number): Uint8Array
  * the per-pixel pass entirely.
  */
 export function buildChannelLut(effects: ReadonlyArray<Effect>): ChannelLut | null {
-  const active = effects.filter((e) => e.enabled !== false && isLutEffect(e.type));
+  // One lookup decides both membership and content, so the "listed but
+  // unhandled" arm this loop used to need no longer exists.
+  const active = effects
+    .filter((e) => e.enabled !== false)
+    .map((e) => LUT_BUILDERS.get(e.type)?.(e))
+    .filter((t): t is ChannelLut => t !== undefined);
   if (active.length === 0) return null;
 
   const lut: ChannelLut = { r: identityTable(), g: identityTable(), b: identityTable() };
-  for (const e of active) {
-    const tables = tableFor(e);
-    if (!tables) continue;
+  for (const tables of active) {
     // Compose: later effects look up the previous effect's output, per channel.
     for (let i = 0; i < 256; i++) {
       lut.r[i] = tables.r[lut.r[i]!]!;
