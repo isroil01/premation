@@ -62,6 +62,32 @@ export interface ExprContext {
    *  x and y wiggle INDEPENDENTLY (AE behaviour) instead of diagonally in
    *  lock-step. Still reproducible: same node+prop ⇒ same motion every run. */
   propSeed?: number;
+  /**
+   * The layer's CONTENT bounds at time `t`, in layer space — backs
+   * `sourceRectAtTime`.
+   *
+   * `t` is a real parameter, not decoration: a text layer's bounds change when
+   * its size, tracking or source text animate, and an auto-sizing plate reading
+   * the bounds at the wrong time lags its subject by a frame. The provider is
+   * expected to evaluate the node's props at `t` before measuring.
+   *
+   * `extents` asks for the looser box. For text that is the FONT box (stable
+   * per font and line count) rather than the glyph INK box (tight, changes as
+   * you type) — see the note on `sourceRectAtTime` in `run` for why that is the
+   * closest honest mapping of AE's flag rather than an exact one.
+   */
+  sourceRectAt?: (t: number, extents: boolean) => SourceRect | undefined;
+  /** The current property's own keyframe times, ascending — backs `numKeys`,
+   *  `key(n)` and `nearestKey()`. Empty when the property has no track. */
+  keyTimes?: ReadonlyArray<number>;
+}
+
+/** AE's `sourceRectAtTime` return shape. */
+export interface SourceRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
 }
 
 export interface ExprResult {
@@ -104,16 +130,12 @@ function humanize(e: unknown): string {
   return msg;
 }
 
-/**
- * The complete set of names an expression can see. Was the parameter list for
- * `new Function`; now the contract for the scope built in `run` (and the source
- * of truth for the "Unknown name" hint below and API_NAMES highlighting).
- */
-export const API_PARAMS = [
-  'time', 'value', 'audio', 'ctrl', 'wiggle', 'clamp', 'linear', 'ease', 'easeIn', 'easeOut',
-  'timeToFrames', 'framesToTime', 'random', 'Math', 'valueAtTime', 'velocity', 'speed',
-  'velocityAtTime', 'layer', 'layerAt', 'loopOut', 'loopIn', 'thisComp', 'thisLayer', 'thisProperty',
-] as const;
+// `API_PARAMS` lived here: a fourth hand-written list of the same names, left
+// over from when this API was compiled with `new Function` and the array was
+// its parameter list. It had NO consumers anywhere in src/ or packages/ — the
+// tokenizer reads its own set, and the "Unknown name" hint below hardcodes its
+// suggestions — so it was a stale description of the scope that nothing could
+// notice going wrong. Deleted rather than updated, per the no-dual-shape rule.
 
 function resolveRange(t: number, a: number, b: number, c?: number, d?: number): { k: number; vMin: number; vMax: number } {
   let tMin: number, tMax: number, vMin: number, vMax: number;
@@ -191,7 +213,165 @@ export function compileExpression(src: string): CompiledExpression {
       const compInfo = ctx.comp ?? { width: 1920, height: 1080, duration: 10, fps: 60, numLayers: 1 };
       const timeToFrames = (t = time, fps = compInfo.fps): number => Math.round(t * fps);
       const framesToTime = (f: number, fps = compInfo.fps): number => f / fps;
-      const random = (seed = time): number => hash01(seed);
+      /**
+       * AE's randomness model, which is a SEQUENCE and not a pure function.
+       *
+       * `random()` with no argument must return a different value on each call
+       * within one evaluation — `[random(), random()]` is meant to be a random
+       * point, not the same number twice. But it must also be identical on
+       * every re-evaluation of the same frame, or scrubbing would shimmer and
+       * export would not match preview.
+       *
+       * Both hold by making the sequence a pure function of (seed, call index):
+       * the counter resets per evaluation, so call N of frame F always gets the
+       * same value. `seedRandom(s)` re-bases it; AE's `timeless` second
+       * argument is honoured by simply not mixing time in, which is what this
+       * already does — the seed is the only input.
+       *
+       * The previous `random(seed = time)` was a pure hash of the time, so
+       * every call in a frame returned the SAME number. That is not AE's
+       * behaviour and quietly broke the commonest use.
+       */
+      let randomSeed = ctx.propSeed ?? 0;
+      let randomCounter = 0;
+      const seedRandom = (seed: number, _timeless = false): number => {
+        randomSeed = seed;
+        randomCounter = 0;
+        return 0; // AE returns undefined; 0 keeps the expression numeric.
+      };
+      const nextRandom = (): number => hash01(randomSeed * 1013.7 + (randomCounter += 1) * 71.3);
+      /** `random()` → 0..1 · `random(max)` → 0..max · `random(min, max)`. */
+      const random = (a?: number, b?: number): number => {
+        const u = nextRandom();
+        if (a === undefined) return u;
+        if (b === undefined) return u * a;
+        return a + u * (b - a);
+      };
+      /**
+       * Gaussian random, mean 0 and standard deviation 1 — Box–Muller over two
+       * draws from the same sequence.
+       *
+       * Worth having distinct from `random`: a uniform jitter looks mechanical
+       * because extreme values are exactly as likely as central ones, which is
+       * why AE rigs reach for this for natural-looking variation.
+       */
+      const gaussRandom = (): number => {
+        const u1 = Math.max(1e-9, nextRandom());
+        const u2 = nextRandom();
+        return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      };
+      /**
+       * Coherent noise, −1..1 — smooth in its argument, unlike `random`.
+       *
+       * The distinction that matters: nearby inputs give nearby outputs, so
+       * `noise(time)` drifts where `random()` jitters. That is the whole reason
+       * both exist.
+       */
+      const noise = (x: number, y = 0): number => (smoothNoise(x * 1.7 + y * 31.4) - 0.5) * 2;
+
+      /**
+       * `sourceRectAtTime(t, includeExtents)` — the layer's content bounds.
+       *
+       * The single most-reached-for expression in AE, because an auto-sizing
+       * background behind text is impossible without it, and the reason it is
+       * worth the provider plumbing the rest of this API does not need.
+       *
+       * ── One honest divergence from AE ───────────────────────────────────
+       *
+       * AE's `includeExtents` adds the box-text extents (and, for shapes, the
+       * stroke). Here it selects the FONT box instead of the glyph INK box.
+       * They are not the same flag, but they are the same *choice*: tight to
+       * the pixels drawn, or loose and stable while the text changes. The tight
+       * box is the default because that is what a plate behind text wants; the
+       * loose one stops the plate twitching as the caret moves, which is what
+       * people actually reach for `includeExtents` to fix.
+       *
+       * Returns a plain object, so `sourceRectAtTime().width` reads naturally.
+       * Falls back to the layer box when there is no provider — never
+       * undefined, because a missing rect in the middle of an arithmetic
+       * expression surfaces as a confusing NaN rather than a useful error.
+       */
+      const sourceRectAtTime = (t = time, includeExtents = false): SourceRect =>
+        ctx.sourceRectAt?.(t, includeExtents)
+        ?? {
+          top: 0,
+          left: 0,
+          width: ctx.layerInfo?.width ?? compInfo.width,
+          height: ctx.layerInfo?.height ?? compInfo.height,
+        };
+
+      // ── Keyframe access ────────────────────────────────────────────
+      const keyTimes = ctx.keyTimes ?? [];
+      const numKeys = keyTimes.length;
+      /**
+       * `key(n)` — the nth keyframe, ONE-BASED, as AE numbers them.
+       *
+       * Out-of-range clamps rather than throwing: `key(numKeys)` is the
+       * commonest call and an off-by-one there would otherwise take down the
+       * whole property rather than degrading.
+       */
+      const key = (n: number): { index: number; time: number; value: number } => {
+        const i = Math.max(1, Math.min(numKeys, Math.round(n)));
+        const t = keyTimes[i - 1] ?? 0;
+        return { index: i, time: t, value: selfAt(t) };
+      };
+      /** `nearestKey(t)` — the keyframe closest in time to `t`. */
+      const nearestKey = (t = time): { index: number; time: number; value: number } => {
+        if (numKeys === 0) return { index: 0, time: 0, value };
+        let best = 0;
+        for (let i = 1; i < numKeys; i++) {
+          if (Math.abs(keyTimes[i]! - t) < Math.abs(keyTimes[best]! - t)) best = i;
+        }
+        return key(best + 1);
+      };
+
+      /**
+       * `posterizeTime(fps)` — quantise the clock this expression sees.
+       *
+       * Returns the stepped time rather than mutating anything, because an
+       * interpreted expression has no way to re-enter itself with a different
+       * `time`. `wiggle(3, 40, 1, 0.5, posterizeTime(8))` is the idiomatic use
+       * and reads the same as AE's, even though AE's version is a statement and
+       * this is a value.
+       */
+      const posterizeTime = (fps: number, t = time): number =>
+        fps > 0 ? Math.floor(t * fps) / fps : t;
+
+      // ── Vector maths ───────────────────────────────────────────────
+      // AE treats a 1-element vector and a scalar interchangeably, so each of
+      // these coerces a bare number to [n] rather than erroring.
+      const vec = (v: number | number[]): number[] => (Array.isArray(v) ? v : [v]);
+      const zip = (a: number | number[], b: number | number[], f: (x: number, y: number) => number): number[] => {
+        const va = vec(a); const vb = vec(b);
+        const n = Math.max(va.length, vb.length);
+        // The SHORTER operand extends with its last component, not with zero:
+        // `add([10,20], 5)` means "add 5 to both", which is how AE's scalar
+        // broadcast behaves. Padding with 0 would silently drop the second.
+        const at = (v: number[], i: number): number => v[i] ?? v[v.length - 1] ?? 0;
+        return Array.from({ length: n }, (_, i) => f(at(va, i), at(vb, i)));
+      };
+      const add = (a: number | number[], b: number | number[]): number[] => zip(a, b, (x, y) => x + y);
+      const sub = (a: number | number[], b: number | number[]): number[] => zip(a, b, (x, y) => x - y);
+      const mul = (a: number | number[], b: number | number[]): number[] => zip(a, b, (x, y) => x * y);
+      const div = (a: number | number[], b: number | number[]): number[] =>
+        zip(a, b, (x, y) => (y === 0 ? 0 : x / y));
+      const dot = (a: number | number[], b: number | number[]): number =>
+        zip(a, b, (x, y) => x * y).reduce((s, v) => s + v, 0);
+      /** 3D cross product. 2-vectors are treated as z=0, which is what makes
+       *  `cross([1,0],[0,1])` give [0,0,1] as expected rather than erroring. */
+      const cross = (a: number | number[], b: number | number[]): number[] => {
+        const [ax = 0, ay = 0, az = 0] = vec(a);
+        const [bx = 0, by = 0, bz = 0] = vec(b);
+        return [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+      };
+      const length = (a: number | number[], b?: number | number[]): number =>
+        b === undefined
+          ? Math.hypot(...vec(a))
+          : Math.hypot(...sub(a, b)); // AE's two-argument form: distance between points
+      const normalize = (a: number | number[]): number[] => {
+        const len = Math.hypot(...vec(a));
+        return len === 0 ? vec(a).map(() => 0) : vec(a).map((v) => v / len);
+      };
 
       const selfAt = ctx.selfAt ?? ((): number => value);
       const valueAtTime = (t: number): number => selfAt(t);
@@ -275,8 +455,15 @@ export function compileExpression(src: string): CompiledExpression {
       };
 
       // The evaluator can only see these names — there is no `window`, no
-      // `fetch`, no prototype chain to climb. Keep in sync with API_PARAMS
-      // (the tokenizer's API_NAMES drives editor highlighting off the same set).
+      // `fetch`, no prototype chain to climb.
+      //
+      // §2·0 NOTE. This Map is the AUTHORITY on what exists. Two other lists
+      // describe the same set — `API_NAMES` (editor highlighting) and
+      // `EXPRESSION_API` (autocomplete + docs) — and nothing forced the three to
+      // agree, so a function added here alone would work but be invisible and
+      // undiscoverable: a model with no UI. `API_NAMES` is now DERIVED from
+      // `EXPRESSION_API` below, and `expressionApi.test.ts` asserts this Map and
+      // that table hold the same names, which closes the loop.
       const scope = new Map<string, unknown>([
         ['time', time], ['value', value], ['audio', audio], ['ctrl', ctrl],
         ['wiggle', wiggle], ['clamp', clamp], ['linear', linear],
@@ -288,6 +475,13 @@ export function compileExpression(src: string): CompiledExpression {
         ['layer', layer], ['layerAt', layerAt],
         ['loopOut', loopOut], ['loopIn', loopIn],
         ['thisComp', thisComp], ['thisLayer', thisLayer], ['thisProperty', thisProperty],
+        // ── Round two ──
+        ['sourceRectAtTime', sourceRectAtTime],
+        ['seedRandom', seedRandom], ['gaussRandom', gaussRandom], ['noise', noise],
+        ['numKeys', numKeys], ['key', key], ['nearestKey', nearestKey],
+        ['posterizeTime', posterizeTime],
+        ['add', add], ['sub', sub], ['mul', mul], ['div', div],
+        ['dot', dot], ['cross', cross], ['length', length], ['normalize', normalize],
       ]);
 
       try {
@@ -336,11 +530,34 @@ export interface SyntaxToken {
   start: number;
 }
 
-const API_NAMES = new Set([
-  'time', 'value', 'audio', 'ctrl', 'wiggle', 'clamp', 'linear', 'random', 'Math',
-  'valueAtTime', 'layer', 'layerAt', 'loopOut', 'loopIn', 'ease', 'easeIn', 'easeOut',
-  'timeToFrames', 'framesToTime', 'thisComp', 'thisLayer', 'thisProperty', 'velocity', 'speed', 'velocityAtTime',
-]);
+/**
+ * Names the editor highlights as API — DERIVED from `EXPRESSION_API`, not
+ * maintained beside it.
+ *
+ * These were two hand-written lists (this one and the autocomplete table) plus
+ * the `scope` Map in `run`, three descriptions of one set with nothing forcing
+ * agreement. §2·0, and a costly one for this API in particular: a function
+ * present in `scope` alone works perfectly and is invisible — no highlight, no
+ * autocomplete entry, nothing to discover it by. That is a model with no UI,
+ * which is the exact failure the project standard exists to prevent.
+ *
+ * Derivation collapses two of the three. `expressionApi.test.ts` closes the
+ * third by asserting `scope` and this table name the same set.
+ *
+ * Computed lazily because `EXPRESSION_API` is declared further down the file
+ * and `const` does not hoist its initialiser — deriving eagerly here throws at
+ * module load.
+ */
+let apiNamesCache: Set<string> | null = null;
+function apiNames(): Set<string> {
+  // The ROOT of each label, because the tokenizer looks up `word.split('.')[0]`
+  // — `Math.sin()` must register the name `Math`. Deriving the full label
+  // instead silently un-highlighted `Math`, which the API test caught.
+  apiNamesCache ??= new Set(
+    EXPRESSION_API.map((a) => a.label.replace(/\(\)$/, '').split('.')[0]!),
+  );
+  return apiNamesCache;
+}
 
 /** Split an expression into colored syntax tokens. Never throws. */
 export function tokenizeExpression(src: string): SyntaxToken[] {
@@ -365,7 +582,7 @@ export function tokenizeExpression(src: string): SyntaxToken[] {
     if (/[A-Za-z_$]/.test(c)) {
       let j = i; while (j < src.length && /[A-Za-z0-9_$.]/.test(src[j]!)) j++;
       const word = src.slice(i, j);
-      push(word, API_NAMES.has(word.split('.')[0]!) ? 'api' : 'ident');
+      push(word, apiNames().has(word.split('.')[0]!) ? 'api' : 'ident');
       continue;
     }
     if (c === '(' || c === ')' || c === '[' || c === ']') { push(c, 'paren'); continue; }
@@ -425,4 +642,22 @@ export const EXPRESSION_API: { insert: string; label: string; hint: string }[] =
   { insert: "layerAt('Layer 1', 'x', time - 0.5)", label: 'layerAt()', hint: "another layer's value at a time" },
   { insert: "loopOut('cycle')", label: 'loopOut()', hint: 'repeat keyframes after the last (cycle · pingpong · offset)' },
   { insert: "loopIn('cycle')", label: 'loopIn()', hint: 'repeat keyframes before the first (cycle · pingpong · offset)' },
+  // ── Round two ──
+  { insert: 'sourceRectAtTime().width', label: 'sourceRectAtTime()', hint: 'content bounds {top,left,width,height} — auto-sizing plates' },
+  { insert: 'numKeys', label: 'numKeys', hint: "this property's keyframe count" },
+  { insert: 'key(1).time', label: 'key()', hint: 'nth keyframe (1-based): .index .time .value' },
+  { insert: 'nearestKey(time).time', label: 'nearestKey()', hint: 'keyframe closest to a time' },
+  { insert: 'seedRandom(7)', label: 'seedRandom()', hint: 'rebase the random sequence' },
+  { insert: 'random(100)', label: 'random()', hint: 'random 0..1, 0..max, or min..max — advances per call' },
+  { insert: 'gaussRandom()', label: 'gaussRandom()', hint: 'normal distribution, mean 0 sd 1' },
+  { insert: 'noise(time)', label: 'noise()', hint: 'coherent noise −1..1 — drifts, unlike random()' },
+  { insert: 'posterizeTime(8)', label: 'posterizeTime()', hint: 'stepped time, e.g. wiggle(…, posterizeTime(8))' },
+  { insert: 'add(value, [10, 0])', label: 'add()', hint: 'vector add (scalars broadcast)' },
+  { insert: 'sub(value, [10, 0])', label: 'sub()', hint: 'vector subtract' },
+  { insert: 'mul(value, 2)', label: 'mul()', hint: 'vector multiply' },
+  { insert: 'div(value, 2)', label: 'div()', hint: 'vector divide (÷0 → 0)' },
+  { insert: 'dot([1, 0], [0, 1])', label: 'dot()', hint: 'dot product → scalar' },
+  { insert: 'cross([1, 0], [0, 1])', label: 'cross()', hint: '3D cross product (2-vectors take z=0)' },
+  { insert: 'length(value)', label: 'length()', hint: 'magnitude, or distance between two points' },
+  { insert: 'normalize(value)', label: 'normalize()', hint: 'unit vector' },
 ];

@@ -49,6 +49,13 @@ export type CompInfoProvider = () => {
   numLayers: number;
 };
 /** Supplies layer metadata (`thisLayer`) for expressions. */
+/** Content bounds of a layer at a time — see `setSourceRectProvider`. */
+export type SourceRectProvider = (
+  nodeId: string,
+  t: number,
+  extents: boolean,
+) => import('./expressions').SourceRect | undefined;
+
 export type LayerInfoProvider = (nodeId: string) => {
   name: string;
   width: number;
@@ -132,6 +139,8 @@ export class AnimationEngine {
     numLayers: 1,
   });
   /** Layer metadata provider for `thisLayer`. */
+  private sourceRectProvider: SourceRectProvider = () => undefined;
+
   private layerInfoProvider: LayerInfoProvider = () => ({
     name: 'Layer',
     width: 1920,
@@ -176,6 +185,20 @@ export class AnimationEngine {
   /** Bind layer metadata (`thisLayer`) provider. */
   setLayerInfoProvider(provider: LayerInfoProvider): void {
     this.layerInfoProvider = provider;
+  }
+
+  /**
+   * Supplies `sourceRectAtTime` with a layer's CONTENT bounds at a time.
+   *
+   * Defaults to undefined rather than to the layer box: the expression falls
+   * back to the box itself, and having the default here too would make an
+   * unwired provider indistinguishable from a correctly wired one that happens
+   * to return the box — which is how a provider stays unwired for months (see
+   * the four that did exactly that before the layer/comp providers were
+   * connected).
+   */
+  setSourceRectProvider(provider: SourceRectProvider): void {
+    this.sourceRectProvider = provider;
   }
 
   /** All property tracks for a node. */
@@ -506,6 +529,12 @@ export class AnimationEngine {
       layerAt: (name, p, tt) => this.crossLayerValue(name, p, tt, visited, depth),
       comp: this.compInfoProvider(),
       layerInfo: this.layerInfoProvider(nodeId),
+      // Needs no provider: the engine already holds this property's track, so
+      // numKeys / key(n) / nearestKey() are free.
+      keyTimes: kfs.map((k) => k.t),
+      // Does need one — measuring content bounds requires the scene graph and,
+      // for text, a DOM measuring context, neither of which belongs in here.
+      sourceRectAt: (tt, extents) => this.sourceRectProvider(nodeId, tt, extents),
       // Per-(node, prop) noise phase so `wiggle` on x and y move
       // independently (AE) — still deterministic run to run.
       propSeed: stringSeed(`${nodeId}:${prop}`),
