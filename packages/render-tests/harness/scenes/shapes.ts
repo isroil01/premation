@@ -86,19 +86,13 @@ export const shapeScenes: Scene[] = [
   scene('shape-path-op-zigzag', 'Zigzag path operator on a stroked rect.', (graph) => {
     graph.addNode(shapeNode('z', { x: 180, y: 140, rotation: 0, fill: '#22344f' }));
     graph.setStroke('z', { enabled: true, color: '#ffd166', width: 8, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
-    graph.setPathOp('z', { type: 'zigzag', amount: 16, detail: 5 });
-  }, 'known-divergent', {
-    why:
-      'A zigzagged rect is a many-cornered outline carrying a centre-aligned mitred stroke, so '
-      + 'almost every inked pixel is on a contour. analyze-gap.mjs reports coverage-only with 0 '
-      + 'flat-region pixels: the two engines agree on where the outline is and disagree only on '
-      + 'sub-pixel coverage along it. This scene ALSO hid a real defect until 2026-07-30 — the '
-      + 'raster was sized from the stroke alone, so the geometry the path operator pushed outside '
-      + 'the layer box was clipped and 22% of the stroke was missing (extent 238px vs 262px). That '
-      + 'is fixed; what remains is coverage.',
-    wouldMatchWhen:
-      'The reference is re-blessed from the GPU engine — Canvas2D is deleted and its coverage rule '
-      + 'cannot be reproduced.',
-    proof: 'src/core/rendering/raster/pathEscapePadding.test.ts — pins the padding the extent depends on',
+    graph.setPathOps('z', [{ id: 'z1', type: 'zigzag', amount: 16, detail: 5 }]);
   }),
+  // Was marked `known-divergent` against a Canvas2D oracle. Two things ended
+  // that: the references were re-blessed from WebGL2 (the documented
+  // `wouldMatchWhen`, already met), and the scene's `setPathOps` call was
+  // repaired — from schema 1.3.0 until 2026-08-04 it called the older
+  // `setPathOp`, threw during setup, and rendered NOTHING, so the "accepted
+  // coverage gap" was really a missing image. It matches exactly now, so it
+  // gates like any other scene. See F15.
 ];

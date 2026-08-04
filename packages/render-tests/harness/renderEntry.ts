@@ -124,10 +124,39 @@ function rgbaToPngBase64(rgba: RGBA): string {
 /** One backend announcement per process, not one per scene. */
 let announcedBackend = false;
 
-async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> {
+/**
+ * Build a scene's graph, treating ANY error as fatal to the run.
+ *
+ * Separate from the render below because the two failures are not the same
+ * kind. A backend that cannot render is a per-scene, per-backend problem and
+ * stays isolated. A scene whose SETUP throws did not produce a wrong image — it
+ * produced NO image, and no image is not a measurement.
+ *
+ * `shape-path-op-zigzag` sat in exactly that state from schema 1.3.0 until
+ * 2026-08-04. Its `graph.setPathOp(…)` had been renamed to `setPathOps`, so
+ * `build` threw, no frame was ever written, and the comparator's
+ * `!actual → { pass: false }` was then routed by `gpuParity: 'known-divergent'`
+ * into the ACCEPTED-GAP bucket. The `divergence` prose that exists to stop
+ * silent suppression is what suppressed it: "fail closed unless a cause is
+ * written down" was designed for a pixel gap, and a stated cause cannot tell
+ * "these pixels differ for a known reason" from "there are no pixels".
+ */
+function buildSceneOrThrow(scene: Scene): { graph: SceneGraph; anim: AnimationEngine } {
   const graph = new SceneGraph();
   const anim = new AnimationEngine();
-  scene.build(graph, anim);
+  try {
+    scene.build(graph, anim);
+  } catch (err) {
+    throw new Error(
+      `scene setup threw for "${scene.id}" — the scene measures NOTHING until this is fixed: `
+      + `${(err as Error)?.message ?? err}`,
+    );
+  }
+  return { graph, anim };
+}
+
+async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> {
+  const { graph, anim } = buildSceneOrThrow(scene);
 
   const { w, h } = scene.size;
   const canvas = document.createElement('canvas');
@@ -251,13 +280,36 @@ async function main(): Promise<void> {
         animatesMinChange: s.animatesMinChange,
       })),
     );
+    // PRE-FLIGHT: every scene must build before anything renders.
+    //
+    // Backend-independent, so it runs once rather than once per backend, and it
+    // aborts the run rather than being absorbed by the isolation below. A scene
+    // that cannot build is not a scene with a visual gap — it is a scene that
+    // silently stopped testing its subject, which is the failure this whole
+    // check exists for (see `buildSceneOrThrow`).
+    const setupFailures: string[] = [];
+    for (const scene of SCENES) {
+      try {
+        buildSceneOrThrow(scene);
+      } catch (err) {
+        setupFailures.push((err as Error)?.message ?? String(err));
+      }
+    }
+    if (setupFailures.length) {
+      await window.harnessBridge.done(
+        `${setupFailures.length} scene(s) failed SETUP:\n  ${setupFailures.join('\n  ')}`,
+      );
+      return;
+    }
+
     const failures: string[] = [];
     for (const scene of SCENES) {
       for (const backend of backends) {
         try {
           await renderScene(scene, backend);
         } catch (err) {
-          // Per-scene isolation: a bad scene must not abort the whole batch.
+          // Per-scene isolation for RENDER failures only — setup already passed
+          // above, so anything here is a backend problem, not a dead scene.
           failures.push(`${scene.id}/${backend}: ${(err as Error)?.message ?? err}`);
           // eslint-disable-next-line no-console
           console.error(`[scene-fail] ${scene.id}/${backend}:`, err);
