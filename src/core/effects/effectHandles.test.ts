@@ -328,3 +328,130 @@ describe('what a drag writes', () => {
     expect(after[1]!.pos).toEqual(target);
   });
 });
+
+/**
+ * THE THREE DISTORT CENTRES - Bulge, Twirl, Spherize.
+ *
+ * The mechanism being correct does NOT make its consumers correct. A registry
+ * entry with a wrong prop name, a wrong rest position, or a centre expressed in
+ * the wrong space all compile and all look plausible on canvas, so each centre
+ * gets the same treatment as Corner Pin rather than being waved through.
+ *
+ * The rest position is derived from the DISPATCH, not the param name: all three
+ * dispatchers compute `w / 2 + centerX`, `h / 2 + centerY`, so rest in effect
+ * space is the middle of the box - NOT (0,0), which is what every other
+ * consumer here uses. Getting that wrong puts the handle on the layer top-left
+ * and writes offsets a half-box out.
+ *
+ * MAIN RIG, hand-derived:
+ *   layer at (100, 50), rotation 90, scale (2, 3), 100x100, zoom 2
+ *   W = translate(100,50).rotate(90).scale(2,3) = {a:0, b:2, c:-3, d:0, e:100, f:50}
+ *   centre rests at effect (50, 50) -> layer (0, 0) -> comp (100, 50) -> screen (200, 100)
+ *
+ * The centre resting exactly on the origin is convenient and is also what makes
+ * that rig weak: at the origin every rotation and scale term multiplies zero, so
+ * the matrix contributes nothing but its translation. Every boundary fixture
+ * below therefore moves the centre OFF the origin with a param offset, which is
+ * the only way the transform is exercised at all.
+ */
+describe('the three distort centres', () => {
+  const CENTRES = ['bulge', 'twirl', 'spherize'] as const;
+
+  it('each declares exactly one handle, resting at the layer CENTRE', () => {
+    for (const type of CENTRES) {
+      const hs = collectEffectHandles(type, {}, 200, 100);
+      expect({ type, n: hs.length }).toEqual({ type, n: 1 });
+      expect({ type, pos: hs[0]!.pos }).toEqual({ type, pos: { x: 100, y: 50 } });
+      expect({ type, keys: [hs[0]!.spec.xKey, hs[0]!.spec.yKey] })
+        .toEqual({ type, keys: ['centerX', 'centerY'] });
+    }
+  });
+
+  it('the centre rest maps to the layer ORIGIN, which is what the dispatch means', () => {
+    for (const [w, h] of [[200, 100], [64, 64], [1920, 1080]] as Array<[number, number]>) {
+      expect(effectToLayer({ x: w / 2, y: h / 2 }, w, h)).toEqual({ x: 0, y: 0 });
+    }
+  });
+
+  it('MAIN RIG: the centre lands at the hand-derived screen position', () => {
+    for (const type of CENTRES) {
+      reset();
+      defaultSceneGraph.addChild('comp_root', node('L', { x: 100, y: 50, rotation: 90, scaleX: 2, scaleY: 3 }));
+      const toScreen = toScreenFor('L', 100, 100, 2);
+      const h = collectEffectHandles(type, {}, 100, 100)[0]!;
+      expect({ type, at: at(toScreen, h.pos) }).toEqual({ type, at: [200, 100] });
+    }
+  });
+
+  /**
+   * MAIN RIG with the centre MOVED - the assertion that exercises the matrix.
+   *   centerX = 10 => effect (60, 50) -> layer (10, 0)
+   *   comp.x = 0*10 + (-3)*0 + 100 = 100
+   *   comp.y = 2*10 +   0 *0 +  50 =  70   -> screen (200, 140)
+   * Only y moves: the layer 90-degree turn sends effect +X onto comp +Y. A
+   * centre ignoring the layer transform would land at (220, 100).
+   */
+  it('MAIN RIG: a moved centre is rotated and scaled by the layer', () => {
+    for (const type of CENTRES) {
+      reset();
+      defaultSceneGraph.addChild('comp_root', node('L', { x: 100, y: 50, rotation: 90, scaleX: 2, scaleY: 3 }));
+      const toScreen = toScreenFor('L', 100, 100, 2);
+      const h = collectEffectHandles(type, { centerX: 10 }, 100, 100)[0]!;
+      expect({ type, at: at(toScreen, h.pos) }).toEqual({ type, at: [200, 140] });
+    }
+  });
+
+  /** BOUNDARY identity: offset (10,20), no transform, no zoom. The half-box
+   *  conversion is the only thing left that can be wrong. */
+  it('BOUNDARY identity: offset only, no transform, no zoom', () => {
+    defaultSceneGraph.addChild('comp_root', node('I'));
+    const toScreen = toScreenFor('I', 100, 100, 1);
+    const h = collectEffectHandles('bulge', { centerX: 10, centerY: 20 }, 100, 100)[0]!;
+    expect(at(toScreen, h.pos)).toEqual([10, 20]);
+  });
+
+  /** BOUNDARY 180: W = rotate(180).scale(2,3) = {a:-2,b:0,c:0,d:-3};
+   *  layer (10,20) -> comp (-2*10, -3*20) = (-20, -60). */
+  it('BOUNDARY 180 degrees: the diagonal terms the 90-degree rig cannot see', () => {
+    defaultSceneGraph.addChild('comp_root', node('R', { rotation: 180, scaleX: 2, scaleY: 3 }));
+    const toScreen = toScreenFor('R', 100, 100, 1);
+    const h = collectEffectHandles('twirl', { centerX: 10, centerY: 20 }, 100, 100)[0]!;
+    expect(at(toScreen, h.pos)).toEqual([-20, -60]);
+  });
+
+  /** BOUNDARY uniform scale: W = rotate(90);
+   *  layer (10,20) -> comp (0*10 + (-1)*20, 1*10 + 0*20) = (-20, 10). */
+  it('BOUNDARY uniform scale: rotation alone', () => {
+    defaultSceneGraph.addChild('comp_root', node('U', { rotation: 90 }));
+    const toScreen = toScreenFor('U', 100, 100, 1);
+    const h = collectEffectHandles('spherize', { centerX: 10, centerY: 20 }, 100, 100)[0]!;
+    expect(at(toScreen, h.pos)).toEqual([-20, 10]);
+  });
+
+  /** BOUNDARY parented: P at (200,0) rot 90, child local (0,0).
+   *  W = {a:0,b:1,c:-1,d:0,e:200,f:0}; layer (10,20) -> comp (200-20, 10) = (180, 10). */
+  it('BOUNDARY parented: the chain is walked for a centre too', () => {
+    defaultSceneGraph.addChild('comp_root', node('P', { x: 200, y: 0, rotation: 90 }));
+    defaultSceneGraph.addChild('P', node('C', { parent: 'P' }));
+    const toScreen = toScreenFor('C', 100, 100, 1);
+    const h = collectEffectHandles('bulge', { centerX: 10, centerY: 20 }, 100, 100)[0]!;
+    expect(at(toScreen, h.pos)).toEqual([180, 10]);
+  });
+
+  /** BOUNDARY zoom: the main rig uses zoom 2, so a missing multiply halves
+   *  everything there and is invisible. Asserted as the PAIR, which is what
+   *  makes it a zoom test rather than a second position test. */
+  it('BOUNDARY zoom: the same handle scales with zoom, exactly', () => {
+    defaultSceneGraph.addChild('comp_root', node('Z'));
+    const h = collectEffectHandles('bulge', { centerX: 10, centerY: 20 }, 100, 100)[0]!;
+    expect(at(toScreenFor('Z', 100, 100, 1), h.pos)).toEqual([10, 20]);
+    expect(at(toScreenFor('Z', 100, 100, 3), h.pos)).toEqual([30, 60]);
+  });
+
+  it('a drag writes the offset from the CENTRE, not from the corner', () => {
+    const h = collectEffectHandles('twirl', {}, 200, 100)[0]!;
+    // Dragging to effect (150, 80) is (50, 30) from the centre. Measuring from
+    // the corner would write (150, 80) - plausible, and wrong by half the box.
+    expect(handleDragValues(h, { x: 150, y: 80 })).toEqual({ centerX: 50, centerY: 30 });
+  });
+});

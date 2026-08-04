@@ -101,6 +101,32 @@ const CORNER_PIN_HANDLES: readonly HandleSpec[] = [
 ];
 
 /**
+ * The three distort centres — Bulge, Twirl and Spherize.
+ *
+ * One handle each, and the whole entry is three lines per effect, which is what
+ * the mechanism was extracted for.
+ *
+ * ── The rest position is the LAYER CENTRE, and that was checked ─────────
+ *
+ * Their params are named `centerX`/`centerY` and default to 0 like every other
+ * consumer here, but the base they offset from is NOT a corner: all three
+ * dispatchers compute `w / 2 + centerX`, `h / 2 + centerY`
+ * (`canvas2dEffects.ts`, applyBulge / applyTwirl / applySpherize). So rest is
+ * the middle of the box, and in layer-local terms that is the origin itself.
+ *
+ * Read from the dispatch rather than assumed from the param name. A rest
+ * position of (0,0) — the value the corner-based consumers use — would put every
+ * centre handle on the layer's top-left and write offsets a half-box wrong, and
+ * it would compile, render and look like a plausible overlay.
+ */
+const CENTRE_HANDLE = (label: string): readonly HandleSpec[] => [
+  {
+    id: 'centre', label, xKey: 'centerX', yKey: 'centerY', kind: 'centre',
+    rest: (w, h) => ({ x: w / 2, y: h / 2 }),
+  },
+];
+
+/**
  * The registry.
  *
  * A `Partial<Record<EffectType, …>>` rather than a Map or an if-chain: most
@@ -111,6 +137,9 @@ const CORNER_PIN_HANDLES: readonly HandleSpec[] = [
 export const EFFECT_HANDLES: Partial<Record<EffectType, readonly HandleSpec[]>> = {
   'bezier-warp': BEZIER_WARP_HANDLES,
   'corner-pin': CORNER_PIN_HANDLES,
+  bulge: CENTRE_HANDLE('Bulge Centre'),
+  twirl: CENTRE_HANDLE('Twirl Centre'),
+  spherize: CENTRE_HANDLE('Spherize Centre'),
 };
 
 export function hasEffectHandles(type: string): boolean {

@@ -1213,6 +1213,30 @@ one of the five either.
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
 
+## 2b-undecies. 2026-08-05 — the Puppet/Bone consolidation is NOT a refactor
+
+Deferred, and the reason is the point rather than an excuse.
+
+The existence table found `localToScreen`/`screenToLocal` byte-identical in
+`PuppetOverlay` and `BoneOverlay`, and consolidating them onto the effect
+overlay's projection looked like the cheap way to close the third duplication.
+Checking before starting says otherwise: **the two projections are not
+equivalent.**
+
+`worldMatrix(g)` (`core/workspace/geometry.ts:281`) composes
+`translate(g.x, g.y) · rotate · scale` — the node's OWN transform and nothing
+else — and `readGeometry` supplies that node's LOCAL x/y. Neither walks the
+parent chain. `layerSpaceAt` does, through `worldMatrixOf`.
+
+So replacing one with the other would not preserve behaviour. It would CHANGE
+it, which makes this a behaviour change to rig tooling wanting its own
+verification, not a tidy-up. Doing it as an afterthought at the end of a run is
+exactly how a "pure refactor" ships a surprise.
+
+| # | Finding | Severity | Proposed |
+|---|---|---|---|
+| **F23** | **The puppet and bone overlays ignore layer PARENTING.** Both position their handles through `worldMatrix(readGeometry(node))`, which composes only that node's own translate/rotate/scale; neither references `worldMatrixOf` or `parentWorld3d`. So on a layer parented to anything that moves, the pins and bones draw at the unparented position while the artwork renders at the parented one — the same class of drift `liveWorld3d` was written to end for cameras, lights and layer-box gizmos, in a fourth and fifth place. Not reproduced on a rig yet: found by reading `worldMatrix` while checking whether the two overlays could share the effect overlay's projection. | **Correctness, live, unverified scope** | Point both at `layerSpaceAt`, which is the consolidation the existence table wanted anyway — the duplication and the bug have the same fix. Needs a parented-rig fixture and a runtime check first, since it changes where existing rigs draw. |
+
 ## 2b-nonies. 2026-08-05 — Bezier Warp, and a guard that covered nothing
 
 Corner Pin's generalisation: four cubic edges, a Coons patch interior, and a
