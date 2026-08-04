@@ -54,7 +54,11 @@ function contentOf(layer: RenderLayer): unknown {
     // the concatenation of those runs. `layerSubpaths` preserves the run
     // boundaries, so the structure is in the key and a trim that only moves a
     // split point still busts the cache.
-    pts: layerSubpaths(layer).map((s) => ({ p: s.points, o: s.open === true })),
+    // PER-RUN PAINT is in the key too. Two paths with identical geometry and
+    // different run paint are different pictures; hashing only the points would
+    // let the second reuse the first's raster. Same class as the run-boundary
+    // point above, but harder to catch, because the geometry genuinely matches.
+    pts: layerSubpaths(layer).map((s) => ({ p: s.points, o: s.open === true, pa: s.paint })),
     w: layer.width,
     h: layer.height,
     q: layer.quality,

@@ -777,8 +777,12 @@ export class AppTextureProvider implements TextureProvider {
     // different splits of the same points are two different signatures. Without
     // the boundary marker a path cut into 2+2 points and one cut into 1+3 sign
     // identically and the second silently reuses the first's texture.
+    // Per-run PAINT signs too. Identical geometry with different run paint is a
+    // different picture, and without this the second layer reuses the first's
+    // texture — the same failure the run boundary above prevents, but with
+    // matching geometry, so nothing else in the key would catch it.
     const ptsSig = layerSubpaths(layer)
-      .map((s) => `${s.open ? 'o' : 'c'}:${s.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|')}`)
+      .map((s) => `${s.open ? 'o' : 'c'}:${s.paint ? JSON.stringify(s.paint) : ''}:${s.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|')}`)
       .join('//');
     const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
     const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';

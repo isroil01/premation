@@ -734,7 +734,53 @@ The **repeater** is a different answer: see F16.
 | **F15** | **FIXED.** **The `shape-path-op-zigzag` golden had not exercised a path operator since schema 1.3.0.** The harness scene calls `graph.setPathOp('z', …)` (`render-tests/harness/scenes/shapes.ts:89`), but `SceneGraph` renamed that method to `setPathOps` in `85aa8ac` and nothing updated the scene. Every run since then logs `TypeError: n.setPathOp is not a function` and renders a **plain stroked rect**. The scene is marked `known-divergent`, so its failure is not gated and the error scrolls past. The `pathEscapePadding` proof it cites as evidence is therefore **inert at the pixel level** — the unit test still pins the arithmetic, but no golden confirms it. Not fixed here: repairing it re-blesses a golden for a reason unrelated to trim, which is exactly the attribution mistake this work was told to avoid. | **Test integrity, high** | Rename to `setPathOps` with an array, re-bless `shape-path-op-zigzag`, and confirm the new pixels show a zigzag. Consider failing the run on `[render-fails]` even for `known-divergent` scenes — a scene that did not BUILD is not a scene with an accepted visual gap. |
 | **F16** | **STILL BLOCKING, and Phase 3a shipped without it.** **The repeater cannot fold into `fx.pathOps` without losing `offsetOpacity`.** Copies are emitted as N `RenderLayer`s sharing one geometry and differing by transform deltas. Making a repeater card's POSITION in the chain meaningful requires baking the copies into geometry — now expressible as N subpaths — but a `Subpath` carries no paint, so per-copy **opacity** (and any future per-copy fill) has nowhere to live. Folding it in as-is would ship a reorder control that works while silently dropping a parameter users already animate (`rep.offsetOpacity` is keyframeable). | **Design, blocking Phase 3b** | Either add per-run paint to the render contract first — a strictly larger change than the subpath lift — or fold in `trim` alone and leave the repeater on its fixed final position, documented as such. Do **not** ship a repeater card whose arrows move a control that cannot carry its own parameters. |
 | **F17** | **FIXED.** **`rasterPadding` read bezier handles as RELATIVE; every other consumer reads them as ABSOLUTE.** `BezierPoint.inX/outX` are documented absolute ("Equal to (x,y) for a corner", `packages/workspace/src/math/BezierPoint.ts:7`) and `shapePath` passes them straight to `ctx.bezierCurveTo`. `rasterPadding` computes `p.x + (p.inX ?? 0)` (`raster/vectorDraw.ts:225`), which for a corner doubles the coordinate and over-pads by the point's own distance from the origin. Harmless today — over-padding is transparent margin — but it is two readers of one field disagreeing on its units (§2·0), and the `pathEscapePadding` suite was authored to the wrong convention (`inX: 0`), so it pins the bug rather than catching it. Carried through the subpath lift **verbatim**, deliberately: correcting it shrinks the raster and would perturb `shape-path-op-zigzag`, whose reference was blessed with the over-pad — and see F15 for why that scene cannot currently confirm anything. | **Correctness, latent** | Fix after F15, so the golden that measures path escape is actually measuring a path operator when the padding changes. |
-| **F18** | **OPEN, and it degrades every effect that ships.** **There is currently no way to visually verify an effect in the running app.** Two independent routes both fail: `drawImage` from the live WebGPU canvas into a 2D scratch canvas returns only the clear colour, so pixel readback via `javascript_tool` measures the comp background and nothing else — a shape, a solid and a text layer created in sequence all left the readback at a constant two-colour histogram (`16,16,20` background plus `0,0,0` letterbox) while the Scene panel correctly listed all three; and `computer{action:"screenshot"}` times out because the Browser pane is not compositing frames when it is not displayed. The consequence is that every effect shipped in the 2026-08-04 and 2026-08-05 rounds was verified for UI reachability, parameter exposure, stopwatch presence and value commit at runtime, but for PIXELS only through `render-tests` — real Chromium, but offscreen Electron and one frame per scene, not the interactive editor. Anything that renders correctly in the harness and wrongly in the app is invisible to the whole current loop. | **Development loop, medium-high** | Establish one reliable in-app pixel readback. Cheapest candidate first: check whether the WebGPU context is created with `alphaMode`/`preserveDrawingBuffer` settings that permit `drawImage`, or whether the renderer can expose a debug hook that returns the last presented frame as an ImageBitmap. Failing that, a Canvas2D-backend toggle reachable from the UI would make readback work at the cost of testing a different path. NOT fixed in this run — logged deliberately, since sizing it needs the renderer's surface configuration, which is outside the effects work that found it. |
+| **F18** | **WITHDRAWN AS WRITTEN — the conclusion was wrong, and the correction matters more than the finding.** F18 originally read "there is no way to visually verify an effect in the running app" and was about to be raised to blocking. It is false. `renderStillFrame(params, frameIndex)` (`src/core/export/offlineRenderer.ts:204`) renders a frame through the real pipeline and returns a PNG Blob; it has FOUR production callers, including `src/core/ai/renderFeedback.ts`, which exists precisely so the assistant can look at rendered frames. Verified 2026-08-05 in the running app: a Checkerboard effect with colours #ff0000/#00ff00 applied to a text layer produced a 1920x1080 PNG containing 1331 red and 886 green pixels clipped to the glyphs. **What is actually true** is narrower and was misdiagnosed: the LIVE VIEWPORT canvas cannot be read back at an arbitrary later moment. `drawImage` from it returns the clear colour because a WebGPU canvas's current texture is only valid within the task that drew it (see `gotcha_webgpu_canvas_readback_macrotask`). `componentThumbs.ts:200` does the same `drawImage` successfully by reading back in the SAME task as `renderFrame` — so the mechanism was timing, not capability, and 'drawImage returns only clear colour' named the wrong cause. Screenshots timing out when the Browser pane is not displayed is real but is a harness property, not a product gap. **Method note.** This is the seventh instance on this project of underestimating what already exists, and the first where the underestimate was recorded as a blocking finding. The error was reasoning from two failed attempts to a capability claim without grepping for an existing renderer. | **Was: development loop, blocking. Now: none — no work required** | Use `renderStillFrame` for in-app pixel verification; it is already the supported path. If live-viewport readback is ever wanted for its own sake, the fix is a debug hook that calls `renderFrame` and reads back in one task, which is the pattern `componentThumbs` already ships — S, not the renderer surgery F18 implied. |
+
+## 2b-quinquies. Standard — testing a spatial effect
+
+Adopted 2026-08-05 after Twirl and Corner Pin were both found shipping guards
+that could not fail.
+
+**A wrong distortion looks exactly like a right one.** Spherize shipped inverted
+and passed three checks: the pixels changed, it differed from Bulge at equal
+settings, and its render-test golden matched — because the golden had been
+blessed from the bug. Auditing its neighbours afterwards found the same hole
+open in two of them:
+
+* **Twirl** asserted `sign(pos.x) === -sign(neg.x)` — that +90 and -90 land on
+  opposite sides. Mirror the entire rotation and both flip together, so it
+  passes just as happily on a twirl that spins backwards. A DIFFERENCE assertion
+  wearing a directional one's clothes.
+* **Corner Pin** was subtler and worse. Its projectivity and identity checks are
+  both symmetric in the quad, so neither ever established where content actually
+  lands. Swap source and destination and both still pass.
+
+### The rule
+
+1. **Derive the expected value independently, on paper, before looking at the
+   implementation.** A test written from the code cannot disagree with the code.
+   Twirl's expectation is arithmetic anyone can recheck: a dot at (32,12) about
+   centre (32,32) with radius 30 rotates by `90 * (1 - 20/30) = 30 degrees`, and
+   since `remap` asks the inverse question it lands at
+   `(32,32) + R(-30) * (0,-20) = (22, 14.68)` — LEFT. A mirrored twirl puts it
+   at x = 42.
+2. **Assert an absolute position, not a relation between two runs.** "These two
+   differ" and "these two are opposite" are both invariant under mirroring.
+3. **Choose a case whose arithmetic you can do by hand**, so the test does not
+   re-derive the implementation inside its own assertion. Corner Pin's uses an
+   axis-aligned quad inset to the middle half, where source (8,8) maps to
+   (20,20) by inspection — deliberately not a general projective quad.
+4. **Verify by breaking the direction, and watch which tests fail.** The proof
+   is not that the new test fails; it is that the OLD guard passes while the new
+   one fails. Mirroring the twirl leaves its distance-preservation check green;
+   mirroring the corner-pin u axis leaves projectivity green. That demonstrates
+   the blind spot instead of assuming it.
+5. **A golden is not independent evidence.** It records whatever the code did on
+   the day it was blessed. Spherize's golden was blessed from the bug and had to
+   be re-blessed after the fix.
+
+Applies to anything positional: warps, distortions, transforms, path operators,
+layout, hit-testing.
 
 ## 2b-quater. Closed 2026-08-04 — F15, F17 and Phase 3a
 

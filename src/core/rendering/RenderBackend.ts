@@ -37,6 +37,59 @@ export interface Subpath {
   points: ReadonlyArray<BezierPoint>;
   /** Stroke leaves this run open; fill still closes it implicitly. */
   open?: boolean;
+  /**
+   * PER-RUN PAINT. Absent means "paint with the layer's own fill/stroke", which
+   * is what every existing writer produces and what keeps this field free.
+   *
+   * ── Why a run needs its own paint ───────────────────────────────────────
+   *
+   * The repeater emits its copies as N `RenderLayer`s that share one geometry
+   * and differ by transform deltas, which is why it cannot fold into
+   * `fx.pathOps` (F16): folding means baking the copies into geometry — now
+   * expressible as N subpaths — but per-copy `offsetOpacity` is keyframeable
+   * TODAY and would have nowhere to live. Dropping a parameter users already
+   * animate is worse than an inert control, because the control still moves.
+   *
+   * ── What `paint` being present COSTS, and why it is opt-in ──────────────
+   *
+   * Runs are normally drawn as ONE Canvas path so `fill()` sees them as a
+   * single nonzero-winding region — that is what makes a reverse-wound run cut
+   * a HOLE rather than paint over the shape. A run with its own paint cannot
+   * share that path; it has to be filled separately, and separately-filled runs
+   * cannot cut holes in each other.
+   *
+   * So the two behaviours are genuinely exclusive, and the resolution is that
+   * paint is opt-in per run: runs without it stay batched (holes intact, output
+   * byte-identical to before this field existed), runs with it are drawn
+   * individually. See `drawSubpathBatches` in vectorDraw.ts, which is the one
+   * place that grouping happens.
+   *
+   * Both cache keys — the content hash and the texture signature — must digest
+   * this. Two structurally identical paths differing only in run paint are
+   * different pictures, and without it the second silently reuses the first's
+   * texture.
+   */
+  paint?: SubpathPaint;
+}
+
+/**
+ * A single run's paint override. Every field is optional and falls back to the
+ * layer's own value, so `{ opacity: 0.5 }` means "this run, at half opacity,
+ * otherwise exactly like the layer" rather than "this run, unpainted".
+ */
+export interface SubpathPaint {
+  /** Overrides the layer's fill. */
+  fill?: FillPaint;
+  /** Overrides the layer's stroke. */
+  stroke?: Stroke;
+  /**
+   * 0..1, multiplied into BOTH fill and stroke for this run only.
+   *
+   * The field the repeater fold-in actually needs: `offsetOpacity` ramps each
+   * copy, and it multiplies whatever paint the copy already has rather than
+   * replacing it.
+   */
+  opacity?: number;
 }
 
 /** One sub-frame transform sample used for motion-blur accumulation. */

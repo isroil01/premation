@@ -12,7 +12,7 @@
  * Coordinates are the layer's centred local space (origin at the box centre).
  */
 
-import type { RenderLayer } from '../RenderBackend';
+import type { RenderLayer, Subpath, SubpathPaint } from '../RenderBackend';
 import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { Pt } from '@core/scene/trimPath';
@@ -335,6 +335,70 @@ export function outlinePolyline(layer: RenderLayer): { pts: Pt[]; closed: boolea
   };
 }
 
+/** Trace one run into the CURRENT path (no `beginPath`). Extracted from
+ *  `shapePath` so a batch can trace a subset with identical geometry. */
+function traceRun(ctx: CanvasRenderingContext2D, run: Subpath): void {
+  const pts = run.points;
+  if (pts.length === 0) return;
+  // Open runs (line / freehand pencil / a trimmed arc) stop at the last point;
+  // closed shapes wrap the final segment back to the first and close.
+  const open = run.open === true;
+  ctx.moveTo(pts[0]!.x, pts[0]!.y);
+  const lastSeg = open ? pts.length - 1 : pts.length;
+  for (let i = 0; i < lastSeg; i++) {
+    const curr = pts[i]!;
+    const next = pts[(i + 1) % pts.length]!;
+    ctx.bezierCurveTo(curr.outX, curr.outY, next.inX, next.inY, next.x, next.y);
+  }
+  if (!open) ctx.closePath();
+}
+
+/** A group of runs sharing one paint, traced as a single path. */
+export interface SubpathBatch {
+  runs: ReadonlyArray<Subpath>;
+  /** Undefined = paint with the LAYER's own fill/stroke. */
+  paint?: SubpathPaint;
+}
+
+/**
+ * Group a layer's runs for drawing, or NULL when no run carries paint.
+ *
+ * Null is the load-bearing half of this contract. Runs are normally traced into
+ * ONE path so `fill()` sees them as a single nonzero-winding region — that is
+ * what lets a reverse-wound run cut a HOLE instead of painting over the shape.
+ * Separately-filled runs cannot cut holes in each other, so batching is not a
+ * free refactor: it changes what a multi-run path looks like.
+ *
+ * Returning null when nothing is painted means every layer that exists today
+ * takes the unchanged path and renders byte-identically. Only a layer actually
+ * using the feature pays for it, and only that layer gives up cross-run holes —
+ * which it must, because the two behaviours are genuinely exclusive.
+ *
+ * Unpainted runs stay TOGETHER in one batch rather than being split, so a path
+ * mixing painted and unpainted runs still gets holes among the unpainted ones.
+ *
+ * Batch order puts the unpainted group FIRST, then painted runs in their
+ * original order — so a painted run still draws over the plain body, which is
+ * the stacking a repeater's later copies need.
+ */
+export function subpathBatches(layer: RenderLayer): SubpathBatch[] | null {
+  if (layer.primitive !== 'path') return null;
+  const runs = layerSubpaths(layer);
+  if (runs.length === 0 || !runs.some((r) => r.paint)) return null;
+
+  const batches: SubpathBatch[] = [];
+  const plain = runs.filter((r) => !r.paint);
+  if (plain.length > 0) batches.push({ runs: plain });
+  for (const r of runs) if (r.paint) batches.push({ runs: [r], paint: r.paint });
+  return batches;
+}
+
+/** Trace one batch's runs into a fresh path. */
+export function traceBatch(ctx: CanvasRenderingContext2D, batch: SubpathBatch): void {
+  ctx.beginPath();
+  for (const run of batch.runs) traceRun(ctx, run);
+}
+
 /** Trace the layer's fill outline (centred at 0,0) without painting it. */
 export function shapePath(ctx: CanvasRenderingContext2D, layer: RenderLayer): void {
   const w = layer.width;
@@ -349,28 +413,7 @@ export function shapePath(ctx: CanvasRenderingContext2D, layer: RenderLayer): vo
     // `stroke()` draws each run independently. Calling beginPath per run would
     // give the stroke the same result and the fill a different one.
     ctx.beginPath();
-    for (const run of layerSubpaths(layer)) {
-      const pts = run.points;
-      if (pts.length === 0) continue;
-      // Open runs (line / freehand pencil / a trimmed arc) stop at the last
-      // point; closed shapes wrap the final segment back to the first and close.
-      const open = run.open === true;
-      // Move to first anchor
-      ctx.moveTo(pts[0]!.x, pts[0]!.y);
-      // Draw cubic bezier segments: each segment uses outgoing handle of current point
-      // and incoming handle of next point
-      const lastSeg = open ? pts.length - 1 : pts.length;
-      for (let i = 0; i < lastSeg; i++) {
-        const curr = pts[i]!;
-        const next = pts[(i + 1) % pts.length]!;
-        ctx.bezierCurveTo(
-          curr.outX, curr.outY,   // outgoing handle of current
-          next.inX,  next.inY,    // incoming handle of next
-          next.x,    next.y,      // next anchor
-        );
-      }
-      if (!open) ctx.closePath();
-    }
+    for (const run of layerSubpaths(layer)) traceRun(ctx, run);
   } else {
     roundRect(ctx, -w / 2, -h / 2, w, h, layer.cornerRadius ?? 0);
   }

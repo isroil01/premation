@@ -16,6 +16,8 @@ import {
   fillStyleFor,
   shapePath,
   strokeShape,
+  subpathBatches,
+  traceBatch,
 } from './vectorDraw';
 import { textCssFont } from '../AppTextureProvider';
 
@@ -441,24 +443,52 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     ctx.scale(ss, ss);
     ctx.translate(bw / 2, bh / 2);
 
-    shapePath(ctx, layer);
-    if (layer.fillPaints && layer.fillPaints.length > 0) {
-      for (const p of layer.fillPaints) {
-        ctx.fillStyle = fillStyleFor(ctx, p, layer.fill, layer.width, layer.height);
-        ctx.fill();
-      }
-    } else {
-      ctx.fillStyle = fillStyleFor(ctx, layer.fillPaint, layer.fill, layer.width, layer.height);
-      ctx.fill();
-    }
     const strokeStack =
       layer.strokes && layer.strokes.length > 0 ? layer.strokes : layer.stroke ? [layer.stroke] : [];
-    for (const s of strokeStack) {
-      // No trim branch. Trim is baked into the layer's geometry by
-      // buildSnapshot, so the ordinary trace already describes the cut path —
-      // which is the point: the fill above traces the SAME path and now follows
-      // the trim, as it does in AE.
-      strokeShape(ctx, s, () => shapePath(ctx, layer), layer.width, layer.height);
+
+    // PER-RUN PAINT. `subpathBatches` returns null unless some run carries its
+    // own paint, so every layer not using the feature takes the original
+    // single-path branch and renders byte-identically. That matters: separately
+    // filled runs cannot cut holes in each other, so batching unconditionally
+    // would silently change every multi-run path in every existing project.
+    const batches = subpathBatches(layer);
+    if (batches) {
+      for (const batch of batches) {
+        const trace = (): void => traceBatch(ctx, batch);
+        ctx.save();
+        // MULTIPLIES the run's paint rather than replacing it — which is what a
+        // repeater's per-copy offsetOpacity means, and why it is a separate
+        // field from fill/stroke rather than folded into them.
+        const alpha = batch.paint?.opacity ?? 1;
+        if (alpha < 1) ctx.globalAlpha *= alpha;
+        trace();
+        ctx.fillStyle = fillStyleFor(
+          ctx, batch.paint?.fill ?? layer.fillPaint, layer.fill, layer.width, layer.height,
+        );
+        ctx.fill();
+        for (const s of batch.paint?.stroke ? [batch.paint.stroke] : strokeStack) {
+          strokeShape(ctx, s, trace, layer.width, layer.height);
+        }
+        ctx.restore();
+      }
+    } else {
+      shapePath(ctx, layer);
+      if (layer.fillPaints && layer.fillPaints.length > 0) {
+        for (const p of layer.fillPaints) {
+          ctx.fillStyle = fillStyleFor(ctx, p, layer.fill, layer.width, layer.height);
+          ctx.fill();
+        }
+      } else {
+        ctx.fillStyle = fillStyleFor(ctx, layer.fillPaint, layer.fill, layer.width, layer.height);
+        ctx.fill();
+      }
+      for (const s of strokeStack) {
+        // No trim branch. Trim is baked into the layer's geometry by
+        // buildSnapshot, so the ordinary trace already describes the cut path —
+        // which is the point: the fill above traces the SAME path and now follows
+        // the trim, as it does in AE.
+        strokeShape(ctx, s, () => shapePath(ctx, layer), layer.width, layer.height);
+      }
     }
 
     if (layer.paint) {
