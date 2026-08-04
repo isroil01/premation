@@ -88,6 +88,17 @@ function bakedEffectSpread(layer: RenderLayer): number {
       case 'vegas':
         s = effectNumber(e, 'width');
         break;
+      // NOT bezier-warp either, and for a sharper version of the same reason.
+      // Its patch is built by `defaultWarpPoints(w, h)` from the dimensions the
+      // effect is HANDED, which are the padded canvas's — so padding does not
+      // merely shift the result, it rebuilds the rest patch around a larger box
+      // and the same offsets then describe a different warp. A 200x200 layer
+      // padded by 50 would put the patch corners 50px outside the content, and
+      // the visible deformation would weaken as the padding grew. Leaving it
+      // unpadded keeps the warp correct and costs only content pushed past the
+      // layer box. The exit is the same as for the two below: an origin and
+      // extent threaded into the warp math so the patch can be built on the
+      // layer's own rectangle regardless of the canvas it is drawn into.
       // NOT wave-warp / turbulent-displace, even though they clearly do push
       // pixels outward. Both index their displacement field by ABSOLUTE canvas
       // coordinates — `along = x·px + y·py` in waveWarpData, the noise lookup in

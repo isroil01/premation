@@ -41,6 +41,7 @@ import { selectiveColorData, selectiveRange, shadowHighlightData } from './toneE
 import { bulgeData, twirlData, spherizeData, cornerPinData, defaultCorners } from './distort';
 import { drawCheckerboard, drawGrid, cellPatternData } from './generatePatterns';
 import { drawVegas } from './vegas';
+import { defaultWarpPoints, bezierWarpData, isRestWarp, type WarpPoints } from './bezierWarp';
 import { turbulentNoiseData, addGrainData, medianData } from './noiseEffects';
 import {
   simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
@@ -96,6 +97,8 @@ const CANVAS2D_ONLY = new Set<string>([
   'twirl',
   'spherize',
   'corner-pin',
+  // Same class as the four above: an inverse-map resample with no shader form.
+  'bezier-warp',
   // Generate family, round two — these DRAW, like `beam` and `lens-flare`.
   'checkerboard',
   'grid',
@@ -275,6 +278,8 @@ export function applyCanvas2dEffect(
       return applySpherize(oc, w, h, e);
     case 'corner-pin':
       return applyCornerPin(oc, w, h, e);
+    case 'bezier-warp':
+      return applyBezierWarp(oc, w, h, e);
     case 'checkerboard':
       return drawCheckerboard(oc, w, h, e);
     case 'grid':
@@ -569,6 +574,34 @@ function applyCornerPin(oc: CanvasRenderingContext2D, w: number, h: number, e: E
   const corners = base.map((v, i) => v + offsets[i]!) as unknown as
     readonly [number, number, number, number, number, number, number, number];
   applyRemapEffect(oc, w, h, (d) => cornerPinData(d, w, h, corners));
+}
+
+/**
+ * Bezier Warp — the twelve offsets, applied to the rest patch.
+ *
+ * Identical shape to `applyCornerPin`: params are offsets, so all-zero is the
+ * identity and is skipped rather than resampled. Skipping is not just an
+ * optimisation here — a bilinear pass that reproduces its own input still
+ * costs a fraction of a pixel of sharpness, which compounds if two warps stack.
+ */
+function applyBezierWarp(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const rest = defaultWarpPoints(w, h);
+  const pts = [
+    { x: rest[0]!.x + effectNumber(e, 'topLeftX'), y: rest[0]!.y + effectNumber(e, 'topLeftY') },
+    { x: rest[1]!.x + effectNumber(e, 'top1X'), y: rest[1]!.y + effectNumber(e, 'top1Y') },
+    { x: rest[2]!.x + effectNumber(e, 'top2X'), y: rest[2]!.y + effectNumber(e, 'top2Y') },
+    { x: rest[3]!.x + effectNumber(e, 'topRightX'), y: rest[3]!.y + effectNumber(e, 'topRightY') },
+    { x: rest[4]!.x + effectNumber(e, 'right1X'), y: rest[4]!.y + effectNumber(e, 'right1Y') },
+    { x: rest[5]!.x + effectNumber(e, 'right2X'), y: rest[5]!.y + effectNumber(e, 'right2Y') },
+    { x: rest[6]!.x + effectNumber(e, 'bottomRightX'), y: rest[6]!.y + effectNumber(e, 'bottomRightY') },
+    { x: rest[7]!.x + effectNumber(e, 'bottom1X'), y: rest[7]!.y + effectNumber(e, 'bottom1Y') },
+    { x: rest[8]!.x + effectNumber(e, 'bottom2X'), y: rest[8]!.y + effectNumber(e, 'bottom2Y') },
+    { x: rest[9]!.x + effectNumber(e, 'bottomLeftX'), y: rest[9]!.y + effectNumber(e, 'bottomLeftY') },
+    { x: rest[10]!.x + effectNumber(e, 'left1X'), y: rest[10]!.y + effectNumber(e, 'left1Y') },
+    { x: rest[11]!.x + effectNumber(e, 'left2X'), y: rest[11]!.y + effectNumber(e, 'left2Y') },
+  ] as unknown as WarpPoints;
+  if (isRestWarp(pts, w, h)) return;
+  applyRemapEffect(oc, w, h, (d) => bezierWarpData(d, w, h, pts));
 }
 
 // ── Generate / Noise, round two (kernels in generatePatterns.ts, noiseEffects.ts) ──
