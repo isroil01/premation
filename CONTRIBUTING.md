@@ -28,8 +28,16 @@ Before you open a PR:
 npm run typecheck && npm test && npm run lint
 ```
 
-All three must be clean. Tests run in under a minute, so there is no excuse for
-skipping them.
+All three must be clean, and **CI runs the same three on every push and PR** to
+`dev` and `main` (`.github/workflows/ci.yml`). Tests run in under a minute, so
+there is no excuse for skipping them.
+
+`lint` allows a fixed number of warnings and zero errors. The warning budget is a
+ratchet, not a target: it was set to the count on the day the gate went in, so
+adding an `any` means lowering something else or raising the number on purpose.
+For a long time nothing ran lint at all and it drifted to 42 errors — at which
+point a real one (a numeric literal silently truncated by float precision) was
+indistinguishable from the noise. A gate nobody can pass is worse than no gate.
 
 ## Environment hazards
 
@@ -59,15 +67,33 @@ npm run worktree -- feat/my-thing
 ```
 
 That makes a `git worktree` beside the repo — separate directory, separate index,
-one shared `.git`. It needs its own `npm install` (npm trees are not relocatable,
-and symlinking breaks the native modules) and its own dev-server port. The
-install is the real cost and it is not small: **`node_modules` measures 760M**, so
-each worktree is about a gigabyte on disk. Two or three at a time is fine; a
-dozen left lying around is not. `npm run worktree -- --list` shows what you have
-and `-- --remove <branch>` cleans one up.
+one shared `.git` — and **copies `node_modules` into it for you**. Copying takes
+seconds where installing takes minutes, and it reuses the native modules the main
+checkout already built. Pass `--install` if you want a genuinely independent tree
+(bumping a dependency, say). `npm run worktree -- --list` shows what you have and
+`-- --remove <branch>` cleans one up.
 
-Worth the gigabyte anyway. The alternative is a failure mode that depends on
-everyone being careful every time, and it has already not worked once.
+Each worktree gets its own dev-server port and its own **~1G on disk** —
+`node_modules` measures 760M and is not shareable: npm's tree is not relocatable
+and symlinking it breaks the native modules. Two or three at a time is fine; a
+dozen left lying around is not. Worth the gigabyte: the alternative is a failure
+mode that depends on everyone being careful every time, and it has already not
+worked once.
+
+> **This used to say "run `npm install`", and that did not work.** `better-sqlite3`
+> builds from source, and without MSVC and Python the build fails — taking the
+> *whole* install down with it and leaving `node_modules` empty. The advice read
+> fine and produced a worktree with no dependencies at all. It is now an
+> `optionalDependency`, which is what it always was in fact (`electron/localIndexDb.ts`
+> loads it behind a guarded require and falls back to an in-memory index), so a
+> plain `npm install` completes on a machine without a compiler toolchain too.
+> Recorded rather than quietly corrected: guidance that reads fine and fails in
+> practice is the same trap as the two above.
+
+Removing a worktree can fail on Windows with a permission error while something
+holds a file under `node_modules` open — an editor, a watcher, a dev server.
+Close it and retry. If git detached the worktree but left the directory behind,
+`git worktree prune` tidies the bookkeeping and the folder can go by hand.
 
 Where a shared checkout is unavoidable, **never `git add -A` in this repo** —
 name every file in every commit, and read the diffstat before you push.

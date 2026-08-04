@@ -57,7 +57,7 @@ describe('skeletonCommands', () => {
     addBone(nodeId, { id: 'b1', parentId: null, length: 50, x: 0, y: 0, rotation: 0 });
     updateBone(nodeId, 'b1', { length: 120, rotation: 30 });
 
-    let node = defaultSceneGraph.getNode(nodeId);
+    const node = defaultSceneGraph.getNode(nodeId);
     let skel = node ? readNodeSkeleton(node) : undefined;
     expect(skel?.bones[0]?.length).toBe(120);
     expect(skel?.bones[0]?.rotation).toBe(30);

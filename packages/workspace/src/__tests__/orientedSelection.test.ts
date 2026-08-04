@@ -14,8 +14,6 @@
 import * as OBox from '../math/OrientedBox';
 import * as Mat from '../math/Mat2D';
 import * as R from '../math/Rect';
-import type { Corners } from '../math/OrientedBox';
-import type { Rect } from '../math/Rect';
 import type { Vec2 } from '../math/Vec2';
 import { HitTester } from '../hit/HitTester';
 import { SelectionController } from '../selection/SelectionController';

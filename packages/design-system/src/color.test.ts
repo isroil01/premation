@@ -261,8 +261,7 @@ describe('buildPalette', () => {
 
   it('respects neutralTint: 0 for a truly neutral palette', () => {
     const p = buildPalette({ accent: '#2b7eff', neutralTint: 0 });
-    expect(hexToOklch(p.bg).c).toBeLessThan
-      (0.005);
+    expect(hexToOklch(p.bg).c).toBeLessThan(0.005);
   });
 
   it('is deterministic', () => {

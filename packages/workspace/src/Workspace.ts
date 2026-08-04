@@ -468,7 +468,9 @@ export class Workspace implements InputSink {
   }
 
   private makeToolContext(): ToolContext {
-    const self = this;
+    // Arrow properties rather than shorthand methods + `const self = this`.
+    // Each one closes over the instance lexically, so the context keeps working
+    // when a tool destructures it — which a shorthand method would not.
     return {
       camera: this.camera,
       viewport: this.viewport,
@@ -482,34 +484,20 @@ export class Workspace implements InputSink {
       scene: this.scene,
       commands: this.commands,
       events: this.events,
-      selectionIds() {
-        return self.selectionPort.get();
+      selectionIds: () => this.selectionPort.get(),
+      screenToWorld: (screen: Vec2) => this.coordinates.screenToWorld(screen),
+      screenToViewport: (screen: Vec2) => this.viewport.screenToViewport(screen),
+      requestRender: () => {
+        this.pushOverlay();
+        this.renderer.markDirty();
       },
-      screenToWorld(screen: Vec2) {
-        return self.coordinates.screenToWorld(screen);
-      },
-      screenToViewport(screen: Vec2) {
-        return self.viewport.screenToViewport(screen);
-      },
-      requestRender() {
-        self.pushOverlay();
-        self.renderer.markDirty();
-      },
-      setTool(id: string) {
-        self.tools.setActive(id);
-      },
-      execute(command: WorkspaceCommand) {
-        self.commands.execute(command);
-      },
-      setSnapLines(lines) {
-        self.snapLines = [...lines];
-      },
-      buildSnapTargets(region: Rect, excludeIds?: ReadonlySet<string>) {
-        return self.buildSnapTargets(region, excludeIds);
-      },
-      snapRect(rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect> {
-        return self.snapRect(rect, excludeIds);
-      },
+      setTool: (id: string) => { this.tools.setActive(id); },
+      execute: (command: WorkspaceCommand) => { this.commands.execute(command); },
+      setSnapLines: (lines) => { this.snapLines = [...lines]; },
+      buildSnapTargets: (region: Rect, excludeIds?: ReadonlySet<string>) =>
+        this.buildSnapTargets(region, excludeIds),
+      snapRect: (rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect> =>
+        this.snapRect(rect, excludeIds),
     };
   }
 

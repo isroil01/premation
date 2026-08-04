@@ -13,6 +13,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
+import globals from 'globals';
 
 export default tseslint.config(
   {
@@ -159,6 +160,13 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
+      // `require()` inside a test is deliberate, not legacy style: it is how a
+      // module gets re-evaluated after `jest.resetModules()` or loaded AFTER a
+      // `jest.mock()` in the same file. A static `import` is hoisted above both,
+      // so there is no ESM spelling of "load this now, with the mocks I just
+      // installed". Sixteen of these were the single largest block of lint
+      // errors and none of them was a defect.
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
   {
@@ -167,18 +175,24 @@ export default tseslint.config(
   },
   {
     // Node-side tooling: build scripts, jest configs, the render-test harness.
-    // Declared inline rather than pulling in the `globals` package for six
-    // names. `require`/`module` are CommonJS-only but harmless to declare.
+    //
+    // DERIVED from the `globals` package, not hand-listed. The previous inline
+    // set named eight globals "rather than pulling in the package for six
+    // names", and then did what every hand-maintained set does: it stopped
+    // covering anything written after it. `setTimeout`/`clearTimeout` in the
+    // render-test harness and `fetch`/`Blob`/`FormData` in the plugin signer
+    // were all reported undefined — six `no-undef` errors on globals that
+    // plainly exist.
+    //
+    // The cost was never those six. It is that `no-undef` was USELESS in these
+    // files: a genuinely undefined name would have looked exactly like the
+    // false ones and been read as more of the same noise. Same shape as F25 —
+    // a list inside a guard, silently narrowing what the guard covers.
     files: ['**/*.{mjs,cjs}', 'scripts/**', 'packages/*/jest.config.cjs', 'jest.*.cjs'],
     languageOptions: {
       globals: {
-        process: 'readonly',
-        console: 'readonly',
-        Buffer: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
+        ...globals.node,
         module: 'writable',
-        require: 'readonly',
         exports: 'writable',
       },
     },

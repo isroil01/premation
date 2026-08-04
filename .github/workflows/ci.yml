@@ -1,0 +1,70 @@
+# The gate CONTRIBUTING.md already promised.
+#
+# ── Why this file exists ─────────────────────────────────────────────────────
+# `CONTRIBUTING.md` tells every contributor:
+#
+#     npm run typecheck && npm test && npm run lint
+#     All three must be clean.
+#
+# Nothing enforced that. `release.yml` runs typecheck and test, but only on a
+# release TAG — so nothing at all gated `dev`, and `lint` ran nowhere. It drifted
+# to 42 errors, and the cost was never the 42: a gate nobody can pass is worse
+# than no gate, because the next real error is indistinguishable from the
+# existing noise. One of the 42 WAS real (a silently-truncated numeric literal
+# in the noise hash) and had been sitting in that noise.
+#
+# Same reasoning as making the render-test harness fail on uncaught setup errors:
+# a check whose failure mode is "looks fine" is not a check.
+#
+# ── The warning ratchet ──────────────────────────────────────────────────────
+# `npm run lint` passes `--max-warnings 129`, the count at the time the gate went
+# in. Errors are banned outright; warnings are frozen. That stops the slow drift
+# that produced this situation without demanding 129 unrelated fixes first. To
+# add an `any`, lower something else or raise the number deliberately — which is
+# the point: it becomes a decision instead of an accident.
+#
+# 32 of those warnings are unused `eslint-disable` directives. `--fix-type
+# directive` removes them all, and that was tried and REVERTED: it rewrites 30+
+# files this branch has no other business touching, deletes comments that
+# document intent (`// eslint-disable-line eqeqeq` on a deliberate loose compare
+# in the expression evaluator), and leaves trailing whitespace behind. Worth
+# doing on its own, not inside a lint-gate change.
+
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+# A newer push to the same branch/PR makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: typecheck · test · lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Native modules (better-sqlite3) build from source here. They are not
+      # needed to typecheck, test or lint, and building them is the slowest and
+      # flakiest step in the job — so skip the scripts rather than the cache.
+      - run: npm ci --ignore-scripts
+
+      # Each runs even if an earlier one fails: three separate reports beat
+      # finding out about the type error only after fixing the lint error.
+      - run: npm run typecheck
+      - if: '!cancelled()'
+        run: npx tsc -p electron/tsconfig.json --noEmit
+      - if: '!cancelled()'
+        run: npm test -- --ci
+      - if: '!cancelled()'
+        run: npm run lint
