@@ -782,6 +782,34 @@ open in two of them:
 Applies to anything positional: warps, distortions, transforms, path operators,
 layout, hit-testing.
 
+## 2b-sexies. 2026-08-05 — the repeater gate PASSES, and F19 blocks the fold anyway
+
+**The gate answer: the arrows would NOT be inert.** Measured, hand-computed
+first, in `src/core/scene/repeaterFoldGate.test.ts`.
+
+Baking copies into geometry makes chain position meaningful because every
+operator measures its effect in ABSOLUTE px — zigzag's amplitude, Round Corners'
+radius, Offset Path's distance — while the repeater's ladder applies a per-copy
+SCALE. Scaling before the operator changes the ratio between them; scaling after
+does not. On one open run (0,0)-(10,0), zigzag amplitude 1, two copies at
+offsetScale 2, copy 1's midpoint is **y=2 with zigzag first and y=1 with the
+repeater first**. Both figures were derived on paper and matched the
+implementation exactly.
+
+**The special case is the DEFAULT, which is the part worth recording.**
+Translation and rotation are rigid, so they commute with every operator in the
+chain — the ruffle moves without resizing. `defaultRepeater()` is
+`offsetX: 80, offsetRotation: 0, offsetScale: 1`: translate-only. A gate measured
+on a freshly added repeater would have reported the arrows inert and blocked a
+feature that works. The trim gate nearly returned the wrong answer from a
+degenerate case; this one would have returned the wrong answer from the default.
+The rule that generalises is `offsetScale != 1`, verified across 0.5/1.5/2/3 with
+the boundary at exactly 1 asserted rather than assumed.
+
+| # | Finding | Severity | Proposed |
+|---|---|---|---|
+| **F19** | **The fold-in cannot satisfy "existing documents render identically", and no lossless migration exists.** Copies are placed in COMP space today — `buildSnapshot` emits `x: px + c.dx`, adding the ladder delta to the layer's comp position, so the ARRANGEMENT of copies stays axis-aligned however the layer is rotated. Folding into `fx.pathOps` bakes copies into LAYER-LOCAL geometry, after which the layer transform rotates and scales the whole repeated group. For an untransformed layer the two agree exactly; for a rotated one they diverge immediately — a repeater with `offsetX: 10` on a layer rotated 90 degrees puts copy 1 at (10,0) today and at (0,10) folded. Measured in the gate file. The local-space model is the AE-correct one (AE's Repeater lives inside contents, so the layer transform applies to it), so the fold is not merely a refactor — it is a rendering-semantics change. A migration could divide the layer transform out of the offsets only while that transform is STATIC; on a layer with keyframed rotation or scale the compensation would have to vary per frame, which makes the repeater operator depend on the layer transform and breaks the chain's contract that operators are pure point-to-point functions. **The existing pixel gate would not catch this**: `shape-repeater` in `render-tests/harness/scenes/shapes.ts` uses an untransformed layer, so its golden is blind to exactly the case that changes. | **Design, blocking the fold-in** | Not mine to decide unilaterally. Either (a) accept the semantic change, document it as an AE-parity fix, and add a render-test scene with a ROTATED repeater layer so the change is visible and gated rather than silent; or (b) keep comp-space placement by making the repeater operator read the layer transform, which buys backward compatibility at the cost of the chain's purity and behaves badly under non-uniform scale. Recommend (a) with the new golden, but it needs a decision before code. |
+
 ## 2b-quater. Closed 2026-08-04 — F15, F17 and Phase 3a
 
 **F15 — the dead golden.** Corrected from how it was first written up: the
