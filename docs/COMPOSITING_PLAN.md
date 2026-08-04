@@ -827,6 +827,36 @@ open in two of them:
    re-derive the implementation inside its own assertion. Corner Pin's uses an
    axis-aligned quad inset to the middle half, where source (8,8) maps to
    (20,20) by inspection — deliberately not a general projective quad.
+
+   **3a. Then ask what those clean values make IMPOSSIBLE, and add a fixture at
+   that boundary.** This is rule 3's failure mode, and it is the sharpest
+   mistake this project has made — not a shortcut taken, but the right practice
+   applied without asking what it excluded.
+
+   Vegas: every contour fixture used alpha 200 against threshold 100, chosen so
+   each crossing solves to exactly 0.5 and the whole contour is derivable on
+   paper. That choice is what made the tests good. It is also what made a
+   DEGENERATE crossing structurally unreachable — a sample landing exactly ON
+   the threshold, where the crossing solves to 0 or 1 and lands on a grid corner.
+   Nine contour tests, all green, all blind, and the defect they could not see
+   broke one contour into six. The boundary fixture is three lines: the same
+   block, at alpha exactly equal to the threshold.
+
+   The pattern generalises, and every gate this project has nearly got wrong sits
+   on one of these:
+
+   | Clean value chosen | What it silently excludes |
+   |---|---|
+   | alpha 200 vs threshold 100 | the sample exactly AT the threshold |
+   | `offsetScale` 0.5 / 2 | scale exactly 1, where the repeater commutes |
+   | a trim at 37% | a trim exactly at a vertex, which commutes |
+   | a repeater with offsets | the translate-only DEFAULT, which is rigid |
+   | an interior shape | a shape touching the plane edge |
+
+   Note the direction differs — sometimes the boundary is the case that WORKS
+   when the clean sample fails (scale 1), sometimes the case that FAILS when the
+   clean sample works (alpha at threshold). So the question is not "is the
+   boundary inert?" but "is it reachable from my fixture at all?"
 4. **Verify by breaking the direction, and watch which tests fail.** The proof
    is not that the new test fails; it is that the OLD guard passes while the new
    one fails. Mirroring the twirl leaves its distance-preservation check green;
@@ -835,6 +865,15 @@ open in two of them:
 5. **A golden is not independent evidence.** It records whatever the code did on
    the day it was blessed. Spherize's golden was blessed from the bug and had to
    be re-blessed after the fix.
+
+   **Check a new golden by COUNTING, not by looking.** Added 2026-08-05. Vegas's
+   first blessed frame was plausible at a glance — lights along the star, right
+   colour, right size — and it was wrong. What found it was arithmetic: 13
+   connected blobs against an expected 10, then a direct measurement showing SIX
+   contours where the alpha had exactly ONE connected region. Eyeballing would
+   have blessed it, and the golden would then have recorded the bug as the
+   expectation. Pick something in the frame you can predict a NUMBER for — blob
+   count, inked area, extent — and check that number.
 
    **What makes a RE-bless evidence: predicting the diff first.** Added
    2026-08-05. Blessing a scene, changing the code, and blessing it again proves
@@ -930,6 +969,19 @@ rather than treating as one bad day.
    real operator live in a separate file (`pathOpChain.test.ts`); the gate is
    not retired once the feature ships, because it is the record of why the
    feature was worth shipping.
+
+8. **A guard that HANGS is worse than no guard.** Added 2026-08-05, from
+   verifying Vegas. Breaking `walkArc`'s unwrapping did not turn the suite red —
+   it allocated until the process died, because the loop's termination depended
+   on an invariant maintained somewhere else. A red test names the thing that
+   broke; a hang makes the whole suite unusable and says nothing. A wrong picture
+   is debuggable; a hang is a hang.
+
+   So: any loop whose exit depends on a computed quantity gets a STRUCTURAL bound
+   as well. `walkArc` is bounded by the vertex count, because a run clamped to
+   one perimeter can pass each vertex at most once — the bound is derived from
+   the problem, not a guessed iteration cap. Then breaking the invariant produces
+   a visibly wrong run, which is a test result.
 
 ## 2b-sexies. 2026-08-05 — the repeater gate PASSES, and F19 blocks the fold anyway
 
