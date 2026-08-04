@@ -31,6 +31,47 @@ npm run typecheck && npm test && npm run lint
 All three must be clean. Tests run in under a minute, so there is no excuse for
 skipping them.
 
+## Environment hazards
+
+Two things about *where and how* you check this repo out have cost real hours.
+Neither announces itself. Both produce corruption that is silent at the moment it
+happens and hard to attribute afterwards, because the symptom surfaces a long way
+from the cause — in someone else's commit, or in a test run that reported success.
+Read these before you start, not after.
+
+**Do not put the repo in OneDrive, Dropbox, or any syncing folder.** OneDrive
+hides files from jest: thirteen test suites went invisible, and the run went
+green because the failures were never collected. A green suite that did not run
+looks exactly like a green suite that passed. It also breaks `git stash`. If you
+suspect it, **check the suite count**, not the pass/fail line.
+
+**Do not run two sessions in one checkout.** A working tree and its index are
+shared, so `git add -A` in one session stages whatever the other has
+half-finished — and commits it cleanly, under the wrong author, in an unrelated
+commit. That is not hypothetical: it swept roughly a thousand lines of in-flight
+timeline work into two commits here. It was caught before the push, but only
+because someone read the diffstat.
+
+Give each session its own checkout:
+
+```bash
+npm run worktree -- feat/my-thing
+```
+
+That makes a `git worktree` beside the repo — separate directory, separate index,
+one shared `.git`. It needs its own `npm install` (npm trees are not relocatable,
+and symlinking breaks the native modules) and its own dev-server port. The
+install is the real cost and it is not small: **`node_modules` measures 760M**, so
+each worktree is about a gigabyte on disk. Two or three at a time is fine; a
+dozen left lying around is not. `npm run worktree -- --list` shows what you have
+and `-- --remove <branch>` cleans one up.
+
+Worth the gigabyte anyway. The alternative is a failure mode that depends on
+everyone being careful every time, and it has already not worked once.
+
+Where a shared checkout is unavoidable, **never `git add -A` in this repo** —
+name every file in every commit, and read the diffstat before you push.
+
 ## What to work on
 
 Good first issues are labelled [`good first
