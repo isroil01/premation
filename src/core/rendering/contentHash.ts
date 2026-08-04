@@ -55,7 +55,6 @@ function contentOf(layer: RenderLayer): unknown {
     // boundaries, so the structure is in the key and a trim that only moves a
     // split point still busts the cache.
     pts: layerSubpaths(layer).map((s) => ({ p: s.points, o: s.open === true })),
-    trim: layer.trim,
     w: layer.width,
     h: layer.height,
     q: layer.quality,

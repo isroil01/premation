@@ -15,7 +15,7 @@
 import type { RenderLayer } from '../RenderBackend';
 import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
-import { trimPolyline, type Pt } from '@core/scene/trimPath';
+import type { Pt } from '@core/scene/trimPath';
 import { layerSubpaths, hasPathGeometry } from './subpaths';
 import { effectNumber } from '@core/effects/effects';
 import { layerIsBaked } from '@core/effects/effectBake';
@@ -280,7 +280,17 @@ export function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: Stroke, 
   ctx.setLineDash(stroke.dash.length ? stroke.dash : []);
 }
 
-/** Sample the layer's fill outline into a polyline (for trim stroking). */
+/**
+ * Sample the layer's fill outline into a polyline — the input Trim Paths cuts.
+ *
+ * Called from `buildSnapshot`, not from the draw loop: trim resolves to
+ * geometry now, so the sampling happens once per frame when the snapshot is
+ * built rather than once per stroke when it is drawn.
+ *
+ * Known gap: a rect's rounded corners are NOT sampled — the outline is the four
+ * hard corners. That was already true when only the stroke was trimmed; the fill
+ * now inherits it, so a trimmed rounded rect cuts along the square outline.
+ */
 export function outlinePolyline(layer: RenderLayer): { pts: Pt[]; closed: boolean } {
   const w = layer.width;
   const h = layer.height;
@@ -311,22 +321,6 @@ export function outlinePolyline(layer: RenderLayer): { pts: Pt[]; closed: boolea
     ],
     closed: true,
   };
-}
-
-/** Stroke only the trim-path visible arcs of the shape outline (MG-C). */
-export function strokeTrimmed(ctx: CanvasRenderingContext2D, layer: RenderLayer, stroke: Stroke): void {
-  const { pts, closed } = outlinePolyline(layer);
-  const subs = trimPolyline(pts, closed, layer.trim ?? []);
-  ctx.save();
-  applyStrokeStyle(ctx, stroke);
-  for (const sub of subs) {
-    if (sub.length < 2) continue;
-    ctx.beginPath();
-    ctx.moveTo(sub[0]!.x, sub[0]!.y);
-    for (let i = 1; i < sub.length; i++) ctx.lineTo(sub[i]!.x, sub[i]!.y);
-    ctx.stroke();
-  }
-  ctx.restore();
 }
 
 /** Trace the layer's fill outline (centred at 0,0) without painting it. */

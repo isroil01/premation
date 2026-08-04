@@ -61,6 +61,23 @@ export const shapeScenes: Scene[] = [
     graph.setTrimPath('s', { start: 0, end: 65, offset: 0 });
   }),
 
+  // The F14 gate. A trim with NO stroke at all: every inked pixel in this frame
+  // is fill, so it can only be right if the trim cut the geometry the fill is
+  // traced from. Before the fix this rendered a solid rectangle — `layer.trim`
+  // was read inside the stroke loop and the fill ignored it.
+  scene('shape-trim-fill', 'FILL follows the trim (no stroke) — the path is cut, not annotated.', (graph) => {
+    graph.addNode(shapeNode('f', { x: 180, y: 140, rotation: 0, fill: '#f0a030' }));
+    graph.setTrimPath('f', { start: 0, end: 50, offset: 0 });
+  }),
+
+  // Two runs from one path — the case a single `pathPoints` polyline could not
+  // express, and therefore the reason trim could not cut geometry at all.
+  scene('shape-trim-wrap', 'Trim window wrapped past the end of the path: TWO subpaths, filled + stroked.', (graph) => {
+    graph.addNode(shapeNode('w', { x: 180, y: 140, rotation: 0, fill: '#1f2f47' }));
+    graph.setStroke('w', { enabled: true, color: '#66e0ff', width: 10, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
+    graph.setTrimPath('w', { start: 0, end: 40, offset: 80 });
+  }),
+
   scene('shape-repeater', 'Repeater: 4 copies with x/rotation/scale offset.', (graph) => {
     graph.addNode(node('rc', { kind: 'shape', position: { x: 90, y: 140 }, transform: { width: 70, height: 70, shapeType: 'rect' }, style: { fill: '#8a7bff' } }));
     graph.setRepeater('rc', { copies: 4, offsetX: 60, offsetY: 0, offsetRotation: 12, offsetScale: 0.85, offsetOpacity: 0.85 });

@@ -220,9 +220,6 @@ export interface RenderLayer {
    *  filled — the backend draws them as an open polyline instead of a loop.
    *  Applies to `pathPoints`; `subpaths` carry their own per-run `open`. */
   pathOpen?: boolean;
-  /** Trim-path visible arcs [lo,hi] (0..1 of the outline length). When present
-   *  the backend strokes only these portions of the shape outline (MG-C). */
-  trim?: ReadonlyArray<readonly [number, number]>;
   /** For text. */
   text?: string;
   fontSize?: number;

@@ -31,7 +31,7 @@ import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import { isAutoOrientedToCamera, readNodeAutoOrient } from '@core/scene/autoOrient';
 import { autoOrientAngleDeg } from '@core/motion/motionPath';
 import { resolveRepeater, repeaterCopies } from '@core/scene/repeater';
-import { resolveTrim, trimSegments } from '@core/scene/trimPath';
+import { resolveTrim, trimSegments, trimPolyline } from '@core/scene/trimPath';
 import { nearestPrecompRoot, precompAncestorChain } from '@core/scene/precomp';
 import { readNodeAnchor } from '@core/scene/anchor';
 import { readNodeLight } from '@core/scene/light';
@@ -74,7 +74,7 @@ import type { MotionSample } from './RenderBackend';
 import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 import { contentHashOf } from './contentHash';
-import { rasterPadding } from './raster/vectorDraw';
+import { rasterPadding, outlinePolyline } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
@@ -1978,12 +1978,46 @@ export function buildSnapshot(
       }
     }
 
-    // Trim path (MG Phase C): visible outline arcs, resolved with any animated
-    // start/end/offset. The backend strokes only these portions.
+    // Trim path (MG Phase C): CUT the path down to its visible arcs, resolved
+    // with any animated start/end/offset.
+    //
+    // This used to write `layer.trim = segs` — an annotation the rasterizer read
+    // inside its STROKE loop and nowhere else. The fill ran `shapePath →
+    // ctx.fill()` above it, unconditionally, so a trimmed shape drew its whole
+    // fill and a partial outline. AE's Trim Paths cuts the path itself and the
+    // fill follows, and a new shape layer defaults to a solid fill (#2B7EFF), so
+    // that was wrong for the common case, not an edge one (F14).
+    //
+    // Cutting here rather than at draw time is what makes it work for both
+    // operations at once: geometry is the one thing every consumer already
+    // reads. The trimmed runs are OPEN — the stroke must not draw a chord back
+    // to the start — and `fill()` closes them implicitly, which is exactly the
+    // region AE shades.
     const trimCfg = resolveTrim(node, a);
     if (trimCfg) {
       const segs = trimSegments(trimCfg.start, trimCfg.end, trimCfg.offset);
-      if (!(segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1)) layer.trim = segs;
+      if (!(segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1)) {
+        // Sampled AFTER the path operators above, so trim cuts their output —
+        // the documented fixed pipeline is pathOps → trim → repeater.
+        const { pts, closed } = outlinePolyline(layer);
+        const runs = trimPolyline(pts, closed, segs);
+        if (runs.length === 0) {
+          // An empty window (start ≥ end) shows nothing. Not "the untrimmed
+          // shape", which is what an empty `layer.trim` used to leave on screen:
+          // the stroke drew no arcs and the fill drew the whole shape anyway.
+          layer.visible = false;
+        } else {
+          layer.subpaths = runs.map((run) => ({
+            points: run.map((p) => corner(p.x, p.y)),
+            open: true,
+          }));
+          // The invariant: one field or the other, never both. The cut geometry
+          // supersedes whatever single run got us here.
+          layer.pathPoints = undefined;
+          layer.pathOpen = undefined;
+          layer.primitive = 'path';
+        }
+      }
     }
 
     // Motion blur: sub-frame transform samples for a moving, opted-in layer.
