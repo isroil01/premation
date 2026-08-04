@@ -1037,6 +1037,63 @@ open in two of them:
    thing is load-bearing, not that any particular guard is watching it. The
    informative breaks are the ones that fail a little.
 
+5·0. **Before blessing a scene, confirm the thing under test can REACH the
+   medium.** Added 2026-08-05, from F23, and numbered `·0` because it is the
+   prior question to all of rule 5 rather than another clause of it. Every
+   subject-choice rule below — count don't look, never test a spatial transform
+   on smooth material — assumes the medium is CAPABLE of showing the failure.
+   That assumption is worth one minute and is occasionally false.
+
+   F23 is the rig overlays drawing their handles at the unparented position. The
+   natural gate is a render-test scene: parent a rigged layer, bless the frame,
+   fix the bug, re-bless. Rule 5b was already satisfied — a rig on structured
+   material, not a smooth gradient. It would have proved nothing. The harness
+   runs `createRenderBackend → buildSnapshot → renderFrame`, which is the
+   COMPOSITING pipeline; pins, bones and effect handles are React chrome drawn
+   over the viewport and are not in a composited frame at all. No pixel in that
+   golden could move when the bug was fixed, or when it was put back.
+
+   The distinction from 5b is the one that matters:
+
+   | | 5b — wrong subject | 5·0 — wrong medium |
+   |---|---|---|
+   | Failure | dead by unlucky choice | dead by construction |
+   | Recovery | pick a better subject | no subject exists |
+   | Tell | frame looks plausible either way | frame cannot contain the observable |
+
+   5b is recoverable inside the medium. This is not, and that is why it has to be
+   asked first — a bad subject wastes the scene, a bad medium wastes the whole
+   approach and everything built on it.
+
+   It generalises past pixels, and each pairing below has bitten something:
+
+   | Medium | What it structurally cannot see |
+   |---|---|
+   | a pixel gate | chrome, overlays, cursors — anything outside the composite |
+   | a DOM snapshot | a renderer bug; the markup is identical either way |
+   | a unit test | wiring — the function is right, nobody calls it |
+   | a typecheck | any value, including the one that is always `undefined` |
+   | a green suite | a suite that did not run (see the OneDrive trap) |
+
+   The check is mechanical. Name the observable, name the layer of the stack that
+   produces it, and confirm the medium samples THAT layer. When it samples a
+   different one, stop and change medium — do not go looking for a cleverer
+   fixture, because there isn't one.
+
+   This is rule 4a arriving early. A scene that cannot see its subject is a guard
+   that fails nothing, discovered before it was blessed rather than after it had
+   spent a year implying coverage. Note also that such a scene does not announce
+   itself: a render-test scene that fails to BUILD is not gated, so a dead scene
+   reports as a pass in both directions.
+
+   **The ordering discipline is medium-independent, which is the useful half.**
+   Changing medium did not mean abandoning the method. The sequence — derive the
+   expected numbers on paper, record them before touching the code, then match —
+   carried over to a component test unchanged: the parented pin was predicted to
+   move from `(30,0)` to `(100,110)` and landed there exactly. What rule 5
+   actually teaches is the ORDER of prediction and observation. Pixels were only
+   ever one way to observe.
+
 5. **A golden is not independent evidence.** It records whatever the code did on
    the day it was blessed. Spherize's golden was blessed from the bug and had to
    be re-blessed after the fix.
@@ -1272,9 +1329,12 @@ The repeater's ORDERING still applied; only the medium changed. A component test
 asserting the wrong-but-current handle position landed first, with the corrected
 number written down as a prediction, and the fix re-blessed it.
 
-Worth noting for the next behaviour change: **"bless before, predict, match"
-needs a medium that actually observes the thing.** Ask what artifact would move,
-before choosing the artifact.
+This is now **rule 5·0** of §2b-quinquies — *before blessing a scene, confirm the
+thing under test can reach the medium* — recorded there with the pixel-gate /
+snapshot / unit-test / typecheck generalisation, and placed ahead of the
+subject-choice rules because all of them assume a medium that can show the
+failure. The half worth repeating here: only the MEDIUM changed. The ordering
+survived intact, which is what says the discipline was never about pixels.
 
 Also checked, and the same blindness as `shape-repeater`: NO existing rig scene
 uses a parented layer. The `parent` matches in `rig.ts` are all `parentId` on
