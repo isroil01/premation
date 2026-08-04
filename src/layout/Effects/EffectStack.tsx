@@ -1,3 +1,6 @@
+import { writeEffectParams } from '@core/effects/writeEffectParams';
+import { hasEffectHandles } from '@core/effects/effectHandles';
+import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useState } from 'react';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 /**
@@ -199,16 +202,16 @@ function EffectParamRow({
   const layerT = compToKeyframeTime(nodeId, time);
   const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? stored : stored;
 
+  // ONE writer, shared with the canvas handle overlay. This used to be the
+  // `animated ? setKeyframe : updateEffectParam` branch inline, and the overlay
+  // needed the identical rule — a second copy of "does this edit keyframe?" is
+  // the §2·0 shape that guarantees the canvas and the field eventually disagree
+  // about the same parameter.
   const onChange = (v: number): void => {
-    if (animated) {
-      runAnimEdit(
-        `Set ${label}`,
-        () => defaultAnimation.setKeyframe(nodeId, path, layerT, v),
-        `fx:${nodeId}:${path}:${layerT}`,
-      );
-    } else {
-      updateEffectParam(nodeId, effect.id, param.key, v);
-    }
+    writeEffectParams(
+      nodeId, effect.id, { [param.key]: v },
+      { time, mergeKey: `fx:${nodeId}:${path}:${layerT}`, label: `Set ${label}` },
+    );
   };
   const toggle = (): void => {
     if (animated) runAnimEdit(`Remove ${label} animation`, () => defaultAnimation.removeTrack(nodeId, path));
@@ -356,7 +359,14 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
 
               <span
                 className={off ? panel.itemLabelOff : panel.itemLabel}
-                onClick={() => toggleEffectCard(e.id, isCollapsed)}
+                // Selecting the card is what shows its canvas handles. Twelve
+                // Bezier Warp points and four Corner Pin points on one layer at
+                // once would make the canvas unusable, so the overlay follows
+                // the selected effect — the AE behaviour too.
+                onClick={() => {
+                  if (hasEffectHandles(e.type)) useEffectHandleStore.getState().select(nodeId, e.id);
+                  toggleEffectCard(e.id, isCollapsed);
+                }}
                 style={{
                   flex: 1,
                   cursor: 'pointer',
