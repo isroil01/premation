@@ -1316,6 +1316,60 @@ one of the five either.
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
 
+## 2b-duodecies. Release note — puppet pins and bones draw where the artwork is (F23, SHIPPED)
+
+**Behaviour change, editor only. Rig handles move on parented and on keyframed
+layers. No rendered frame changes, no export changes, no document migration.**
+
+Puppet pins and bone handles were positioned through `worldMatrix(readGeometry
+(node))`, which composes that node's own translate/rotate/scale and reads its
+STATIC props. Two things were missing from that, and both are fixed by routing
+the overlays through `layerScreenMapping` → `layerSpaceAt`, the resolver the
+expression functions and the effect handles already used.
+
+**They now follow layer PARENTING.** On a layer parented to anything that has
+moved, the pins and bones drew at the unparented position while the artwork
+rendered at the parented one. Parent a rigged layer to a null and slide the null
+across the comp, and the handles stayed behind. They travel with it now. 3D
+parenting works too, which the old 2×3 matrix could not express at all.
+
+**They now follow the layer's own ANIMATION.** This is a second change, and it
+is called out separately because it moves handles for an unrelated reason.
+`worldMatrix` read the static x/y/rotation/scale, so on a layer whose own
+transform is keyframed the handles sat at the rest pose for the whole animation
+while the artwork moved away from them. They track the artwork through the
+animation now.
+
+What you will see:
+
+  * A rig on a **parented** layer, or on a layer with a **keyframed** transform:
+    the pins and bones snap onto the artwork. If you had learned to work around
+    the offset, that compensation is no longer needed.
+  * **Dragging** is corrected in the same motion, in both directions. The
+    screen→layer conversion had the identical omission, so on a parented layer a
+    dragged pin used to jump. A drag now lands where you release it.
+  * A rig on an **unparented layer with a static transform** is unchanged — the
+    parent chain and the animated sample both collapse to the old matrix there.
+    That is the common case, and it is the reason this is not a bigger deal than
+    it looks.
+  * **Effect handles** — Bezier Warp, Corner Pin, and the three distort centres —
+    are unaffected. They already went through `layerSpaceAt` and were already
+    correct; they moved onto the shared helper as a refactor.
+
+**Your rigs are not modified, and nothing re-renders differently.** Pin and bone
+positions are stored in layer-local space, and the deformer consumes them in
+layer-local space — so the deformation was always applied at the right point on
+the artwork. It was only the overlay that drew somewhere else. The handle moves
+onto the point it was already controlling; the change touches six files under
+`src/layout/Workspace` and nothing in the renderer, the document schema or the
+migration chain.
+
+Announced rather than absorbed, on the grounds in F19 and F14: someone with a
+keyframed rigged layer will notice their pins moved, and an unexplained change
+in where the tooling draws is worse than a documented one. Side-effect
+improvements arriving unannounced beside a fix is how behaviour drifts without
+anyone owning the decision.
+
 ## 2b-undecies. 2026-08-05 — the Puppet/Bone consolidation is NOT a refactor
 
 **Closed the same day, and one thing learned in the closing.** The obvious move
@@ -1361,7 +1415,7 @@ exactly how a "pure refactor" ships a surprise.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
-| **F23** | **The puppet and bone overlays ignore layer PARENTING.** Both position their handles through `worldMatrix(readGeometry(node))`, which composes only that node's own translate/rotate/scale; neither references `worldMatrixOf` or `parentWorld3d`. So on a layer parented to anything that moves, the pins and bones draw at the unparented position while the artwork renders at the parented one — the same class of drift `liveWorld3d` was written to end for cameras, lights and layer-box gizmos, in a fourth and fifth place. Not reproduced on a rig yet: found by reading `worldMatrix` while checking whether the two overlays could share the effect overlay's projection. | **FIXED 2026-08-05** | Both overlays now go through `layerScreenMapping`, which wraps `layerSpaceAt`. `layerScreenMapping` is the ONLY code in `src/layout` that composes a layer transform to screen — every remaining `worldMatrix(` there is a comment — and it has three consumers: Puppet, Bone and the effect-handle overlay, whose inline copy went the same way. So the third duplication the existence table found is closed by the same change that fixed the bug. Guard landed first asserting the wrong-but-current (30, 0) with (100, 110) written down as the prediction; it is now (100, 110). **A SECOND behaviour change came with it and is called out rather than absorbed**: `layerSpaceAt` samples the ANIMATED layer transform where `worldMatrix(readGeometry(node))` read static props only, so an overlay on a keyframed layer now tracks the artwork instead of sitting at the rest pose. Same defect class, separately guarded. |
+| **F23** | **The puppet and bone overlays ignore layer PARENTING.** Both position their handles through `worldMatrix(readGeometry(node))`, which composes only that node's own translate/rotate/scale; neither references `worldMatrixOf` or `parentWorld3d`. So on a layer parented to anything that moves, the pins and bones draw at the unparented position while the artwork renders at the parented one — the same class of drift `liveWorld3d` was written to end for cameras, lights and layer-box gizmos, in a fourth and fifth place. Not reproduced on a rig yet: found by reading `worldMatrix` while checking whether the two overlays could share the effect overlay's projection. | **FIXED 2026-08-05** | Both overlays now go through `layerScreenMapping`, which wraps `layerSpaceAt`. `layerScreenMapping` is the ONLY code in `src/layout` that composes a layer transform to screen — every remaining `worldMatrix(` there is a comment — and it has three consumers: Puppet, Bone and the effect-handle overlay, whose inline copy went the same way. So the third duplication the existence table found is closed by the same change that fixed the bug. Guard landed first asserting the wrong-but-current (30, 0) with (100, 110) written down as the prediction; it is now (100, 110). **A SECOND behaviour change came with it and is called out rather than absorbed**: `layerSpaceAt` samples the ANIMATED layer transform where `worldMatrix(readGeometry(node))` read static props only, so an overlay on a keyframed layer now tracks the artwork instead of sitting at the rest pose. Same defect class, separately guarded. **Both changes ship with a release note (§2b-duodecies)** — editor-only, no rendered frame or export changes, no migration; a rig on an unparented static layer is unchanged. |
 
 ## 2b-nonies. 2026-08-05 — Bezier Warp, and a guard that covered nothing
 
