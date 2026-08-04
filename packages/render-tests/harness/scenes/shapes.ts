@@ -104,6 +104,50 @@ export const shapeScenes: Scene[] = [
     graph.setRepeater('rc', { copies: 4, offsetX: 60, offsetY: 0, offsetRotation: 12, offsetScale: 0.85, offsetOpacity: 0.85 });
   }),
 
+  // ── The two scenes that make the repeater's SPACE visible ──────────────
+  //
+  // `shape-repeater` above uses an untransformed layer, where comp-space and
+  // layer-local copy placement agree exactly. That blindness is the whole
+  // reason these exist (F19): the repeater fold-in moves copies from comp
+  // space into layer-local geometry, and without a transformed layer in the
+  // suite the pixel gate would have passed the change in silence.
+  //
+  // Both are deliberately translate-only — `offsetRotation: 0`,
+  // `offsetScale: 1` — so the ONLY thing a re-bless can be showing is the
+  // direction/length of the copy ladder. A per-copy rotation or scale would
+  // render the same in either model and would just muddy the diff.
+
+  scene('shape-repeater-rotated-layer', 'Repeater on a layer rotated 35 degrees — copy ladder direction is model-dependent.', (graph) => {
+    // Comp-space (pre-fold): copies march along comp +X, 70px apart, and the
+    // arrangement stays axis-aligned no matter how the layer is turned.
+    //   (100,90) (170,90) (240,90) (310,90)
+    // Layer-local (post-fold): the ladder is baked into geometry, so the
+    // layer's 35 degrees turns it too — 70·(cos35, sin35) = (57.3, 40.2).
+    //   (100,90) (157,130) (215,170) (272,211)
+    // Both stay inside the 360×280 frame, so the change shows as movement
+    // rather than as copies falling off the edge.
+    graph.addNode(node('rr', { kind: 'shape', position: { x: 100, y: 90 }, rotation: 35, transform: { width: 70, height: 70, shapeType: 'rect' }, style: { fill: '#ff9f43' } }));
+    graph.setRepeater('rr', { copies: 4, offsetX: 70, offsetY: 0, offsetRotation: 0, offsetScale: 1, offsetOpacity: 0.8 });
+  }),
+
+  scene('shape-repeater-scaled-layer', 'Repeater on a layer scaled 1.5× — copy SPACING is model-dependent.', (graph) => {
+    // The same blindness on the other axis of the layer transform, and it is
+    // not implied by the rotated scene: rotation changes the ladder's
+    // DIRECTION, scale changes its LENGTH.
+    //   comp-space (pre-fold):   80px apart      -> x = 60, 140, 220
+    //   layer-local (post-fold): 80·1.5 = 120px  -> x = 60, 180, 300
+    // The shape's own drawn size is 40·1.5 = 60 wide either way — layer scale
+    // has always multiplied into the copy's scale — so only the gaps move.
+    //
+    // The bar is deliberately NARROWER than the pre-fold spacing (60 < 80).
+    // Sized the obvious way the copies overlap into one featureless block in
+    // the pre-fold model, and a golden that cannot show the ladder cannot show
+    // the ladder MOVING either. `offsetOpacity` fades each copy for the same
+    // reason: so a reader can tell which rung is which.
+    graph.addNode(node('rs', { kind: 'shape', position: { x: 60, y: 140 }, transform: { width: 40, height: 80, shapeType: 'rect', scaleX: 1.5, scaleY: 1.5 }, style: { fill: '#4ecdc4' } }));
+    graph.setRepeater('rs', { copies: 3, offsetX: 80, offsetY: 0, offsetRotation: 0, offsetScale: 1, offsetOpacity: 0.75 });
+  }),
+
   scene('shape-path-op-zigzag', 'Zigzag path operator on a stroked rect.', (graph) => {
     graph.addNode(shapeNode('z', { x: 180, y: 140, rotation: 0, fill: '#22344f' }));
     graph.setStroke('z', { enabled: true, color: '#ffd166', width: 8, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
