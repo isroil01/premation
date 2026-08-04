@@ -810,7 +810,11 @@ export const flashPop: TechniqueDef = {
     ids.forEach((id, i) => {
       const at = ctx.startMs + staggerAt(ctx, i, ids.length, f * 3);
       const fx = `${ctx.idPrefix}_flash_${i}`;
-      calls.push(mk('add_effect', { nodeId: id, type: 'glow', amount: 0 }));
+      // `id: fx` — see `entrance.blur_resolve_slow`. Without it this named a
+      // generated `fx_<n>` it had no way to know, so the flare that gives the
+      // technique its name was a stored track nothing ever read. What shipped
+      // was the scale dip alone: an impact with no light.
+      calls.push(mk('add_effect', { nodeId: id, type: 'glow', amount: 0, id: fx }));
       calls.push(
         track(id, `effect.${fx}.radius`, [
           // The flare LEADS the scale dip by a frame — light reaches the eye

@@ -96,7 +96,15 @@ export interface SceneFacade {
    *  parent-relative (e.g. Lottie). */
   reparent(nodeId: string, parentId: string | null, options?: { preserveWorld?: boolean }): void;
   setProp(nodeId: string, prop: string, value: unknown): boolean;
-  addEffect(nodeId: string, type: string): string;
+  /**
+   * Add an effect, returning its id.
+   *
+   * `id` requests a specific one. A deterministic emitter cannot read a return
+   * value — it produces a flat `ToolCall[]` with no execution between calls — so
+   * without this it has no way to keyframe `effect.<id>.<param>` on an effect it
+   * just added. Ignored if the node already carries an effect with that id.
+   */
+  addEffect(nodeId: string, type: string, id?: string): string;
   updateEffect(nodeId: string, effectId: string, amount: number): void;
   /**
    * Set a **named** effect parameter.

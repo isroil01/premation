@@ -117,16 +117,56 @@ describe('vocabulary separation (criterion 6b)', () => {
     }
   });
 
-  it('still permits the vocabulary-neutral techniques product packs need', () => {
-    // The rule must not become a blanket ban. A calm entrance is legitimate in a
-    // product piece — the separation is about performance, not about motion.
+  it('refuses editorial techniques ENTIRELY — there is no vocabulary-neutral carve-out', () => {
+    /**
+     * This test asserted the opposite until it was measured.
+     *
+     * It used to read "a calm entrance is legitimate in a product piece — the
+     * separation is about performance, not about motion", and required
+     * `packPermits` to admit at least one editorial entrance under 0.85 energy.
+     * That carve-out was not a design decision that survived contact with the
+     * rest of the repo; it was the assumption that made a total failure look
+     * intentional.
+     *
+     * What was actually happening: `motionCastPrompts` searched only the
+     * editorial registry, so both product packs were offered zero product
+     * techniques on every beat and fell through to exactly these "calm
+     * entrances" — `entrance.rise_settle`, `entrance.depth_arrive`,
+     * `entrance.wipe_columns`. The carve-out this test defended WAS the whole of
+     * their output.
+     *
+     * And it is not neutral. Those techniques emit `set_keyframes` with explicit
+     * beziers, which is what `BEZIER_ON_UI` in this package exists to refuse: "a
+     * bezier reaches its target once; a spring crosses it and settles." Measured
+     * on the pre-fix corpus with the UI-layer set repaired, those six product
+     * runs score 0.850, not the 1.000 they had been reporting. Two rules in the
+     * same repo disagreed, and this was the weaker one.
+     *
+     * So the separation IS about motion. A product pack animates on springs, and
+     * a technique that cannot is not calm — it is editorial.
+     */
     const calmEntrances = EDITORIAL_TECHNIQUES.filter(
       (t) => t.category === 'entrance' && t.energy[1] < 0.85,
     );
     expect(calmEntrances.length).toBeGreaterThan(0);
     for (const packId of PRODUCT_PACKS) {
       const pack = LOOK_PACKS.find((p) => p.id === packId)!;
-      expect(calmEntrances.some((t) => packPermits(pack, t))).toBe(true);
+      const admitted = calmEntrances.filter((t) => packPermits(pack, t)).map((t) => t.id);
+      expect(`${packId} admits editorial: ${admitted.join(', ') || 'none'}`).toBe(
+        `${packId} admits editorial: none`,
+      );
+    }
+  });
+
+  it('gives each product pack a real choice from its OWN vocabulary', () => {
+    // The other half of the rule above. Refusing everything editorial is only
+    // correct if the product library is deep enough to carry a whole piece, so
+    // that is asserted here rather than assumed. If this ever drops, the fix is
+    // more product techniques — never a carve-out back into the editorial one.
+    for (const packId of PRODUCT_PACKS) {
+      const pack = LOOK_PACKS.find((p) => p.id === packId)!;
+      const permitted = PRODUCT_TECHNIQUES.filter((t) => packPermits(pack, t)).length;
+      expect(`${packId}: ${permitted} permitted`).toBe(`${packId}: ${Math.max(permitted, 12)} permitted`);
     }
   });
 

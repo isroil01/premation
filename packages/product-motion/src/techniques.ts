@@ -771,6 +771,16 @@ export const progressFill: TechniqueDef = {
 import { PRODUCT_TECHNIQUES_2 } from './techniques2';
 import { PRODUCT_TECHNIQUES_3 } from './techniques3';
 
+/**
+ * `vocabulary: 'product'` is stamped HERE rather than on each definition.
+ *
+ * Thirty-odd techniques across three files, and the cost of forgetting it on one
+ * of them is that the technique silently disappears from every product pack's
+ * candidate list — the exact failure this field was added to fix. A per-file
+ * declaration is a list someone has to remember to extend; the boundary is the
+ * one place that cannot be missed, because everything reaches the caster through
+ * it.
+ */
 export const PRODUCT_TECHNIQUES: readonly TechniqueDef[] = [
   listStaggerIn,
   pressFeedback,
@@ -791,4 +801,4 @@ export const PRODUCT_TECHNIQUES: readonly TechniqueDef[] = [
   progressFill,
   ...PRODUCT_TECHNIQUES_2,
   ...PRODUCT_TECHNIQUES_3,
-];
+].map((t) => ({ ...t, vocabulary: 'product' as const }));

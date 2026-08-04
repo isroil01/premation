@@ -144,7 +144,28 @@ export function emitLitStage(
 export function emitDepth(
   ctx: ComposeContext,
   orderedIds: readonly string[],
-  o: { spread?: number } = {},
+  o: {
+    spread?: number;
+    /**
+     * Layers a motion technique is going to stage itself.
+     *
+     * They keep their slot in the ladder — the step is computed across the FULL
+     * ordering — but no call is emitted for them, so one layer never carries a
+     * static z from here and an animated z from there.
+     *
+     * This exists because the alternative was skipping the whole pass whenever a
+     * camera technique was cast on the beat, on the reasoning that "a track
+     * beats a static prop, so emitting both leaves the beat carrying two
+     * disagreeing depth systems". The reasoning was sound and the conclusion was
+     * inverted: a camera technique stages only the roles it DECLARES — headline,
+     * media, mark, background — while a real beat also carries overline,
+     * subhead, support, cta and a cta plate. Those got no depth from anywhere,
+     * and measurement put the beat holding the camera at a spread of **0** while
+     * every beat without one sat at 378. The beat with the camera was the only
+     * flat beat in the composition, which is precisely backwards.
+     */
+    skip?: ReadonlySet<string>;
+  } = {},
 ): ToolCall[] {
   if (orderedIds.length < 2) return [];
   const span = Math.round(Math.min(ctx.width, ctx.height) * (o.spread ?? 0.35));
@@ -153,8 +174,10 @@ export function emitDepth(
   // applies `threeD` before the transform props precisely so this works — and a
   // one-keyframe `set_keyframes` would set the same value while also leaving an
   // animation track for a later technique to inherit.
-  return orderedIds.map((id, i) => ({
-    name: 'update_layer',
-    args: { nodeId: id, threeD: true, z: Math.round(span - i * step) },
-  }));
+  return orderedIds
+    .map((id, i) => ({
+      name: 'update_layer',
+      args: { nodeId: id, threeD: true, z: Math.round(span - i * step) },
+    }))
+    .filter((c) => !o.skip?.has(String(c.args.nodeId)));
 }

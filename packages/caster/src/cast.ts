@@ -25,13 +25,77 @@
  */
 
 import { candidates as layoutCandidates, lookPack, type LookPack } from '@motion/design-system';
-import { candidates as motionCandidates, atCap, clashesWith, resourceTakenBy, technique } from '@motion/technique-library';
+import {
+  TECHNIQUES,
+  candidates as motionCandidates,
+  atCap,
+  clashesWith,
+  resourceTakenBy,
+  technique,
+  type CastQuery,
+} from '@motion/technique-library';
 import { PRODUCT_TECHNIQUES } from '@motion/product-motion';
 import { availableRolesFor } from './sequencer';
 import type { Beat, Casting, LayoutCast, MotionCast, Sequence } from './types';
 
 const PRODUCT_BY_ID = new Map(PRODUCT_TECHNIQUES.map((t) => [t.id, t]));
 const anyTechnique = (id: string) => technique(id) ?? PRODUCT_BY_ID.get(id);
+
+/**
+ * The `pack` + `pool` half of a motion cast query, derived once.
+ *
+ * ## What this exists to stop happening again
+ *
+ * Both candidate call sites in this file used to inline the same `pack:` literal
+ * and no `pool` at all, so `candidates()` searched `TECHNIQUES` — the editorial
+ * registry — for every pack including the two product ones. The two registries
+ * were merged at the *validate* step (`anyTechnique`, just above) and at the
+ * *emit* step (`PRODUCT_BY_ID` in `emit.ts`) but never at the *offer* step. So
+ * `saas_product` and `mobile_app` were shown zero product techniques on every
+ * beat of every run. Both packs name five `ui.*` ids in `prefer`; all ten were
+ * unreachable, and each pack quietly cast whatever editorial technique its
+ * forbid rules had not caught.
+ *
+ * Nothing failed anywhere. `uiMotionScore` was being computed over editorial
+ * output wearing a product pack's palette, which is exactly why the corpus
+ * numbers looked healthy.
+ *
+ * Exported so the metrics harness and the tests derive the scope through this
+ * function rather than rebuilding it. A test that re-derives the pool can agree
+ * with itself while disagreeing with the caster — which is the shape of how this
+ * survived in the first place.
+ */
+export function motionCastScope(pack: LookPack): Pick<CastQuery, 'pack' | 'pool'> {
+  return {
+    pack: {
+      id: pack.id,
+      prefer: pack.prefer,
+      forbid: pack.forbid,
+      forbidCategories: pack.forbidCategories,
+      forbidAboveEnergy: pack.forbidAboveEnergy,
+      vocabulary: pack.vocabulary,
+    },
+    pool: pack.vocabulary === 'product' ? PRODUCT_TECHNIQUES : TECHNIQUES,
+  };
+}
+
+/**
+ * The survival kinds that mean two beats genuinely share an element.
+ *
+ * `carry_motion` is deliberately absent. `sequence()` inserts it when
+ * `survivalBetween` found nothing at all — it exists so a run does not fail over
+ * a boundary a drawn mark can bridge, and `validate()` already reports a
+ * sequence where every boundary is one of these as visibly thin. Treating it as
+ * a real bridge would give a `requiresBridge` technique exactly the case it was
+ * written to avoid.
+ */
+const STRONG_SURVIVALS: ReadonlySet<string> = new Set(['persist', 'transform_into', 'match_cut', 'mask_reveal']);
+
+/** How strongly this beat hands over to the next one. See `TechniqueDef.requiresBridge`. */
+function bridgeOf(beat: Beat): 'strong' | 'weak' | 'none' {
+  if (!beat.survival) return 'none';
+  return STRONG_SURVIVALS.has(beat.survival.kind) ? 'strong' : 'weak';
+}
 
 // ── Stage 1: the brief prompt ─────────────────────────────────────────
 
@@ -144,10 +208,11 @@ export function motionCastPrompts(
 
   return seq.beats.map((beat) => {
     const list = motionCandidates({
-      pack: { id: pack.id, prefer: pack.prefer, forbid: pack.forbid, forbidCategories: pack.forbidCategories, forbidAboveEnergy: pack.forbidAboveEnergy },
+      ...motionCastScope(pack),
       energy,
       slotDurationMs: beat.durationMs,
       availableRoles: availableRolesFor(beat) as never,
+      bridge: bridgeOf(beat),
       alreadyCast: cast,
       tags: beat.tags,
     });
@@ -240,10 +305,11 @@ export function validateCasting(
   const castSoFar: string[] = [];
   for (const beat of seq.beats) {
     const list = motionCandidates({
-      pack: { id: pack.id, prefer: pack.prefer, forbid: pack.forbid, forbidCategories: pack.forbidCategories, forbidAboveEnergy: pack.forbidAboveEnergy },
+      ...motionCastScope(pack),
       energy,
       slotDurationMs: beat.durationMs,
       availableRoles: availableRolesFor(beat) as never,
+      bridge: bridgeOf(beat),
       alreadyCast: castSoFar,
       tags: beat.tags,
     });
@@ -290,10 +356,20 @@ function rejectReason(
   offered: readonly string[],
 ): string | undefined {
   if (!def) return `'${id}' is not a registered technique.`;
+  // Vocabulary first, and it subsumes what `forbidCategories` was doing for the
+  // product packs. See `packPermits` — a category name means different things in
+  // the two disciplines, so refusing 'transition' to keep out an editorial wipe
+  // was also refusing `ui.shared_element_expand`.
+  const vocabulary = pack.vocabulary ?? 'editorial';
+  if ((def.vocabulary ?? 'editorial') !== vocabulary) {
+    return `'${id}' is a ${def.vocabulary ?? 'editorial'} technique and the '${pack.id}' pack speaks ` +
+      `${vocabulary}. The two vocabularies do not mix: product motion is springs and 8–24px moves, ` +
+      `editorial motion is beziers and full-frame travel.`;
+  }
   if (pack.forbid.includes(id)) {
     return `'${id}' is forbidden in the '${pack.id}' pack — its motion vocabulary contradicts this look.`;
   }
-  if (pack.forbidCategories?.includes(def.category)) {
+  if (vocabulary === 'editorial' && pack.forbidCategories?.includes(def.category)) {
     return `'${id}' is a '${def.category}' technique and the '${pack.id}' pack refuses that whole ` +
       `category — a product interface has no camera and its type is read, not watched.`;
   }
@@ -317,6 +393,11 @@ function rejectReason(
     return `'${id}' needs the composition's ${def.exclusiveResource}, and '${holder}' already has it. ` +
       `A second camera layer would sit in the scene with its whole animation ignored — the renderer ` +
       `uses the first camera it finds.`;
+  }
+  if (def.requiresBridge && bridgeOf(beat) !== 'strong') {
+    return `'${id}' carries a move THROUGH the boundary after beat ${beat.index}, and that boundary has ` +
+      `${beat.survival ? `only a '${beat.survival.kind}' bridge` : 'no survivor at all'}. A camera that keeps ` +
+      `travelling while every element on screen is replaced reads as a mistake, not as a match cut.`;
   }
   if (!offered.includes(id)) {
     return `'${id}' was not among the candidates offered for beat ${beat.index} — its energy band or the ` +

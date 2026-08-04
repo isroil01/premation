@@ -1367,11 +1367,27 @@ export function writeNodeEffects(nodeId: string, effects: Effect[]): void {
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 
-export function addEffect(nodeId: string, type: EffectType): void {
+/**
+ * `id` lets a caller NAME the effect instead of discovering its generated id.
+ *
+ * The generated `fx_<n>` is only knowable by reading the return value, and a
+ * deterministic emitter cannot read one: `@motion/technique-library` builds a
+ * flat `ToolCall[]` with no execution and no feedback, so a technique that wants
+ * to keyframe `effect.<id>.<param>` must know the id before the effect exists.
+ * Two techniques solved that by inventing one — and because `isAnimatableProp`
+ * accepts any `effect.*` path, both wrote tracks onto effects that never
+ * existed. The calls succeeded, the keyframes were stored, and nothing rendered.
+ *
+ * A supplied id already taken on the node falls back to a generated one, so this
+ * can never produce two effects sharing an id.
+ */
+export function addEffect(nodeId: string, type: EffectType, id?: string): void {
   const def = DEF.get(type);
   if (!def) return;
   const effects = getNodeEffects(nodeId);
-  writeNodeEffects(nodeId, [...effects, { id: `fx_${(seq += 1)}`, type, params: defaultParams(def) }]);
+  const taken = new Set(effects.map((e) => e.id));
+  const useId = id && !taken.has(id) ? id : `fx_${(seq += 1)}`;
+  writeNodeEffects(nodeId, [...effects, { id: useId, type, params: defaultParams(def) }]);
 }
 
 /** Set one of an effect's parameters. */

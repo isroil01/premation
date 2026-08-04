@@ -157,7 +157,7 @@ describe('emitters', () => {
 
 describe('the tool surface itself', () => {
   // Models degrade past ~30 tools, so this count is a budget, not trivia.
-  it('exposes 62 tools: 8 read, 38 write, 16 compose', () => {
+  it('exposes 61 tools: 8 read, 37 write, 16 compose', () => {
     // 54 → 59 when five tools that were registered INLINE in `buildAiTools()`
     // moved into this list. They had always been reachable at runtime and had
     // never appeared here, so the backend's tool catalogue, the provider
@@ -167,9 +167,12 @@ describe('the tool surface itself', () => {
     // imported, `import_svg` makes a real vector layer instead of a pile of
     // rectangles, and `analyse_audio` is the only way anything in the surface can
     // learn where the beats are.
-    expect(ALL_TOOL_DEFS).toHaveLength(62);
+    // 62 → 61: `set_text_on_path` removed. Nothing in the repository reads the
+    // keys it wrote, so it spent a turn, reported success and changed nothing —
+    // the budget above is exactly why a tool that cannot work is not free.
+    expect(ALL_TOOL_DEFS).toHaveLength(61);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(8);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(38);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(37);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'compose')).toHaveLength(16);
   });
 
@@ -194,7 +197,7 @@ describe('the tool surface itself', () => {
     // 'write' silently drops the compose tools — and it was a literal 'write'
     // test that decided which calls appear in the user's pending-changes list.
     const mutating = ALL_TOOL_DEFS.filter((t) => mutates(t.kind));
-    expect(mutating).toHaveLength(54);
+    expect(mutating).toHaveLength(53);
     expect(mutating.map((t) => t.name)).toContain('add_title');
     expect(mutating.map((t) => t.name)).toContain('set_spring');
   });

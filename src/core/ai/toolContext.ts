@@ -321,9 +321,9 @@ export function createSceneFacade(): SceneFacade {
       return ok;
     },
 
-    addEffect: (nodeId, type) => {
+    addEffect: (nodeId, type, id) => {
       const before = new Set(getNodeEffects(nodeId).map((e) => e.id));
-      addEffect(nodeId, type as EffectType);
+      addEffect(nodeId, type as EffectType, id);
       const added = getNodeEffects(nodeId).find((e) => !before.has(e.id));
       return added?.id ?? '';
     },

@@ -125,7 +125,6 @@ const TOOL_ACTIVITY: Record<string, string> = {
   set_trim_path: 'Revealing trim-path outlines',
   add_repeater: 'Adding shape repeater burst',
   add_path_operator: 'Morphing vector path distortion',
-  set_text_on_path: 'Setting text on a path',
   create_puppet_rig: 'Rigging puppet pins',
   set_puppet_pin_keyframes: 'Animating the rig',
   create_skeleton_rig: 'Building a skeleton',
@@ -370,8 +369,33 @@ export function useAiChat(): UseAiChat {
    * pay for the comparison. The control is opt-in.
    */
   const [direction, setDirectionState] = useState<AiDirection>({ variants: 1 });
+  /**
+   * The live direction, for `submit` to read.
+   *
+   * `submit` is a `useCallback` whose deps deliberately do not list everything
+   * it reads — recreating it on every slider tick would churn the composer's
+   * handler identity through a drag. The consequence was that `direction` was
+   * captured at whatever it had been the last time the deps DID change, so a
+   * user who picked a look pack, set an energy or chose a brand colour got the
+   * PREVIOUS direction on the next run, and on a first-ever setting got none at
+   * all.
+   *
+   * Since overriding what the model would guess is the composer's entire
+   * purpose, that meant nearly every run fell through to "let the AI choose" —
+   * a large part of why pieces looked alike whatever was selected.
+   *
+   * A ref rather than a wider dep array: the value is read once, at submit time,
+   * and nothing renders from it here.
+   */
+  const directionRef = useRef<AiDirection>(direction);
   const setDirection = useCallback((patch: Partial<AiDirection>) => {
-    setDirectionState((d) => ({ ...d, ...patch }));
+    setDirectionState((d) => {
+      const next = { ...d, ...patch };
+      // Assigned inside the updater rather than in an effect, so a click that
+      // pins the pack and an Enter in the same tick cannot race a queued effect.
+      directionRef.current = next;
+      return next;
+    });
   }, []);
 
   /** Frames sampled across the last result. Cleared when a new run starts. */
@@ -658,6 +682,14 @@ export function useAiChat(): UseAiChat {
       }
     }
 
+    // Both read live, not from this callback's closure. `projectId` came from a
+    // zustand subscription that is not in the dep array, so the id sent to the
+    // backend was whatever it had been when `submit` was last rebuilt — which
+    // defeated project and conversation memory on exactly the runs after a
+    // project switch.
+    const pinned = directionRef.current;
+    const boundProjectId = useCloudProjectStore.getState().projectId;
+
     const attachments = (images ?? []).map((i) => ({ mediaType: i.mediaType, dataBase64: i.dataBase64 }));
     const storedText = attachments.length
       ? `[${attachments.length} reference image${attachments.length > 1 ? 's' : ''} attached]\n${text}`
@@ -689,24 +721,27 @@ export function useAiChat(): UseAiChat {
         // Only the fields the user actually pinned. Sending `energy: undefined`
         // and sending nothing are the same to the caster, but building the
         // object conditionally keeps "unset" meaning "the model decides".
-        ...(direction.lookPackId || direction.accent || direction.energy !== undefined || direction.totalDurationMs
+        // Read through the ref, never the closed-over `direction` — see
+        // `directionRef`. Reading the state here is what silently discarded the
+        // composer's whole direction bar on the run that followed a change.
+        ...(pinned.lookPackId || pinned.accent || pinned.energy !== undefined || pinned.totalDurationMs
           ? {
               direction: {
-                ...(direction.lookPackId ? { lookPackId: direction.lookPackId } : {}),
-                ...(direction.accent ? { accent: direction.accent } : {}),
-                ...(direction.energy !== undefined ? { energy: direction.energy } : {}),
-                ...(direction.totalDurationMs ? { totalDurationMs: direction.totalDurationMs } : {}),
+                ...(pinned.lookPackId ? { lookPackId: pinned.lookPackId } : {}),
+                ...(pinned.accent ? { accent: pinned.accent } : {}),
+                ...(pinned.energy !== undefined ? { energy: pinned.energy } : {}),
+                ...(pinned.totalDurationMs ? { totalDurationMs: pinned.totalDurationMs } : {}),
               },
             }
           : {}),
-        ...(direction.variants > 1 ? { variants: direction.variants } : {}),
+        ...(pinned.variants > 1 ? { variants: pinned.variants } : {}),
         history: history.current.slice(-HISTORY_TURNS),
         images: attachments.length ? attachments : undefined,
         // Both ids were already live in this hook and neither was ever passed
         // on, so the backend's project and conversation memory keyed on
         // `undefined` and every run started from nothing. This is what lets run
         // #10 be better than run #1.
-        ...(projectId ? { projectId } : {}),
+        ...(boundProjectId ? { projectId: boundProjectId } : {}),
         ...(conversationId.current ? { conversationId: conversationId.current } : {}),
         events: {
           // Stream the answer as it arrives, so the panel isn't dead air while

@@ -364,7 +364,7 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
   const label = `AI: ${prompt.length > 48 ? `${prompt.slice(0, 48)}…` : prompt}`;
   const tx = beginAiTransaction(label);
 
-  let requestPrompt = prompt;
+  const requestPrompt = prompt;
   /**
    * True once a programmatic plan (backend director OR client pipeline) has
    * executed against the scene. Both paths then flow into the SAME sighted

@@ -1080,10 +1080,30 @@ describe('technique reachability', () => {
     const never = [...TECHNIQUES, ...PRODUCT_TECHNIQUES]
       .map((t) => t.id)
       .filter((id) => !offered.has(id));
-    // Reported rather than asserted empty: a technique can legitimately need
-    // content this fixture does not produce. The assertion is that CAMERA
-    // techniques — the ones this investigation was about — are all reachable.
+    /**
+     * The exemption used to be "assert cameras, merely report the rest", and
+     * that blind spot swallowed something large: EVERY product technique sat in
+     * `never`, because `motionCastPrompts` searched only the editorial registry
+     * and no product pack was ever offered one. Thirty-odd entries, computed
+     * right here, printed nowhere, looked at by nobody. A sweep with an
+     * exemption is a sweep with a blind spot — the same lesson
+     * `templates.test.ts` records about skipping the product packs.
+     *
+     * So the exemption is BOUNDED rather than open. A technique can still
+     * legitimately need content this fixture does not produce, but the number
+     * that do is pinned and the list is in the failure message, so anything
+     * that pushes it up has to be looked at rather than absorbed.
+     */
     const cameraNever = never.filter((id) => id.startsWith('camera.'));
     expect(cameraNever).toEqual([]);
+    // Product techniques must ALSO be reachable now the pool is
+    // vocabulary-scoped. This is the assertion whose absence hid the gap.
+    const productOffered = PRODUCT_TECHNIQUES.filter((t) => offered.has(t.id)).length;
+    expect(`${productOffered}/${PRODUCT_TECHNIQUES.length} product offered`).toBe(
+      `${Math.max(productOffered, Math.ceil(PRODUCT_TECHNIQUES.length * 0.7))}/${PRODUCT_TECHNIQUES.length} product offered`,
+    );
+    expect(`unreachable: ${never.length} — ${never.join(', ')}`).toBe(
+      `unreachable: ${Math.min(never.length, 15)} — ${never.join(', ')}`,
+    );
   });
 });
