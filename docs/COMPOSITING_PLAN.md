@@ -1261,6 +1261,26 @@ one of the five either.
 
 ## 2b-undecies. 2026-08-05 — the Puppet/Bone consolidation is NOT a refactor
 
+**Closed the same day, and one thing learned in the closing.** The obvious move
+— a render-test scene with a parented rigged layer, blessed before the fix —
+does not work: the harness is `createRenderBackend → buildSnapshot →
+renderFrame`, and the overlays are React chrome that never enters the rendered
+frame. That golden would have stayed byte-identical through the fix and proved
+nothing, which is F15's dead golden in a new costume.
+
+The repeater's ORDERING still applied; only the medium changed. A component test
+asserting the wrong-but-current handle position landed first, with the corrected
+number written down as a prediction, and the fix re-blessed it.
+
+Worth noting for the next behaviour change: **"bless before, predict, match"
+needs a medium that actually observes the thing.** Ask what artifact would move,
+before choosing the artifact.
+
+Also checked, and the same blindness as `shape-repeater`: NO existing rig scene
+uses a parented layer. The `parent` matches in `rig.ts` are all `parentId` on
+BONES — skeleton hierarchy, not layer parenting.
+
+
 Deferred, and the reason is the point rather than an excuse.
 
 The existence table found `localToScreen`/`screenToLocal` byte-identical in
@@ -1281,7 +1301,7 @@ exactly how a "pure refactor" ships a surprise.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
-| **F23** | **The puppet and bone overlays ignore layer PARENTING.** Both position their handles through `worldMatrix(readGeometry(node))`, which composes only that node's own translate/rotate/scale; neither references `worldMatrixOf` or `parentWorld3d`. So on a layer parented to anything that moves, the pins and bones draw at the unparented position while the artwork renders at the parented one — the same class of drift `liveWorld3d` was written to end for cameras, lights and layer-box gizmos, in a fourth and fifth place. Not reproduced on a rig yet: found by reading `worldMatrix` while checking whether the two overlays could share the effect overlay's projection. | **Correctness, live, unverified scope** | Point both at `layerSpaceAt`, which is the consolidation the existence table wanted anyway — the duplication and the bug have the same fix. Needs a parented-rig fixture and a runtime check first, since it changes where existing rigs draw. |
+| **F23** | **The puppet and bone overlays ignore layer PARENTING.** Both position their handles through `worldMatrix(readGeometry(node))`, which composes only that node's own translate/rotate/scale; neither references `worldMatrixOf` or `parentWorld3d`. So on a layer parented to anything that moves, the pins and bones draw at the unparented position while the artwork renders at the parented one — the same class of drift `liveWorld3d` was written to end for cameras, lights and layer-box gizmos, in a fourth and fifth place. Not reproduced on a rig yet: found by reading `worldMatrix` while checking whether the two overlays could share the effect overlay's projection. | **FIXED 2026-08-05** | Both overlays now go through `layerScreenMapping`, which wraps `layerSpaceAt`. `layerScreenMapping` is the ONLY code in `src/layout` that composes a layer transform to screen — every remaining `worldMatrix(` there is a comment — and it has three consumers: Puppet, Bone and the effect-handle overlay, whose inline copy went the same way. So the third duplication the existence table found is closed by the same change that fixed the bug. Guard landed first asserting the wrong-but-current (30, 0) with (100, 110) written down as the prediction; it is now (100, 110). **A SECOND behaviour change came with it and is called out rather than absorbed**: `layerSpaceAt` samples the ANIMATED layer transform where `worldMatrix(readGeometry(node))` read static props only, so an overlay on a keyframed layer now tracks the artwork instead of sitting at the rest pose. Same defect class, separately guarded. |
 
 ## 2b-nonies. 2026-08-05 — Bezier Warp, and a guard that covered nothing
 
