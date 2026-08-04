@@ -125,10 +125,18 @@ export function dedupeByTime(samples: readonly SketchSample[]): SketchSample[] {
  * then ease. Interior keyframes get `easeInOut` so the reduced path reads as
  * smooth motion rather than a polyline — this is why simplification depends on
  * easing existing at all. The endpoints ease out of / into rest.
+ *
+ * `simplify: false` keeps every surviving sample. It exists because the
+ * spatial reduction is SPATIAL: Douglas–Peucker drops any point lying on the
+ * chord between its neighbours regardless of how much time it accounts for, so
+ * a stationary hold collapses to a straight drift. `tolerance: 0` does not
+ * express "keep everything" — the test is `distance > tol`, and a collinear
+ * point is at distance 0 — so a caller that needs the timing preserved needs
+ * this flag rather than a smaller number. Motion Sketch is that caller.
  */
 export function sketchToKeyframes(
   samples: readonly SketchSample[],
-  opts?: { tolerance?: number; minTimeGap?: number; ease?: boolean },
+  opts?: { tolerance?: number; minTimeGap?: number; ease?: boolean; simplify?: boolean },
 ): SketchKeyframe[] {
   if (samples.length === 0) return [];
   const sorted = [...samples].sort((a, b) => a.t - b.t);
@@ -140,7 +148,9 @@ export function sketchToKeyframes(
   // keyframes at t=0.
   const deduped = dedupeByTime(sorted);
   const thinned = thinByTime(deduped, opts?.minTimeGap ?? 0);
-  const simplified = simplifySketch(thinned, opts?.tolerance ?? DEFAULT_SKETCH_TOLERANCE);
+  const simplified = opts?.simplify === false
+    ? thinned
+    : simplifySketch(thinned, opts?.tolerance ?? DEFAULT_SKETCH_TOLERANCE);
   const ease = opts?.ease !== false;
   const last = simplified.length - 1;
   return simplified.map((s, i) => {
