@@ -36,6 +36,7 @@
     "dist:selfhosted": "npm run electron:build && electron-builder --publish never --config electron-builder.selfhosted.yml",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "worktree": "node scripts/worktree.mjs",
     "release:patch": "npm version patch -m \"release: v%s\"",
     "release:minor": "npm version minor -m \"release: v%s\"",
     "release:major": "npm version major -m \"release: v%s\"",

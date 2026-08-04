@@ -141,8 +141,13 @@ Drop the `:local` suffix to build the `server` edition; it will sit on a sign-in
 | `npm run lint` | eslint 9 flat config |
 | `npm run render-tests` / `:update` | golden-image GPU harness (real Chromium) |
 | `npm run release:patch/minor/major` | `npm version` → tag → GH Actions draft release |
+| `npm run worktree -- <branch>` | isolated checkout for a parallel session (see trap below) |
 
 > **Trap (recorded):** this repo must NOT live under OneDrive. OneDrive hides test files from jest (13 suites went invisible) and breaks `git stash`.
+
+> **Trap (recorded):** two sessions must NOT share one checkout. The working tree and index are shared, so `git add -A` in one stages the other's half-finished work and commits it cleanly — wrong author, unrelated commit, no error. It swept ~1,000 lines of in-flight timeline work into two commits before anyone read the diffstat. Use `npm run worktree -- <branch>`: separate directory and index, one shared `.git`, at the cost of a per-worktree `npm install`. Where that is not possible, **never `git add -A`** — name every file.
+>
+> Both traps share a shape worth naming: the environment corrupts the work *silently*, and the symptom surfaces far from the cause — in a green suite that never ran, or in someone else's commit. Neither is caught by review of the change you meant to make.
 
 ---
 
