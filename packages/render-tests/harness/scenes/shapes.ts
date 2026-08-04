@@ -78,6 +78,27 @@ export const shapeScenes: Scene[] = [
     graph.setTrimPath('w', { start: 0, end: 40, offset: 80 });
   }),
 
+  // The Phase-3a gate, in PIXELS. Same two operators, opposite order — if these
+  // two references were identical the reorder arrows on a Trim card would be
+  // inert, and shipping inert controls is worse than shipping none.
+  scene('shape-trim-then-zigzag', 'Trim BEFORE Zig-Zag: the arc is cut first, then ruffled.', (graph) => {
+    graph.addNode(shapeNode('a', { x: 180, y: 140, rotation: 0, fill: '#22344f' }));
+    graph.setStroke('a', { enabled: true, color: '#ffd166', width: 8, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
+    graph.setPathOps('a', [
+      { id: 'a_t', type: 'trim', amount: 0, detail: 0, start: 0, end: 37, offset: 0 },
+      { id: 'a_z', type: 'zigzag', amount: 16, detail: 5 },
+    ]);
+  }),
+
+  scene('shape-zigzag-then-trim', 'Zig-Zag BEFORE Trim: the ruffled outline is cut by arc length.', (graph) => {
+    graph.addNode(shapeNode('b', { x: 180, y: 140, rotation: 0, fill: '#22344f' }));
+    graph.setStroke('b', { enabled: true, color: '#ffd166', width: 8, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
+    graph.setPathOps('b', [
+      { id: 'b_z', type: 'zigzag', amount: 16, detail: 5 },
+      { id: 'b_t', type: 'trim', amount: 0, detail: 0, start: 0, end: 37, offset: 0 },
+    ]);
+  }),
+
   scene('shape-repeater', 'Repeater: 4 copies with x/rotation/scale offset.', (graph) => {
     graph.addNode(node('rc', { kind: 'shape', position: { x: 90, y: 140 }, transform: { width: 70, height: 70, shapeType: 'rect' }, style: { fill: '#8a7bff' } }));
     graph.setRepeater('rc', { copies: 4, offsetX: 60, offsetY: 0, offsetRotation: 12, offsetScale: 0.85, offsetOpacity: 0.85 });

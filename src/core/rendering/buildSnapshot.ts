@@ -31,7 +31,6 @@ import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import { isAutoOrientedToCamera, readNodeAutoOrient } from '@core/scene/autoOrient';
 import { autoOrientAngleDeg } from '@core/motion/motionPath';
 import { resolveRepeater, repeaterCopies } from '@core/scene/repeater';
-import { resolveTrim, trimSegments, trimPolyline } from '@core/scene/trimPath';
 import { nearestPrecompRoot, precompAncestorChain } from '@core/scene/precomp';
 import { readNodeAnchor } from '@core/scene/anchor';
 import { readNodeLight } from '@core/scene/light';
@@ -74,7 +73,7 @@ import type { MotionSample } from './RenderBackend';
 import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
 import { contentHashOf } from './contentHash';
-import { rasterPadding, outlinePolyline } from './raster/vectorDraw';
+import { rasterPadding } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
@@ -1955,9 +1954,18 @@ export function buildSnapshot(
       };
     }
 
-    // Path operators (MG Phase C): deform the shape outline into a new path
-    // (zig-zag / round corners), keyframeable. Replaces the primitive with the
-    // deformed polyline so the renderer draws (and trims/repeats) the result.
+    // The shape geometry chain (`fx.pathOps`): deform, trim, deform again — an
+    // ORDERED stack evaluated top-down, exactly as AE evaluates shape contents.
+    //
+    // Trim is an entry in this chain rather than a fixed stage after it (v1.4.0).
+    // That is what makes its position meaningful: at a 37% trim, moving it past
+    // any of the six deformers changes the geometry, because trimming by ARC
+    // LENGTH cuts a ruffled outline somewhere quite different from where it cuts
+    // the smooth one. Round Corners then Trim is not Trim then Round Corners.
+    //
+    // Trim CUTS the path, so the fill follows it (F14). It used to write an
+    // annotation the rasterizer read inside its stroke loop and nowhere else,
+    // leaving the fill to trace the whole shape above it.
     if (layerKind === 'shape') {
       const ops = resolvePathOps(node, a);
       if (ops.length > 0) {
@@ -1973,46 +1981,29 @@ export function buildSnapshot(
         // sampled on (valuesOf → remapOf). Handing it comp `t` would leave the
         // noise running at wall-clock speed while the keyframes it animates
         // alongside obey time remapping and stretch.
-        layer.pathPoints = applyPathOpChain(base, true, ops, remapOf(node.id)(t)).map((p) => corner(p.x, p.y));
-        layer.primitive = 'path';
-      }
-    }
+        const runs = applyPathOpChain(
+          [{ pts: base, closed: pathOpen !== true }],
+          ops,
+          remapOf(node.id)(t),
+        ).filter((r) => r.pts.length > 1);
 
-    // Trim path (MG Phase C): CUT the path down to its visible arcs, resolved
-    // with any animated start/end/offset.
-    //
-    // This used to write `layer.trim = segs` — an annotation the rasterizer read
-    // inside its STROKE loop and nowhere else. The fill ran `shapePath →
-    // ctx.fill()` above it, unconditionally, so a trimmed shape drew its whole
-    // fill and a partial outline. AE's Trim Paths cuts the path itself and the
-    // fill follows, and a new shape layer defaults to a solid fill (#2B7EFF), so
-    // that was wrong for the common case, not an edge one (F14).
-    //
-    // Cutting here rather than at draw time is what makes it work for both
-    // operations at once: geometry is the one thing every consumer already
-    // reads. The trimmed runs are OPEN — the stroke must not draw a chord back
-    // to the start — and `fill()` closes them implicitly, which is exactly the
-    // region AE shades.
-    const trimCfg = resolveTrim(node, a);
-    if (trimCfg) {
-      const segs = trimSegments(trimCfg.start, trimCfg.end, trimCfg.offset);
-      if (!(segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1)) {
-        // Sampled AFTER the path operators above, so trim cuts their output —
-        // the documented fixed pipeline is pathOps → trim → repeater.
-        const { pts, closed } = outlinePolyline(layer);
-        const runs = trimPolyline(pts, closed, segs);
         if (runs.length === 0) {
-          // An empty window (start ≥ end) shows nothing. Not "the untrimmed
-          // shape", which is what an empty `layer.trim` used to leave on screen:
-          // the stroke drew no arcs and the fill drew the whole shape anyway.
+          // Every run was cut away — an empty trim window (start >= end) draws
+          // NOTHING. Not "the untrimmed shape", which is what the old annotation
+          // left on screen: the stroke drew no arcs and the fill drew the lot.
           layer.visible = false;
+        } else if (runs.length === 1 && runs[0]!.closed) {
+          // The overwhelmingly common result — one closed run — takes the
+          // single-subpath shorthand, so nothing downstream sees a list it did
+          // not see before this change.
+          layer.pathPoints = runs[0]!.pts.map((p) => corner(p.x, p.y));
+          layer.primitive = 'path';
         } else {
-          layer.subpaths = runs.map((run) => ({
-            points: run.map((p) => corner(p.x, p.y)),
-            open: true,
+          layer.subpaths = runs.map((r) => ({
+            points: r.pts.map((p) => corner(p.x, p.y)),
+            open: !r.closed,
           }));
-          // The invariant: one field or the other, never both. The cut geometry
-          // supersedes whatever single run got us here.
+          // The invariant: one geometry field or the other, never both.
           layer.pathPoints = undefined;
           layer.pathOpen = undefined;
           layer.primitive = 'path';

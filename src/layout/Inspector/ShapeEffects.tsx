@@ -1,6 +1,6 @@
 /**
  * ShapeEffects — one consolidated inspector section for a shape layer's
- * procedural effects (Repeater, Path Operator, Trim Paths). A SINGLE "+ Add"
+ * procedural effects (Repeater, Path Operators incl. Trim). A SINGLE "+ Add"
  * menu is the one visible entry point (no three stacked per-effect "Add"
  * buttons); each effect's controls appear inline once added, and each self-
  * hides when absent. Keeps one home per action — no duplication.
@@ -12,12 +12,10 @@ import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readRepeaterConfig, setRepeater, defaultRepeater } from '@core/scene/repeater';
-import { addPathOp, readPathOps } from '@core/scene/pathOps';
-import { readTrimConfig, setTrim, defaultTrim } from '@core/scene/trimPath';
+import { addPathOp, readPathOps, readTrimOp, defaultTrimOp } from '@core/scene/pathOps';
 import { readNodeAudioWaveform, setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
 import { RepeaterControls } from './RepeaterControls';
 import { PathOpControls } from './PathOpControls';
-import { TrimPathControls } from './TrimPathControls';
 import { AudioWaveformSection } from './AudioWaveformSection';
 import styles from './TextAnimatorControls.module.css';
 
@@ -27,7 +25,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
   if (!node || readNodeKind(node) !== 'shape') return null;
 
   const hasRepeater = !!readRepeaterConfig(node);
-  const hasTrim = !!readTrimConfig(node);
+  const hasTrim = !!readTrimOp(node);
   const hasAudioWave = !!readNodeAudioWaveform(node);
 
   const items: DropdownItem[] = [
@@ -47,8 +45,11 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
       id: 'add-trim',
       label: 'Trim Paths',
       icon: 'shape',
+      // One trim per layer, as in AE. It joins the SAME ordered chain as the
+      // deformers rather than sitting in a fixed slot after them — which is why
+      // it no longer has an inspector section of its own.
       disabled: hasTrim,
-      onSelect: () => setTrim(nodeId, defaultTrim()),
+      onSelect: () => addPathOp(nodeId, defaultTrimOp()),
     },
     {
       type: 'item',
@@ -82,11 +83,12 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
           items={items}
         />
       </div>
-      {!hasRepeater && readPathOps(node).length === 0 && !hasTrim && !hasAudioWave && (
+      {/* `hasTrim` is not tested separately any more — a trim IS a path op, so
+          `readPathOps(node).length` already counts it. */}
+      {!hasRepeater && readPathOps(node).length === 0 && !hasAudioWave && (
         <div className={styles.empty}>Fan into copies, deform, trim the outline, or draw an audio waveform.</div>
       )}
       <PathOpControls nodeId={nodeId} />
-      <TrimPathControls nodeId={nodeId} />
       <RepeaterControls nodeId={nodeId} />
       <AudioWaveformSection nodeId={nodeId} />
     </div>

@@ -65,11 +65,34 @@ describe('propertyMeta — static entries', () => {
     expect(propertyUnit(POSITION_PSEUDO_PROP)).toBe('px');
   });
 
-  it('covers trim, repeater, time, text and data-track paths', () => {
-    for (const p of ['trim.start', 'rep.copies', 'timeRemap', 'text.source', 'fill.stops', 'path.points']) {
+  it('covers repeater, time, text and data-track paths', () => {
+    for (const p of ['rep.copies', 'timeRemap', 'text.source', 'fill.stops', 'path.points']) {
       expect(hasPropertyMeta(p)).toBe(true);
       expect(propertyLabel(p)).not.toBe(p);
     }
+  });
+
+  /**
+   * Path-operator params are id-scoped (`pathop.<opId>.<param>`), so no static
+   * table can name them — they go through a resolver. Trim is why this exists:
+   * it HAD literal `trim.start` / `trim.end` / `trim.offset` entries with real
+   * labels, and folding it into the chain (v1.4.0) would have silently
+   * downgraded every trim row in the timeline and the graph editor to
+   * "Pathop Trimop Rect End" if the resolver had not landed with it.
+   */
+  it('names path-operator params, including the trim that used to be static', () => {
+    for (const p of ['pathop.abc.amount', 'pathop.abc.end', 'pathop.abc.offset']) {
+      expect(hasPropertyMeta(p)).toBe(true);
+      expect(propertyLabel(p)).not.toBe(p);
+      expect(propertyLabel(p)).not.toMatch(/pathop/i);
+    }
+    // The retired path is genuinely gone. Asserting on its LABEL would prove
+    // nothing — the generic fallback title-cases `trim.start` into "Trim Start",
+    // which is indistinguishable from a real entry. `hasPropertyMeta` is the
+    // question that actually has an answer: is any table or resolver claiming
+    // to describe it?
+    expect(hasPropertyMeta('trim.start')).toBe(false);
+    expect(hasPropertyMeta('trim.end')).toBe(false);
   });
 });
 

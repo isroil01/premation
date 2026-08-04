@@ -533,8 +533,39 @@ export class SceneGraph {
   }
 
   /** Store the layer's trim-path config on its `fx` (undefined clears it). */
+  /**
+   * Set the layer's trim by appending (or replacing) a `trim` entry in the
+   * `fx.pathOps` chain.
+   *
+   * Kept as a named convenience because "give this layer a trim" is a common
+   * one-liner for seeds, tests and the render-test harness — but it writes the
+   * CHAIN, not the retired `fx.trim` key. Passing `undefined` removes the
+   * entry. Document version 1.4.0.
+   */
   setTrimPath(nodeId: ID, trim: unknown): void {
-    this.setFx(nodeId, 'trim', trim);
+    const node = this.getNode(nodeId);
+    if (!node) return;
+    const ops = (node.components.find((c) => c.type === 'fx')?.props as
+      | { pathOps?: unknown[] }
+      | undefined)?.pathOps;
+    const rest = Array.isArray(ops) ? ops.filter((o) => (o as { type?: string })?.type !== 'trim') : [];
+    if (trim === undefined || trim === null) {
+      this.setPathOps(nodeId, rest.length > 0 ? rest : undefined);
+      return;
+    }
+    const t = trim as { start?: number; end?: number; offset?: number };
+    this.setPathOps(nodeId, [
+      ...rest,
+      {
+        id: `trimop_${nodeId}`,
+        type: 'trim',
+        amount: 0,
+        detail: 0,
+        start: t.start ?? 0,
+        end: t.end ?? 100,
+        offset: t.offset ?? 0,
+      },
+    ]);
   }
 
   /**

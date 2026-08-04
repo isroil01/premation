@@ -16,12 +16,26 @@
  * a scrub back to the same frame all produce the same shape.
  */
 
-import type { Pt } from './trimPath';
+import { trimSegments, trimPolyline, type Pt } from './trimPath';
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 
-export type PathOpType = 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen';
+export type PathOpType = 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen' | 'trim';
+
+/**
+ * One continuous run of geometry flowing through the chain.
+ *
+ * The chain's currency used to be a single `Pt[]` with one `closed` flag, which
+ * is why Trim could not live in it: trimming produces a LIST of open arcs, and
+ * a single polyline has nowhere to put the second one. `closed` is per-run
+ * because a trim makes its outputs open while leaving nothing else about the
+ * shape open.
+ */
+export interface PolyRun {
+  pts: Pt[];
+  closed: boolean;
+}
 
 export interface PathOp {
   /**
@@ -45,14 +59,26 @@ export interface PathOp {
   wigglesPerSecond?: number;
   /** Roughen only — decorrelates two layers that would otherwise wiggle alike. */
   seed?: number;
+  /** Trim only — start of the visible range, percent 0..100. */
+  start?: number;
+  /** Trim only — end of the visible range, percent 0..100. */
+  end?: number;
+  /** Trim only — rotate the window around the path, percent (wraps). */
+  offset?: number;
 }
 
 /**
  * The keyframeable parameters. `wigglesPerSecond` is here so the wiggle can
  * spin up and settle; `seed` deliberately is NOT — interpolating a seed
  * scrubs through unrelated noise fields instead of animating anything.
+ *
+ * `start`/`end`/`offset` belong to Trim. They are in the SHARED list rather
+ * than a per-type one because the sampling path (`resolveOne`) reads every
+ * param for every operator and the inspector only renders the rows a type
+ * declares — a type-specific list would be a second place for "which params
+ * exist" to be stated, and the two would drift.
  */
-export const PATHOP_PARAMS = ['amount', 'detail', 'wigglesPerSecond'] as const;
+export const PATHOP_PARAMS = ['amount', 'detail', 'wigglesPerSecond', 'start', 'end', 'offset'] as const;
 export type PathOpParam = (typeof PATHOP_PARAMS)[number];
 
 /**
@@ -77,6 +103,37 @@ export function newPathOpId(): string {
 
 export function defaultPathOp(): PathOp {
   return { id: newPathOpId(), type: 'zigzag', amount: 20, detail: 4, wigglesPerSecond: 0, seed: 0 };
+}
+
+/**
+ * Trim defaults: the full range, i.e. a no-op until the user moves something.
+ *
+ * `amount`/`detail` are zeroed rather than inherited from `defaultPathOp`, so a
+ * freshly added Trim and one produced by the 1.3.0 → 1.4.0 migration are byte
+ * identical. Two ways to spell the same operator is how a round-trip starts
+ * showing spurious diffs.
+ */
+export function defaultTrimOp(): PathOp {
+  return { id: newPathOpId(), type: 'trim', amount: 0, detail: 0, start: 0, end: 100, offset: 0 };
+}
+
+/** The chain's trim entry for a node, or null. AE allows only one; so do we. */
+export function readTrimOp(node: SceneNode): PathOp | null {
+  return readPathOps(node).find((o) => o.type === 'trim') ?? null;
+}
+
+/**
+ * The keyframe path for a node's trim parameter, or null when it has no trim.
+ *
+ * Callers outside the inspector (AI tools, seeds, the caster) used to write
+ * `trim.<param>`, a per-layer namespace that worked only because there could be
+ * exactly one trim. Now that trim is a chain entry the path is id-scoped like
+ * every other operator's, and this is how a caller that knows only the node
+ * finds it.
+ */
+export function trimOpPropPath(node: SceneNode, param: 'start' | 'end' | 'offset'): string | null {
+  const op = readTrimOp(node);
+  return op ? pathOpPropPath(op.id, param) : null;
 }
 
 const DEG = Math.PI / 180;
@@ -362,7 +419,7 @@ function fxProps(node: SceneNode): Record<string, unknown> | undefined {
   return node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
 }
 
-const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen'];
+const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim'];
 
 function isPathOpType(v: unknown): v is PathOpType {
   return typeof v === 'string' && (PATH_OP_TYPES as readonly string[]).includes(v);
@@ -405,6 +462,9 @@ function coercePathOp(raw: unknown): PathOp | null {
     detail: num(o.detail, d.detail),
     wigglesPerSecond: Math.max(0, num(o.wigglesPerSecond, 0)),
     seed: num(o.seed, 0),
+    start: num(o.start, 0),
+    end: num(o.end, 100),
+    offset: num(o.offset, 0),
   };
 }
 
@@ -429,6 +489,12 @@ function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
     // so a keyframe that dips below zero cannot run the noise backwards.
     wigglesPerSecond: Math.max(0, v('wigglesPerSecond', op.wigglesPerSecond ?? 0)),
     seed: op.seed ?? 0,
+    // Trim's three, sampled the same way. NOT clamped: `offset` wraps by
+    // design, and start/end past 0..100 is how a draw-on overshoots and
+    // settles — `trimSegments` already normalizes the window.
+    start: v('start', op.start ?? 0),
+    end: v('end', op.end ?? 100),
+    offset: v('offset', op.offset ?? 0),
   };
 }
 
@@ -441,26 +507,78 @@ function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
 export function resolvePathOps(node: SceneNode, av: Map<string, number> | undefined): PathOp[] {
   return readPathOps(node)
     .map((op) => resolveOne(op, av))
-    .filter((op) => op.type !== 'none');
+    .filter((op) => op.type !== 'none' && !isInertTrim(op));
 }
 
 /**
- * Fold the whole chain over a polyline.
+ * A trim covering the whole path, which is what a freshly added Trim card is.
+ *
+ * Filtered out for the same reason `none` is: so the renderer never has to
+ * special-case it. It is not merely an optimisation. A live chain converts the
+ * layer's PRIMITIVE to an explicit path, and a rect's outline is its four hard
+ * corners — so without this, dropping an untouched Trim card onto a rounded
+ * rect would square off its corners while changing nothing the user asked for.
+ */
+function isInertTrim(op: PathOp): boolean {
+  if (op.type !== 'trim') return false;
+  const segs = trimSegments(op.start ?? 0, op.end ?? 100, op.offset ?? 0);
+  return segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1;
+}
+
+/**
+ * Cut every run down to a trim's visible arcs.
+ *
+ * Each run is trimmed INDEPENDENTLY by the same percentages — AE's "Trim
+ * Multiple Shapes: Individually". Trimming the concatenation instead
+ * (Simultaneously) would make a shape's arcs depend on how many runs happen to
+ * precede it, so inserting an operator upstream would move a trim the user did
+ * not touch. With the single closed outline that is the common case, the two
+ * are identical.
+ *
+ * Outputs are always OPEN: a cut arc closed by the stroke would draw a chord
+ * back to its own start. The fill closes it implicitly, which is the region AE
+ * shades.
+ */
+function applyTrim(runs: readonly PolyRun[], op: PathOp): PolyRun[] {
+  const segs = trimSegments(op.start ?? 0, op.end ?? 100, op.offset ?? 0);
+  // The full range is a no-op, and must stay one: it has to leave a closed
+  // outline closed, or adding an untouched Trim card would visibly open the
+  // shape's stroke.
+  if (segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1) return [...runs];
+  const out: PolyRun[] = [];
+  for (const run of runs) {
+    for (const cut of trimPolyline(run.pts, run.closed, segs)) {
+      out.push({ pts: cut, closed: false });
+    }
+  }
+  return out;
+}
+
+/**
+ * Fold the whole chain over a list of runs.
  *
  * Order is significant and is the point of the feature: Round Corners then
  * Zig-Zag gives soft ridges, Zig-Zag then Round Corners gives rounded spikes.
  * AE evaluates its contents list top-down and so does this.
+ *
+ * The currency is a LIST because Trim is in the chain now. Every other operator
+ * is per-run and keeps its run's own `closed` — which matters downstream of a
+ * trim, where a zigzag must ruffle an open arc without wrapping a segment from
+ * its end back to its start.
  */
 export function applyPathOpChain(
-  pts: readonly Pt[],
-  closed: boolean,
+  runs: readonly PolyRun[],
   ops: readonly PathOp[],
   timeSec = 0,
-): Pt[] {
-  let out: Pt[] = [...pts];
+): PolyRun[] {
+  let out: PolyRun[] = runs.map((r) => ({ pts: [...r.pts], closed: r.closed }));
   for (const op of ops) {
     if (op.type === 'none') continue;
-    out = applyPathOp(out, closed, op, timeSec);
+    if (op.type === 'trim') {
+      out = applyTrim(out, op);
+      continue;
+    }
+    out = out.map((r) => ({ pts: applyPathOp(r.pts, r.closed, op, timeSec), closed: r.closed }));
   }
   return out;
 }
@@ -476,6 +594,32 @@ export function addPathOp(nodeId: string, op: PathOp = defaultPathOp()): void {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return;
   setPathOps(nodeId, [...readPathOps(node), op]);
+}
+
+/**
+ * Append a Trim entry and return its id.
+ *
+ * The id is the point: keyframes are id-scoped (`pathop.<id>.end`), so a caller
+ * that wants to animate a draw-on needs it back. Seeds, `sceneInsert` and the
+ * AI tools all used to write the fixed `trim.end` path, which worked only while
+ * a layer could have exactly one trim in exactly one place.
+ */
+export function addTrimOp(nodeId: string, patch: Partial<PathOp> = {}): string {
+  const op: PathOp = { ...defaultTrimOp(), ...patch, type: 'trim' };
+  addPathOp(nodeId, op);
+  return op.id;
+}
+
+/**
+ * The node's trim entry id, adding one if it has none.
+ *
+ * For callers that want "the trim on this layer" without caring whether it is
+ * already there — the AI's `set_trim_path` being the case that matters.
+ */
+export function ensureTrimOp(nodeId: string): string {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const existing = node ? readTrimOp(node) : null;
+  return existing ? existing.id : addTrimOp(nodeId);
 }
 
 export function removePathOp(nodeId: string, opId: string): void {
