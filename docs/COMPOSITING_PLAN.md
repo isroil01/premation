@@ -590,12 +590,20 @@ set genuinely cannot be derived, that inability is itself the finding, because i
 means the thing under test has no enumerable identity and the next person will
 make the same list again.
 
-The same rule caught a second instance in the same run at a smaller scale: the
-eslint config hand-listed eight Node globals "rather than pulling in the package
-for six names", then stopped covering anything written afterwards, and reported
-six `no-undef` errors on globals that plainly exist. The cost there was not the
-six errors but that `no-undef` had become useless in those files — a genuinely
-undefined name would have looked exactly like the false ones.
+The same rule caught a second instance at a smaller scale, and the pairing is
+worth keeping because it shows the shape is not about expressions or
+autocomplete: the eslint config hand-listed eight Node globals *"rather than
+pulling in the `globals` package for six names"*, then covered nothing written
+afterwards, and reported six `no-undef` errors on globals that plainly exist.
+
+The cost is identical in both, and it is not the false reports. It is that the
+guard becomes **inert**: `no-undef` in those files, like the discoverability
+assertion for any name outside its sixteen, cannot fail for the case it exists
+to catch. A guard emitting constant false positives is not a weak guard — it is
+a disabled one that still looks enabled, and the noise trains everyone to
+discount exactly the signal it was installed to raise. Written up in full beside
+the lint gate (§2b-quaterdecies), which is where the same argument decided that
+41 harmless errors were what hid the one real one.
 
 ### The variant with no compile-time surface at all: a PROP PATH
 
@@ -960,6 +968,33 @@ open in two of them:
    offset applied a wrong key reads 0 exactly like a right one, and fails only
    the moved fixture. The rule found the hole before the break did, which is the
    order it is supposed to work in.
+
+   **The rule applies to the fixtures that demonstrate the rule.** Added
+   2026-08-06, from Exponential Scale, and it is the sharpest evidence the rule
+   generalises: the miss was found INSIDE its own demonstration.
+
+   The bake writes the final keyframe from the ORIGINAL end value rather than
+   from the formula, because `s0 · (s1/s0)^1` is not reliably `s1` in floating
+   point and an end-of-animation that drifts by a hair is unexplainable later.
+   The test pinning that used 37 → 991 — values picked to look awkward, with a
+   comment saying so.
+
+   Breaking the endpoint failed NOTHING. 37 → 991 is one of the pairs where
+   `s0 · (s1/s0)^1` lands exactly on `s1`, so the fixture could not reach the
+   case the guard exists for. "Awkward-looking" is not the same property as
+   "reaches the boundary", and picking values by eye selects for the first.
+
+   A sweep of integer pairs found `7 → 29`, where the formula gives
+   `29.000000000000004`; a sweep of random pairs put the rate near **1 in 14**,
+   so the inexact case is ordinary rather than exotic — the original fixture was
+   simply unlucky, in the way rule 3a says fixtures chosen for tidiness are. The
+   premise is now an assertion (`expect(exponentialScaleAt(r, 1)).not.toBe(29)`)
+   so it cannot rot, and breaking the endpoint fails exactly one test.
+
+   Two things worth carrying: the property to test for is REACHABILITY, not
+   apparent messiness — and where reachability is a numeric accident, SWEEP for
+   a case rather than guessing one. The sweep is three lines and it answers the
+   question the eye cannot.
 3b. **A test's stated rationale is an assertion too — measure it, and rewrite
    it when it is wrong.** Added 2026-08-05.
 
@@ -1349,6 +1384,41 @@ rather than treating as one bad day.
    the problem, not a guessed iteration cap. Then breaking the invariant produces
    a visibly wrong run, which is a test result.
 
+   **8a. PREFER THE FORM THAT CANNOT RUN AWAY OVER THE ONE THAT IS BOUNDED.**
+   Amended 2026-08-06, from Exponential Scale, where the stronger version was
+   available for free and the rule as written would have accepted the weaker one.
+
+   The bake first walked the span with an accumulator:
+
+   ```js
+   for (let t = t0 + step; t < t1 - step / 2; t += step)   // hangs on step <= 0
+   ```
+
+   A negative or zero `step` never advances toward `t1`, so the loop runs
+   forever. A `Math.max(1, fps)` floor upstream prevented that — and breaking
+   the floor HUNG the suite rather than failing it, which is precisely rule 8's
+   complaint. Adding an iteration cap would have satisfied rule 8 as stated.
+
+   Counting instead removes the failure mode rather than catching it:
+
+   ```js
+   const frames = Math.floor((t1 - t0) / step);
+   for (let i = 1; i < frames; i++) { const t = t0 + i * step; … }
+   ```
+
+   `i` advances by construction, so no value of `step` can produce a runaway —
+   the floor upstream became belt-and-braces rather than load-bearing, which is
+   what "structural" should mean. Two things came free with it: float
+   accumulation disappeared (frame 600 is `600 · step`, not 600 additions), and
+   a guard that had been guessing at the end (`t < t1 - step/2`) turned out to
+   be DEAD once `i < frames` was strict, and was deleted rather than left
+   implying coverage.
+
+   So the ladder is: an unbounded loop is worst, a bounded loop is acceptable,
+   and a loop whose counter cannot fail to advance is the one to reach for. Ask
+   whether the iteration can be COUNTED before reaching for a cap — a cap is a
+   guess about the problem, a count is a statement of it.
+
 ## 2b-sexies. 2026-08-05 — the repeater gate PASSES, and F19 blocks the fold anyway
 
 **The gate answer: the arrows would NOT be inert.** Measured, hand-computed
@@ -1416,6 +1486,103 @@ one of the five either.
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
+
+## 2b-quaterdecies. 2026-08-06 — the lint gate, and why the RATIO is the argument
+
+**42 errors, one of them real. That ratio is the case for the gate, and it is a
+stronger case than "the suite should be green".**
+
+### The real one: a constant the code never used
+
+`stylize.ts`'s value-noise hash multiplied the seed by `1442695040888963407` —
+splitmix64's constant. It needs 61 bits. A double carries 53, so JavaScript
+silently rounds the literal to `1442695040888963328`, 79 less than written. The
+code had never performed the arithmetic it appeared to describe, and nothing
+anywhere would ever have said so: the hash still hashes, the noise still looks
+like noise, and no test can fail because no expected value was ever derived from
+the intended constant.
+
+**Written as the true value rather than replaced with a representable one, and
+that choice is the interesting part.** Any odd constant works for a hash, so
+"fixing" it properly — picking a number that fits in 53 bits — would change
+every frame of every layer using this noise. That is a behaviour change to a
+shipped effect *wearing a lint fix's clothes*, and it would have shipped inside
+a commit whose message said "satisfy no-loss-of-precision". Writing
+`…328` keeps the output bit-identical (`1442695040888963407 ===
+1442695040888963328` is `true`, which is the whole proof) and stops the source
+claiming an arithmetic it does not perform. The correction is a no-op by
+construction rather than by test.
+
+### Why the other 41 matter
+
+They were style, config and false positives — deliberate `require()` in tests,
+`no-undef` on real Node globals, a `rules-of-hooks` hit on an SVG `<use>`
+resolver that happened to be called `useTarget`. Individually, none worth a
+commit.
+
+Collectively they are what hid the first one. **A gate nobody can pass is worse
+than no gate**, because the next real error arrives indistinguishable from the
+existing noise — and this one did exactly that, for months. The argument for
+running lint is not tidiness; it is that a signal only works against a quiet
+background, and 41 harmless errors are not a quiet background.
+
+Root cause worth naming separately: `CONTRIBUTING.md` promised contributors that
+typecheck, test and lint must all be clean, and **nothing ran lint anywhere**.
+`release.yml` ran typecheck and test, but only on a release TAG, so `dev` was
+ungated entirely. The promise had no enforcement behind it, which is the same
+shape as a comment where an enforcement should be (§2·0).
+
+### The globals list is F25 at smaller scale
+
+The eslint config declared eight Node globals inline, with a comment explaining
+the choice: *"rather than pulling in the `globals` package for six names."* It
+then covered nothing written afterwards — `setTimeout`, `clearTimeout`, `fetch`,
+`Blob`, `FormData` all reported undefined.
+
+This is **exactly F25** (see §2·0, *the variant INSIDE the guard*), one level
+down: a hand-maintained list standing in for a set that should have been
+derived, inside the thing meant to catch the problem. And the cost has the same
+shape too. It was never the six false errors — it is that `no-undef` had become
+**inert** in those files, so a genuinely undefined name would have looked
+identical to the false ones and been dismissed with them. A guard that reports
+constant false positives is not a weak guard; it is a disabled one that still
+looks enabled.
+
+Both are now derived from the thing under test — `boundScopeNames()` reflecting
+the real scope Map, `globals.node` replacing the hand list.
+
+### `better-sqlite3`: the hard dependency WAS the bug
+
+`npm install` failed in a fresh checkout because `better-sqlite3` builds from
+source and its failure aborts the entire install, leaving `node_modules` empty.
+The copy-`node_modules`-across workaround was a workaround. Making the package
+an `optionalDependency` is the actual fix, and the reason is that **it was
+already optional in fact**: `electron/localIndexDb.ts` loads it behind a guarded
+require, `index:available` returns false without it, the renderer falls back to
+an in-memory index, and the header says outright that "a missing DB never blocks
+editing". The manifest claimed a hard requirement the code did not have. The
+declaration was the defect.
+
+What makes that safe rather than merely convenient is the other half:
+`release.yml` now asserts the driver really built before packaging. Optional for
+a contributor without MSVC, mandatory for a release — otherwise "optional" would
+quietly become "sometimes absent from shipped installers", which is a worse bug
+than the one it fixed.
+
+### Reverting `--fix-type directive` was also correct
+
+32 of the remaining warnings are unused `eslint-disable` directives, and eslint
+removes them all with one flag. It was applied and reverted. It rewrites 30+
+files the change had no other business touching, and it deletes comments that
+carry intent — an `eqeqeq` disable sitting on a *deliberate* loose compare in
+the expression evaluator, where the rule is not even enabled, so the comment is
+documentation rather than suppression. It also leaves trailing whitespace.
+
+**A change that looks purely mechanical and is not.** The right home for it is
+its own commit where a reviewer is looking at exactly that, not folded into a
+gate change where 30 incidental files make the two real ones invisible — which
+is the same "signal against a quiet background" argument as the 41 errors above,
+pointed at a diff instead of a log.
 
 ## 2b-terdecies. 2026-08-06 — two features that already existed, and a guard that only half worked
 
