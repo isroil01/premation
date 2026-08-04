@@ -111,6 +111,14 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   tint: 'Color Correction',
   'channel-mixer': 'Color Correction',
   // Generate
+  checkerboard: 'Generate',
+  grid: 'Generate',
+  'cell-pattern': 'Generate',
+  // Noise — filed under Stylize beside the existing `noise`, which is where AE
+  // puts Add Grain and Median too.
+  'turbulent-noise': 'Stylize',
+  'add-grain': 'Stylize',
+  median: 'Stylize',
   fill: 'Generate',
   stroke: 'Generate',
   beam: 'Generate',

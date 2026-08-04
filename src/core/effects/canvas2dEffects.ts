@@ -39,6 +39,8 @@ import { mosaicData, findEdgesData, roughenEdgesData } from './stylize';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
 import { selectiveColorData, selectiveRange, shadowHighlightData } from './toneEffects';
 import { bulgeData, twirlData, spherizeData, cornerPinData, defaultCorners } from './distort';
+import { drawCheckerboard, drawGrid, cellPatternData } from './generatePatterns';
+import { turbulentNoiseData, addGrainData, medianData } from './noiseEffects';
 import {
   simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
 } from './keyingEffects';
@@ -93,6 +95,16 @@ const CANVAS2D_ONLY = new Set<string>([
   'twirl',
   'spherize',
   'corner-pin',
+  // Generate family, round two — these DRAW, like `beam` and `lens-flare`.
+  'checkerboard',
+  'grid',
+  'cell-pattern',
+  // Noise family. Turbulent Noise generates a field, Add Grain disturbs the
+  // pixels, Median is a rank filter over the neighbourhood — no shader form for
+  // any of the three.
+  'turbulent-noise',
+  'add-grain',
+  'median',
   // Keying family. `set-matte` is deliberately ABSENT: it reads another layer's
   // pixels, which this chain's per-layer signature cannot express, so it lives
   // on the GPU path beside displacement-map instead.
@@ -258,6 +270,18 @@ export function applyCanvas2dEffect(
       return applySpherize(oc, w, h, e);
     case 'corner-pin':
       return applyCornerPin(oc, w, h, e);
+    case 'checkerboard':
+      return drawCheckerboard(oc, w, h, e);
+    case 'grid':
+      return drawGrid(oc, w, h, e);
+    case 'cell-pattern':
+      return applyCellPattern(oc, w, h, e);
+    case 'turbulent-noise':
+      return applyTurbulentNoise(oc, w, h, e);
+    case 'add-grain':
+      return applyAddGrain(oc, w, h, e);
+    case 'median':
+      return applyMedian(oc, w, h, e);
     case 'selective-color':
       return applySelectiveColor(oc, w, h, e);
     case 'shadow-highlight':
@@ -538,6 +562,63 @@ function applyCornerPin(oc: CanvasRenderingContext2D, w: number, h: number, e: E
   const corners = base.map((v, i) => v + offsets[i]!) as unknown as
     readonly [number, number, number, number, number, number, number, number];
   applyRemapEffect(oc, w, h, (d) => cornerPinData(d, w, h, corners));
+}
+
+// ── Generate / Noise, round two (kernels in generatePatterns.ts, noiseEffects.ts) ──
+
+function applyCellPattern(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const p = paramsOf(e);
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  cellPatternData(
+    img.data, w, h,
+    effectNumber(e, 'size'),
+    effectNumber(e, 'evolution'),
+    effectNumber(e, 'contrast'),
+    p.invert === true,
+    p.membrane === true,
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyTurbulentNoise(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  turbulentNoiseData(
+    img.data, w, h,
+    effectNumber(e, 'scale'),
+    effectNumber(e, 'complexity'),
+    effectNumber(e, 'evolution'),
+    effectNumber(e, 'contrast'),
+    effectNumber(e, 'brightness'),
+    paramsOf(e).invert === true,
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyAddGrain(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'intensity') === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  addGrainData(
+    img.data, w, h,
+    effectNumber(e, 'intensity'),
+    effectNumber(e, 'size'),
+    effectNumber(e, 'saturation'),
+    effectNumber(e, 'seed'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyMedian(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = Math.round(effectNumber(e, 'radius'));
+  if (radius <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  // A rank filter cannot run in place — a sorted window must see the ORIGINAL
+  // neighbours, not ones this pass already replaced.
+  img.data.set(medianData(img.data, w, h, radius));
+  oc.putImageData(img, 0, 0);
 }
 
 function applySelectiveColor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
