@@ -904,6 +904,19 @@ open in two of them:
    and add a fixture there, whatever the behaviour turns out to be. It is a
    property of the fixture, which you control and can enumerate, rather than a
    prediction about the code, which is the thing under test.
+
+   **Worked example, applied PROSPECTIVELY rather than in hindsight.** The
+   distort centres rest at the layer origin, which made the main rig's screen
+   position trivially checkable — and useless: at the origin every rotation and
+   scale term multiplies zero, so the composed matrix contributes nothing but
+   its translation. That was spotted while writing the fixture, so a
+   MOVED-centre fixture went in beside it.
+
+   The break confirmed the reasoning afterwards: a typo'd param key
+   (`centreX` for `centerX`) leaves the origin fixture GREEN, because with no
+   offset applied a wrong key reads 0 exactly like a right one, and fails only
+   the moved fixture. The rule found the hole before the break did, which is the
+   order it is supposed to work in.
 3b. **A test's stated rationale is an assertion too — measure it, and rewrite
    it when it is wrong.** Added 2026-08-05.
 
@@ -944,6 +957,27 @@ open in two of them:
    Prefer the last whenever the claim is checkable — and note that an
    INCONSISTENT break (changing a function without its derivative, a value
    without its cache) proves nothing, which is its own trap.
+
+3c. **Read a parameter's MEANING from the dispatch, not from its
+   declaration.** Added 2026-08-05, from the three distort centres.
+
+   The declaration says what a param is CALLED and what its default is. It does
+   not say what the number means. Bulge, Twirl and Spherize all declare
+   `centerX`/`centerY` defaulting to 0 — identical in shape to Corner Pin's
+   `topLeftX`/`topLeftY`, which are offsets from a CORNER. But the dispatch
+   computes `w / 2 + centerX`, so these are offsets from the MIDDLE of the box.
+
+   Taking the declaration at face value would have rested all three handles on
+   the layer's top-left and written every offset a half-box out. It compiles, it
+   renders, and — this is the part that matters — it looks like a plausible bug
+   in the EFFECT rather than in the wiring, so the search would start in the
+   wrong file.
+
+   The dispatch is where a param stops being a name and becomes a number in an
+   expression. Read it. This generalises past offsets: units (degrees or
+   radians?), sign conventions (is +Y down?), and whether a "radius" is measured
+   before or after the layer's scale are all invisible in a `params` table and
+   all obvious one call further in.
 
 4. **Verify by breaking the direction, and watch which tests fail.** The proof
    is not that the new test fails; it is that the OLD guard passes while the new
@@ -1015,6 +1049,18 @@ open in two of them:
    have blessed it, and the golden would then have recorded the bug as the
    expectation. Pick something in the frame you can predict a NUMBER for — blob
    count, inked area, extent — and check that number.
+
+   **And when the number is CLOSE but not equal, find out why.** Added
+   2026-08-05. Moving a distort centre by 200 layer px shifted the measured
+   distortion centroid 94 output px against a predicted 100. "Close enough,
+   antialiasing" is the tempting reading and it is a way of not looking. The
+   actual cause was geometric: at that offset the radius-160 disc reaches output
+   x 660 against the layer's right edge at 630, so the clipped part biases the
+   centroid left. Confirmed by re-measuring at an offset small enough not to
+   clip, where the shift is EXACTLY the predicted 50.
+
+   A 6% discrepancy you have explained is evidence. A 6% discrepancy you have
+   excused is a 6% discrepancy you will still have when it becomes 60%.
 
    **NEVER test a spatial transform on SMOOTH material.** Added 2026-08-05, as
    a DEFAULT rather than a lesson, because it is now three runs running:
