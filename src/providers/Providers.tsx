@@ -67,6 +67,8 @@ import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { isAudioNode } from '@core/audio/audioScene';
+import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
@@ -334,6 +336,36 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => true,
       execute: () => {
         document.querySelector<HTMLElement>('[data-workspace-viewport]')?.focus();
+      },
+    },
+    {
+      /**
+       * AE's keyframe assistant, in the place people look for it. The
+       * conversion itself already existed but was reachable only from the
+       * audio layer's inspector panel — so anyone who knew the AE command by
+       * name and searched for it found nothing, and the feature read as
+       * missing rather than as hidden.
+       */
+      id: asCommandId('animation.convertAudioToKeyframes'),
+      label: 'Convert Audio to Keyframes',
+      icon: 'audio-lines',
+      enabled: () => {
+        const ids = useSelectionStore.getState().ids;
+        if (ids.length !== 1) return false;
+        const node = defaultSceneGraph.getNode(ids[0]!);
+        return !!node && isAudioNode(node);
+      },
+      execute: () => {
+        const nodeId = useSelectionStore.getState().ids[0];
+        if (!nodeId) return;
+        void convertAudioToSliderNull(nodeId).then(({ nodeId: nullId, written }) => {
+          if (!nullId) {
+            notify('That layer has no decodable audio.', 'warning');
+            return;
+          }
+          const total = [...written.values()].reduce((a, b) => a + b, 0);
+          notify(`Audio → ${total} keyframes across ${written.size} sliders`, 'success');
+        });
       },
     },
     {
