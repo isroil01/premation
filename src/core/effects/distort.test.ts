@@ -117,14 +117,39 @@ describe('Bulge', () => {
 });
 
 describe('Twirl', () => {
-  it('rotates about the centre, and the direction follows the angle sign', () => {
-    const pos = centroid(twirlData(dotAt(32, 12), W, H, 32, 32, 30, 90))!;
-    const neg = centroid(twirlData(dotAt(32, 12), W, H, 32, 32, 30, -90))!;
-    // The dot starts directly above the centre. Opposite angles must send it to
-    // opposite sides — the single property that distinguishes a twirl from any
-    // other radial warp.
-    expect(Math.sign(pos.x - 32)).toBe(-Math.sign(neg.x - 32));
-    expect(Math.abs(pos.x - 32)).toBeGreaterThan(2);
+  /**
+   * WHERE the dot lands, computed by hand — not merely that two angles differ.
+   *
+   * This replaces a check that asserted only `sign(pos.x) === -sign(neg.x)`.
+   * That is a DIFFERENCE assertion wearing a directional label: mirror the
+   * whole rotation and both sides flip together, so it passes just as happily
+   * on a twirl that spins the wrong way. It is the identical hole that let
+   * Spherize ship inverted — found there only by luck, and found here by
+   * auditing for the same shape.
+   *
+   * The arithmetic, so the expected numbers are checkable rather than blessed
+   * from a run: the dot sits at (32,12), directly above the centre (32,32), so
+   * its offset is (0,-20) and its distance is 20. `remap` asks the INVERSE
+   * question, and rotation preserves length, so the destination sits at the
+   * same radius and therefore the same falloff angle:
+   *
+   *     angle  = 90° · (1 − 20/30) = 30°
+   *     v_dest = R(−30°) · (0,−20) = (−10, −17.32)
+   *     dest   = (32,32) + v_dest  = (22, 14.68)
+   *
+   * Left of centre. A mirrored twirl puts it at x ≈ 42, and only an absolute
+   * assertion can tell those apart.
+   */
+  it('sends a dot ABOVE the centre to a specific point LEFT of it (+90°)', () => {
+    const c = centroid(twirlData(dotAt(32, 12), W, H, 32, 32, 30, 90))!;
+    expect(c.x).toBeCloseTo(22, 0);
+    expect(c.y).toBeCloseTo(14.68, 0);
+  });
+
+  it('−90° mirrors that exactly — to the RIGHT, same height', () => {
+    const c = centroid(twirlData(dotAt(32, 12), W, H, 32, 32, 30, -90))!;
+    expect(c.x).toBeCloseTo(42, 0);
+    expect(c.y).toBeCloseTo(14.68, 0);
   });
 
   it('preserves distance from the centre — it rotates, it does not scale', () => {
@@ -171,6 +196,32 @@ describe('Corner Pin', () => {
     // Bilinear resampling at exact pixel centres is exact, so this must be
     // byte-identical, not merely close.
     expect([...out]).toEqual([...src]);
+  });
+
+  /**
+   * WHERE content lands, on a quad simple enough to compute by hand.
+   *
+   * The projectivity check below proves the map is not affine, and the identity
+   * check proves the rest position — but neither pins the DIRECTION of the
+   * mapping. Swap source and destination and both still pass, because both are
+   * symmetric in the quad. This is the Twirl/Spherize hole in its Corner Pin
+   * form, and it needs a point whose destination is known independently.
+   *
+   * An axis-aligned quad inset to the middle half makes that arithmetic trivial
+   * and, crucially, avoids re-deriving `squareToQuad` inside its own test:
+   *
+   *     quad   = (16,16) (48,16) (48,48) (16,48)
+   *     source (x,y) → (u,v) = (x/64, y/64) → dest = (16 + 32u, 16 + 32v)
+   *     source (8,8) → u=v=0.125            → dest = (20, 20)
+   *
+   * If the mapping ran the other way the dot would land outside the quad and be
+   * clipped to nothing, so this also fails loudly rather than drifting.
+   */
+  it('maps a known source point to a known destination point', () => {
+    const out = cornerPinData(dotAt(8, 8), W, H, [16, 16, 48, 16, 48, 48, 16, 48]);
+    const c = centroid(out)!;
+    expect(c.x).toBeCloseTo(20, 0);
+    expect(c.y).toBeCloseTo(20, 0);
   });
 
   it('is PROJECTIVE, not affine — parallel edges converge', () => {
