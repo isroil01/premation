@@ -898,11 +898,65 @@ open in two of them:
    the failure the comment predicts, the comment is wrong — rewrite it to the
    mechanism actually measured, and say in it that it was measured.
 
+   **The better outcome, from Bezier Warp: promote the claim to a TEST.** A
+   comment there said the down-bow's null was itself directional — that a
+   mirrored implementation would cover the same point. Breaking the source to
+   check it did not demonstrate that, and the reason is instructive: mirroring
+   `coonsPoint` alone leaves `coonsJacobian` inconsistent with it, so Newton
+   stops converging and the null then comes from non-convergence rather than
+   from the geometry. The break was not a faithful mirror, so it was not
+   evidence either way.
+
+   Rewording the comment would have been the minimum. What actually closed it
+   was making the claim a fixture: handles moved UP put the boundary at −30, and
+   the same point IS covered there. Down-bow excludes it, up-bow includes it —
+   which no mirrored implementation satisfies both halves of.
+
+   So the ladder is: a claim in prose is weakest, a claim verified by breaking
+   is stronger, and a claim that has become an assertion cannot rot at all.
+   Prefer the last whenever the claim is checkable — and note that an
+   INCONSISTENT break (changing a function without its derivative, a value
+   without its cache) proves nothing, which is its own trap.
+
 4. **Verify by breaking the direction, and watch which tests fail.** The proof
    is not that the new test fails; it is that the OLD guard passes while the new
    one fails. Mirroring the twirl leaves its distance-preservation check green;
    mirroring the corner-pin u axis leaves projectivity green. That demonstrates
    the blind spot instead of assuming it.
+4a. **Breaking a guard that fails NOTHING is a finding, not a null result.**
+   Added 2026-08-05, from Bezier Warp, and it is the reason rule 4 has to be
+   applied to EVERY guard rather than only the ones that look load-bearing.
+
+   Deleting `solveUV`'s residual verification — the check that the (u,v) Newton
+   lands on actually maps back to the target — broke no test in the file. The
+   comfortable reading is "the other guards already cover it". The true reading
+   is that the check was **never live**: the range check on (u,v) happened to
+   reject every case the fixtures probed, so nothing in the suite had ever
+   exercised the residual path at all.
+
+   When a break produces no red, exactly one of two things is true, and both
+   need closing before the guard set can be trusted:
+
+   * the guard is DEAD — nothing it does can change any outcome, so delete it
+     and stop implying coverage that does not exist; or
+   * the FIXTURES cannot reach what it covers — the guard is real and the suite
+     is blind to it, which is rule 3a in a different costume.
+
+   Here it was the second. What the check was hiding is worth naming because it
+   is the Spherize class — **wrong output that looks like output**: on a FOLDED
+   patch Newton can exhaust its iterations at a (u,v) comfortably inside the
+   unit square and nowhere near the target, and sampling there returns a
+   plausible wrong pixel that reads as texture rather than as an error.
+
+   The closure is a swept CONTRACT assertion rather than another hand-picked
+   point: *every non-null answer must map back*. That is the right shape when
+   the claim is universal and there is no single interesting case to derive —
+   and it is what the same break now fails, and nothing else does.
+
+   Corollary: a break that fails EVERYTHING is also weak evidence. It says the
+   thing is load-bearing, not that any particular guard is watching it. The
+   informative breaks are the ones that fail a little.
+
 5. **A golden is not independent evidence.** It records whatever the code did on
    the day it was blessed. Spherize's golden was blessed from the bug and had to
    be re-blessed after the fix.
@@ -915,6 +969,27 @@ open in two of them:
    have blessed it, and the golden would then have recorded the bug as the
    expectation. Pick something in the frame you can predict a NUMBER for — blob
    count, inked area, extent — and check that number.
+
+   **NEVER test a spatial transform on SMOOTH material.** Added 2026-08-05, as
+   a DEFAULT rather than a lesson, because it is now three runs running:
+
+   | Effect | Subject it was first given | Why the frame proved nothing |
+   |---|---|---|
+   | Median | a smooth gradient | a rank filter has no outliers to remove |
+   | Vegas | a convex ellipse | lights on any smooth curve look alike |
+   | Bezier Warp | the gradient ellipse | a warped smooth gradient is a smooth gradient |
+
+   Each produced a plausible frame that would have passed whether the effect ran
+   correctly, ran wrongly, or did not run at all. The generalisation is that a
+   transform is only visible against structure it can DISTURB, so the subject
+   must carry structure of the kind the transform acts on: grain for a denoiser,
+   a concave contour for a contour effect, a regular grid for a warp.
+
+   The tell is that the effect family's shared subject is chosen for breadth,
+   not for any one effect. When the effect under test is spatial, assume the
+   shared subject is wrong for it and write a bespoke scene — `effect-median-
+   denoise`, `effect-vegas-contour` and `effect-bezier-warp-grid` all exist for
+   exactly this reason.
 
    **What makes a RE-bless evidence: predicting the diff first.** Added
    2026-08-05. Blessing a scene, changing the code, and blessing it again proves
