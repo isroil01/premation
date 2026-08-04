@@ -68,6 +68,9 @@ export type EffectType =
   | 'twirl'
   | 'spherize'
   | 'corner-pin'
+  // Corner Pin's generalisation: four edges as cubic Beziers, interior filled
+  // by a Coons patch. See `bezierWarp.ts`.
+  | 'bezier-warp'
   // ── Generate family, round two ──
   | 'checkerboard'
   | 'grid'
@@ -1054,6 +1057,47 @@ export const EFFECT_DEFS: EffectDef[] = [
     css: () => '',
   },
 
+  // Bezier Warp — Corner Pin with curved edges.
+  //
+  // Twelve control points: the four vertices plus two tangent handles per edge,
+  // named around the perimeter clockwise from the top-left so the inspector
+  // rows read in the order you would drag them.
+  //
+  // OFFSETS from the rest rectangle, all defaulting to 0, exactly as Corner Pin
+  // does — which makes the default effect the identity and lets the dispatch
+  // skip the resample entirely rather than paying a bilinear pass to reproduce
+  // its own input.
+  {
+    type: 'bezier-warp',
+    label: 'Bezier Warp',
+    params: [
+      { key: 'topLeftX', label: 'Top Left Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topLeftY', label: 'Top Left Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top1X', label: 'Top Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top1Y', label: 'Top Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top2X', label: 'Top Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top2Y', label: 'Top Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightX', label: 'Top Right Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightY', label: 'Top Right Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right1X', label: 'Right Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right1Y', label: 'Right Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right2X', label: 'Right Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right2Y', label: 'Right Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightX', label: 'Bottom Right Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightY', label: 'Bottom Right Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom1X', label: 'Bottom Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom1Y', label: 'Bottom Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom2X', label: 'Bottom Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom2Y', label: 'Bottom Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftX', label: 'Bottom Left Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftY', label: 'Bottom Left Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left1X', label: 'Left Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left1Y', label: 'Left Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left2X', label: 'Left Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left2Y', label: 'Left Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+    ],
+    css: () => '',
+  },
   // ── Generate family, round two ──────────────────────────────────────
   //
   // All three composite with 'source-atop', so the pattern fills the layer's

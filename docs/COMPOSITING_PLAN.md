@@ -1052,6 +1052,55 @@ the boundary at exactly 1 asserted rather than assumed.
 |---|---|---|---|
 | **F19** | **RESOLVED by decision, 2026-08-05 — option (a) taken, and shipped.** ~~The fold-in cannot satisfy "existing documents render identically", and no lossless migration exists.~~ The diagnosis stands and is unchanged: copies were placed in COMP space (`x: px + c.dx`), so a repeated layer's arrangement stayed axis-aligned however the layer was rotated; folding bakes them into LAYER-LOCAL geometry, after which the layer transform turns and scales the whole group. What changed is the verdict, not the analysis. The comp-space model was an artifact of where the copies were emitted rather than a feature anyone chose, and preserving it would mean permanently carrying a wrong model to protect documents that were rendering wrong. So the semantic change is ACCEPTED and announced (§2b-septies), the migration claims what is true rather than losslessness, and the pixel gate's blindness was closed FIRST: `shape-repeater-rotated-layer` and `shape-repeater-scaled-layer` were blessed against the old behaviour one commit ahead of the fold, so the re-bless is the evidence. Measured on those two goldens: 23.4% and 20.9% of pixels moved, and `shape-repeater` — the untransformed scene — stayed pixel-identical, which is the claim. Option (b) was not taken: making the operator read the layer transform would break the chain's contract that operators are pure point-to-point functions, and would still behave badly under non-uniform scale. | **Closed — shipped as an announced behaviour change** | Document version 1.5.0. See §2b-septies. |
 
+## 2b-nonies. 2026-08-05 — Bezier Warp, and a guard that covered nothing
+
+Corner Pin's generalisation: four cubic edges, a Coons patch interior, and a
+Newton inverse because a bicubic surface has no algebraic one.
+
+**Rule 3a paid for itself twice more, and one of the demonstrations is the
+cleanest yet.** The main fixture bends the TOP edge with BOTH handles moved
+equally, which is what collapses the displacement to the tidy 3k·u(1−u). Two
+things become unreachable as a direct consequence:
+
+  * x is never displaced (S.x is identically w·u), so the left and right curves
+    contribute nothing. Replacing both with straight lines left **every**
+    top-edge assertion, the identity, and the asymmetric fixture GREEN — only
+    the left-edge boundary fixture caught it. An implementation ignoring half
+    the control points would have shipped.
+  * the displacement is symmetric in u about ½, so conflating the two handles is
+    invisible. Taking the second handle's Y from the first left the identity and
+    the entire symmetric block green and failed only the three asymmetric
+    assertions.
+
+**F21 — a guard that covered nothing, found by breaking it.** Deleting
+`solveUV`'s residual verification broke NO test in the file: the range check on
+(u,v) happened to reject every case the fixtures probed. On a FOLDED patch it
+does not — Newton can exhaust its iterations at a (u,v) comfortably inside the
+unit square and nowhere near the target, and an unverified answer there samples
+a plausible wrong pixel, which reads as texture rather than as an error. Closed
+with a swept contract assertion (every non-null answer must map back), which the
+same break now fails and nothing else does.
+
+That is rule 4 doing the job it exists for. The check had been written on
+reasoning, looked obviously necessary, and was covered by nothing — and only
+breaking it said so.
+
+**Padding: deliberately NONE, and the reason is sharper than wave-warp's.** The
+patch is built by `defaultWarpPoints(w, h)` from the dimensions the effect is
+HANDED, which are the padded canvas's. Padding therefore does not shift the
+result, it rebuilds the rest patch around a larger box, and the same offsets
+describe a different warp — the deformation would weaken as padding grew.
+Unpadded keeps the warp correct and costs content pushed past the layer box.
+Same exit as wave-warp and turbulent-displace: an origin and extent threaded
+into the warp math.
+
+**UI: numeric rows ship, on-canvas handles are DEFERRED and said so.** Twelve
+points as twenty-four keyframeable offset rows, the same surface Corner Pin has.
+Draggable handles are a real gap and their own piece of work — hit-testing,
+autokey-on-drag, and viewport↔layer conversion under the layer's own transform,
+which is the gizmo problem rather than the warp problem. Recorded in the module
+header so the numeric-only version cannot pass for finished.
+
 ## 2b-octies. 2026-08-05 — coordinate-space expressions, and one logged limit
 
 `toComp` / `toWorld` / `fromComp` / `fromWorld` ship over a provider, following

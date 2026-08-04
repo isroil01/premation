@@ -140,6 +140,7 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   twirl: 'Distort',
   spherize: 'Distort',
   'corner-pin': 'Distort',
+  'bezier-warp': 'Distort',
   'wave-warp': 'Distort',
   'turbulent-displace': 'Distort',
   'displacement-map': 'Distort',
