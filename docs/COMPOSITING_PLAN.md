@@ -527,6 +527,63 @@ Two things to carry:
    the UI is what proves the model is *reachable*, and reachability is precisely
    what unit tests are least able to check.
 
+### The variant with no compile-time surface at all: a PROP PATH
+
+Added 2026-08-05 from the repeater fold, which is the cleanest instance yet.
+
+A keyframe path is a **string**, so the writer and the sampler are two consumers
+with nothing whatsoever forcing them to agree. `tsc` cannot see it. The fold
+renamed `rep.<param>` to `pathop.<opId>.<param>` and the build stayed green while
+two live call sites went dead:
+
+* `seedComplexShowcase` wrote `kf('ring_dot', repeaterPropPath('offsetRotation'), …)`
+  — a track nothing would ever sample. The showcase's ring would simply have
+  **stopped spinning**, with no error anywhere.
+* The AI's `set_repeater` returned `"Animate 'repeater.copies'"` — advice naming
+  a path this app has **never** understood, at any version. Following it wrote a
+  dead track. That one predates the fold entirely; renaming the real path is what
+  surfaced it.
+
+Both are the §2·0 signature exactly: *a reader of a key nothing writes compiles
+fine.* The type checker's silence is not evidence, because there is no type.
+
+**Standing rule — for any prop-path change, sweep every consumer BY HAND.**
+`tsc` clean means nothing here. Grep the old path, the new path, and the helper
+that built the old one, across `src/` *and* `packages/`, and check each hit is a
+live write or a live read. Deleting the helper that produced the old path
+(`repeaterPropPath`) is what turns the remaining consumers into compile errors —
+which is fix (1) from the list above, *remove the choice*, applied to the one
+case where the choice is a string literal. Prefer that to grepping where you can.
+
+### Judging a guard SET: which ones stay green is the stronger signal
+
+Added 2026-08-05, alongside the above.
+
+The standard already requires each guard be verified to fail by breaking what it
+covers. That is necessary and not sufficient: eight guards that all fail on every
+break are **one guard written eight times**, and it will miss the ninth thing.
+
+So when breaking a guard, read the whole result, not the one red line. On the
+repeater fold:
+
+* Dropping the run-paint spread in `applyPathOpChain` failed the
+  deformer-paint test while the **trim**-paint test stayed green — and dropping
+  the paint inside `applyTrim` failed the trim one while the deformer one stayed
+  green. Two genuinely independent guards over two genuinely independent code
+  paths, demonstrated rather than assumed.
+* Removing the repeater's `propertyMeta` bounds failed the BOUNDS test while the
+  LABEL test passed. That is the blind spot a label-only check would have had,
+  made visible.
+* Dropping one param from the migration's reroute list failed the all-nine test
+  while the two the fixture happens to animate stayed green — which is the entire
+  reason the broader test exists.
+
+**The question to ask of a guard set: what would have to break for exactly this
+one to fail?** If no answer distinguishes it from its neighbour, it is not a
+second guard. This is the same idea as rule 4 of §2b-quinquies (verify by
+breaking the direction and watch which tests fail), generalised from one guard to
+a set.
+
 ## 2a. Method: revert-and-verify is required for golden attribution
 
 **A plausible cause and a verified cause read identically in a report. Only one
@@ -778,6 +835,19 @@ open in two of them:
 5. **A golden is not independent evidence.** It records whatever the code did on
    the day it was blessed. Spherize's golden was blessed from the bug and had to
    be re-blessed after the fix.
+
+   **What makes a RE-bless evidence: predicting the diff first.** Added
+   2026-08-05. Blessing a scene, changing the code, and blessing it again proves
+   only that something moved — and "something moved" is equally consistent with
+   the intended change and with a bug riding along beside it. The re-bless
+   becomes evidence when the new numbers were derived on paper BEFORE rendering
+   and then matched. On the repeater fold: the scaled scene's bars were predicted
+   at x = 60/180/300 (spacing 80 × 1.5) and the rotated scene's copy centres at
+   (100,90) → (272,211) (70 × cos/sin 35°), both written into the scene file as
+   comments one commit before the fold, and both matched. Equally load-bearing:
+   the untransformed scene was predicted to stay pixel-identical, and did — a
+   prediction that CANNOT be satisfied by any change that moved more than
+   intended, which is what makes it the strongest assertion of the three.
 
 Applies to anything positional: warps, distortions, transforms, path operators,
 layout, hit-testing.
