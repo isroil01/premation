@@ -133,8 +133,24 @@ function valueNoise(x: number, y: number, seed: number): number {
   const u = xf * xf * (3 - 2 * xf);
   const v = yf * yf * (3 - 2 * yf);
 
+  /**
+   * The seed multiplier is written as the value a double ACTUALLY holds.
+   *
+   * It was `1442695040888963407` — splitmix64's constant, which needs 61 bits
+   * and so cannot be represented: JavaScript rounds it to ...328, 79 less than
+   * written. The code therefore never used the constant it named, and
+   * `no-loss-of-precision` was reporting that correctly from inside a lint gate
+   * nobody could run.
+   *
+   * Written as the true value rather than replaced with a representable one on
+   * purpose. Any odd constant works for a hash, so "fixing" it to a different
+   * number would change every frame of every layer using this noise — a
+   * behaviour change to a shipped effect, which is a decision rather than a
+   * lint cleanup. This keeps output bit-identical and stops the code claiming
+   * an arithmetic it does not perform.
+   */
   const hash = (a: number, b: number): number => {
-    let n = a * 374761393 + b * 668265263 + seed * 1442695040888963407;
+    let n = a * 374761393 + b * 668265263 + seed * 1442695040888963328;
     n = (n ^ (n >> 13)) * 1274126177;
     return ((n ^ (n >> 16)) >>> 0) / 4294967295;
   };

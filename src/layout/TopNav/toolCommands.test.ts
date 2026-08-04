@@ -42,7 +42,7 @@ function toolbarTools(): Set<string> {
 /** Tool ids `buildToolCommands` registers as `tool.<id>`. */
 function commandTools(): Set<string> {
   const src = readFileSync(PROVIDERS, 'utf8');
-  const block = /const tools: Array<\{[\s\S]*?\n  \];/.exec(src)?.[0] ?? '';
+  const block = /const tools: Array<\{[\s\S]*?\n {2}\];/.exec(src)?.[0] ?? '';
   const ids = new Set<string>();
   for (const m of block.matchAll(/\{\s*tool:\s*'([a-z-]+)'/g)) ids.add(m[1]!);
   return ids;

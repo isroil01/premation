@@ -8,7 +8,7 @@ if (typeof globalThis.structuredClone !== 'function') {
 
 // jsdom doesn't expose TextEncoder/TextDecoder globally; the zip writer needs
 // them. Bridge Node's implementations for the test environment.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+ 
 import { TextEncoder as NodeTextEncoder, TextDecoder as NodeTextDecoder } from 'util';
 if (typeof globalThis.TextEncoder === 'undefined') {
   globalThis.TextEncoder = NodeTextEncoder as typeof globalThis.TextEncoder;
@@ -111,7 +111,7 @@ import { createCanvas } from '@napi-rs/canvas';
   HTMLCanvasElement.prototype.getContext = function (
     this: HTMLCanvasElement,
     type: string,
-    ...rest: unknown[]
+    ..._rest: unknown[]
   ) {
     // WebGL and friends are not provided — callers already handle a null here.
     if (type !== '2d') return null;

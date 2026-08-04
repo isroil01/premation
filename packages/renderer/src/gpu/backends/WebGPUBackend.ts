@@ -1,3 +1,6 @@
+// Ambient global declarations. An `import` of a globals-only .d.ts is elided
+// by tsc, so the reference directive is the only spelling that works here.
+/* eslint-disable-next-line @typescript-eslint/triple-slash-reference */
 /// <reference path="./webgpu.d.ts" />
 /**
  * WebGPU backend (primary). Maps the backend-independent descriptors to WebGPU

@@ -69,6 +69,7 @@ import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isAudioNode } from '@core/audio/audioScene';
 import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
+import { applyExponentialScale, eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
@@ -336,6 +337,30 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => true,
       execute: () => {
         document.querySelector<HTMLElement>('[data-workspace-viewport]')?.focus();
+      },
+    },
+    {
+      /**
+       * Exponential Scale — AE's other keyframe assistant.
+       *
+       * `enabled` and `execute` both go through `eligibleScaleTracks`, so the
+       * command cannot grey itself out for a layer it would have handled, or
+       * offer itself for one it would refuse. One predicate, two callers.
+       */
+      id: asCommandId('animation.exponentialScale'),
+      label: 'Exponential Scale',
+      icon: 'trending-up',
+      enabled: () => {
+        const ids = useSelectionStore.getState().ids;
+        return ids.length === 1 && eligibleScaleTracks(ids[0]!).length > 0;
+      },
+      execute: () => {
+        const nodeId = useSelectionStore.getState().ids[0];
+        if (!nodeId) return;
+        const { written, refusal } = applyExponentialScale(nodeId);
+        if (refusal) { notify(REFUSAL_TEXT[refusal], 'warning'); return; }
+        const total = [...written.values()].reduce((a, b) => a + b, 0);
+        notify(`Exponential scale — ${total} keyframes across ${written.size} tracks`, 'success');
       },
     },
     {

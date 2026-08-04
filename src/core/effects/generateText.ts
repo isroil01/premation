@@ -118,7 +118,10 @@ export function formatNumber(
   const negative = value < 0;
   const fixed = Math.abs(value).toFixed(d);
 
-  let [whole = '0', frac] = fixed.split('.');
+  // Split rather than destructure with `let`: only `whole` is reassigned below.
+  const parts = fixed.split('.');
+  let whole = parts[0] ?? '0';
+  const frac = parts[1];
 
   // PAD FIRST, then insert separators. The other order lets the comma consume a
   // padding slot, so "pad to 6" yields six digits on 123 but only five on 1234

@@ -12,7 +12,7 @@
  */
 
 import {
-  analyseAudio, downmix, estimateTempo, fftInPlace, onsetEnvelope, pickOnsets, snapToBeat,
+  analyseAudio, downmix, fftInPlace, onsetEnvelope, pickOnsets, snapToBeat,
 } from './analyse';
 
 const SR = 44100;

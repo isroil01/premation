@@ -676,7 +676,7 @@ const MAX_USE_DEPTH = 12;
  * still emit both, and `getAttribute('xlink:href')` works without namespace
  * awareness because the attribute's qualified name is literally that string.
  */
-function useTarget(el: Element): Element | null {
+function resolveUseTarget(el: Element): Element | null {
   const raw = el.getAttribute('href')
     ?? el.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
     ?? el.getAttribute('xlink:href');
@@ -744,7 +744,7 @@ function traverse(
   // dropping them silently meant whole parts of the file simply never appeared.
   if (tag === 'use') {
     if (useDepth >= MAX_USE_DEPTH) return;
-    const target = useTarget(el);
+    const target = resolveUseTarget(el);
     if (!target) return;
     // A <use> may not reference itself or an ancestor — that is an infinite
     // expansion, and a hostile or merely broken file should not hang the import.

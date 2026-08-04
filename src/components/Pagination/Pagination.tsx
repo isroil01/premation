@@ -137,7 +137,6 @@ export function Pagination({
 
             {pages.map((p, i) =>
               p === null ? (
-                // eslint-disable-next-line react/no-array-index-key
                 <span key={`gap-${i}`} className={styles.gap} aria-hidden="true">
                   …
                 </span>

@@ -148,6 +148,8 @@ jobs:
       - run: npm run typecheck
       - run: npx tsc -p electron/tsconfig.json --noEmit
       - run: npm test -- --ci
+      # A release must not ship unlinted either; CI gates dev, this gates the tag.
+      - run: npm run lint
 
   build:
     name: Build ${{ matrix.name }}
@@ -178,6 +180,15 @@ jobs:
           cache: 'npm'
 
       - run: npm ci
+
+      # better-sqlite3 is an OPTIONAL dependency so a contributor without a
+      # native toolchain can still install (the driver is behind a guarded
+      # require and the app degrades to an in-memory index). A RELEASE must
+      # not degrade silently, so assert here that it really built.
+      - name: Assert the SQLite driver built
+        shell: bash
+        run: |
+          node -e "try{require('better-sqlite3');console.log('better-sqlite3: built')}catch(e){console.error('::error::better-sqlite3 failed to build; the release would ship without the local index');console.error(e.message);process.exit(1)}"
 
       - name: Build renderer and main process
         shell: bash

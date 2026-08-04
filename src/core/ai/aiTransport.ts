@@ -238,6 +238,9 @@ export function streamProviderBytes(req: TransportRequest, signal: AbortSignal):
   if (!localAiAvailable()) {
     // A browser build of the local edition — no Electron bridge at all. Say the
     // true thing rather than "coming soon": the desktop app is the local edition.
+    // Throws on the first next() by design, so this failure reaches the caller
+    // through the stream it already handles rather than a second, separate path.
+    // eslint-disable-next-line require-yield
     return (async function* (): ChunkStream {
       throw new AiTransportError(
         'unsupported',
