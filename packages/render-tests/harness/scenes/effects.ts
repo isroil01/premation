@@ -68,6 +68,36 @@ const EFFECTS: EffectSpec[] = [
   { type: 'keylight', params: { screenColor: '#00ff00', balance: 50, gain: 100, clipBlack: 8, clipWhite: 65, despill: 100, choke: 0, matteSoftness: 0 } },
   { type: 'wave-warp', params: { waveHeight: 20, waveWidth: 120, direction: 90, phase: 0 } },
   { type: 'turbulent-displace', params: { amount: 30, size: 120, complexity: 2, evolution: 0 } },
+  // ── Colour, round two ──────────────────────────────────────────────
+  // Lumetri is a LUT effect, so it renders on BOTH backends with no bake and
+  // must agree exactly — same class as levels/curves above. The temperature and
+  // tint values are deliberately non-zero: they are the only two controls that
+  // differ PER CHANNEL, so a scene with them at zero would pass even if the
+  // per-channel table collapsed back to a single shared one.
+  { type: 'lumetri', params: { exposure: 0.6, contrast: 30, highlights: -40, shadows: 45, whites: 0, blacks: -20, temperature: 55, tint: -25 } },
+  // Both of these force the CPU bake, whose result both backends then composite,
+  // so they are expect-pass rather than gpuOnly.
+  //
+  // The subject is a blue→orange gradient, so 'reds' (range 0) genuinely selects
+  // part of the frame and leaves the rest alone — with a range that matched
+  // nothing the scene would render identically to no effect at all and would
+  // still pass, which is precisely the dead-scene failure this suite has had
+  // before.
+  { type: 'selective-color', params: { range: 0, cyan: -60, magenta: 30, yellow: 45, black: 20, absolute: true } },
+  { type: 'shadow-highlight', params: { shadowAmount: 70, highlightAmount: 40, radius: 24, tonalWidth: 55 } },
+  // ── Distort, round two ─────────────────────────────────────────────
+  // All four force the CPU bake, so both backends composite the same baked
+  // result and these are expect-pass.
+  //
+  // The centres are OFFSET from the layer centre, so a non-zero offset is what
+  // proves the offset resolution is wired — a scene centred at 0,0 would render
+  // identically whether the app resolved the offset or ignored it.
+  { type: 'bulge', params: { centerX: -30, centerY: 10, radius: 90, height: 70 } },
+  { type: 'twirl', params: { centerX: 20, centerY: -15, radius: 100, angle: 160 } },
+  { type: 'spherize', params: { centerX: 0, centerY: 0, radius: 95, amount: 80 } },
+  // Asymmetric offsets on all four corners: a symmetric pin would still be an
+  // affine map, and would pass even if the projective solve collapsed to one.
+  { type: 'corner-pin', params: { topLeftX: 40, topLeftY: 18, topRightX: -25, topRightY: 35, bottomRightX: -12, bottomRightY: -30, bottomLeftX: 30, bottomLeftY: -10 } },
 ];
 
 function effectScene(spec: EffectSpec): Scene {

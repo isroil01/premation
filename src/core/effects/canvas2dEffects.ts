@@ -37,6 +37,8 @@ import { waveWarpData, turbulentDisplaceData } from './warp';
 import { blurRgba, radialBlurData, blurDimensions } from './blurs';
 import { mosaicData, findEdgesData, roughenEdgesData } from './stylize';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
+import { selectiveColorData, selectiveRange, shadowHighlightData } from './toneEffects';
+import { bulgeData, twirlData, spherizeData, cornerPinData, defaultCorners } from './distort';
 import {
   simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
 } from './keyingEffects';
@@ -78,6 +80,19 @@ const CANVAS2D_ONLY = new Set<string>([
   // per-channel table can express.
   'vibrance',
   'colorama',
+  // Both for the same reason as the two above, one step further. `lumetri` is
+  // deliberately ABSENT beside `exposure` — all eight of its controls are
+  // channel-independent, so it is a LUT.
+  'selective-color',
+  // And this one is the strongest case of all: it reads the pixel's NEIGHBOURS,
+  // so it is spatial and could not be a transfer function of any kind.
+  'shadow-highlight',
+  // Distort family — inverse-map resamples, no shader form. `transform` and
+  // `wave-warp` above are the same class.
+  'bulge',
+  'twirl',
+  'spherize',
+  'corner-pin',
   // Keying family. `set-matte` is deliberately ABSENT: it reads another layer's
   // pixels, which this chain's per-layer signature cannot express, so it lives
   // on the GPU path beside displacement-map instead.
@@ -235,6 +250,18 @@ export function applyCanvas2dEffect(
       return applyVibrance(oc, w, h, e);
     case 'colorama':
       return applyColorama(oc, w, h, e);
+    case 'bulge':
+      return applyBulge(oc, w, h, e);
+    case 'twirl':
+      return applyTwirl(oc, w, h, e);
+    case 'spherize':
+      return applySpherize(oc, w, h, e);
+    case 'corner-pin':
+      return applyCornerPin(oc, w, h, e);
+    case 'selective-color':
+      return applySelectiveColor(oc, w, h, e);
+    case 'shadow-highlight':
+      return applyShadowHighlight(oc, w, h, e);
     case 'simple-choker':
       return applySimpleChoker(oc, w, h, e);
     case 'linear-color-key':
@@ -432,6 +459,112 @@ function applyVibrance(oc: CanvasRenderingContext2D, w: number, h: number, e: Ef
   oc.setTransform(1, 0, 0, 1, 0, 0);
   const img = oc.getImageData(0, 0, w, h);
   vibranceData(img.data, vib, sat);
+  oc.putImageData(img, 0, 0);
+}
+
+// ── Distort family (kernels in distort.ts) ─────────────────────────
+//
+// Every one of these resolves its centre as an OFFSET from the layer centre —
+// see the note on the Bulge definition in effects.ts for why the params are
+// offsets rather than absolute points. Resolved HERE, in one place, because
+// this is the only layer that knows `w` and `h`.
+
+function applyRemapEffect(
+  oc: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  kernel: (data: Uint8ClampedArray) => Uint8ClampedArray,
+): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const out = kernel(img.data);
+  // The kernels return a NEW buffer — a resample cannot be done in place, since
+  // a destination pixel may read a source pixel that an earlier destination has
+  // already overwritten. Copy it back into the ImageData we already own rather
+  // than constructing a second one: `new ImageData(buf, w, h)` needs the buffer
+  // to be ArrayBuffer-backed, which `Uint8ClampedArray` does not guarantee.
+  img.data.set(out);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyBulge(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const height = effectNumber(e, 'height');
+  const radius = effectNumber(e, 'radius');
+  if (height === 0 || radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => bulgeData(
+    d, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    radius, height,
+  ));
+}
+
+function applyTwirl(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const angle = effectNumber(e, 'angle');
+  const radius = effectNumber(e, 'radius');
+  if (angle === 0 || radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => twirlData(
+    d, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    radius, angle,
+  ));
+}
+
+function applySpherize(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  const radius = effectNumber(e, 'radius');
+  if (amount === 0 || radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => spherizeData(
+    d, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    radius, amount,
+  ));
+}
+
+function applyCornerPin(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const base = defaultCorners(w, h);
+  const offsets = [
+    effectNumber(e, 'topLeftX'), effectNumber(e, 'topLeftY'),
+    effectNumber(e, 'topRightX'), effectNumber(e, 'topRightY'),
+    effectNumber(e, 'bottomRightX'), effectNumber(e, 'bottomRightY'),
+    effectNumber(e, 'bottomLeftX'), effectNumber(e, 'bottomLeftY'),
+  ];
+  // All eight at rest is the identity map. Skipping it is not just an
+  // optimisation — running the resample anyway would cost a full bilinear pass
+  // and lose a fraction of a pixel of sharpness for no visible change.
+  if (offsets.every((v) => v === 0)) return;
+  const corners = base.map((v, i) => v + offsets[i]!) as unknown as
+    readonly [number, number, number, number, number, number, number, number];
+  applyRemapEffect(oc, w, h, (d) => cornerPinData(d, w, h, corners));
+}
+
+function applySelectiveColor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const cyan = effectNumber(e, 'cyan');
+  const magenta = effectNumber(e, 'magenta');
+  const yellow = effectNumber(e, 'yellow');
+  const black = effectNumber(e, 'black');
+  if (cyan === 0 && magenta === 0 && yellow === 0 && black === 0) return;
+  const range = selectiveRange(effectNumber(e, 'range'));
+  const absolute = paramsOf(e).absolute === true;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  selectiveColorData(img.data, range, cyan, magenta, yellow, black, !absolute);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyShadowHighlight(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const shadowAmount = effectNumber(e, 'shadowAmount');
+  const highlightAmount = effectNumber(e, 'highlightAmount');
+  if (shadowAmount === 0 && highlightAmount === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  shadowHighlightData(
+    img.data, w, h,
+    shadowAmount, highlightAmount,
+    effectNumber(e, 'radius'), effectNumber(e, 'tonalWidth'),
+  );
   oc.putImageData(img, 0, 0);
 }
 
