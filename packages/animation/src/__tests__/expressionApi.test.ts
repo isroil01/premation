@@ -13,7 +13,7 @@
  *      agreement. `API_NAMES` is now derived; this file closes the third edge.
  */
 
-import { compileExpression, tokenizeExpression, EXPRESSION_API, type ExprContext } from '../expressions';
+import { compileExpression, tokenizeExpression, EXPRESSION_API, boundScopeNames, type ExprContext } from '../expressions';
 
 const base: ExprContext = { time: 0, value: 0 };
 
@@ -261,7 +261,7 @@ describe('§2·0 — every function is discoverable', () => {
 
   const ROUND_TWO = [
     'sourceRectAtTime', 'seedRandom', 'gaussRandom', 'noise',
-    'numKeys', 'key', 'nearestKey', 'posterizeTime',
+    'numKeys', 'key', 'nearestKey', 'posterizeTime', 'marker',
     'add', 'sub', 'mul', 'div', 'dot', 'cross', 'length', 'normalize',
   ];
 
@@ -272,6 +272,30 @@ describe('§2·0 — every function is discoverable', () => {
   it.each(ROUND_TWO)('%s appears in the autocomplete table', (name) => {
     const labels = EXPRESSION_API.map((a) => a.label.replace(/\(\)$/, ''));
     expect(labels).toContain(name);
+  });
+
+  /**
+   * The same direction, but over the WHOLE scope instead of a hand-written
+   * list — which is what `ROUND_TWO` above could not do.
+   *
+   * `ROUND_TWO` only ever covered the names someone thought to add to it, so a
+   * function bound in `run` and missing from the table worked, was invisible,
+   * and failed nothing. `marker` was exactly that case when it landed: deleting
+   * its autocomplete row broke no test in this file. Enumerating the real Map
+   * through `boundScopeNames` is what makes the assertion complete, so the next
+   * addition cannot go through the same gap.
+   *
+   * Compared on the FIRST segment, matching how `API_NAMES` is derived: the
+   * table documents `Math.sin()` while the scope binds `Math`.
+   */
+  it('EVERY name bound in scope appears in the autocomplete table', () => {
+    compileExpression('time').run(base); // populate the reflection
+    const bound = boundScopeNames();
+    expect(bound.length).toBeGreaterThan(20); // the reflection really ran
+    const documented = new Set(
+      EXPRESSION_API.map((a) => a.label.replace(/\(\)$/, '').split('.')[0]!),
+    );
+    expect(bound.filter((n) => !documented.has(n))).toEqual([]);
   });
 
   it('every autocomplete entry names something that really exists', () => {

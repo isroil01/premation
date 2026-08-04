@@ -91,6 +91,20 @@ export interface ExprContext {
    * indistinguishable from one that worked.
    */
   spaceAt?: (name: string | null, t: number) => LayerSpace | undefined;
+  /**
+   * Markers for one scope, ascending by time — backs `marker.*`.
+   *
+   * `'layer'` means the CURRENT layer's markers, already converted to comp
+   * seconds by the host. `'comp'` means the composition's. Absent or empty
+   * yields `numKeys === 0`, which every accessor handles, so an unwired
+   * provider degrades to "no markers" rather than throwing — the opposite call
+   * from `spaceAt`, and for a different reason: no markers is a perfectly
+   * ordinary state that an expression must survive, whereas no coordinate
+   * conversion is not.
+   *
+   * Order is not required of the host; see {@link ExprMarker}.
+   */
+  markersAt?: (scope: 'comp' | 'layer') => readonly ExprMarkerData[];
 }
 
 /**
@@ -133,6 +147,43 @@ export interface SourceRect {
   left: number;
   width: number;
   height: number;
+}
+
+/**
+ * One marker, as an expression sees it — backs `marker.key(n)`.
+ *
+ * `time` is COMPOSITION seconds for both scopes, including layer markers,
+ * which the model stores layer-relative. That conversion is deliberate and it
+ * is the whole reason this type exists rather than passing `MarkerData`
+ * through: the overwhelmingly common expression is
+ * `marker.nearestKey(time).time`, and `time` in an expression is comp seconds.
+ * Handing back a layer-relative number there would compare two different
+ * clocks and be wrong by the layer's start offset — correct-looking on any
+ * layer starting at 0, which is most of them while you are testing.
+ *
+ * `duration` is NOT converted, because it is a length rather than an instant.
+ */
+export interface ExprMarkerData {
+  /** Composition seconds. */
+  time: number;
+  /** Span length in seconds; 0 for a point marker. */
+  duration: number;
+  /** The marker's label. */
+  name: string;
+  /** The marker's note — AE's `.comment`. */
+  comment: string;
+}
+
+/**
+ * A marker with its AE index. `index` is assigned HERE, by position after
+ * sorting, rather than supplied by the host — so the 1-based numbering that
+ * `key(n)` depends on has exactly one author. A host that returned markers in
+ * insertion order (which `MarkerList` does) would otherwise make `key(1)` mean
+ * "the first one added" in one scope and "the earliest" in another.
+ */
+export interface ExprMarker extends ExprMarkerData {
+  /** 1-based, matching AE's `key(n)` numbering. 0 when there are no markers. */
+  index: number;
 }
 
 export interface ExprResult {
@@ -192,6 +243,26 @@ function resolveRange(t: number, a: number, b: number, c?: number, d?: number): 
   if (tMax === tMin) return { k: 0, vMin, vMax };
   const k = Math.min(1, Math.max(0, (t - tMin) / (tMax - tMin)));
   return { k, vMin, vMax };
+}
+
+/** Filled on the first `run`; see {@link boundScopeNames}. */
+let boundNames: string[] = [];
+
+/**
+ * The names `run` actually binds — for the §2·0 discoverability guard.
+ *
+ * This is a REFLECTION of the scope Map, not a fourth list to keep in step.
+ * The guard it exists for previously probed a hand-written array of names,
+ * which meant the scope→table direction only covered names someone had
+ * remembered to add to it: a function bound in scope and missing from the
+ * autocomplete table worked perfectly, was undiscoverable, and failed nothing.
+ * Enumerating the Map itself is what makes that assertion complete.
+ *
+ * Empty until the first expression is evaluated, because the Map is built
+ * inside `run` where its closures live.
+ */
+export function boundScopeNames(): readonly string[] {
+  return boundNames;
 }
 
 export function compileExpression(src: string): CompiledExpression {
@@ -430,6 +501,82 @@ export function compileExpression(src: string): CompiledExpression {
         return key(best + 1);
       };
 
+      // ── Marker access ──────────────────────────────────────────────
+      /**
+       * `marker.*` for one scope, deliberately the same shape as the keyframe
+       * accessors above — `numKeys`, `key(n)`, `nearestKey(t)` — because in AE
+       * they ARE the same shape, and someone who has learned one should not
+       * have to learn the other.
+       *
+       * The empty case returns a zero marker rather than null or undefined.
+       * `marker.nearestKey(time).time` is the canonical use, and on a comp
+       * with no markers the null version would throw on `.time` and take the
+       * whole property down; 0 degrades to "the start", which is wrong but
+       * survivable and visible.
+       */
+      const buildMarkers = (which: 'comp' | 'layer') => {
+        const sorted = [...(ctx.markersAt?.(which) ?? [])]
+          .sort((a, b) => a.time - b.time)
+          .map((m, i): ExprMarker => ({ ...m, index: i + 1 }));
+        const EMPTY: ExprMarker = { time: 0, duration: 0, name: '', comment: '', index: 0 };
+        /**
+         * `key(n)` — 1-based by position, or by NAME/comment when given a
+         * string, which is AE's other form (`marker.key("Chorus")`).
+         *
+         * Comment is matched before name because that is the field AE's
+         * string form addresses; name is accepted too since our markers carry
+         * a label as well and `addMarkerAtPlayhead` fills the label, not the
+         * comment — so matching only AE's field would make the string form
+         * useless on every marker this app creates.
+         */
+        const mKey = (n: number | string): ExprMarker => {
+          if (typeof n === 'string') {
+            return sorted.find((m) => m.comment === n)
+              ?? sorted.find((m) => m.name === n)
+              ?? EMPTY;
+          }
+          if (sorted.length === 0) return EMPTY;
+          const i = Math.max(1, Math.min(sorted.length, Math.round(n)));
+          return sorted[i - 1]!;
+        };
+        const mNearest = (t = time): ExprMarker => {
+          if (sorted.length === 0) return EMPTY;
+          let best = 0;
+          for (let i = 1; i < sorted.length; i++) {
+            if (Math.abs(sorted[i]!.time - t) < Math.abs(sorted[best]!.time - t)) best = i;
+          }
+          return sorted[best]!;
+        };
+        return { numKeys: sorted.length, key: mKey, nearestKey: mNearest };
+      };
+      /**
+       * LAZY, and that is not premature. `run` is called per property per
+       * frame, so building and sorting two marker lists eagerly would charge
+       * every expression in the project for a feature almost none of them use.
+       * The getter defers to first access and the memo keeps one build per
+       * evaluation, which is what a marker expression actually needs.
+       *
+       * `readMember` (exprLang.ts) does a plain property read, so a getter is
+       * indistinguishable from a field to the evaluator — checked, not assumed.
+       */
+      const markerScope = (which: 'comp' | 'layer') => {
+        let api: ReturnType<typeof buildMarkers> | null = null;
+        const get = () => (api ??= buildMarkers(which));
+        return {
+          get numKeys() { return get().numKeys; },
+          key: (n: number | string) => get().key(n),
+          nearestKey: (t?: number) => get().nearestKey(t),
+        };
+      };
+      /**
+       * Bare `marker` is the LAYER's markers, matching AE — comp markers are
+       * `thisComp.marker`. Worth stating because the reverse is the natural
+       * guess, and the two silently differ: a bare `marker` reading comp
+       * markers would work fine until someone put a marker on a layer.
+       */
+      const markerLayer = markerScope('layer');
+      const markerComp = markerScope('comp');
+
       /**
        * `posterizeTime(fps)` — quantise the clock this expression sees.
        *
@@ -548,6 +695,7 @@ export function compileExpression(src: string): CompiledExpression {
           name,
           ...spaceFns(name),
         },
+        marker: markerComp,
       };
       const thisLayer = {
         ...(ctx.layerInfo ?? {
@@ -559,6 +707,7 @@ export function compileExpression(src: string): CompiledExpression {
         // form people already know. The bare `toComp([0,0])` is bound too, the
         // same way `sourceRectAtTime` is — one shorter to type, identical.
         ...ownSpace,
+        marker: markerLayer,
       };
       const thisProperty = {
         value,
@@ -597,10 +746,16 @@ export function compileExpression(src: string): CompiledExpression {
         ['fromComp', ownSpace.fromComp], ['fromWorld', ownSpace.fromWorld],
         ['seedRandom', seedRandom], ['gaussRandom', gaussRandom], ['noise', noise],
         ['numKeys', numKeys], ['key', key], ['nearestKey', nearestKey],
+        ['marker', markerLayer],
         ['posterizeTime', posterizeTime],
         ['add', add], ['sub', sub], ['mul', mul], ['div', div],
         ['dot', dot], ['cross', cross], ['length', length], ['normalize', normalize],
       ]);
+      // Reflect the REAL Map for the discoverability guard. Captured once
+      // (first evaluation) rather than per run, because `run` is called per
+      // property per frame and this exists only so a test can enumerate what
+      // is actually bound — see `boundScopeNames`.
+      if (boundNames.length === 0) boundNames = [...scope.keys()];
 
       try {
         const out = evaluateExpression(ast, scope);
@@ -752,6 +907,13 @@ export const EXPRESSION_API: { insert: string; label: string; hint: string }[] =
   { insert: 'easeIn(time, 0, 1, 0, 100)', label: 'easeIn()', hint: 'smooth start interpolation' },
   { insert: 'easeOut(time, 0, 1, 0, 100)', label: 'easeOut()', hint: 'smooth end interpolation' },
   { insert: 'timeToFrames(time)', label: 'timeToFrames()', hint: 'convert seconds to frame number' },
+  // These three were bound in scope from the start and documented nowhere, so
+  // they worked and could not be found — the exact defect this table exists to
+  // prevent. Surfaced by the scope-wide discoverability assertion in
+  // `expressionApi.test.ts`, which the previous hand-written list could not see.
+  { insert: 'framesToTime(12)', label: 'framesToTime()', hint: 'convert a frame number to seconds' },
+  { insert: 'value + audio * 200', label: 'audio', hint: 'audio amplitude 0..1 at the playhead — audio-reactive motion' },
+  { insert: "ctrl('Speed')", label: 'ctrl()', hint: 'read a named slider control from anywhere in the scene' },
   { insert: 'thisComp.width', label: 'thisComp', hint: 'composition properties and layer access' },
   { insert: 'thisLayer.name', label: 'thisLayer', hint: 'current layer properties' },
   { insert: 'thisProperty.valueAtTime(time - 0.5)', label: 'thisProperty', hint: 'current property accessors' },
@@ -771,6 +933,7 @@ export const EXPRESSION_API: { insert: string; label: string; hint: string }[] =
   { insert: 'numKeys', label: 'numKeys', hint: "this property's keyframe count" },
   { insert: 'key(1).time', label: 'key()', hint: 'nth keyframe (1-based): .index .time .value' },
   { insert: 'nearestKey(time).time', label: 'nearestKey()', hint: 'keyframe closest to a time' },
+  { insert: 'marker.nearestKey(time).time', label: 'marker', hint: 'THIS LAYER’s markers: .numKeys .key(n|"name") .nearestKey(t) → {time,duration,name,comment,index}' },
   { insert: 'seedRandom(7)', label: 'seedRandom()', hint: 'rebase the random sequence' },
   { insert: 'random(100)', label: 'random()', hint: 'random 0..1, 0..max, or min..max — advances per call' },
   { insert: 'gaussRandom()', label: 'gaussRandom()', hint: 'normal distribution, mean 0 sd 1' },

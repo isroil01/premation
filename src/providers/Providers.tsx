@@ -67,6 +67,8 @@ import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { isAudioNode } from '@core/audio/audioScene';
+import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
@@ -334,6 +336,36 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => true,
       execute: () => {
         document.querySelector<HTMLElement>('[data-workspace-viewport]')?.focus();
+      },
+    },
+    {
+      /**
+       * AE's keyframe assistant, in the place people look for it. The
+       * conversion itself already existed but was reachable only from the
+       * audio layer's inspector panel — so anyone who knew the AE command by
+       * name and searched for it found nothing, and the feature read as
+       * missing rather than as hidden.
+       */
+      id: asCommandId('animation.convertAudioToKeyframes'),
+      label: 'Convert Audio to Keyframes',
+      icon: 'audio-lines',
+      enabled: () => {
+        const ids = useSelectionStore.getState().ids;
+        if (ids.length !== 1) return false;
+        const node = defaultSceneGraph.getNode(ids[0]!);
+        return !!node && isAudioNode(node);
+      },
+      execute: () => {
+        const nodeId = useSelectionStore.getState().ids[0];
+        if (!nodeId) return;
+        void convertAudioToSliderNull(nodeId).then(({ nodeId: nullId, written }) => {
+          if (!nullId) {
+            notify('That layer has no decodable audio.', 'warning');
+            return;
+          }
+          const total = [...written.values()].reduce((a, b) => a + b, 0);
+          notify(`Audio → ${total} keyframes across ${written.size} sliders`, 'success');
+        });
       },
     },
     {
@@ -1107,6 +1139,30 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           }
           if (nodeId === null) return undefined;
           return layerSpaceAt(nodeId, t, { width: comp.width, height: comp.height });
+        });
+        /**
+         * `marker.*` — comp and layer markers.
+         *
+         * Goes through `getMarkers` / `getLayerMarkers` rather than reading
+         * `timeline.markers` directly, deliberately. `getLayerMarkers` is the
+         * ONE place that undoes the layer-relative storage (via
+         * `toAbsoluteTime`), and a second copy of that conversion here is the
+         * §2·0 shape: two readers of one rule, nothing forcing them to agree,
+         * and a discrepancy that shows up only on a trimmed or slid layer.
+         *
+         * `label` maps to `name` because that is the field the app's marker
+         * commands fill; `comment` is the note. Both are exposed so a
+         * `marker.key("...")` lookup works whichever one the user typed into.
+         */
+        defaultAnimation.setMarkerProvider((nodeId, scope) => {
+          const ctrl = getTimelineController();
+          const src = scope === 'comp' ? ctrl.getMarkers() : ctrl.getLayerMarkers(nodeId);
+          return src.map((m) => ({
+            time: m.time,
+            duration: m.duration,
+            name: m.label,
+            comment: m.comment,
+          }));
         });
         // Keyframe edits refresh the timeline tracks + inspector + viewport.
         track(getEventBus().on('AnimationChanged', () => { bumpScene(); }));

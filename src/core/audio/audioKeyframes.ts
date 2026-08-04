@@ -27,6 +27,9 @@ import { runAnimEdit } from '@core/animation/animationCommands';
 import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { readAudioClipTimings } from './audioScene';
+import { insertPrimitive } from '@core/scene/sceneInsert';
+import { addSliderControl, CONTROL_PREFIX } from '@core/animation/expressionControls';
+import { useSelectionStore } from '@stores/selectionStore';
 
 export const AUDIO_AMPLITUDE_PROP = 'audioAmplitude';
 
@@ -59,17 +62,46 @@ export const DEFAULT_AUDIO_KEYFRAME_OPTIONS: AudioKeyframeOptions = {
 };
 
 /**
- * Per-frame RMS amplitude, normalized to 0–100 against the clip's own peak.
- * Pure math over the decoded buffer — one value per frame at `fps`.
+ * Which channels an envelope reads — AE's three, and the three it writes as
+ * sliders.
+ *
+ * A MONO buffer answers all three from its single channel rather than giving
+ * Right zeros. "Channel 1 of a one-channel file" is the literal reading and it
+ * is the wrong one: a mono voiceover driving a rig off Right would animate
+ * nothing, which reads as a broken feature rather than as a property of the
+ * source.
  */
-export function amplitudeEnvelope(buffer: AudioBuffer, fps: number): number[] {
+export type AudioChannel = 'both' | 'left' | 'right';
+
+export const AUDIO_CHANNELS: readonly AudioChannel[] = ['both', 'left', 'right'];
+
+/** Slider names, matching AE's. */
+export const AUDIO_CHANNEL_LABELS: Record<AudioChannel, string> = {
+  both: 'Both Channels',
+  left: 'Left',
+  right: 'Right',
+};
+
+function channelIndices(buffer: AudioBuffer, ch: AudioChannel): number[] {
+  const n = buffer.numberOfChannels;
+  if (n <= 1) return [0];
+  if (ch === 'left') return [0];
+  if (ch === 'right') return [Math.min(1, n - 1)];
+  return Array.from({ length: n }, (_, i) => i);
+}
+
+/**
+ * Per-frame RMS, UN-normalised, for one channel selection.
+ *
+ * Split out because the three-slider output has to normalise the channels
+ * TOGETHER — see {@link amplitudeEnvelopes}.
+ */
+function rawEnvelope(buffer: AudioBuffer, fps: number, channel: AudioChannel): number[] {
   if (fps <= 0 || buffer.length === 0) return [];
   const frames = Math.max(1, Math.ceil(buffer.duration * fps));
   const samplesPerFrame = Math.max(1, Math.floor(buffer.sampleRate / fps));
-  const channels: Float32Array[] = [];
-  for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
+  const channels = channelIndices(buffer, channel).map((c) => buffer.getChannelData(c));
   const out = new Array<number>(frames);
-  let peak = 0;
   for (let f = 0; f < frames; f++) {
     const start = f * samplesPerFrame;
     const end = Math.min(buffer.length, start + samplesPerFrame);
@@ -82,12 +114,60 @@ export function amplitudeEnvelope(buffer: AudioBuffer, fps: number): number[] {
         n++;
       }
     }
-    const rms = n > 0 ? Math.sqrt(sum / n) : 0;
-    out[f] = rms;
-    if (rms > peak) peak = rms;
+    out[f] = n > 0 ? Math.sqrt(sum / n) : 0;
   }
-  if (peak <= 0) return out.map(() => 0);
-  return out.map((v) => Math.round((v / peak) * 1000) / 10); // 0–100, 0.1 steps
+  return out;
+}
+
+/** Scale an RMS envelope to 0–100 against `peak`, in 0.1 steps. */
+function scaleTo100(env: readonly number[], peak: number): number[] {
+  if (peak <= 0) return env.map(() => 0);
+  return env.map((v) => Math.round((v / peak) * 1000) / 10);
+}
+
+/**
+ * Per-frame RMS amplitude, normalized to 0–100 against the clip's own peak.
+ * Pure math over the decoded buffer — one value per frame at `fps`.
+ */
+export function amplitudeEnvelope(
+  buffer: AudioBuffer,
+  fps: number,
+  channel: AudioChannel = 'both',
+): number[] {
+  const raw = rawEnvelope(buffer, fps, channel);
+  let peak = 0;
+  for (const v of raw) if (v > peak) peak = v;
+  return scaleTo100(raw, peak);
+}
+
+/**
+ * All requested channels at once, normalised against ONE SHARED peak.
+ *
+ * This is the part that cannot be had by calling `amplitudeEnvelope` three
+ * times. Normalising each channel to its own peak makes every channel reach
+ * 100, so a track with a quiet right side yields a Right slider that swings
+ * exactly as hard as Left — the relative loudness, which is the only reason to
+ * separate the channels at all, is destroyed by the normalisation.
+ *
+ * The peak is taken across the envelopes ACTUALLY requested, so asking for
+ * `['both']` alone reduces to `amplitudeEnvelope`'s own-peak behaviour exactly.
+ * That is what keeps the existing single-track conversion unchanged.
+ */
+export function amplitudeEnvelopes(
+  buffer: AudioBuffer,
+  fps: number,
+  channels: readonly AudioChannel[],
+): Map<AudioChannel, number[]> {
+  const raws = new Map<AudioChannel, number[]>();
+  let peak = 0;
+  for (const c of channels) {
+    const raw = rawEnvelope(buffer, fps, c);
+    raws.set(c, raw);
+    for (const v of raw) if (v > peak) peak = v;
+  }
+  const out = new Map<AudioChannel, number[]>();
+  for (const [c, raw] of raws) out.set(c, scaleTo100(raw, peak));
+  return out;
 }
 
 /** Thin an envelope: keep frames where the value moves ≥ `minDelta` from the
@@ -260,4 +340,103 @@ export async function convertAudioToKeyframes(
   const buffer = await ensureAudioBuffer(nodeId);
   if (!buffer) return 0;
   return applyAudioKeyframes(nodeId, buffer, opts);
+}
+
+/** The prop path a named slider control keyframes on. */
+export const sliderProp = (name: string): string => CONTROL_PREFIX + name;
+
+export interface AudioSliderNullResult {
+  /** The created null's node id, or null when it could not be created. */
+  nodeId: string | null;
+  /** Keyframes written per channel. */
+  written: Map<AudioChannel, number>;
+}
+
+/**
+ * AE's actual output: a null carrying one slider per channel, keyframed.
+ *
+ * `applyAudioKeyframes` writes a single `audioAmplitude` track onto the audio
+ * layer itself, which is convenient and is NOT what AE produces. AE makes an
+ * "Audio Amplitude" null with Both Channels / Left / Right sliders, and every
+ * tutorial, rig and muscle memory a user brings assumes that shape — including
+ * `ctrl('Both Channels')`, which only resolves if a control by that name
+ * exists somewhere. Both paths are kept: this one for the AE shape, the other
+ * because a single track on the layer is genuinely simpler when that is all
+ * you want.
+ *
+ * ## The time axis, which is the part that goes wrong quietly
+ *
+ * Samples are indexed by the AUDIO layer's source frames, but the keyframes
+ * live on the NULL. Those are two different time axes and neither one alone is
+ * correct, so the conversion is composed:
+ *
+ *   audio source frame → comp time   (the audio layer's clip timings)
+ *   comp time → keyframe time        (the NULL's own remapping)
+ *
+ * Using the audio layer for both steps is the tempting shortcut and it is
+ * right only while the null is untrimmed and unstretched — which it is, the
+ * moment it is created, so the bug would not show until someone slid the null
+ * and wondered why their rig drifted.
+ */
+export function applyAudioSliderNull(
+  audioNodeId: string,
+  buffer: AudioBuffer,
+  opts: AudioKeyframeOptions = DEFAULT_AUDIO_KEYFRAME_OPTIONS,
+  channels: readonly AudioChannel[] = AUDIO_CHANNELS,
+): AudioSliderNullResult {
+  const fps = getTimelineController().fps || 30;
+  const envs = amplitudeEnvelopes(buffer, fps, channels);
+
+  const layerName = defaultSceneGraph.getNode(audioNodeId)?.name ?? 'Audio';
+  let nullId: string | null = null;
+  const written = new Map<AudioChannel, number>();
+
+  runAnimEdit('Convert audio to keyframes', () => {
+    insertPrimitive('null', `${layerName} Amplitude`);
+    nullId = useSelectionStore.getState().ids[0] ?? null;
+    if (!nullId) return;
+
+    defaultAnimation.batch(() => {
+      for (const channel of channels) {
+        const env = envs.get(channel) ?? [];
+        const label = AUDIO_CHANNEL_LABELS[channel];
+        // Create the slider first: its prop is what the inspector renders a
+        // keyframeable row for, and a track on a prop that does not exist is
+        // invisible in the UI even though it samples correctly.
+        const name = addSliderControl(nullId!, label, 0);
+        if (!name) continue;
+        const prop = sliderProp(name);
+
+        const planned = planAudioKeyframes(env, { ...opts, prop });
+        const seen = new Set<number>();
+        const keyframes: Keyframe[] = [];
+        for (const k of planned) {
+          // Step 1 uses the AUDIO layer — the frame index is in its source.
+          const compTime = sourceFrameToCompTime(audioNodeId, k.frame, fps);
+          if (compTime === null) continue;
+          // Step 2 uses the NULL — the keyframes live there.
+          const t = compToKeyframeTime(nullId!, compTime, prop);
+          if (seen.has(t)) continue;
+          seen.add(t);
+          keyframes.push({ t, value: k.value, easing: 'linear' });
+        }
+        if (keyframes.length === 0) continue;
+        defaultAnimation.setKeyframes(nullId!, prop, keyframes);
+        written.set(channel, keyframes.length);
+      }
+    });
+  });
+
+  return { nodeId: nullId, written };
+}
+
+/** Decode-if-needed, then build the AE-shaped null. */
+export async function convertAudioToSliderNull(
+  audioNodeId: string,
+  opts: AudioKeyframeOptions = DEFAULT_AUDIO_KEYFRAME_OPTIONS,
+  channels: readonly AudioChannel[] = AUDIO_CHANNELS,
+): Promise<AudioSliderNullResult> {
+  const buffer = await ensureAudioBuffer(audioNodeId);
+  if (!buffer) return { nodeId: null, written: new Map() };
+  return applyAudioSliderNull(audioNodeId, buffer, opts, channels);
 }

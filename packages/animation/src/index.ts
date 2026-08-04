@@ -42,6 +42,8 @@ export type {
   LoopMode,
   LayerSpace,
   SourceRect,
+  ExprMarker,
+  ExprMarkerData,
 } from './expressions';
 
 // The raw parser/evaluator, for callers that need their own scope rather than
@@ -76,4 +78,5 @@ export type {
   ControlProvider,
   LayerResolver,
   BaseValueProvider,
+  MarkerProvider,
 } from './AnimationEngine';

@@ -87,6 +87,16 @@ export interface TimelineMarkerView {
   time: number;
   label: string;
   color: string | null;
+  /**
+   * The marker's note. Carried here rather than through a second, richer
+   * accessor because `marker.key(n).comment` in an expression and the marker
+   * chip on the ruler must not read markers by two different paths — the
+   * layer-relative → comp conversion in `getLayerMarkers` is exactly the kind
+   * of step that goes wrong once it exists twice. One reader, widened.
+   */
+  comment: string;
+  /** Span length in SECONDS (0 = point marker); the model stores frames. */
+  duration: number;
 }
 
 class TimelineCommandAdapter implements IUndoableCommand {
@@ -776,6 +786,8 @@ export class TimelineController {
       time: framesToSeconds(m.frame, rate),
       label: m.name || 'Marker',
       color: m.color,
+      comment: m.comment,
+      duration: framesToSeconds(m.duration, rate),
     }));
   }
 
@@ -800,6 +812,11 @@ export class TimelineController {
           time: this.toAbsoluteTime(nodeId, framesToSeconds(m.frame, rate)),
           label: m.name || 'Marker',
           color: m.color,
+          comment: m.comment,
+          // NOT run through `toAbsoluteTime`: that maps an INSTANT from layer
+          // to comp time, and a duration is a difference between two instants.
+          // Converting it would add the layer's start offset to a length.
+          duration: framesToSeconds(m.duration, rate),
         });
       }
     }
