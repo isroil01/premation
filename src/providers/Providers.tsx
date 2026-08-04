@@ -69,6 +69,7 @@ import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { layerSpaceAt } from '@core/scene/layerSpace';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioPlaybackBridge } from '@core/audio/useAudioPlayback';
 import { controlValue } from '@core/animation/expressionControls';
@@ -1084,6 +1085,28 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           const h = tr?.props.height;
           if (typeof w !== 'number' || typeof h !== 'number') return undefined;
           return { top: -h / 2, left: -w / 2, width: w, height: h };
+        });
+        /**
+         * `toComp` / `toWorld` / `fromComp` / `fromWorld` — coordinate spaces.
+         *
+         * `name` is null for the layer the expression is on, or another layer's
+         * name. Resolution matches `layer(name, prop)`: by name, first match.
+         *
+         * Everything real happens in `layerSpaceAt`, which composes nothing of
+         * its own — it routes to `worldMatrixOf` (2D), `nodeWorldWithParents3d`
+         * (3D) and `readSceneCamera`, the same three the renderer uses.
+         */
+        defaultAnimation.setLayerSpaceProvider((self, name, t) => {
+          const comp = useCompositionStore.getState().comp();
+          let nodeId: string | null = self;
+          if (name !== null) {
+            nodeId = null;
+            defaultSceneGraph.traverse((n) => {
+              if (nodeId === null && n.name === name) nodeId = n.id;
+            });
+          }
+          if (nodeId === null) return undefined;
+          return layerSpaceAt(nodeId, t, { width: comp.width, height: comp.height });
         });
         // Keyframe edits refresh the timeline tracks + inspector + viewport.
         track(getEventBus().on('AnimationChanged', () => { bumpScene(); }));

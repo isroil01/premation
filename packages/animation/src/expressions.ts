@@ -80,6 +80,51 @@ export interface ExprContext {
   /** The current property's own keyframe times, ascending — backs `numKeys`,
    *  `key(n)` and `nearestKey()`. Empty when the property has no track. */
   keyTimes?: ReadonlyArray<number>;
+  /**
+   * The layer's LAYER-LOCAL → COMPOSITION placement at time `t` — backs
+   * `toComp` / `toWorld` / `fromComp` / `fromWorld`.
+   *
+   * `name` is null for the current layer, or another layer's name, matching
+   * how `layerAt` addresses layers. Undefined when there is no provider or no
+   * such layer, which the host turns into a STATED error rather than a silent
+   * identity: a coordinate conversion that quietly returns its input is
+   * indistinguishable from one that worked.
+   */
+  spaceAt?: (name: string | null, t: number) => LayerSpace | undefined;
+}
+
+/**
+ * A layer's placement, as the coordinate-space functions need it.
+ *
+ * ── Why this is FUNCTIONS and not a matrix ─────────────────────────────
+ *
+ * A 2×3 affine would cover 2D layers and nothing else. A 3D layer's
+ * layer→comp conversion passes through the camera, which is a perspective
+ * DIVIDE, and its comp→layer conversion is a ray/plane intersection. Neither is
+ * a matrix, so a matrix contract would have forced the host to reimplement the
+ * app's projection — a second copy of "where does this point land", kept in
+ * step by attention. That is the §2·0 shape this codebase keeps paying for.
+ *
+ * So the arithmetic stays where the matrices already live (the app installs the
+ * provider over the SAME `parentWorld3d` / `worldMatrixOf` the renderer uses)
+ * and this package only marshals arguments and reports errors.
+ */
+export interface LayerSpace {
+  /** Layer-local (x, y) → composition (x, y). */
+  toComp(p: readonly [number, number]): [number, number];
+  /** Composition (x, y) → layer-local (x, y). */
+  fromComp(p: readonly [number, number]): [number, number];
+  /**
+   * Layer-local (x, y) → WORLD (x, y, z).
+   *
+   * For a 2D layer the composition is the world plane, so this returns the same
+   * x/y as `toComp` with z = 0 — as in AE. They stay separate functions rather
+   * than one aliased to the other, because for a 3D layer they genuinely differ:
+   * world is before the camera, comp is after it.
+   */
+  toWorld(p: readonly [number, number]): [number, number, number];
+  /** WORLD (x, y, z) → layer-local (x, y). */
+  fromWorld(p: readonly [number, number, number]): [number, number];
 }
 
 /** AE's `sourceRectAtTime` return shape. */
@@ -300,6 +345,66 @@ export function compileExpression(src: string): CompiledExpression {
           height: ctx.layerInfo?.height ?? compInfo.height,
         };
 
+      // ── Coordinate spaces ──────────────────────────────────────────
+      //
+      // `toComp` / `toWorld` / `fromComp` / `fromWorld`, AE's four. What they
+      // are FOR is attaching one thing to a point on another: the corner of a
+      // rotated, scaled, PARENTED layer, expressed in composition coordinates.
+      // That is exactly the case a naive implementation gets wrong, because
+      // adding the layer's position to the point is right only while the layer
+      // is unrotated, unscaled and unparented.
+      //
+      // The conversion itself comes from a PROVIDER (`ctx.spaceAt`) rather than
+      // being rebuilt here — see `LayerSpace` for why it is functions and not a
+      // matrix. This block only marshals arguments and reports failures.
+      const asPoint2 = (p: unknown, fn: string): [number, number] => {
+        if (Array.isArray(p) && p.length >= 2 &&
+            typeof p[0] === 'number' && typeof p[1] === 'number' &&
+            Number.isFinite(p[0]) && Number.isFinite(p[1])) {
+          return [p[0], p[1]];
+        }
+        throw new Error(`${fn}() needs a point, e.g. ${fn}([0, 0]).`);
+      };
+      /** A world point. `[x, y]` is accepted with z = 0, as AE does. */
+      const asPoint3 = (p: unknown, fn: string): [number, number, number] => {
+        const [x, y] = asPoint2(p, fn);
+        const z = Array.isArray(p) && typeof p[2] === 'number' && Number.isFinite(p[2]) ? p[2] : 0;
+        return [x, y, z];
+      };
+
+      /**
+       * The layer's placement, or a STATED error.
+       *
+       * Never a silent identity: a coordinate conversion that returns its input
+       * looks correct for a layer sitting at the origin and is wrong for every
+       * other one, which is the failure this whole API exists to remove.
+       */
+      const spaceOf = (name: string | null, t: number, fn: string): LayerSpace => {
+        const sp = ctx.spaceAt?.(name, t);
+        if (!sp) {
+          throw new Error(
+            name === null
+              ? `${fn}() cannot see this layer’s transform here.`
+              : `${fn}(): no layer named “${name}”.`,
+          );
+        }
+        return sp;
+      };
+
+      const spaceFns = (name: string | null): {
+        toComp: (p: unknown, t?: number) => [number, number];
+        toWorld: (p: unknown, t?: number) => [number, number, number];
+        fromComp: (p: unknown, t?: number) => [number, number];
+        fromWorld: (p: unknown, t?: number) => [number, number];
+      } => ({
+        toComp: (p, t = time) => spaceOf(name, t, 'toComp').toComp(asPoint2(p, 'toComp')),
+        toWorld: (p, t = time) => spaceOf(name, t, 'toWorld').toWorld(asPoint2(p, 'toWorld')),
+        fromComp: (p, t = time) => spaceOf(name, t, 'fromComp').fromComp(asPoint2(p, 'fromComp')),
+        fromWorld: (p, t = time) => spaceOf(name, t, 'fromWorld').fromWorld(asPoint3(p, 'fromWorld')),
+      });
+
+      const ownSpace = spaceFns(null);
+
       // ── Keyframe access ────────────────────────────────────────────
       const keyTimes = ctx.keyTimes ?? [];
       const numKeys = keyTimes.length;
@@ -433,16 +538,27 @@ export function compileExpression(src: string): CompiledExpression {
         frameDuration: 1 / Math.max(1, compInfo.fps),
         fps: compInfo.fps,
         numLayers: compInfo.numLayers,
+        // Without a prop this is a LAYER OBJECT, and the coordinate-space
+        // functions are bound to THAT layer — `thisComp.layer('Target').toComp`
+        // must convert in the target's space, not in this one's, which is the
+        // whole reason to reach for it.
         layer: (name: string, prop?: string) => prop ? layer(name, prop) : {
           width: compInfo.width,
           height: compInfo.height,
           name,
+          ...spaceFns(name),
         },
       };
-      const thisLayer = ctx.layerInfo ?? {
-        name: 'Layer',
-        width: compInfo.width,
-        height: compInfo.height,
+      const thisLayer = {
+        ...(ctx.layerInfo ?? {
+          name: 'Layer',
+          width: compInfo.width,
+          height: compInfo.height,
+        }),
+        // AE spells these as layer methods, so `thisLayer.toComp([0,0])` is the
+        // form people already know. The bare `toComp([0,0])` is bound too, the
+        // same way `sourceRectAtTime` is — one shorter to type, identical.
+        ...ownSpace,
       };
       const thisProperty = {
         value,
@@ -477,6 +593,8 @@ export function compileExpression(src: string): CompiledExpression {
         ['thisComp', thisComp], ['thisLayer', thisLayer], ['thisProperty', thisProperty],
         // ── Round two ──
         ['sourceRectAtTime', sourceRectAtTime],
+        ['toComp', ownSpace.toComp], ['toWorld', ownSpace.toWorld],
+        ['fromComp', ownSpace.fromComp], ['fromWorld', ownSpace.fromWorld],
         ['seedRandom', seedRandom], ['gaussRandom', gaussRandom], ['noise', noise],
         ['numKeys', numKeys], ['key', key], ['nearestKey', nearestKey],
         ['posterizeTime', posterizeTime],
@@ -644,6 +762,12 @@ export const EXPRESSION_API: { insert: string; label: string; hint: string }[] =
   { insert: "loopIn('cycle')", label: 'loopIn()', hint: 'repeat keyframes before the first (cycle · pingpong · offset)' },
   // ── Round two ──
   { insert: 'sourceRectAtTime().width', label: 'sourceRectAtTime()', hint: 'content bounds {top,left,width,height} — auto-sizing plates' },
+  // Coordinate spaces. The hints name the DIRECTION, because that is the only
+  // thing anyone gets wrong about these four.
+  { insert: 'toComp([0, 0])', label: 'toComp()', hint: 'layer point → composition coords (honours parenting, rotation, scale)' },
+  { insert: 'fromComp([960, 540])', label: 'fromComp()', hint: 'composition point → this layer’s coords' },
+  { insert: 'toWorld([0, 0])', label: 'toWorld()', hint: 'layer point → world coords (same as toComp for a 2D layer)' },
+  { insert: 'fromWorld([960, 540])', label: 'fromWorld()', hint: 'world point → this layer’s coords' },
   { insert: 'numKeys', label: 'numKeys', hint: "this property's keyframe count" },
   { insert: 'key(1).time', label: 'key()', hint: 'nth keyframe (1-based): .index .time .value' },
   { insert: 'nearestKey(time).time', label: 'nearestKey()', hint: 'keyframe closest to a time' },

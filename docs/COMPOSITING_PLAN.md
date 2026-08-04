@@ -1011,6 +1011,33 @@ the boundary at exactly 1 asserted rather than assumed.
 |---|---|---|---|
 | **F19** | **RESOLVED by decision, 2026-08-05 — option (a) taken, and shipped.** ~~The fold-in cannot satisfy "existing documents render identically", and no lossless migration exists.~~ The diagnosis stands and is unchanged: copies were placed in COMP space (`x: px + c.dx`), so a repeated layer's arrangement stayed axis-aligned however the layer was rotated; folding bakes them into LAYER-LOCAL geometry, after which the layer transform turns and scales the whole group. What changed is the verdict, not the analysis. The comp-space model was an artifact of where the copies were emitted rather than a feature anyone chose, and preserving it would mean permanently carrying a wrong model to protect documents that were rendering wrong. So the semantic change is ACCEPTED and announced (§2b-septies), the migration claims what is true rather than losslessness, and the pixel gate's blindness was closed FIRST: `shape-repeater-rotated-layer` and `shape-repeater-scaled-layer` were blessed against the old behaviour one commit ahead of the fold, so the re-bless is the evidence. Measured on those two goldens: 23.4% and 20.9% of pixels moved, and `shape-repeater` — the untransformed scene — stayed pixel-identical, which is the claim. Option (b) was not taken: making the operator read the layer transform would break the chain's contract that operators are pure point-to-point functions, and would still behave badly under non-uniform scale. | **Closed — shipped as an announced behaviour change** | Document version 1.5.0. See §2b-septies. |
 
+## 2b-octies. 2026-08-05 — coordinate-space expressions, and one logged limit
+
+`toComp` / `toWorld` / `fromComp` / `fromWorld` ship over a provider, following
+`setSourceRectProvider`'s shape. Two things are worth carrying forward.
+
+**The contract is FUNCTIONS, not a matrix, and that was a §2·0 call.** A 2×3
+affine covers 2D layers and nothing else: a 3D layer's layer→comp conversion
+passes through the camera (a perspective divide) and its comp→layer conversion
+is a ray/plane intersection. Neither is a matrix. A matrix contract would have
+forced the expression host to reimplement the app's projection — a second copy
+of "where does this point land", kept in step by attention. Instead the provider
+hands over conversions, the arithmetic stays on the SAME `worldMatrixOf` /
+`nodeWorldWithParents3d` / `readSceneCamera` the renderer uses, and
+`@motion/animation` only marshals arguments.
+
+Worth noting what made this cheap: `liveWorld3d.ts` had already established the
+rule ("the renderer's answer and the chrome's answer are the same computation
+with different caches"), so this is a third consumer of it rather than a new
+mechanism. The first survey of `buildSnapshot`'s inline 3D block suggested the
+opposite — that 3D would need a hot-path refactor. Reading one more file
+changed the estimate from "block it" to "ship it". Eighth instance of
+underestimating what exists.
+
+| # | Finding | Severity | Proposed |
+|---|---|---|---|
+| **F20** | **`thisLayer.toComp(...)` in an expression on that layer's own Position is self-referential.** The provider resolves transforms through `evaluateNode`, which samples expressions, so the position feeds the transform that computes the position. Measured in the running app: `toComp([42, 7])[0]` returned 14904 instead of 42. It does NOT hang or corrupt — `AnimationEngine.sample` catches the cycle and falls back to the track value, so the result is bounded, just meaningless — and AE has the same hazard, reporting it as a self-reference. Everything else is exact, including the case the API exists for (`thisComp.layer('Other').toComp(...)`, verified against hand-derived coordinates in the running app) and `thisLayer.toComp(...)` from any non-transform property. | **Correctness, narrow and bounded** | Resolve the EVALUATING node's own transform from keyframes only, exactly as `ExprContext.selfAt` already does for `valueAtTime`. Needs a keyframe-only resolver threaded through BOTH this file's 2D path and `resolveNode3DTransform`'s 3D one — doing the 2D half alone would leave the two disagreeing, which is why it is logged whole rather than half-applied. |
+
 ## 2b-septies. Release note — the Repeater turns with its layer (F19, SHIPPED)
 
 **Behaviour change, and a schema bump. A repeater on a ROTATED or SCALED layer
