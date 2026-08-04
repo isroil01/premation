@@ -853,10 +853,51 @@ open in two of them:
    | a repeater with offsets | the translate-only DEFAULT, which is rigid |
    | an interior shape | a shape touching the plane edge |
 
-   Note the direction differs — sometimes the boundary is the case that WORKS
-   when the clean sample fails (scale 1), sometimes the case that FAILS when the
-   clean sample works (alpha at threshold). So the question is not "is the
-   boundary inert?" but "is it reachable from my fixture at all?"
+   **THE QUESTION TO ASK IS REACHABILITY, NOT INERTNESS.** This is the part
+   worth carrying, because the obvious phrasing — "check the boundary case" —
+   is not enough to know WHICH case to check, and the natural instinct
+   ("is the boundary a no-op?") points the wrong way half the time.
+
+   The direction genuinely differs:
+
+   | Boundary | Behaviour there | The clean sample… |
+   |---|---|---|
+   | `offsetScale` exactly 1 | COMMUTES — the reorder is inert | …fails to commute, so the boundary is the quiet one |
+   | trim exactly at a vertex | COMMUTES — degenerate | …does not, same shape |
+   | alpha exactly AT threshold | BREAKS — crossings collapse onto a grid corner | …works fine, so the boundary is the loud one |
+   | shape touching the plane edge | BREAKS — the contour never closes | …works fine |
+
+   Two of those are inert-at-the-boundary and two are broken-at-the-boundary, so
+   any rule phrased around inertness gets half of them backwards. What they all
+   share is that the fixture could not REACH the boundary: nothing in the chosen
+   values could produce a scale of exactly 1, or an alpha exactly equal to the
+   threshold, or a cut exactly at a vertex.
+
+   So the question is: **what values can my fixture never produce?** Answer that
+   and add a fixture there, whatever the behaviour turns out to be. It is a
+   property of the fixture, which you control and can enumerate, rather than a
+   prediction about the code, which is the thing under test.
+3b. **A test's stated rationale is an assertion too — measure it, and rewrite
+   it when it is wrong.** Added 2026-08-05.
+
+   The coordinate-space guards shipped with a comment claiming the 90-degree
+   main case was blind to a TRANSPOSED rotation. Measured: transposing the
+   matrix DOES move the result, so the claim was false. The real blind spot was
+   different and worse — at 90 degrees the composed diagonal is zero, so an
+   error in the `a`/`d` terms contributes nothing, which deleting those two
+   terms confirmed (all four hand-derived assertions stayed green).
+
+   Both versions of the comment sat above a passing test. That is exactly the
+   danger: **a false explanation is what the next person trusts INSTEAD of
+   re-deriving.** A test with no rationale at least prompts them to work it out;
+   a test with a confident wrong one sends them away satisfied, and the blind
+   spot it misdescribes stays open.
+
+   So the rationale gets the same treatment as an expected value: derive it,
+   then verify it by breaking the thing it names. If the break does not produce
+   the failure the comment predicts, the comment is wrong — rewrite it to the
+   mechanism actually measured, and say in it that it was measured.
+
 4. **Verify by breaking the direction, and watch which tests fail.** The proof
    is not that the new test fails; it is that the OLD guard passes while the new
    one fails. Mirroring the twirl leaves its distance-preservation check green;
