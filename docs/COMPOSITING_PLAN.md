@@ -904,6 +904,19 @@ open in two of them:
    and add a fixture there, whatever the behaviour turns out to be. It is a
    property of the fixture, which you control and can enumerate, rather than a
    prediction about the code, which is the thing under test.
+
+   **Worked example, applied PROSPECTIVELY rather than in hindsight.** The
+   distort centres rest at the layer origin, which made the main rig's screen
+   position trivially checkable — and useless: at the origin every rotation and
+   scale term multiplies zero, so the composed matrix contributes nothing but
+   its translation. That was spotted while writing the fixture, so a
+   MOVED-centre fixture went in beside it.
+
+   The break confirmed the reasoning afterwards: a typo'd param key
+   (`centreX` for `centerX`) leaves the origin fixture GREEN, because with no
+   offset applied a wrong key reads 0 exactly like a right one, and fails only
+   the moved fixture. The rule found the hole before the break did, which is the
+   order it is supposed to work in.
 3b. **A test's stated rationale is an assertion too — measure it, and rewrite
    it when it is wrong.** Added 2026-08-05.
 
@@ -944,6 +957,27 @@ open in two of them:
    Prefer the last whenever the claim is checkable — and note that an
    INCONSISTENT break (changing a function without its derivative, a value
    without its cache) proves nothing, which is its own trap.
+
+3c. **Read a parameter's MEANING from the dispatch, not from its
+   declaration.** Added 2026-08-05, from the three distort centres.
+
+   The declaration says what a param is CALLED and what its default is. It does
+   not say what the number means. Bulge, Twirl and Spherize all declare
+   `centerX`/`centerY` defaulting to 0 — identical in shape to Corner Pin's
+   `topLeftX`/`topLeftY`, which are offsets from a CORNER. But the dispatch
+   computes `w / 2 + centerX`, so these are offsets from the MIDDLE of the box.
+
+   Taking the declaration at face value would have rested all three handles on
+   the layer's top-left and written every offset a half-box out. It compiles, it
+   renders, and — this is the part that matters — it looks like a plausible bug
+   in the EFFECT rather than in the wiring, so the search would start in the
+   wrong file.
+
+   The dispatch is where a param stops being a name and becomes a number in an
+   expression. Read it. This generalises past offsets: units (degrees or
+   radians?), sign conventions (is +Y down?), and whether a "radius" is measured
+   before or after the layer's scale are all invisible in a `params` table and
+   all obvious one call further in.
 
 4. **Verify by breaking the direction, and watch which tests fail.** The proof
    is not that the new test fails; it is that the OLD guard passes while the new
@@ -1015,6 +1049,18 @@ open in two of them:
    have blessed it, and the golden would then have recorded the bug as the
    expectation. Pick something in the frame you can predict a NUMBER for — blob
    count, inked area, extent — and check that number.
+
+   **And when the number is CLOSE but not equal, find out why.** Added
+   2026-08-05. Moving a distort centre by 200 layer px shifted the measured
+   distortion centroid 94 output px against a predicted 100. "Close enough,
+   antialiasing" is the tempting reading and it is a way of not looking. The
+   actual cause was geometric: at that offset the radius-160 disc reaches output
+   x 660 against the layer's right edge at 630, so the clipped part biases the
+   centroid left. Confirmed by re-measuring at an offset small enough not to
+   clip, where the shift is EXACTLY the predicted 50.
+
+   A 6% discrepancy you have explained is evidence. A 6% discrepancy you have
+   excused is a 6% discrepancy you will still have when it becomes 60%.
 
    **NEVER test a spatial transform on SMOOTH material.** Added 2026-08-05, as
    a DEFAULT rather than a lesson, because it is now three runs running:
@@ -1215,6 +1261,26 @@ one of the five either.
 
 ## 2b-undecies. 2026-08-05 — the Puppet/Bone consolidation is NOT a refactor
 
+**Closed the same day, and one thing learned in the closing.** The obvious move
+— a render-test scene with a parented rigged layer, blessed before the fix —
+does not work: the harness is `createRenderBackend → buildSnapshot →
+renderFrame`, and the overlays are React chrome that never enters the rendered
+frame. That golden would have stayed byte-identical through the fix and proved
+nothing, which is F15's dead golden in a new costume.
+
+The repeater's ORDERING still applied; only the medium changed. A component test
+asserting the wrong-but-current handle position landed first, with the corrected
+number written down as a prediction, and the fix re-blessed it.
+
+Worth noting for the next behaviour change: **"bless before, predict, match"
+needs a medium that actually observes the thing.** Ask what artifact would move,
+before choosing the artifact.
+
+Also checked, and the same blindness as `shape-repeater`: NO existing rig scene
+uses a parented layer. The `parent` matches in `rig.ts` are all `parentId` on
+BONES — skeleton hierarchy, not layer parenting.
+
+
 Deferred, and the reason is the point rather than an excuse.
 
 The existence table found `localToScreen`/`screenToLocal` byte-identical in
@@ -1235,7 +1301,7 @@ exactly how a "pure refactor" ships a surprise.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
-| **F23** | **The puppet and bone overlays ignore layer PARENTING.** Both position their handles through `worldMatrix(readGeometry(node))`, which composes only that node's own translate/rotate/scale; neither references `worldMatrixOf` or `parentWorld3d`. So on a layer parented to anything that moves, the pins and bones draw at the unparented position while the artwork renders at the parented one — the same class of drift `liveWorld3d` was written to end for cameras, lights and layer-box gizmos, in a fourth and fifth place. Not reproduced on a rig yet: found by reading `worldMatrix` while checking whether the two overlays could share the effect overlay's projection. | **Correctness, live, unverified scope** | Point both at `layerSpaceAt`, which is the consolidation the existence table wanted anyway — the duplication and the bug have the same fix. Needs a parented-rig fixture and a runtime check first, since it changes where existing rigs draw. |
+| **F23** | **The puppet and bone overlays ignore layer PARENTING.** Both position their handles through `worldMatrix(readGeometry(node))`, which composes only that node's own translate/rotate/scale; neither references `worldMatrixOf` or `parentWorld3d`. So on a layer parented to anything that moves, the pins and bones draw at the unparented position while the artwork renders at the parented one — the same class of drift `liveWorld3d` was written to end for cameras, lights and layer-box gizmos, in a fourth and fifth place. Not reproduced on a rig yet: found by reading `worldMatrix` while checking whether the two overlays could share the effect overlay's projection. | **FIXED 2026-08-05** | Both overlays now go through `layerScreenMapping`, which wraps `layerSpaceAt`. `layerScreenMapping` is the ONLY code in `src/layout` that composes a layer transform to screen — every remaining `worldMatrix(` there is a comment — and it has three consumers: Puppet, Bone and the effect-handle overlay, whose inline copy went the same way. So the third duplication the existence table found is closed by the same change that fixed the bug. Guard landed first asserting the wrong-but-current (30, 0) with (100, 110) written down as the prediction; it is now (100, 110). **A SECOND behaviour change came with it and is called out rather than absorbed**: `layerSpaceAt` samples the ANIMATED layer transform where `worldMatrix(readGeometry(node))` read static props only, so an overlay on a keyframed layer now tracks the artwork instead of sitting at the rest pose. Same defect class, separately guarded. |
 
 ## 2b-nonies. 2026-08-05 — Bezier Warp, and a guard that covered nothing
 
