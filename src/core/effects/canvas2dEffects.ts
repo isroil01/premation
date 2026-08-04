@@ -40,6 +40,7 @@ import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
 import { selectiveColorData, selectiveRange, shadowHighlightData } from './toneEffects';
 import { bulgeData, twirlData, spherizeData, cornerPinData, defaultCorners } from './distort';
 import { drawCheckerboard, drawGrid, cellPatternData } from './generatePatterns';
+import { drawVegas } from './vegas';
 import { turbulentNoiseData, addGrainData, medianData } from './noiseEffects';
 import {
   simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
@@ -99,6 +100,10 @@ const CANVAS2D_ONLY = new Set<string>([
   'checkerboard',
   'grid',
   'cell-pattern',
+  // Vegas READS the layer's alpha per pixel to find its contour, so there is
+  // no shader form for it any more than there is for Median. It also DRAWS,
+  // like the three above.
+  'vegas',
   // Noise family. Turbulent Noise generates a field, Add Grain disturbs the
   // pixels, Median is a rank filter over the neighbourhood — no shader form for
   // any of the three.
@@ -276,6 +281,8 @@ export function applyCanvas2dEffect(
       return drawGrid(oc, w, h, e);
     case 'cell-pattern':
       return applyCellPattern(oc, w, h, e);
+    case 'vegas':
+      return drawVegas(oc, w, h, e);
     case 'turbulent-noise':
       return applyTurbulentNoise(oc, w, h, e);
     case 'add-grain':

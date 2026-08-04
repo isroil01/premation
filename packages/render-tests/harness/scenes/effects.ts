@@ -286,8 +286,70 @@ const medianDenoiseScene: Scene = defineScene({
   },
 });
 
+
+/**
+ * Vegas, on a contour that a bounding box could not fake.
+ *
+ * ── Why this scene is NOT an entry in EFFECTS ─────────────────────────────
+ *
+ * Every other effect here is measured on the family's gradient ellipse. For
+ * Vegas that would be the Median mistake in a new costume: an ellipse's alpha
+ * boundary is smooth and convex, so lights running along it look exactly like
+ * lights running along ANY smooth closed curve — including the one a
+ * bounding-box shortcut would draw. The scene would pass whether the contour
+ * came from marching squares or from `layer.width`/`layer.height`, which is
+ * precisely the shortcut this effect was deferred rather than ship.
+ *
+ * A five-pointed STAR cannot be faked. Its outline has ten alternating vertices
+ * and five deep concavities, so a correct render puts lights INSIDE the notches
+ * and around the spike tips; a box, an ellipse, or a convex hull all put them
+ * somewhere visibly else. The perimeter is roughly 2.4x the width of the
+ * bounding box, so even the SPACING between lights is wrong under any of those.
+ *
+ * The parameters are chosen to make that legible rather than to look pretty:
+ * 10 segments at 45% of their slot puts two lights on most spikes, so a wrong
+ * arc length shows as wrong COUNT per spike and not merely as a shifted phase.
+ * Hardness is 100 so the frame records geometry rather than a blur kernel.
+ */
+const vegasContourScene: Scene = defineScene({
+  id: 'effect-vegas-contour',
+  description: 'Vegas running lights along a STAR’s alpha contour — concave, so a bounding box cannot fake it.',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'expect-pass',
+  build(graph) {
+    // 5-pointed star, outer radius 90, inner 38, first spike straight up.
+    const points = Array.from({ length: 10 }, (_, i) => {
+      const r = i % 2 === 0 ? 90 : 38;
+      const a = (-90 + i * 36) * (Math.PI / 180);
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      return { x, y, inX: x, inY: y, outX: x, outY: y };
+    });
+    graph.addNode(node('star', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      style: { fill: '#1d2740' },
+      components: [{ id: 'star_g', type: 'Geometry', props: { points } }],
+    }));
+    graph.setEffects('star', [
+      {
+        id: 'veg',
+        type: 'vegas',
+        params: {
+          segments: 10, length: 45, rotation: 0, width: 7,
+          hardness: 100, threshold: 128, color: '#ffd166', opacity: 100,
+        },
+      },
+    ]);
+  },
+});
+
 export const effectScenes: Scene[] = [
   ...EFFECTS.map(effectScene),
   displacementMapLayerScene,
   medianDenoiseScene,
+  vegasContourScene,
 ];

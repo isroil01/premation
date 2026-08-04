@@ -78,6 +78,16 @@ function bakedEffectSpread(layer: RenderLayer): number {
       case 'stroke':
         s = effectNumber(e, 'width');
         break;
+      // Vegas strokes the alpha CONTOUR, so half its width falls outside the
+      // layer's own alpha, plus the hardness feather on top of that. It belongs
+      // with `stroke` above and NOT with the two below: the lights are placed by
+      // arc length along a contour that moves with the padding, so padding
+      // translates the whole result and changes nothing about it. The displacement
+      // effects below index absolute canvas coordinates, which is what makes them
+      // different.
+      case 'vegas':
+        s = effectNumber(e, 'width');
+        break;
       // NOT wave-warp / turbulent-displace, even though they clearly do push
       // pixels outward. Both index their displacement field by ABSOLUTE canvas
       // coordinates — `along = x·px + y·py` in waveWarpData, the noise lookup in
