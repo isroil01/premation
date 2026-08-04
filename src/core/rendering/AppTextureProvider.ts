@@ -31,6 +31,7 @@ import type {
 import type { RenderLayer } from './RenderBackend';
 import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
 import { rasterPadding } from './raster/vectorDraw';
+import { layerSubpaths } from './raster/subpaths';
 import { resolutionTier, paddingClass, continuousResolutionTier, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
 import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
@@ -772,7 +773,13 @@ export class AppTextureProvider implements TextureProvider {
   setPath(key: string, layer: RenderLayer): void {
     const layerScale = Math.max(1, Math.abs(layer.scaleX || 1), Math.abs(layer.scaleY || 1));
     const effectiveScale = this.rasterScale * layerScale;
-    const ptsSig = layer.pathPoints ? layer.pathPoints.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') : '';
+    // Runs are joined by a separator that cannot appear inside a run, so two
+    // different splits of the same points are two different signatures. Without
+    // the boundary marker a path cut into 2+2 points and one cut into 1+3 sign
+    // identically and the second silently reuses the first's texture.
+    const ptsSig = layerSubpaths(layer)
+      .map((s) => `${s.open ? 'o' : 'c'}:${s.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|')}`)
+      .join('//');
     const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
     const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';
     const fillSig = layer.fillOpacity !== undefined && layer.fillOpacity < 1 ? `|fo${layer.fillOpacity}` : '';

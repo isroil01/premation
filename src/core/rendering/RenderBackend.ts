@@ -18,6 +18,27 @@ import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoi
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
 
+/**
+ * One continuous run of a layer's path geometry.
+ *
+ * A shape used to be exactly one polyline — `pathPoints` — which is why Trim
+ * Paths could only ever annotate the STROKE: cutting a path into two visible
+ * arcs produces two runs, and the contract had nowhere to put the second one.
+ * `trimPolyline` has returned `Pt[][]` since it was written; the list simply
+ * died inside `strokeTrimmed` instead of reaching the renderer.
+ *
+ * `open` is per-subpath, not per-layer, because it differs between the two
+ * operations that consume it: a trimmed arc must NOT be closed by the stroke
+ * (that would draw a chord back to the start), while the fill closes it
+ * implicitly — which is exactly what Canvas2D does for a path with no
+ * `closePath`, and exactly what AE draws.
+ */
+export interface Subpath {
+  points: ReadonlyArray<BezierPoint>;
+  /** Stroke leaves this run open; fill still closes it implicitly. */
+  open?: boolean;
+}
+
 /** One sub-frame transform sample used for motion-blur accumulation. */
 export interface MotionSample {
   x: number;
@@ -177,10 +198,27 @@ export interface RenderLayer {
    * still antialiased by the pass's multisampling.
    */
   flatFacet?: boolean;
-  /** Vector path points in LOCAL space (only present if primitive === 'path') */
+  /**
+   * Vector path points in LOCAL space (only present if primitive === 'path').
+   *
+   * The single-subpath shorthand. `subpaths` is the general form; this field is
+   * the overwhelmingly common one-run case kept in place so every existing
+   * writer (SVG import, audio waveform, path operators, the pen tool) is
+   * untouched. **The two are mutually exclusive** — see `layerSubpaths`, which
+   * is the ONLY reader of either, so a consumer cannot pick the wrong one.
+   */
   pathPoints?: ReadonlyArray<BezierPoint>;
+  /**
+   * Path geometry as a LIST of runs — the general form of `pathPoints`.
+   *
+   * Set only when the geometry genuinely has more than one run (a trim whose
+   * window wraps past the end of the path yields two arcs). Writers must set
+   * this OR `pathPoints`, never both; `assertSinglePathSource` pins that.
+   */
+  subpaths?: ReadonlyArray<Subpath>;
   /** True for open strokes (freehand pencil / line) that must NOT be closed or
-   *  filled — the backend draws them as an open polyline instead of a loop. */
+   *  filled — the backend draws them as an open polyline instead of a loop.
+   *  Applies to `pathPoints`; `subpaths` carry their own per-run `open`. */
   pathOpen?: boolean;
   /** Trim-path visible arcs [lo,hi] (0..1 of the outline length). When present
    *  the backend strokes only these portions of the shape outline (MG-C). */

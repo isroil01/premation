@@ -17,13 +17,14 @@
  */
 
 import type { RenderLayer } from './RenderBackend';
+import { layerSubpaths } from './raster/subpaths';
 
 /**
  * Bump when the hashing scheme OR the rasterizer's pixel output semantics
  * change, so textures cached under a prior scheme are never reused across the
  * change. Folded into the digest input.
  */
-export const CONTENT_HASH_VERSION = 1;
+export const CONTENT_HASH_VERSION = 2;
 
 /** FNV-1a 32-bit — cheap, deterministic, no crypto. (Mirrors the renderer's
  *  `hashString`; kept local so app-side hashing doesn't depend on a renderer
@@ -47,8 +48,13 @@ function contentOf(layer: RenderLayer): unknown {
     // geometry + rasterization size
     prim: layer.primitive,
     cr: layer.cornerRadius,
-    pts: layer.pathPoints,
-    open: layer.pathOpen,
+    // The normalized run list, NOT the raw fields. Two layers whose geometry is
+    // the same drawing must hash the same whichever field carried it, and — the
+    // reason this matters — one path cut into two runs must NOT hash the same as
+    // the concatenation of those runs. `layerSubpaths` preserves the run
+    // boundaries, so the structure is in the key and a trim that only moves a
+    // split point still busts the cache.
+    pts: layerSubpaths(layer).map((s) => ({ p: s.points, o: s.open === true })),
     trim: layer.trim,
     w: layer.width,
     h: layer.height,
