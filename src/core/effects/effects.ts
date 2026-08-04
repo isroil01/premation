@@ -72,6 +72,9 @@ export type EffectType =
   | 'checkerboard'
   | 'grid'
   | 'cell-pattern'
+  // The one whose geometry comes from the LAYER rather than from a formula:
+  // Vegas runs lights along the alpha contour. See `vegas.ts`.
+  | 'vegas'
   // ── Noise family ──
   | 'turbulent-noise'
   | 'add-grain'
@@ -1082,6 +1085,31 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'anchorX', label: 'Anchor X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'anchorY', label: 'Anchor Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'thickness', label: 'Border', type: 'number', unit: 'px', min: 0, max: 200, default: 2 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  // Vegas — the one generator whose geometry comes from the LAYER. Its params
+  // are all defined in ARC LENGTH around the alpha contour, which is why
+  // `rotation` is a full lap per 360 degrees regardless of the shape: a linear
+  // keyframe on it is a constant-speed chase around anything.
+  {
+    type: 'vegas',
+    label: 'Vegas',
+    params: [
+      { key: 'segments', label: 'Segments', type: 'number', unit: '', min: 1, max: 200, default: 3 },
+      // Percent of each light's own SLOT, not of the whole perimeter, so
+      // changing the count does not also change how long each light is.
+      { key: 'length', label: 'Length', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+      // The animated one. A full lap per 360 degrees.
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', min: -3600, max: 3600, default: 0 },
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 0.1, max: 200, default: 6 },
+      { key: 'hardness', label: 'Hardness', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      // Where the contour is cut. Clamped away from both ends in `drawVegas`:
+      // at 0 every pixel counts as inside and there is no edge to trace, at 255
+      // an antialiased shape contours along its own interior.
+      { key: 'threshold', label: 'Threshold', type: 'number', unit: '', min: 1, max: 254, default: 128 },
       { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
       { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
     ],

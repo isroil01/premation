@@ -852,6 +852,52 @@ open in two of them:
 Applies to anything positional: warps, distortions, transforms, path operators,
 layout, hit-testing.
 
+### The deadness check is not a formality — Vegas, 2026-08-05
+
+Rule 5 says to check a new golden is not dead before blessing it. On Vegas that
+check found a real defect in the effect being blessed, and the sequence is worth
+recording because every step of it was load-bearing.
+
+**Choosing the subject was the first half.** The effects family renders every
+effect on one gradient ellipse. For a CONTOUR effect that is the Median mistake
+again: an ellipse's alpha boundary is smooth and convex, so lights along it look
+like lights along any smooth curve — including the one a bounding-box shortcut
+would draw. The scene would have passed whether the contour came from marching
+squares or from `layer.width`. A five-pointed STAR was used instead, because its
+outline is concave and roughly 2.4x its bounding box's width, so both the shape
+and the SPACING of the lights are wrong under any fake.
+
+**Eyeballing it was the second half.** The first blessed frame looked busy and
+broadly plausible — lights along the star, roughly the right colour and size.
+Zooming into one region showed a dense cluster of short dashes where the walk
+should have produced one. Counting connected components put 13 blobs where 10
+were expected.
+
+**Then measure, do not guess.** Running the real extractor on the real
+rasterised star reported SIX contours instead of one, four of them three-point
+specks. The decisive follow-up was counting connected components of the ALPHA at
+the same threshold: exactly ONE region. So the shape was not broken up — the
+extractor was breaking it, and the bug was mine rather than the fixture's.
+
+**The mechanism.** When a corner sample equals the threshold exactly, the
+crossing solves to t = 0 or 1 and lands precisely on a grid CORNER, coinciding
+with the crossings of the perpendicular edges. With 8-bit alpha and a threshold
+of 128 that is ordinary — the star produced 85 collisions. The stitcher keyed
+segments by start point alone, so each collision silently discarded one, the
+walk ran into a consumed point, and one contour came apart into fragments.
+
+**Why the unit tests could not have caught it.** Every hand-built fixture used
+alpha 200 against threshold 100, chosen so crossings land at exactly 0.5 and the
+arithmetic could be done on paper. That choice — the one that made the tests
+derivable — is precisely the one that made degeneracy unreachable. Nine contour
+tests, all green, all blind. The regression guard added afterwards uses alpha
+EXACTLY at the threshold, and reverting the stitcher fails it while leaving all
+nine of the others green.
+
+The generalisation: **a fixture chosen for its arithmetic is chosen against its
+edge cases.** Pick at least one whose values are awkward on purpose, and let the
+render-test subject be the thing that is allowed to be messy.
+
 ### Two more rules, added 2026-08-05 from the repeater gate
 
 Both come from runs where the OBVIOUS test case would have given the wrong

@@ -114,6 +114,7 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   checkerboard: 'Generate',
   grid: 'Generate',
   'cell-pattern': 'Generate',
+  vegas: 'Generate',
   // Noise — filed under Stylize beside the existing `noise`, which is where AE
   // puts Add Grain and Median too.
   'turbulent-noise': 'Stylize',
