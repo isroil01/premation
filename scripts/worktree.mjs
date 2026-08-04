@@ -90,7 +90,29 @@ function remove(branch) {
   // Deliberately NOT `--force`. A worktree with uncommitted work is someone's
   // session; git refusing is the correct outcome, and the recovery is to look
   // at what is in there rather than to delete it harder.
-  git(['worktree', 'remove', dir]);
+  try {
+    git(['worktree', 'remove', dir], { stdio: 'pipe' });
+  } catch (e) {
+    // Two very different failures arrive here and the advice is opposite, so
+    // say which one it is instead of printing a stack trace. A raw throw here
+    // was genuinely confusing: the commonest case on Windows is a locked file,
+    // which reads as catastrophic and is not.
+    const msg = String(e.stderr ?? e.message ?? '');
+    console.error(`Could not remove ${dir}`);
+    if (/permission denied|EPERM|being used/i.test(msg)) {
+      console.error('\nSomething is holding a file open — an editor, a watcher, a dev server.');
+      console.error('Close it and retry. Git has NOT lost anything.');
+      console.error('If the bookkeeping was already removed and only the folder remains:');
+      console.error('  git worktree prune     # then delete the folder by hand');
+    } else if (/contains modified or untracked files|not empty/i.test(msg)) {
+      console.error('\nThere is uncommitted work in there. Look at it before deleting:');
+      console.error(`  git -C "${dir}" status`);
+      console.error(`  git -C "${dir}" diff > saved.patch`);
+    } else {
+      console.error(`\n${msg.trim()}`);
+    }
+    process.exit(1);
+  }
   console.log(`removed ${dir}`);
   console.log('The branch itself is untouched — delete it separately if you meant to.');
 }
@@ -157,7 +179,11 @@ function create(branch, from) {
   let ready = false;
   if (wantsInstall) {
     console.log('  running npm install…');
-    const r = spawnSync('npm', ['install'], { cwd: dir, stdio: 'inherit', shell: true });
+    // `npm.cmd` directly rather than `shell: true`, which Node 24 warns about
+    // (arguments are concatenated, not escaped) and which is only needed on
+    // Windows to resolve the `.cmd` shim in the first place.
+    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const r = spawnSync(npm, ['install'], { cwd: dir, stdio: 'inherit' });
     ready = r.status === 0;
     if (!ready) console.log('  npm install failed — see above.');
   } else {

@@ -554,6 +554,49 @@ Two things to carry:
    the UI is what proves the model is *reachable*, and reachability is precisely
    what unit tests are least able to check.
 
+### The variant INSIDE the guard: a test that enumerates its own subjects
+
+Added 2026-08-06, from F25, and it is the most uncomfortable instance because
+the list was hiding in the thing that existed to prevent this.
+
+> **A test that enumerates its own subjects can only ever check the subjects
+> someone remembered.**
+
+`expressionApi.test.ts` asserts that *every* function in the expression scope is
+discoverable — bound in `run`'s scope AND present in the `EXPRESSION_API`
+autocomplete table, because a function that works but cannot be found is a model
+with no UI. It made that assertion by iterating a hardcoded sixteen-name array.
+So it enforced the property for sixteen names and for nothing else. Adding
+`marker` to the scope and omitting its table row broke **no test**. The file's
+own header said it "closes the third edge" — true for sixteen names, and the
+rationale had rotted exactly as 3b describes.
+
+Replacing the array with `boundScopeNames()`, a reflection of the real scope Map,
+immediately surfaced **three functions undocumented since the day they were
+written**: `audio`, `ctrl`, `framesToTime`. `audio` is the audio-reactive
+expression — the feature the other half of that same run was building on.
+
+This is the same shape as `applyCanvas2dEffect` and `LUT_EFFECTS`: a list and a
+behaviour, with nothing forcing agreement. The difference is where the list sat.
+In those cases the guard could still catch the drift; here the list *was* the
+guard, so the drift and the thing meant to detect it were the same object. A
+guard with a hardcoded subject set does not fail when it stops being true — it
+just quietly stops covering everything added after it was written, and keeps
+reporting success at full confidence.
+
+**So: derive the subject set from the thing under test.** Enumerate the real
+registry, the real Map, the real union — never a parallel list of names. If the
+set genuinely cannot be derived, that inability is itself the finding, because it
+means the thing under test has no enumerable identity and the next person will
+make the same list again.
+
+The same rule caught a second instance in the same run at a smaller scale: the
+eslint config hand-listed eight Node globals "rather than pulling in the package
+for six names", then stopped covering anything written afterwards, and reported
+six `no-undef` errors on globals that plainly exist. The cost there was not the
+six errors but that `no-undef` had become useless in those files — a genuinely
+undefined name would have looked exactly like the false ones.
+
 ### The variant with no compile-time surface at all: a PROP PATH
 
 Added 2026-08-05 from the repeater fold, which is the cleanest instance yet.
@@ -1064,17 +1107,36 @@ open in two of them:
      also a small finding about the code (one rule, two mechanisms).
 
    So a silent break has FOUR readings, and they need separating before any of
-   them is reported: dead guard, unreachable fixture, unfaithful fixture,
-   ineffective break. The last two are *your* mistakes rather than the suite's,
+   them is reported: **dead guard, unreachable fixture, unfaithful fixture,
+   incoherent break.** The last two are *your* mistakes rather than the suite's,
    and reporting them as coverage gaps is worse than saying nothing.
 
-   The generalisation worth carrying: **a mock's signature is an assertion
-   about the real API**, and gets the same treatment as a rationale under 3b.
+   The generalisation worth carrying, and it gets the same treatment as a
+   rationale under 3b:
+
+   > **A mock's signature is an assertion about the real API. A stub that
+   > ignores an argument the real code branches on is blind to every bug in
+   > that argument, silently, from inside a green suite.**
+
    For every stub, ask which of its parameters the real implementation actually
-   honours, and which inputs the real one REJECTS. A stub that ignores an
-   argument the real code branches on, or accepts an input the real code throws
-   on, is blind to every bug in the use of that argument — and it will be
-   blind silently, from inside a green suite.
+   honours, and which inputs the real one REJECTS.
+
+   **Three instances is a pattern, not three incidents.** A test double
+   modelling a different system than production has now bitten this project
+   three times, in three unrelated subsystems:
+
+   | Where | The double | What production actually does |
+   |---|---|---|
+   | `setResponsiveTime` | RETAINED mutations between calls | does not — so the test proved a state that never exists |
+   | Vegas contour fixtures | clean alpha 200 against threshold 100 | 8-bit alpha lands exactly ON the threshold routinely; degeneracy was unreachable |
+   | `readAudioClipTimings` / `mono()` | ignored the node id; returned samples for any channel index | branches on the node id; throws `IndexSizeError` |
+
+   They look like three different mistakes and they are one: **the double was
+   built from what the test needed, not from what the real thing does.** Every
+   time, the suite stayed green; every time, what it could not see was the exact
+   thing the test was named after. The check is cheap and belongs in the writing
+   rather than the debugging — read the real implementation's signature and its
+   failure modes before writing the stub that stands in for it.
 
 5·0. **Before blessing a scene, confirm the thing under test can REACH the
    medium.** Added 2026-08-05, from F23, and numbered `·0` because it is the
@@ -1375,6 +1437,21 @@ The same reflex cost a second search minutes later: the expression engine is in
 exist" either. **`src/core` is not the codebase.** A "does X exist" check that
 does not include `packages/` is not a check.
 
+**Two checks, both cheap, both skipped:**
+
+1. **Grep the exact word, over the whole repo, before claiming absence.** The
+   marker claim named a directory and a term; running that term against that
+   directory would have refuted it in one command. An absence claim is the one
+   kind of claim a single grep can settle, which is exactly why it should never
+   be made from memory or from a partial search.
+2. **Search `src/` AND `packages/`.** Twelve packages hold the engine, the
+   scene graph, the timeline, the renderer, animation, audio and workspace. A
+   sweep of `src/core` alone can miss the entire subsystem under discussion —
+   and has now done so twice, in one run, for two unrelated features.
+
+The failure is not that a search came back empty. It is that "I did not find it"
+was reported as "it does not exist", and a large estimate was built on top.
+
 Then Convert Audio to Keyframes turned out to be built — `audioKeyframes.ts`,
 eleven exports, the `setKeyframes`/`batch` fix for the freeze it used to cause,
 and keyframes already on the layer's own axis. Three of the four requirements
@@ -1385,7 +1462,7 @@ missing.
 |---|---|---|---|
 | **F24** | **`marker.*` was a provider binding, not a data model.** Estimated large, delivered small-to-medium. The decisive detail was that `expressions.ts:410-430` already implements `numKeys`/`key(n)`/`nearestKey(t)` for property keyframes including the out-of-range clamp, so the marker surface mirrors a proven shape rather than inventing one. | **Estimation** | **SHIPPED** |
 | **F25** | **The §2·0 discoverability guard only covered a hand-written list.** `expressionApi.test.ts` asserts "every function is discoverable", and its scope→table direction ran over a hardcoded `ROUND_TWO` array — so a name bound in `run`'s scope but missing from `EXPRESSION_API` worked, was invisible, and failed nothing. Proven by deleting `marker`'s autocomplete row: **0 failures.** The file's own header claimed it "closes the third edge", which was true only for sixteen names — rule 3b, a rationale that had rotted. Closed by exporting `boundScopeNames()`, a reflection of the real Map rather than a fourth list, and asserting the whole scope. That immediately surfaced **three names undocumented since they were written — `audio`, `ctrl`, `framesToTime`** — all now in the table. `audio` is the audio-reactive expression, i.e. the one feature most related to the other half of this run. | **§2·0, live** | **FIXED** |
-| **F27** | **`npm run lint` is RED on `dev` and has been for a while — 42 errors.** Not caused here: the same 42 reproduce on `dev` at 0ac57be with this branch's files excluded, and every file this run touched lints clean on its own. Logged rather than fixed, because 42 errors across unrelated modules is its own piece of work and folding it into a feature branch would bury both. It matters more than its severity suggests for one reason: `CONTRIBUTING.md` tells every contributor "typecheck, test and lint — all three must be clean", so the instruction is currently impossible to satisfy and a newcomer's first honest reaction is to assume they broke it. Either the errors get fixed or that sentence gets an exception, and the first is better. | **Hygiene, pre-existing** | **LOGGED, not fixed** |
+| **F27** | **`npm run lint` was RED on `dev` — 42 errors — and nothing anywhere ran it.** `release.yml` runs typecheck and test but only on a release TAG, so nothing gated `dev` at all and lint ran in no job. **Exactly one of the 42 was a real defect:** `stylize.ts` multiplied by `1442695040888963407`, splitmix64's constant, which needs 61 bits and so is silently rounded by a double to `...328` — the code never used the constant it named. Written as the true value rather than a representable one, because any odd constant hashes fine and changing it would alter every frame using that noise; verified a no-op (`1442695040888963407 === 1442695040888963328`). The other 41 were style, config or false positives — 18 deliberate `require()` (no ESM spelling exists for "load this now, below the `jest.mock()` I just wrote"), 6 `no-undef` on real Node globals, 1 `rules-of-hooks` on an SVG `<use>` resolver named `useTarget`, 1 disable comment naming an unconfigured rule. **That ratio is the argument for the gate, not against it:** a real defect sat unnoticed for months precisely because 41 harmless ones made it unremarkable, and the next real error would have been equally invisible. | **Hygiene → one real defect** | **FIXED.** 0 errors; `ci.yml` runs typecheck/test/lint on every push and PR to `dev` and `main`; lint added to the release gate; 129 warnings frozen with `--max-warnings` so they cannot drift again. |
 | **F26** | **Convert Audio to Keyframes existed and was reachable from exactly one place.** The audio layer's inspector panel — so anyone who knew the AE command by name and searched for it found nothing, and read the feature as missing rather than hidden. A model with UI, but with the UI in one corner, which is the same defect class as F25 one level up. | **Discoverability** | **FIXED** (palette command) |
 
 **The audio channel maths carried the one design decision worth recording.**

@@ -144,10 +144,17 @@ export function amplitudeEnvelope(
  * All requested channels at once, normalised against ONE SHARED peak.
  *
  * This is the part that cannot be had by calling `amplitudeEnvelope` three
- * times. Normalising each channel to its own peak makes every channel reach
- * 100, so a track with a quiet right side yields a Right slider that swings
- * exactly as hard as Left — the relative loudness, which is the only reason to
- * separate the channels at all, is destroyed by the normalisation.
+ * times — and three calls is the OBVIOUS code, which is what makes this worth a
+ * paragraph. Each call normalises to its own peak, so every channel reaches
+ * 100: a track with a quiet right side yields a Right slider that swings
+ * exactly as hard as Left. The relative loudness between the channels is the
+ * only information the split exists to carry, and the obvious implementation
+ * destroys it.
+ *
+ * It destroys it while LOOKING CORRECT ON SCREEN. Three sliders, all moving,
+ * all in range, all following the music — nothing about the result says it is
+ * wrong. It stays wrong until someone tries to drive something from the
+ * difference between two channels and cannot work out why it never varies.
  *
  * The peak is taken across the envelopes ACTUALLY requested, so asking for
  * `['both']` alone reduces to `amplitudeEnvelope`'s own-peak behaviour exactly.
