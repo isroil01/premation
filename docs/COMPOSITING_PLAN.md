@@ -481,6 +481,33 @@ the code.
    predicate was correct everywhere, which proves the refactor was necessary
    rather than merely working.
 
+### When the RULE cannot be unified, guarantee ONE READER
+
+Added 2026-08-05, from F22. This is a fourth move and it is distinct from the
+three above, which all assume you are allowed to change the behaviour.
+
+Sometimes you are not. F22 is two incompatible definitions of "does editing this
+property create a keyframe?" — transform props honour the Auto-Keyframe
+preference, effect params ignored it — and unifying them alters what every
+existing project does. That is a decision with a release note, not a refactor
+you slip into a feature branch.
+
+The move is to stop the divergence WIDENING while the decision is pending:
+route every consumer through one function, so the two callers cannot drift from
+each other even though the rule itself is still wrong. Building the canvas
+handle forced the question ("which rule does a drag follow?"), and the answer
+was to extract `writeEffectParams` and point both the numeric field and the
+handle at it. The inconsistency survives; a THIRD variant of it cannot appear.
+
+Distinguish it from fix (1), *remove the choice*: that makes the disagreement
+unrepresentable. This makes the disagreement singular — one wrong answer instead
+of two, changeable in one edit when the decision lands. Weaker, and the right
+move when the stronger one is not yours to make.
+
+The tell that you need this rather than (1): the duplication is not a mistake
+anyone made, it is two deliberate behaviours that grew apart, and picking either
+one breaks somebody's file.
+
 ### The sharpest example: a comment where an enforcement should be
 
 `SceneGraph.ts:154` documents that `get components()` returns a copy **so that**
@@ -923,6 +950,25 @@ open in two of them:
    one fails. Mirroring the twirl leaves its distance-preservation check green;
    mirroring the corner-pin u axis leaves projectivity green. That demonstrates
    the blind spot instead of assuming it.
+2a. **A UNIFORM error is invisible to every relative assertion.** Added
+   2026-08-05, from the effect-handle overlay, and it is rule 2's mechanism
+   rather than another instance of it.
+
+   Dropping the half-box offset in `effectToLayer` moves EVERY handle by the
+   same amount. So every assertion phrased as a relationship between handles —
+   which one is nearest, which wins a tie, whether a point 8px away hits and one
+   10px away misses — stays green, because all the distances between them are
+   unchanged. Only the fixtures asserting an ABSOLUTE screen position saw it.
+
+   Same shape as Twirl's difference assertion, but caught by design rather than
+   in the wild: the question to ask of any positional guard is *what class of
+   error moves my two operands together?* A translation does. A uniform scale
+   does, for anything phrased as a ratio. A mirror does, for anything phrased as
+   "these two are opposite".
+
+   The defence is the same each time and it is rule 2: at least one assertion
+   per guard set must name a coordinate, not a relationship.
+
 4a. **Breaking a guard that fails NOTHING is a finding, not a null result.**
    Added 2026-08-05, from Bezier Warp, and it is the reason rule 4 has to be
    applied to EVERY guard rather than only the ones that look load-bearing.
@@ -1165,7 +1211,7 @@ one of the five either.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
-| **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | Decide whether effect params should honour Auto-Keyframe. If yes, `writeEffectParams` is now the single place to change. |
+| **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
 
 ## 2b-nonies. 2026-08-05 — Bezier Warp, and a guard that covered nothing
 
