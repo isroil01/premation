@@ -1037,6 +1037,45 @@ open in two of them:
    thing is load-bearing, not that any particular guard is watching it. The
    informative breaks are the ones that fail a little.
 
+4b. **When a break fails nothing, the FIXTURE is a suspect too — and so is the
+   break.** Added 2026-08-06, from `marker.*` and the audio channels, where
+   four separate breaks failed nothing and NONE of them was a missing guard.
+
+   Rule 4a names two readings for a silent break: the guard is dead, or the
+   fixtures cannot reach what it covers. There are two more, and they are the
+   ones that look most like success:
+
+   * **The fixture ERASES the distinction under test.** Both instances were
+     mocks more PERMISSIVE than the thing they replaced.
+     `readAudioClipTimings` was stubbed as `() => clipTimings`, ignoring its
+     node-id argument — and the thing under test was *which node's* timings get
+     read, so the two nodes were identical to the fixture and swapping them
+     failed nothing. The `mono()` stub returned its samples for ANY channel
+     index, where a real `AudioBuffer` throws `IndexSizeError`; reading
+     channel 1 of a one-channel buffer therefore "worked". Both were fixed by
+     making the stub depend on what the real one depends on, after which the
+     same breaks failed 2 and 1.
+   * **The break itself was inconsistent**, which 3b already warns about in
+     another costume. `markerScope('zzz' as 'layer')` looked like a scope swap
+     and was not: the provider's `scope === 'comp' ? … : layer` branch sends
+     anything non-`'comp'` to the layer list, so the code under test never
+     changed. Removing a `n <= 1` mono guard likewise changed nothing, because
+     a `Math.min(1, n - 1)` clamp two lines down did the same job — which is
+     also a small finding about the code (one rule, two mechanisms).
+
+   So a silent break has FOUR readings, and they need separating before any of
+   them is reported: dead guard, unreachable fixture, unfaithful fixture,
+   ineffective break. The last two are *your* mistakes rather than the suite's,
+   and reporting them as coverage gaps is worse than saying nothing.
+
+   The generalisation worth carrying: **a mock's signature is an assertion
+   about the real API**, and gets the same treatment as a rationale under 3b.
+   For every stub, ask which of its parameters the real implementation actually
+   honours, and which inputs the real one REJECTS. A stub that ignores an
+   argument the real code branches on, or accepts an input the real code throws
+   on, is blind to every bug in the use of that argument — and it will be
+   blind silently, from inside a green suite.
+
 5·0. **Before blessing a scene, confirm the thing under test can REACH the
    medium.** Added 2026-08-05, from F23, and numbered `·0` because it is the
    prior question to all of rule 5 rather than another clause of it. Every
@@ -1315,6 +1354,48 @@ one of the five either.
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
+
+## 2b-terdecies. 2026-08-06 — two features that already existed, and a guard that only half worked
+
+**The ninth and tenth instances of underestimating what exists, back to back,
+and the same reflex caused both: searching `src/core` and concluding "absent".**
+
+`marker.*` was sized as large because "there is no marker model in `src/core`
+at all". The model is in `packages/timeline/src/markers/` — `Marker` (id,
+frame, duration, name, color, comment, scope, ownerId, four scopes) and
+`MarkerList`. But the claim was wrong on its own terms as well:
+`src/core/timeline/TimelineController.ts` carries six marker methods
+(`addMarkerAtPlayhead:610`, `addLayerMarkerAtPlayhead:621`,
+`goToNextMarker:711`, `goToPrevMarker:716`, `getMarkers:772`,
+`getLayerMarkers:793`), plus persistence and five UI call sites. Grepping the
+exact word in the exact directory the claim named would have falsified it.
+
+The same reflex cost a second search minutes later: the expression engine is in
+`packages/animation`, not `src/core`, so `setSourceRectProvider` "did not
+exist" either. **`src/core` is not the codebase.** A "does X exist" check that
+does not include `packages/` is not a check.
+
+Then Convert Audio to Keyframes turned out to be built — `audioKeyframes.ts`,
+eleven exports, the `setKeyframes`/`batch` fix for the freeze it used to cause,
+and keyframes already on the layer's own axis. Three of the four requirements
+were already met; only channels, the AE null shape, and reachability were
+missing.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| **F24** | **`marker.*` was a provider binding, not a data model.** Estimated large, delivered small-to-medium. The decisive detail was that `expressions.ts:410-430` already implements `numKeys`/`key(n)`/`nearestKey(t)` for property keyframes including the out-of-range clamp, so the marker surface mirrors a proven shape rather than inventing one. | **Estimation** | **SHIPPED** |
+| **F25** | **The §2·0 discoverability guard only covered a hand-written list.** `expressionApi.test.ts` asserts "every function is discoverable", and its scope→table direction ran over a hardcoded `ROUND_TWO` array — so a name bound in `run`'s scope but missing from `EXPRESSION_API` worked, was invisible, and failed nothing. Proven by deleting `marker`'s autocomplete row: **0 failures.** The file's own header claimed it "closes the third edge", which was true only for sixteen names — rule 3b, a rationale that had rotted. Closed by exporting `boundScopeNames()`, a reflection of the real Map rather than a fourth list, and asserting the whole scope. That immediately surfaced **three names undocumented since they were written — `audio`, `ctrl`, `framesToTime`** — all now in the table. `audio` is the audio-reactive expression, i.e. the one feature most related to the other half of this run. | **§2·0, live** | **FIXED** |
+| **F26** | **Convert Audio to Keyframes existed and was reachable from exactly one place.** The audio layer's inspector panel — so anyone who knew the AE command by name and searched for it found nothing, and read the feature as missing rather than hidden. A model with UI, but with the UI in one corner, which is the same defect class as F25 one level up. | **Discoverability** | **FIXED** (palette command) |
+
+**The audio channel maths carried the one design decision worth recording.**
+Splitting Left/Right is only useful if the two are COMPARABLE, and the natural
+implementation — call the single-channel function three times — normalises each
+to its own peak, so every channel reaches 100 and a quiet right side swings
+exactly as hard as the left. The information the split exists to carry is
+destroyed by the obvious code, and the result looks entirely reasonable on
+screen. `amplitudeEnvelopes` shares one peak across the channels actually
+requested, which also makes the single-channel case reduce to the old behaviour
+exactly, so the existing path is unchanged rather than "probably unchanged".
 
 ## 2b-duodecies. Release note — puppet pins and bones draw where the artwork is (F23, SHIPPED)
 
