@@ -31,8 +31,9 @@
  *
  * `node_modules` is per-worktree — npm's tree is not relocatable and symlinking
  * it across checkouts breaks native modules (electron, canvas). So a new
- * worktree needs its own `npm install`. That is the price, once per worktree,
- * and it buys back the entire class of cross-session corruption.
+ * worktree needs its own `npm install` — measured rather than waved at:
+ * `node_modules` is 760M, so budget ~1G per worktree. Keep two or three, not a
+ * dozen. It buys back the entire class of cross-session corruption.
  *
  * `dist/`, `dist-electron/` and `packages/render-tests/.artifacts/` are also
  * per-worktree, which is what you want: two sessions blessing goldens into one

@@ -60,9 +60,14 @@ npm run worktree -- feat/my-thing
 
 That makes a `git worktree` beside the repo — separate directory, separate index,
 one shared `.git`. It needs its own `npm install` (npm trees are not relocatable,
-and symlinking breaks the native modules), and its own dev-server port. That is
-the whole cost, and it removes the failure mode rather than asking everyone to be
-careful. `npm run worktree -- --list` and `-- --remove <branch>` do the rest.
+and symlinking breaks the native modules) and its own dev-server port. The
+install is the real cost and it is not small: **`node_modules` measures 760M**, so
+each worktree is about a gigabyte on disk. Two or three at a time is fine; a
+dozen left lying around is not. `npm run worktree -- --list` shows what you have
+and `-- --remove <branch>` cleans one up.
+
+Worth the gigabyte anyway. The alternative is a failure mode that depends on
+everyone being careful every time, and it has already not worked once.
 
 Where a shared checkout is unavoidable, **never `git add -A` in this repo** —
 name every file in every commit, and read the diffstat before you push.
