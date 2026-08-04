@@ -4,20 +4,18 @@
  * so a rotation offset makes the copies sweep an arc/circle/spiral rather than
  * a straight line — the core of generative motion graphics.
  *
- * Config lives on the layer's `fx` component, but every numeric parameter is
- * also keyframeable under `rep.<param>` (buildSnapshot reads `av.get(path) ??
- * static`), so an ANIMATED repeater (growing copies, spinning spiral…) is one
- * keyframe away.
+ * This module is the LADDER and nothing else: pure, and the single definition
+ * of where a repeater's copies go. Since document version 1.5.0 the repeater is
+ * an entry in the `fx.pathOps` chain, so its config, its keyframe paths
+ * (`pathop.<id>.<param>`) and its scene writers all live in `pathOps.ts`
+ * alongside every other operator's. See the note at the foot of this file.
  */
 
-import type { SceneNode } from '@core/types';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { bumpScene } from '@stores/sceneStore';
 
 export interface Repeater {
   /** Number of copies (includes the original). */
   copies: number;
-  /** Per-copy position offset, comp px. */
+  /** Per-copy position offset, layer-local px (comp px before 1.5.0). */
   offsetX: number;
   offsetY: number;
   /** Per-copy rotation offset, degrees (drives arcs/spirals). */
@@ -55,7 +53,7 @@ export type RepeaterComposite = 'above' | 'below';
 
 export interface RepeaterCopy {
   index: number;
-  /** Cumulative offset from the base layer, comp space. */
+  /** Cumulative offset from the base layer, in the geometry's own space. */
   dx: number;
   dy: number;
   /** Cumulative rotation offset, degrees. */
@@ -63,28 +61,6 @@ export interface RepeaterCopy {
   /** Cumulative scale / opacity multipliers. */
   scaleMul: number;
   opacityMul: number;
-}
-
-/**
- * The keyframeable parameters. `composite` is absent on purpose — it is a
- * discrete stacking choice, and interpolating it would mean a frame where the
- * copies are halfway between in front of and behind the original.
- */
-export const REPEATER_PARAMS = [
-  'copies',
-  'offsetX',
-  'offsetY',
-  'offsetRotation',
-  'offsetScale',
-  'offsetOpacity',
-  'offset',
-  'anchorX',
-  'anchorY',
-] as const;
-export type RepeaterParam = (typeof REPEATER_PARAMS)[number];
-
-export function repeaterPropPath(param: RepeaterParam): string {
-  return `rep.${param}`;
 }
 
 export function defaultRepeater(): Repeater {
@@ -186,73 +162,21 @@ export function repeaterCopies(rep: Repeater): RepeaterCopy[] {
   return out;
 }
 
-// ── Scene integration ────────────────────────────────────────────────
-
-function fxProps(node: SceneNode): Record<string, unknown> | undefined {
-  return node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
-}
-
-const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
-
-/** The static repeater config on a node, or null when none. */
-export function readRepeaterConfig(node: SceneNode): Repeater | null {
-  const raw = fxProps(node)?.repeater;
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Partial<Repeater>;
-  const d = defaultRepeater();
-  return {
-    copies: num(r.copies, d.copies),
-    offsetX: num(r.offsetX, d.offsetX),
-    offsetY: num(r.offsetY, d.offsetY),
-    offsetRotation: num(r.offsetRotation, d.offsetRotation),
-    offsetScale: num(r.offsetScale, d.offsetScale),
-    offsetOpacity: num(r.offsetOpacity, d.offsetOpacity),
-    // All four default to the no-op value, so a repeater authored before these
-    // existed reads back as the identical arrangement it always drew. That is
-    // what keeps this additive instead of a schema migration.
-    offset: num(r.offset, 0),
-    anchorX: num(r.anchorX, 0),
-    anchorY: num(r.anchorY, 0),
-    composite: r.composite === 'below' ? 'below' : 'above',
-  };
-}
-
-/** True when the layer has an active repeater (2+ copies). */
-export function hasRepeater(node: SceneNode): boolean {
-  const r = readRepeaterConfig(node);
-  return !!r && r.copies > 1;
-}
-
-/** Resolve the repeater for a frame, overriding params with animated values. */
-export function resolveRepeater(node: SceneNode, av: Map<string, number> | undefined): Repeater | null {
-  const base = readRepeaterConfig(node);
-  if (!base) return null;
-  const v = (p: RepeaterParam, fb: number): number => av?.get(repeaterPropPath(p)) ?? fb;
-  return {
-    copies: v('copies', base.copies),
-    offsetX: v('offsetX', base.offsetX),
-    offsetY: v('offsetY', base.offsetY),
-    offsetRotation: v('offsetRotation', base.offsetRotation),
-    offsetScale: v('offsetScale', base.offsetScale),
-    offsetOpacity: v('offsetOpacity', base.offsetOpacity),
-    offset: v('offset', base.offset ?? 0),
-    anchorX: v('anchorX', base.anchorX ?? 0),
-    anchorY: v('anchorY', base.anchorY ?? 0),
-    // Discrete, so it is read straight from the config and never sampled.
-    composite: base.composite ?? 'above',
-  };
-}
-
-/** Add / update / clear the repeater config on a layer. */
-export function setRepeater(nodeId: string, rep: Repeater | null): void {
-  defaultSceneGraph.setRepeater(nodeId, rep ?? undefined);
-  bumpScene();
-}
-
-/** Patch fields of a layer's repeater (creating a default one if absent). */
-export function updateRepeater(nodeId: string, patch: Partial<Repeater>): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return;
-  const base = readRepeaterConfig(node) ?? defaultRepeater();
-  setRepeater(nodeId, { ...base, ...patch });
-}
+// ── Scene integration: NONE, deliberately ────────────────────────────
+//
+// This module used to own `readRepeaterConfig` / `resolveRepeater` /
+// `setRepeater` / `updateRepeater` / `repeaterPropPath`, all reading and
+// writing the `fx.repeater` key with keyframes under `rep.<param>`. Document
+// version 1.5.0 folded the repeater into the `fx.pathOps` chain, so all of
+// that lives in `pathOps.ts` alongside every other operator's — one place
+// where "what an operator is" is written down.
+//
+// They are DELETED rather than left as thin forwarders. A reader of a key
+// nothing writes any more is not a compatibility shim, it is a function that
+// silently returns null: `updateRepeater` would have read its base config as
+// absent, fallen back to `defaultRepeater()` and reset every parameter the
+// caller did not name.
+//
+// What stays here is the LADDER — pure, tested, and the single definition of
+// what a repeater's copies are — plus the config shape the chain entry carries
+// and the migration converts into.

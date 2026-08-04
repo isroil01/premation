@@ -35,9 +35,10 @@ import { v1_0_0_to_v1_1_0 } from './v1_0_0_to_v1_1_0';
 import { v1_1_0_to_v1_2_0 } from './v1_1_0_to_v1_2_0';
 import { v1_2_0_to_v1_3_0 } from './v1_2_0_to_v1_3_0';
 import { v1_3_0_to_v1_4_0 } from './v1_3_0_to_v1_4_0';
+import { v1_4_0_to_v1_5_0 } from './v1_4_0_to_v1_5_0';
 
 /** The version this build writes and understands. Bump when adding a migration. */
-export const CURRENT_DOCUMENT_VERSION = '1.4.0';
+export const CURRENT_DOCUMENT_VERSION = '1.5.0';
 
 /**
  * The version assumed for a document that carries none. The oldest shape we
@@ -89,6 +90,7 @@ export const MIGRATIONS: readonly DocumentMigration[] = [
   v1_1_0_to_v1_2_0,
   v1_2_0_to_v1_3_0,
   v1_3_0_to_v1_4_0,
+  v1_4_0_to_v1_5_0,
 ];
 
 /**

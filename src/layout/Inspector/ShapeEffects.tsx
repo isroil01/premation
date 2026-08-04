@@ -11,10 +11,10 @@ import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { readRepeaterConfig, setRepeater, defaultRepeater } from '@core/scene/repeater';
-import { addPathOp, readPathOps, readTrimOp, defaultTrimOp } from '@core/scene/pathOps';
+import {
+  addPathOp, readPathOps, readTrimOp, readRepeaterOp, defaultTrimOp, defaultRepeaterOp,
+} from '@core/scene/pathOps';
 import { readNodeAudioWaveform, setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
-import { RepeaterControls } from './RepeaterControls';
 import { PathOpControls } from './PathOpControls';
 import { AudioWaveformSection } from './AudioWaveformSection';
 import styles from './TextAnimatorControls.module.css';
@@ -24,7 +24,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || readNodeKind(node) !== 'shape') return null;
 
-  const hasRepeater = !!readRepeaterConfig(node);
+  const hasRepeater = !!readRepeaterOp(node);
   const hasTrim = !!readTrimOp(node);
   const hasAudioWave = !!readNodeAudioWaveform(node);
 
@@ -56,8 +56,11 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
       id: 'add-repeater',
       label: 'Repeater',
       icon: 'layers',
+      // One repeater per layer, as in AE. It joins the SAME ordered chain as
+      // the deformers rather than sitting in a fixed slot after them — which is
+      // why it no longer has an inspector section of its own (document 1.5.0).
       disabled: hasRepeater,
-      onSelect: () => setRepeater(nodeId, defaultRepeater()),
+      onSelect: () => addPathOp(nodeId, defaultRepeaterOp()),
     },
     {
       type: 'item',
@@ -83,13 +86,12 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
           items={items}
         />
       </div>
-      {/* `hasTrim` is not tested separately any more — a trim IS a path op, so
-          `readPathOps(node).length` already counts it. */}
-      {!hasRepeater && readPathOps(node).length === 0 && !hasAudioWave && (
+      {/* Neither `hasTrim` nor `hasRepeater` is tested separately any more —
+          both ARE path ops, so `readPathOps(node).length` already counts them. */}
+      {readPathOps(node).length === 0 && !hasAudioWave && (
         <div className={styles.empty}>Fan into copies, deform, trim the outline, or draw an audio waveform.</div>
       )}
       <PathOpControls nodeId={nodeId} />
-      <RepeaterControls nodeId={nodeId} />
       <AudioWaveformSection nodeId={nodeId} />
     </div>
   );

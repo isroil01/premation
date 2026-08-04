@@ -782,6 +782,138 @@ open in two of them:
 Applies to anything positional: warps, distortions, transforms, path operators,
 layout, hit-testing.
 
+### Two more rules, added 2026-08-05 from the repeater gate
+
+Both come from runs where the OBVIOUS test case would have given the wrong
+answer — in opposite directions, which is what makes them worth writing down
+rather than treating as one bad day.
+
+6. **Pick the sample by the mechanism, and assert the boundary.** The trim gate
+   nearly returned the wrong answer from a DEGENERATE case (zigzag at exactly
+   50% of a rect trims at a vertex, so it commutes). The repeater gate would
+   have returned the wrong answer from the DEFAULT one: `defaultRepeater()` is
+   `offsetX: 80, offsetRotation: 0, offsetScale: 1` — translate-only, and
+   translation is rigid, so it commutes with every operator in the chain. A gate
+   measured on a freshly added repeater would have reported the reorder arrows
+   inert and blocked a feature that works.
+
+   The fix is not "use a weirder sample". It is to name the ingredient the
+   result rests on and vary THAT: every operator measures its effect in ABSOLUTE
+   px, so a per-copy SCALE changes the ratio between operator and geometry and
+   a translation cannot. The rule that generalises is `offsetScale != 1`,
+   checked across 0.5/1.5/2/3 — with the boundary at exactly 1 ASSERTED rather
+   than assumed, because "inert here" is half the claim and the half that
+   explains the other.
+
+7. **A gate that can say "do not build this" cannot depend on the thing it
+   gates.** `repeaterFoldGate.test.ts` is written against a local `repeatRuns`
+   replica, deliberately, so it could run before the operator existed and could
+   return a NEGATIVE answer. Importing the shipped module would have made the
+   gate unrunnable exactly when it was needed, and would have let the
+   implementation define its own success criterion. The tests that exercise the
+   real operator live in a separate file (`pathOpChain.test.ts`); the gate is
+   not retired once the feature ships, because it is the record of why the
+   feature was worth shipping.
+
+## 2b-sexies. 2026-08-05 — the repeater gate PASSES, and F19 blocks the fold anyway
+
+**The gate answer: the arrows would NOT be inert.** Measured, hand-computed
+first, in `src/core/scene/repeaterFoldGate.test.ts`.
+
+Baking copies into geometry makes chain position meaningful because every
+operator measures its effect in ABSOLUTE px — zigzag's amplitude, Round Corners'
+radius, Offset Path's distance — while the repeater's ladder applies a per-copy
+SCALE. Scaling before the operator changes the ratio between them; scaling after
+does not. On one open run (0,0)-(10,0), zigzag amplitude 1, two copies at
+offsetScale 2, copy 1's midpoint is **y=2 with zigzag first and y=1 with the
+repeater first**. Both figures were derived on paper and matched the
+implementation exactly.
+
+**The special case is the DEFAULT, which is the part worth recording.**
+Translation and rotation are rigid, so they commute with every operator in the
+chain — the ruffle moves without resizing. `defaultRepeater()` is
+`offsetX: 80, offsetRotation: 0, offsetScale: 1`: translate-only. A gate measured
+on a freshly added repeater would have reported the arrows inert and blocked a
+feature that works. The trim gate nearly returned the wrong answer from a
+degenerate case; this one would have returned the wrong answer from the default.
+The rule that generalises is `offsetScale != 1`, verified across 0.5/1.5/2/3 with
+the boundary at exactly 1 asserted rather than assumed.
+
+| # | Finding | Severity | Proposed |
+|---|---|---|---|
+| **F19** | **RESOLVED by decision, 2026-08-05 — option (a) taken, and shipped.** ~~The fold-in cannot satisfy "existing documents render identically", and no lossless migration exists.~~ The diagnosis stands and is unchanged: copies were placed in COMP space (`x: px + c.dx`), so a repeated layer's arrangement stayed axis-aligned however the layer was rotated; folding bakes them into LAYER-LOCAL geometry, after which the layer transform turns and scales the whole group. What changed is the verdict, not the analysis. The comp-space model was an artifact of where the copies were emitted rather than a feature anyone chose, and preserving it would mean permanently carrying a wrong model to protect documents that were rendering wrong. So the semantic change is ACCEPTED and announced (§2b-septies), the migration claims what is true rather than losslessness, and the pixel gate's blindness was closed FIRST: `shape-repeater-rotated-layer` and `shape-repeater-scaled-layer` were blessed against the old behaviour one commit ahead of the fold, so the re-bless is the evidence. Measured on those two goldens: 23.4% and 20.9% of pixels moved, and `shape-repeater` — the untransformed scene — stayed pixel-identical, which is the claim. Option (b) was not taken: making the operator read the layer transform would break the chain's contract that operators are pure point-to-point functions, and would still behave badly under non-uniform scale. | **Closed — shipped as an announced behaviour change** | Document version 1.5.0. See §2b-septies. |
+
+## 2b-septies. Release note — the Repeater turns with its layer (F19, SHIPPED)
+
+**Behaviour change, and a schema bump. A repeater on a ROTATED or SCALED layer
+looks different after this build. Document version 1.5.0.**
+
+The Repeater is an entry in the `fx.pathOps` chain now, alongside Trim Paths and
+the six deformers, instead of a fixed stage that ran after all of them. Two
+things follow, one of them visible.
+
+**Its position in the stack is now meaningful.** Every operator in the chain
+measures its effect in absolute px — Zig-Zag's amplitude, Round Corners' radius,
+Offset Path's distance — while the Repeater applies a per-copy SCALE. Putting
+the Repeater above a Zig-Zag ruffles the copies at their own sizes; putting it
+below ruffles the original and scales the ruffle with each copy. Measured, not
+assumed: on an open run with two copies at `offsetScale: 2`, copy 1's midpoint
+sits at y=2 one way round and y=1 the other.
+
+**Its copies live in the layer's own space.** This is the part that changes
+existing projects. Copies used to be emitted at the layer's comp position plus
+the ladder delta, which meant the ARRANGEMENT stayed axis-aligned however the
+layer was turned: a rotated layer drew rotated copies marching along a
+horizontal line. They are baked into the layer's geometry now, so the layer's
+own rotation and scale carry the whole repeated group — which is what AE does
+(its Repeater lives inside `contents`, below the layer's Transform) and what
+anyone coming from AE expects.
+
+What changes on screen:
+
+  * A repeater on a **rotated** layer: the copies now march along the layer's
+    own axis instead of along comp +X. Measured on the new render-test scene at
+    35 degrees: 23.4% of pixels move.
+  * A repeater on a **scaled** layer: the spacing scales too, so copies spread
+    further apart (or closer) by the layer's scale factor. Measured at 1.5x:
+    20.9% of pixels move.
+  * A repeater on an **untransformed** layer is pixel-identical. That is gated,
+    not asserted — `shape-repeater` still matches its original golden byte for
+    byte.
+  * A **gradient** fill on a repeated layer now spans the whole repeated group
+    rather than repeating per copy, because the layer's box grows to contain the
+    copies and gradients are built from that box. Solid fills are unaffected.
+  * Per-copy **stroke width** now follows `offsetScale`, as it did before, via a
+    per-run stroke override. Layers with a MULTI-stroke stack are the exception:
+    the per-run override carries one stroke, so a multi-stroke repeater keeps its
+    authored widths on every copy. Logged rather than half-applied.
+
+The migration (1.4.0 → 1.5.0) converts `fx.repeater` into a chain entry appended
+LAST — reproducing the old fixed `pathOps → trim → repeater` order exactly — and
+reroutes all nine keyframeable parameters from `rep.<param>` to
+`pathop.<opId>.<param>`. The legacy key is deleted; nothing reads it any more,
+per the `fx.pathOp` (1.3.0) and `fx.trim` (1.4.0) precedent.
+
+**The migration does not claim losslessness, and that wording is deliberate.**
+It claims "identical except on rotated or scaled layers, deliberately". No
+lossless migration exists: dividing the layer transform out of the offsets works
+only while that transform is STATIC, and a keyframed rotation would force the
+compensation to vary per frame — which makes the repeater operator depend on the
+layer transform and breaks the chain's contract that operators are pure
+point-to-point functions. Announced rather than silent, on the same grounds as
+the curves-interpolation change, F1's error surfacing (M8b) and the Trim Paths
+fix (§2b-bis).
+
+**The gate was closed before the change, not after.** `shape-repeater` had always
+used an untransformed layer, so the pixel suite was blind to exactly the case
+this moves. Two scenes with a rotated and a scaled repeater layer were added and
+blessed against the OLD behaviour one commit ahead of the fold, so the re-bless
+is the evidence. A golden blessed after the change would have proved nothing.
+
+**Inspector:** the Repeater's own section is gone. Its nine rows, its Composite
+picker and its bounds moved onto a Repeater card in the path-operator stack,
+with the same reorder arrows every other operator has.
+
 ## 2b-quater. Closed 2026-08-04 — F15, F17 and Phase 3a
 
 **F15 — the dead golden.** Corrected from how it was first written up: the

@@ -20,8 +20,10 @@ import { trimSegments, trimPolyline, type Pt } from './trimPath';
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
+import { repeaterCopies, defaultRepeater, type Repeater, type RepeaterComposite } from '@core/scene/repeater';
 
-export type PathOpType = 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen' | 'trim';
+export type PathOpType =
+  | 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen' | 'trim' | 'repeater';
 
 /**
  * One continuous run of geometry flowing through the chain.
@@ -35,6 +37,27 @@ export type PathOpType = 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist'
 export interface PolyRun {
   pts: Pt[];
   closed: boolean;
+  /**
+   * Cumulative paint opacity for this run, 0..1, MULTIPLYING the layer's own.
+   *
+   * Written only by the repeater, which is the only operator that produces runs
+   * meant to be painted differently from one another (`offsetOpacity`). Absent
+   * means "paint exactly like the layer", so every other operator leaves it
+   * alone and every chain without a repeater emits geometry with no paint at
+   * all — which is what keeps those layers on the unbatched draw path.
+   */
+  opacity?: number;
+  /**
+   * Cumulative scale applied to this run's geometry, so a downstream consumer
+   * can scale things measured in px that are NOT geometry — the stroke width.
+   *
+   * The repeater's `offsetScale` used to be part of the copy's layer transform,
+   * which scaled its stroke along with it. Baked into geometry it no longer
+   * does, and a repeater that shrinks its copies would draw every one of them
+   * with the original stroke width. This carries the factor to where the stroke
+   * is resolved.
+   */
+  strokeScale?: number;
 }
 
 export interface PathOp {
@@ -63,8 +86,44 @@ export interface PathOp {
   start?: number;
   /** Trim only — end of the visible range, percent 0..100. */
   end?: number;
-  /** Trim only — rotate the window around the path, percent (wraps). */
+  /**
+   * Trim: rotate the window around the path, percent (wraps).
+   * Repeater: AE's Repeater Offset — shift the whole ladder by this many rungs,
+   * fractional and negative allowed.
+   *
+   * SHARED between the two on purpose. They are the same word for the same idea
+   * — "slide the effect along its own axis" — and an operator is exactly one
+   * type, so `pathop.<id>.offset` can never be ambiguous. A second param name
+   * would be a second row in `PATHOP_PARAMS` sampling the same slot.
+   */
   offset?: number;
+
+  // ── Repeater only ──────────────────────────────────────────────────
+  // Defaults here are the INERT ones (one copy, no offset, unit scale and
+  // opacity), not `defaultRepeater()`'s. A malformed stored entry should do
+  // nothing rather than silently start repeating; the authored defaults live in
+  // `defaultRepeaterOp`.
+
+  /** Number of copies, INCLUDING the original. 1 or less is inert. */
+  copies?: number;
+  /** Per-copy position offset, in the layer's own units. */
+  offsetX?: number;
+  offsetY?: number;
+  /** Per-copy rotation offset, degrees — this is what draws arcs and spirals. */
+  offsetRotation?: number;
+  /** Per-copy scale multiplier (1 = no change). */
+  offsetScale?: number;
+  /** Per-copy opacity multiplier (1 = no change). */
+  offsetOpacity?: number;
+  /** Pivot for the per-copy rotation and scale, layer-local px. */
+  anchorX?: number;
+  anchorY?: number;
+  /**
+   * Whether the copies stack above or below the original. Discrete, so it is
+   * NOT keyframeable — interpolating it would mean a frame where the copies are
+   * halfway between in front of and behind.
+   */
+  composite?: RepeaterComposite;
 }
 
 /**
@@ -78,7 +137,12 @@ export interface PathOp {
  * declares — a type-specific list would be a second place for "which params
  * exist" to be stated, and the two would drift.
  */
-export const PATHOP_PARAMS = ['amount', 'detail', 'wigglesPerSecond', 'start', 'end', 'offset'] as const;
+export const PATHOP_PARAMS = [
+  'amount', 'detail', 'wigglesPerSecond',
+  'start', 'end', 'offset',
+  'copies', 'offsetX', 'offsetY', 'offsetRotation', 'offsetScale', 'offsetOpacity',
+  'anchorX', 'anchorY',
+] as const;
 export type PathOpParam = (typeof PATHOP_PARAMS)[number];
 
 /**
@@ -115,6 +179,57 @@ export function defaultPathOp(): PathOp {
  */
 export function defaultTrimOp(): PathOp {
   return { id: newPathOpId(), type: 'trim', amount: 0, detail: 0, start: 0, end: 100, offset: 0 };
+}
+
+/**
+ * A freshly added Repeater. The ladder defaults come from `defaultRepeater()`
+ * rather than being restated, so the operator and the migration that converts
+ * old `fx.repeater` configs cannot disagree about what a default repeater is.
+ *
+ * `amount`/`detail` are zeroed for the same reason `defaultTrimOp` zeroes them:
+ * one spelling per operator, so a round-trip shows no spurious diff.
+ */
+export function defaultRepeaterOp(): PathOp {
+  const d = defaultRepeater();
+  return {
+    id: newPathOpId(), type: 'repeater', amount: 0, detail: 0,
+    copies: d.copies, offsetX: d.offsetX, offsetY: d.offsetY,
+    offsetRotation: d.offsetRotation, offsetScale: d.offsetScale,
+    offsetOpacity: d.offsetOpacity, offset: d.offset ?? 0,
+    anchorX: d.anchorX ?? 0, anchorY: d.anchorY ?? 0, composite: d.composite ?? 'above',
+  };
+}
+
+/** The chain's repeater entry for a node, or null. AE allows one; so do we. */
+export function readRepeaterOp(node: SceneNode): PathOp | null {
+  return readPathOps(node).find((o) => o.type === 'repeater') ?? null;
+}
+
+/**
+ * The keyframe path for a node's repeater parameter, or null when it has none.
+ *
+ * The replacement for `rep.<param>`, which was a per-LAYER namespace that worked
+ * only while a layer could have exactly one repeater in exactly one place.
+ */
+export function repeaterOpPropPath(node: SceneNode, param: PathOpParam): string | null {
+  const op = readRepeaterOp(node);
+  return op ? pathOpPropPath(op.id, param) : null;
+}
+
+/** The ladder config carried by a repeater operator. */
+function repeaterFromOp(op: PathOp): Repeater {
+  return {
+    copies: op.copies ?? 1,
+    offsetX: op.offsetX ?? 0,
+    offsetY: op.offsetY ?? 0,
+    offsetRotation: op.offsetRotation ?? 0,
+    offsetScale: op.offsetScale ?? 1,
+    offsetOpacity: op.offsetOpacity ?? 1,
+    offset: op.offset ?? 0,
+    anchorX: op.anchorX ?? 0,
+    anchorY: op.anchorY ?? 0,
+    composite: op.composite ?? 'above',
+  };
 }
 
 /** The chain's trim entry for a node, or null. AE allows only one; so do we. */
@@ -419,7 +534,7 @@ function fxProps(node: SceneNode): Record<string, unknown> | undefined {
   return node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
 }
 
-const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim'];
+const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater'];
 
 function isPathOpType(v: unknown): v is PathOpType {
   return typeof v === 'string' && (PATH_OP_TYPES as readonly string[]).includes(v);
@@ -465,6 +580,15 @@ function coercePathOp(raw: unknown): PathOp | null {
     start: num(o.start, 0),
     end: num(o.end, 100),
     offset: num(o.offset, 0),
+    copies: num(o.copies, 1),
+    offsetX: num(o.offsetX, 0),
+    offsetY: num(o.offsetY, 0),
+    offsetRotation: num(o.offsetRotation, 0),
+    offsetScale: num(o.offsetScale, 1),
+    offsetOpacity: num(o.offsetOpacity, 1),
+    anchorX: num(o.anchorX, 0),
+    anchorY: num(o.anchorY, 0),
+    composite: o.composite === 'below' ? 'below' : 'above',
   };
 }
 
@@ -495,6 +619,19 @@ function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
     start: v('start', op.start ?? 0),
     end: v('end', op.end ?? 100),
     offset: v('offset', op.offset ?? 0),
+    // The repeater's eight. Every one of them was keyframeable under `rep.*`
+    // before the fold and stays keyframeable here — the migration reroutes the
+    // tracks rather than dropping them.
+    copies: v('copies', op.copies ?? 1),
+    offsetX: v('offsetX', op.offsetX ?? 0),
+    offsetY: v('offsetY', op.offsetY ?? 0),
+    offsetRotation: v('offsetRotation', op.offsetRotation ?? 0),
+    offsetScale: v('offsetScale', op.offsetScale ?? 1),
+    offsetOpacity: v('offsetOpacity', op.offsetOpacity ?? 1),
+    anchorX: v('anchorX', op.anchorX ?? 0),
+    anchorY: v('anchorY', op.anchorY ?? 0),
+    // Discrete, so it is read straight from the config and never sampled.
+    composite: op.composite ?? 'above',
   };
 }
 
@@ -507,7 +644,24 @@ function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
 export function resolvePathOps(node: SceneNode, av: Map<string, number> | undefined): PathOp[] {
   return readPathOps(node)
     .map((op) => resolveOne(op, av))
-    .filter((op) => op.type !== 'none' && !isInertTrim(op));
+    .filter((op) => op.type !== 'none' && !isInertTrim(op) && !isInertRepeater(op));
+}
+
+/**
+ * A repeater producing a single copy.
+ *
+ * Dropped for the same reason an untouched Trim is: a live chain converts the
+ * layer's PRIMITIVE to an explicit path, so leaving a one-copy repeater in the
+ * chain would square off a rounded rect's corners while changing nothing the
+ * user asked for.
+ *
+ * `copies <= 1` and not "copies <= 1 with no offset": the pre-fold renderer
+ * skipped the whole repeater block on `copies > 1`, so a single copy sitting at
+ * a non-zero ladder Offset drew at the origin. Preserved deliberately — one
+ * copy means "off", whatever the rest of the ladder says.
+ */
+function isInertRepeater(op: PathOp): boolean {
+  return op.type === 'repeater' && (op.copies ?? 1) <= 1;
 }
 
 /**
@@ -548,7 +702,56 @@ function applyTrim(runs: readonly PolyRun[], op: PathOp): PolyRun[] {
   const out: PolyRun[] = [];
   for (const run of runs) {
     for (const cut of trimPolyline(run.pts, run.closed, segs)) {
-      out.push({ pts: cut, closed: false });
+      // Paint rides along. A trim downstream of a repeater cuts each COPY, and
+      // dropping the run's opacity here would flatten a faded ladder back to
+      // full strength at the moment it was trimmed.
+      out.push({ pts: cut, closed: false, opacity: run.opacity, strokeScale: run.strokeScale });
+    }
+  }
+  return out;
+}
+
+/**
+ * Replicate every run along the repeater's transform ladder.
+ *
+ * ── The space this happens in, which is the whole semantic change ──────
+ *
+ * Copies used to be emitted as separate `RenderLayer`s at `x: px + c.dx` —
+ * COMP space, the delta added to the layer's comp position AFTER its own
+ * rotation and scale were resolved. So a repeated layer's arrangement stayed
+ * stubbornly axis-aligned however the layer was turned.
+ *
+ * Here the copies are baked into LAYER-LOCAL geometry, so the layer transform
+ * applies to them like it applies to everything else the layer draws. That is
+ * AE's model — the Repeater lives inside `contents`, below the layer's own
+ * Transform — and it is why an untransformed layer renders identically while a
+ * rotated or scaled one deliberately does not. See F19.
+ *
+ * The ladder itself is NOT re-derived here: `repeaterCopies` already composes
+ * it iteratively, interpolates fractional Offsets, pivots about the anchor and
+ * reverses for `composite: 'below'`. Restating any of that would be a second
+ * place for "what a repeater does" to be written down.
+ */
+function applyRepeater(runs: readonly PolyRun[], op: PathOp): PolyRun[] {
+  const out: PolyRun[] = [];
+  for (const c of repeaterCopies(repeaterFromOp(op))) {
+    // Scale folded into the rotation matrix: (p·s)·R == p·(s·R).
+    const rad = c.drot * DEG;
+    const cos = Math.cos(rad) * c.scaleMul;
+    const sin = Math.sin(rad) * c.scaleMul;
+    for (const r of runs) {
+      out.push({
+        closed: r.closed,
+        pts: r.pts.map((p): Pt => ({
+          x: p.x * cos - p.y * sin + c.dx,
+          y: p.x * sin + p.y * cos + c.dy,
+        })),
+        // MULTIPLIED into whatever the run already carried, so two stacked
+        // repeaters compound their fades the way two stacked ladders compound
+        // their offsets.
+        opacity: (r.opacity ?? 1) * c.opacityMul,
+        strokeScale: (r.strokeScale ?? 1) * c.scaleMul,
+      });
     }
   }
   return out;
@@ -571,14 +774,21 @@ export function applyPathOpChain(
   ops: readonly PathOp[],
   timeSec = 0,
 ): PolyRun[] {
-  let out: PolyRun[] = runs.map((r) => ({ pts: [...r.pts], closed: r.closed }));
+  let out: PolyRun[] = runs.map((r) => ({ ...r, pts: [...r.pts] }));
   for (const op of ops) {
     if (op.type === 'none') continue;
     if (op.type === 'trim') {
       out = applyTrim(out, op);
       continue;
     }
-    out = out.map((r) => ({ pts: applyPathOp(r.pts, r.closed, op, timeSec), closed: r.closed }));
+    if (op.type === 'repeater') {
+      out = applyRepeater(out, op);
+      continue;
+    }
+    // Spread, so a per-run `opacity`/`strokeScale` set by an upstream repeater
+    // survives every deformer below it. Rebuilding the run from `pts`/`closed`
+    // alone silently un-fades the copies.
+    out = out.map((r) => ({ ...r, pts: applyPathOp(r.pts, r.closed, op, timeSec) }));
   }
   return out;
 }
@@ -620,6 +830,38 @@ export function ensureTrimOp(nodeId: string): string {
   const node = defaultSceneGraph.getNode(nodeId);
   const existing = node ? readTrimOp(node) : null;
   return existing ? existing.id : addTrimOp(nodeId);
+}
+
+/** Append a Repeater entry and return its id (keyframes are id-scoped). */
+export function addRepeaterOp(nodeId: string, patch: Partial<PathOp> = {}): string {
+  const op: PathOp = { ...defaultRepeaterOp(), ...patch, type: 'repeater' };
+  addPathOp(nodeId, op);
+  return op.id;
+}
+
+/** The node's repeater entry id, adding one if it has none. */
+export function ensureRepeaterOp(nodeId: string): string {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const existing = node ? readRepeaterOp(node) : null;
+  return existing ? existing.id : addRepeaterOp(nodeId);
+}
+
+/**
+ * Patch the node's repeater, adding one at the end of the chain if absent, and
+ * return its id.
+ *
+ * The replacement for `repeater.ts`'s `updateRepeater`, for callers that want
+ * "set these fields on this layer's repeater" without tracking operator ids —
+ * the AI's `set_repeater` and the recipe seeds. Returns the id so an animating
+ * caller can build `pathop.<id>.<param>` without a second lookup, which is the
+ * whole reason `addTrimOp` returns one too.
+ */
+export function updateRepeaterOp(nodeId: string, patch: Partial<PathOp>): string {
+  const opId = ensureRepeaterOp(nodeId);
+  // `type` is pinned so a patch can never retype the repeater into a deformer,
+  // which would reinterpret `copies` as an unrelated operator's parameter.
+  updatePathOp(nodeId, opId, { ...patch, type: 'repeater' });
+  return opId;
 }
 
 export function removePathOp(nodeId: string, opId: string): void {

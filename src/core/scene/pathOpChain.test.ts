@@ -229,3 +229,79 @@ describe('applyPathOpChain — trim in the chain', () => {
     expect(out[0]!.closed).toBe(false);
   });
 });
+
+/**
+ * The repeater as a chain entry (document 1.5.0).
+ *
+ * `repeaterFoldGate.test.ts` already establishes — against a LOCAL replica,
+ * deliberately, so it could say "do not build this" — that a repeater's chain
+ * POSITION changes the picture whenever `offsetScale != 1`. These cover what
+ * the shipped operator has to do on top of that: replicate the runs, and carry
+ * per-copy paint through everything downstream of it.
+ */
+describe('applyPathOpChain — repeater in the chain', () => {
+  const rep = (over: Partial<PathOp> = {}): PathOp =>
+    op({ type: 'repeater', amount: 0, detail: 0, copies: 3, offsetX: 100, offsetY: 0,
+        offsetRotation: 0, offsetScale: 1, offsetOpacity: 1, offset: 0,
+        anchorX: 0, anchorY: 0, composite: 'above', ...over });
+  const run1 = [{ pts: square, closed: true }];
+
+  it('replicates every run, translating copy k by k offsets', () => {
+    const out = applyPathOpChain(run1, [rep()]);
+    expect(out).toHaveLength(3);
+    // The square spans -50..50, so copy k's left edge sits at 100k - 50.
+    expect(out.map((r) => r.pts[0]!.x)).toEqual([-50, 50, 150]);
+    // Replication does not open anything.
+    expect(out.every((r) => r.closed)).toBe(true);
+  });
+
+  it('multiplies offsetOpacity down the ladder', () => {
+    const out = applyPathOpChain(run1, [rep({ offsetOpacity: 0.5 })]);
+    expect(out.map((r) => r.opacity)).toEqual([1, 0.5, 0.25]);
+  });
+
+  it('PAINT SURVIVES a deformer placed after it', () => {
+    // The guard for the spread in `applyPathOpChain`. Rebuilding each run from
+    // `pts`/`closed` alone — which is what the loop did before the repeater
+    // joined it — drops `opacity` and `strokeScale` on the floor, and a faded
+    // ladder silently snaps back to full strength the moment anyone adds a
+    // Zig-Zag below it.
+    const out = applyPathOpChain(run1, [
+      rep({ offsetOpacity: 0.5, offsetScale: 0.5 }),
+      op({ type: 'zigzag', amount: 4, detail: 2 }),
+    ]);
+    expect(out.map((r) => r.opacity)).toEqual([1, 0.5, 0.25]);
+    expect(out.map((r) => r.strokeScale)).toEqual([1, 0.5, 0.25]);
+  });
+
+  it('PAINT SURVIVES a trim placed after it', () => {
+    // Trim rebuilds its runs from scratch rather than mapping them, so it is a
+    // second, independent place the paint can be dropped.
+    const out = applyPathOpChain(run1, [rep({ offsetOpacity: 0.5 }), { ...op({ type: 'trim' }), start: 0, end: 40, offset: 0 }]);
+    expect(out.map((r) => r.opacity)).toEqual([1, 0.5, 0.25]);
+    expect(out.every((r) => !r.closed)).toBe(true);
+  });
+
+  it('COMPOUNDS with a second repeater rather than replacing it', () => {
+    // Two ladders stack their offsets; their fades have to stack too, or the
+    // second repeater would reset the first one's.
+    const out = applyPathOpChain(run1, [
+      rep({ copies: 2, offsetOpacity: 0.5 }),
+      rep({ copies: 2, offsetX: 0, offsetY: 100, offsetOpacity: 0.5 }),
+    ]);
+    expect(out).toHaveLength(4);
+    // Outer ladder is applied second, so its rung 1 halves BOTH inner copies.
+    expect(out.map((r) => r.opacity)).toEqual([1, 0.5, 0.5, 0.25]);
+  });
+
+  it('composite: below reverses PAINT ORDER, which is run order', () => {
+    const above = applyPathOpChain(run1, [rep({ offsetOpacity: 0.5, composite: 'above' })]);
+    const below = applyPathOpChain(run1, [rep({ offsetOpacity: 0.5, composite: 'below' })]);
+    expect(above.map((r) => r.opacity)).toEqual([1, 0.5, 0.25]);
+    expect(below.map((r) => r.opacity)).toEqual([0.25, 0.5, 1]);
+  });
+
+  it('leaves geometry untouched when the run list is empty', () => {
+    expect(applyPathOpChain([], [rep()])).toEqual([]);
+  });
+});

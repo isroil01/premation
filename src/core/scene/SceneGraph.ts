@@ -527,9 +527,48 @@ export class SceneGraph {
     this.setFx(nodeId, 'autoOrient', on);
   }
 
-  /** Store the layer's shape-repeater config on its `fx` (undefined clears it). */
+  /**
+   * Set the layer's repeater by appending (or replacing) a `repeater` entry in
+   * the `fx.pathOps` chain.
+   *
+   * Kept as a named convenience — "give this layer a repeater" is a one-liner
+   * for seeds, tests and the render-test harness — but it writes the CHAIN, not
+   * the retired `fx.repeater` key. Passing `undefined` removes the entry. Same
+   * shape as `setTrimPath`, which folded the same way in 1.4.0. Document
+   * version 1.5.0.
+   */
   setRepeater(nodeId: ID, repeater: unknown): void {
-    this.setFx(nodeId, 'repeater', repeater);
+    const node = this.getNode(nodeId);
+    if (!node) return;
+    const ops = (node.components.find((c) => c.type === 'fx')?.props as
+      | { pathOps?: unknown[] }
+      | undefined)?.pathOps;
+    const rest = Array.isArray(ops) ? ops.filter((o) => (o as { type?: string })?.type !== 'repeater') : [];
+    if (repeater === undefined || repeater === null) {
+      this.setPathOps(nodeId, rest.length > 0 ? rest : undefined);
+      return;
+    }
+    const r = repeater as Record<string, unknown>;
+    const n = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
+    this.setPathOps(nodeId, [
+      ...rest,
+      {
+        id: `repop_${nodeId}`,
+        type: 'repeater',
+        amount: 0,
+        detail: 0,
+        copies: n(r.copies, 1),
+        offsetX: n(r.offsetX, 0),
+        offsetY: n(r.offsetY, 0),
+        offsetRotation: n(r.offsetRotation, 0),
+        offsetScale: n(r.offsetScale, 1),
+        offsetOpacity: n(r.offsetOpacity, 1),
+        offset: n(r.offset, 0),
+        anchorX: n(r.anchorX, 0),
+        anchorY: n(r.anchorY, 0),
+        composite: r.composite === 'below' ? 'below' : 'above',
+      },
+    ]);
   }
 
   /** Store the layer's trim-path config on its `fx` (undefined clears it). */

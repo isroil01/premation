@@ -19,8 +19,7 @@ import { SCENE_KIND_PROP } from './seedDefaultScene';
 import { defaultAnimation } from '@motion/animation';
 import { bezierCorner as corner } from '@motion/workspace';
 import { addEffect, getNodeEffects, effectPropPath, type EffectType } from '@core/effects/effects';
-import { setRepeater, repeaterPropPath } from './repeater';
-import { addTrimOp, setPathOps, pathOpPropPath } from './pathOps';
+import { addTrimOp, addRepeaterOp, setPathOps, pathOpPropPath } from './pathOps';
 import { setPrecomp } from './precomp';
 import { set3DEnabled } from './threeD';
 import { setNodeBlend } from '@core/effects/blendMode';
@@ -152,8 +151,11 @@ export function buildComplexShowcase(): { root: string; layerCount: number; ids:
   dot.parent = 'ring_grp';
   defaultSceneGraph.addChild('ring_grp', dot);
   ids.push('ring_dot');
-  setRepeater('ring_dot', { copies: 18, offsetX: 0, offsetY: 0, offsetRotation: 20, offsetScale: 1, offsetOpacity: 1 });
-  kf('ring_dot', repeaterPropPath('offsetRotation'), [[0, 20], [DUR, 40, 'linear']]);
+  // The id comes back so the keyframe can be scoped to THIS operator. The old
+  // per-layer `rep.offsetRotation` path is gone with document 1.5.0, and a seed
+  // writing it would store a track nothing samples — the spin would just stop.
+  const ringRepId = addRepeaterOp('ring_dot', { copies: 18, offsetX: 0, offsetY: 0, offsetRotation: 20, offsetScale: 1, offsetOpacity: 1 });
+  kf('ring_dot', pathOpPropPath(ringRepId, 'offsetRotation'), [[0, 20], [DUR, 40, 'linear']]);
   addEffect('ring_dot', 'glow' as EffectType);
   kf('ring_grp', 'rotation', [[0, 0], [DUR, 360, 'linear']]);
   setPrecomp('ring_grp', true);

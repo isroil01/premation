@@ -139,13 +139,15 @@ describe('v1_3_0_to_v1_4_0 — registered in the chain', () => {
   it('brings a 1.3.0 document to the current version through the real walker', () => {
     const out = migrateDocument(legacyDoc());
     expect(out.version).toBe(CURRENT_DOCUMENT_VERSION);
-    expect(CURRENT_DOCUMENT_VERSION).toBe('1.4.0');
+    // NOT `toBe('1.4.0')` any more. This step is no longer the last one — the
+    // repeater fold added 1.4.0 → 1.5.0 — and pinning the current version here
+    // made a later, unrelated migration fail this suite. What the test is
+    // actually for is that a 1.3.0 document walks all the way to today.
   });
 
-  it('is the last step and carries nothing but this change', () => {
-    const last = MIGRATIONS[MIGRATIONS.length - 1]!;
-    expect(last.from).toBe('1.3.0');
-    expect(last.to).toBe('1.4.0');
+  it('carries nothing but this change, and steps 1.3.0 → 1.4.0 exactly once', () => {
+    const steps = MIGRATIONS.filter((m) => m.to === '1.4.0');
+    expect(steps.map((m) => m.from)).toEqual(['1.3.0']);
   });
 });
 
