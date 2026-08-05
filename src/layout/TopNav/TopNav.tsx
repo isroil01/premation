@@ -52,6 +52,9 @@ import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { useLayoutStore } from '@stores/layoutStore';
 import styles from './TopNav.module.css';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { usePresentationStore } from '@stores/presentationStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { openExportDialog } from '@layout/Export/ExportDialog';
 
 interface ToolDef {
   id: Tool;
@@ -245,6 +248,9 @@ export function TopNav(): JSX.Element {
   const navigate = useNavigate();
   const activeTool = useUIStore((s) => s.activeTool);
   const setTool = useUIStore((s) => s.setActiveTool);
+  const enterPresentation = usePresentationStore((s) => s.enter);
+  const compFps = useCompositionStore((s) => s.fps);
+  const compDuration = useCompositionStore((s) => s.durationSeconds);
   
   useSceneRevision((s) => s.rev);
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -831,6 +837,32 @@ export function TopNav(): JSX.Element {
                   onClick={() => openCustomizeDialog()}
                 >
                   <Icon name="settings" size={18} />
+                </button>
+              </div>
+            </>
+          )}
+
+          {!isElectron && (
+            <>
+              <span className={styles.toolDivider} aria-hidden />
+              <div className={styles.toolGroup}>
+                <button
+                  type="button"
+                  className={styles.previewBtn}
+                  title="Preview presentation (Fullscreen)"
+                  onClick={() => enterPresentation()}
+                >
+                  <Icon name="play" size={13} weight="fill" />
+                  <span>Preview</span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.exportBtn}
+                  title="Export composition…"
+                  onClick={() => openExportDialog(compDuration, compFps)}
+                >
+                  <Icon name="export" size={13} weight="bold" />
+                  <span>Export</span>
                 </button>
               </div>
             </>

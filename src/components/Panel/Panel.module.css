@@ -17,7 +17,7 @@
   height: 32px;
   padding: 0 var(--space-5);
   background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-border-subtle);
   flex: none;
   user-select: none;
 }
@@ -85,7 +85,7 @@
   height: 24px;
   padding: 0 var(--space-5);
   background: var(--color-panel-header);
-  border-top: 1px solid var(--color-divider);
+  border-top: 1px solid var(--color-border-subtle);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   flex: none;

@@ -5,23 +5,105 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-surface-1);
-  border-top: 1px solid var(--color-border-strong);
+  background: var(--color-surface-0, #161616);
+  border-top: 1px solid var(--color-border);
   overflow: hidden;
+  font-family: var(--font-family-sans, system-ui, sans-serif);
 }
 
-/* ── Header / transport bar ────────────────────────────────────────
-   Sized to --bar-height-tool (36px) rather than an arbitrary 38px, so it
-   agrees with the top tool row down the editor's vertical axis. */
+/* ── Topside AE-style Progress Bar ────────────────────────────────── */
+.topProgressBarContainer {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  background: #141414;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  overflow: hidden;
+  flex: none;
+  box-sizing: border-box;
+}
+
+.topProgressBarContainer:hover {
+  background: #191919;
+}
+
+.topProgressBarTrack {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.topProgressBarFill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, rgba(62, 160, 255, 0.25) 0%, rgba(62, 160, 255, 0.5) 100%);
+  border-right: 1px solid #3ea0ff;
+  transition: width 0.05s linear;
+}
+
+.topProgressBarThumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #3ea0ff;
+  box-shadow: 0 0 6px #3ea0ff;
+  pointer-events: none;
+}
+
+.topProgressBarTimeText {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-family-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  letter-spacing: 0.02em;
+}
+
+.topProgressBarCurrentTime {
+  color: #3ea0ff;
+  font-weight: 700;
+}
+
+.topProgressBarDivider {
+  color: #666666;
+}
+
+.topProgressBarTotalTime {
+  color: #a0a0a0;
+}
+
+.topProgressBarPctText {
+  font-size: 10px;
+  color: #888888;
+  margin-left: 2px;
+}
+
+/* ── Header / transport bar ──────────────────────────────────────── */
 .header {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: var(--bar-height-tool);
-  padding: 0 var(--space-4);
-  background: color-mix(in srgb, var(--color-surface-2) 85%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  gap: var(--space-3, 8px);
+  height: 36px;
+  padding: 0 10px;
+  background: var(--color-toolbar, #1d1d1d);
   border-bottom: 1px solid var(--color-border);
   flex: none;
   user-select: none;
@@ -37,52 +119,131 @@
   display: none;
 }
 
+.transportCluster {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
 
-/* ── Timecode ────────────────────────────────────────────────────────
-   The timecode and the search field sit side by side at the same height but
-   carried different corner radii (4px vs 6px). Both now take the control
-   radius, so the row reads as one set of controls instead of two. */
+.transportDivider {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border-subtle, #2d2d2d);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.transportBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  background: var(--color-surface-1, #232323);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 6px);
+  color: var(--color-text-secondary, #a6a6a6);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-shrink: 0;
+}
+
+.transportBtn:hover {
+  background: var(--color-surface-3, #333333);
+  border-color: var(--color-border-strong, #444444);
+  color: var(--color-text-primary, #ffffff);
+  transform: translateY(-0.5px);
+}
+
+.transportBtn:active {
+  transform: scale(0.94);
+}
+
+.transportBtnActive {
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15)) !important;
+  border-color: color-mix(in srgb, var(--color-primary, #2988ff) 40%, transparent) !important;
+  color: var(--color-primary, #2988ff) !important;
+  box-shadow: 0 1px 6px color-mix(in srgb, var(--color-primary, #2988ff) 20%, transparent);
+}
+
+.playBtn {
+  width: 36px;
+  height: 26px;
+  background: var(--color-primary, #2988ff);
+  border: 1px solid transparent;
+  color: var(--color-primary-foreground, #ffffff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.playBtn:hover {
+  background: var(--color-primary-hover, #4097ff);
+  border-color: transparent;
+  color: var(--color-primary-foreground, #ffffff);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--color-primary, #2988ff) 50%, transparent);
+  transform: translateY(-0.5px);
+}
+
+.playBtnActive {
+  background: var(--color-primary-active, #1d75e0) !important;
+  border-color: transparent !important;
+  color: var(--color-primary-foreground, #ffffff) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--color-primary, #2988ff) 65%, transparent);
+  transform: scale(0.97);
+}
+
+.zoomCluster {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.zoomSlider {
+  width: 80px;
+  height: 4px;
+  accent-color: var(--color-primary, #2988ff);
+  cursor: pointer;
+}
+
+/* ── Timecode ──────────────────────────────────────────────────────── */
 .timecode {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-4);
-  background: var(--color-surface-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15));
+  border: 1px solid color-mix(in srgb, var(--color-primary, #2988ff) 30%, transparent);
+  border-radius: var(--radius-md, 6px);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  letter-spacing: var(--letter-spacing-wide);
-  color: var(--color-text-primary);
-  cursor: default;
+  letter-spacing: 0.02em;
+  color: var(--color-primary, #2988ff);
+  cursor: pointer;
   white-space: nowrap;
-  height: var(--control-height-md);
+  height: 26px;
   box-sizing: border-box;
-  transition:
-    background var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   flex-shrink: 0;
 }
 
 .timecode:hover {
-  background: var(--color-surface-0);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary, #2988ff) 25%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary, #2988ff) 50%, transparent);
+  color: var(--color-primary-hover, #4097ff);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary, #2988ff) 20%, transparent);
 }
 
 .timecodeTotal {
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
-  /*
-   * Not --color-text-muted. That token is documented as "decorative / icons
-   * only, never body", and on the raised timecode chip it measured 1.83:1 —
-   * this is the composition's duration, which is data the user reads.
-   */
-  color: var(--color-text-secondary);
-  font-weight: var(--font-weight-regular);
+  font-size: 11px;
+  font-family: var(--font-family-mono, monospace);
+  color: var(--color-text-tertiary, #8c8c8c);
+  font-weight: 400;
 }
 
 /* ── Timeline Search/Filter Bar ────────────────────────────────────── */
@@ -90,34 +251,32 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  background: var(--color-surface-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  padding: 0 var(--space-4);
-  height: var(--control-height-md);
+  gap: 6px;
+  background: var(--color-surface-1, #232323);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 6px);
+  padding: 0 8px;
+  height: 26px;
   flex: 0 0 160px;
   min-width: 100px;
   max-width: 220px;
-  transition:
-    background var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   flex-shrink: 0;
 }
 
 .searchContainer:hover {
-  background: var(--color-surface-0);
-  border-color: var(--color-border-strong);
+  background: var(--color-surface-3, #333333);
+  border-color: var(--color-border-strong, #444444);
 }
 
 .searchContainer:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary);
-  background: var(--color-surface-2);
+  border-color: var(--color-primary, #2988ff);
+  background: var(--color-surface-1, #232323);
+  box-shadow: 0 0 0 1px var(--color-primary, #2988ff);
 }
 
 .searchIcon {
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary, #8c8c8c);
   flex-shrink: 0;
 }
 
@@ -126,14 +285,14 @@
   background: transparent;
   border: none;
   outline: none;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  color: var(--color-text-primary, #ffffff);
+  font-size: 11px;
   padding: 0;
   width: 100%;
 }
 
 .searchInput::placeholder {
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary, #8c8c8c);
 }
 
 .searchClear {
@@ -196,26 +355,27 @@ button.play:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
+  height: 26px;
   padding: 0 8px;
-  background: var(--color-surface-3);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  color: var(--color-text-secondary);
+  background: var(--color-surface-1, #232323);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 6px);
+  color: var(--color-text-secondary, #a6a6a6);
   font-size: 10px;
   font-family: var(--font-family-sans);
   font-weight: 500;
   letter-spacing: 0.02em;
   text-transform: none;
   cursor: pointer;
-  transition: var(--motion-hover-transition);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   white-space: nowrap;
   flex-shrink: 0;
 }
 .toggleBtn:hover {
-  color: var(--color-text-primary);
-  background: var(--color-surface-0);
-  border-color: var(--color-border-strong);
+  color: var(--color-text-primary, #ffffff);
+  background: var(--color-surface-3, #333333);
+  border-color: var(--color-border-strong, #444444);
+  transform: translateY(-0.5px);
 }
 .toggleBtn:active {
   transform: scale(0.95);
@@ -227,27 +387,32 @@ button.play:hover {
 }
 .toggleBtnActive {
   composes: toggleBtn;
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  border-color: var(--color-primary);
+  color: var(--color-primary, #2988ff);
+  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15));
+  border-color: color-mix(in srgb, var(--color-primary, #2988ff) 40%, transparent);
+  box-shadow: 0 1px 6px color-mix(in srgb, var(--color-primary, #2988ff) 20%, transparent);
 }
 
-/* Icon-only variant — square, no text label (tooltip carries the name). The
-   toggle cluster used to pair each icon with a redundant word ("Loop", "Shy",
-   "Motion Blur", …), which read as noisy; the glyph + title is enough. */
 .toggleIcon {
   composes: toggleBtn;
-  width: 24px;
+  width: 28px;
   padding: 0;
   justify-content: center;
   gap: 0;
 }
 .toggleIconActive {
   composes: toggleBtnActive;
-  width: 24px;
+  width: 28px;
   padding: 0;
   justify-content: center;
   gap: 0;
+}
+
+.aeHeaderTools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* ── Zoom cluster ─────────────────────────────────────────────────── */
@@ -582,3 +747,72 @@ button.play:hover {
   color: var(--color-text-tertiary);
   white-space: nowrap;
 }
+
+/* ── AE Timeline Bottom Bar ────────────────────────────────────────── */
+.bottomBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  padding: 0 8px;
+  background: #252525;
+  border-top: 1px solid #181818;
+  flex: none;
+  user-select: none;
+  font-size: 11px;
+  color: #aaaaaa;
+}
+
+.bottomBarLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bottomBarRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoomSliderContainer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoomIconBtn {
+  background: transparent;
+  border: none;
+  color: #888888;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.zoomIconBtn:hover {
+  color: #3ea0ff;
+}
+
+.zoomRangeInput {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 90px;
+  height: 3px;
+  background: #333333;
+  border-radius: 2px;
+  outline: none;
+}
+
+.zoomRangeInput::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 8px;
+  height: 10px;
+  border-radius: 1px;
+  background: #3ea0ff;
+  cursor: pointer;
+}
+

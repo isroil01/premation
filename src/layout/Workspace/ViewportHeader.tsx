@@ -125,11 +125,6 @@ export function ViewportHeader(): JSX.Element {
           </>
         )}
 
-        {/* Which engine is actually rendering. WebGPU is the primary tier and
-            WebGL2 the fallback, but until now nothing surfaced which one won —
-            so "are we on WebGPU?" was unanswerable without a debugger. Hidden
-            while pending and on the happy path is a quiet neutral chip; the
-            fallback rung reads as a warning because it IS a degraded state. */}
         {engineTier !== 'pending' && engineTier !== 'software' && (
           <>
             <span className={styles.sep} />
@@ -157,7 +152,11 @@ export function ViewportHeader(): JSX.Element {
         )}
       </div>
 
-          <div className={styles.spacer} />
+      {/* Transport, split/trim, easing and preview-quality live in the timeline
+          panel header. They are deliberately NOT mirrored here — two copies of
+          the same control drift apart and double the surface to keep in sync. */}
+
+      <div className={styles.spacer} />
 
       {/* ── Contextual motion path controls — icon-only with rich tooltips ── */}
       {hasPositionAnim && (

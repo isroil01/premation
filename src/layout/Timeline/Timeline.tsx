@@ -47,8 +47,6 @@ import type {
 import { Dropdown } from '@components/Dropdown';
 import { type LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from '@layout/Inspector/blendMenu';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSelectionStore } from '@stores/selectionStore';
 import { eligibleParents, parentOfNode } from '@core/scene/parenting';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import {
@@ -62,12 +60,12 @@ import {
 import { audioEngine } from '@core/audio/AudioEngine';
 import { waveformPath, peaksInRange } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
-import { LABEL_COLORS } from '@core/scene/labelColor';
+import { ColorPicker } from '@components/ColorPicker';
 import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
 
-const RULER_HEIGHT_DEFAULT = 26;
+const RULER_HEIGHT_DEFAULT = 36;
 const TRACK_HEIGHT_DEFAULT = 30;
-const TRACK_HEADER_WIDTH_DEFAULT = 460;
+const TRACK_HEADER_WIDTH_DEFAULT = 490;
 
 /** A virtualized row is either a track summary row, a category accordion row, or a property sub-row. */
 type Row =
@@ -1034,9 +1032,15 @@ function Timeline({
       >
         <div className={styles.ruler} style={{ height: rulerHeight }}>
           {/* Column heads for the switches and modes (AE layout). */}
-          <div className={styles.colHeads} aria-hidden>
-            <span className={styles.colHeadLayer} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span>Layer Name</span>
+          <div className={styles.colHeads}>
+            <div className={styles.colHeadPreInfo} aria-hidden>
+              <span className={styles.colHeadItem}><Icon name="eye" size={12} title="Video Visibility" /></span>
+              <span className={styles.colHeadItem}><Icon name="circle" size={11} title="Solo" /></span>
+              <span className={styles.colHeadItem}><Icon name="lock" size={12} title="Lock" /></span>
+            </div>
+            <span className={styles.colHeadLayer}>
+              <span style={{ color: '#888888', marginRight: 4 }} aria-hidden>#</span>
+              <span>Source Name</span>
               <button
                 type="button"
                 onClick={() => {
@@ -1044,26 +1048,28 @@ function Timeline({
                   window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
                 }}
                 title="Pop Out Timeline into Separate Window"
-                style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, display: 'inline-flex' }}
+                aria-label="Pop out timeline into a separate window"
+                style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, marginLeft: 6, display: 'inline-flex' }}
               >
                 <Icon name="export" size={12} />
               </button>
             </span>
-            <span className={styles.colHeadMode}>Mode</span>
-            <span className={styles.colHeadMatte}>Track Matte</span>
-            <span className={styles.colHeadParent}>Parent & Link</span>
-            <span className={styles.colHeadAeSwitches}>
-              {/* Legend for the per-layer switch column below (AE shows the
-                  same glyphs in its column head — five unlabeled dots were
-                  unguessable for new users). */}
-              <Icon name="shy" size={9} title="Shy" />
-              <span className={styles.fxText} title="Effects" style={{ fontSize: 10 }}>fx</span>
-              <Icon name="motion-blur" size={9} title="Motion Blur" />
-              <Icon name="adjustment" size={9} title="Adjustment Layer" />
-              <Icon name="eye-off" size={9} title="Guide Layer (not rendered)" />
-              <Icon name="3d" size={9} title="3D Layer" />
+            {/* Legend for the per-layer switch column below — one glyph per
+                switch that actually exists on the rows, in ROW ORDER. The
+                guide-layer glyph is not optional: `data-kind="guide"` ships on
+                every row between adjustment and 3D, and a legend that skips a
+                live switch is worse than no legend. */}
+            <span className={styles.colHeadAeSwitches} aria-hidden>
+              <span className={styles.colHeadItem}><Icon name="shy" size={12} title="Shy" /></span>
+              <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects" style={{ fontSize: 12 }}>fx</span></span>
+              <span className={styles.colHeadItem}><Icon name="motion-blur" size={12} title="Motion Blur" /></span>
+              <span className={styles.colHeadItem}><Icon name="adjustment" size={12} title="Adjustment Layer" /></span>
+              <span className={styles.colHeadItem}><Icon name="eye-off" size={12} title="Guide Layer (not rendered)" /></span>
+              <span className={styles.colHeadItem}><Icon name="3d" size={12} title="3D Layer" /></span>
             </span>
-            <span className={styles.colHeadSwitches}>Switches</span>
+            <span className={styles.colHeadMode}>Mode</span>
+            <span className={styles.colHeadMatte}>T</span>
+            <span className={styles.colHeadParent}>Parent & Link</span>
           </div>
         </div>
         <div
@@ -1688,7 +1694,43 @@ const TrackHeader = memo(function TrackHeader({
       aria-label={track.name}
       title="Enter to select · F2 to focus"
     >
-      <div className={styles.layerInfoCol} style={{ paddingLeft: track.depth ? track.depth * 16 : undefined }}>
+      <div className={styles.preInfoCol}>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="visible"
+          data-on={!hidden || undefined}
+          aria-label={hidden ? 'Show track' : 'Hide track'}
+          title={hidden ? 'Hide' : 'Show (Video)'}
+          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
+        >
+          <Icon name={hidden ? 'eye-off' : 'eye'} size={10} />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="solo"
+          data-on={solo || undefined}
+          aria-label={solo ? 'Unsolo track' : 'Solo track'}
+          title={solo ? 'Unsolo' : 'Solo'}
+          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
+        >
+          <Icon name="circle" size={9} />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="lock"
+          data-on={locked || undefined}
+          aria-label={locked ? 'Unlock track' : 'Lock track'}
+          title={locked ? 'Unlock' : 'Lock'}
+          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
+        >
+          <Icon name="lock" size={10} />
+        </button>
+      </div>
+
+      <div className={styles.layerInfoCol} style={{ paddingLeft: track.depth ? track.depth * 14 : undefined }}>
         <div
           className={styles.dragHandle}
           title="Drag to reorder"
@@ -1697,6 +1739,17 @@ const TrackHeader = memo(function TrackHeader({
           <Icon name="grip-vertical" size={11} />
         </div>
         <span className={styles.trackIndex}>{index}</span>
+        {typeof track.nodeColor === 'string' && (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <ColorPicker
+              value={track.nodeColor || '#5282b8'}
+              onChange={(hex) => onTrackColorChange?.(track.id, hex)}
+              compact
+              alpha={false}
+              aria-label="Layer label color"
+            />
+          </div>
+        )}
         <button
           type="button"
           className={cn(styles.disclosure, !hasProps && styles.disclosureHidden)}
@@ -1708,78 +1761,15 @@ const TrackHeader = memo(function TrackHeader({
             if (hasProps) onToggleExpand();
           }}
         >
-          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
+          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={11} />
         </button>
         <span
           className={styles.trackIcon}
           style={{ color: track.color ?? 'var(--color-accent)' }}
           title={track.kind}
         >
-          <Icon name={(track.icon as IconName) ?? 'layers'} size={14} />
+          <Icon name={(track.icon as IconName) ?? 'layers'} size={12} />
         </span>
-        {typeof track.nodeColor === 'string' && (
-          <div onClick={(e) => e.stopPropagation()} style={{ marginRight: 'var(--space-2)', display: 'inline-flex', alignItems: 'center' }}>
-            <Dropdown
-              placement="bottom-start"
-              trigger={
-                <button
-                  type="button"
-                  style={{
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '2px',
-                    backgroundColor: track.nodeColor,
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    cursor: 'pointer',
-                    padding: 0,
-                  }}
-                  aria-label="Layer label color"
-                  title="Change layer color / Select label group"
-                />
-              }
-              items={[
-                ...LABEL_COLORS.map((color) => ({
-                  type: 'item' as const,
-                  id: `color-${color.id}`,
-                  label: (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ width: '12px', height: '12px', borderRadius: '2px', backgroundColor: color.color }} />
-                      <span>{color.label}</span>
-                    </div>
-                  ),
-                  onSelect: () => onTrackColorChange?.(track.id, color.color),
-                })),
-                { type: 'separator' as const },
-                {
-                  type: 'item' as const,
-                  id: 'select-label-group',
-                  label: 'Select Label Group',
-                  onSelect: () => {
-                    const findSameColorNodes = (): string[] => {
-                      const result: string[] = [];
-                      const traverse = (nodeId: string) => {
-                        const node = defaultSceneGraph.getNode(nodeId);
-                        if (!node) return;
-                        if ((node as any).color === track.nodeColor) {
-                          result.push(node.id);
-                        }
-                        const kids = defaultSceneGraph.getChildren(nodeId);
-                        for (const k of kids) traverse(k.id);
-                      };
-                      const roots = defaultSceneGraph.getRoots();
-                      for (const r of roots) traverse(r.id);
-                      return result;
-                    };
-                    const sameColorNodeIds = findSameColorNodes();
-                    if (sameColorNodeIds.length > 0) {
-                      useSelectionStore.getState().set(sameColorNodeIds);
-                    }
-                  },
-                },
-              ]}
-            />
-          </div>
-        )}
         {editing ? (
           <input
             ref={inputRef}
@@ -1805,53 +1795,6 @@ const TrackHeader = memo(function TrackHeader({
         )}
       </div>
 
-      <div className={styles.modeCol} onClick={(e) => e.stopPropagation()}>
-        <Dropdown
-          placement="bottom-start"
-          trigger={
-            <button type="button" className={styles.timelineSelectTrigger} aria-label="Layer Blend Mode">
-              {blendModeLabel(track.blendMode as LayerBlendMode | undefined)}
-            </button>
-          }
-          items={blendDropdownItems(
-            track.blendMode as LayerBlendMode | undefined,
-            (m) => onBlendModeChange?.(m),
-          )}
-        />
-      </div>
-
-      <div className={styles.matteCol} onClick={(e) => e.stopPropagation()}>
-        <Dropdown
-          placement="bottom-start"
-          trigger={
-            <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte">
-              {currentMatteLabel}
-            </button>
-          }
-          items={MATTE_OPTIONS.map((m) => ({
-            type: 'item',
-            id: m.id,
-            label: MATTE_SHORT_LABEL[m.id] ?? m.label,
-            icon: m.id === currentMatteOption ? ('check' as const) : undefined,
-            // Carries an explicit matte source across a mode change; dropping it
-            // would silently re-point the matte at the layer above.
-            onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
-          }))}
-        />
-      </div>
-
-      <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
-        <Dropdown
-          placement="bottom-start"
-          trigger={
-            <button type="button" className={styles.timelineSelectTrigger} aria-label="Parent Layer">
-              {currentParentName}
-            </button>
-          }
-          items={parentItems}
-        />
-      </div>
-
       <div className={styles.aeSwitchesCol}>
         <button
           type="button"
@@ -1863,6 +1806,7 @@ const TrackHeader = memo(function TrackHeader({
         >
           <Icon name="shy" size={10} />
         </button>
+
         <button
           type="button"
           className={styles.trackAction}
@@ -1873,6 +1817,7 @@ const TrackHeader = memo(function TrackHeader({
         >
           <span className={styles.fxText}>fx</span>
         </button>
+
         <button
           type="button"
           className={styles.trackAction}
@@ -1916,40 +1861,49 @@ const TrackHeader = memo(function TrackHeader({
         </button>
       </div>
 
-      <div className={styles.trackHeaderActions}>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="visible"
-          data-on={hidden || undefined}
-          aria-label={hidden ? 'Show track' : 'Hide track'}
-          title={hidden ? 'Show' : 'Hide'}
-          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
-        >
-          <Icon name={hidden ? 'eye-off' : 'eye'} size={12} />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="solo"
-          data-on={solo || undefined}
-          aria-label={solo ? 'Unsolo track' : 'Solo track'}
-          title={solo ? 'Unsolo' : 'Solo (only soloed layers render)'}
-          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
-        >
-          <Icon name="circle" size={11} />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="lock"
-          data-on={locked || undefined}
-          aria-label={locked ? 'Unlock track' : 'Lock track'}
-          title={locked ? 'Unlock' : 'Lock'}
-          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
-        >
-          <Icon name="lock" size={12} />
-        </button>
+      <div className={styles.modeCol} onClick={(e) => e.stopPropagation()}>
+        <Dropdown
+          placement="bottom-start"
+          trigger={
+            <button type="button" className={styles.timelineSelectTrigger} aria-label="Layer Blend Mode">
+              {blendModeLabel(track.blendMode as LayerBlendMode | undefined)}
+            </button>
+          }
+          items={blendDropdownItems(
+            track.blendMode as LayerBlendMode | undefined,
+            (m) => onBlendModeChange?.(m),
+          )}
+        />
+      </div>
+
+      <div className={styles.matteCol} onClick={(e) => e.stopPropagation()}>
+        <Dropdown
+          placement="bottom-start"
+          trigger={
+            <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte">
+              {currentMatteLabel}
+            </button>
+          }
+          items={MATTE_OPTIONS.map((m) => ({
+            type: 'item',
+            id: m.id,
+            label: MATTE_SHORT_LABEL[m.id] ?? m.label,
+            icon: m.id === currentMatteOption ? ('check' as const) : undefined,
+            onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
+          }))}
+        />
+      </div>
+
+      <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
+        <Dropdown
+          placement="bottom-start"
+          trigger={
+            <button type="button" className={styles.timelineSelectTrigger} aria-label="Parent Layer">
+              {currentParentName}
+            </button>
+          }
+          items={parentItems}
+        />
       </div>
     </div>
   );
@@ -2123,11 +2077,8 @@ const TrackContent = memo(function TrackContent({
               transform: `translateX(${8 + view.start * pps}px)`,
               width,
               height,
-              // Category color as a subtle fill; the solid hue forms the border.
-              background: clip.color
-                ? `color-mix(in srgb, ${clip.color} 26%, transparent)`
-                : 'var(--color-primary-subtle)',
-              borderColor: clip.color ?? 'var(--color-primary)',
+              background: clip.color ?? 'var(--color-primary)',
+              border: 'none',
               cursor: onClipDown ? 'grab' : undefined,
             }}
             title={clip.label ?? clip.id}

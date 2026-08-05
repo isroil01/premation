@@ -88,24 +88,24 @@ export function TitleBar(): JSX.Element | null {
               <Icon name="panel-right" size={16} />
             </IconButton>
             <span className={styles.menuDivider} aria-hidden />
-            <IconButton
-              aria-label="Preview"
-              size="sm"
-              className={styles.layoutToggle}
-              title="Preview"
+            <button
+              type="button"
+              className={styles.previewBtn}
+              title="Preview presentation (Fullscreen)"
               onClick={() => enterPresentation()}
             >
-              <Icon name="eye" size={16} />
-            </IconButton>
-            <IconButton
-              aria-label="Export"
-              size="sm"
-              className={styles.layoutToggle}
-              title="Export"
+              <Icon name="play" size={13} weight="fill" />
+              <span>Preview</span>
+            </button>
+            <button
+              type="button"
+              className={styles.exportBtn}
+              title="Export composition…"
               onClick={() => openExportDialog(compDuration, compFps)}
             >
-              <Icon name="export" size={16} />
-            </IconButton>
+              <Icon name="export" size={13} weight="bold" />
+              <span>Export</span>
+            </button>
           </div>
         )}
         <div className={styles.windowActions}>
