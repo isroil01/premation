@@ -581,6 +581,7 @@ function transformComponentId(node: SceneNode): ID | null {
 }
 
 import { worldMatrixOf } from '@core/scene/worldTransform';
+import { recordMotionSketchSample, motionSketchNodeId } from '@core/animation/motionSketch';
 import { Matrix } from '@motion/scene';
 
 function getLocalTransformForPorts(id: string) {
@@ -870,8 +871,17 @@ function moveNodes(payload: MoveNodesPayload, viewOf?: () => Camera3dMode): void
   for (const id of payload.ids) {
     const node = defaultSceneGraph.getNode(id as ID);
     if (!node || node.locked) continue;
-    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y'])) toKey.push(node);
-    else toWrite.push(node);
+    // A layer being MOTION SKETCHED always keyframes, whatever the
+    // Auto-Keyframe preference says and whether or not it already has a track.
+    // Recording a path is an explicit request for keyframes — the same intent
+    // as a lit stopwatch — and without this the commonest case does nothing at
+    // all: a fresh layer has no x/y track, so with Auto-Keyframe off it takes
+    // the static-write branch, the recorder is never fed, and the take comes
+    // back empty with no error. Found by driving the real command in the app;
+    // no unit test on the reduction could have seen it (rule 5·0).
+    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y']) || motionSketchNodeId() === node.id) {
+      toKey.push(node);
+    } else toWrite.push(node);
   }
 
   const comp = useProjectStore.getState().comps[
@@ -936,6 +946,14 @@ function moveNodes(payload: MoveNodesPayload, viewOf?: () => Camera3dMode): void
           const cy = cidOf(node, 'y');
           defaultSceneGraph.writeProp(node.id, cx, 'x', curX + delta.x);
           defaultSceneGraph.writeProp(node.id, cy, 'y', curY + delta.y);
+          // Motion Sketch records HERE and nowhere else, because this is the
+          // one place a viewport drag has already become the layer's OWN x/y —
+          // through the parent's inverse world matrix above, on the keyframe
+          // axis via `getRemappedTime`. A recorder sampling the pointer itself
+          // would need a second copy of both conversions and would be wrong
+          // under a moving parent in exactly the way F23 was. No-ops unless a
+          // recording is armed for this node.
+          recordMotionSketchSample(node.id, curX + delta.x, curY + delta.y, lt);
           // Depth is NOT run through the parent inverse above: that is a 2×3
           // affine with no z, so it cannot express the depth axis. A 3D parent
           // chain's own depth handling lives in nodeMatrix.parentWorld3d.

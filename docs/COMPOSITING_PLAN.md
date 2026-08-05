@@ -590,12 +590,20 @@ set genuinely cannot be derived, that inability is itself the finding, because i
 means the thing under test has no enumerable identity and the next person will
 make the same list again.
 
-The same rule caught a second instance in the same run at a smaller scale: the
-eslint config hand-listed eight Node globals "rather than pulling in the package
-for six names", then stopped covering anything written afterwards, and reported
-six `no-undef` errors on globals that plainly exist. The cost there was not the
-six errors but that `no-undef` had become useless in those files — a genuinely
-undefined name would have looked exactly like the false ones.
+The same rule caught a second instance at a smaller scale, and the pairing is
+worth keeping because it shows the shape is not about expressions or
+autocomplete: the eslint config hand-listed eight Node globals *"rather than
+pulling in the `globals` package for six names"*, then covered nothing written
+afterwards, and reported six `no-undef` errors on globals that plainly exist.
+
+The cost is identical in both, and it is not the false reports. It is that the
+guard becomes **inert**: `no-undef` in those files, like the discoverability
+assertion for any name outside its sixteen, cannot fail for the case it exists
+to catch. A guard emitting constant false positives is not a weak guard — it is
+a disabled one that still looks enabled, and the noise trains everyone to
+discount exactly the signal it was installed to raise. Written up in full beside
+the lint gate (§2b-quaterdecies), which is where the same argument decided that
+41 harmless errors were what hid the one real one.
 
 ### The variant with no compile-time surface at all: a PROP PATH
 
@@ -960,6 +968,54 @@ open in two of them:
    offset applied a wrong key reads 0 exactly like a right one, and fails only
    the moved fixture. The rule found the hole before the break did, which is the
    order it is supposed to work in.
+
+   **The rule applies to the fixtures that demonstrate the rule.** Added
+   2026-08-06, from Exponential Scale, and it is the sharpest evidence the rule
+   generalises: the miss was found INSIDE its own demonstration.
+
+   The bake writes the final keyframe from the ORIGINAL end value rather than
+   from the formula, because `s0 · (s1/s0)^1` is not reliably `s1` in floating
+   point and an end-of-animation that drifts by a hair is unexplainable later.
+   The test pinning that used 37 → 991 — values picked to look awkward, with a
+   comment saying so.
+
+   Breaking the endpoint failed NOTHING. 37 → 991 is one of the pairs where
+   `s0 · (s1/s0)^1` lands exactly on `s1`, so the fixture could not reach the
+   case the guard exists for. "Awkward-looking" is not the same property as
+   "reaches the boundary", and picking values by eye selects for the first.
+
+   A sweep of integer pairs found `7 → 29`, where the formula gives
+   `29.000000000000004`; a sweep of random pairs put the rate near **1 in 14**,
+   so the inexact case is ordinary rather than exotic — the original fixture was
+   simply unlucky, in the way rule 3a says fixtures chosen for tidiness are. The
+   premise is now an assertion (`expect(exponentialScaleAt(r, 1)).not.toBe(29)`)
+   so it cannot rot, and breaking the endpoint fails exactly one test.
+
+   Two things worth carrying: the property to test for is REACHABILITY, not
+   apparent messiness — and where reachability is a numeric accident, SWEEP for
+   a case rather than guessing one. The sweep is three lines and it answers the
+   question the eye cannot.
+
+   **Second worked example: the capture-speed ANCHOR.** Added 2026-08-06, from
+   Motion Sketch, and it is the best application of this rule so far for one
+   reason — the brief listed three things a casual path excludes, and DERIVING
+   found a fourth that nobody had named.
+
+   Capture speed rescales a recording's sample times. The question rule 3a asks
+   is "what can my fixture never produce?", and the answer was: a first sample
+   at anything other than zero. Scaling times about ZERO and scaling them about
+   the FIRST SAMPLE are the same operation when the first sample is zero, and
+   completely different otherwise — at 50% speed a take starting at t=2 either
+   stays at 2 (correct) or jumps to 4 (wrong), and a fixture recorded from t=0
+   cannot tell those apart. Every capture-speed fixture therefore starts at
+   t=2, and breaking the anchor fails three tests.
+
+   Nothing about the anchor was messy, surprising, or flagged in advance. It
+   was found by asking the rule's question mechanically about a value —
+   `t0` — that the obvious fixture would have set to zero without a thought.
+   Which is the argument for asking it every time rather than when something
+   looks suspicious: **the excluded case is usually the one chosen by default,
+   and defaults do not look like choices.**
 3b. **A test's stated rationale is an assertion too — measure it, and rewrite
    it when it is wrong.** Added 2026-08-05.
 
@@ -1195,6 +1251,29 @@ open in two of them:
    actually teaches is the ORDER of prediction and observation. Pixels were only
    ever one way to observe.
 
+   **The cleanest instance so far is F29 (§2b-quinquiesdecies), because the test
+   file PREDICTED its own blind spot and was then proved right.** Motion Sketch's
+   guards are complete and correct about the reduction, the capture speed, the
+   splice and the two-track fan-out — and every one of them passes with the
+   recorder never fed a single sample, because they construct their own arrays.
+   The header says exactly that, in advance:
+
+   > *What it CANNOT see is that the samples are in the right SPACE … Nothing
+   > here would change if the wiring fed it screen pixels. That is a wiring
+   > fact, checked in the running app.*
+
+   And that is precisely where the bug was. `moveNodes` only keyframes when
+   Auto-Keyframe is on or the layer already has an x/y track, so on a fresh
+   layer the recorder was never called at all — the commonest case, silent, no
+   error, with a fully green suite. Naming the blind spot did not close it; only
+   changing medium did.
+
+   Which is the rule's real content. **A test header that names what the medium
+   cannot sample is a promissory note, not a guard.** It tells the next person
+   where to look, and it obliges THIS person to go and look there before calling
+   the feature done — in another medium, not by writing more tests in the same
+   one.
+
 5. **A golden is not independent evidence.** It records whatever the code did on
    the day it was blessed. Spherize's golden was blessed from the bug and had to
    be re-blessed after the fix.
@@ -1349,6 +1428,41 @@ rather than treating as one bad day.
    the problem, not a guessed iteration cap. Then breaking the invariant produces
    a visibly wrong run, which is a test result.
 
+   **8a. PREFER THE FORM THAT CANNOT RUN AWAY OVER THE ONE THAT IS BOUNDED.**
+   Amended 2026-08-06, from Exponential Scale, where the stronger version was
+   available for free and the rule as written would have accepted the weaker one.
+
+   The bake first walked the span with an accumulator:
+
+   ```js
+   for (let t = t0 + step; t < t1 - step / 2; t += step)   // hangs on step <= 0
+   ```
+
+   A negative or zero `step` never advances toward `t1`, so the loop runs
+   forever. A `Math.max(1, fps)` floor upstream prevented that — and breaking
+   the floor HUNG the suite rather than failing it, which is precisely rule 8's
+   complaint. Adding an iteration cap would have satisfied rule 8 as stated.
+
+   Counting instead removes the failure mode rather than catching it:
+
+   ```js
+   const frames = Math.floor((t1 - t0) / step);
+   for (let i = 1; i < frames; i++) { const t = t0 + i * step; … }
+   ```
+
+   `i` advances by construction, so no value of `step` can produce a runaway —
+   the floor upstream became belt-and-braces rather than load-bearing, which is
+   what "structural" should mean. Two things came free with it: float
+   accumulation disappeared (frame 600 is `600 · step`, not 600 additions), and
+   a guard that had been guessing at the end (`t < t1 - step/2`) turned out to
+   be DEAD once `i < frames` was strict, and was deleted rather than left
+   implying coverage.
+
+   So the ladder is: an unbounded loop is worst, a bounded loop is acceptable,
+   and a loop whose counter cannot fail to advance is the one to reach for. Ask
+   whether the iteration can be COUNTED before reaching for a cap — a cap is a
+   guess about the problem, a count is a statement of it.
+
 ## 2b-sexies. 2026-08-05 — the repeater gate PASSES, and F19 blocks the fold anyway
 
 **The gate answer: the arrows would NOT be inert.** Measured, hand-computed
@@ -1416,6 +1530,198 @@ one of the five either.
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
+
+## 2b-quinquiesdecies. 2026-08-06 — Motion Sketch, and a reduction that is wrong by default
+
+**The eleventh instance, in a new form: not the feature, the ENGINE.** Motion
+Sketch genuinely did not exist. `core/rig/puppetSketch.ts` did, and it holds the
+entire sample→keyframe reduction — Douglas–Peucker on the spatial path, time
+thinning, same-instant collapse, easing of the survivors — written for Puppet
+Sketch, tested in `rig/phase3.test.ts`, wired to `PuppetOverlay`, and completely
+generic: it operates on `{x, y, t}` and knows nothing about pins.
+
+Worth distinguishing from the previous ten. Those were "the thing you are about
+to build is already there". This is "the *hard part* of the thing you are about
+to build is already there, under a name that does not mention it". The search
+that finds it is not `grep -i "motion sketch"` — that correctly returns nothing.
+It is noticing that `puppetSketch` in the rig folder is a general algorithm with
+a domain-specific filename.
+
+### The search heuristic this gives us
+
+**When a feature seems absent, search for the ALGORITHM it needs, not the name
+it has.** A name search answers "has anyone built this feature", which is the
+question you already suspect the answer to. The algorithm search answers "does
+the hard part exist", which is the one that changes the estimate.
+
+For Motion Sketch the feature name returned nothing, correctly, while the
+algorithm — reduce a timed point stream to keyframes — was sitting complete and
+tested two folders away. Concretely, the searches that would have found it:
+`Douglas`, `simplify`, `tolerance`, `Recorder`, `samples`, `{ x, y, t }`.
+
+Filenames encode the first caller, not the capability. `puppetSketch` is generic
+over `{x, y, t}` and mentions pins nowhere in its logic; `layerSpace` serves
+expressions, overlays and rig handles alike; `puppetSketch`'s reduction now
+serves two features under a name that still names one. That is not a mistake to
+go and fix — renaming churns imports for no behaviour — but it IS a permanent
+reason to search by what a thing DOES.
+
+Stated as a check to run before estimating: name the operation in the abstract
+("reduce a timed point stream", "map layer-local to screen", "undo the
+layer-relative offset"), then grep for that, across `src/` **and** `packages/`.
+
+### F28 is what the standard is FOR
+
+Both findings below are real, but they are not equal. F29 was caught by running
+the thing; a careful person catches it eventually, because an empty take is
+visible the first time anyone tries the feature. **F28 would have shipped**, and
+shipped looking fine: smoothing on by default produces a plausible curve from
+any recording, and the only symptom is that pauses you performed are not in the
+result — which reads as "I must have drifted", not as a bug.
+
+It was caught before a line of the feature was written, by asking what
+Douglas–Peucker does to a stationary hold and answering it on paper: a hold is
+exactly collinear, the test is `distance > tol`, therefore the hold is dropped
+at every tolerance including zero. No fixture, no run, no debugging. That is the
+entire argument for deriving on paper first — the cost was five minutes and the
+alternative was a feature that quietly discards the thing it was built to
+record.
+
+### `simplify: false` — the right shape for changing a shared engine
+
+The fix needed the shared reduction to stop reducing, and the tempting spellings
+were both wrong. `tolerance: 0` does not mean "keep everything" (the test is
+`distance > tol`, so collinear points still go). Forking the function for
+Motion Sketch would have made two implementations of the one algorithm, drifting
+on exactly the cases nobody re-tests.
+
+What went in instead is worth naming as a pattern:
+
+* **ADDITIVE.** A new optional flag, defaulting to the existing behaviour, so
+  every existing caller is untouched by construction rather than by inspection.
+* **The existing consumer's suite stays green THROUGH THE BREAK SET.**
+  `phase3.test.ts` — Puppet Sketch's own guards — passed on every one of the
+  seven breaks run against the new code, including the break that removes the
+  flag's effect entirely. That is the evidence the change is additive, and it is
+  stronger than reading the diff.
+* **The new behaviour is documented at the shared function**, not only at the
+  new caller, because the next person to reach for the engine needs to know the
+  reduction is spatial and what that costs.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| **F28** | **A spatial reduction is the WRONG DEFAULT for motion capture, and `tolerance: 0` does not turn it off.** Douglas–Peucker keeps a point when its distance from the chord between its neighbours exceeds the tolerance. A stationary hold is exactly collinear, so every sample of it sits at distance 0 and is dropped *at any tolerance including zero* — the test is `distance > tol`. A layer held still for a second and then moved reduces to two keyframes: a straight drift across the whole take, with the pause gone. For Puppet Sketch that is an acceptable trade (pins are dragged continuously). For Motion Sketch the timing IS the content. | **Correctness, would-have-shipped** | **FIXED before shipping.** The shared engine gained `simplify: false` (additive — `phase3.test.ts` stays green through the whole break set), and Motion Sketch defaults to one keyframe per frame as AE does, with smoothing as an opt-in. Both halves asserted: the default preserves a 21-sample hold, smoothing reduces it to 2. The cost is a fact the suite holds, not a warning in a comment. |
+| **F29** | **`moveNodes` only keyframes when Auto-Keyframe is on or the layer already has an x/y track** (`ports.ts:874`), so an armed Motion Sketch on a FRESH layer recorded nothing at all — the commonest case, failing silently with an empty take and no error. An armed recording now always keyframes, which is the same intent as a lit stopwatch. | **Wiring, live** | **FIXED** |
+
+**F29 is rule 5·0 earning its place.** The unit tests are complete and correct
+about the reduction, the capture speed, the splice and the two-track fan-out —
+and every one of them passes with the recorder never fed, because they build
+their own sample arrays. The header of `motionSketch.test.ts` says so in
+advance. It took driving the real command in the running app to see zero samples
+come back, and the fix is in a file the tests never touch.
+
+**Also worth noting: this is adjacent to F22 but not it.** F22 is about whether
+effect params should honour the Auto-Keyframe preference. F29 is not a change to
+what Auto-Keyframe means — it is that an explicit "record this path" request
+implies keyframes regardless, the same way dragging a property with a lit
+stopwatch does. F22 stays untouched and undecided on timing.
+
+## 2b-quaterdecies. 2026-08-06 — the lint gate, and why the RATIO is the argument
+
+**42 errors, one of them real. That ratio is the case for the gate, and it is a
+stronger case than "the suite should be green".**
+
+### The real one: a constant the code never used
+
+`stylize.ts`'s value-noise hash multiplied the seed by `1442695040888963407` —
+splitmix64's constant. It needs 61 bits. A double carries 53, so JavaScript
+silently rounds the literal to `1442695040888963328`, 79 less than written. The
+code had never performed the arithmetic it appeared to describe, and nothing
+anywhere would ever have said so: the hash still hashes, the noise still looks
+like noise, and no test can fail because no expected value was ever derived from
+the intended constant.
+
+**Written as the true value rather than replaced with a representable one, and
+that choice is the interesting part.** Any odd constant works for a hash, so
+"fixing" it properly — picking a number that fits in 53 bits — would change
+every frame of every layer using this noise. That is a behaviour change to a
+shipped effect *wearing a lint fix's clothes*, and it would have shipped inside
+a commit whose message said "satisfy no-loss-of-precision". Writing
+`…328` keeps the output bit-identical (`1442695040888963407 ===
+1442695040888963328` is `true`, which is the whole proof) and stops the source
+claiming an arithmetic it does not perform. The correction is a no-op by
+construction rather than by test.
+
+### Why the other 41 matter
+
+They were style, config and false positives — deliberate `require()` in tests,
+`no-undef` on real Node globals, a `rules-of-hooks` hit on an SVG `<use>`
+resolver that happened to be called `useTarget`. Individually, none worth a
+commit.
+
+Collectively they are what hid the first one. **A gate nobody can pass is worse
+than no gate**, because the next real error arrives indistinguishable from the
+existing noise — and this one did exactly that, for months. The argument for
+running lint is not tidiness; it is that a signal only works against a quiet
+background, and 41 harmless errors are not a quiet background.
+
+Root cause worth naming separately: `CONTRIBUTING.md` promised contributors that
+typecheck, test and lint must all be clean, and **nothing ran lint anywhere**.
+`release.yml` ran typecheck and test, but only on a release TAG, so `dev` was
+ungated entirely. The promise had no enforcement behind it, which is the same
+shape as a comment where an enforcement should be (§2·0).
+
+### The globals list is F25 at smaller scale
+
+The eslint config declared eight Node globals inline, with a comment explaining
+the choice: *"rather than pulling in the `globals` package for six names."* It
+then covered nothing written afterwards — `setTimeout`, `clearTimeout`, `fetch`,
+`Blob`, `FormData` all reported undefined.
+
+This is **exactly F25** (see §2·0, *the variant INSIDE the guard*), one level
+down: a hand-maintained list standing in for a set that should have been
+derived, inside the thing meant to catch the problem. And the cost has the same
+shape too. It was never the six false errors — it is that `no-undef` had become
+**inert** in those files, so a genuinely undefined name would have looked
+identical to the false ones and been dismissed with them. A guard that reports
+constant false positives is not a weak guard; it is a disabled one that still
+looks enabled.
+
+Both are now derived from the thing under test — `boundScopeNames()` reflecting
+the real scope Map, `globals.node` replacing the hand list.
+
+### `better-sqlite3`: the hard dependency WAS the bug
+
+`npm install` failed in a fresh checkout because `better-sqlite3` builds from
+source and its failure aborts the entire install, leaving `node_modules` empty.
+The copy-`node_modules`-across workaround was a workaround. Making the package
+an `optionalDependency` is the actual fix, and the reason is that **it was
+already optional in fact**: `electron/localIndexDb.ts` loads it behind a guarded
+require, `index:available` returns false without it, the renderer falls back to
+an in-memory index, and the header says outright that "a missing DB never blocks
+editing". The manifest claimed a hard requirement the code did not have. The
+declaration was the defect.
+
+What makes that safe rather than merely convenient is the other half:
+`release.yml` now asserts the driver really built before packaging. Optional for
+a contributor without MSVC, mandatory for a release — otherwise "optional" would
+quietly become "sometimes absent from shipped installers", which is a worse bug
+than the one it fixed.
+
+### Reverting `--fix-type directive` was also correct
+
+32 of the remaining warnings are unused `eslint-disable` directives, and eslint
+removes them all with one flag. It was applied and reverted. It rewrites 30+
+files the change had no other business touching, and it deletes comments that
+carry intent — an `eqeqeq` disable sitting on a *deliberate* loose compare in
+the expression evaluator, where the rule is not even enabled, so the comment is
+documentation rather than suppression. It also leaves trailing whitespace.
+
+**A change that looks purely mechanical and is not.** The right home for it is
+its own commit where a reviewer is looking at exactly that, not folded into a
+gate change where 30 incidental files make the two real ones invisible — which
+is the same "signal against a quiet background" argument as the 41 errors above,
+pointed at a diff instead of a log.
 
 ## 2b-terdecies. 2026-08-06 — two features that already existed, and a guard that only half worked
 

@@ -70,6 +70,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isAudioNode } from '@core/audio/audioScene';
 import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
 import { applyExponentialScale, eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
+import { armMotionSketch, finishMotionSketch } from '@core/animation/motionSketch';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
@@ -337,6 +338,41 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => true,
       execute: () => {
         document.querySelector<HTMLElement>('[data-workspace-viewport]')?.focus();
+      },
+    },
+    {
+      /**
+       * Motion Sketch — arm, then draw the layer's path while the comp plays.
+       *
+       * Arming rather than acting immediately is AE's shape and the only one
+       * available: the gesture IS the input, so a command can only set up for
+       * it. Recording ends on the first pointer release, which is the end of
+       * the drag the user just made — a release with no drag records nothing
+       * and says so, rather than leaving a session armed indefinitely.
+       *
+       * Playback starts with the arming, because a sketch against a stopped
+       * playhead puts every sample at one instant; `dedupeByTime` collapses
+       * that to a single keyframe, which is correct and also useless.
+       */
+      id: asCommandId('animation.motionSketch'),
+      label: 'Motion Sketch (Record Position)',
+      icon: 'pencil-line',
+      enabled: () => useSelectionStore.getState().ids.length === 1,
+      execute: () => {
+        const nodeId = useSelectionStore.getState().ids[0];
+        if (!nodeId) return;
+        armMotionSketch(nodeId);
+        const ctrl = getTimelineController();
+        if (!ctrl.isPlaying) ctrl.play();
+        notify('Motion Sketch armed — drag the layer to record', 'info');
+        window.addEventListener('pointerup', () => {
+          const n = finishMotionSketch();
+          if (ctrl.isPlaying) ctrl.pause();
+          notify(
+            n > 0 ? `Motion Sketch — ${n} keyframes recorded` : 'Motion Sketch — nothing recorded',
+            n > 0 ? 'success' : 'warning',
+          );
+        }, { once: true });
       },
     },
     {
