@@ -406,6 +406,7 @@ export function createAnimFacade(): AnimFacade {
     setRoving: (nodeId, prop, t, roving) => defaultAnimation.setRoving(nodeId, prop, t, roving),
     setExpression: (nodeId, prop, src) => defaultAnimation.setExpression(nodeId, prop, src),
     getExpressionError: (nodeId, prop) => defaultAnimation.getExpressionError(nodeId, prop),
+    isExpressionEnabled: (nodeId, prop) => defaultAnimation.isExpressionEnabled(nodeId, prop),
     tracks: (nodeId) =>
       defaultAnimation.tracksFor(nodeId).map((tr) => ({
         prop: tr.prop,

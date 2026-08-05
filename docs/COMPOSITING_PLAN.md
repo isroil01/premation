@@ -812,6 +812,7 @@ Catalogued rather than absorbed.
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
 | **F14** | **FIXED (multi-subpath geometry).** ~~Trim Paths does not trim — it only trims the stroke.~~ `buildSnapshot.ts:1986` writes `layer.trim = segs`, and that field has exactly two non-test readers: the content-hash cache key (`contentHash.ts:52`) and `strokeTrimmed`, called only inside the stroke branch (`Canvas2DVectorRasterizer.ts:458`). The fill runs `shapePath → ctx.fill()` **unconditionally**, above it and independent of it (`Canvas2DVectorRasterizer.ts:445-452`). AE's Trim Paths cuts **the path itself**, so the fill follows the trim. Ours is wrong against AE for **any filled shape**, today, in shipped builds — and a new shape layer defaults to a solid fill (`#2B7EFF`), so this is the common case, not an edge one. Found while deciding whether `trim` folds into `fx.pathOps`. **This is a correctness defect, not a missing feature** — "trim doesn't fold into the stack" and "trim doesn't trim fills" get prioritised very differently, and the second is the true one. | **Correctness, live** | Fix = the multi-subpath prerequisite: lift `Pt[][]` — already produced by `trimPolyline` (`trimPath.ts:191`), the only such producer, currently consumed entirely inside `strokeTrimmed` and never escaping into the render contract — into `RenderLayer`, and teach the **rasterizer, content hash, hit-testing and bbox** about subpath lists. **The fix and the `trim`/`rep` fold-in prerequisite are the same work**; one change unblocks both. **Deliberately breaks byte-identity** for filled+trimmed shapes, so it ships as an announced **behaviour change with a release note**, not a silent migration — same treatment as the curves interpolation change and F1's error surfacing (M8b). Design context: `PREMATION_COMPLETE_REFERENCE.md` §17.5. |
+| **F31** | **`captureDocument` stamps every document it writes `version: '1.1.0'`** — a hardcoded literal at `cloudDocument.ts:43`. Nothing writes `CURRENT_DOCUMENT_VERSION` (1.6.0), so a project saved by this build is five versions behind its own contents and is walked through the whole migration chain again on every open. It has been survivable only because each step happens to no-op on already-current data, which is luck rather than design: it makes IDEMPOTENCE load-bearing for every migration, present and future, and a step that rewrites unconditionally would corrupt freshly-saved work on the first reopen (1.6.0 nearly did — see §2b-septiesdecies). It also means `DocumentVersionError`'s "saved by a newer version" check can never fire for a document this build wrote. Found while writing the 1.6.0 migration. | **Correctness, latent** | One line — `version: CURRENT_DOCUMENT_VERSION` — plus a test that a captured document round-trips at the current version and a sweep of the five existing steps for anything that is only correct because it never sees its own output. NOT taken in this run: it changes which migrations run on every existing local project, which deserves its own change and its own break sweep. |
 | **F1** | A precomp used as a **matte source** beyond the depth cap renders the matted layer **UNMATTED, silently** (`CompositionPass.ts:1057` → `:1068`). Pre-existing, unrelated to stencil, same severity class as the risk D2 exists to prevent. | Correctness, latent | **SCHEDULED as M8b (S)**, immediately after the M8a mechanism it shares. Not folded into stencil work, where it would be invisible in review. |
 | **F4** | **The local test suite silently ran 13 fewer test files than a clean checkout** — 392 vs 405 discovered, ~533 tests, including `editorBoot.smoke.test.tsx`. Files present on disk and tracked at HEAD; jest returned nothing even when pointed directly at them. Not a cache issue. Same directories `git stash` failed on with "Permission denied". | **Process, high** | **RESOLVED 2026-08-03** — repo moved `OneDrive/Desktop/motion-editor` → `C:\Users\isroi\dev\motion-editor`. Discovery now 405/405; full suite 488 suites / 5739 passing / 0 failures. |
 | **F6** | **Bake ownership is expressed by more than one predicate and they can disagree.** `snapshotToFrameScene` gated on `effectsNeedCpuBake`, the rasterizer on `layerNeedsCpuBake`; fill opacity alone triggers a bake without any effect requiring it, so both sides claimed the chain and effects applied twice. Third instance of the family (after ea47497 "which side may bake" and b814e3a "what the bake can draw"). `fill-opacity-zero-stroke` was correct at HEAD, wrong mid-branch, correct again by luck of commit order — no golden would have caught it one commit earlier. | Correctness, class | **SCHEDULED as M5b**, before M6 — `hasActiveMaskPaths` is about to become a fourth gate. Fix is one `layerIsBaked()` source of truth, not three sites kept in sync by attention. |
@@ -930,6 +931,17 @@ open in two of them:
    | a trim at 37% | a trim exactly at a vertex, which commutes |
    | a repeater with offsets | the translate-only DEFAULT, which is rigid |
    | an interior shape | a shape touching the plane edge |
+   | a guide layer, and separately a soloed layer | ONE layer that is BOTH, where the two rules point opposite ways |
+
+   The last row is worth a sentence because the excluded case is not a numeric
+   edge — it is a COMBINATION. Solo says "only this one" and guide says "not
+   this one", so a layer carrying both is the only fixture where the two rules
+   disagree, and no fixture exercising one flag at a time can produce it. Guide
+   wins (a guide layer is an authoring aid; soloing one should not deliver it),
+   and that is now asserted rather than left to whichever branch happens to run
+   first. Rule 3a's question — what can my fixtures never produce? — reaches
+   combinations as readily as numbers, and clean fixtures are single-variable
+   by construction.
 
    **THE QUESTION TO ASK IS REACHABILITY, NOT INERTNESS.** This is the part
    worth carrying, because the obvious phrasing — "check the boundary case" —
@@ -1193,6 +1205,82 @@ open in two of them:
    thing the test was named after. The check is cheap and belongs in the writing
    rather than the debugging — read the real implementation's signature and its
    failure modes before writing the stub that stands in for it.
+
+4c. **A guard SET can be complete over the parts and empty over the SEAM.**
+   Added 2026-08-06, from F30, and it is a category the four readings of 4b do
+   not contain. Every one of those — dead guard, unreachable fixture, unfaithful
+   fixture, incoherent break — is a property of ONE guard. This is a property of
+   the set: full coverage of every component, zero coverage of their
+   composition.
+
+   The shape, concretely. Guide layers are decided by `exportComp`, a one-line
+   helper that stamps `forExport` onto the comp handed to `buildSnapshot`. Two
+   guards watched it, both deliberate, both correct:
+
+   | Guard | What it observes |
+   |---|---|
+   | `exportPathsMarkForExport` | that the four export call sites *mention* `exportComp` — source text |
+   | `guideLayers.test.ts` | that `buildSnapshot` honours `forExport` — on a comp it builds itself |
+
+   Changing `exportComp` to return `forExport: false` — the single line deciding
+   whether a guide layer reaches a delivered file — broke **nothing**. The first
+   guard reads the call sites and never runs the helper; the second runs the
+   rule and never asks the helper what it returns. The helper's body is watched
+   by neither, and the split is exactly why: **test A checks the caller, test B
+   checks the callee's contract AS A IMAGINES IT, and the callee's actual body
+   falls through the middle.**
+
+   Splitting rule from wiring was still right — they fail differently and need
+   different media, which is 5·0. The cost of the split is this seam, and it has
+   to be paid for deliberately rather than discovered.
+
+   **Why §2·0's "which guards stayed green" cannot find this one.** That check
+   is the strongest signal available for a set built by ENUMERATION — break a
+   thing, read the whole result, and a neighbour staying green proves the two
+   guards are independent. It is useless for a set built by SPLITTING, because
+   the answer here is *all of them stayed green*, and a wholly green run reads
+   as "nothing broke" rather than as "nothing was watching". The informative
+   break of 4a fails a little; this one fails nothing at all, and 4a's two
+   readings both point at a single guard that does not exist yet. The set is the
+   subject and no per-guard question reaches it.
+
+   **The mechanical check, and it is cheap.** For any value that crosses a seam
+   between two guarded units, ask *which guard observes the crossing*. If the
+   answer is "the first one assumes it and the second one constructs it",
+   nothing does — write the third guard that calls the real producer and asserts
+   what it actually returns, including the arguments the clean path never passes
+   (F30's was `comp === undefined`, which every honest call site reaches and no
+   fixture did).
+
+   Ask it at the joins the code already names: a helper between a caller and a
+   callee, a value threaded through a constructor, a legacy branch that
+   bypasses a converter every other path runs. Task 1 of this run found one
+   prospectively that way — `restoreRecovery`'s pre-1.1 branch calls
+   `defaultAnimation.restore` directly, so nothing between an old snapshot and
+   the engine observes the shape change (see §2b-septiesdecies).
+
+4d. **Assert the test COUNT when verifying a break. A suite that shrinks is not
+   a suite that passes.** Added 2026-08-06, from the same run, and it is the
+   trap that makes every rule above unenforceable when it fires.
+
+   Deleting a line to verify a guard left an unused import behind.
+   `guideLayers.test.ts` then failed to COMPILE, its ten tests never ran, and
+   the totals went 17 → 7 while the summary reported **zero failures**. Read as
+   a break result, that is "the guard did not fire". Read correctly, it is "the
+   guard was not present".
+
+   "Zero failures" and "nothing ran" are indistinguishable in a summary line,
+   and the break sweep is exactly when a suite is most likely to stop compiling
+   — because breaking a thing is how imports become unused, types stop matching
+   and fixtures stop type-checking. The failure mode is aimed at the moment you
+   are relying on the count.
+
+   So a break result is a PAIR: the tests that failed, and the total that ran.
+   Record the baseline total before the sweep, compare after every break, and
+   treat any drop as the break being invalid rather than as evidence. This is
+   the OneDrive tell (`--listTests` counted 392 against 405) arriving through a
+   different mechanism, and it belongs in 5·0's table: **a green suite cannot
+   see a suite that did not run.**
 
 5·0. **Before blessing a scene, confirm the thing under test can REACH the
    medium.** Added 2026-08-05, from F23, and numbered `·0` because it is the
@@ -1530,6 +1618,289 @@ one of the five either.
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
+
+## 2b-septiesdecies. 2026-08-06 — the expression enabled-state, and a seam found by asking
+
+**The model change was the whole difficulty, and it was a representation
+problem in three places at once.** `setExpression(nodeId, prop, src)` stored a
+compiled expression, present or absent, so "disable but keep" had nowhere to
+live. Adding a bit is one line; the work is that PRESENCE was doing the job of
+enablement in the engine, in the undo record, and in the persisted document, and
+each of the three encodes it differently.
+
+| Layer | How presence was encoded | What it becomes |
+|---|---|---|
+| engine | a key in the map, or no key | `{ compiled, enabled }` |
+| undo | `expressionAfter: string \| null` — the string IS the bit | `ExpressionState \| null` |
+| document | `expressions[node][prop]: string` | `{ src, enabled }`, document 1.6.0 |
+
+The undo one is the trap, and it was named in advance. `string | null` has two
+states and the model now has three, so an undo across a disable had only wrong
+answers available: restore the string, and a formula the user switched off runs
+again; treat it as absent, and one they wanted kept is deleted. Neither is a
+bug you would find by reading the diff — both look like the code doing what it
+says.
+
+**`tsc` clean means nothing on a change of this shape, and the sweep is what
+matters.** A reader of presence where it should read enablement type-checks
+perfectly. The sweep found three:
+
+* `sampleInternal` — the one line where the bit decides anything.
+* `diffTracks`'s `eb === ea` — correct on strings, a REFERENCE comparison on
+  objects. Every snapshot allocates fresh ones, so it would have reported the
+  expression as changed on every unrelated edit.
+* The AI's `set_expression`, which reports "it now overrides any keyframed
+  value". `setExpression` preserves the disabled bit deliberately, so on a
+  disabled property that sentence is false and sends the model hunting a
+  rendering bug that does not exist.
+
+The last one is the same class as the showcase seed and `set_repeater`: a prop
+path with no compile-time surface, found by reading call sites rather than by
+the compiler.
+
+### The seam, asked prospectively rather than found afterwards
+
+Rule 4c's question — *for a value crossing between two guarded units, which
+guard observes the crossing?* — was run over this change while designing it, and
+it returned an answer.
+
+`restoreRecovery` has a pre-1.1 branch that called `defaultAnimation.restore`
+DIRECTLY: the one path from persisted state into the engine with no migration
+between, on the subsystem whose entire purpose is not losing work after a crash.
+It was correct while every schema change was additive, and it had no test
+because until 1.6.0 there was nothing for one to catch. Document 1.6.0 changes
+the shape of `expressions`, and `restore` reads one shape only — so an old
+snapshot's expressions would have been dropped silently by the restore that
+exists to prevent exactly that.
+
+It now assembles a document at `IMPLIED_LEGACY_VERSION` and goes through
+`restoreDocument` like every other foreign state — §2·0's "guarantee one
+reader". Breaking it back fails exactly one test, the one written for the seam,
+and **nothing else** — which is the demonstration rule 4c is about: before that
+test existed, this break was green across the whole set.
+
+Asking the question also produced a second, smaller find on the same path:
+`restore` did `Object.keys(data.expressions)` on a field that a
+pre-expressions snapshot does not have at all, and threw. Nothing had noticed,
+because that branch never reached `restore` through a path anyone tested.
+
+### F31, logged not fixed
+
+**`captureDocument` writes `version: '1.1.0'` as a hardcoded literal.** Nothing
+writes `CURRENT_DOCUMENT_VERSION` (now 1.6.0), so every document this build
+saves is stamped five versions behind and is walked through the entire
+migration chain again on every open.
+
+It is out of scope and it is not harmless: it makes IDEMPOTENCE load-bearing
+for every migration rather than a nicety. This step converts only a `string`
+value and passes an object through untouched, which is why a project saved by
+this build keeps its `enabled: false` — a step that rewrote unconditionally
+would have worked perfectly right up until the first reopen, and the test that
+catches it is in the round-trip suite, not the migration's own.
+
+### Boundaries, and one fixture class that agrees by accident
+
+Rule 3a on the engine guards. The obvious fixture is a keyframed property with
+an expression, and it excludes:
+
+| Excluded | Why it matters |
+|---|---|
+| a property with NO keyframes | its fallback is the base-value provider, a different branch |
+| an expression that AGREES with the keyframes | enabled and disabled return the same number, so the fixture cannot fail |
+| a CROSS-LAYER read | enablement is consulted on a node the fixture never names |
+| an expression that ERRORS | `sample` catches cycles and falls back itself — same answer, other reason |
+
+The second and fourth are worth keeping because they are fixtures that LOOK
+like enablement tests and measure something else. `value * 0 + 50` on a track
+that reads 50 at the sample instant proves nothing however the bit is read, and
+a self-cycling expression answers identically either way because the catch
+block, not the flag, produced the number. Both are in the file as negative
+examples, and the main fixture's discriminating power is asserted beside them so
+it cannot drift into that class unnoticed.
+
+### The medium found the wiring, again
+
+The component test caught something neither unit test could: `ExpressionEditor`
+subscribed to the SCENE revision only. Every state it showed until now happened
+to change local `draft` state too, so a scene bump was enough by accident; the
+toggle changes only engine state, and without `useAnimationRevision` the switch
+stayed visually on after being turned off. Both unit suites were fully green
+while that was true — 5·0's point, and F29's shape one more time.
+
+### The break sweep, with counts (rule 4d)
+
+Baseline for the guard set: **8 suites, 92 tests.** Every break below held that
+total; a drop would have meant the break was invalid rather than informative.
+
+| Break | Failed | Stayed green |
+|---|---|---|
+| sampler ignores the bit | 18 | migration + undo suites — they watch shape and diffing, not sampling |
+| `setExpression` re-enables on rewrite | 3 | everything else |
+| `exprEqual` compares only `src` | 3 | the engine suite entirely |
+| `snapshot()` always writes `enabled: true` | 10 | the migration suite |
+| migration step unregistered | 5 | engine + undo suites |
+| migration rewrites unconditionally | 3 | the engine suite; caught by the round-trip AND idempotence tests independently |
+| recovery bypasses the migration | **1** | all seven other suites |
+| panel does not subscribe to changes | 2 | everything not rendering |
+| toggle button inert | 2 | everything not rendering |
+| `restore` also accepts the legacy string | 1 | all but the guard written for that rule |
+| AI report ignores enablement | **0** | **everything** |
+
+The last row is a 4b finding, and the reading is *unreachable fixture*: every
+`set_expression` test creates a fresh layer, where an expression is new and so
+enabled, making the disabled branch structurally unenterable. Closed with a test
+that disables first; the same break now fails exactly one.
+
+The `getExpressionState` row is not in the table because it produced a different
+kind of result. Breaking it failed exactly ONE test — its own — which is what a
+unit no production path touches looks like. It had been written to mirror
+`getDataTrack` (genuinely used in four places) and doc-commented "the undo
+seam", which was false: the undo path reads `snapshot()`. Deleted rather than
+left implying coverage.
+
+### Runtime verification
+
+In the running app (`vite`, local edition): a shape layer, Position X animated,
+`value + 200` typed into the expression editor. Enabled, the status line reads
+`= 1160.00 @ 0.00s` and the inspector's Position X reads 1160px — 960 + 200, as
+derived. Toggled off, the switch reports `aria-checked="false"`, the source
+stays in the editor, the status line reads *"Disabled — the property uses its
+keyframes. Would be 1160.00"*, and Position X reads **960px**. One Undo returns
+it to 1160px. No console errors.
+
+The status-line wording is deliberate: showing `= 1160.00` beside a formula
+that is not driving anything would be the misreport this feature exists to
+prevent, in the one panel a user opens to find out.
+
+## 2b-duodevicesimum. 2026-08-06 — Convert Expression to Keyframes, and two decisions taste would have got wrong
+
+Task 1's enabled-state existed so this command had somewhere to put the
+expression it replaces. The bake itself is a loop; both hard parts are choices
+the code cannot make for you, and both have a wrong answer that looks fine.
+
+### THE RANGE: the layer's extent, not the work area
+
+The brief offered either. They are not equivalent and the argument is not about
+convenience:
+
+| | Work area | Layer extent |
+|---|---|---|
+| What it is | a PREVIEW scope (B/N, playback, render) | the comp times where the property affects anything |
+| Outside it | the track CLAMPS — the motion silently stops | there is no outside |
+| Depends on | a control set for an unrelated reason | the layer |
+
+A work-area bake changes frames the user did not ask about. Bake two seconds of
+a ten-second wiggle and the other eight hold at the endpoint — a valid-looking
+result from a command whose entire promise is that the picture does not move.
+The extent is exactly the range over which "nothing changed" *can* be true,
+which is what makes it the one that can be tested.
+
+The extent is HALF-OPEN, and that is not tidiness. A clip bar's `end` is one
+frame past its last live frame — `isActiveAt` rejects it — so a closed range
+bakes a frame the layer does not occupy. On an offset clip that frame is
+outside every bar, the time axis passes it through unmapped, and the keyframe
+lands a whole clip offset out of place. Found by the offset fixture; with a bar
+at 0 the two axes are the identity and the extra frame is invisible.
+
+### PLAN, THEN WRITE
+
+The one thing this module has to get right, and it is invisible once wrong. An
+expression can read its own property — `value + 200`, `valueAtTime`, `loopOut`
+all do — and `value` is the KEYFRAMED base. Writing as the walk proceeds
+changes the input to every later sample: frame 0 bakes 200, frame 1 then reads
+a base of 200 and bakes 400. The output compounds smoothly and reads as motion.
+
+So the plan is pure and the caller applies it in one go. Every fixture that
+ignores `value` passes either way, which is the whole reason the `value + 200`
+one is in the file.
+
+**The same property has a consequence, and it was mistaken for a defect during
+runtime verification before being understood.** Re-enabling a `value`-reading
+expression after a bake does not restore the original motion — it compounds,
+because the expression now reads the baked track where it used to read the
+static value. The bake's invariant is about the DISABLED state and holds
+exactly; UNDO is what restores, which is why the command is one step. Pinned as
+an assertion rather than left as a sentence, per 3b's ladder.
+
+### Rule 3a over the three obvious expressions
+
+The brief named three and they are ordered by strength, which is worth keeping:
+
+| Fixture | Cannot fail on |
+|---|---|
+| a CONSTANT expression | sampling at all — a bake that sampled once and copied passes |
+| a LINEAR one | curvature — an endpoints-only bake passes, since interpolation fills it in correctly |
+| `wiggle()` | nothing; it pins per-sample seeding, and only it does |
+| a clip starting at 0 | the time axis — both are the identity |
+| an expression ignoring `value` | the plan/write ordering |
+
+Breaking the axis (`t = compT` instead of `getRemappedTime`) fails exactly the
+two offset-clip fixtures and leaves all four clip-at-0 tests green — the
+cleanest demonstration in this run that a fixture's convenience is what makes
+it blind.
+
+### The menu ⇄ registry seam, closed before it could bite
+
+A menu entry names its command by STRING id, and both renderers grey an
+unregistered id out rather than failing. "The menu lists it" and "the command
+exists" were therefore two claims with nothing requiring them to meet — rule
+4c's shape, in the wiring rather than in a helper. The natural guard (assert the
+menu model contains the id) reads source text and stays green through a typo, a
+missing registration, and an `execute` that does something else entirely.
+
+Boot spelled out seven `for (const cmd of buildX())` loops, so there was no
+single answer to "what commands does this app have". They are now one exported
+`buildStaticCommands()`, which the boot sequence and the guard both read.
+Breaking it both ways — typo the menu's id, drop the builder — fails 1 and 6
+tests respectively; before, both were green.
+
+Noted while there, not fixed: **Exponential Scale, Motion Sketch and Convert
+Audio to Keyframes are registered commands that reach the palette and never the
+Animation menu.** Adding them is their features' change, not this one's.
+
+### The break sweep, with counts
+
+Baseline **4 suites, 47 tests** (48 after the compounding guard). Every break
+held the total.
+
+| Break | Failed | Notable green |
+|---|---|---|
+| endpoints only, no per-frame sampling | 6 | the wiring and eligibility suites entirely |
+| store on COMP time, not the layer axis | **2** | every clip-at-0 fixture — see above |
+| write-as-you-go | 5 | the constant/linear fixtures, which cannot compound |
+| delete instead of disable | 2 | the whole bake suite; only the two "not deleted" claims move |
+| range = work area, else first bar | 2 | everything about values — the range is orthogonal to correctness of samples |
+| closed range (`i <= frames`) | 2 | the wiggle and end-to-end tests, which compare like with like |
+| context menu bakes the layer | **1** | the two-property fixture is the only one that can see it |
+| menu names a TYPO'd id | **1** | the command still works; only the crossing fails |
+| command never registered | 6 | the module's own suite, entirely |
+| two undo steps | 2 | every value assertion |
+| `enabled()` stops sharing the predicate | 2 | `execute` still works, which is the §2·0 failure exactly |
+
+### Runtime verification
+
+In the running app: a shape layer, Position X animated, `wiggle(3, 50)` typed
+into the expression editor. Animation ▸ Keyframe Assistant ▸ Convert Expression
+to Keyframes was the only ENABLED entry in that menu, which is its `enabled()`
+predicate working. It reported *"Expression baked — 300 keyframes across 1
+property. The expression is disabled, not deleted."*
+
+The invariant, measured on the inspector's Position X across frames 0, 7, 14
+and 21, with the expression live and after the bake:
+
+| | f0 | f7 | f14 | f21 |
+|---|---|---|---|---|
+| live expression | 952.1 | 988.5 | 977.4 | 940.1 |
+| baked keyframes | 952.1 | 988.5 | 977.4 | 940.1 |
+| after undo, then redo | 952.1 | 988.5 | 977.4 | 940.1 |
+
+**The first attempt at this measurement compared the baked Position X against
+the panel's "Would be" preview and got 988.5 against 1016.95**, which looked
+exactly like a seeding defect. It was the compounding property above: the
+preview evaluates the expression against the CURRENT base, which after a bake is
+the baked track. The comparison was wrong, not the bake — and the way that was
+established was to measure the actual observable in both states rather than to
+reason about which number was right. Rule 2a, in a medium with no goldens.
 
 ## 2b-sexiesdecies. 2026-08-06 — guide layers, and two green guards watching nothing
 

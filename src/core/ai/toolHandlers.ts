@@ -605,6 +605,17 @@ const setExpression: AiTool['handler'] = (input, ctx) => {
     ctx.anim.setExpression(nodeId, prop, '');
     return fail(`Expression rejected and not applied: ${err}. It must be a single expression returning a number — no 'return', no statements.`);
   }
+  // Presence stopped being the same question as enablement. `setExpression`
+  // preserves a disabled expression's state, so writing a formula onto a
+  // property the user switched off does NOT make it drive the value — and
+  // claiming otherwise sends the model hunting a rendering bug that is not there.
+  if (!ctx.anim.isExpressionEnabled(nodeId, prop)) {
+    return ok(
+      `Applied expression to ${nodeId}.${prop}, but the expression on that property is ` +
+        `DISABLED, so its keyframed or static value still applies. It can be re-enabled ` +
+        `from the expression editor.`,
+    );
+  }
   return ok(`Applied expression to ${nodeId}.${prop}. It now overrides any keyframed value.`);
 };
 

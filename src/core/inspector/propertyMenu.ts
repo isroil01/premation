@@ -19,6 +19,7 @@ import { makeKeyframeId } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { applyEasingToKeyframes, type EasingPreset } from '@core/animation/keyframeAssistants';
 import { copyKeyframes, pasteKeyframes, hasClipboard } from '@core/animation/keyframeClipboard';
+import { convertExpressionToKeyframes } from '@core/animation/convertExpressionToKeyframes';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import { resolvePropertyMeta } from './propertyMeta';
 
@@ -128,6 +129,31 @@ export function buildPropertyMenu(ctx: PropertyMenuContext): ContextMenuItem[] {
         runAnimEdit(`Animate ${meta.label}`, () =>
           defaultAnimation.setKeyframe(nodeId, prop, layerT, value),
         ),
+    });
+  }
+
+  /**
+   * Convert Expression to Keyframes — PER PROPERTY here, unlike the command,
+   * which bakes every eligible property on the layer.
+   *
+   * That difference is why this entry exists rather than delegating to the
+   * command. A right-click lands on ONE row and means that row; baking a
+   * layer's rotation because the user asked about its x is the kind of
+   * over-reach that teaches people not to use a menu. The command bakes the
+   * whole layer because it is invoked with a layer selected and has nothing
+   * narrower to go on.
+   *
+   * Shown only when there IS an enabled expression, for the same reason nothing
+   * else here is unconditional: a menu full of no-ops teaches people not to
+   * open it.
+   */
+  if (defaultAnimation.isExpressionEnabled(nodeId, prop)) {
+    items.push({ id: 'sep-expr', separator: true });
+    items.push({
+      id: 'expr-bake',
+      label: 'Convert Expression to Keyframes',
+      icon: 'keyframe',
+      onSelect: () => { convertExpressionToKeyframes(nodeId, [prop]); },
     });
   }
 
