@@ -3152,6 +3152,101 @@ drops per-copy `offsetOpacity` — which is keyframeable today. Inert controls
 waste time; a dropped parameter destroys work without telling the user. It
 waits behind per-run paint.
 
+## 2e. DECISION D4 — per-vertex width: ONE geometry primitive, TWO consumers
+
+**Made before building either feature**, because deciding it while building one
+is how it gets decided badly. Stroke taper and variable-width mask feather both
+want "a width that varies along a path", and whether that is one mechanism
+changes the shape of both.
+
+### What already exists — checked, not assumed
+
+`ribbonOutline` in `packages/workspace/src/tools/builtin.ts` is already a general
+variable-width-stroke algorithm, under a brush-tool filename. Its own docstring
+says so: *"Build the closed outline of a variable-width stroke: offset each
+centreline point along its normal by half the local width, walk the left side
+forward and the right side back."* It carries an arc-length taper profile, a
+densifier for short inputs, and a width floor proportional to the brush.
+
+This is the fifteenth-instance trap the brief warned about, and it is real: the
+mechanism exists, it is tested, and it is invisible to a search for "taper" in
+the renderer.
+
+### The decision
+
+**Extract the GEOMETRIC core as one shared primitive. Do NOT force one mechanism
+on both features.**
+
+The shared part is genuinely shared, and it is small:
+
+    offsetAlongNormals(points, distanceAt) → { left[], right[] }
+
+That is the whole of what taper and variable feather have in common — per-vertex
+normals from the local tangent, offset by a per-vertex distance.
+
+Past that point they diverge in a way that a single mechanism would have to
+paper over:
+
+| | stroke taper | variable-width mask feather |
+|---|---|---|
+| consumes the offsets as | ONE closed outline, filled | TWO boundaries bounding a band |
+| output is | geometry (a path to fill) | a gradient//distance ramp — a rasterizer concern |
+| input path is | authored beziers, needs flattening | authored beziers, needs flattening |
+| profile source | two endpoints + an ease | a per-vertex authored value |
+
+A "shared mechanism" that produced both would be a function returning either a
+fill path or a shading band depending on a flag — two features wearing one name,
+which is the shape §2·0 exists to stop.
+
+### What this makes unreachable, stated
+
+A single call cannot give a feathered tapered stroke. That is a real
+composition someone will eventually want (a brush stroke with a soft edge), and
+under this decision it is two passes rather than one primitive. Judged
+acceptable: nothing in the current brief asks for it, and the alternative
+prices every stroke draw with a shading path it does not use.
+
+### The layering constraint this forces
+
+`ribbonOutline` lives in `packages/workspace` — the INTERACTION package. A
+renderer-side taper importing from it would be a layering inversion (the
+rasterizer depending on the tool layer). So the extraction is not optional
+cleanup: the primitive has to move somewhere both can reach before either
+feature is built on it, and `ribbonOutline` then becomes its first caller,
+keeping its brush-specific policy (pressure normalisation, the 0.05 taper floor,
+the 1.4× clamp) where it belongs.
+
+### Sizing taper, measured rather than estimated
+
+Shape strokes are drawn by Canvas2D `ctx.stroke()` with a single `lineWidth`
+(`vectorDraw.ts:310`, `:483`). Canvas2D has no variable-width stroking, so taper
+is not a parameter change — it is a **change of drawing operation**: flatten the
+path, build the outline, `fill()` instead of `stroke()`.
+
+That collides with four things the stroke path already does through Canvas2D and
+would have to re-implement on the filled outline:
+
+- **dashing** — `setLineDash` + `lineDashOffset`, which the dash-offset work
+  deliberately reused rather than cutting the path up (see 2b-septendecies);
+- **cap and join** — free today, hand-built on an outline;
+- **align** (centre/inside/outside), which currently fakes inside/outside by
+  doubling the width and clipping (`vectorDraw.ts:478`);
+- **gradient strokes**, whose paint is built in the layer's local space.
+
+And unlike F34, taper WOULD need new goldens: a tapered stroke is a visible
+change with no existing coverage, so it carries a blessing of its own.
+
+**Conclusion: taper is an M, not an S**, and its first unit is the primitive
+extraction plus the flatten-and-fill path — not the `taperStart`/`taperEnd`
+properties, which are the cheap half and would otherwise land as a stopwatch
+wired to nothing (exactly F34, one item earlier on this same board).
+
+### Revisit if
+
+A second consumer of the band form appears (a variable-width glow or contour
+shading). At two consumers the shading half earns its own primitive; at one it
+would be a generalisation written for nobody.
+
 ## 2d. DECISION D3 — templates are deliberately de-scoped
 
 **Recorded as a decision rather than allowed to happen by omission.**
