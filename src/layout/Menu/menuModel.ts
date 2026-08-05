@@ -155,6 +155,17 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: 'anim.interpLinear', label: 'Keyframe Interpolation: Linear' },
       { commandId: 'anim.interpHold', label: 'Keyframe Interpolation: Hold' },
+      { separator: true },
+      // AE files this under Animation → Keyframe Assistant, which is where
+      // anyone who knows the command by name will look for it. Its neighbours
+      // (Exponential Scale, Motion Sketch, Convert Audio to Keyframes) are
+      // registered commands that reached the palette and never this menu — see
+      // the note in COMPOSITING_PLAN §2b-septiesdecies. Adding them is their
+      // features' change, not this one's.
+      {
+        commandId: 'animation.convertExpressionToKeyframes',
+        label: 'Keyframe Assistant: Convert Expression to Keyframes',
+      },
     ],
   },
   {

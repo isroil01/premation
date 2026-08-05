@@ -70,6 +70,11 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isAudioNode } from '@core/audio/audioScene';
 import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
 import { applyExponentialScale, eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
+import {
+  convertExpressionToKeyframes,
+  eligibleExpressionProps,
+  BAKE_REFUSAL_TEXT,
+} from '@core/animation/convertExpressionToKeyframes';
 import { armMotionSketch, finishMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
@@ -459,6 +464,38 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       },
     },
     {
+      /**
+       * Convert Expression to Keyframes — AE's keyframe assistant.
+       *
+       * `enabled` and `execute` both go through `eligibleExpressionProps`, so
+       * the command cannot offer itself for a layer it would refuse (§2·0).
+       *
+       * The count is worth reporting rather than a bare "done": a bake writes
+       * one keyframe per frame, so a two-second layer produces sixty, and a
+       * user who does not expect that should learn it from the toast rather
+       * than from the timeline.
+       */
+      id: asCommandId('animation.convertExpressionToKeyframes'),
+      label: 'Convert Expression to Keyframes',
+      icon: 'keyframe',
+      enabled: () => {
+        const ids = useSelectionStore.getState().ids;
+        return ids.length === 1 && eligibleExpressionProps(ids[0]!).length > 0;
+      },
+      execute: () => {
+        const nodeId = useSelectionStore.getState().ids[0];
+        if (!nodeId) return;
+        const { written, refusal } = convertExpressionToKeyframes(nodeId);
+        if (refusal) { notify(BAKE_REFUSAL_TEXT[refusal], 'warning'); return; }
+        const total = [...written.values()].reduce((a, b) => a + b, 0);
+        notify(
+          `Expression baked — ${total} keyframes across ${written.size} ` +
+            `${written.size === 1 ? 'property' : 'properties'}. The expression is disabled, not deleted.`,
+          'success',
+        );
+      },
+    },
+    {
       id: BuiltinCommands.ResetLayout,
       label: 'Reset Layout',
       icon: 'layout',
@@ -575,6 +612,32 @@ function hasCutCopyTarget(): boolean {
  * they confirm first — silently discarding the user's work would be worse than
  * the no-op they replace.
  */
+/**
+ * Every statically-defined command, in one list.
+ *
+ * WHY IT EXISTS. Boot used to spell out seven `for (const cmd of buildX())`
+ * loops, so "what commands does this app have" had no answer short of reading
+ * the boot sequence — and a menu entry names its command by STRING id, which
+ * both renderers grey out rather than fail on when it is missing. "The menu
+ * lists it" and "the command exists" were therefore two claims with nothing
+ * requiring them to meet, which is the seam rule 4c is about.
+ *
+ * One exported list gives the boot sequence and the guard the same answer.
+ * Example scenes stay out deliberately: they are registered separately because
+ * they REPLACE the scene, and the menu does not reference them.
+ */
+export function buildStaticCommands(): ReadonlyArray<Command> {
+  return [
+    ...buildBuiltinCommands(),
+    ...buildToolCommands(),
+    ...buildCameraToolCommands(),
+    ...buildViewSwitchCommands(),
+    ...buildEasingCommands(),
+    ...buildMergePathCommands(),
+    ...buildProjectCommands(),
+  ];
+}
+
 function buildExampleCommands(): ReadonlyArray<Command> {
   const load = (label: string, build: () => void) => async (): Promise<void> => {
     const dirty = useProjectStore.getState().activeTabId
@@ -1070,12 +1133,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
       try {
         // Register built-in + project commands AFTER boot so the registry exists.
         const registry = getCommandRegistry();
-        for (const cmd of buildBuiltinCommands()) registry.register(cmd);
-        for (const cmd of buildToolCommands()) registry.register(cmd);
-        for (const cmd of buildCameraToolCommands()) registry.register(cmd);
-        for (const cmd of buildViewSwitchCommands()) registry.register(cmd);
-        for (const cmd of buildEasingCommands()) registry.register(cmd);
-        for (const cmd of buildMergePathCommands()) registry.register(cmd);
+        for (const cmd of buildStaticCommands()) registry.register(cmd);
         registry.register({
           id: asCommandId(BuiltinCommands.Undo),
           label: 'Undo',
@@ -1091,7 +1149,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           execute: () => performRedo(),
         });
 
-        for (const cmd of buildProjectCommands()) registry.register(cmd);
         for (const cmd of buildExampleCommands()) registry.register(cmd);
 
         getShortcutManager().rehydrateFromRegistry();
