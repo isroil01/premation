@@ -14,12 +14,12 @@ import { Icon } from '@components/Icon';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodePuppet } from '@core/rig/puppet';
+import { readNodePuppet, type PinKind } from '@core/rig/puppet';
 import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap';
 import { updatePuppetSettings, updatePuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
 import styles from './BoneControls.module.css';
 
-/** Shared <select> chrome — the two dropdowns here must look identical. */
+/** Shared <select> chrome — every dropdown here must look identical. */
 const selectStyle: React.CSSProperties = {
   padding: '3px 8px',
   fontSize: 11,
@@ -230,6 +230,29 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
               <Icon name="trash" size={12} />
             </Button>
           </div>
+
+          <div className={styles.paramRow}>
+            <span className={styles.paramLabel}>Pin Type</span>
+            <select
+              value={pin.kind ?? 'advanced'}
+              aria-label={`${pin.name || pin.id} pin type`}
+              onChange={(e) =>
+                updatePuppetPin(nodeId, pin.id, { kind: e.target.value as PinKind })
+              }
+              style={selectStyle}
+            >
+              <option value="advanced">Advanced (owns position)</option>
+              <option value="bend">Bend (derives position)</option>
+            </select>
+          </div>
+
+          {pin.kind === 'bend' && (
+            <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+              Position is derived from the advanced pins around it. Rotation and
+              scale act on the motion they already produce — at 0° and 1× this
+              pin does nothing.
+            </div>
+          )}
 
           <div className={styles.paramRow}>
             <span className={styles.paramLabel}>Rotation</span>

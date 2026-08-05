@@ -304,6 +304,7 @@ describe('ARAP robustness / fallback', () => {
       ]),
       triangles: new Uint16Array([0, 1, 2, 1, 2, 3]),
       pinRestPositions: { A: { x: -30, y: 0 }, B: { x: 30, y: 0 } },
+      pinVertexIndices: { A: 0, B: 3 },
       weights: {
         A: new Float32Array([1, 0.66, 0.33, 0]),
         B: new Float32Array([0, 0.33, 0.66, 1]),

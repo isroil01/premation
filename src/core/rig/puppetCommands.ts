@@ -122,12 +122,20 @@ export function updatePuppetSettings(
   applyAndRecord(nodeId, after, 'Edit Puppet Mesh');
 }
 
-/** Update one pin's static properties (rotation / stiffness). One undo step. */
+/**
+ * Update one pin's static properties (rotation / stiffness / kind). One undo step.
+ *
+ * Switching a pin to `bend` leaves any position track it already has in place
+ * rather than deleting it: the solve ignores the track while the pin is a bend
+ * pin, and switching back restores the animation intact. Deleting it here would
+ * make a two-click round trip destroy work, which is a worse trade than a track
+ * that lies dormant.
+ */
 export function updatePuppetPin(
   nodeId: ID,
   pinId: string,
   patch: Partial<
-    Pick<PuppetPin, 'rotation' | 'stiffness' | 'name' | 'scale' | 'overlap' | 'overlapExtent'>
+    Pick<PuppetPin, 'rotation' | 'stiffness' | 'name' | 'scale' | 'overlap' | 'overlapExtent' | 'kind'>
   >,
 ): void {
   const rig = currentRig(nodeId);
