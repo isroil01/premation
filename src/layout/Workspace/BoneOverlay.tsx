@@ -15,7 +15,15 @@ import { bumpScene } from '@stores/sceneStore';
 import { computeWorldTransforms, boneRoot, boneTip, type Bone } from '@core/rig/skeleton';
 import { angleOf } from '@core/rig/mat2d';
 import { applyIk, ikChainIds, type IkTargetResolved } from '@core/rig/rigDeform';
-import { readNodeSkeleton, addBone, deleteBone, setIKTarget, setWeightPaint } from '@core/rig/skeletonCommands';
+import {
+  readNodeSkeleton, addBone, deleteBone, setIKTarget, setWeightPaint,
+  previewSkeleton, recordSkeletonPose, type SkeletonRig,
+} from '@core/rig/skeletonCommands';
+import {
+  controllerPosition, controllerDragKind,
+  CONTROLLER_HIT_SLOP, type RigController,
+} from '@core/rig/controllers';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints } from '@core/rig/puppet';
 import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding, skinRigVertices } from '@core/rig/rigDeform';
@@ -46,6 +54,66 @@ function capturePointer(svg: SVGSVGElement, pointerId: number): void {
 /** Pointer travel (screen px) below which a down→up pair still counts as a click. */
 const CLICK_SLOP_PX = 3;
 
+/**
+ * Controller side colours — hardcoded hex, like every other colour in this file.
+ *
+ * NOT `--color-layer-*` tokens, and the reason is worth keeping. Those tokens
+ * encode layer KIND (text / shape / image / video / …), not rig SIDE; there is
+ * no left/right/centre triple to reuse, and borrowing three kind tokens would
+ * give a rig colour a meaning the token does not carry and drift the moment
+ * someone retints "video". Reading tokens at runtime is also not free here —
+ * `getComputedStyle` forces a style recalculation (see the note in
+ * `useWorkspace.ts`), and an overlay pays that per frame for the whole of a
+ * drag.
+ *
+ * So this follows the convention already in the file (`#00e699` bones,
+ * `#ff0055` IK targets, `#a855f7` poles) rather than inventing a second one.
+ * If a runtime-token convention for canvas overlays is ever built, these move
+ * with the rest of them — this should not be the thing that invents it.
+ *
+ * Values chosen to separate from those three at a glance: amber and cyan sit
+ * away from the existing green/magenta/purple, and centre is a neutral grey so
+ * a spine control never reads as a side.
+ */
+const CONTROLLER_SIDE_COLOR: Record<'left' | 'right' | 'centre', string> = {
+  left: '#ffb020',
+  right: '#3fd0ff',
+  centre: '#c8cedb',
+};
+
+/** Halo drawn under every controller so it reads against arbitrary artwork. */
+const CONTROLLER_HALO = 'rgba(0, 0, 0, 0.55)';
+
+/**
+ * The controller shape library, as an SVG path in SCREEN space.
+ *
+ * Built around (cx, cy) at radius `r` screen px, so the drawn size is constant
+ * at any zoom — the same rule the 3D gizmo and the effect handles follow. A
+ * path rather than per-shape elements keeps the halo trivial: the same `d`
+ * drawn twice, once wide and dark underneath, once in the side colour on top.
+ */
+function controllerPath(shape: RigController['shape'], cx: number, cy: number, r: number): string {
+  switch (shape) {
+    case 'square':
+      return `M ${cx - r} ${cy - r} H ${cx + r} V ${cy + r} H ${cx - r} Z`;
+    case 'arrow':
+      return `M ${cx} ${cy - r} L ${cx + r} ${cy + r * 0.6} L ${cx + r * 0.4} ${cy + r * 0.6} `
+        + `L ${cx + r * 0.4} ${cy + r} L ${cx - r * 0.4} ${cy + r} L ${cx - r * 0.4} ${cy + r * 0.6} `
+        + `L ${cx - r} ${cy + r * 0.6} Z`;
+    case 'arc': {
+      // Three-quarter ring with a tick — reads as "rotates" without a label.
+      const a0 = -Math.PI * 0.75;
+      const a1 = Math.PI * 0.75;
+      const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+      const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+      return `M ${x0} ${y0} A ${r} ${r} 0 1 1 ${x1} ${y1} M ${cx} ${cy - r * 0.35} L ${cx} ${cy + r * 0.35}`;
+    }
+    case 'circle':
+    default:
+      return `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${r * 2} 0 a ${r} ${r} 0 1 0 ${-r * 2} 0`;
+  }
+}
+
 export function BoneOverlay(): JSX.Element | null {
   const activeTool = useUIStore((s) => s.activeTool);
   const selectedNodeId = useSelectionStore((s) => s.ids[0]);
@@ -55,6 +123,8 @@ export function BoneOverlay(): JSX.Element | null {
 
   const [selectedBoneId, setSelectedBoneId] = useState<string | null>(null);
   const [hoveredBoneId, setHoveredBoneId] = useState<string | null>(null);
+  const [selectedControllerId, setSelectedControllerId] = useState<string | null>(null);
+  const [hoveredControllerId, setHoveredControllerId] = useState<string | null>(null);
   /** Weight painting (Phase 4.3): hold W, or toggle from the header. */
   const [paintMode, setPaintMode] = useState<PaintMode | null>(null);
   const [brushRadius, setBrushRadius] = useState(40);
@@ -70,6 +140,15 @@ export function BoneOverlay(): JSX.Element | null {
     animTx: any;
     startRotation: number;
     startLocal: { x: number; y: number };
+    /** Set when the gesture began on a controller — drives the active state. */
+    controllerId?: string;
+    /**
+     * Rig snapshot taken at pointer-down, present ONLY for a non-keyframing
+     * gesture. Its presence is what tells pointer-up to close the gesture as one
+     * `SkeletonEditCommand` instead of an anim edit, so the two paths cannot
+     * both fire.
+     */
+    staticBefore?: SkeletonRig | undefined;
   } | null>(null);
 
   // Drag/element-origin guard: a pointerup synthesizes a click even after a
@@ -232,6 +311,92 @@ export function BoneOverlay(): JSX.Element | null {
     defaultAnimation.setKeyframe(node.id, `ikTarget.${boneId}.y`, layerT, local.y);
   };
 
+  // ── Controllers ───────────────────────────────────────────────────────
+  // Resolved through `controllerPosition`, the single reader for placement, so
+  // the shape is drawn exactly where it is hit-tested and where the drag
+  // measures from. The overlay contributes no placement maths of its own.
+  const controllers = skel?.controllers ?? [];
+  const ikTargetPositions = new Map<string, { x: number; y: number }>(
+    activeIkTargets.map((tg) => [tg.boneId, { x: tg.x, y: tg.y }]),
+  );
+  const controllerLocal = (c: RigController) =>
+    controllerPosition(c, { worldTransforms, ikTargets: ikTargetPositions });
+  const controllerScreen = (c: RigController) => {
+    const local = controllerLocal(c);
+    return local ? localToScreen(local.x, local.y) : null;
+  };
+
+  /**
+   * Does this gesture write keyframes?
+   *
+   * The app's rule, matching the inspector rows: keyframe when the track is
+   * ALREADY animated, or when auto-keyframe is on. Otherwise the drag edits the
+   * static rig value and leaves the track alone.
+   *
+   * Deliberately decided ONCE, at pointer-down, rather than per pointermove — a
+   * gesture that started static must not begin keyframing halfway through
+   * because the first write made the track animated.
+   */
+  const gestureKeyframes = (kind: 'fk' | 'ik', boneId: string): boolean => {
+    if (usePreferenceStore.getState().timelineAutoKeyframe) return true;
+    const paths = kind === 'ik'
+      ? [`ikTarget.${boneId}.x`, `ikTarget.${boneId}.y`]
+      : [`bone.${boneId}.rotation`, `bone.${boneId}.x`, `bone.${boneId}.y`];
+    return paths.some((p) => defaultAnimation.isAnimated(node.id, p));
+  };
+
+  /** Write the STATIC rig value for a non-keyframing pose drag (no history). */
+  const previewStaticPose = (
+    kind: 'fk' | 'ik',
+    boneId: string,
+    local: { x: number; y: number },
+    rotation: number,
+  ) => {
+    const current = readNodeSkeleton(defaultSceneGraph.getNode(node.id)!);
+    if (!current) return;
+    const next: SkeletonRig = kind === 'ik'
+      ? {
+          ...current,
+          ikTargets: (current.ikTargets ?? []).map((t) =>
+            t.boneId === boneId ? { ...t, x: local.x, y: local.y } : t,
+          ),
+        }
+      : {
+          ...current,
+          bones: (current.bones ?? []).map((b) =>
+            b.id === boneId ? { ...b, rotation } : b,
+          ),
+        };
+    previewSkeleton(node.id, next);
+  };
+
+  const onPointerDownController = (e: React.PointerEvent, c: RigController) => {
+    e.stopPropagation();
+    suppressClickAddRef.current = true;
+    setSelectedBoneId(c.link.boneId);
+    setSelectedControllerId(c.id);
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    // The drag mode is the one the LINK implies — a controller owns no drag
+    // logic, it just enters the existing fk/ik gesture from a different target.
+    const kind = controllerDragKind(c);
+    const bone = animatedBones.find((b) => b.id === c.link.boneId);
+    const keyframes = gestureKeyframes(kind, c.link.boneId);
+    dragInfoRef.current = {
+      kind,
+      boneId: c.link.boneId,
+      startScreen,
+      animTx: keyframes ? beginAnimEdit() : null,
+      startRotation: bone?.rotation ?? 0,
+      startLocal: screenToLocal(startScreen.x, startScreen.y),
+      controllerId: c.id,
+      ...(keyframes ? {} : { staticBefore: skel }),
+    };
+    capturePointer(svg, e.pointerId);
+  };
+
   // Pointer drag operations
   const onPointerDownBone = (e: React.PointerEvent, boneId: string) => {
     e.stopPropagation();
@@ -368,6 +533,15 @@ export function BoneOverlay(): JSX.Element | null {
     }
 
     if (drag.kind === 'ik') {
+      // A non-keyframing controller gesture edits the rig's static goal instead
+      // of writing a track. `staticBefore` is only ever set by a controller
+      // drag, so bone and IK-handle drags keep their existing always-keyframe
+      // behaviour untouched.
+      if (drag.staticBefore !== undefined || drag.animTx === null) {
+        previewStaticPose('ik', drag.boneId, local, 0);
+        controller.requestRender();
+        return;
+      }
       // Drag the IK goal — the chain solves toward it live.
       writeIkTargetKeyframes(drag.boneId, local);
       controller.requestRender();
@@ -385,6 +559,11 @@ export function BoneOverlay(): JSX.Element | null {
       const startAngle = Math.atan2(drag.startLocal.y - selfRoot.y, drag.startLocal.x - selfRoot.x);
       const currAngle = Math.atan2(local.y - selfRoot.y, local.x - selfRoot.x);
       const newRot = drag.startRotation + (currAngle - startAngle);
+      if (drag.staticBefore !== undefined || drag.animTx === null) {
+        previewStaticPose('fk', drag.boneId, local, newRot);
+        controller.requestRender();
+        return;
+      }
       defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.rotation`, layerT, newRot);
     } else {
       // Root bone translation
@@ -431,6 +610,14 @@ export function BoneOverlay(): JSX.Element | null {
       try {
         svg.releasePointerCapture(e.pointerId);
       } catch {}
+    }
+    // A non-keyframing controller gesture closes as ONE SkeletonEditCommand —
+    // the whole drag previewed the rig with no history, exactly as a weight-paint
+    // stroke does, so undoing it restores the pose in a single step.
+    if (drag.animTx === null) {
+      recordSkeletonPose(node.id, drag.staticBefore, `Pose ${drag.boneId}`);
+      bumpScene();
+      return;
     }
     recordAnimEdit(
       drag.animTx.commit(
@@ -770,6 +957,70 @@ export function BoneOverlay(): JSX.Element | null {
               points={`${p.x},${p.y - 7} ${p.x + 6},${p.y + 5} ${p.x - 6},${p.y + 5}`}
               fill="#a855f7" stroke="#ffffff" strokeWidth={1.2}
             />
+          </g>
+        );
+      })}
+
+      {/* ── Rig controllers ──────────────────────────────────────────────
+          Drawn LAST so they sit above bones, IK crosses and poles: a controller
+          is the thing an animator is meant to grab, and the painter's order is
+          also the pick order (`pickController` walks the list backwards). */}
+      {controllers.map((c) => {
+        const s = controllerScreen(c);
+        // A dangling link draws nothing rather than stacking at the origin.
+        if (!s) return null;
+        const isSelected = selectedControllerId === c.id;
+        const isHovered = hoveredControllerId === c.id;
+        const color = CONTROLLER_SIDE_COLOR[c.side];
+        // Hover grows the shape slightly; the transition uses the app's spring,
+        // which is the token reserved for direct manipulation — which this is.
+        const r = c.size * (isHovered || isSelected ? 1.12 : 1);
+        const d = controllerPath(c.shape, s.x, s.y, r);
+        // While selected, show WHAT this controller drives. Twelve controllers
+        // on a character are indistinguishable without it.
+        const driven = c.link.kind === 'ikTarget'
+          ? ikTargetPositions.get(c.link.boneId)
+          : (() => {
+              const m = worldTransforms.get(c.link.boneId);
+              return m ? boneRoot(m) : undefined;
+            })();
+        const drivenScreen = driven ? localToScreen(driven.x, driven.y) : null;
+        return (
+          <g
+            key={`ctrl-${c.id}`}
+            style={{ cursor: 'grab' }}
+            onPointerDown={(e) => onPointerDownController(e, c)}
+            onClick={(e) => e.stopPropagation()}
+            onMouseEnter={() => setHoveredControllerId(c.id)}
+            onMouseLeave={() => setHoveredControllerId(null)}
+          >
+            {/* Link indicator: only while selected, so a rig full of controls
+                is not a cat's cradle of lines. */}
+            {isSelected && drivenScreen && (
+              <line
+                x1={s.x} y1={s.y} x2={drivenScreen.x} y2={drivenScreen.y}
+                stroke={color} strokeWidth={1} strokeDasharray="3 3" opacity={0.7}
+                pointerEvents="none"
+              />
+            )}
+            {/* Hit target, larger than the drawn shape. Transparent, not
+                `fill: none` — a `none` fill is not hit-testable. */}
+            <circle cx={s.x} cy={s.y} r={c.size + CONTROLLER_HIT_SLOP} fill="transparent" />
+            {/* Halo first: a dark wide underlay is what keeps the outline legible
+                on artwork that happens to share the side colour. */}
+            <path
+              d={d} fill="none" stroke={CONTROLLER_HALO}
+              strokeWidth={4} strokeLinejoin="round" pointerEvents="none"
+            />
+            <path
+              d={d} fill="none" stroke={color}
+              strokeWidth={isSelected ? 2.4 : 1.8}
+              strokeLinejoin="round"
+              opacity={isHovered || isSelected ? 1 : 0.85}
+              pointerEvents="none"
+              style={{ transition: 'stroke-width var(--motion-spring, 220ms cubic-bezier(0.34, 1.56, 0.64, 1))' }}
+            />
+            <title>{`${c.name ?? c.id} → ${c.link.kind === 'ikTarget' ? 'IK goal' : 'bone'} ${c.link.boneId}`}</title>
           </g>
         );
       })}

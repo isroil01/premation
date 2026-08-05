@@ -14,6 +14,7 @@ import { captureAnimEdit, type AnimEditCommand } from '@core/animation/animation
 import { bumpScene } from '@stores/sceneStore';
 import type { ID, SceneNode } from '@core/types';
 import type { Bone, Skeleton } from './skeleton';
+import type { RigController } from './controllers';
 import type { WeightPaintMap } from './weightPaint';
 
 export const SKELETON_EDIT_COMMAND = asCommandId('skeleton.edit');
@@ -46,6 +47,12 @@ export interface SkeletonRig extends Skeleton {
   meshExpansion?: number;
   /** Per-vertex bone-weight overrides painted on top of the auto binding. */
   weightPaint?: WeightPaintMap;
+  /**
+   * Grab handles that drive bones and IK goals — see `controllers.ts`.
+   * Absent in every rig authored before controllers existed, and absence means
+   * "none", so this is additive: no migration and no version bump.
+   */
+  controllers?: RigController[];
 }
 
 /** Read a node's skeleton rig from its fx component. */
@@ -132,6 +139,14 @@ export function deleteBone(nodeId: ID, boneId: string): void {
     ...skel,
     bones: (skel.bones ?? []).filter((b) => b.id !== boneId && b.parentId !== boneId),
     ikTargets: (skel.ikTargets ?? []).filter((t) => t.boneId !== boneId),
+    // Controllers pointing at the deleted bone go with it, exactly as its IK
+    // target does. `controllerPosition` already returns null for a dangling
+    // link so nothing would crash — but a control left in the rig driving a
+    // bone that no longer exists is invisible, unselectable and still
+    // serialised, which is worse than one that is gone.
+    ...(skel.controllers
+      ? { controllers: skel.controllers.filter((c) => c.link.boneId !== boneId) }
+      : {}),
   };
   const trackEdit = captureAnimEdit(`Delete Bone ${boneId} tracks`, () => {
     defaultAnimation.removeTrack(nodeId, `bone.${boneId}.rotation`);
@@ -191,4 +206,83 @@ export function setWeightPaint(nodeId: ID, weightPaint: WeightPaintMap | undefin
   if (!skel) return;
   const after: SkeletonRig = { ...skel, weightPaint };
   applyAndRecord(nodeId, after, 'Paint Bone Weights');
+}
+
+// ── Controllers ─────────────────────────────────────────────────────────
+// STRUCTURAL edits only. POSING a controller writes keyframes on the bone or
+// IK-target tracks and never touches the rig, so it does not come through here
+// — see `BoneOverlay`. Keeping the two apart is what makes a pose one undo entry
+// instead of a rig edit stacked on an animation edit.
+
+/**
+ * Write the rig with NO history entry — a live drag preview.
+ *
+ * Paired with `recordSkeletonPose`, which pushes the single entry on release.
+ * This is the weight-paint stroke's shape: many writes during the gesture, one
+ * undo step for it. Exported so the recording rule stays in this module and the
+ * overlay never pushes a command itself (§2·0 — one reader for how a skeleton
+ * edit reaches history).
+ */
+export function previewSkeleton(nodeId: ID, rig: SkeletonRig | undefined): void {
+  defaultSceneGraph.setSkeleton(nodeId, cloneSkeleton(rig));
+  bumpScene();
+}
+
+/** Close a previewed gesture as ONE undo entry, restoring to `before` on undo. */
+export function recordSkeletonPose(
+  nodeId: ID,
+  before: SkeletonRig | undefined,
+  label: string,
+): void {
+  const after = currentSkeleton(nodeId);
+  getCommandSystem()
+    .getHistory()
+    .push(new SkeletonEditCommand(nodeId, before, after, label));
+}
+
+/** Add a controller. One undo step. */
+export function addController(nodeId: ID, controller: RigController): void {
+  const skel = currentSkeleton(nodeId);
+  if (!skel) return;
+  const after: SkeletonRig = {
+    ...skel,
+    controllers: [...(skel.controllers ?? []), controller],
+  };
+  applyAndRecord(nodeId, after, `Add Controller ${controller.name ?? controller.id}`);
+}
+
+/** Delete a controller. One undo step. */
+export function deleteController(nodeId: ID, controllerId: string): void {
+  const skel = currentSkeleton(nodeId);
+  if (!skel) return;
+  const after: SkeletonRig = {
+    ...skel,
+    controllers: (skel.controllers ?? []).filter((c) => c.id !== controllerId),
+  };
+  applyAndRecord(nodeId, after, `Delete Controller ${controllerId}`);
+}
+
+/**
+ * Update a controller's static properties (shape / side / size / offset / link).
+ * One undo step.
+ *
+ * No animation tracks to clean up when the link changes: a controller owns no
+ * keyframes of its own. Re-pointing one at another bone leaves the OLD bone's
+ * pose exactly as it was, which is the behaviour you want — re-linking a control
+ * is not an instruction to undo the animation it used to drive.
+ */
+export function updateController(
+  nodeId: ID,
+  controllerId: string,
+  patch: Partial<Omit<RigController, 'id'>>,
+): void {
+  const skel = currentSkeleton(nodeId);
+  if (!skel) return;
+  const after: SkeletonRig = {
+    ...skel,
+    controllers: (skel.controllers ?? []).map((c) =>
+      c.id === controllerId ? { ...c, ...patch } : c,
+    ),
+  };
+  applyAndRecord(nodeId, after, 'Edit Controller');
 }
