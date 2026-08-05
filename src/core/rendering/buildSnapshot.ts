@@ -1677,6 +1677,41 @@ export function buildSnapshot(
         finalStroke = { ...finalStroke, width: Math.max(0, w) };
       }
     }
+    // Taper and Wave. Nine tracks, folded HERE for the same reason every other
+    // stroke track is: `propertyMeta` gives them a stopwatch, and a stopwatch
+    // the renderer never samples is F34/F35 — twice on this board already.
+    //
+    // Each falls back to the STORED profile rather than to a constant, so a
+    // taper authored statically survives when only one of its nine is animated.
+    if (finalStroke && a) {
+      const t = finalStroke.taper;
+      const num = (k: string, fallback: number): number => {
+        const v = a.get(k);
+        return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+      };
+      if (
+        a.has('strokeTaperStartWidth') || a.has('strokeTaperEndWidth') ||
+        a.has('strokeTaperStartLength') || a.has('strokeTaperEndLength') ||
+        a.has('strokeTaperStartEase') || a.has('strokeTaperEndEase')
+      ) {
+        finalStroke = { ...finalStroke, taper: {
+          startWidth: num('strokeTaperStartWidth', t?.startWidth ?? 1),
+          endWidth: num('strokeTaperEndWidth', t?.endWidth ?? 1),
+          startLength: num('strokeTaperStartLength', t?.startLength ?? 0),
+          endLength: num('strokeTaperEndLength', t?.endLength ?? 0),
+          startEase: num('strokeTaperStartEase', t?.startEase ?? 0),
+          endEase: num('strokeTaperEndEase', t?.endEase ?? 0),
+        } };
+      }
+      const wv = finalStroke.wave;
+      if (a.has('strokeWaveAmount') || a.has('strokeWaveWavelength') || a.has('strokeWavePhase')) {
+        finalStroke = { ...finalStroke, wave: {
+          amount: num('strokeWaveAmount', wv?.amount ?? 0),
+          wavelength: num('strokeWaveWavelength', wv?.wavelength ?? 0),
+          phase: num('strokeWavePhase', wv?.phase ?? 0),
+        } };
+      }
+    }
     // Chained off `finalStroke`, not `baseStroke`: colour and dash offset can be
     // animated on the same layer, and rebuilding from `baseStroke` here would
     // silently drop whichever was applied first.

@@ -230,6 +230,52 @@ const STATIC: Record<string, MetaSpec> = {
   // depends on the shape rather than on any bound expressible here.
   strokeDashOffset: { ...PX('Dash Offset', 'stroke', ORDER.stroke), defaultValue: 0 },
 
+  // ── Taper and Wave (AE's Stroke group, CC 2018) ──
+  //
+  // Registered ONLY because `buildSnapshot` folds every one of them into the
+  // resolved stroke. Registering a keyframeable property the renderer does not
+  // sample is F34/F35, twice on this same board — and `animatablePropertyReaders`
+  // now fails the build for it rather than leaving it to be found later.
+  //
+  // Stored as FRACTIONS with `displayScale: 100`, like `fillRadius`: the model
+  // works in 0..1 and only the inspector says "%".
+  strokeTaperStartWidth: {
+    label: 'Taper Start Width', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 1, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperEndWidth: {
+    label: 'Taper End Width', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 1, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperStartLength: {
+    label: 'Taper Start Length', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperEndLength: {
+    label: 'Taper End Length', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperStartEase: {
+    label: 'Taper Start Ease', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperEndEase: {
+    label: 'Taper End Ease', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  // Wave amplitude and wavelength are ARC-LENGTH px, not fractions — a period
+  // that scaled with the path would change the look on resize.
+  strokeWaveAmount: { ...PX('Wave Amount', 'stroke', ORDER.stroke), defaultValue: 0 },
+  strokeWaveWavelength: { ...PX('Wavelength', 'stroke', ORDER.stroke), min: 0, defaultValue: 0 },
+  // The one that animates.
+  strokeWavePhase: { ...DEG('Wave Phase', 'stroke', ORDER.stroke), defaultValue: 0 },
+
   // Trim paths — matched by the `pathop.<id>.<param>` resolver below, not by a
   // literal key, since document version 1.4.0 made trim a chain entry with an
   // id-scoped keyframe path. Listing `trim.start` here would be a label for a
