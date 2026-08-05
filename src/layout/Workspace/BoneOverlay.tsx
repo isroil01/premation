@@ -25,16 +25,14 @@ import {
 } from '@core/rig/controllers';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { resolveActiveIkTargets, resolveIkTargets, chainModeOf } from '@core/rig/liveIkTargets';
-import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints } from '@core/rig/puppet';
-import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
+import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding, skinRigVertices } from '@core/rig/rigDeform';
 import {
   paintWeights, emptyWeightPaint, weightPaintMatches, isWeightPaintEmpty,
   type PaintMode, type WeightPaintMap,
 } from '@core/rig/weightPaint';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import { useAssetStore } from '@stores/assetStore';
-import { rasterPadding } from '@core/rendering/raster/vectorDraw';
+import { useRigVertexSelection, selectRigVertex } from '@stores/rigVertexStore';
 import { nextRigId, usedRigIds } from '@core/rig/rigIds';
 
 /**
@@ -131,6 +129,19 @@ export function BoneOverlay(): JSX.Element | null {
   const [hoveredControllerId, setHoveredControllerId] = useState<string | null>(null);
   /** Weight painting (Phase 4.3): hold W, or toggle from the header. */
   const [paintMode, setPaintMode] = useState<PaintMode | null>(null);
+  /**
+   * Vertex-pick mode, for the Rigging panel's numeric weight editor.
+   *
+   * An explicit mode rather than a modifier-click: a plain click on empty canvas
+   * already ADDS A BONE, and Alt is already taken by the brush's invert. A
+   * picking gesture that silently grew the skeleton would be the worst of the
+   * three outcomes.
+   */
+  const [vertexPick, setVertexPick] = useState(false);
+  // Reactive, and ABOVE the guards — the highlight has to redraw when the panel
+  // or another pick changes the selection, and a hook below an early return is
+  // the "Rendered fewer hooks than expected" crash.
+  const pickedVertex = useRigVertexSelection(selectedNodeId ?? '');
   const [brushRadius, setBrushRadius] = useState(40);
   /** Scratch paint map during a stroke — committed as ONE undo step on release. */
   const paintScratchRef = useRef<WeightPaintMap | null>(null);
@@ -208,34 +219,12 @@ export function BoneOverlay(): JSX.Element | null {
   // The bone overlay drew bones and IK handles but never the mesh, so you could
   // not see the deformation or the weight falloff while rigging a skeleton —
   // the puppet overlay has always shown both. Same rest mesh buildSnapshot uses.
-  const puppetRig = readNodePuppet(node);
-  const meshRig = (puppetRig?.pins?.length ?? 0) > 0
-    ? puppetRig!
-    : { pins: [], meshDensity: skel?.meshDensity, meshExpansion: skel?.meshExpansion };
-  const geometryComponent = node.components.find((c) => c.type === 'Geometry');
-  const silhouette = silhouetteFromPathPoints(
-    geometryComponent?.props.points as Array<{ x: number; y: number }> | undefined,
-    geometryComponent?.props.open === true,
-  );
-  const media = readNodeMediaRef(node);
-  const coverage = rigCoverageMask(
-    rigLayerKind(readNodeKind(node)),
-    resolveRigImageSrc(node, readNodeKind(node), media, 0, (id) =>
-      useAssetStore.getState().assets.find((a) => a.id === id),
-    ),
-    media.assetId,
-    silhouette,
-  );
-  const dummyLayer: any = {
-    kind: geom.ellipse ? 'shape' : 'rect',
-    stroke: node.components.find((c) => c.type === 'Stroke')?.props.stroke,
-    strokes: node.components.find((c) => c.type === 'Strokes')?.props.strokes,
-    paint: node.components.find((c) => c.type === 'Paint')?.props.paint,
-  };
-  const pad = rasterPadding(dummyLayer);
-  const restMesh = getCachedRestMesh(
-    node.id, geom.width, geom.height, pad, meshRig, silhouette, coverage,
-  );
+  // Assembled by `nodeRestMesh`, not here. The Rigging panel's weight editor
+  // needs the SAME mesh — a weight override is stored against a vertex INDEX, so
+  // two derivations at different densities would not be slightly inconsistent,
+  // they would be addressing different vertices.
+  const restMesh = nodeRestMesh(node, geom, (id) =>
+    useAssetStore.getState().assets.find((a) => a.id === id));
 
   const controller = getWorkspaceController();
   const camera = controller.ws.camera;
@@ -656,6 +645,22 @@ export function BoneOverlay(): JSX.Element | null {
     const rect = svg.getBoundingClientRect();
     const local = screenToLocal(e.clientX - rect.left, e.clientY - rect.top);
 
+    // Vertex pick: nearest POSED vertex to the click, because the posed mesh is
+    // what the user is looking at. The index it yields addresses the REST mesh,
+    // which is what weights are stored against — the two are index-aligned by
+    // construction, since skinning transforms vertices without reordering them.
+    if (vertexPick && bones.length > 0) {
+      const n = posedVertices.length / 4;
+      let best = -1;
+      let bestD = Infinity;
+      for (let i = 0; i < n; i++) {
+        const d = Math.hypot(posedVertices[i * 4]! - local.x, posedVertices[i * 4 + 1]! - local.y);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      if (best >= 0) selectRigVertex(node.id, best);
+      return;
+    }
+
     // Chain drawing: a new bone grows from the selected parent's TIP toward the
     // click. Local pose is derived from the parent's world frame so the bone
     // points exactly at the clicked spot (rotation in radians — engine unit).
@@ -750,6 +755,22 @@ export function BoneOverlay(): JSX.Element | null {
         return <g>{tris}</g>;
       })()}
 
+      {/* The picked vertex. Drawn from the POSED position so the ring sits on
+          the point the user clicked even on a deformed rig, and labelled with
+          its index so the panel's `#N` badge is checkable against the canvas. */}
+      {bones.length > 0 && pickedVertex !== null && pickedVertex * 4 < posedVertices.length && (() => {
+        const p = localToScreen(posedVertices[pickedVertex * 4]!, posedVertices[pickedVertex * 4 + 1]!);
+        return (
+          <g pointerEvents="none">
+            <circle cx={p.x} cy={p.y} r={6} fill="none" stroke="#33aaff" strokeWidth={2} />
+            <circle cx={p.x} cy={p.y} r={2} fill="#33aaff" />
+            <text x={p.x + 9} y={p.y - 7} fontSize={10} fill="#33aaff" style={{ userSelect: 'none' }}>
+              {`#${pickedVertex}`}
+            </text>
+          </g>
+        );
+      })()}
+
       {/* ── Weight-paint controls (Phase 4.3) ────────────────────────────
           Only meaningful with a bone selected — the brush writes that bone's
           weight column. */}
@@ -786,6 +807,38 @@ export function BoneOverlay(): JSX.Element | null {
               </g>
             );
           })}
+          {/* Vertex pick — the entry point for the numeric weight editor in the
+              Rigging panel. Needs no bone selected, because it reads the whole
+              influence list rather than one bone's column. Turning it on turns
+              the brush off: the two interpret the same click. */}
+          <g
+            style={{ cursor: 'pointer' }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setVertexPick((on) => !on);
+              setPaintMode(null);
+            }}
+          >
+            <rect
+              x={3 * 74} y={0} width={82} height={22} rx={4}
+              fill={vertexPick ? 'rgba(0,170,255,0.25)' : 'rgba(0,0,0,0.45)'}
+              stroke={vertexPick ? '#33aaff' : 'rgba(255,255,255,0.25)'}
+              strokeWidth={1}
+            />
+            <text
+              x={3 * 74 + 41} y={15} textAnchor="middle"
+              fontSize={11} fill={vertexPick ? '#33aaff' : '#ffffff'}
+              style={{ userSelect: 'none' }}
+            >
+              Pick Vertex
+            </text>
+          </g>
+          {vertexPick && (
+            <text x={0} y={40} fontSize={10} fill="rgba(255,255,255,0.75)" style={{ userSelect: 'none' }}>
+              Click the mesh — weights appear in the Rigging panel
+            </text>
+          )}
           {paintMode && (
             <g onPointerDown={(e) => e.stopPropagation()}>
               <text x={0} y={40} fontSize={10} fill="rgba(255,255,255,0.75)" style={{ userSelect: 'none' }}>

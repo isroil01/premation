@@ -26,7 +26,7 @@ import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
-import { useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
+import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
 import { Button } from '@components/Button';
 import { Logo } from '@components/Logo';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
@@ -67,6 +67,9 @@ import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
+import { applyRigPreset } from '@core/rig/skeletonCommands';
+import { readGeometry } from '@core/workspace/geometry';
 import { isAudioNode } from '@core/audio/audioScene';
 import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
 import { applyExponentialScale, eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
@@ -626,6 +629,50 @@ function hasCutCopyTarget(): boolean {
  * Example scenes stay out deliberately: they are registered separately because
  * they REPLACE the scene, and the menu does not reference them.
  */
+/**
+ * One palette entry per auto-rig preset, DERIVED from the registry.
+ *
+ * Mapping `RIG_PRESETS` rather than listing the presets means a new one is
+ * reachable from the palette the moment it is registered. Writing them out would
+ * be the F25 shape again: the entry for whatever preset existed on the day, and
+ * a silent gap afterwards — which is exactly how the inspector's `<select>` is
+ * already built, so this matches it rather than inventing a second source.
+ *
+ * Applying a preset REPLACES the rig, and that is stated in the label rather
+ * than behind a confirm: merging two skeletons produces duplicate bone ids, and
+ * a duplicate id silently couples two bones onto one animation track.
+ */
+function buildRigPresetCommands(): ReadonlyArray<Command> {
+  return (Object.keys(RIG_PRESETS) as RigPresetId[]).map((id) => ({
+    id: asCommandId(`rig.preset.${id}`),
+    label: `Auto-Rig: ${RIG_PRESET_LABELS[id]}`,
+    icon: 'bone' as const,
+    enabled: () => useSelectionStore.getState().count() > 0,
+    execute: () => {
+      const nodeId = useSelectionStore.getState().ids[0];
+      if (!nodeId) return;
+      const node = defaultSceneGraph.getNode(nodeId);
+      if (!node) return;
+      // Sized from the layer's own box, so the rig fits the artwork. `readGeometry`
+      // reports the UNSCALED size, which is what keeps a scaled layer from getting
+      // a differently-proportioned skeleton.
+      const geom = readGeometry(node);
+      const problems = applyRigPreset(
+        nodeId,
+        RIG_PRESETS[id]({ width: geom?.width ?? 200, height: geom?.height ?? 200 }),
+        `Auto-Rig ${RIG_PRESET_LABELS[id]}`,
+      );
+      // Never silently: a refused rig with no message reads as a dead command,
+      // which is worse than the error.
+      if (problems.length > 0) {
+        notify(`Auto-rig refused: ${problems.map((p) => p.kind).join(', ')}`, 'warning');
+        return;
+      }
+      notify(`${RIG_PRESET_LABELS[id]} rig applied`, 'success');
+    },
+  }));
+}
+
 export function buildStaticCommands(): ReadonlyArray<Command> {
   return [
     ...buildBuiltinCommands(),
@@ -635,6 +682,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildEasingCommands(),
     ...buildMergePathCommands(),
     ...buildProjectCommands(),
+    ...buildRigPresetCommands(),
   ];
 }
 
@@ -1532,14 +1580,16 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // different layer/property commits the previous one first. A bare
           // `schedule` merged anything that happened to land inside the same
           // 700 ms — two unrelated edits, one Ctrl+Z, both gone.
-          const h = (): ReturnType<typeof useHistoryStore.getState> => useHistoryStore.getState();
-          track(getEventBus().on('AnimationChanged', () => h().schedule('anim')));
-          track(getEventBus().on('NodeUpdated', (e) => {
-            const p = e as { nodeId?: string; propName?: string } | undefined;
-            h().schedule(p?.nodeId ? `node:${p.nodeId}:${p.propName ?? ''}` : 'node');
-          }));
-          // Structural edits (add/delete/reparent) are their own action.
-          track(getEventBus().on('SceneGraphChanged', () => h().schedule('scene')));
+          //
+          // ONE attach point, deliberately. These were four separate `track`
+          // lines here and three of them worked; the baseline sync had been
+          // subscribed at MODULE SCOPE, so it landed on the bus this boot
+          // discards and never fired once — every commanded edit then also
+          // recorded a generic snapshot and Ctrl+Z took two presses, app-wide.
+          // Keeping the set together in `historyStore` makes the half-wired
+          // state unrepresentable, and lets the guard suite drive the same unit
+          // boot does rather than a re-typed copy of it.
+          track(attachHistoryRecording());
         } catch { /* ignore */ }
 
         // Dirty tracking + autosave (crash recovery). Edits mark the active

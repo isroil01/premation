@@ -249,9 +249,66 @@ export function performJumpTo(index: number): void {
 }
 
 import { getEventBus } from '@core/events/EventBus';
-getEventBus().on('UndoStackChanged', () => {
-  // Whenever the global undo stack is manipulated (undo/redo), 
-  // we must recapture the current state so the next StoreSnapshotCommand 
-  // uses the accurate "before" state instead of a stale one.
-  lastState = captureState();
-});
+
+/**
+ * Keep `lastState` in step with the undo stack. MUST be called from inside the
+ * boot sequence, never at module scope.
+ *
+ * This was a module-scope `getEventBus().on(...)` and it never fired once.
+ * `Application.boot()` calls `setEventBus(new EventBus())`, so any subscription
+ * made before boot resolves is attached to a bus that is then discarded — the
+ * hazard already recorded at `Providers.tsx` for the cross-window sync, hitting
+ * a second victim here. The listener existed, was correct, and was wired to
+ * nothing.
+ *
+ * Two consequences, both live until now:
+ *   • every command-covered edit ALSO produced a generic `Edit N` snapshot,
+ *     because the baseline was never refreshed after a command push, so
+ *     `statesEqual` compared against a stale state and always saw a change.
+ *     Ctrl+Z took two presses for one gesture, app-wide;
+ *   • after an undo or redo the baseline was stale, so the NEXT snapshot's
+ *     `before` was the pre-undo state rather than the current one.
+ *
+ * Returns its disposer so the caller can tear it down with the rest of boot.
+ */
+export function attachHistoryBaselineSync(): { dispose(): void } {
+  return getEventBus().on('UndoStackChanged', () => {
+    lastState = captureState();
+  });
+}
+
+/**
+ * Wire the WHOLE recording mechanism: the debounced edit capture and the
+ * baseline sync that decides whether a capture is redundant.
+ *
+ * These four subscriptions were four separate `track(...)` lines in the boot
+ * sequence, and three of them worked while the fourth had been attached at
+ * module scope and never fired. Splitting them across two files is what let
+ * that happen and what kept it invisible: nothing owned "recording is wired",
+ * so nothing could be missing it.
+ *
+ * They belong together because they are not independent — `schedule` decides
+ * WHEN to capture and the baseline decides WHETHER the capture is a real
+ * change. With the baseline missing, `schedule` fires into a permanently stale
+ * comparison and every commanded edit records a second, generic entry on top of
+ * the command's own. Half of this wiring is not a degraded version of it; it is
+ * the bug (§2·0 — one attach point makes the half-wired state unrepresentable).
+ *
+ * MUST be called from inside boot, never at module scope: `Application.boot()`
+ * calls `setEventBus(new EventBus())` and discards whatever a module-scope
+ * subscription attached to. Returns one disposer for all four.
+ */
+export function attachHistoryRecording(): { dispose(): void } {
+  const h = (): HistoryStore => useHistoryStore.getState();
+  const subs = [
+    getEventBus().on('AnimationChanged', () => h().schedule('anim')),
+    getEventBus().on('NodeUpdated', (e) => {
+      const p = e as { nodeId?: string; propName?: string } | undefined;
+      h().schedule(p?.nodeId ? `node:${p.nodeId}:${p.propName ?? ''}` : 'node');
+    }),
+    // Structural edits (add/delete/reparent) are their own action.
+    getEventBus().on('SceneGraphChanged', () => h().schedule('scene')),
+    attachHistoryBaselineSync(),
+  ];
+  return { dispose(): void { for (const s of subs) s.dispose(); } };
+}

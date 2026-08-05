@@ -31,7 +31,7 @@ import type { SkeletonRig, IKTarget } from './skeletonCommands';
 import type { RigController, ControllerSide } from './controllers';
 import { DEFAULT_CONTROLLER_SIZE } from './controllers';
 
-export type RigPresetId = 'biped';
+export type RigPresetId = 'biped' | 'quadruped';
 
 export interface PresetBounds {
   /** Layer width in local units. */
@@ -62,9 +62,25 @@ function limb(opts: {
   /** Local rotation of the upper bone, radians. */
   rotation: number;
   parentId: string;
+  /**
+   * Layer-space origin of the parent bone's frame, added to the IK GOAL only.
+   *
+   * `x`/`y` above are parent-local, but the goal has to be expressed in layer
+   * space because that is where `IKTarget` lives. The two coincide only when the
+   * parent's frame sits on the layer origin unrotated. The biped attaches its
+   * limbs to bones that do NOT (its spine is rotated −90°), and omits this — its
+   * goals are approximate by construction and the rest position hides it, since
+   * a goal at the limb's own tip does not pose anything on creation.
+   *
+   * The quadruped attaches its legs to an UNROTATED spine and passes the spine's
+   * origin, so its goals are exact. Defaulting to zero keeps the biped's output
+   * byte-identical rather than silently re-placing a blessed rig.
+   */
+  parentOrigin?: { x: number; y: number };
 }): { bones: Bone[]; target: IKTarget; controller: RigController } {
   const upperId = `${opts.prefix}_upper`;
   const lowerId = `${opts.prefix}_lower`;
+  const origin = opts.parentOrigin ?? { x: 0, y: 0 };
   return {
     bones: [
       {
@@ -81,8 +97,8 @@ function limb(opts: {
     // before anyone has touched it.
     target: {
       boneId: lowerId,
-      x: opts.x + Math.cos(opts.rotation) * (opts.upperLen + opts.lowerLen),
-      y: opts.y + Math.sin(opts.rotation) * (opts.upperLen + opts.lowerLen),
+      x: origin.x + opts.x + Math.cos(opts.rotation) * (opts.upperLen + opts.lowerLen),
+      y: origin.y + opts.y + Math.sin(opts.rotation) * (opts.upperLen + opts.lowerLen),
       chainLength: 2,
     },
     controller: {
@@ -157,12 +173,106 @@ export function bipedPreset(bounds: PresetBounds): SkeletonRig {
   return { bones, ikTargets: targets, controllers };
 }
 
+/**
+ * A quadruped in SIDE VIEW, facing screen-right: spine and hips along the body
+ * line, neck and head forward, tail back, and four legs as two-bone IK chains.
+ *
+ * ## Why side view, and what `side` means here
+ *
+ * A quadruped drawn front-on has no usable 2D rig — its legs occlude each other
+ * and nothing bends in the picture plane. Every 2D quadruped rig is a side view,
+ * so this generates one rather than pretending the choice is open.
+ *
+ * That makes `side` read oddly at first: the four legs are FORE and HIND, not
+ * left and right. `ControllerSide` "drives colour only — it carries no solver
+ * meaning", and the convention this file already documents is that `side` is
+ * SCREEN side, `left` = negative local x. Fore legs sit at positive x and hind
+ * legs at negative x, so fore controls colour as `right` and hind as `left`, and
+ * an animator gets the fore and hind sets in two different colours. Inventing a
+ * fore/hind enum would have meant a schema change, a migration, and a new case in
+ * every controller reader, to recolour four handles.
+ *
+ * ## Every controller's side is derivable from where it ENDS UP
+ *
+ * The spine bone is rooted at x = 0 deliberately, so the body control's driven
+ * point is exactly on the midline and `centre` is a measurable claim rather than
+ * a label. That is what lets the guard anchor EVERY controller — including the
+ * centre ones — to the sign of the point it drives, instead of exempting the
+ * midline and checking only the halves against each other (rule 2b).
+ *
+ * ## Legs hang from an UNROTATED parent
+ *
+ * All four attach to `spine`, whose rotation is 0. Bone `x`/`y` are parent-local
+ * while an IK goal is layer-space, and those coincide only under an unrotated
+ * parent — so this arrangement is what makes the goals exact rather than
+ * approximate. See `limb`'s `parentOrigin`.
+ */
+export function quadrupedPreset(bounds: PresetBounds): SkeletonRig {
+  const w = Math.max(MIN_PRESET_EXTENT, bounds.width);
+  const h = Math.max(MIN_PRESET_EXTENT, bounds.height);
+  const halfH = h / 2;
+
+  // The body line, measured from the top. Legs occupy everything below it.
+  const spineY = -halfH + h * 0.34;
+  // Half the barrel: the spine runs from the origin forward to the shoulder and
+  // the hips run backward from the same point, so the two are exact mirrors.
+  const spineHalf = w * 0.30;
+  // Fore/hind pairs are separated in x rather than in depth — a side view has no
+  // depth — so the far leg of each pair reads as a leg rather than as a smear.
+  const spread = w * 0.05;
+
+  const bones: Bone[] = [
+    { id: 'spine', name: 'Spine', parentId: null, length: spineHalf, x: 0, y: spineY, rotation: 0 },
+    // Backward from the same root, so hip and shoulder are mirrored about x = 0.
+    { id: 'hips', name: 'Hips', parentId: 'spine', length: spineHalf, x: 0, y: 0, rotation: Math.PI },
+    { id: 'chest', name: 'Chest', parentId: 'spine', length: w * 0.10, x: spineHalf, y: 0, rotation: 0 },
+    { id: 'neck', name: 'Neck', parentId: 'chest', length: h * 0.20, x: w * 0.10, y: 0, rotation: -Math.PI * 0.32 },
+    // Levels out again, so the head reads as horizontal rather than continuing
+    // the neck's climb.
+    { id: 'head', name: 'Head', parentId: 'neck', length: h * 0.14, x: h * 0.20, y: 0, rotation: Math.PI * 0.32 },
+    // Continues the hips' direction (its local rotation is 0 in an already
+    // reversed frame), so the tail trails behind the animal.
+    { id: 'tail', name: 'Tail', parentId: 'hips', length: w * 0.24, x: spineHalf, y: 0, rotation: 0 },
+  ];
+
+  const targets: IKTarget[] = [];
+  const controllers: RigController[] = [
+    // Body control. FK on the spine root, which sits ON the midline — see the
+    // header: that is what makes `centre` checkable.
+    {
+      id: 'ctrl_root', name: 'Body', shape: 'square', side: 'centre',
+      size: DEFAULT_CONTROLLER_SIZE + 4, link: { kind: 'bone', boneId: 'spine' },
+    },
+    { id: 'ctrl_head', name: 'Head', shape: 'arc', side: 'right', size: DEFAULT_CONTROLLER_SIZE, link: { kind: 'bone', boneId: 'head' } },
+    { id: 'ctrl_tail', name: 'Tail', shape: 'arc', side: 'left', size: DEFAULT_CONTROLLER_SIZE, link: { kind: 'bone', boneId: 'tail' } },
+  ];
+
+  // Legs straight down (+y is DOWN). Hind legs are the longer pair, as they are
+  // on the animal. `near` is the outer leg of each pair.
+  const spineOrigin = { x: 0, y: spineY };
+  const legs = [
+    limb({ prefix: 'leg_fore_near', side: 'right', x: spineHalf + spread, y: 0, upperLen: h * 0.30, lowerLen: h * 0.28, rotation: Math.PI * 0.5, parentId: 'spine', parentOrigin: spineOrigin }),
+    limb({ prefix: 'leg_fore_far', side: 'right', x: spineHalf - spread, y: 0, upperLen: h * 0.30, lowerLen: h * 0.28, rotation: Math.PI * 0.5, parentId: 'spine', parentOrigin: spineOrigin }),
+    limb({ prefix: 'leg_hind_near', side: 'left', x: -spineHalf - spread, y: 0, upperLen: h * 0.32, lowerLen: h * 0.28, rotation: Math.PI * 0.5, parentId: 'spine', parentOrigin: spineOrigin }),
+    limb({ prefix: 'leg_hind_far', side: 'left', x: -spineHalf + spread, y: 0, upperLen: h * 0.32, lowerLen: h * 0.28, rotation: Math.PI * 0.5, parentId: 'spine', parentOrigin: spineOrigin }),
+  ];
+  for (const l of legs) {
+    bones.push(...l.bones);
+    targets.push(l.target);
+    controllers.push(l.controller);
+  }
+
+  return { bones, ikTargets: targets, controllers };
+}
+
 export const RIG_PRESETS: Record<RigPresetId, (b: PresetBounds) => SkeletonRig> = {
   biped: bipedPreset,
+  quadruped: quadrupedPreset,
 };
 
 export const RIG_PRESET_LABELS: Record<RigPresetId, string> = {
   biped: 'Biped',
+  quadruped: 'Quadruped',
 };
 
 // ── Validity ────────────────────────────────────────────────────────────

@@ -33,6 +33,7 @@ import {
 import { computeWorldTransforms } from './skeleton';
 import { applyRigPreset, readNodeSkeleton, type SkeletonRig } from './skeletonCommands';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readGeometry } from '@core/workspace/geometry';
 import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
@@ -128,7 +129,23 @@ describe.each(PRESET_IDS)('preset "%s"', (id) => {
   });
 });
 
-describe('sides — rule 2b, anchored outside the generator', () => {
+/**
+ * Where a controller ACTUALLY ends up, in layer space, derived from the rig's
+ * own geometry: an IK controller sits on its goal, an FK controller on its
+ * bone's world root. This is the anchor rule 2b requires — it is computed here,
+ * from the skeleton solver, and owes nothing to the generator's naming.
+ */
+function drivenPoints(r: SkeletonRig): Array<{ id: string; side: string; x: number }> {
+  const world = computeWorldTransforms({ bones: [...(r.bones ?? [])] });
+  const goalOf = new Map((r.ikTargets ?? []).map((t) => [t.boneId, t]));
+  return (r.controllers ?? []).map((c) => ({
+    id: c.id,
+    side: c.side,
+    x: c.link.kind === 'ikTarget' ? goalOf.get(c.link.boneId)!.x : world.get(c.link.boneId)![4]!,
+  }));
+}
+
+describe.each(PRESET_IDS)('preset "%s" — sides, rule 2b, anchored outside the generator', (id) => {
   /**
    * A symmetric preset cannot show a left/right swap by comparing its two halves
    * against each other: mirror the assignment and the comparison still holds. So
@@ -136,47 +153,62 @@ describe('sides — rule 2b, anchored outside the generator', () => {
    * DRIVEN POINT's x, which this file defines (`left` = negative x, screen
    * space) and the generator must satisfy.
    */
-  it('every sided controller drives a point on ITS OWN side of the centre line', () => {
-    // Anchored to WHERE THE CONTROL ENDS UP, computed from the rig's own
-    // geometry — not to a naming convention and not to the other side's value.
-    // An IK controller is placed at its goal; an FK controller at its bone's
-    // world root. Both are positions this test derives itself.
+  it('every controller drives a point on ITS OWN side of the centre line', () => {
+    // Anchored to WHERE THE CONTROL ENDS UP, not to a naming convention and not
+    // to the other side's value.
     //
     // The first version of this walked parent links looking for a bone with
     // x === 0 and landed on the limb's LOWER bone, whose local x is the upper
     // bone's length — positive on both sides. It failed, which is the only
-    // reason the anchor got fixed rather than the expectation.
-    const r = bipedPreset(BOUNDS);
-    const world = computeWorldTransforms({ bones: [...(r.bones ?? [])] });
-    const goalOf = new Map((r.ikTargets ?? []).map((t) => [t.boneId, t]));
-    const sided = (r.controllers ?? []).filter((c) => c.side !== 'centre');
-    expect(sided.length).toBeGreaterThan(0);
-    for (const c of sided) {
-      const x = c.link.kind === 'ikTarget'
-        ? goalOf.get(c.link.boneId)!.x
-        : world.get(c.link.boneId)![4]!;
-      const expectedSign = c.side === 'left' ? -1 : 1;
-      expect({ id: c.id, side: c.side, sign: Math.sign(x) })
-        .toEqual({ id: c.id, side: c.side, sign: expectedSign });
-    }
-  });
-  it('and the layout IS symmetric, so the check above is not free', () => {
-    // The positive control for the claim: if the two sides were at different
-    // magnitudes, "left is negative" could hold for reasons unrelated to sides.
-    const r = bipedPreset(BOUNDS);
-    const byId = new Map((r.bones ?? []).map((b) => [b.id, b]));
-    for (const base of ['arm', 'leg']) {
-      const l = byId.get(`${base}_l_upper`)!;
-      const rr = byId.get(`${base}_r_upper`)!;
-      expect({ base, mirrored: Math.abs(l.x) === Math.abs(rr.x) && l.x === -rr.x })
-        .toEqual({ base, mirrored: true });
-      expect({ base, sameY: l.y === rr.y }).toEqual({ base, sameY: true });
+    // reason the anchor got fixed rather than the expectation. That is twice for
+    // the same reason, so the anchor is now TOTAL: `centre` used to be exempt,
+    // which left a third of the biped's controllers making an unchecked
+    // directional claim. Both presets root their body control at x = 0 so
+    // `centre` means "on the midline" and is measurable like the other two.
+    const points = drivenPoints(RIG_PRESETS[id](BOUNDS));
+    expect(points.length).toBeGreaterThan(0);
+    for (const p of points) {
+      const expectedSign = p.side === 'left' ? -1 : p.side === 'right' ? 1 : 0;
+      expect({ id: p.id, side: p.side, sign: Math.sign(p.x) })
+        .toEqual({ id: p.id, side: p.side, sign: expectedSign });
     }
   });
 
+  it('and the layout IS symmetric, so the check above is not free', () => {
+    // The positive control for the claim: if the two sides were at different
+    // magnitudes, "left is negative" could hold for reasons unrelated to sides.
+    //
+    // Derived, not named — the biped mirrors arms and legs, the quadruped
+    // mirrors fore against hind, and neither list belongs in this file. A pair
+    // is any left/right controller whose driven points are equal and opposite.
+    const points = drivenPoints(RIG_PRESETS[id](BOUNDS));
+    const left = points.filter((p) => p.side === 'left');
+    const right = points.filter((p) => p.side === 'right');
+    const mirrored = left.filter((l) =>
+      right.some((rr) => Math.abs(Math.abs(l.x) - Math.abs(rr.x)) < 1e-9));
+    expect({ leftCount: left.length > 0, rightCount: right.length > 0, mirroredPairs: mirrored.length > 0 })
+      .toEqual({ leftCount: true, rightCount: true, mirroredPairs: true });
+  });
+
   it('assigns both sides and a centre — not everything to one side', () => {
-    const sides = new Set((bipedPreset(BOUNDS).controllers ?? []).map((c) => c.side));
+    const sides = new Set((RIG_PRESETS[id](BOUNDS).controllers ?? []).map((c) => c.side));
     expect([...sides].sort()).toEqual(['centre', 'left', 'right']);
+  });
+
+  it('POSITIVE CONTROL: mirroring the side assignment FAILS the anchor', () => {
+    // Without this, "every controller is on its own side" could be passing
+    // because the anchor is insensitive rather than because the rig is right.
+    // Swapping left and right must break it.
+    const r = RIG_PRESETS[id](BOUNDS);
+    r.controllers = (r.controllers ?? []).map((c) => ({
+      ...c,
+      side: c.side === 'left' ? ('right' as const) : c.side === 'right' ? ('left' as const) : c.side,
+    }));
+    const wrong = drivenPoints(r).filter((p) => {
+      const expectedSign = p.side === 'left' ? -1 : p.side === 'right' ? 1 : 0;
+      return Math.sign(p.x) !== expectedSign;
+    });
+    expect(wrong.length).toBeGreaterThan(0);
   });
 });
 
@@ -229,30 +261,54 @@ describe('validateRig catches what it claims to', () => {
   });
 });
 
-describe('applying a preset is ONE undo entry', () => {
-  const ID = 'preset_probe';
-  const historyDepth = () => {
-    const h = getCommandSystem().getHistory() as unknown as { undoStack?: unknown[] };
-    return h.undoStack?.length ?? 0;
-  };
-  const rigOf = () => readNodeSkeleton(defaultSceneGraph.getNode(ID)!);
+const ID = 'preset_probe';
+const historyDepth = (): number => {
+  const h = getCommandSystem().getHistory() as unknown as { undoStack?: unknown[] };
+  return h.undoStack?.length ?? 0;
+};
+const rigOf = (): SkeletonRig | undefined => readNodeSkeleton(defaultSceneGraph.getNode(ID)!);
+
+/**
+ * The probe layer. `transform` carries the ROTATION and NON-UNIFORM SCALE rule
+ * 3a asks for — a layer sitting at identity is the clean fixture that would make
+ * "the preset ignores the layer transform" unfalsifiable.
+ */
+function addProbeNode(transform?: { rotation?: number; scale?: { x: number; y: number } }): void {
+  if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
+  defaultSceneGraph.addNode({
+    id: ID, name: ID, parent: null, children: [], visible: true, locked: false,
+    transform: {
+      position: { x: 0, y: 0 },
+      rotation: transform?.rotation ?? 0,
+      scale: transform?.scale ?? { x: 1, y: 1 },
+    },
+    components: [
+      {
+        id: `${ID}_t`, type: 'Transform',
+        props: {
+          [SCENE_KIND_PROP]: 'shape', x: 0, y: 0,
+          rotation: transform?.rotation ?? 0,
+          scaleX: transform?.scale?.x ?? 1,
+          scaleY: transform?.scale?.y ?? 1,
+          width: BOUNDS.width, height: BOUNDS.height,
+        },
+      },
+      { id: `${ID}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
+    ],
+  } as unknown as SceneNode);
+}
+
+describe.each(PRESET_IDS)('applying preset "%s" is ONE undo entry', (id) => {
+  const preset = (): SkeletonRig => RIG_PRESETS[id](BOUNDS);
 
   beforeEach(() => {
     setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
-    if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
-    defaultSceneGraph.addNode({
-      id: ID, name: ID, parent: null, children: [], visible: true, locked: false,
-      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
-      components: [
-        { id: `${ID}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, width: BOUNDS.width, height: BOUNDS.height } },
-        { id: `${ID}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
-      ],
-    } as unknown as SceneNode);
+    addProbeNode();
   });
 
   it('writes the whole rig and records exactly one entry', () => {
     const d0 = historyDepth();
-    expect(applyRigPreset(ID, bipedPreset(BOUNDS))).toEqual([]);
+    expect(applyRigPreset(ID, preset())).toEqual([]);
     // Count, not just "undo works" — bundling failures show up as N entries.
     expect(historyDepth()).toBe(d0 + 1);
     const r = rigOf()!;
@@ -262,7 +318,7 @@ describe('applying a preset is ONE undo entry', () => {
   });
 
   it('ONE undo removes the entire rig — bones, chains and controllers together', () => {
-    applyRigPreset(ID, bipedPreset(BOUNDS));
+    applyRigPreset(ID, preset());
     getCommandSystem().getHistory().undo();
     const r = rigOf();
     expect(r?.bones ?? []).toEqual([]);
@@ -271,12 +327,72 @@ describe('applying a preset is ONE undo entry', () => {
   });
 
   it('REFUSES an invalid rig rather than writing a broken one', () => {
-    const broken = bipedPreset(BOUNDS);
+    const broken = preset();
     broken.bones = [...broken.bones!, { ...broken.bones![0]! }];
     const d0 = historyDepth();
     const problems = applyRigPreset(ID, broken);
     expect(problems.map((p) => p.kind)).toContain('duplicate-bone');
     expect(historyDepth()).toBe(d0);          // nothing recorded
     expect(rigOf()?.bones ?? []).toEqual([]); // nothing written
+  });
+});
+
+/**
+ * Rule 3a — the fixtures the clean one would have excluded.
+ *
+ * The suite already refuses a square layer. These two are the other halves of
+ * that argument, and they were previously asserted as `preset({...BOUNDS})`
+ * deep-equals `preset(BOUNDS)` — which is a determinism check wearing a
+ * transform-invariance label: a generator that read the layer transform would
+ * pass it, because the argument never carried one either way.
+ *
+ * Driving it through the SCENE GRAPH is what makes the claim real: the layer
+ * genuinely is rotated and non-uniformly scaled, and the rig written for it must
+ * be identical to the rig written for a layer at rest.
+ */
+describe.each(PRESET_IDS)('preset "%s" is a function of BOUNDS, not of the layer transform', (id) => {
+  beforeEach(() => {
+    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+  });
+
+  const rigWritten = (t?: { rotation?: number; scale?: { x: number; y: number } }): SkeletonRig => {
+    addProbeNode(t);
+    expect(applyRigPreset(ID, RIG_PRESETS[id](BOUNDS))).toEqual([]);
+    return rigOf()!;
+  };
+
+  it('a layer rotated 37° and scaled 2.4 × 0.6 stores the same rig as one at rest', () => {
+    const rest = rigWritten();
+    const skewed = rigWritten({ rotation: (37 * Math.PI) / 180, scale: { x: 2.4, y: 0.6 } });
+    expect(skewed).toEqual(rest);
+  });
+
+  it('POSITIVE CONTROL: the fixture is genuinely unclean, read through readGeometry', () => {
+    // Otherwise the equality above holds because both fixtures were at rest.
+    //
+    // Read through `readGeometry` — the function `BoneControls` actually calls
+    // to size a preset — rather than off `node.transform`. The first version of
+    // this read `node.transform.scale` and reported `nonUniform: false` on a
+    // layer that IS non-uniformly scaled: the Transform COMPONENT is the
+    // authority and `node.transform` is not what anything downstream reads.
+    // The positive control caught its own fixture, which is what it is for.
+    addProbeNode({ rotation: (37 * Math.PI) / 180, scale: { x: 2.4, y: 0.6 } });
+    const g = readGeometry(defaultSceneGraph.getNode(ID)!)!;
+    expect({
+      rotated: g.rotationDeg !== 0,
+      nonUniform: g.scaleX !== g.scaleY,
+      nonSquare: g.width !== g.height,
+    }).toEqual({ rotated: true, nonUniform: true, nonSquare: true });
+  });
+
+  it('and the preset is sized from the UNSCALED box, so scale cannot leak in', () => {
+    // The seam this whole describe rests on: `BoneControls` passes
+    // `geom.width`/`geom.height`, which `readGeometry` documents as the BASE
+    // (unscaled) size. If it ever returned the scaled box, a scaled layer would
+    // silently get a differently-proportioned rig and the equality above would
+    // start failing rather than this — so the reason is pinned here explicitly.
+    addProbeNode({ rotation: (37 * Math.PI) / 180, scale: { x: 2.4, y: 0.6 } });
+    const g = readGeometry(defaultSceneGraph.getNode(ID)!)!;
+    expect({ width: g.width, height: g.height }).toEqual({ width: BOUNDS.width, height: BOUNDS.height });
   });
 });

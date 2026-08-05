@@ -168,6 +168,82 @@ export function applyWeightPaint(
   return normalizeWeights(merged, maxInfluences);
 }
 
+/**
+ * Set ONE bone's weight at ONE vertex to an exact value — the numeric editor's
+ * write path, beside the brush's.
+ *
+ * ## The normalisation decision, and why this one
+ *
+ * Two options: enforce the sum by REJECTING an edit that breaks it, or accept
+ * the edit and REDISTRIBUTE the rest. This redistributes, for three reasons.
+ *
+ * First, an un-normalised vertex is not an error state the user can be warned
+ * about — `skinVertex` divides by the total weight, so it silently rescales.
+ * Rejecting edits to defend an invariant the renderer does not depend on would
+ * make the control feel broken while changing no output.
+ *
+ * Second, redistribution is ALREADY the rule here: `applyWeightPaint` shares the
+ * remaining weight across the unpainted bones. A numeric editor that enforced a
+ * sum instead would be a second, disagreeing normalisation rule for the same
+ * data (§2·0), and the panel's numbers would stop matching the deformation.
+ *
+ * Third — and this is why it writes the WHOLE vertex rather than one entry —
+ * partial painting makes the typed number a lie. If only the edited bone were
+ * stored, the next edit would find it already painted, `paintedTotal` could
+ * exceed 1, and `normalizeWeights` would rescale the value the user typed. By
+ * writing every influence as an override that sums to exactly 1,
+ * `applyWeightPaint` finds `remaining === 0`, `normalizeWeights` is a no-op, and
+ * WHAT YOU TYPE IS WHAT DEFORMS. That is the property a numeric field has to
+ * have to be worth having.
+ *
+ * ## The single-influence boundary
+ *
+ * A vertex reached by exactly one bone has weight 1 by definition and there is
+ * nothing to redistribute to: typing 0.3 would renormalise straight back to 1.
+ * The map is returned UNCHANGED rather than storing a value that cannot survive
+ * a read-back, and the panel does not offer an editable field in that case —
+ * the state is better made unrepresentable than corrected after the fact.
+ *
+ * `current` is the vertex's EFFECTIVE weights (post-paint, as the renderer sees
+ * them), so an edit composes with earlier ones instead of against the raw auto
+ * binding.
+ */
+export function setVertexWeight(
+  map: WeightPaintMap,
+  vertexIndex: number,
+  boneId: string,
+  weight: number,
+  current: readonly VertexWeight[],
+): WeightPaintMap {
+  // Stale indices — refuse rather than smear, same rule as `paintWeights`.
+  if (vertexIndex < 0 || vertexIndex >= map.vertexCount) return map;
+  const others = current.filter((w) => w.boneId !== boneId);
+  // Nothing to redistribute to: the single-influence boundary above, and the
+  // no-influence case (a vertex outside every bone's reach).
+  if (others.length === 0) return map;
+
+  const w = weight < 0 ? 0 : weight > 1 ? 1 : weight;
+  const remaining = 1 - w;
+  const othersTotal = others.reduce((a, o) => a + o.weight, 0);
+
+  const bones: Record<string, Record<number, number>> = {};
+  for (const key of Object.keys(map.bones)) bones[key] = { ...map.bones[key]! };
+  const write = (id: string, value: number): void => {
+    (bones[id] ??= {})[vertexIndex] = value;
+  };
+
+  write(boneId, w);
+  for (const o of others) {
+    // Proportional when the others carry weight; even when they do not, so
+    // pulling one bone down from 1 has somewhere to put the released weight
+    // instead of leaving the vertex summing to less than 1.
+    write(o.boneId, othersTotal > 1e-9
+      ? (o.weight / othersTotal) * remaining
+      : remaining / others.length);
+  }
+  return { vertexCount: map.vertexCount, bones };
+}
+
 /** Drop every painted override for one bone (returns a new map). */
 export function clearBonePaint(map: WeightPaintMap, boneId: string): WeightPaintMap {
   if (!map.bones[boneId]) return map;
