@@ -9,7 +9,23 @@
  * ORDER rather than a depth test) which fold ends up on top.
  *
  * Every scene here is a still at a time where the deformation is unambiguous,
- * and deliberately asymmetric so a mirrored or transposed mesh cannot pass.
+ * and deliberately asymmetric so a mirrored mesh cannot pass.
+ *
+ * CORRECTION, measured 2026-08-06. The line above used to claim a TRANSPOSED
+ * mesh could not pass either. It could. Every scene below fills its bar with a
+ * FLAT COLOUR, and UV mapping is only observable through texture CONTENT — a
+ * uniform texture samples the same colour at every coordinate, so swapping u and
+ * v changes nothing. Verified by transposing the UV write in both the grid and
+ * the silhouette path and running the gate: green both times. The mesh being
+ * asymmetric was never the property that mattered; the TEXTURE being asymmetric
+ * is. `rig-uv-orientation` below is the scene that closes it.
+ *
+ * TRIANGLE WINDING, also measured, and NOT a gap. Reversing the winding at both
+ * emission sites leaves the gate green — correctly, because nothing in the
+ * renderer culls (`grep cullMode|cullFace|CULL_FACE` finds no state anywhere),
+ * and a filled triangle covers the same pixels whichever way it is wound. A
+ * pixel guard for winding would be a test that cannot fail, which is worse than
+ * no test; the honest record is this note.
  */
 
 import { defineScene, node, type Scene } from '../sceneKit';
@@ -29,7 +45,60 @@ function bar(graph: SceneGraph, opts: { w?: number; h?: number } = {}): void {
   }));
 }
 
+/**
+ * A bar whose texture has DIRECTIONAL content — the fixture a UV error needs.
+ *
+ * The ramp runs along one axis with five distinct hues, so sampling it with u
+ * and v exchanged rotates the ramp a quarter turn and moves thousands of pixels.
+ * A flat fill cannot do this no matter how asymmetric the mesh is.
+ */
+function texturedBar(graph: SceneGraph): void {
+  graph.addNode(node('bar', {
+    kind: 'shape',
+    position: { x: 180, y: 120 },
+    // Deliberately NOT square: a square bar would make u and v interchangeable
+    // in extent as well as in content, which is a second way to hide the swap.
+    transform: { width: 240, height: 60 },
+    style: { fill: '#4cc9f0' },
+  }));
+  graph.setFill('bar', {
+    type: 'linear',
+    angle: 0,
+    stops: [
+      { id: 'u0', offset: 0, color: '#ff0040' },
+      { id: 'u1', offset: 0.25, color: '#ff9e00' },
+      { id: 'u2', offset: 0.5, color: '#00d4ff' },
+      { id: 'u3', offset: 0.75, color: '#7a00ff' },
+      { id: 'u4', offset: 1, color: '#00ff88' },
+    ],
+  });
+}
+
 export const rigScenes: Scene[] = [
+  defineScene({
+    id: 'rig-uv-orientation',
+    description:
+      'Deformed bar with a five-hue ramp ACROSS it — the only scene here whose texture can show a u/v swap.',
+    size: SIZE,
+    comp: COMP,
+    fps: 30,
+    frames: [0],
+    build(graph: SceneGraph) {
+      texturedBar(graph);
+      // A bend, so the mesh is genuinely deformed and the UVs are doing work
+      // rather than mapping an undisturbed rectangle onto itself.
+      graph.setPuppet('bar', {
+        meshDensity: 12,
+        meshExpansion: 0,
+        pins: [
+          { id: 'p0', name: 'L', x: -90, y: 0 },
+          { id: 'p1', name: 'R', x: 90, y: 0 },
+          { id: 'p2', name: 'M', x: 0, y: -34 },
+        ],
+      });
+    },
+  }),
+
   defineScene({
     id: 'rig-puppet-bend',
     description: 'Two puppet pins, one displaced upward — ARAP bend. The baseline mesh render.',
