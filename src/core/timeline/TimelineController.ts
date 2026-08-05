@@ -40,6 +40,7 @@ import { sourceOf } from '@core/source/sourceInfo';
 import { compSourceOf } from '@core/composition/compSizes';
 import type { SceneNode } from '@core/types';
 import { defaultAnimation } from '@motion/animation';
+import { runAnimEdit } from '@core/animation/animationCommands';
 
 
 import { getEventBus } from '@core/events/EventBus';
@@ -471,22 +472,89 @@ export class TimelineController {
    * `sequenceLayers` (which only shifts animation in place). Returns false with
    * fewer than two timeline layers among the nodes.
    */
-  sequenceLayerBars(nodeIds: ReadonlyArray<string>, overlapSeconds = 0): boolean {
+  sequenceLayerBars(
+    nodeIds: ReadonlyArray<string>,
+    overlapSeconds = 0,
+    opts: { crossfade?: boolean } = {},
+  ): boolean {
     const fr = this.timeline.getFrameRate();
-    const layers = nodeIds
-      .map((id) => this.getLayersForNode(id)[0])
-      .filter((l): l is Layer => !!l);
-    if (layers.length < 2) return false;
+    // nodeId is kept ALONGSIDE the layer, not discarded: the crossfade writes
+    // keyframes, and keyframes are addressed by node, not by timeline layer.
+    const pairs = nodeIds
+      .map((id) => ({ id, layer: this.getLayersForNode(id)[0] }))
+      .filter((p): p is { id: string; layer: Layer } => !!p.layer);
+    if (pairs.length < 2) return false;
     const overlap = Math.round(secondsToFrames(overlapSeconds, fr));
     // The first layer anchors the sequence; each next bar butts against it.
-    let cursor = Math.max(0, layers[0]!.start + layers[0]!.duration - overlap);
-    for (let i = 1; i < layers.length; i++) {
-      const L = layers[i]!;
+    let cursor = Math.max(0, pairs[0]!.layer.start + pairs[0]!.layer.duration - overlap);
+    for (let i = 1; i < pairs.length; i++) {
+      const L = pairs[i]!.layer;
       this.timeline.setLayerStart(L.id, cursor);
       cursor = Math.max(0, cursor + L.duration - overlap);
     }
     this.invalidateLayerIndex();
+    if (opts.crossfade && overlap > 0) this.writeCrossfades(pairs, fr);
     return true;
+  }
+
+  /**
+   * Opacity ramps across each overlap region produced by `sequenceLayerBars`.
+   *
+   * Lives HERE, beside the geometry that created the overlap, rather than as a
+   * separate pass a caller composes. The fade region is not derivable from the
+   * layers alone — it is exactly the span the sequencing just produced — so
+   * recomputing it anywhere else is two definitions of one region that agree
+   * until someone changes the cursor arithmetic (§2·0).
+   *
+   * ## The axis
+   *
+   * Keyframe times go through `compToKeyframeTime`, which is the ONLY axis the
+   * renderer samples. The naive alternative next door, `toLayerTime`, carries a
+   * docstring forbidding exactly this use — it ignores `sourceIn`, stretch,
+   * reverse and precomp remaps, so a sequenced precomp would fade at the wrong
+   * time. Called AFTER the bars have moved, because that mapping depends on
+   * where the bar now is.
+   *
+   * ## What is deliberately not faded
+   *
+   * The first layer never fades IN and the last never fades OUT: a sequence
+   * that opened from and ended in transparency would be a different edit from
+   * the one asked for, and both are trivially added by hand if wanted. Only the
+   * OVERLAP is touched.
+   */
+  private writeCrossfades(
+    pairs: ReadonlyArray<{ id: string; layer: Layer }>,
+    fr: ReturnType<TimelineController['timeline']['getFrameRate']>,
+  ): void {
+    const fps = fr.fps;
+    // ONE undo entry for the whole set of ramps. Without this each
+    // `setKeyframe` is its own step and undoing a four-layer crossfade takes
+    // twelve presses.
+    runAnimEdit('Sequence Layers crossfade', () => {
+    for (let i = 1; i < pairs.length; i++) {
+      const outgoing = pairs[i - 1]!;
+      const incoming = pairs[i]!;
+      // Re-read: `setLayerStart` moved these bars, so the cached objects from
+      // before the loop would describe the pre-sequence layout.
+      const outL = this.getLayersForNode(outgoing.id)[0];
+      const inL = this.getLayersForNode(incoming.id)[0];
+      if (!outL || !inL) continue;
+      const fadeStart = inL.start;
+      const fadeEnd = outL.start + outL.duration;
+      if (fadeEnd <= fadeStart) continue;
+
+      const t0Out = compToKeyframeTime(outgoing.id, fadeStart / fps);
+      const t1Out = compToKeyframeTime(outgoing.id, fadeEnd / fps);
+      const t0In = compToKeyframeTime(incoming.id, fadeStart / fps);
+      const t1In = compToKeyframeTime(incoming.id, fadeEnd / fps);
+
+      // Opacity is a percentage (propertyMeta: PCT), so 100 → 0, not 1 → 0.
+      defaultAnimation.setKeyframe(outgoing.id, 'opacity', t0Out, 100);
+      defaultAnimation.setKeyframe(outgoing.id, 'opacity', t1Out, 0);
+      defaultAnimation.setKeyframe(incoming.id, 'opacity', t0In, 0);
+      defaultAnimation.setKeyframe(incoming.id, 'opacity', t1In, 100);
+    }
+    });
   }
 
   /** Trim a clip edge to an absolute time (seconds). Undoable. */
