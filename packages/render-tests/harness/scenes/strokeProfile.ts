@@ -112,6 +112,14 @@ export const strokeProfileScenes: Scene[] = [
     { wave: { amount: 8, wavelength: 190, phase: 90 } },
   ),
   profileScene(
+    'stroke-taper-dashed',
+    'Taper AND dash together: each dash reads its width from where it sits on the whole path.',
+    {
+      dash: [26, 14],
+      taper: { startWidth: 0.1, endWidth: 1, startLength: 0.7, endLength: 0, startEase: 0, endEase: 0 },
+    },
+  ),
+  profileScene(
     'stroke-taper-wave',
     'Taper and Wave composed: the ribbon narrows toward the start while its centreline waves.',
     {

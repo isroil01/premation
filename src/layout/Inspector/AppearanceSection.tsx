@@ -713,17 +713,13 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                     same arc-length walk. Every row is keyframeable and every
                     track is folded in `buildSnapshot` — a stopwatch the renderer
                     ignores is F34/F35, and the class guard now fails the build
-                    for it. */}
-                {(stroke?.dash ?? []).length > 0 && (hasTaper || hasWave) && (
-                  // Said out loud rather than left as a control that does
-                  // nothing: the rasterizer refuses to profile a dashed stroke,
-                  // so without this the taper rows would read as broken.
-                  <div className={styles.popoverRow}>
-                    <span className={styles.popoverLabel} style={{ color: 'var(--color-warning)' }}>
-                      Taper and Wave are ignored while the stroke is dashed.
-                    </span>
-                  </div>
-                )}
+                    for it.
+
+                    The dashed-stroke warning that used to sit here is gone
+                    because the limitation is gone: dash and taper compose now,
+                    each dash reading its width from where it sits on the whole
+                    path. A warning about a restriction that no longer exists is
+                    worse than none. */}
 
                 <AnimatablePaintRow
                   nodeId={nodeId} prop="strokeTaperStartWidth" label="Taper Start"

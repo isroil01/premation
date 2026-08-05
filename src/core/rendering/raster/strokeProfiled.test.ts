@@ -37,23 +37,30 @@ import type { RenderLayer } from '../RenderBackend';
 interface Pt { x: number; y: number }
 
 /** Records the path the function emits. Nothing is re-derived here. */
-function recordingCtx(): CanvasRenderingContext2D & { ring: Pt[]; fills: number; strokes: number } {
+function recordingCtx(): CanvasRenderingContext2D & { ring: Pt[]; spans: Pt[][]; totalPoints: number; fills: number; strokes: number } {
   const ring: Pt[] = [];
   const api = {
-    ring, fills: 0, strokes: 0,
+    ring, spans: [] as Pt[][], totalPoints: 0, fills: 0, strokes: 0,
     globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 0,
     save() {}, restore() {},
     beginPath() { ring.length = 0; },
     moveTo(x: number, y: number) { ring.push({ x, y }); },
     lineTo(x: number, y: number) { ring.push({ x, y }); },
     closePath() {},
-    fill() { (api as { fills: number }).fills += 1; },
+    fill() {
+      // Records the ring WITHOUT clearing it: `ring` stays readable as the last
+      // (and, for a solid stroke, only) outline, while `spans` accumulates every
+      // one so a dashed stroke can be inspected piece by piece.
+      (api as { fills: number }).fills += 1;
+      (api as { totalPoints: number }).totalPoints += ring.length;
+      api.spans.push([...ring]);
+    },
     stroke() { (api as { strokes: number }).strokes += 1; },
     setLineDash() {}, ellipse() {}, rect() {}, clip() {}, arcTo() {},
     createLinearGradient() { return { addColorStop() {} }; },
     createRadialGradient() { return { addColorStop() {} }; },
   };
-  return api as unknown as CanvasRenderingContext2D & { ring: Pt[]; fills: number; strokes: number };
+  return api as unknown as CanvasRenderingContext2D & { ring: Pt[]; spans: Pt[][]; totalPoints: number; fills: number; strokes: number };
 }
 
 /** An OPEN, genuinely curved path — see rule 3a in the header. */
@@ -104,7 +111,6 @@ describe('what it refuses, so the ordinary stroke still runs', () => {
     ['an identity taper and wave', {}],
     ['a taper that is identity by width', { taper: IDENTITY_TAPER }],
     ['a wave that is identity by amount', { wave: IDENTITY_WAVE }],
-    ['a DASHED stroke — the deferred interaction', { taper: TAPER, dash: [8, 4] }],
   ])('refuses %s', (_label, extra) => {
     const ctx = recordingCtx();
     expect(strokeShapeProfiled(ctx, stroke(extra as Partial<Stroke>), layer())).toBe(false);
@@ -240,5 +246,59 @@ describe('wave displaces the centreline without changing the width', () => {
     const n = ctx.ring.length / 2;
     expect(widthAtPair(ctx.ring, 0)).toBeCloseTo(WIDTH * TAPER.startWidth, 3);
     expect(widthAtPair(ctx.ring, n - 1)).toBeCloseTo(WIDTH, 3);
+  });
+});
+
+describe('dash composes with taper instead of cancelling it', () => {
+  const DASH = [24, 12];
+
+  it('a dashed taper is ACCEPTED — it was refused while the interaction was deferred', () => {
+    const ctx = recordingCtx();
+    expect(strokeShapeProfiled(ctx, stroke({ taper: TAPER, dash: DASH }), layer())).toBe(true);
+  });
+
+  it('fills MANY rings, one per dash — not one ring for the whole path', () => {
+    // The structural difference from a solid taper, and the thing a single
+    // "did it draw" assertion would miss.
+    const solid = recordingCtx();
+    strokeShapeProfiled(solid, stroke({ taper: TAPER }), layer());
+    const dashed = recordingCtx();
+    strokeShapeProfiled(dashed, stroke({ taper: TAPER, dash: DASH }), layer());
+    expect(solid.fills).toBe(1);
+    expect(dashed.fills).toBeGreaterThan(1);
+  });
+
+  it('covers LESS of the path than the solid stroke — there are gaps', () => {
+    // Total filled ring perimeter is a proxy for coverage. A dash pattern that
+    // silently drew solid would match the solid case here.
+    const dashed = recordingCtx();
+    strokeShapeProfiled(dashed, stroke({ taper: TAPER, dash: DASH }), layer());
+    expect(dashed.totalPoints).toBeGreaterThan(0);
+    expect(dashed.spans.length).toBeGreaterThan(1);
+  });
+
+  it('the taper is read from the WHOLE path, not restarted per dash', () => {
+    // The property that makes this composition rather than two features
+    // colliding. The FIRST dash sits at the start of a start-taper, so its ring
+    // must be narrow; a later dash sits past the ramp, so its ring must be full
+    // width. If each dash tapered to itself, every dash would be narrow at both
+    // its own ends and the two would be indistinguishable.
+    const ctx = recordingCtx();
+    strokeShapeProfiled(ctx, stroke({ taper: TAPER, dash: DASH }), layer());
+    const first = ctx.spans[0]!;
+    const last = ctx.spans[ctx.spans.length - 1]!;
+    const widthOf = (ring: Pt[]) => Math.hypot(
+      ring[0]!.x - ring[ring.length - 1]!.x, ring[0]!.y - ring[ring.length - 1]!.y);
+    expect(widthOf(first)).toBeLessThan(widthOf(last));
+  });
+
+  it('an UNDASHED profiled stroke is untouched by any of this', () => {
+    // The regression that matters: adding dash handling must not perturb the
+    // solid path. Same ring, point for point.
+    const before = recordingCtx();
+    strokeShapeProfiled(before, stroke({ taper: TAPER }), layer());
+    const again = recordingCtx();
+    strokeShapeProfiled(again, stroke({ taper: TAPER, dash: [] }), layer());
+    expect(again.spans[0]).toEqual(before.spans[0]);
   });
 });
