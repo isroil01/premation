@@ -202,17 +202,37 @@ function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }
   );
 }
 
-/** Editor for a gradient's stop list (shared by linear + radial fills). */
-function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.Element | null {
+/**
+ * Editor for a gradient's stop list — linear + radial, FILL and STROKE.
+ *
+ * The stroke used to get two lone ColorPickers wired to `stops[0]` and
+ * `stops[n-1]`: a gradient stroke could RENDER any number of stops (the model
+ * and the rasterizer have always supported it) but only its two ends could be
+ * edited and none could be added. Reusing this editor rather than growing a
+ * second one is the point — two stop editors would drift, and this one already
+ * carries the keyframing, the sort and the minimum-two rule.
+ *
+ * `target` selects where a write goes. Stop KEYFRAMING stays fill-only, and
+ * that is honest gating rather than an oversight: the animated stop list is read
+ * from the `fill.stops` data track, and there is no `stroke.stops` equivalent in
+ * the renderer. Offering the stopwatch here would be a control writing keyframes
+ * nothing samples — F34, which this same branch fixed twice.
+ */
+function StopList({
+  nodeId,
+  paint,
+  target = 'fill',
+}: { nodeId: string; paint: FillPaint; target?: 'fill' | 'stroke' }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   if (paint.type === 'solid') return null;
   const layerT = compToKeyframeTime(nodeId, time);
+  const canAnimate = target === 'fill';
 
   // Gradient-stop keyframes (data track): when live, the rows show the
   // SAMPLED stop list at the playhead and every edit writes a keyframe there —
   // the renderer reads the track, so writing the static paint would be an
   // edit that changes nothing on screen.
-  const stopsAnimated = defaultAnimation.isDataAnimated(nodeId, 'fill.stops');
+  const stopsAnimated = canAnimate && defaultAnimation.isDataAnimated(nodeId, 'fill.stops');
   const sampled = stopsAnimated
     ? (defaultAnimation.sampleData(nodeId, 'fill.stops', layerT) as Array<{ pos: number; color: string }> | undefined)
     : undefined;
@@ -227,6 +247,8 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
           sortedStops(next).map((s) => ({ pos: s.offset, color: s.color })),
         );
       }, `gradStops:${nodeId}`);
+    } else if (target === 'stroke') {
+      updateNodeStroke(nodeId, { paint: { ...paint, stops: next } });
     } else {
       setNodeFill(nodeId, { ...paint, stops: next });
     }
@@ -248,6 +270,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
 
   return (
     <div className={effStyles.list}>
+      {canAnimate && (
       <button
         type="button"
         className={effStyles.addChip}
@@ -260,6 +283,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
       >
         <Icon name="keyframe" size={11} /> {stopsAnimated ? 'Stops keyframed' : 'Animate stops'}
       </button>
+      )}
       {stops.map((s, i) => (
         <div key={s.id} className={effStyles.stopRow}>
           <ColorPicker
@@ -295,7 +319,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
         <Icon name="plus" size={11} /> Add stop
       </button>
 
-      <OpacityStopList nodeId={nodeId} paint={paint} />
+      {canAnimate && <OpacityStopList nodeId={nodeId} paint={paint} />}
     </div>
   );
 }
@@ -781,36 +805,11 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                     <option value="radial">Radial gradient</option>
                   </select>
                 </div>
+                {/* The full stop list, not two lone end-pickers. A gradient
+                    stroke has always RENDERED any number of stops; until now
+                    only its two ends were editable and none could be added. */}
                 {stroke?.paint && stroke.paint.type !== 'solid' && (
-                  <div className={styles.popoverRow}>
-                    <span className={styles.popoverLabel}>Grad</span>
-                    <ColorPicker
-                      compact
-                      value={sortedStops(stroke.paint.stops)[0]?.color ?? '#ffffff'}
-                      onChange={(hex) => {
-                        const p = stroke.paint!;
-                        if (p.type === 'solid') return;
-                        updateNodeStroke(nodeId, {
-                          paint: { ...p, stops: p.stops.map((s, si) => (si === 0 ? { ...s, color: hex } : s)) },
-                        });
-                      }}
-                      aria-label="Stroke gradient start color"
-                    />
-                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>→</span>
-                    <ColorPicker
-                      compact
-                      value={sortedStops(stroke.paint.stops).slice(-1)[0]?.color ?? '#000000'}
-                      onChange={(hex) => {
-                        const p = stroke.paint!;
-                        if (p.type === 'solid') return;
-                        const last = p.stops.length - 1;
-                        updateNodeStroke(nodeId, {
-                          paint: { ...p, stops: p.stops.map((s, si) => (si === last ? { ...s, color: hex } : s)) },
-                        });
-                      }}
-                      aria-label="Stroke gradient end color"
-                    />
-                  </div>
+                  <StopList nodeId={nodeId} paint={stroke.paint} target="stroke" />
                 )}
               </div>
             )}
