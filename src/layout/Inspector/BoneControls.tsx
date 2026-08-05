@@ -6,6 +6,9 @@ import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode } from '@core/rig/skeletonCommands';
 import { chainModeOf } from '@core/rig/liveIkTargets';
+import { applyRigPreset } from '@core/rig/skeletonCommands';
+import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
+import { readGeometry } from '@core/workspace/geometry';
 import { chainModePropPath, type ChainMode } from '@core/rig/ikfk';
 import { defaultAnimation } from '@motion/animation';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -31,6 +34,12 @@ const selectStyle: React.CSSProperties = {
 
 export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
+  // EVERY hook above the `!node` guard. React counts hooks per render, so a
+  // hook below an early return runs on one pass and not the next — "Rendered
+  // fewer hooks than expected", which unmounts the tree and takes the editor
+  // down. Deleting a selected layer with this panel open is the ordinary way to
+  // hit it; `conditionalHooks.test.tsx` exists because it has happened before.
+  const workspaceTime = useActiveWorkspace()?.time ?? 0;
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
 
@@ -40,7 +49,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   const controllers = skel?.controllers ?? [];
   // The canonical keyframe axis for this layer — the same forward map the
   // renderer samples, so a mode keyframe lands where the pose does.
-  const layerT = compToKeyframeTime(nodeId, useActiveWorkspace()?.time ?? 0);
+  const layerT = compToKeyframeTime(nodeId, workspaceTime);
   const hasPuppet = ((readNodePuppet(node)?.pins ?? []).length ?? 0) > 0;
 
   return (
@@ -61,6 +70,41 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
         </Button>
       </div>
 
+      {/* Auto-rig. Offered whether or not bones exist, but the destructive
+          case is stated on the control itself: applying a preset REPLACES the
+          rig, because merging two skeletons produces duplicate bone ids and a
+          duplicate id silently couples two bones onto one animation track. */}
+      <div className={styles.paramRow}>
+        <span className={styles.paramLabel} title="Generates bones, IK chains and controllers scaled to this layer. Replaces any existing rig.">
+          Auto-Rig
+        </span>
+        <select
+          value=""
+          aria-label="Auto-rig preset"
+          onChange={(e) => {
+            const id = e.target.value as RigPresetId;
+            if (!id) return;
+            const geom = readGeometry(node);
+            const problems = applyRigPreset(
+              nodeId,
+              RIG_PRESETS[id]({ width: geom?.width ?? 200, height: geom?.height ?? 200 }),
+              `Auto-Rig ${RIG_PRESET_LABELS[id]}`,
+            );
+            if (problems.length > 0) {
+              // Never silently: a refused rig with no message reads as a dead
+              // control, which is worse than the error.
+              console.error("Auto-rig refused:", problems);
+            }
+            e.currentTarget.value = "";
+          }}
+          style={selectStyle}
+        >
+          <option value="">Generate…</option>
+          {(Object.keys(RIG_PRESETS) as RigPresetId[]).map((id) => (
+            <option key={id} value={id}>{RIG_PRESET_LABELS[id]}</option>
+          ))}
+        </select>
+      </div>
       {bones.length === 0 && (
         <div className={styles.card} style={{ textAlign: 'center', padding: '16px 12px' }}>
           <span className={styles.subText}>No bones added to this layer.</span>
