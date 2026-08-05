@@ -26,6 +26,7 @@ import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
 import { localMatrix, worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
+import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import { isAutoOrientedToCamera, readNodeAutoOrient } from '@core/scene/autoOrient';
@@ -99,6 +100,25 @@ export interface SnapshotComp {
    *  this over the flat `background`. Undefined = plain solid `background`. */
   backgroundPaint?: FillPaint;
   transparent?: boolean;
+  /**
+   * This frame is being built for DELIVERY, not for the editor — so guide
+   * layers are dropped from it.
+   *
+   * Carried on the comp rather than on `RenderView` or as its own parameter,
+   * and the reason is nested compositions. `buildSnapshot` recurses for a comp
+   * instance and spreads `{...comp}` into that call while deliberately passing
+   * `view` and `overlays` as `undefined` (a nested comp renders at its own size
+   * with none of the editor's chrome). A purpose flag on the view would
+   * therefore be LOST one level down, and a guide layer inside a precomp would
+   * render into an export — the exact bug this flag exists to prevent, hidden
+   * one level deeper than anyone would look. Riding on `comp` means the
+   * propagation is the existing spread rather than a line someone must
+   * remember to add.
+   *
+   * Set in exactly one place per export path, and every export path builds its
+   * geometry through `exportView` — so if you are adding a fifth, set this too.
+   */
+  forExport?: boolean;
   camera3dMode?: 'active' | Project3D.OrthoView;
   /**
    * View-camera override (AE custom views): when set (and the mode is not an
@@ -181,7 +201,7 @@ function prefixLayerIds(layers: ReadonlyArray<RenderLayer>, prefix: string): Ren
   }));
 }
 
-const DEFAULT_COMP: SnapshotComp = { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG };
+export const DEFAULT_COMP: SnapshotComp = { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG };
 
 function num(v: unknown): number | undefined {
   return typeof v === 'number' ? v : undefined;
@@ -1744,7 +1764,15 @@ export function buildSnapshot(
       stroke: finalStroke,
       strokes,
       color: finalColor,
-      visible: node.visible !== false && (!anySolo || node.solo === true),
+      // Guide layers fold into the SAME visibility decision as the eye toggle
+      // and solo, rather than filtering the node list earlier. Three rules,
+      // one expression, so there is no second place for them to disagree —
+      // and the layer is still BUILT either way, just marked invisible, so
+      // every downstream consumer takes the path it already takes for a hidden
+      // layer instead of meeting a gap in the list.
+      visible: node.visible !== false
+        && (!anySolo || node.solo === true)
+        && !(comp.forExport === true && readIsGuideLayer(node)),
       primitive: pathPoints
         ? 'path'
         : isSolid

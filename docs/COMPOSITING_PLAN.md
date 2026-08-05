@@ -1531,6 +1531,43 @@ one of the five either.
 |---|---|---|---|
 | **F22** | **"Does editing this property create a keyframe?" has two answers.** Transform props go through `ports.applyNodePropsKeyframed`, which keyframes when `autoKeyframe \|\| hasAnyTrack(group)` — so the Auto-Keyframe preference counts. Effect params went through `EffectStack`'s inline `isAnimated(path)` branch, which ignores the preference entirely. A user with Auto-Keyframe ON gets a keyframe from dragging a layer and a static write from dragging a Bezier Warp handle, in the same session, with no way to tell which they will get. NOT resolved here — changing when an effect param autokeys alters behaviour every existing project depends on, which is a decision rather than a refactor. What IS resolved is the thing that would have made it worse: both the numeric field and the new canvas handle now call one `writeEffectParams`, so they cannot drift from each other while the larger question is open. | **Consistency, live** | **DIRECTION DECIDED 2026-08-05, TIMING NOT.** Effect params will unify on HONOURING the preference — "Auto-Keyframe is on but this property ignores it" is indefensible once anyone notices. It ships as its own announced behaviour change with its own release note, bundled with nothing else, same treatment as the repeater fold and the trim/fill change — and not yet. `writeEffectParams` is the single place to change when it does. |
 
+## 2b-sexiesdecies. 2026-08-06 — guide layers, and two green guards watching nothing
+
+**Where a purpose flag lives is decided by NESTING, not by taste.** Guide
+layers need `buildSnapshot` — shared by preview and export — to know which it
+is building. Two homes were available and they are not equivalent:
+
+| Home | Propagates into a precomp? |
+|---|---|
+| `RenderView` | **NO.** The nested recursion passes `view: undefined` on purpose (a precomp renders at its own size with none of the editor's chrome). |
+| `SnapshotComp` | **YES**, free. The recursion already spreads `{...comp, width, height}`. |
+
+`RenderView` is the more natural-sounding choice — it is the parameter that
+already differs between preview and export, and `exportView()` is a single
+chokepoint every export path passes through. It is also the one that would have
+shipped the bug: a guide layer inside a precomp rendering into the delivered
+file, one level below where anyone would look for it. The propagation question
+is what separates them, and it is not visible from the call sites — only from
+the recursion.
+
+Recorded as a check: **before choosing where a render-context flag lives, find
+the recursive call and read what it forwards.** Anything the recursion drops is
+a flag that works at the top level and fails inside a precomp, which is the
+worst failure shape available — correct in every test anyone writes casually.
+
+| # | Finding | Severity | Status |
+|---|---|---|---|
+| **F30** | **Two guards, both green, neither watching the deciding line.** `exportPathsMarkForExport` asserts the four export call sites *mention* `exportComp`; `guideLayers.test.ts` asserts `buildSnapshot` honours `forExport`. Changing `exportComp` to return `forExport: false` — the single line that decides whether guide layers reach a delivered file — broke **nothing**, because the first test only reads source text and the second builds its own comp. Closed with direct tests of what the helper returns, including the `comp === undefined` boundary the clean fixture cannot reach. | **Coverage gap** | **FIXED** |
+
+**F30 is a shape worth naming, because both guards were deliberate and good.**
+Splitting rule from wiring was right — they fail differently and need different
+media. But splitting a claim into two tests can leave a seam neither one covers:
+test A checks the caller, test B checks the callee's *contract as A imagines
+it*, and the callee's actual body is watched by neither. The join is where to
+look. When a guard set is built by splitting a claim, ask which line each half
+would let you change silently — and note that this one was found by rule 4's
+routine break sweep, not by inspection.
+
 ## 2b-quinquiesdecies. 2026-08-06 — Motion Sketch, and a reduction that is wrong by default
 
 **The eleventh instance, in a new form: not the feature, the ENGINE.** Motion

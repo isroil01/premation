@@ -147,7 +147,7 @@ export interface TimelineProps {
   onTrackBlendModeChange?: (trackId: string, mode: LayerBlendMode) => void;
   onTrackMatteChange?: (trackId: string, matte: any) => void;
   onTrackParentChange?: (trackId: string, parentId: string | null) => void;
-  onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
+  onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide') => void;
   /** Rename a layer (confirmed on blur/Enter). */
   onTrackRename?: (trackId: string, newName: string) => void;
   onKeyframeSeek?: (keyframeId: string) => void;
@@ -1060,6 +1060,7 @@ function Timeline({
               <span className={styles.fxText} title="Effects" style={{ fontSize: 10 }}>fx</span>
               <Icon name="motion-blur" size={9} title="Motion Blur" />
               <Icon name="adjustment" size={9} title="Adjustment Layer" />
+              <Icon name="eye-off" size={9} title="Guide Layer (not rendered)" />
               <Icon name="3d" size={9} title="3D Layer" />
             </span>
             <span className={styles.colHeadSwitches}>Switches</span>
@@ -1608,7 +1609,7 @@ const TrackHeader = memo(function TrackHeader({
   onBlendModeChange?: (mode: LayerBlendMode) => void;
   onMatteChange?: (matte: any) => void;
   onParentChange?: (parentId: string | null) => void;
-  onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
+  onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide') => void;
   onRename?: (newName: string) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
   onReorderStart?: (e: ReactPointerEvent<HTMLDivElement>) => void;
@@ -1891,6 +1892,17 @@ const TrackHeader = memo(function TrackHeader({
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
         >
           <Icon name="adjustment" size={10} />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="guide"
+          data-on={track.guide || undefined}
+          aria-pressed={track.guide === true}
+          title={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
+        >
+          <Icon name="eye-off" size={10} />
         </button>
         <button
           type="button"

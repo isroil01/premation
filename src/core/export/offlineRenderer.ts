@@ -14,7 +14,7 @@
  */
 
 import { createRenderBackend } from '@core/rendering/createRenderBackend';
-import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, type SnapshotComp } from '@core/rendering/buildSnapshot';
+import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, DEFAULT_COMP, type SnapshotComp } from '@core/rendering/buildSnapshot';
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -48,6 +48,32 @@ export function exportView(
   const ch = comp?.height ?? COMP_HEIGHT;
   const scale = Math.min(outW / cw, outH / ch);
   return { scale, offsetX: (outW - cw * scale) / 2, offsetY: (outH - ch * scale) / 2 };
+}
+
+/**
+ * The comp settings for a DELIVERED frame — today, drop guide layers.
+ *
+ * Deliberately a sibling of `exportView`, meant to be called on the adjacent
+ * line, because there is no single funnel every export path passes through:
+ * `offlineRenderer`, `exportManager` (both the sequence and the poster
+ * thumbnail) and `exportPreview` each call `buildSnapshot` themselves. Four
+ * call sites is four chances to forget, which is the §2·0 shape.
+ *
+ * Two things narrow it. One DEFINITION of "for export" lives here, so the rule
+ * cannot drift between the four. And `exportPathsMarkForExport.test.ts` reads
+ * this directory's source, finds every `buildSnapshot(` call in it, and asserts
+ * each is paired with this helper — derived from the code rather than from a
+ * list someone maintains, so a fifth export path is caught the day it appears.
+ *
+ * `exportPreview` counts as an export path on purpose: it shows what the file
+ * will contain, so a guide layer visible there would be a preview that lies.
+ */
+export function exportComp(comp?: SnapshotComp): SnapshotComp & { forExport: true } {
+  // `comp` is optional on every export path, and `buildSnapshot` would have
+  // substituted its defaults for `undefined`. Substituting them HERE keeps that
+  // behaviour while still marking the frame — passing `undefined` through would
+  // be the one case that silently kept guide layers in the output.
+  return { ...DEFAULT_COMP, ...comp, forExport: true };
 }
 
 // ── Pure frame timing (deterministic, tested) ────────────────────────
@@ -150,7 +176,7 @@ export async function renderOffline(
         undefined,
         exportView(params.width, params.height, params.comp), // 1:1 comp→frame (no preview inset)
         params.motionBlur,
-        params.comp,
+        exportComp(params.comp),
       );
       backend.renderFrame(snap);
       // Converge media: while a render started async media work (video seeks,

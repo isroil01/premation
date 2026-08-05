@@ -118,6 +118,15 @@ export interface TimelineTrack {
   /** Muted / solo state. */
   muted?: boolean;
   solo?: boolean;
+  /**
+   * A GUIDE layer: drawn in the comp, dropped from every export.
+   *
+   * Shown on the row because the whole point of the flag is that the layer
+   * behaves differently somewhere the user is not looking. An unmarked guide
+   * layer is indistinguishable from an ordinary one until the delivered file
+   * comes back missing it.
+   */
+  guide?: boolean;
   /** Per-track color stripe on the header. */
   color?: string;
   /** Ghosted (dimmed) because it's outside the current Focus Mode context. */

@@ -71,6 +71,7 @@ import { isAudioNode } from '@core/audio/audioScene';
 import { convertAudioToSliderNull } from '@core/audio/audioKeyframes';
 import { applyExponentialScale, eligibleScaleTracks, REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import { armMotionSketch, finishMotionSketch } from '@core/animation/motionSketch';
+import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
@@ -338,6 +339,34 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       enabled: () => true,
       execute: () => {
         document.querySelector<HTMLElement>('[data-workspace-viewport]')?.focus();
+      },
+    },
+    {
+      /**
+       * Guide layers — visible while you work, absent from the deliverable.
+       *
+       * Multi-select capable, because marking a batch of reference layers at
+       * once is the normal use (a folder of design comps, a set of safe-area
+       * overlays). The toggle follows the FIRST selected layer so a mixed
+       * selection resolves to one state, rather than flipping each layer
+       * independently and leaving the batch as mixed as it started.
+       */
+      id: asCommandId('layer.toggleGuide'),
+      label: 'Guide Layer (exclude from render)',
+      icon: 'eye-off',
+      enabled: () => useSelectionStore.getState().ids.length > 0,
+      execute: () => {
+        const ids = useSelectionStore.getState().ids;
+        if (ids.length === 0) return;
+        const next = !isGuideLayer(ids[0]!);
+        for (const id of ids) setGuideLayer(id, next);
+        const plural = ids.length > 1 ? 's' : '';
+        notify(
+          next
+            ? `Guide layer${plural} — hidden from render and export`
+            : `No longer a guide layer${plural}`,
+          'success',
+        );
       },
     },
     {

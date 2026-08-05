@@ -67,6 +67,7 @@ import { getNodeMatte, setNodeMatte } from '@core/effects/matte';
 import { readNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
 import { readNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { readNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
+import { readIsGuideLayer, toggleGuideLayer } from '@core/scene/guideLayer';
 import { reparentNode, moveNodeAdjacent } from '@core/scene/parenting';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
@@ -425,6 +426,10 @@ function EditorShellInner(): JSX.Element {
         motionBlur: readNodeMotionBlur(node),
         fxEnabled: readNodeFxEnabled(node),
         adjustment: readNodeAdjustment(node),
+        // Guide layers are marked in the row so the exclusion is visible at a
+        // glance — a layer that silently vanishes from the export is exactly
+        // the thing a user needs told BEFORE they deliver, not after.
+        guide: readIsGuideLayer(node),
         shy: (node as any).shy === true,
         keyframes,
         properties,
@@ -1206,6 +1211,13 @@ function EditorShellInner(): JSX.Element {
                 // pipeline never consults — so the icon lit up and no pixel
                 // changed, while the inspector's equivalent switch (writing the
                 // `fx` component) changed pixels without lighting the icon.
+                if (flag === 'guide') {
+                  // Writes the fx component through the graph, so undo, autosave
+                  // and the renderer all see the same flag — the trap this
+                  // handler'''s comment above is about.
+                  toggleGuideLayer(trackId);
+                  return;
+                }
                 if (flag === 'threeD') {
                   // Honest gating: kinds the renderer can't project in 3D
                   // (groups/nulls/cameras/lights/solids/particles/audio) must

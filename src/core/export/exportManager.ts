@@ -23,7 +23,7 @@ import { captureDocument } from '@core/api/cloudDocument';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
-import { renderOffline, exportView, resolveRange, type OfflineRenderParams } from './offlineRenderer';
+import { renderOffline, exportView, exportComp, resolveRange, type OfflineRenderParams } from './offlineRenderer';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { type ZipEntry } from './zip';
 import { encodeGifBytes, encodeZipBytes } from './encodeClient';
@@ -84,7 +84,7 @@ function exportSnapshot(opts: ExportOptions, time: number): ReturnType<typeof bu
     undefined,
     exportView(opts.width, opts.height, opts.comp),
     exportMotionBlur(opts.fps),
-    opts.comp,
+    exportComp(opts.comp),
   );
 }
 
@@ -124,7 +124,7 @@ export async function renderThumbnailBlob(
         undefined, // no motion blur on a still
         // A poster frame is never transparent: it sits on a card, and a
         // transparent JPEG is just a black one.
-        { ...comp, transparent: false },
+        exportComp({ ...comp, transparent: false }),
       ),
     );
     return await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.72));
