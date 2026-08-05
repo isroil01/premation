@@ -7,7 +7,7 @@
  * unification; the suite tracks the gap.
  */
 
-import { defineScene, shapeNode, type Scene } from '../sceneKit';
+import { defineScene, shapeNode, node, type Scene } from '../sceneKit';
 
 const COMP = { width: 360, height: 280, background: '#101014' };
 const SIZE = { w: 360, h: 280 };
@@ -18,11 +18,18 @@ interface StrokeOpts {
   opacity?: number;
   align?: 'center' | 'inside' | 'outside';
   dash?: number[];
+  dashOffset?: number;
   cap?: 'butt' | 'round' | 'square';
   join?: 'miter' | 'round' | 'bevel';
 }
 
-function strokeScene(id: string, description: string, strokes: StrokeOpts[]): Scene {
+function strokeScene(
+  id: string,
+  description: string,
+  strokes: StrokeOpts[],
+  /** Extra Transform props — e.g. `{ shapeType: 'ellipse' }` for a curved path. */
+  transform?: Record<string, unknown>,
+): Scene {
   return defineScene({
     id,
     description,
@@ -31,7 +38,16 @@ function strokeScene(id: string, description: string, strokes: StrokeOpts[]): Sc
     fps: 30,
     frames: [0],
     build(graph) {
-      graph.addNode(shapeNode('s', { x: 180, y: 140, rotation: 0, fill: '#1f4f8f' }));
+      graph.addNode(
+        transform
+          ? node('s', {
+              kind: 'shape',
+              position: { x: 180, y: 140 },
+              transform,
+              style: { fill: '#1f4f8f' },
+            })
+          : shapeNode('s', { x: 180, y: 140, rotation: 0, fill: '#1f4f8f' }),
+      );
       const payload = strokes.map((s) => ({
         enabled: true,
         opacity: 1,
@@ -67,4 +83,30 @@ export const strokeScenes: Scene[] = [
     { color: '#20304a', width: 28, join: 'round' },
     { color: '#ff6b9d', width: 8, join: 'round' },
   ]),
+
+  /**
+   * Dash OFFSET on a curve — the pixels behind the drawing-on / marching-border
+   * feature.
+   *
+   * Two deliberate choices, both about what a lazier fixture could not see:
+   *
+   *  • **An ellipse, not the rect the rest of this family uses.** Offset is an
+   *    ARC-LENGTH parameter. On straight edges any monotonic parameterisation
+   *    looks plausible, so a rect would still pass if the offset were applied in
+   *    the wrong units or per-segment rather than along the path. Curvature is
+   *    what separates arc length from everything that resembles it.
+   *
+   *  • **Offset 9 against a [24, 12] pattern — a QUARTER of the 36px period, not
+   *    zero and not a whole period.** Dashes are periodic: offset 0 and offset
+   *    36 draw the same picture, pixel for pixel. A golden blessed at either
+   *    would be satisfied by a build that ignored the offset entirely, and by
+   *    one that applied it modulo the wrong period. A quarter period is the
+   *    furthest a phase can be from agreeing with itself (rule 3a).
+   */
+  strokeScene(
+    'stroke-dash-offset-curve',
+    'Dashed ellipse phase-shifted a quarter period — dash offset along a curve.',
+    [{ color: '#33e0a0', width: 14, dash: [24, 12], dashOffset: 9, cap: 'butt' }],
+    { shapeType: 'ellipse' },
+  ),
 ];

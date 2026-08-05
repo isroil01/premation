@@ -224,6 +224,11 @@ const STATIC: Record<string, MetaSpec> = {
 
   // Stroke
   strokeWidth: { ...PX('Stroke Width', 'stroke', ORDER.stroke), min: 0, defaultValue: 4 },
+  // Arc length along the path, in the same px the dash pattern is measured in.
+  // No min and no max on purpose: a negative offset slides the pattern the other
+  // way, and drawing-on runs the offset across the whole path length, which
+  // depends on the shape rather than on any bound expressible here.
+  strokeDashOffset: { ...PX('Dash Offset', 'stroke', ORDER.stroke), defaultValue: 0 },
 
   // Trim paths — matched by the `pathop.<id>.<param>` resolver below, not by a
   // literal key, since document version 1.4.0 made trim a chain entry with an

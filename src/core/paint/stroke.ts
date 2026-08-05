@@ -32,6 +32,24 @@ export interface Stroke {
   align: StrokeAlign;
   /** Dash pattern in px ([] = solid). */
   dash: number[];
+  /**
+   * How far the dash pattern is slid ALONG THE PATH, in the same layer-local px
+   * `dash` is measured in — arc length, not a fraction and not an angle.
+   *
+   * This is the half of dashes that animates. A static pattern is decoration; a
+   * keyframed offset is a line drawing itself on, a marching border, a progress
+   * ring. Keyframe it through the `strokeDashOffset` track, which `buildSnapshot`
+   * folds in here before the stroke reaches the rasterizer.
+   *
+   * Absent means 0, so every stroke authored before this renders bit-identically.
+   *
+   * PERIODIC by construction: `offset` and `offset + sum(dash)` draw the same
+   * picture, because the pattern repeats over one full dash+gap period (twice
+   * that for an odd-length array, which Canvas2D doubles). That is a property of
+   * dashes, not a quirk here — and it is exactly why a fixture at 0, or at one
+   * whole period, cannot see an offset bug.
+   */
+  dashOffset?: number;
   cap: StrokeCap;
   join: StrokeJoin;
   /** Optional gradient paint — when set (linear/radial) it overrides `color`;
@@ -79,6 +97,13 @@ export function normalizeStroke(v: unknown): Stroke {
     opacity: clamp01(Number.isFinite(s.opacity) ? (s.opacity as number) : base.opacity),
     align: s.align === 'inside' || s.align === 'outside' ? s.align : 'center',
     dash: Array.isArray(s.dash) ? s.dash.filter((n) => Number.isFinite(n) && n >= 0) : [],
+    // Omitted rather than defaulted to 0. `contentHash` serialises the whole
+    // stroke object as the raster cache key, so writing `dashOffset: 0` into
+    // every normalised stroke would change the key for every existing layer and
+    // invalidate every cached raster in the project on first open — for a value
+    // that means "unchanged". Negative offsets are legal (they slide the other
+    // way), so this only rejects non-finite input.
+    ...(Number.isFinite(s.dashOffset) ? { dashOffset: s.dashOffset as number } : {}),
     cap: s.cap === 'round' || s.cap === 'square' ? s.cap : 'butt',
     join: s.join === 'round' || s.join === 'bevel' ? s.join : 'miter',
     ...(validPaint ? { paint } : {}),
