@@ -89,12 +89,13 @@ const EXPLAINED: Record<string, string> = {
  * bugs it describes.
  */
 const KNOWN_UNSAMPLED: Record<string, string> = {
-  // F35 (2026-08-06). Same class as F34, found by this guard the day F34 was
-  // fixed. The STATIC value is read (`num(p.cornerRadius)` in the component
-  // scan), so a rounded rect draws — but the animated TRACK is folded nowhere,
-  // so a keyframed corner radius does not move. No golden animates it, so the
-  // fix is cheap; it is out of scope here because F34 is what this change is.
-  cornerRadius: 'F35 — animated track never folded; static value is read',
+  // EMPTY, and that is the healthy state — not a sign the list is unused.
+  //
+  // It held exactly one entry for exactly one commit: F35 (`cornerRadius`),
+  // which this guard found the day F34 was fixed. Fixing F35 made
+  // `and every LOGGED finding is still real` go red, which is the whole design
+  // — the list cannot outlive the bugs it names, so it emptied itself rather
+  // than quietly becoming an exemption for a property that now works.
 };
 
 /**

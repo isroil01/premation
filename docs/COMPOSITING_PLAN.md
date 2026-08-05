@@ -917,6 +917,50 @@ palette; running the quadruped entry → 14 bones, one Undo → 0. Pick Vertex �
 vertex #135 highlighted, panel showing four bones at 29.3 / 28.4 / 24.2 / 18.1 %,
 total 100%. Typed values landed exactly and one Undo reverted exactly one edit.
 
+## 2b-duodevicies-ter. Release note — animated corner radius (F35, FIXED)
+
+**A behaviour change for any project carrying a `cornerRadius` track**, and the
+first thing the F34 class guard paid for.
+
+**What changed.** A keyframed corner radius now animates. It did not before: the
+STATIC value was read by the component scan (`num(p.cornerRadius)`), so a rounded
+rect drew correctly and nothing looked broken, while the animated TRACK was folded
+nowhere. The stopwatch wrote keyframes the renderer never read.
+
+**How it was found.** Not by looking. `animatablePropertyReaders.test.ts` — the
+derived sweep added with F34, whose subject set is the registry's own inventory —
+reported it the same day F34 was fixed. Fixing one instance found the next one;
+that is the whole argument for guarding the class.
+
+**Re-bless: NONE, checked the same way F34 was.** Three scenes use `cornerRadius`
+(`composited.ts`, `glass.ts`, `hires.ts`) and all three set it STATICALLY. A
+static value arrives through the component scan and never through the animated
+fold, so no existing golden could shift. Predicted diff: zero goldens. Actual:
+zero. And as with F34, the consequence is that the fix is not covered by the pixel
+gate — a scene ramping a corner radius would be a NEW golden and its own blessing.
+
+**The guard bookkeeping worked as designed, and is worth recording.** `cornerRadius`
+was logged in G2's `KNOWN_UNSAMPLED` when F34 shipped. Fixing it turned
+`and every LOGGED finding is still real` RED — because that test exists precisely
+so a fixed entry cannot linger as a silent exemption. The list is now empty, which
+is the healthy state, not a sign it is unused: it held one entry for one commit
+and emptied itself.
+
+**Guards.** `cornerRadiusSnapshot.test.ts` samples the crossing —
+`buildSnapshot(...).layers[].cornerRadius` — mirroring `strokeWidthSnapshot.test.ts`.
+Values derived on paper: 20 at t=0, **36** at t=1, 52 at t=2. Negative radii clamp
+to 0, because an overshooting ease undershoots between keys and a negative radius
+THROWS in `roundRect` rather than drawing a sharper corner.
+
+**A fixture flaw its own positive control caught.** The first draft ramped 4 → 36
+against a stored 8 — so the ramp crossed the static value partway, and a fold
+still reading `base.cornerRadius` could have matched a row by coincidence instead
+of failing all of them. The ramp now runs 20 → 52, clear of the stored 8.
+
+Verified to fail: reverting the fold turns 7 of 17 red, the class guard included.
+
+Suite 602 → 603 files, 7514 → 7522 passing. Lint 0 errors.
+
 ## 2b-duodevicies-bis. Release note — animated stroke width (F34, FIXED)
 
 **A behaviour change for any project that already carries a `strokeWidth`

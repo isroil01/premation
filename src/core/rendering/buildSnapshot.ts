@@ -1814,7 +1814,20 @@ export function buildSnapshot(
           : (shapeType === 'ellipse' || (!shapeType && /circle|ellip|dot|orb/.test(name)))
             ? 'ellipse'
             : 'rect',
-      cornerRadius: base.cornerRadius,
+      // F35, FIXED. `cornerRadius` was registered keyframeable in `propertyMeta`
+      // and its animated track was folded NOWHERE — the STATIC value is read by
+      // the component scan, so a rounded rect drew correctly and a keyframed
+      // corner radius simply did not move. Found by the derived sweep added with
+      // F34 (`animatablePropertyReaders.test.ts`): same class, and the same
+      // one-line shape as the `backdropBlur` fold immediately below.
+      //
+      // Clamped at 0 for the reason `strokeWidth` is: an overshooting ease
+      // undershoots between keys, and a negative radius is a Canvas2D exception
+      // rather than a sharper corner. The property's own `min: 0` agrees.
+      cornerRadius: (() => {
+        const r = a?.get('cornerRadius');
+        return typeof r === 'number' && Number.isFinite(r) ? Math.max(0, r) : base.cornerRadius;
+      })(),
       // Keyframeable like any numeric prop: an animated track wins over the base,
       // so a panel can frost in over time.
       // Glass owns the backdrop blur when it is on — one control, not two that
