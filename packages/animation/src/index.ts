@@ -73,6 +73,7 @@ export type { LottieBezier, LottieShapeProp } from './lottiePath';
 export { AnimationEngine, defaultAnimation } from './AnimationEngine';
 export type {
   AnimSnapshot,
+  ExpressionState,
   AnimationChangeListener,
   AudioLevelProvider,
   ControlProvider,

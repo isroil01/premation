@@ -189,13 +189,19 @@ describe('v1_4_0_to_v1_5_0 — registered in the chain', () => {
   it('brings a 1.4.0 document to the current version through the real walker', () => {
     const out = migrateDocument(legacyDoc());
     expect(out.version).toBe(CURRENT_DOCUMENT_VERSION);
-    expect(CURRENT_DOCUMENT_VERSION).toBe('1.5.0');
+    // NOT `toBe('1.5.0')` any more, for the reason the trim suite already
+    // records: this step stopped being the last one when the expression
+    // enabled-state added 1.5.0 → 1.6.0, and pinning today's version here made
+    // an unrelated later migration fail this suite. What the test is for is
+    // that a 1.4.0 document walks all the way to today.
   });
 
-  it('is the last step and carries nothing but this change', () => {
-    const last = MIGRATIONS[MIGRATIONS.length - 1]!;
-    expect(last.from).toBe('1.4.0');
-    expect(last.to).toBe('1.5.0');
+  it('carries nothing but this change, and steps 1.4.0 → 1.5.0 exactly once', () => {
+    // Phrased as "the step that produces 1.5.0" rather than "the last step" —
+    // the identity being asserted is the transformation, which does not change
+    // when something is appended after it.
+    const steps = MIGRATIONS.filter((m) => m.to === '1.5.0');
+    expect(steps.map((m) => m.from)).toEqual(['1.4.0']);
   });
 });
 

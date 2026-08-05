@@ -99,6 +99,34 @@ function componentIndexOf(prop: PropPath): number {
   return 0;
 }
 
+/**
+ * A property's expression as the engine holds it: the compiled source plus
+ * whether it currently drives the value.
+ *
+ * `enabled` is deliberately NOT a field of `CompiledExpression`. Compilation is
+ * a pure function of the source text and is shared by `previewExpression`,
+ * which compiles a draft that is not attached to anything; enablement is state
+ * that belongs to the (node, prop) slot. Putting the bit on the compilation
+ * would make a preview carry an enabled-ness it has no business having.
+ */
+interface ExpressionEntry {
+  compiled: CompiledExpression;
+  enabled: boolean;
+}
+
+/**
+ * The serializable form of the above — the undo seam and the persisted shape.
+ *
+ * Mirrors `DataTrack`'s role for data keyframes: `getExpressionState` hands one
+ * out, `setExpressionState` takes one back, and a command stores a before and
+ * an after. Carrying `enabled` here rather than encoding presence in a
+ * `string | null` is what makes "disable" and "delete" different undo steps.
+ */
+export interface ExpressionState {
+  src: string;
+  enabled: boolean;
+}
+
 /** Small deterministic string hash → a noise-phase seed (NOT crypto). */
 function stringSeed(s: string): number {
   let h = 0;
@@ -108,8 +136,17 @@ function stringSeed(s: string): number {
 
 export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
-  /** Per-property expressions that override the sampled value each frame. */
-  private expressions = new Map<string, Map<PropPath, CompiledExpression>>();
+  /**
+   * Per-property expressions that override the sampled value each frame —
+   * unless DISABLED, in which case the entry is retained and ignored.
+   *
+   * Presence and enablement are two questions, not one. `hasExpression` answers
+   * the first (is there a formula to show in the editor?) and
+   * `isExpressionEnabled` the second (does it drive the value?). Anything that
+   * conflates them reads a disabled expression as an active one, which compiles
+   * fine and is wrong at every frame.
+   */
+  private expressions = new Map<string, Map<PropPath, ExpressionEntry>>();
   /** Change sink — no-op until the host binds one via setChangeListener. */
   private changeListener: AnimationChangeListener = () => {};
   /** >0 while inside batch; notifications are held until the batch closes. */
@@ -546,9 +583,12 @@ export class AnimationEngine {
     try {
       const track = this.tracks.get(nodeId)?.get(prop);
       const base = track ? sampleTrack(track, t) : undefined;
-      const expr = this.expressions.get(nodeId)?.get(prop);
-      if (expr) {
-        const r = expr.run(this.exprContext(nodeId, prop, t, base, visited, depth + 1));
+      const entry = this.expressions.get(nodeId)?.get(prop);
+      // The one line where enablement decides anything. A disabled expression
+      // is skipped entirely — not run-and-discarded — so it costs nothing per
+      // frame and cannot raise a cycle error from a formula nobody is using.
+      if (entry?.enabled) {
+        const r = entry.compiled.run(this.exprContext(nodeId, prop, t, base, visited, depth + 1));
         if (r.error) {
           if (/Cycle detected/i.test(r.error) || /Maximum cross-layer/i.test(r.error)) {
             throw new Error(r.error);
@@ -825,12 +865,21 @@ export class AnimationEngine {
   }
 
   // ── Expressions ─────────────────────────────────────────────────
-  /** Attach/replace an expression on a property (compiles immediately). */
+  /**
+   * Attach/replace an expression on a property (compiles immediately).
+   *
+   * PRESERVES the enabled bit when one is already attached. Editing the text of
+   * a disabled expression must not silently re-enable it — the user turned it
+   * off, and a keystroke is not a request to turn it back on. A newly attached
+   * expression is enabled, which is the only sensible default for something the
+   * user just typed.
+   */
   setExpression(nodeId: string, prop: PropPath, src: string): void {
     if (src.trim() === '') { this.removeExpression(nodeId, prop); return; }
     let byProp = this.expressions.get(nodeId);
     if (!byProp) { byProp = new Map(); this.expressions.set(nodeId, byProp); }
-    byProp.set(prop, compileExpression(src));
+    const enabled = byProp.get(prop)?.enabled ?? true;
+    byProp.set(prop, { compiled: compileExpression(src), enabled });
     this.notifyChange(nodeId);
   }
 
@@ -841,17 +890,69 @@ export class AnimationEngine {
     this.notifyChange(nodeId);
   }
 
+  /**
+   * Turn an attached expression on or off WITHOUT discarding its source.
+   *
+   * A disabled expression is not evaluated: the property falls back to its
+   * keyframes, and to its static value when it has none. No-op when the
+   * property has no expression — there is nothing to enable, and creating an
+   * empty one here would put an expression-shaped hole in the snapshot.
+   */
+  setExpressionEnabled(nodeId: string, prop: PropPath, enabled: boolean): void {
+    const entry = this.expressions.get(nodeId)?.get(prop);
+    if (!entry || entry.enabled === enabled) return;
+    entry.enabled = enabled;
+    this.notifyChange(nodeId);
+  }
+
   getExpressionSrc(nodeId: string, prop: PropPath): string | undefined {
-    return this.expressions.get(nodeId)?.get(prop)?.src;
+    return this.expressions.get(nodeId)?.get(prop)?.compiled.src;
   }
 
   /** Compile error for the property's expression (null if valid or none). */
   getExpressionError(nodeId: string, prop: PropPath): string | null {
-    return this.expressions.get(nodeId)?.get(prop)?.compileError ?? null;
+    return this.expressions.get(nodeId)?.get(prop)?.compiled.compileError ?? null;
   }
 
+  /**
+   * Is there an expression attached at all — enabled or not?
+   *
+   * This is the question the EDITOR asks (show the source, offer the toggle).
+   * It is NOT the question the sampler asks; see `isExpressionEnabled`.
+   */
   hasExpression(nodeId: string, prop: PropPath): boolean {
     return this.expressions.get(nodeId)?.has(prop) ?? false;
+  }
+
+  /**
+   * Does an expression currently DRIVE this property?
+   *
+   * False both when none is attached and when one is attached but disabled —
+   * the two cases a caller asking "will the keyframes win?" wants merged, and
+   * exactly the two `hasExpression` must keep apart.
+   */
+  isExpressionEnabled(nodeId: string, prop: PropPath): boolean {
+    return this.expressions.get(nodeId)?.get(prop)?.enabled ?? false;
+  }
+
+  /** Source + enabled state, or null — the undo seam (mirrors getDataTrack). */
+  getExpressionState(nodeId: string, prop: PropPath): ExpressionState | null {
+    const entry = this.expressions.get(nodeId)?.get(prop);
+    return entry ? { src: entry.compiled.src, enabled: entry.enabled } : null;
+  }
+
+  /**
+   * Replace a property's expression wholesale (null removes). Mirrors
+   * `setDataTrack`, and is what undo/redo applies — one call restores source
+   * and enablement together, so no ordering of two setters can leave a
+   * half-restored state.
+   */
+  setExpressionState(nodeId: string, prop: PropPath, state: ExpressionState | null): void {
+    if (!state || state.src.trim() === '') { this.removeExpression(nodeId, prop); return; }
+    let byProp = this.expressions.get(nodeId);
+    if (!byProp) { byProp = new Map(); this.expressions.set(nodeId, byProp); }
+    byProp.set(prop, { compiled: compileExpression(state.src), enabled: state.enabled });
+    this.notifyChange(nodeId);
   }
 
   /** All props on a node that are keyframed and/or expressed. */
@@ -889,8 +990,10 @@ export class AnimationEngine {
     }
     const expressions: AnimSnapshot['expressions'] = {};
     for (const [nodeId, byProp] of this.expressions) {
-      const props: Record<string, string> = {};
-      for (const [prop, expr] of byProp) props[prop] = expr.src;
+      const props: Record<string, ExpressionState> = {};
+      for (const [prop, entry] of byProp) {
+        props[prop] = { src: entry.compiled.src, enabled: entry.enabled };
+      }
       expressions[nodeId] = props;
     }
     const data: NonNullable<AnimSnapshot['data']> = {};
@@ -946,13 +1049,23 @@ export class AnimationEngine {
       }
       this.tracks.set(nodeId, byProp);
     }
-    for (const nodeId of Object.keys(data.expressions)) {
+    // `?? {}` because a snapshot predating the expression feature has no
+    // `expressions` key at all — an ABSENT optional field, not a second shape.
+    // This path now carries pre-1.1 recovery snapshots, which is where such a
+    // blob actually turns up, and `Object.keys(undefined)` threw.
+    for (const nodeId of Object.keys(data.expressions ?? {})) {
       const props = data.expressions[nodeId];
       if (!props) continue;
-      const byProp = new Map<PropPath, CompiledExpression>();
+      const byProp = new Map<PropPath, ExpressionEntry>();
       for (const prop of Object.keys(props)) {
-        const src = props[prop];
-        if (src) byProp.set(prop, compileExpression(src));
+        // ONE SHAPE ONLY. The pre-1.6.0 form was a bare `src` string; it is
+        // upgraded by the document migration, never here. A reader that quietly
+        // accepted both would let documents stay un-migrated indefinitely and
+        // the two shapes drift — same precedent as fx.repeater in 1.5.0.
+        const state = props[prop];
+        if (state?.src) {
+          byProp.set(prop, { compiled: compileExpression(state.src), enabled: state.enabled !== false });
+        }
       }
       if (byProp.size) this.expressions.set(nodeId, byProp);
     }
@@ -960,11 +1073,15 @@ export class AnimationEngine {
   }
 }
 
-/** Serializable animation state: keyframe tracks + expression sources +
- *  (optionally) non-scalar data tracks. `data` is absent on old documents. */
+/** Serializable animation state: keyframe tracks + expression states +
+ *  (optionally) non-scalar data tracks. `data` is absent on old documents.
+ *
+ *  `expressions` values were a bare source STRING before document 1.6.0 and are
+ *  `{ src, enabled }` from 1.6.0 on. The upgrade lives in
+ *  `migrations/v1_5_0_to_v1_6_0.ts`; nothing here reads the old shape. */
 export interface AnimSnapshot {
   tracks: Record<string, Record<string, PropertyTrack>>;
-  expressions: Record<string, Record<string, string>>;
+  expressions: Record<string, Record<string, ExpressionState>>;
   data?: Record<string, Record<string, DataTrack>>;
 }
 

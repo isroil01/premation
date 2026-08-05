@@ -178,6 +178,15 @@ export interface AnimFacade {
   setRoving(nodeId: string, prop: string, t: number, roving: boolean): void;
   setExpression(nodeId: string, prop: string, src: string): void;
   getExpressionError(nodeId: string, prop: string): string | null;
+  /**
+   * Does the expression currently DRIVE the property?
+   *
+   * The engine preserves a disabled expression's enabled state across a
+   * rewrite, so `setExpression` succeeding stopped being the same claim as
+   * "this now overrides the keyframes". The tool has to ask, or it reports a
+   * change the user will not see.
+   */
+  isExpressionEnabled(nodeId: string, prop: string): boolean;
   tracks(nodeId: string): readonly { prop: string; keyframes: readonly KeyframeView[] }[];
   evaluate(nodeId: string, t: number): Record<string, number>;
   applyPreset(nodeId: string, name: string, atTime: number): boolean;

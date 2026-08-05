@@ -16,6 +16,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useGuidesStore } from '@stores/guidesStore';
+import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
@@ -170,6 +171,37 @@ describe('captureDocument → restoreDocument', () => {
       proportionalRows: 3,
       safeArea: true,
     });
+  });
+
+  /**
+   * A DISABLED expression is authored state: the user switched it off and kept
+   * the formula. If only the source round-trips, every disabled expression comes
+   * back live on the next load — the property jumps, and the cause is a save
+   * boundary rather than anything visible in the editor.
+   *
+   * The enabled case is asserted beside it deliberately: a round trip that
+   * hard-coded `enabled: true` would pass a disabled-only test's inverse and
+   * fail nothing, so both directions are pinned.
+   */
+  it('preserves an expression that is DISABLED, and one that is not', () => {
+    defaultAnimation.clear();
+    defaultAnimation.setKeyframe('layer_a', 'x', 0, 0);
+    defaultAnimation.setKeyframe('layer_a', 'x', 2, 100);
+    defaultAnimation.setExpression('layer_a', 'x', 'value + 200');
+    defaultAnimation.setExpressionEnabled('layer_a', 'x', false);
+    defaultAnimation.setExpression('layer_b', 'rotation', 'time * 90');
+
+    const doc = structuredClone(captureDocument());
+    defaultAnimation.clear();
+    restoreDocument(doc);
+
+    expect(defaultAnimation.getExpressionSrc('layer_a', 'x')).toBe('value + 200');
+    expect(defaultAnimation.isExpressionEnabled('layer_a', 'x')).toBe(false);
+    // Not merely "the flag survived" — the property answers its keyframes.
+    expect(defaultAnimation.sample('layer_a', 'x', 1)).toBeCloseTo(50);
+
+    expect(defaultAnimation.isExpressionEnabled('layer_b', 'rotation')).toBe(true);
+    expect(defaultAnimation.sample('layer_b', 'rotation', 2)).toBeCloseTo(180);
   });
 
   it('migrates a legacy gridDivisions onto the PROPORTIONAL grid', () => {
