@@ -253,6 +253,47 @@ function buildViewSwitchCommands(): ReadonlyArray<Command> {
 }
 
 /**
+ * Jump to comp marker 1–9 — the beat-work shortcut.
+ *
+ * ## Why Shift+digit and not a bare digit (AE's chord)
+ *
+ * After Effects puts "go to comp marker N" on the BARE main-keyboard digits.
+ * That is not available here: `1` and `2` are already registered above for 3D
+ * view switching, and they shipped first. Binding markers to bare `3`–`9` while
+ * `1`–`2` needed a modifier would be a keymap nobody can hold in their head, so
+ * all nine take one consistent chord instead.
+ *
+ * Shift+digit is AE's OTHER marker chord (it places a numbered comp marker), so
+ * the digit-means-marker association survives even though the modifier moved.
+ *
+ * NOTE: this chord did not work at all until `chordFromEvent` learned to resolve
+ * the digit row from `e.code` — `e.key` for Shift+1 is `'!'`, so a
+ * `{ key: '1', shift: true }` binding could never match. Registering these
+ * before that fix would have produced nine commands that appear in the palette,
+ * appear in Customize, and silently never fire from the keyboard.
+ *
+ * Generated from a range rather than written out nine times: the shortcut, the
+ * label and the index cannot drift apart, and a tenth is one number.
+ */
+function buildMarkerCommands(): ReadonlyArray<Command> {
+  return Array.from({ length: 9 }, (_, i) => i + 1).map((n) => ({
+    id: asCommandId(`timeline.goToMarker${n}`),
+    label: `Go to Comp Marker ${n}`,
+    icon: 'marker' as const,
+    shortcut: { key: String(n), shift: true },
+    // Honest disable: with fewer than N markers the key does nothing, and a
+    // command that reports itself enabled while doing nothing is the dead-control
+    // shape this codebase keeps finding.
+    enabled: () => getTimelineController().compMarkerCount() >= n,
+    execute: () => {
+      if (!getTimelineController().goToMarkerIndex(n)) {
+        notify(`No comp marker ${n}`, 'info');
+      }
+    },
+  }));
+}
+
+/**
  * Keyframe-assistant commands (AE's F9 family + interpolation).
  *
  * These already existed and worked, but had NO menu home — the audit's "F9
@@ -679,6 +720,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildToolCommands(),
     ...buildCameraToolCommands(),
     ...buildViewSwitchCommands(),
+    ...buildMarkerCommands(),
     ...buildEasingCommands(),
     ...buildMergePathCommands(),
     ...buildProjectCommands(),

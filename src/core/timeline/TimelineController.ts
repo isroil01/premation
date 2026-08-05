@@ -728,6 +728,43 @@ export class TimelineController {
     if (m) this.timeline.seek(m.frame);
   }
 
+  /**
+   * Seek to the Nth COMP marker, 1-based, in TIME order — the operation behind
+   * the number-key shortcuts.
+   *
+   * "Nth" is by time, not creation order, because time order is the only one a
+   * user can see: markers are a row on the ruler and "jump to the third one"
+   * means the third one along.
+   *
+   * No sort here, and that is VERIFIED rather than assumed: `MarkerList` keeps
+   * itself ordered by frame (`insertSorted` on add, `reindex()` after an
+   * in-place frame change) and says so in its own header — being ordered is the
+   * reason `at`/`next`/`previous` are O(log n). An earlier draft of this method
+   * re-sorted defensively and carried a docstring claiming the order was
+   * undocumented; it is documented, the sort was dead, and a local sort would
+   * have MASKED a genuinely stale list instead of surfacing it.
+   *
+   * COMP scope only. Layer markers live on their own layer and
+   * `layerMarkers.test.ts` guards that they do not leak into this list — a
+   * number key that sometimes jumped to a marker belonging to whichever layer
+   * happened to be selected would be unusable for beat work.
+   *
+   * Returns false when there is no Nth marker, so pressing 5 with three markers
+   * set does NOTHING rather than seeking to frame 0.
+   */
+  goToMarkerIndex(n: number): boolean {
+    if (!Number.isInteger(n) || n < 1) return false;
+    const m = this.timeline.markers.list()[n - 1];
+    if (!m) return false;
+    this.timeline.seek(m.frame);
+    return true;
+  }
+
+  /** How many comp markers exist — lets a command disable itself honestly. */
+  compMarkerCount(): number {
+    return this.timeline.markers.list().length;
+  }
+
   private collectKeyframeTimes(): number[] {
     const ids = useSelectionStore.getState().ids;
     let nodeIds: string[];
