@@ -13,6 +13,31 @@
  * pixelmatch's `threshold` is a 0..1 perceptual (YIQ) distance; 0.02 corresponds
  * closely to the "channel delta > 4/255 / ΔE ≈ 2" bar the doc specifies. Pixels
  * under that threshold are considered equal; we then gate on how many exceeded it.
+ *
+ * ## The blind band, and why it bites hardest on SMALL subjects
+ *
+ * A tolerance expressed as a FRACTION OF THE FRAME leaves a band beneath it in
+ * which a real, wholly-attributable change passes silently. Measured: the ARAP
+ * rotation-sign fix (F33) moved `rig-compose-puppet-skeleton` by **417 pixels,
+ * 0.4826%** — and it PASSED, because the bar is 0.5%. The same fix moved
+ * `rig-puppet-overlap` 3.62% and `rig-puppet-bend` 1.31%, and those failed. One
+ * behaviour change, three affected scenes, one of them silent.
+ *
+ * The band scales with FRAME area while the thing under test usually occupies a
+ * small part of it. A 360x240 frame is 86,400 px, so 0.5% is 432 px — more than
+ * a small layer's entire silhouette can move. The smaller the subject relative
+ * to the frame, the more of its behaviour fits inside the band.
+ *
+ * Two consequences worth acting on:
+ *   - Re-bless every scene whose pixels actually MOVED, not only the ones that
+ *     failed. A reference that is *nearly* current cannot attribute the NEXT
+ *     change; the drift compounds and surfaces on someone else's commit. F33
+ *     re-blessed all five scenes that moved, including the 417px and 13px ones
+ *     that passed.
+ *   - Do not read a green gate as "nothing changed". It means "nothing changed
+ *     by more than the band". When a change is expected to be broad, compare the
+ *     ratios directly rather than trusting pass/fail — see the predicted-vs-actual
+ *     table in the F33 release note (docs/COMPOSITING_PLAN.md §2b-sexdecies).
  */
 
 import { PNG } from 'pngjs';
