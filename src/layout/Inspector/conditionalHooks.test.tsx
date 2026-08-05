@@ -17,6 +17,7 @@
 import { render, cleanup } from '@testing-library/react';
 import { AppearanceSection } from './AppearanceSection';
 import { TextSection } from './TextSection';
+import { BoneControls } from './BoneControls';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
@@ -44,6 +45,12 @@ afterEach(() => {
 describe.each([
   ['AppearanceSection', AppearanceSection],
   ['TextSection', TextSection],
+  // Added after BoneControls shipped a hook BELOW its `!node` guard —
+  // `useActiveWorkspace()` inside the `layerT` expression. The suite could not
+  // see it because BoneControls was never in this list; eslint's
+  // rules-of-hooks caught it instead. The list is the coverage, so a panel
+  // absent from it is a panel with no guard.
+  ['BoneControls', BoneControls],
 ])('%s survives its node disappearing mid-session', (_name, Section) => {
   it('renders with the node present, then again after it is deleted', () => {
     defaultSceneGraph.addNode(textNode(ID));

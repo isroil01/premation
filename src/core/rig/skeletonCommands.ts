@@ -17,6 +17,7 @@ import type { Bone, Skeleton } from './skeleton';
 import type { RigController } from './controllers';
 import { planChainSwitch, chainModePropPath, chainModeValue, type ChainMode } from './ikfk';
 import { resolveActiveIkTargets } from './liveIkTargets';
+import { validateRig, type RigProblem } from './rigPresets';
 import type { WeightPaintMap } from './weightPaint';
 
 export const SKELETON_EDIT_COMMAND = asCommandId('skeleton.edit');
@@ -324,6 +325,34 @@ export function setChainMode(
   }
 
   applyAndRecord(nodeId, after, `Switch ${boneId} to ${to.toUpperCase()}`, trackEdit);
+}
+/**
+ * Apply a rig preset — bones, IK chains and controllers — as ONE undo entry.
+ *
+ * One entry falls out of the storage choice rather than being arranged: bones,
+ * targets and controllers all live on the same `fx.skeleton` blob, so a single
+ * `setSkeleton` carries the whole rig and `applyAndRecord` records one
+ * `SkeletonEditCommand`. Nothing here bundles or batches.
+ *
+ * REPLACES any existing rig rather than merging. Merging two skeletons produces
+ * duplicate bone ids, and a duplicate id silently couples two bones onto one
+ * animation track (`bone.<id>.rotation`) — the failure `create_skeleton_rig`
+ * already rejects rather than writes. Replacing is destructive and obvious;
+ * merging is non-destructive and corrupt.
+ *
+ * Refuses to write an invalid rig at all. A generated skeleton someone has to
+ * repair by hand is worse than none, so `validateRig` gates it and the caller
+ * gets the problems back instead of a broken rig.
+ */
+export function applyRigPreset(
+  nodeId: ID,
+  preset: SkeletonRig,
+  label = "Auto-Rig",
+): RigProblem[] {
+  const problems = validateRig(preset);
+  if (problems.length > 0) return problems;
+  applyAndRecord(nodeId, preset, label);
+  return [];
 }
 /** Add a controller. One undo step. */
 export function addController(nodeId: ID, controller: RigController): void {
