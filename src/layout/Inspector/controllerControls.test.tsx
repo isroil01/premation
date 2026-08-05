@@ -6,25 +6,16 @@
  * not to ship. The overlay draws whatever the rig holds, so without this section
  * the only way to get a controller is to hand-edit a document.
  *
- * ## UNVERIFIED AT RUNTIME — read this before trusting the green
+ * ## Reachability resolved
  *
- * Everything below runs in jsdom. The section was NOT driven in the real app,
- * because it lives inside a Rigging accordion that the probe view could not be
- * made to open — the overlay half of controllers WAS runtime-verified, this half
- * was not.
+ * This file used to record that the section could not be surfaced in the probe
+ * view. The cause was a misreading, not a limitation: Rigging is a separate
+ * registered PANEL (`rig`), not a section of the Properties inspector, so the
+ * probe was reading the wrong tab. Open it with
+ * `useLayoutStore.getState().openPanel('rig')` — verified on this branch, where
+ * the rig panel and its controls were driven through the real UI.
  *
- * That is F29's shape: the medium could not reach the layer where the bug would
- * live. jsdom renders the component in isolation, so it cannot see anything the
- * accordion, the panel router or the real inspector layout does to it — a
- * section that never mounts in the app would leave every test here green.
- *
- * What that means concretely: these tests prove the section BEHAVES correctly
- * when rendered. They do not prove it is reachable by a user. Do not read them
- * as proof of reachability until someone drives it in the running app.
- *
- * Worth fixing generally rather than here: several future inspector sections
- * will hit exactly this, so a way to open a named accordion from the probe view
- * would pay for itself more than once.
+ * These tests still only prove BEHAVIOUR; the app is what proves reachability.
  */
 
 import { render, cleanup, fireEvent, screen } from '@testing-library/react';

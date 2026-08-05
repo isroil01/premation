@@ -1,24 +1,25 @@
 /**
  * The per-chain IK/FK control must be reachable and must drive `setChainMode`.
  *
- * ## UNVERIFIED AT RUNTIME — read before trusting the green
+ * ## Verified at runtime — and the earlier diagnosis here was wrong
  *
- * Same gap as `controllerControls.test.tsx`, and this run tried to close it and
- * did not. The Rigging section is gated in `DemoPanels.tsx` on
- * `hasSkeleton || activeTool === 'bone' || !hasPuppet`, which a probe layer with
- * a skeleton and the bone tool active satisfies — yet the section never appeared
- * in the running app's inspector, whose other sections (Transform, Fill &
- * Stroke, Geometry & Path Effects, …) all rendered from that same file. Why it
- * did not mount is unresolved and is logged rather than guessed at.
+ * This file used to say the Rigging section "never mounted" in the app despite
+ * its gate being satisfied. That was a misreading. Rigging is not a section of
+ * the Properties inspector at all — it is a SEPARATE REGISTERED PANEL (`rig`),
+ * by design: `DemoPanels.tsx` says "Rigging, Graph, Effects, Presets, Render
+ * and Plugins stay separate tabs on purpose — those are editors and modes, not
+ * properties of the selection." `InspectorContent` and `RigPanelContent` are
+ * different panels that happen to share a file, so the gate quoted never ran
+ * because its panel was not mounted. The app was never broken; the probe was
+ * looking at the wrong tab.
  *
- * So: these tests prove the control BEHAVES correctly when rendered. They do not
- * prove a user can reach it. The SOLVER half of IK/FK switching was verified in
- * the running app — pose preservation measured at 0.000000 movement — but this
- * half was not.
+ * The mechanism to open it is `useLayoutStore.getState().openPanel(<panelId>)`,
+ * which un-collapses the region and makes the panel active. Measured: the
+ * chain-mode control is absent before that call and present after it.
  *
- * F29's shape again: the medium could not reach the layer where the bug would
- * live. Worth a proper fix, because this is now the second inspector section
- * blocked on it.
+ * Driven through the real UI on this branch: a genuine `change` event on the
+ * real `<select>` switched the chain IK -> FK -> IK with the hand moving
+ * 0.000000 both ways and one undo entry per switch.
  */
 
 import { render, cleanup, fireEvent, screen } from '@testing-library/react';
