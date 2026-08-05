@@ -673,6 +673,13 @@ export class SceneGraph {
     this.setFx(nodeId, 'quality', quality);
   }
 
+  /** Mark the layer as a GUIDE (true | undefined=normal) on its `fx`. Guide
+   *  layers draw in the comp and are dropped when a frame is built for export
+   *  — the exclusion lives in `buildSnapshot`, keyed off `SnapshotComp.forExport`. */
+  setGuideLayer(nodeId: ID, guide: unknown): void {
+    this.setFx(nodeId, 'guide', guide);
+  }
+
   /** Store an image-sequence config ({frames,fps}) on the layer's `fx`. */
   setImageSequence(nodeId: ID, sequence: unknown): void {
     this.setFx(nodeId, 'sequence', sequence);
