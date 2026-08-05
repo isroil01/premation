@@ -117,10 +117,10 @@ interface ExpressionEntry {
 /**
  * The serializable form of the above — the undo seam and the persisted shape.
  *
- * Mirrors `DataTrack`'s role for data keyframes: `getExpressionState` hands one
- * out, `setExpressionState` takes one back, and a command stores a before and
- * an after. Carrying `enabled` here rather than encoding presence in a
- * `string | null` is what makes "disable" and "delete" different undo steps.
+ * It is what `snapshot()` writes, what `setExpressionState` takes back, and
+ * what a command stores as its before and after. Carrying `enabled` here rather
+ * than encoding presence in a `string | null` is what makes "disable" and
+ * "delete" different undo steps.
  */
 export interface ExpressionState {
   src: string;
@@ -935,17 +935,19 @@ export class AnimationEngine {
     return this.expressions.get(nodeId)?.get(prop)?.enabled ?? false;
   }
 
-  /** Source + enabled state, or null — the undo seam (mirrors getDataTrack). */
-  getExpressionState(nodeId: string, prop: PropPath): ExpressionState | null {
-    const entry = this.expressions.get(nodeId)?.get(prop);
-    return entry ? { src: entry.compiled.src, enabled: entry.enabled } : null;
-  }
-
   /**
-   * Replace a property's expression wholesale (null removes). Mirrors
-   * `setDataTrack`, and is what undo/redo applies — one call restores source
-   * and enablement together, so no ordering of two setters can leave a
-   * half-restored state.
+   * Replace a property's expression wholesale (null removes).
+   *
+   * This is what undo/redo applies: one call restores source and enablement
+   * together, so no ordering of two setters can leave a half-restored state.
+   *
+   * There is deliberately NO matching `getExpressionState`. One was written, to
+   * mirror `getDataTrack`, and breaking it failed exactly one test — its own —
+   * which is what a unit no production path touches looks like. The reader on
+   * the undo path is `snapshot()`, which `diffTracks` already consumes; a second
+   * accessor beside it would be dead API carrying a false claim about where the
+   * before/after states come from. `getExpressionSrc` + `isExpressionEnabled`
+   * answer the two questions callers actually ask.
    */
   setExpressionState(nodeId: string, prop: PropPath, state: ExpressionState | null): void {
     if (!state || state.src.trim() === '') { this.removeExpression(nodeId, prop); return; }

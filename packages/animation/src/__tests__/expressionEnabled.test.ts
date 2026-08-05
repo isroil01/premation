@@ -246,20 +246,29 @@ describe('the enabled bit survives snapshot → restore', () => {
     expect(b.sample('n1', 'x', 1)).toBeCloseTo(250);
   });
 
-  test('getExpressionState / setExpressionState round-trip both fields', () => {
+  /**
+   * `setExpressionState` is what a command applies. Its input comes from
+   * `snapshot()` — there is no `getExpressionState`; one existed briefly and
+   * breaking it failed exactly one test, its own, which is what an accessor no
+   * production path calls looks like.
+   */
+  test('setExpressionState applies a snapshot entry, both fields', () => {
     const a = keyframed();
     a.setExpressionEnabled('n1', 'x', false);
-    const state = a.getExpressionState('n1', 'x');
+    const state = a.snapshot().expressions.n1!.x!;
     expect(state).toEqual({ src: 'value + 200', enabled: false });
 
     const b = new AnimationEngine();
     b.setKeyframe('n1', 'x', 0, 0);
     b.setKeyframe('n1', 'x', 2, 100);
     b.setExpressionState('n1', 'x', state);
+    expect(b.isExpressionEnabled('n1', 'x')).toBe(false);
     expect(b.sample('n1', 'x', 1)).toBeCloseTo(50);
+
+    b.setExpressionState('n1', 'x', { ...state, enabled: true });
+    expect(b.sample('n1', 'x', 1)).toBeCloseTo(250);
 
     b.setExpressionState('n1', 'x', null);
     expect(b.hasExpression('n1', 'x')).toBe(false);
-    expect(a.getExpressionState('n2', 'x')).toBeNull();
   });
 });
