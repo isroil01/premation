@@ -5,6 +5,17 @@
  * A controller model with no way to create one is the failure this run was told
  * not to ship. The overlay draws whatever the rig holds, so without this section
  * the only way to get a controller is to hand-edit a document.
+ *
+ * ## Reachability resolved
+ *
+ * This file used to record that the section could not be surfaced in the probe
+ * view. The cause was a misreading, not a limitation: Rigging is a separate
+ * registered PANEL (`rig`), not a section of the Properties inspector, so the
+ * probe was reading the wrong tab. Open it with
+ * `useLayoutStore.getState().openPanel('rig')` — verified on this branch, where
+ * the rig panel and its controls were driven through the real UI.
+ *
+ * These tests still only prove BEHAVIOUR; the app is what proves reachability.
  */
 
 import { render, cleanup, fireEvent, screen } from '@testing-library/react';

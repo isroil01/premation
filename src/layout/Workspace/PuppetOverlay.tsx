@@ -11,6 +11,7 @@ import { readGeometry } from '@core/workspace/geometry';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, PuppetPin } from '@core/rig/puppet';
 import { resolveLivePins } from '@core/rig/livePins';
+import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
 import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { useAssetStore } from '@stores/assetStore';
@@ -222,18 +223,9 @@ export function PuppetOverlay(): JSX.Element | null {
         y: typeof liveY === 'number' ? liveY : b.y,
       };
     });
-    const activeIk: IkTargetResolved[] = (skel.ikTargets ?? [])
-      .filter((tg) => tg.enabled !== false)
-      .map((tg) => {
-        const liveX = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.x`, layerT);
-        const liveY = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.y`, layerT);
-        return {
-          boneId: tg.boneId,
-          x: typeof liveX === 'number' ? liveX : tg.x,
-          y: typeof liveY === 'number' ? liveY : tg.y,
-          chainLength: tg.chainLength,
-        };
-      });
+    // Shared resolver. This copy had DRIFTED — it never sampled the pole, so a
+    // keyframed pole previewed here differently from how it rendered.
+    const activeIk: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
     const posedBones = applyIk(animatedBones, activeIk);
     skelPoseWorld = computeWorldTransforms({ bones: posedBones });
     skelBinding = getSkeletonBinding(restMesh, skel.bones);

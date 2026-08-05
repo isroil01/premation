@@ -15,6 +15,8 @@ import { bumpScene } from '@stores/sceneStore';
 import type { ID, SceneNode } from '@core/types';
 import type { Bone, Skeleton } from './skeleton';
 import type { RigController } from './controllers';
+import { planChainSwitch, chainModePropPath, chainModeValue, type ChainMode } from './ikfk';
+import { resolveActiveIkTargets } from './liveIkTargets';
 import type { WeightPaintMap } from './weightPaint';
 
 export const SKELETON_EDIT_COMMAND = asCommandId('skeleton.edit');
@@ -36,6 +38,14 @@ export interface IKTarget {
    * behaviour). Absent keeps the preserve-current-side default.
    */
   pole?: { x: number; y: number };
+  /**
+   * Which way this chain is driven. Absent = IK, so every rig authored before
+   * IK/FK switching keeps solving exactly as it did — additive, no migration.
+   *
+   * The keyframeable `ikMode.<boneId>` track wins over this when present; this
+   * is the value a chain holds with no track. See `ikfk.ts`.
+   */
+  ikMode?: ChainMode;
 }
 
 export interface SkeletonRig extends Skeleton {
@@ -240,6 +250,81 @@ export function recordSkeletonPose(
     .push(new SkeletonEditCommand(nodeId, before, after, label));
 }
 
+/**
+ * Switch a chain between IK and FK, preserving the pose. ONE undo entry.
+ *
+ * The plan is computed from the CURRENT pose before anything is written (see
+ * `planChainSwitch`), so the order of the writes below cannot change what was
+ * measured. Everything — the mode, the rotations or the target — lands inside a
+ * single `captureAnimEdit` nested in one `SkeletonEditCommand`, because a
+ * half-undone switch is a moved limb, which is the one outcome this feature
+ * exists to prevent.
+ *
+ * Keyframes go on the LAYER axis (`layerT`, from `getRemappedTime` via
+ * `compToKeyframeTime`) — the mode is animation data, so a shot can be IK for
+ * the contact and FK for the follow-through.
+ */
+export function setChainMode(
+  nodeId: ID,
+  boneId: string,
+  to: ChainMode,
+  opts: { layerT: number; keyframe: boolean },
+): void {
+  const skel = currentSkeleton(nodeId);
+  if (!skel) return;
+  const target = (skel.ikTargets ?? []).find((t) => t.boneId === boneId);
+  if (!target) return;
+
+  // Live bones and live targets, exactly as the solver sees them this frame.
+  const liveBones = (skel.bones ?? []).map((b) => {
+    const r = defaultAnimation.sample(nodeId, `bone.${b.id}.rotation`, opts.layerT);
+    return typeof r === "number" ? { ...b, rotation: r } : { ...b };
+  });
+  const liveTargets = resolveActiveIkTargets(skel, nodeId, opts.layerT);
+  const plan = planChainSwitch(liveBones, liveTargets, boneId, to, target.chainLength);
+
+  const after: SkeletonRig = {
+    ...skel,
+    ikTargets: (skel.ikTargets ?? []).map((t) =>
+      t.boneId === boneId ? { ...t, ikMode: to } : t,
+    ),
+  };
+
+  const trackEdit = captureAnimEdit(`Switch ${boneId} to ${to.toUpperCase()}`, () => {
+    if (opts.keyframe) {
+      defaultAnimation.setKeyframe(nodeId, chainModePropPath(boneId), opts.layerT, chainModeValue(to));
+    }
+    // Pose preservation. IK -> FK writes the solved rotations; FK -> IK writes
+    // the effector. Written as keyframes when the gesture keyframes, so the
+    // preserved pose survives at THIS time rather than being a static value a
+    // later frame overrides.
+    for (const [id, rot] of plan.rotations) {
+      if (opts.keyframe) defaultAnimation.setKeyframe(nodeId, `bone.${id}.rotation`, opts.layerT, rot);
+    }
+    if (plan.target && opts.keyframe) {
+      defaultAnimation.setKeyframe(nodeId, `ikTarget.${boneId}.x`, opts.layerT, plan.target.x);
+      defaultAnimation.setKeyframe(nodeId, `ikTarget.${boneId}.y`, opts.layerT, plan.target.y);
+    }
+  });
+
+  // Static writes go on the rig itself so a non-keyframing switch still holds
+  // its pose. Folded into `after` rather than written separately, so the single
+  // SkeletonEditCommand carries them.
+  if (!opts.keyframe) {
+    if (plan.rotations.size > 0) {
+      after.bones = (after.bones ?? []).map((b) =>
+        plan.rotations.has(b.id) ? { ...b, rotation: plan.rotations.get(b.id)! } : b,
+      );
+    }
+    if (plan.target) {
+      after.ikTargets = (after.ikTargets ?? []).map((t) =>
+        t.boneId === boneId ? { ...t, x: plan.target!.x, y: plan.target!.y } : t,
+      );
+    }
+  }
+
+  applyAndRecord(nodeId, after, `Switch ${boneId} to ${to.toUpperCase()}`, trackEdit);
+}
 /** Add a controller. One undo step. */
 export function addController(nodeId: ID, controller: RigController): void {
   const skel = currentSkeleton(nodeId);
