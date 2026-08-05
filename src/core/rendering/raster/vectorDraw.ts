@@ -21,12 +21,28 @@ import { flattenOutline } from '@core/scene/mergePaths';
 import { offsetAlongNormals, closedRibbon } from '@motion/scene';
 import {
   taperWidthFactorAt, waveOffsetAt, isIdentityTaper, isIdentityWave,
+  type StrokeWave,
 } from '@core/scene/strokeProfile';
 
 /** Bezier samples per segment when flattening for a profiled stroke. Matches
  *  the boolean-ops default; a tapered edge is a fill boundary, so it wants the
  *  same smoothness the outline ops already settled on. */
 const TAPER_FLATTEN_PER_SEG = 8;
+
+/**
+ * Bezier samples per segment when a WAVE is active.
+ *
+ * A wave needs far more samples than a taper: taper varies slowly along the
+ * path, while a wave has to resolve every crest. At the taper default of 8, a
+ * two-segment curve gives ~16 points over ~400px of arc — under eight samples
+ * per period at a 190px wavelength, which reads as a chain of facets.
+ *
+ * HONEST CORRECTION: this was first written claiming it fixed a folded golden.
+ * It did not. That folding was the offset self-intersection limit documented on
+ * `strokeShapeProfiled`, and raising this changed the picture not at all. It is
+ * kept because it genuinely improves wave smoothness, not because it fixed that.
+ */
+const WAVE_FLATTEN_PER_SEG = 64;
 import { effectNumber } from '@core/effects/effects';
 import { layerIsBaked } from '@core/effects/effectBake';
 
@@ -520,11 +536,65 @@ export function strokeShape(ctx: CanvasRenderingContext2D, stroke: Stroke, trace
  *   • identity profiles — nothing to do, and skipping keeps an untapered stroke
  *     BYTE-identical rather than merely numerically equal (§2·0);
  *   • non-path primitives — rect/ellipse taper is not modelled yet;
+ * ## A GEOMETRIC LIMIT this shares with every naive offset
+ *
+ * Offsetting a curve along its normals SELF-INTERSECTS wherever the local radius
+ * of curvature is smaller than the offset distance — here, half the stroke
+ * width. A tight wave on a wide stroke therefore folds into a knot rather than
+ * bending. Measured, not theorised: amplitude 14 over a 70px wavelength on an
+ * 18px stroke folds; amplitude 8 over 190px does not. Trimming the
+ * self-intersections is the proper cure and is NOT built — the limit is recorded
+ * here and in the golden scene so the next reader does not chase it through the
+ * sampling code, which is where I chased it.
+ *
  *   • DASHED strokes — dash + taper is a real AE combination and a deferred one
  *     here. Dashing is shipped behaviour; silently dropping it to apply a new
  *     feature would be the worse trade. The UI step must surface this rather
  *     than leaving a control that quietly does nothing.
  */
+/**
+ * Samples per wave PERIOD. Below about eight, a sine reads as a polygon.
+ *
+ * A backstop for LONG STRAIGHT runs, where bezier sampling adds nothing because
+ * there is no curve to subdivide: a 400px straight segment carrying a 190px
+ * wave would otherwise get two samples across two periods.
+ *
+ * Not the cure for the faceted first golden — see the note on
+ * `WAVE_FLATTEN_PER_SEG`; that was the offset limit.
+ */
+const WAVE_SAMPLES_PER_PERIOD = 12;
+
+/**
+ * Insert points so no segment spans more than a fraction of the wavelength.
+ *
+ * Linear interpolation is faithful here because the input is ALREADY flattened
+ * — these are chords of the curve, not the curve itself, so subdividing them
+ * adds sample density without inventing geometry.
+ *
+ * Returns the input untouched when there is no wave: taper alone needs no extra
+ * density, and densifying regardless would change every tapered ribbon's vertex
+ * count for nothing.
+ */
+function densifyForWave(
+  poly: Array<{ x: number; y: number }>,
+  wave: StrokeWave | undefined,
+): Array<{ x: number; y: number }> {
+  if (isIdentityWave(wave) || poly.length < 2) return poly;
+  const maxSpan = wave!.wavelength / WAVE_SAMPLES_PER_PERIOD;
+  if (!(maxSpan > 0)) return poly;
+  const out: Array<{ x: number; y: number }> = [poly[0]!];
+  for (let i = 1; i < poly.length; i++) {
+    const a = poly[i - 1]!;
+    const b = poly[i]!;
+    const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / maxSpan);
+    for (let k = 1; k <= steps; k++) {
+      const u = k / steps;
+      out.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
+    }
+  }
+  return out;
+}
+
 export function strokeShapeProfiled(
   ctx: CanvasRenderingContext2D,
   stroke: Stroke,
@@ -555,7 +625,13 @@ export function strokeShapeProfiled(
   let drew = false;
   for (const run of runs) {
     const open = run.open === true;
-    const poly = flattenOutline(run.points, TAPER_FLATTEN_PER_SEG, open);
+    // A wave rides the flattened polyline, so the CURVE has to be sampled finely
+    // before the wave is applied — densifying chords afterwards only adds points
+    // along straight lines between widely-spaced curve samples, which is why the
+    // first golden came out faceted. Raise the bezier sampling instead, then
+    // densify as a backstop for long straight runs.
+    const perSeg = isIdentityWave(wave) ? TAPER_FLATTEN_PER_SEG : WAVE_FLATTEN_PER_SEG;
+    const poly = densifyForWave(flattenOutline(run.points, perSeg, open), wave);
     if (poly.length < 2) continue;
 
     // Cumulative arc length. Taper is a FRACTION of it; wave is measured in the

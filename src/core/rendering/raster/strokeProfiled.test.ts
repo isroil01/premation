@@ -204,14 +204,34 @@ describe('wave displaces the centreline without changing the width', () => {
   });
 
   it('moves the ribbon OFF the un-waved one', () => {
+    // Compared by EXTENT, not index by index.
+    //
+    // The first version asserted the two rings had the same point count and
+    // walked them in step. That was true when written and false the moment
+    // `densifyForWave` landed — a wave samples the path more finely, so the
+    // rings have different lengths by design. It failed deterministically and I
+    // mis-read it as a flake for one run; a bounding box does not care how many
+    // points describe it.
+    const bbox = (ring: Pt[]) => ring.reduce(
+      (b, p) => ({
+        minX: Math.min(b.minX, p.x), maxX: Math.max(b.maxX, p.x),
+        minY: Math.min(b.minY, p.y), maxY: Math.max(b.maxY, p.y),
+      }),
+      { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
+    );
     const plain = recordingCtx();
     strokeShapeProfiled(plain, stroke({ taper: TAPER }), layer());
     const waved = recordingCtx();
     strokeShapeProfiled(waved, stroke({ taper: TAPER, wave: WAVE }), layer());
-    expect(waved.ring.length).toBe(plain.ring.length);
-    const moved = waved.ring.some((p, i) =>
-      Math.hypot(p.x - plain.ring[i]!.x, p.y - plain.ring[i]!.y) > 1);
-    expect(moved).toBe(true);
+
+    const a = bbox(plain.ring);
+    const b = bbox(waved.ring);
+    // The wave pushes the ribbon off its own centreline, so it must reach
+    // FURTHER than the unwaved one in at least one direction.
+    const grew =
+      b.minX < a.minX - 1 || b.maxX > a.maxX + 1 ||
+      b.minY < a.minY - 1 || b.maxY > a.maxY + 1;
+    expect(grew).toBe(true);
   });
 
   it('composes WITH taper — width still follows the profile while waving', () => {
