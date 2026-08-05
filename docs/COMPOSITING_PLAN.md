@@ -1772,6 +1772,136 @@ The status-line wording is deliberate: showing `= 1160.00` beside a formula
 that is not driving anything would be the misreport this feature exists to
 prevent, in the one panel a user opens to find out.
 
+## 2b-duodevicesimum. 2026-08-06 — Convert Expression to Keyframes, and two decisions taste would have got wrong
+
+Task 1's enabled-state existed so this command had somewhere to put the
+expression it replaces. The bake itself is a loop; both hard parts are choices
+the code cannot make for you, and both have a wrong answer that looks fine.
+
+### THE RANGE: the layer's extent, not the work area
+
+The brief offered either. They are not equivalent and the argument is not about
+convenience:
+
+| | Work area | Layer extent |
+|---|---|---|
+| What it is | a PREVIEW scope (B/N, playback, render) | the comp times where the property affects anything |
+| Outside it | the track CLAMPS — the motion silently stops | there is no outside |
+| Depends on | a control set for an unrelated reason | the layer |
+
+A work-area bake changes frames the user did not ask about. Bake two seconds of
+a ten-second wiggle and the other eight hold at the endpoint — a valid-looking
+result from a command whose entire promise is that the picture does not move.
+The extent is exactly the range over which "nothing changed" *can* be true,
+which is what makes it the one that can be tested.
+
+The extent is HALF-OPEN, and that is not tidiness. A clip bar's `end` is one
+frame past its last live frame — `isActiveAt` rejects it — so a closed range
+bakes a frame the layer does not occupy. On an offset clip that frame is
+outside every bar, the time axis passes it through unmapped, and the keyframe
+lands a whole clip offset out of place. Found by the offset fixture; with a bar
+at 0 the two axes are the identity and the extra frame is invisible.
+
+### PLAN, THEN WRITE
+
+The one thing this module has to get right, and it is invisible once wrong. An
+expression can read its own property — `value + 200`, `valueAtTime`, `loopOut`
+all do — and `value` is the KEYFRAMED base. Writing as the walk proceeds
+changes the input to every later sample: frame 0 bakes 200, frame 1 then reads
+a base of 200 and bakes 400. The output compounds smoothly and reads as motion.
+
+So the plan is pure and the caller applies it in one go. Every fixture that
+ignores `value` passes either way, which is the whole reason the `value + 200`
+one is in the file.
+
+**The same property has a consequence, and it was mistaken for a defect during
+runtime verification before being understood.** Re-enabling a `value`-reading
+expression after a bake does not restore the original motion — it compounds,
+because the expression now reads the baked track where it used to read the
+static value. The bake's invariant is about the DISABLED state and holds
+exactly; UNDO is what restores, which is why the command is one step. Pinned as
+an assertion rather than left as a sentence, per 3b's ladder.
+
+### Rule 3a over the three obvious expressions
+
+The brief named three and they are ordered by strength, which is worth keeping:
+
+| Fixture | Cannot fail on |
+|---|---|
+| a CONSTANT expression | sampling at all — a bake that sampled once and copied passes |
+| a LINEAR one | curvature — an endpoints-only bake passes, since interpolation fills it in correctly |
+| `wiggle()` | nothing; it pins per-sample seeding, and only it does |
+| a clip starting at 0 | the time axis — both are the identity |
+| an expression ignoring `value` | the plan/write ordering |
+
+Breaking the axis (`t = compT` instead of `getRemappedTime`) fails exactly the
+two offset-clip fixtures and leaves all four clip-at-0 tests green — the
+cleanest demonstration in this run that a fixture's convenience is what makes
+it blind.
+
+### The menu ⇄ registry seam, closed before it could bite
+
+A menu entry names its command by STRING id, and both renderers grey an
+unregistered id out rather than failing. "The menu lists it" and "the command
+exists" were therefore two claims with nothing requiring them to meet — rule
+4c's shape, in the wiring rather than in a helper. The natural guard (assert the
+menu model contains the id) reads source text and stays green through a typo, a
+missing registration, and an `execute` that does something else entirely.
+
+Boot spelled out seven `for (const cmd of buildX())` loops, so there was no
+single answer to "what commands does this app have". They are now one exported
+`buildStaticCommands()`, which the boot sequence and the guard both read.
+Breaking it both ways — typo the menu's id, drop the builder — fails 1 and 6
+tests respectively; before, both were green.
+
+Noted while there, not fixed: **Exponential Scale, Motion Sketch and Convert
+Audio to Keyframes are registered commands that reach the palette and never the
+Animation menu.** Adding them is their features' change, not this one's.
+
+### The break sweep, with counts
+
+Baseline **4 suites, 47 tests** (48 after the compounding guard). Every break
+held the total.
+
+| Break | Failed | Notable green |
+|---|---|---|
+| endpoints only, no per-frame sampling | 6 | the wiring and eligibility suites entirely |
+| store on COMP time, not the layer axis | **2** | every clip-at-0 fixture — see above |
+| write-as-you-go | 5 | the constant/linear fixtures, which cannot compound |
+| delete instead of disable | 2 | the whole bake suite; only the two "not deleted" claims move |
+| range = work area, else first bar | 2 | everything about values — the range is orthogonal to correctness of samples |
+| closed range (`i <= frames`) | 2 | the wiggle and end-to-end tests, which compare like with like |
+| context menu bakes the layer | **1** | the two-property fixture is the only one that can see it |
+| menu names a TYPO'd id | **1** | the command still works; only the crossing fails |
+| command never registered | 6 | the module's own suite, entirely |
+| two undo steps | 2 | every value assertion |
+| `enabled()` stops sharing the predicate | 2 | `execute` still works, which is the §2·0 failure exactly |
+
+### Runtime verification
+
+In the running app: a shape layer, Position X animated, `wiggle(3, 50)` typed
+into the expression editor. Animation ▸ Keyframe Assistant ▸ Convert Expression
+to Keyframes was the only ENABLED entry in that menu, which is its `enabled()`
+predicate working. It reported *"Expression baked — 300 keyframes across 1
+property. The expression is disabled, not deleted."*
+
+The invariant, measured on the inspector's Position X across frames 0, 7, 14
+and 21, with the expression live and after the bake:
+
+| | f0 | f7 | f14 | f21 |
+|---|---|---|---|---|
+| live expression | 952.1 | 988.5 | 977.4 | 940.1 |
+| baked keyframes | 952.1 | 988.5 | 977.4 | 940.1 |
+| after undo, then redo | 952.1 | 988.5 | 977.4 | 940.1 |
+
+**The first attempt at this measurement compared the baked Position X against
+the panel's "Would be" preview and got 988.5 against 1016.95**, which looked
+exactly like a seeding defect. It was the compounding property above: the
+preview evaluates the expression against the CURRENT base, which after a bake is
+the baked track. The comparison was wrong, not the bake — and the way that was
+established was to measure the actual observable in both states rather than to
+reason about which number was right. Rule 2a, in a medium with no goldens.
+
 ## 2b-sexiesdecies. 2026-08-06 — guide layers, and two green guards watching nothing
 
 **Where a purpose flag lives is decided by NESTING, not by taste.** Guide

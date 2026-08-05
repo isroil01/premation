@@ -312,7 +312,7 @@ describe('the expression is disabled, not deleted', () => {
   });
 
   /**
-   * Re-enabling after a bake puts the expression back on top of the keyframes
+   * Re-enabling after a bake puts the expression back ON TOP OF the keyframes
    * it produced. For an expression that ignores `value` that is the original
    * motion again — which is the promise "disable, do not delete" is making.
    */
@@ -323,6 +323,39 @@ describe('the expression is disabled, not deleted', () => {
     convertExpressionToKeyframes(NODE);
     defaultAnimation.setExpressionEnabled(NODE, 'x', true);
     expect(defaultAnimation.sample(NODE, 'x', 0.5)).toBeCloseTo(45);
+  });
+
+  /**
+   * …and where it does NOT hold. Rule 3a: `time * 90` ignores `value`, so the
+   * fixture above cannot fail on the case that matters, and every other fixture
+   * in this file ignores it too.
+   *
+   * An expression that READS its property is now reading the baked track rather
+   * than the static value it read before, so re-enabling COMPOUNDS instead of
+   * restoring. That is not a bug in the bake — the bake's own invariant is
+   * about the disabled state and holds exactly — it is what "an expression is a
+   * function OF the property" means once the property has keyframes. Pinned
+   * here because it is a real limit of the undo-by-toggle story, and because it
+   * was mistaken for a bake defect once already while verifying in the app.
+   */
+  test('re-enabling a `value`-reading expression COMPOUNDS — it does not restore', () => {
+    addNode();
+    addClip(0, FPS);
+    defaultAnimation.setExpression(NODE, 'x', 'value + 200');
+
+    // Before: base 0 (no track), so the expression gives 200.
+    expect(defaultAnimation.sample(NODE, 'x', 0.5)).toBeCloseTo(200);
+    convertExpressionToKeyframes(NODE);
+    expect(defaultAnimation.sample(NODE, 'x', 0.5)).toBeCloseTo(200); // baked
+
+    defaultAnimation.setExpressionEnabled(NODE, 'x', true);
+    // The base is now the baked 200, so the expression gives 400.
+    expect(defaultAnimation.sample(NODE, 'x', 0.5)).toBeCloseTo(400);
+
+    // UNDO is what actually restores, which is why the command is one step.
+    getCommandSystem().getHistory().undo();
+    expect(defaultAnimation.isAnimated(NODE, 'x')).toBe(false);
+    expect(defaultAnimation.sample(NODE, 'x', 0.5)).toBeCloseTo(200);
   });
 });
 

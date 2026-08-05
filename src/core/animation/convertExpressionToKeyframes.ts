@@ -29,6 +29,13 @@
  * the caller applies it in one go. Same shape as `planExponentialScale`, for a
  * sharper reason.
  *
+ * The same property has a consequence worth stating rather than discovering:
+ * RE-ENABLING a `value`-reading expression after a bake does not restore the
+ * original motion, it COMPOUNDS — the expression now reads the baked track
+ * where it used to read the static value. The invariant above is about the
+ * DISABLED state and holds exactly; undo, not the toggle, is what puts things
+ * back, which is why the command is a single undo step.
+ *
  * ## THE RANGE: the layer's extent, not the work area
  *
  * Both were available and they are not equivalent.
