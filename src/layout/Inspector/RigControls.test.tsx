@@ -92,6 +92,46 @@ describe('PuppetControls', () => {
     expect(rigOf()!.meshMode).toBe('silhouette');
   });
 
+  // ── Pin type (bend pins) ────────────────────────────────────────────
+  // The solver can do everything a bend pin needs and still ship nothing a
+  // user can reach: `kind` has no default UI anywhere else, so without this
+  // control the whole feature is unreachable from the app.
+
+  it('offers a pin-type control, defaulting to advanced', () => {
+    withPins();
+    const { getByLabelText } = render(<PuppetControls nodeId="n1" />);
+    expect((getByLabelText('Pin 1 pin type') as HTMLSelectElement).value).toBe('advanced');
+  });
+
+  it('switching a pin to bend persists it', () => {
+    withPins();
+    const { getByLabelText } = render(<PuppetControls nodeId="n1" />);
+    fireEvent.change(getByLabelText('Pin 1 pin type'), { target: { value: 'bend' } });
+    expect(rigOf()!.pins[0]!.kind).toBe('bend');
+  });
+
+  it('switching back to advanced persists that too', () => {
+    withPins({ pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0, kind: 'bend' }] });
+    const { getByLabelText } = render(<PuppetControls nodeId="n1" />);
+    expect((getByLabelText('Pin 1 pin type') as HTMLSelectElement).value).toBe('bend');
+    fireEvent.change(getByLabelText('Pin 1 pin type'), { target: { value: 'advanced' } });
+    expect(rigOf()!.pins[0]!.kind).toBe('advanced');
+  });
+
+  it('explains what a bend pin does, but only when one is selected', () => {
+    // The rotation/scale fields look identical on both kinds, and on a bend pin
+    // they mean something different. Showing the note unconditionally would
+    // train people to ignore it.
+    withPins();
+    const plain = render(<PuppetControls nodeId="n1" />);
+    expect(plain.container.textContent).not.toMatch(/derived from the advanced pins/i);
+    plain.unmount();
+
+    withPins({ pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0, kind: 'bend' }] });
+    const bend = render(<PuppetControls nodeId="n1" />);
+    expect(bend.container.textContent).toMatch(/derived from the advanced pins/i);
+  });
+
   it('shows the exact-solve threshold, and lowers it when a pin has stiffness', () => {
     withPins();
     const plain = render(<PuppetControls nodeId="n1" />);

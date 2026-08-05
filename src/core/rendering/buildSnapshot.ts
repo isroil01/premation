@@ -76,6 +76,7 @@ import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint } from './Ren
 import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
+import { resolveLivePins } from '../rig/livePins';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
@@ -1919,33 +1920,10 @@ export function buildSnapshot(
       let overlapDepth: Float32Array | null = null;
 
       if (hasPuppet) {
-        const animatedPins = puppetRig!.pins.map((pin) => {
-          // Sample dynamic position from data track, falling back to static pin position
-          const livePos = anim.sampleData(node.id, `puppet.${pin.id}.position`, rigT);
-          let px = pin.x;
-          let py = pin.y;
-          if (Array.isArray(livePos) && livePos.length > 0 && livePos[0] && typeof livePos[0] === 'object' && 'x' in livePos[0]) {
-            const pt = livePos[0] as { x: number; y: number };
-            px = pt.x;
-            py = pt.y;
-          }
-          // Rotation / stiffness: scalar keyframe tracks (puppet.<pinId>.rotation
-          // and.stiffness), falling back to the pin's static values.
-          const liveRot = anim.sample(node.id, `puppet.${pin.id}.rotation`, rigT);
-          const liveStiff = anim.sample(node.id, `puppet.${pin.id}.stiffness`, rigT);
-          const liveScale = anim.sample(node.id, `puppet.${pin.id}.scale`, rigT);
-          const liveOverlap = anim.sample(node.id, `puppet.${pin.id}.overlap`, rigT);
-          return {
-            id: pin.id,
-            x: px,
-            y: py,
-            rotation: typeof liveRot === 'number' ? liveRot : pin.rotation,
-            stiffness: typeof liveStiff === 'number' ? liveStiff : pin.stiffness,
-            scale: typeof liveScale === 'number' ? liveScale : pin.scale,
-            overlap: typeof liveOverlap === 'number' ? liveOverlap : pin.overlap,
-            overlapExtent: pin.overlapExtent,
-          };
-        });
+        // Static pin values folded with their keyframe tracks. Shared with
+        // PuppetOverlay so the canvas and the render cannot drift — see
+        // `livePins.ts`.
+        const animatedPins = resolveLivePins(puppetRig!.pins, node.id, rigT, anim);
         deformedVertices = deform(
           animatedPins,
           restMesh,

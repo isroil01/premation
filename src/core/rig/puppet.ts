@@ -1,12 +1,38 @@
 import type { SceneNode } from '../types';
-import { deformArap } from './arap';
 import { earClip, subdivide, polygonArea } from './mesh';
+import { splitBendPins, driverRestMesh, applyBendPins, solveDeform } from './bendPins';
+
+/**
+ * What a pin controls.
+ *
+ * `advanced` (the default, and what every pin was before bend pins existed)
+ * owns its position: it is placed, dragged and keyframed, and its rotation and
+ * scale act about ITS OWN centre in the rest frame.
+ *
+ * `bend` owns no position. Its centre is DERIVED — it is carried wherever the
+ * surrounding advanced pins carry that point — and its rotation and scale act
+ * about that derived centre, on top of the deformation those pins already
+ * produced. That is the whole distinction: an advanced pin rotates about a
+ * point it defines, a bend pin rotates about a point the other pins define.
+ * Without it a bend pin is just a second advanced pin.
+ *
+ * Absent means `advanced`, so every rig authored before this reads back
+ * unchanged and deforms bit-identically. See `bendPins.ts` for the solve.
+ */
+export type PinKind = 'advanced' | 'bend';
 
 export interface PuppetPin {
   id: string;
   name: string;
+  /**
+   * Rest-space anchor. For an `advanced` pin this is also the pin's live
+   * position before animation; for a `bend` pin it is ONLY the rest anchor —
+   * the live position is derived and this value is never used as a target.
+   */
   x: number; // local coordinate x
   y: number; // local coordinate y
+  /** Absent = 'advanced'. See {@link PinKind}. */
+  kind?: PinKind;
   /** Static rotation in degrees (AE-style: rotates the pin's influence around it). */
   rotation?: number;
   /** Static stiffness ≥ 0 (sharpens this pin's influence falloff; 0 = default). */
@@ -37,6 +63,8 @@ export interface DeformPin {
   id: string;
   x: number;
   y: number;
+  /** Absent = 'advanced'. A `bend` pin's `x`/`y` are ignored — see {@link PinKind}. */
+  kind?: PinKind;
   /** Degrees. Rotates the displacement field rigidly around the pin. */
   rotation?: number;
   /** ≥ 0. Exponentiates/sharpens the pin's weight column (renormalized). */
@@ -107,6 +135,15 @@ export interface DeformedMesh {
   triangles: Uint16Array; // flat triangle indices
   pinRestPositions: Record<string, { x: number; y: number }>;
   weights: Record<string, Float32Array>; // pinId -> vertex weights
+  /**
+   * pinId → the mesh vertex each pin was anchored to (its nearest vertex).
+   *
+   * Already computed while binding pins; it used to be discarded at the end of
+   * `finishRestMesh`. Bend pins need it: "where did the other pins carry this
+   * pin's rest point" is answered by reading that vertex out of the deformed
+   * array, which is exact, rather than re-blending an approximation of it.
+   */
+  pinVertexIndices: Record<string, number>;
 }
 
 /** Read a node's puppet rig from its fx component. */
@@ -484,34 +521,54 @@ function finishRestMesh(
   }
 
   // 6. Normalize weights per vertex to sum to 1.0
-  if (pinsList.length > 0) {
-    for (let i = 0; i < numVertices; i++) {
-      let sum = 0;
-      for (const pin of pinsList) {
-        const w = weights[pin.id];
-        if (w) sum += w[i] ?? 0;
-      }
-      if (sum > 0) {
-        for (const pin of pinsList) {
-          const w = weights[pin.id];
-          if (w) w[i] = (w[i] ?? 0) / sum;
-        }
-      } else {
-        const uniform = 1.0 / pinsList.length;
-        for (const pin of pinsList) {
-          const w = weights[pin.id];
-          if (w) w[i] = uniform;
-        }
-      }
-    }
-  }
+  normalizeWeightColumns(weights, pinsList.map((p) => p.id), numVertices);
 
   return {
     vertices,
     triangles,
     pinRestPositions,
     weights,
+    pinVertexIndices,
   };
+}
+
+/**
+ * Make the given pins' weight columns a partition of unity: every vertex's
+ * columns sum to 1, or fall back to an equal share where the harmonic solve
+ * left nothing (an isolated vertex reachable from no pin).
+ *
+ * Extracted rather than duplicated because there are now TWO callers and one
+ * rule. `finishRestMesh` normalises over every pin; `bendPins` re-normalises
+ * over the DRIVERS alone, because a bend pin must not consume influence in a
+ * solve it does not take part in. If those two ever disagreed about the
+ * fallback, a rig whose pins all landed on one isolated vertex would deform
+ * differently depending on whether a bend pin happened to be present.
+ */
+export function normalizeWeightColumns(
+  weights: Record<string, Float32Array>,
+  pinIds: readonly string[],
+  numVertices: number,
+): void {
+  if (pinIds.length === 0) return;
+  for (let i = 0; i < numVertices; i++) {
+    let sum = 0;
+    for (const id of pinIds) {
+      const w = weights[id];
+      if (w) sum += w[i] ?? 0;
+    }
+    if (sum > 0) {
+      for (const id of pinIds) {
+        const w = weights[id];
+        if (w) w[i] = (w[i] ?? 0) / sum;
+      }
+    } else {
+      const uniform = 1.0 / pinIds.length;
+      for (const id of pinIds) {
+        const w = weights[id];
+        if (w) w[i] = uniform;
+      }
+    }
+  }
 }
 
 /**
@@ -595,10 +652,14 @@ export function deform(
   solver: 'lbs' | 'arap' = 'arap',
   maxRotationDeg?: number,
 ): Float32Array {
-  const clamped = clampPinRotations(pins, maxRotationDeg);
-  const lbs = deformLbs(clamped, restMesh);
-  if (solver === 'lbs') return lbs;
-  return deformArap(clamped, restMesh, lbs, maxRotationDeg);
+  // Bend pins (if any) solve in two passes — see `bendPins.ts`. `splitBendPins`
+  // returns null for every rig without them, so the path below is the one that
+  // ran before bend pins existed, reached without an extra allocation.
+  const split = splitBendPins(pins);
+  if (!split) return solveDeform(pins, restMesh, solver, maxRotationDeg);
+  const driverMesh = driverRestMesh(restMesh, split.bends);
+  const base = solveDeform(split.drivers, driverMesh, solver, maxRotationDeg);
+  return applyBendPins(base, split.bends, restMesh, maxRotationDeg);
 }
 
 /**
