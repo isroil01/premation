@@ -3280,6 +3280,62 @@ would have to re-implement on the filled outline:
 And unlike F34, taper WOULD need new goldens: a tapered stroke is a visible
 change with no existing coverage, so it carries a blessing of its own.
 
+### Amendment — WHERE this sits relative to the GPU engine
+
+The sizing above says "Canvas2D", and on its own that reads like a claim this
+project composites on Canvas2D. It does not, and the ambiguity is worth closing
+here because `blendMode.ts` carried exactly that stale claim for months and it
+was "the reason the remaining AE modes were estimated as far more expensive than
+they are."
+
+The layering, verified:
+
+- **Compositing is GPU** — WebGPU → WebGL2. Blend modes, effects, matte, layer
+  stacking, and the layer-style `stroke` effect (a texture-space alpha dilation,
+  `effect.type === 'stroke'`) all run there.
+- **Vector geometry is rasterized on Canvas2D into a TEXTURE**
+  (`Canvas2DVectorRasterizer` → `AppTextureProvider`), and that texture is what
+  the GPU composites.
+
+A shape's stroke is the second layer, not the first. So taper is a rasterizer
+change, and the GPU is untouched by it.
+
+### The GPU alternative, evaluated and rejected
+
+Taper could instead be a GPU pass, reusing the dilation the layer-style stroke
+already does. Rejected on three counts:
+
+1. **It cannot express the feature.** A texture-space dilation grows the alpha
+   edge uniformly. Taper is a per-vertex offset along a CENTRELINE; the
+   information needed (which end of the path a pixel is near) is not in the
+   texture. It could fake a symmetric fade, not a taper.
+2. **It doubles the dialect surface.** Every GPU branch has to exist in WGSL and
+   in GLSL, and the render-test gate structurally cannot catch a divergence
+   because it runs one backend per invocation — the reason
+   `blendModeParity.test.ts` exists. This same session nearly shipped a
+   GLSL-only branch of Preserve Underlying Transparency.
+3. **It would be a second stroke mechanism.** Vector strokes would then be drawn
+   two ways depending on whether taper was on, and the two would disagree at the
+   edges (§2·0).
+
+### Why the GPU makes the Canvas2D route CHEAPER, not more expensive
+
+This is the part the "our engine is GPU" framing might otherwise hide, and it
+cuts in favour of the plan rather than against it:
+
+Rasterization is **cached and resolution-tiered** — `contentHash` is the
+VectorRasterizer's key, "same content + same scale ⇒ same texture", and it
+deliberately excludes transform, opacity and compositing. So the flatten-and-fill
+cost is paid **when the stroke's content changes**, not per frame and not per
+transform. A tapered stroke that merely moves, scales or fades re-uses its
+texture exactly like an untapered one.
+
+It also means the tapered outline stays crisp at any zoom without any shader
+work: the resolution tier already re-rasterizes vector content per scale.
+
+And because it happens BEFORE the GPU, taper is automatically identical on
+WebGPU and WebGL2 — no parity guard needed, no divergence class to watch.
+
 **Conclusion: taper is an M, not an S**, and its first unit is the primitive
 extraction plus the flatten-and-fill path — not the `taperStart`/`taperEnd`
 properties, which are the cheap half and would otherwise land as a stopwatch
