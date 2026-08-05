@@ -930,6 +930,17 @@ open in two of them:
    | a trim at 37% | a trim exactly at a vertex, which commutes |
    | a repeater with offsets | the translate-only DEFAULT, which is rigid |
    | an interior shape | a shape touching the plane edge |
+   | a guide layer, and separately a soloed layer | ONE layer that is BOTH, where the two rules point opposite ways |
+
+   The last row is worth a sentence because the excluded case is not a numeric
+   edge — it is a COMBINATION. Solo says "only this one" and guide says "not
+   this one", so a layer carrying both is the only fixture where the two rules
+   disagree, and no fixture exercising one flag at a time can produce it. Guide
+   wins (a guide layer is an authoring aid; soloing one should not deliver it),
+   and that is now asserted rather than left to whichever branch happens to run
+   first. Rule 3a's question — what can my fixtures never produce? — reaches
+   combinations as readily as numbers, and clean fixtures are single-variable
+   by construction.
 
    **THE QUESTION TO ASK IS REACHABILITY, NOT INERTNESS.** This is the part
    worth carrying, because the obvious phrasing — "check the boundary case" —
@@ -1193,6 +1204,82 @@ open in two of them:
    thing the test was named after. The check is cheap and belongs in the writing
    rather than the debugging — read the real implementation's signature and its
    failure modes before writing the stub that stands in for it.
+
+4c. **A guard SET can be complete over the parts and empty over the SEAM.**
+   Added 2026-08-06, from F30, and it is a category the four readings of 4b do
+   not contain. Every one of those — dead guard, unreachable fixture, unfaithful
+   fixture, incoherent break — is a property of ONE guard. This is a property of
+   the set: full coverage of every component, zero coverage of their
+   composition.
+
+   The shape, concretely. Guide layers are decided by `exportComp`, a one-line
+   helper that stamps `forExport` onto the comp handed to `buildSnapshot`. Two
+   guards watched it, both deliberate, both correct:
+
+   | Guard | What it observes |
+   |---|---|
+   | `exportPathsMarkForExport` | that the four export call sites *mention* `exportComp` — source text |
+   | `guideLayers.test.ts` | that `buildSnapshot` honours `forExport` — on a comp it builds itself |
+
+   Changing `exportComp` to return `forExport: false` — the single line deciding
+   whether a guide layer reaches a delivered file — broke **nothing**. The first
+   guard reads the call sites and never runs the helper; the second runs the
+   rule and never asks the helper what it returns. The helper's body is watched
+   by neither, and the split is exactly why: **test A checks the caller, test B
+   checks the callee's contract AS A IMAGINES IT, and the callee's actual body
+   falls through the middle.**
+
+   Splitting rule from wiring was still right — they fail differently and need
+   different media, which is 5·0. The cost of the split is this seam, and it has
+   to be paid for deliberately rather than discovered.
+
+   **Why §2·0's "which guards stayed green" cannot find this one.** That check
+   is the strongest signal available for a set built by ENUMERATION — break a
+   thing, read the whole result, and a neighbour staying green proves the two
+   guards are independent. It is useless for a set built by SPLITTING, because
+   the answer here is *all of them stayed green*, and a wholly green run reads
+   as "nothing broke" rather than as "nothing was watching". The informative
+   break of 4a fails a little; this one fails nothing at all, and 4a's two
+   readings both point at a single guard that does not exist yet. The set is the
+   subject and no per-guard question reaches it.
+
+   **The mechanical check, and it is cheap.** For any value that crosses a seam
+   between two guarded units, ask *which guard observes the crossing*. If the
+   answer is "the first one assumes it and the second one constructs it",
+   nothing does — write the third guard that calls the real producer and asserts
+   what it actually returns, including the arguments the clean path never passes
+   (F30's was `comp === undefined`, which every honest call site reaches and no
+   fixture did).
+
+   Ask it at the joins the code already names: a helper between a caller and a
+   callee, a value threaded through a constructor, a legacy branch that
+   bypasses a converter every other path runs. Task 1 of this run found one
+   prospectively that way — `restoreRecovery`'s pre-1.1 branch calls
+   `defaultAnimation.restore` directly, so nothing between an old snapshot and
+   the engine observes the shape change (see §2b-septiesdecies).
+
+4d. **Assert the test COUNT when verifying a break. A suite that shrinks is not
+   a suite that passes.** Added 2026-08-06, from the same run, and it is the
+   trap that makes every rule above unenforceable when it fires.
+
+   Deleting a line to verify a guard left an unused import behind.
+   `guideLayers.test.ts` then failed to COMPILE, its ten tests never ran, and
+   the totals went 17 → 7 while the summary reported **zero failures**. Read as
+   a break result, that is "the guard did not fire". Read correctly, it is "the
+   guard was not present".
+
+   "Zero failures" and "nothing ran" are indistinguishable in a summary line,
+   and the break sweep is exactly when a suite is most likely to stop compiling
+   — because breaking a thing is how imports become unused, types stop matching
+   and fixtures stop type-checking. The failure mode is aimed at the moment you
+   are relying on the count.
+
+   So a break result is a PAIR: the tests that failed, and the total that ran.
+   Record the baseline total before the sweep, compare after every break, and
+   treat any drop as the break being invalid rather than as evidence. This is
+   the OneDrive tell (`--listTests` counted 392 against 405) arriving through a
+   different mechanism, and it belongs in 5·0's table: **a green suite cannot
+   see a suite that did not run.**
 
 5·0. **Before blessing a scene, confirm the thing under test can REACH the
    medium.** Added 2026-08-05, from F23, and numbered `·0` because it is the
