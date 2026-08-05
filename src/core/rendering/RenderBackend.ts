@@ -113,6 +113,12 @@ export interface RenderLayer {
   kind: LayerKind;
   /** Compositing mode against the layers beneath (defaults to 'normal'). */
   blend?: LayerBlendMode;
+  /**
+   * Preserve Underlying Transparency — the layer is clipped to the alpha
+   * already accumulated beneath it. Orthogonal to `blend`, not a member of it:
+   * "Multiply AND preserve transparency" is a state users want.
+   */
+  preserveTransparency?: boolean;
   /** Vector mask clipping the layer (local space). Omitted when unmasked. */
   mask?: LayerMask;
   /** Track matte: the explicit sourceId (or the layer above) defines this layer's alpha. */

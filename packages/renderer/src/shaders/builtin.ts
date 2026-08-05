@@ -676,6 +676,21 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     co = d.rgb * k;
     ao = ad * k;
   }
+  // ── Preserve Underlying Transparency (cr0.y) ──
+  // Independent of the blend mode, because it composes with every blend: the
+  // layer is clipped to the coverage beneath it and may not ADD coverage.
+  // source-atop, with the blended colour in place of the source colour:
+  //     co = ad*( as*B + (1-as)*cb ),  ao = ad
+  // The tempting shortcut — scale as by ad and keep the source-over line —
+  // is wrong: at ad=0.5, as=1 it yields ao=0.75, so the layer adds opacity
+  // exactly where it is meant to be clipped by it.
+  // Not applied to the matte family (31-34): those contribute no colour of
+  // their own and scale the whole backdrop, so "clip me to the backdrop" is not
+  // a meaningful composition with them.
+  if (obj.cr0.y > 0.5 && mode < 31) {
+    co = ad * (as1 * B + (1.0 - as1) * cb);
+    ao = ad;
+  }
   return vec4<f32>(co, ao);
 }
 `,
@@ -727,6 +742,21 @@ void main() {
     float k = matteFactor(mode, s);
     co = d.rgb * k;
     ao = ad * k;
+  }
+  // ── Preserve Underlying Transparency (cr0.y) ──
+  // Independent of the blend mode, because it composes with every blend: the
+  // layer is clipped to the coverage beneath it and may not ADD coverage.
+  // source-atop, with the blended colour in place of the source colour:
+  //     co = ad*( as*B + (1-as)*cb ),  ao = ad
+  // The tempting shortcut — scale as by ad and keep the source-over line —
+  // is wrong: at ad=0.5, as=1 it yields ao=0.75, so the layer adds opacity
+  // exactly where it is meant to be clipped by it.
+  // Not applied to the matte family (31-34): those contribute no colour of
+  // their own and scale the whole backdrop, so "clip me to the backdrop" is not
+  // a meaningful composition with them.
+  if (cr0.y > 0.5 && mode < 31) {
+    co = ad * (as1 * B + (1.0 - as1) * cb);
+    ao = ad;
   }
   frag = vec4(co, ao);
 }

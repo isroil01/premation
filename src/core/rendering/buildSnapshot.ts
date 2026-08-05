@@ -17,6 +17,7 @@ const LAYER_STYLE_TRACK_PREFIX = `effect.${layerStyleEffectId('dropShadow')}`.re
 import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
+import { readNodePreserveTransparency } from '@core/effects/preserveTransparency';
 import { readNodeMaskAt } from '@core/effects/mask';
 import { readNodeMatte, readMatte } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
@@ -817,6 +818,7 @@ export function buildSnapshot(
       id: groupNode.id,
       kind: 'shape',
       blend: readNodeBlend(groupNode),
+      ...(readNodePreserveTransparency(groupNode) ? { preserveTransparency: true } : {}),
       mask: frameMask,
       matte: readNodeMatte(groupNode),
       x: gWorld ? gWorld.x : comp.width / 2,
@@ -1315,6 +1317,7 @@ export function buildSnapshot(
           opacity: pOpacity, width: pW, height: pH,
           fill: '#000', visible: node.visible !== false,
           blend: readNodeBlend(node),
+      ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
           particles: cfg,
         }, node);
       }
@@ -1703,6 +1706,7 @@ export function buildSnapshot(
       id: node.id,
       kind: layerKind,
       blend: readNodeBlend(node),
+      ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
       mask: readNodeMaskAt(node, remapOf(node.id)(t)),
       matte: readNodeMatte(node),
       isAdjustment: readNodeAdjustment(node) || undefined,

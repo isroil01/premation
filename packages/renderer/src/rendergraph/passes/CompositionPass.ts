@@ -1315,7 +1315,11 @@ export class CompositionPass extends RenderPass {
       // the layer normally; it simply will not frost.
     }
 
-    if (r.advancedBlend && r.advancedBlend > 0) {
+    // Preserve Underlying Transparency needs the same backdrop-sampling route,
+    // and needs it even when the blend mode is Normal (advancedBlend 0) — which
+    // is the common case for it. `bChan` falls through to `return cs` for mode
+    // 0, so Normal composites correctly through the combine.
+    if ((r.advancedBlend && r.advancedBlend > 0) || r.preserveTransparency) {
       // Advanced blend (overlay/hard-light/HSL/…): fixed-function GL can't do
       // these — composite the layer against the accumulated backdrop through
       // the BLEND_COMBINE shader. Needs a samplable out target
@@ -1341,7 +1345,12 @@ export class CompositionPass extends RenderPass {
         const backdropTex = ctx.services.backend.renderTargetTexture(ctx.target(MATTE_TARGET)!);
         // 3. combine (src=layer, dst=backdrop) → OVERWRITE the out target.
         if (backdropTex && layerTex) {
-          const mode = { m: [r.advancedBlend, 0, 0, 0, 0, 0, 0, 0, 0], offset: [0, 0, 0] };
+          // m[0] -> cr0.x = blend id; m[1] -> cr0.y = preserve-transparency flag.
+          // Two independent inputs, because the two features compose.
+          const mode = {
+            m: [r.advancedBlend ?? 0, r.preserveTransparency ? 1 : 0, 0, 0, 0, 0, 0, 0, 0],
+            offset: [0, 0, 0],
+          };
           const combineCmds = new CommandBuffer();
           emitBlendCombine(combineCmds, fullMvp, 'none', layerTex, clampSampler(), backdropTex, mode, full);
           const encOut = beginViewportPass(ctx, 'blend-combine', writeAttachment(ctx, st.out));

@@ -145,7 +145,7 @@ export interface TimelineProps {
   onTrackBlendModeChange?: (trackId: string, mode: LayerBlendMode) => void;
   onTrackMatteChange?: (trackId: string, matte: any) => void;
   onTrackParentChange?: (trackId: string, parentId: string | null) => void;
-  onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide') => void;
+  onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   /** Rename a layer (confirmed on blur/Enter). */
   onTrackRename?: (trackId: string, newName: string) => void;
   onKeyframeSeek?: (keyframeId: string) => void;
@@ -1065,6 +1065,7 @@ function Timeline({
               <span className={styles.colHeadItem}><Icon name="motion-blur" size={12} title="Motion Blur" /></span>
               <span className={styles.colHeadItem}><Icon name="adjustment" size={12} title="Adjustment Layer" /></span>
               <span className={styles.colHeadItem}><Icon name="eye-off" size={12} title="Guide Layer (not rendered)" /></span>
+              <span className={styles.colHeadItem}><span className={styles.fxText} title="Preserve Underlying Transparency" style={{ fontSize: 12 }}>T</span></span>
               <span className={styles.colHeadItem}><Icon name="3d" size={12} title="3D Layer" /></span>
             </span>
             <span className={styles.colHeadMode}>Mode</span>
@@ -1615,7 +1616,7 @@ const TrackHeader = memo(function TrackHeader({
   onBlendModeChange?: (mode: LayerBlendMode) => void;
   onMatteChange?: (matte: any) => void;
   onParentChange?: (parentId: string | null) => void;
-  onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide') => void;
+  onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   onRename?: (newName: string) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
   onReorderStart?: (e: ReactPointerEvent<HTMLDivElement>) => void;
@@ -1848,6 +1849,23 @@ const TrackHeader = memo(function TrackHeader({
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
         >
           <Icon name="eye-off" size={10} />
+        </button>
+        {/* Preserve Underlying Transparency — AE's "T" switch. A glyph rather
+            than an icon because that is what it is called and what AE draws;
+            the column legend carries the same T in the same position. */}
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="preserveTransparency"
+          data-on={track.preserveTransparency || undefined}
+          aria-pressed={track.preserveTransparency === true}
+          aria-label="Preserve Underlying Transparency"
+          title={track.preserveTransparency
+            ? 'Preserve Underlying Transparency — visible only where layers beneath are opaque'
+            : 'Preserve Underlying Transparency'}
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('preserveTransparency'); }}
+        >
+          <span className={styles.fxText} style={{ fontSize: 10 }}>T</span>
         </button>
         <button
           type="button"

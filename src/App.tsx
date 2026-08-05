@@ -68,6 +68,7 @@ import { readNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
 import { readNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { readNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
 import { readIsGuideLayer, toggleGuideLayer } from '@core/scene/guideLayer';
+import { readNodePreserveTransparency, setNodePreserveTransparency } from '@core/effects/preserveTransparency';
 import { reparentNode, moveNodeAdjacent } from '@core/scene/parenting';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
@@ -430,6 +431,7 @@ function EditorShellInner(): JSX.Element {
         // glance — a layer that silently vanishes from the export is exactly
         // the thing a user needs told BEFORE they deliver, not after.
         guide: readIsGuideLayer(node),
+        preserveTransparency: readNodePreserveTransparency(node),
         shy: (node as any).shy === true,
         keyframes,
         properties,
@@ -1211,6 +1213,12 @@ function EditorShellInner(): JSX.Element {
                 // pipeline never consults — so the icon lit up and no pixel
                 // changed, while the inspector's equivalent switch (writing the
                 // `fx` component) changed pixels without lighting the icon.
+                if (flag === 'preserveTransparency') {
+                  // Through the graph, like `guide` — so undo, autosave and the
+                  // renderer all see one flag. See the comment above.
+                  setNodePreserveTransparency(trackId, !readNodePreserveTransparency(n));
+                  return;
+                }
                 if (flag === 'guide') {
                   // Writes the fx component through the graph, so undo, autosave
                   // and the renderer all see the same flag — the trap this
