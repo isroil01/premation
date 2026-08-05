@@ -824,13 +824,134 @@ by instruction. Numbering follows the brief.
 | 9 | **Layer-edge and centre snapping** | **COMPLETE** | `SnapEngine.objectTargets` emits left/right/centre-X and top/bottom/centre-Y with extents; assembled in `Workspace.buildSnapTargets` (grid not gated on grid visibility, matching AE); consumed by `SelectTool` on both move and resize; magnet button bridged in `useWorkspace`. Six tests incl. source toggles. Nothing to build. |
 | 10 | **Convert Expression to Keyframes** | **COMPLETE — already on the branch this stacked on** | `cc677bd feat(animation): Convert Expression to Keyframes`, on `feat/expression-enabled`, together with the enabled-bit model change, its version bump and migration. The blocked-on-a-model-change framing was already resolved. |
 
+## 2b-quindecies. 2026-08-06 — rule 2b: a suite of symmetric assertions cannot see a sign
+
+Sibling to **rule 2a** (*a uniform error is invisible to every relative
+assertion*). Same family, different symmetry, and it is the rule F33 was hiding
+behind.
+
+> **Rule 2b.** An assertion that is invariant under a mirror cannot detect a sign
+> error, however large the error is. Determinism, NaN-freedom, difference
+> (`a !== b`), magnitude (`|d| > k`), ratio and area/rigidity comparisons are all
+> mirror-invariant. A suite built only from those has **no directional coverage**,
+> and its passing says nothing about direction.
+>
+> **The diagnostic:** name one assertion in the suite that a mirrored
+> implementation would fail. If you cannot, there is no directional coverage —
+> not "thin" coverage, none.
+
+`src/core/rig` had 188 tests and could not name one for the ARAP local step. The
+§2b-quinquies rule ("a wrong distortion looks exactly like a right one") was
+written for spatial *effects*; this is the same failure one layer down, in a
+solver, where it is easier to miss because the visible symptom is *softness*
+rather than something obviously backwards.
+
+### The sweep, and what it corrected
+
+Asserting the blindness was itself an untested claim, so it was measured:
+`scripts/symmetrySweep.mjs` applies seven mirror-class mutations — each a
+*semantic* mirror that still compiles and still produces a plausible
+deformation — and reports which tests notice. Results **before** the F33 fix:
+
+| Mutation | Caught by |
+|---|---|
+| ARAP local step: mirror the fitted rotation (**F33**) | **0** |
+| silhouette mesh: transpose UVs | **0** |
+| `earClip`: reverse triangle winding | **0** |
+| ARAP global step: apply Rᵀ instead of R | 2 |
+| `deformLbs`: mirror every pin rotation | 3 |
+| `deformLbs`: swap the displacement axis pair | 6 |
+| `sortTrianglesByDepth`: invert draw order | 2 |
+
+**This corrects the previous run's report,** which said every assertion in the
+directory was symmetric. Four of seven mirrors *were* caught — LBS pin rotation
+has a directional test (`rotation on a single pin rotates the mesh rigidly around
+it`), and draw order has two. The gap was specific, not general: the rotation
+ARAP fits **internally** had no assertion a mirror would fail, because its ARAP
+tests compare ARAP against LBS on **area preservation** and **rigidity**, and
+both survive a mirror. Stating it as a property of the whole directory was
+broader than the evidence.
+
+After the fix and the new guards, 5 of 7 are caught. The two survivors —
+**UV transpose** and **reversed winding** — are pixel properties no vertex-level
+assertion can reach; the rig render-test family names winding explicitly as a
+reason it exists, so the guard for those lives at the golden layer, not here.
+Logged as a coverage note, not a defect: nothing suggests either is currently
+wrong, only that the unit suite would not say so.
+
+### Instrument note
+
+The sweep reported "NOT CAUGHT" for all seven on its first two runs, for two
+reasons that had nothing to do with coverage: `execFileSync` cannot launch a
+`.cmd` shim on Windows without a shell (status `null`, empty output), and on a
+*passing* run it returns **stdout only** while jest writes its summary to
+**stderr**. Both parsed to zero failures. An instrument that agrees with the
+hypothesis it was built to test is worth more suspicion than one that disagrees —
+it now aborts rather than reporting when its baseline does not parse.
+
+## 2b-sexdecies. Release note — the ARAP rotation sign (F33, FIXED)
+
+**Behaviour change. Every ARAP-rigged layer moves.** Same treatment as the
+repeater rotation and the trim/fill correction: announced, not migrated silently.
+
+ARAP's local step fitted the *inverse* of the rotation its global step applied
+(`atan2(s10 − s01, …)` where the maximiser for `R(θ) = [[c,−s],[s,c]]` applied to
+the rest edge is `atan2(s01 − s10, …)`). Corrected.
+
+Three independent confirmations, since the derivation alone should not be enough
+to re-bless a golden:
+
+1. **Algebra.** `(R·e)·e' = c·(s00+s11) + s·(s01−s10)`, maximal at
+   `atan2(s01−s10, s00+s11)`. On one edge: rest `(1,0)` rotated +90° gives
+   `(0,1)`, so `s01 = 1` and the rest are 0 — the corrected form returns +90°,
+   the old one −90°.
+2. **An internal disagreement.** `resolvePinnedVertices` writes
+   `sin = +sin(rot)` into the *same* `cosV`/`sinV` arrays the local step fills.
+   Handles therefore turned one way and every fitted interior vertex the other —
+   two writers, one array, opposite conventions (§2·0).
+3. **Anti-convergence.** On a rigidly rotated handle set, whose exact energy
+   minimum *is* that rigid rotation, worst-vertex error GREW with the outer
+   iteration count: 21.4px at 2, 30.2 at 4, 43.9 at 8, 53.7 at 16, 56.9 at 32.
+   A correct local/global scheme cannot diverge from its own minimum. Corrected,
+   the same fixture converges.
+
+**Golden diffs.** Attribution by revert-and-verify: all eight rig scenes measured
+**0px** against their committed references at HEAD *before* the fix, so every
+pixel below is the fix and nothing else.
+
+| Scene | Predicted | HEAD | After fix |
+|---|---|---|---|
+| `rig-puppet-overlap` | changes, largest | 0px | **3127px · 3.6192%** |
+| `rig-puppet-bend` | changes | 0px | **1131px · 1.3090%** |
+| `rig-compose-puppet-skeleton` | changes | 0px | **417px · 0.4826%** (under the 1% gate) |
+| `rig-puppet-scale` | little or none | 0px | 13px · 0.0150% |
+| `rig-puppet-rotation-refinement` | changes | 0px | **2px · 0.0023%** — MISPREDICTED |
+| `rig-puppet-lbs-vs-arap` | none (LBS) | 0px | **0px** |
+| `rig-skeleton-pose` | none | 0px | **0px** |
+| `rig-skeleton-bone-scale` | none | 0px | **0px** |
+
+Six of eight predicted correctly, including all four "no change" calls exactly.
+The instructive miss is `rig-puppet-rotation-refinement` — **the scene named for
+rotation is the one blindest to the rotation sign.** It applies a pin *rotation*
+with no pin *displacement*, and a pin's rotation sets its own vertex's frame
+through `resolvePinnedVertices`, the forward-signed path this change does not
+touch. With the handles not moving, the free-vertex field stays near identity, so
+the fitted angles are ≈0 — and at θ≈0 the sign cannot show. The pattern holds
+across the family: every scene that moved is **displacement**-driven, every
+scene that did not is rotation-only or LBS/skeleton.
+
+So the goldens *did* exercise the defect — but only incidentally, and one real
+change (417px) sits under the gate's 1% tolerance and would have been absorbed
+silently. Re-blessed anyway, so the committed reference is the current behaviour
+rather than a nearly-current one.
+
 ## 2b. Findings logged, not fixed
 
 Catalogued rather than absorbed.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
-| **F33** | **ARAP's local step fits the INVERSE of the rotation its own global step applies, and nothing anywhere observes the sign.** The global step rotates rest edges by `R(θ) = [[c,−s],[s,c]]` (`arap.ts:651`, `rbx += w·0.5·(cs·ex − sn·ey)`), so the local step must return the θ maximising `Σ w (R·e_rest)·e_def`. Expanding gives `c·(s00+s11) + s·(s01−s10)`, maximal at **`θ = atan2(s01 − s10, s00 + s11)`**. The code computes `atan2(s10 − s01, s00 + s11)` (`arap.ts:621`) — the negation. Checked numerically as well as on paper: flipping it moves a two-pin ARAP solve's vertex checksum from 13012.214 to 12750.384 (max \|x\| 93.32 → 90.57, ≈3%), so it is load-bearing, not a term that cancels. **And yet flipping it fails NOT ONE of the 188 tests in `src/core/rig`.** The sign is entirely unguarded — every existing assertion is determinism, NaN-freedom, difference, or clamping, and all four are symmetric under a mirrored rotation. This is §2b-quinquies' rule playing out on the solver rather than on an effect: a wrong distortion looks exactly like a right one, and ARAP degrades gracefully (it warm-starts from LBS, and an inverted local step drifts the fixed point toward softer, Laplacian-like behaviour) so there is no obvious tell. Found while deriving the bend-pin rotation convention, which deliberately did NOT reuse this expression for that reason. | **Correctness, live — visual magnitude unknown** | Not fixed here: outside the bend-pin scope, it changes the rendered output of **every ARAP-rigged layer**, and re-blessing rig goldens for it inside an unrelated change is the attribution mistake §2a forbids. Wants its own branch: add a **directional** guard first (rotate a mesh rigidly by a known +30° through its pins, assert the interior follows by +30°, not −30°), confirm it fails at HEAD, then correct the sign and re-bless with a release note. The guard must be directional — a magnitude or difference assertion reproduces the hole exactly. |
+| **F33** | **FIXED — see §2b-sexdecies.** ~~ARAP's local step fits the INVERSE of the rotation its own global step applies, and nothing anywhere observes the sign.** The global step rotates rest edges by `R(θ) = [[c,−s],[s,c]]` (`arap.ts:651`, `rbx += w·0.5·(cs·ex − sn·ey)`), so the local step must return the θ maximising `Σ w (R·e_rest)·e_def`. Expanding gives `c·(s00+s11) + s·(s01−s10)`, maximal at **`θ = atan2(s01 − s10, s00 + s11)`**. The code computes `atan2(s10 − s01, s00 + s11)` (`arap.ts:621`) — the negation. Checked numerically as well as on paper: flipping it moves a two-pin ARAP solve's vertex checksum from 13012.214 to 12750.384 (max \|x\| 93.32 → 90.57, ≈3%), so it is load-bearing, not a term that cancels. **And yet flipping it fails NOT ONE of the 188 tests in `src/core/rig`.** The sign is entirely unguarded — every existing assertion is determinism, NaN-freedom, difference, or clamping, and all four are symmetric under a mirrored rotation. This is §2b-quinquies' rule playing out on the solver rather than on an effect: a wrong distortion looks exactly like a right one, and ARAP degrades gracefully (it warm-starts from LBS, and an inverted local step drifts the fixed point toward softer, Laplacian-like behaviour) so there is no obvious tell. Found while deriving the bend-pin rotation convention, which deliberately did NOT reuse this expression for that reason.~~ Corrected on `feat/arap-rotation-sign`, with directional guards, a mutation sweep behind them, and five re-blessed rig goldens. | **Correctness, live — visual magnitude unknown** | Not fixed here: outside the bend-pin scope, it changes the rendered output of **every ARAP-rigged layer**, and re-blessing rig goldens for it inside an unrelated change is the attribution mistake §2a forbids. Wants its own branch: add a **directional** guard first (rotate a mesh rigidly by a known +30° through its pins, assert the interior follows by +30°, not −30°), confirm it fails at HEAD, then correct the sign and re-bless with a release note. The guard must be directional — a magnitude or difference assertion reproduces the hole exactly. |
 | **F32** | **Twelfth instance of underestimating what is already built — this time measured across a whole brief.** A pre-implementation sweep of ten requested features found **four already complete**: the advanced-pin on-canvas manipulator (rotation ring *and* scale handle, the part the brief assumed was missing), continuous rasterization (model, UI toggle, render tests), layer-edge/centre snapping (wired end to end through `SelectTool`'s move and resize), and the Numbers and Timecode effects (registered, with keyframeable parameters). **Three more were partial with the engine already done**: `sequenceLayerBars` takes an overlap parameter and is tested, but the only UI caller passes a hardcoded `0`; dashes exist and render, only the offset is missing; gradient strokes exist and are reachable from the inspector. Convert Expression to Keyframes was found **already shipped on the very branch the work was told to stack on**. Only two of ten were genuinely absent. All three search shapes the brief named paid out — the feature under a different name (`sequenceLayerBars` vs the unrelated keyframe-stagger `sequenceLayers`), the algorithm under a domain filename, and the model shipped without UI. | **Process** | No code fix. The standing lesson now has a number: budget the verification sweep as a real phase rather than a formality — here it cost ~15% of the run and removed ~60% of the assumed work. |
 | **F14** | **FIXED (multi-subpath geometry).** ~~Trim Paths does not trim — it only trims the stroke.~~ `buildSnapshot.ts:1986` writes `layer.trim = segs`, and that field has exactly two non-test readers: the content-hash cache key (`contentHash.ts:52`) and `strokeTrimmed`, called only inside the stroke branch (`Canvas2DVectorRasterizer.ts:458`). The fill runs `shapePath → ctx.fill()` **unconditionally**, above it and independent of it (`Canvas2DVectorRasterizer.ts:445-452`). AE's Trim Paths cuts **the path itself**, so the fill follows the trim. Ours is wrong against AE for **any filled shape**, today, in shipped builds — and a new shape layer defaults to a solid fill (`#2B7EFF`), so this is the common case, not an edge one. Found while deciding whether `trim` folds into `fx.pathOps`. **This is a correctness defect, not a missing feature** — "trim doesn't fold into the stack" and "trim doesn't trim fills" get prioritised very differently, and the second is the true one. | **Correctness, live** | Fix = the multi-subpath prerequisite: lift `Pt[][]` — already produced by `trimPolyline` (`trimPath.ts:191`), the only such producer, currently consumed entirely inside `strokeTrimmed` and never escaping into the render contract — into `RenderLayer`, and teach the **rasterizer, content hash, hit-testing and bbox** about subpath lists. **The fix and the `trim`/`rep` fold-in prerequisite are the same work**; one change unblocks both. **Deliberately breaks byte-identity** for filled+trimmed shapes, so it ships as an announced **behaviour change with a release note**, not a silent migration — same treatment as the curves interpolation change and F1's error surfacing (M8b). Design context: `PREMATION_COMPLETE_REFERENCE.md` §17.5. |
 | **F31** | **`captureDocument` stamps every document it writes `version: '1.1.0'`** — a hardcoded literal at `cloudDocument.ts:43`. Nothing writes `CURRENT_DOCUMENT_VERSION` (1.6.0), so a project saved by this build is five versions behind its own contents and is walked through the whole migration chain again on every open. It has been survivable only because each step happens to no-op on already-current data, which is luck rather than design: it makes IDEMPOTENCE load-bearing for every migration, present and future, and a step that rewrites unconditionally would corrupt freshly-saved work on the first reopen (1.6.0 nearly did — see §2b-septiesdecies). It also means `DocumentVersionError`'s "saved by a newer version" check can never fire for a document this build wrote. Found while writing the 1.6.0 migration. | **Correctness, latent** | One line — `version: CURRENT_DOCUMENT_VERSION` — plus a test that a captured document round-trips at the current version and a sweep of the five existing steps for anything that is only correct because it never sees its own output. NOT taken in this run: it changes which migrations run on every existing local project, which deserves its own change and its own break sweep. |

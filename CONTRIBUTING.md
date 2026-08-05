@@ -41,11 +41,11 @@ indistinguishable from the noise. A gate nobody can pass is worse than no gate.
 
 ## Environment hazards
 
-Two things about *where and how* you check this repo out have cost real hours.
-Neither announces itself. Both produce corruption that is silent at the moment it
-happens and hard to attribute afterwards, because the symptom surfaces a long way
-from the cause — in someone else's commit, or in a test run that reported success.
-Read these before you start, not after.
+Three things about *where and how* you work on this repo have cost real hours.
+None announces itself. All three produce corruption that is silent at the moment
+it happens and hard to attribute afterwards, because the symptom surfaces a long
+way from the cause — in someone else's commit, in a test run that reported
+success, or in a file that still compiles. Read these before you start, not after.
 
 **Do not put the repo in OneDrive, Dropbox, or any syncing folder.** OneDrive
 hides files from jest: thirteen test suites went invisible, and the run went
@@ -97,6 +97,30 @@ Close it and retry. If git detached the worktree but left the directory behind,
 
 Where a shared checkout is unavoidable, **never `git add -A` in this repo** —
 name every file in every commit, and read the diffstat before you push.
+
+**Do not edit source with `sed -i` (or any tool that rewrites a file in place
+without declaring an encoding).** On Windows it has written a literal NUL byte
+into a `.ts` file here. The file still compiled, jest still passed, and the only
+outward sign was `grep` starting to answer `Binary file … matches` instead of
+printing the line — which is easy to read as a grep quirk rather than as
+corruption in the source. It reached a commit-ready working tree before anyone
+looked.
+
+If you suspect it, sweep for the byte rather than trusting a clean build:
+
+```bash
+node -e "const fs=require('fs'),p=require('path');const w=d=>{for(const e of fs.readdirSync(d,{withFileTypes:true})){if(e.name==='node_modules'||e.name==='.git')continue;const f=p.join(d,e.name);e.isDirectory()?w(f):/\.(ts|tsx|css|md)$/.test(e.name)&&fs.readFileSync(f).includes(0)&&console.log(f)}};w('src');w('packages')"
+```
+
+**Expect two hits that are not bugs.** `src/core/text/perChar3D.ts` and
+`packages/renderer/src/shaders/ShaderCache.ts` both use `\0` deliberately, as a
+separator in a cache key (`${font}\0${char}`, `${vertex}\0${fragment}`) — a NUL
+cannot occur in a font name or in shader source, which is exactly why it is the
+right separator there. A sweep that flags every NUL will flag those two forever;
+check what the byte is *doing* before removing it.
+
+Prefer an editor, or a script that reads and writes with an explicit encoding
+(`fs.readFileSync(p, 'utf8')` → `fs.writeFileSync(p, s, 'utf8')`).
 
 ## What to work on
 
