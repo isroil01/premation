@@ -15,6 +15,7 @@
  *   TextTool — click to place a text box
  */
 
+import { offsetAlongNormals, closedRibbon } from '@motion/scene';
 import type { Rect } from '../math/Rect';
 import * as R from '../math/Rect';
 import type { NodeId, OverlayHandle, WorkspaceNode } from '../ports';
@@ -781,21 +782,15 @@ export function ribbonOutline(samples: readonly BrushSample[], size: number, tap
     return Math.max(Math.min(size, 0.5), Math.min(size * 1.4, size * p * taper));
   };
 
-  const left: Vec2[] = [];
-  const right: Vec2[] = [];
-  for (let i = 0; i < n; i++) {
-    const prev = samples[Math.max(0, i - 1)]!;
-    const next = samples[Math.min(n - 1, i + 1)]!;
-    const tx = next.x - prev.x;
-    const ty = next.y - prev.y;
-    const len = Math.hypot(tx, ty) || 1;
-    const nx = -ty / len;
-    const ny = tx / len;
-    const w = widthAt(i) / 2;
-    left.push({ x: samples[i]!.x + nx * w, y: samples[i]!.y + ny * w });
-    right.push({ x: samples[i]!.x - nx * w, y: samples[i]!.y - ny * w });
-  }
-  return smoothBezier([...left, ...right.reverse()], true);
+  // The offset walk itself now lives in `@motion/scene` (DECISION D4): it is the
+  // same arithmetic stroke taper and variable-width feather need, and leaving it
+  // here would make the rasterizer depend on the interaction package. Everything
+  // ABOVE this line — pressure normalisation, the arc-length taper profile, the
+  // width floor and the 1.4x clamp — stays, because it is brush policy rather
+  // than geometry.
+  //
+  // `widthAt` is a WIDTH and the primitive takes a DISTANCE, hence the halving.
+  return smoothBezier(closedRibbon(offsetAlongNormals(samples, (i) => widthAt(i) / 2)), true);
 }
 
 /**
