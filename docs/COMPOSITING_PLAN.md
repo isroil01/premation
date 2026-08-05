@@ -805,6 +805,118 @@ same way the missing-clear hypothesis was.
   output, different encoding — worth confirming how much of the standing
   webgpu-vs-webgl2 parity gap on partial-alpha scenes this accounts for.
 
+## 2b-vicies. Release note — rigging closed out: quadruped, palette, per-vertex weights
+
+**Three features and one consolidation.** With these, the named DUIK/Rive gaps are
+closed and rigging is complete for this version.
+
+### Quadruped auto-rig
+
+Side view facing screen-right — 14 bones, 4 IK chains, 7 controllers. A quadruped
+drawn front-on has no usable 2D rig (legs occlude, nothing bends in the picture
+plane), so the preset generates a side view rather than pretending the choice is
+open.
+
+**`side` reads oddly and is right.** The four legs are FORE and HIND, not left and
+right. `ControllerSide` "drives colour only — it carries no solver meaning", and
+this file's existing convention is that `side` is SCREEN side with `left` =
+negative x. Fore legs sit at positive x, hind at negative, so fore colours as
+`right` and hind as `left`, and the two sets are distinguishable. A fore/hind enum
+would have meant a schema change, a migration and a new case in every controller
+reader, to recolour four handles.
+
+### Rule 2b — the anchor is now TOTAL, which is the substantive change
+
+The biped's side test **exempted `centre`**, so a third of its controllers made a
+directional claim nothing checked. Both presets now root their body control at
+x = 0, which makes `centre` mean "on the midline" — a measurable claim rather than
+a label — and every controller is anchored to the sign of the point it actually
+ends up on, computed from the skeleton solver.
+
+That anchor had been wrong twice before, both times by reaching for a bone whose
+local x is positive on both sides. Verified it is not wrong a third time by
+breaking it: flipping ONE leg's side in the generator turns the suite red. A
+synthetic mirror-swap positive control sits in the file so the anchor cannot go
+insensitive later.
+
+### Rule 3a — a transform-invariance test that was really a determinism test
+
+The suite asserted `preset({...BOUNDS})` deep-equals `preset(BOUNDS)` under a
+comment about ignoring layer rotation and scale. That is a **determinism** check
+wearing an invariance label: a generator that read the layer transform passes it,
+because neither argument ever carried one.
+
+Replaced with a real layer rotated 37° and scaled 2.4 × 0.6, driven through the
+scene graph, asserted to store the same rig as one at rest. **Its positive control
+caught its own fixture:** reading `node.transform.scale` reported `nonUniform:
+false` on a layer that is non-uniformly scaled, because the Transform COMPONENT is
+the authority and `node.transform` is not what anything downstream reads.
+Re-anchored on `readGeometry` — the function `BoneControls` actually calls — plus
+an explicit check that it reports the UNSCALED box, which is the property that
+keeps a scaled layer from getting a differently-proportioned rig.
+
+### Command palette
+
+`buildRigPresetCommands()` maps the preset registry, so a third preset gets an
+entry with no edit — matching the inspector `<select>`, which was already derived,
+rather than adding a second source. Guarded where the claim becomes false rather
+than by grepping source text (rule 4c): the id is in the REGISTERED list, running
+it writes a rig `validateRig` accepts, it is one undo entry, and it sizes from the
+layer rather than the 200×200 fallback. Unwiring it turns 15 of 17 red; the two
+that stay green are the positive control and the orphan check, both correctly
+indifferent.
+
+### Per-vertex numeric weights
+
+**Existence sweep first.** Three of four pieces already existed and were reused:
+the storage (`WeightPaintMap` already holds absolute per-(bone, vertex) overrides),
+the read (`getSkeletonBinding(...).weights[i]` is already the full influence list),
+and the write command (`setWeightPaint`, with undo). Genuinely missing: vertex
+SELECTION and a numeric surface.
+
+**Normalisation — redistribute, and write the WHOLE vertex.** Rejecting an edit
+that breaks the sum would defend an invariant the renderer does not depend on:
+`skinVertex` divides by the total, so an un-normalised vertex silently rescales
+rather than erroring. And `applyWeightPaint` already redistributes, so enforcing a
+sum instead would be a second disagreeing rule for one piece of data (§2·0).
+
+Writing every influence rather than only the edited one is the part that needed
+deriving on paper. With a partial write the next edit finds the first bone already
+painted, `paintedTotal` exceeds 1, and `normalizeWeights` rescales the typed
+number — 0.8 reads back as 0.61. Writing a vertex summing to exactly 1 makes
+`remaining` zero and `normalizeWeights` a no-op, so **what you type is what
+deforms**. Verified in the running app: typed 55 → 55.000, then typed 40 on a
+second bone → 40.000, total 100% both times, others keeping their ratios.
+
+**The single-influence boundary is made unrepresentable, not corrected.** One bone
+on a vertex is weight 1 by definition; the model declines the edit and the panel
+renders an explanation instead of a field.
+
+**Rule 3a again:** the fixture is 0.6 / 0.3 / 0.1, not three thirds. Equal weights
+hide writing to the wrong bone, redistributing to the wrong bone, and transposing
+two entries — all three produce identical output. Ratios are distinct too (6:3:1).
+Verified to fail twice: a partial write reddens exactly the two multi-edit tests
+(correct blast radius — a single edit is right either way), and an even split
+instead of proportional reddens exactly `untouched bones keep their ratio`.
+
+### §2·0 — `nodeRestMesh`
+
+The ~30-line rest-mesh assembly was inline in `BoneOverlay`, and the panel needs
+the SAME mesh. Copying it would have recreated the drift `rigMeshInputs` exists to
+stop, and worse than usual: weights are addressed by vertex INDEX, so two
+derivations at different densities do not disagree slightly — they address
+different vertices, and the editor would write weights onto artwork the user never
+touched.
+
+### Runtime verification, through the real UI
+
+Local edition, real app. Quadruped from the Rigging dropdown → 14 bones, panel
+listing Spine/Hips/Chest/Neck/Head/Tail and four named leg pairs; **one** Undo
+click → 0 bones. `Auto-Rig: Biped` and `Auto-Rig: Quadruped` both render in the
+palette; running the quadruped entry → 14 bones, one Undo → 0. Pick Vertex →
+vertex #135 highlighted, panel showing four bones at 29.3 / 28.4 / 24.2 / 18.1 %,
+total 100%. Typed values landed exactly and one Undo reverted exactly one edit.
+
 ## 2b-undevicies. Release note — one Ctrl+Z per edit (history, FIXED)
 
 **User-visible, app-wide, and not a rigging bug** despite being found while

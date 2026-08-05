@@ -647,16 +647,36 @@ Both rigs can live on the **same layer** and **compose** (puppet first in rest s
 | Toolbar id / shortcut | `puppet-pin` · `Ctrl+P` | `bone` · `Ctrl+B` |
 | Stored at | `fx.puppet` | `fx.skeleton` |
 | Deformer | **ARAP** (default) or LBS over a grid mesh | **Linear Blend Skinning** over the same mesh |
-| Rigging primitive | Position pins + rotation, stiffness, scale, overlap | Bone hierarchy + FK, **IK targets, pole vectors** |
+| Rigging primitive | Position pins + rotation, stiffness, scale, overlap; **bend pins** | Bone hierarchy + FK, **IK targets, pole vectors**, **controllers** |
 | Solver | Sorkine–Alexa ARAP, cotangent Laplacian, dense Cholesky | Analytic two-bone + **FABRIK** |
 | Auto-binding | Laplacian harmonic weights, 150 Jacobi iterations | Inverse-distance-to-segment, capped at 4 influences |
-| Keyframeable | pin position (eased + spatial tangents), rotation, stiffness, scale, overlap | bone rotation / x / y / scaleX / scaleY, IK target x/y, IK pole x/y |
+| Keyframeable | pin position (eased + spatial tangents), rotation, stiffness, scale, overlap | bone rotation / x / y / scaleX / scaleY, IK target x/y, IK pole x/y, **`ikMode.<bone>` (IK/FK)** |
 | Undo | `PuppetEditCommand` — 1 gesture = 1 step | `SkeletonEditCommand` — 1 gesture = 1 step |
 | Renders via | `layer.deformedMesh` → GPU indexed mesh draw (overlap = painter's index order) | same |
-| Authoring | **Puppet Sketch recording**, motion path + tangent handles, advanced-pin gizmo | Mesh preview, **weight painting**, bone names |
+| Authoring | **Puppet Sketch recording**, motion path + tangent handles, advanced-pin gizmo | **Auto-rig presets**, mesh preview, **weight painting + per-vertex numeric weights**, bone names |
 | AI tools | `create_puppet_rig`, `set_puppet_pin_keyframes` | `create_skeleton_rig`, `pose_skeleton` |
 
-Deliberate deltas vs AE: one engine (AE carries two for back-compat), one mesh per layer, overlap resolves *within* the layer rather than through the scene depth buffer. Vs DUIK/Rive — the right benchmark, since AE has no skeleton at all — the gap is that weight painting is brush-only, with no per-vertex numeric editor.
+**Bend pins** (`bendPins.ts`) are a second *kind* of pin, not a second advanced pin. An advanced pin owns a point: its rotation turns the mesh about the place you put it, in the rest frame. A bend pin owns **no point** — its centre is wherever the advanced pins have carried that spot, and its rotation acts on the deformation they already produced. The solve is two passes: drivers only (bend-pin weight columns removed and the rest re-normalised, so adding a bend pin cannot slacken the solve it is not a constraint in), then bends applied on top in list order, each reading its centre from the result of the ones before it. Wagging tails and breathing chests are "a turn on top of the motion already there", which a pin owning its own centre cannot express.
+
+**Controllers** (`controllers.ts`) are the DUIK posing layer, built against a real rig model rather than around the absence of one. DUIK makes controllers null layers driven by expressions because After Effects has no skeleton; here a controller is rig data beside `ikTargets`, so it inherits undo, persistence and autosave through `SceneGraph.setFx`, needs no new `SceneKind` (so no migration, no timeline surface), and is viewport-only by construction. Its `link` is a **field**, not an expression — it cannot be typo'd and survives renames. Position is always an **offset from the driven point**, so a control cannot drift away from its joint. Four shapes (`square` `circle` `arrow` `arc`); `side` (`left`/`right`/`centre`) drives **colour only** and carries no solver meaning.
+
+**IK/FK switching** (`ikfk.ts`) is per chain and keyframeable via `ikMode.<boneId>`. The feature is the *pose-preserving conversion*, not the flag — a switch that moves the limb is worthless. Almost no maths was added because both directions already existed in the solver: IK → FK is `applyIk` itself (it overrides the chain bones' local rotations, so reading them out reproduces the IK result **exactly**, not as a fit), and FK → IK is `boneTip` of the chain's end bone. FK → IK writes a target and **no pole**: without a pole `applyIk` preserves the current bend side and never flips it, so a pole is how you *choose* a side, not how you keep one.
+
+**Auto-rig presets** (`rigPresets.ts`) generate a whole skeleton, its IK chains and its controllers in one command. Two presets: **Biped** (hips → spine → head, two arms, two legs, each limb a two-bone IK chain with a controller on its goal) and **Quadruped** (side view facing screen-right; spine and hips mirrored about x = 0, neck/head forward, tail back, four legs — 14 bones, 4 chains, 7 controllers). The generator is pure and a function of the layer's **unscaled** bounds only, so layer rotation and non-uniform scale cannot leak into the rig. Applying is one command gated on `validateRig`, which enforces the same invariants a hand-built rig obeys (unique bone ids, resolvable parents, no cycles, `chainLength` in [1,8], every controller link resolves) — an invalid rig is **refused rather than half-written**, and a valid one is exactly one undo step. Reachable from the Rigging panel's Auto-Rig dropdown and from the Command Palette (`Auto-Rig: Biped` / `Auto-Rig: Quadruped`); both surfaces are derived from the preset registry, so a third preset appears in both with no edit.
+
+**Weight editing** is now two surfaces over one model. The brush (`paintWeights`) paints a bone's weight column by feel with add/subtract/smooth and a feathered falloff; the **per-vertex numeric editor** shows every bone influencing a picked vertex as an editable percentage in the Rigging panel. Picking is an explicit "Pick Vertex" mode on the bone overlay — a plain click already adds a bone, so picking could not be a modifier-click. Editing one weight redistributes the others **in proportion** and writes the whole vertex, so the typed number is exactly what reads back and exactly what deforms; a vertex with a single influence is 1 by definition and is shown read-only rather than offering a field that would renormalise whatever was typed. Overrides are sparse, stored per (bone, vertex), and **discarded when the mesh is rebuilt at a different density** — positional indices from another resolution would smear weights onto unrelated artwork.
+
+Deliberate deltas vs AE: one engine (AE carries two for back-compat), one mesh per layer, overlap resolves *within* the layer rather than through the scene depth buffer.
+
+**Vs DUIK/Rive** — the right benchmark, since AE has no skeleton at all — the named feature gaps are now closed: controllers, IK/FK switching with pose preservation, auto-rig presets, and per-vertex numeric weights all exist.
+
+> **DECISION — controllers driving puppet pins is deliberately out of scope.**
+>
+> In DUIK a controller drives a puppet pin because that is the only rig AE has: there is no skeleton, so the pin *is* the joint and a null-plus-expression is the only way to get a handle onto it. That is a workaround for a missing rig model, and this project has the rig model — a controller links to a `bone` or an `ikTarget`, both of which the solver reads directly.
+>
+> Inheriting the pin-driving path would add a third link kind whose only justification is AE compatibility, and would put two posing mechanisms on layers that carry both rigs (which compose: puppet first in rest space, skeleton on top). The bone rig is the one with hierarchy, IK and FK, so it is the one controls belong on.
+>
+> Revisit only if a concrete case appears for posing a puppet-only layer through handles — and note that bend pins already cover the motivating case (secondary motion on top of existing deformation) without a controller.
 
 ### 7.9 Particles
 
@@ -1214,7 +1234,9 @@ Ten call sites. The main ones:
 - **Named entries** — deliberate, user-meaningful entries (pinned snapshots, the "Open" baseline) are flagged `named` and render differently in the History panel.
 - **One stack for everything.** Timeline edits push a `TimelineCommandAdapter`; plugin edits and AI runs wrap in `runDocumentEdit` / `aiTransaction`. There is no second undo stack anywhere.
 - **`CompositeCommand`** undoes its children in reverse order. `suspend`/`resume` for programmatic batches.
+- **Two independent producers, one stack.** A command pushes its own entry; behind it, a debounced *snapshot* records anything with no command of its own. `record()` suppresses a snapshot that matches the baseline, and the baseline is refreshed from `UndoStackChanged`. That refresh is what makes the two producers add up to one entry per gesture, and the whole set is wired by **one call**, `attachHistoryRecording()`, from inside boot.
 - ⚠️ **Recorded severe bug (fixed):** history was once baselined *after* `seedDefaultScene`, so one undo wiped the project.
+- ⚠️ **Recorded bug (fixed):** the baseline refresh was subscribed at **module scope**. `Application.boot()` calls `setEventBus(new EventBus())`, so it attached to a bus boot then discarded and never fired once — the baseline went stale, every commanded edit *also* recorded a generic `Edit N` snapshot, and **`Ctrl+Z` took two presses for one gesture, app-wide**. It also meant the next snapshot's `before` after an undo was the pre-undo state. Nothing subscribing to this bus may do so before boot resolves; `Providers.tsx` carries the same warning for the cross-window sync, which was the first victim.
 
 ### 12.13 Assets, proxies and media
 

@@ -22,7 +22,7 @@
 | Keyframeable | pin position (eased + spatial tangents) / rotation / stiffness / scale / overlap | bone rotation / x / y / scaleX / scaleY, IK target x / y, IK pole x / y |
 | Undo | `PuppetEditCommand` (1 gesture = 1 step) | `SkeletonEditCommand` (1 gesture = 1 step) |
 | Renders via | `layer.deformedMesh` → GPU indexed mesh draw (overlap = painter's index order) | same |
-| Authoring | Puppet Sketch recording, motion path + tangent handles, advanced-pin gizmo | mesh preview, weight painting, bone names |
+| Authoring | Puppet Sketch recording, motion path + tangent handles, advanced-pin gizmo, **bend pins** | **auto-rig presets**, mesh preview, **weight painting + per-vertex numeric weights**, **controllers**, **IK/FK switching**, bone names |
 | AI tools | `create_puppet_rig`, `set_puppet_pin_keyframes` | `create_skeleton_rig`, `pose_skeleton` |
 
 Both rigs can live on the **same layer** and **compose** (puppet first, in rest space; skeleton skins on top).
@@ -31,8 +31,15 @@ This is a complete, production-shaped implementation of both the *math* and the 
 Against After Effects the remaining deltas are deliberate, not missing work: there is one engine
 (AE carries two for backward compatibility), one mesh per layer, and overlap resolves **within** the
 layer rather than through the scene depth buffer (§12.6). Against DUIK/Rive — the right benchmark
-for the bone tool, since AE has no skeleton at all — the notable gap is that weight painting is
-brush-only, with no per-vertex numeric editor. Remaining defects and open items: §12.
+for the bone tool, since AE has no skeleton at all — **the named feature gaps are now closed**:
+controllers, per-chain IK/FK switching with pose preservation, auto-rig presets (biped + quadruped)
+and a per-vertex numeric weight editor all ship. Remaining defects and open items: §12.
+
+The one thing deliberately NOT inherited from DUIK is **controllers driving puppet pins**. DUIK does
+that because AE has no skeleton, so a pin *is* the joint and a null-plus-expression is the only
+handle available — a workaround for a missing rig model. This project has the rig model, so a
+controller links to a `bone` or an `ikTarget` and the solver reads it directly. See
+`PREMATION_COMPLETE_REFERENCE.md` §7.8 for the full reasoning.
 
 ---
 
@@ -894,9 +901,11 @@ Every item that used to be listed here now ships. Kept as a record of what was a
   overrides, add/subtract/smooth, one undo step per stroke. See §4.6.
 - **Advanced pin components** → per-pin `scale` (folded into the rotation matrix as a similarity,
   so ARAP's local step scales the pin's 1-ring rigidly) and **Overlap pins** (§12.12). `stiffness`
-  already covered AE's Starch, better, as a real energy term. AE's *Bend* pin — auto-positioned,
-  controlling only scale/rotation — is the one pin type still not modelled; it is a convenience
-  over Advanced pins rather than a capability.
+  already covered AE's Starch, better, as a real energy term.
+- **Bend pins** → `bendPins.ts`. A pin that derives its position from the others and acts on the
+  deformation they already produced, solved in two passes (drivers only, then bends on top in list
+  order). Supersedes the note that used to sit here calling AE's Bend pin "the one pin type still
+  not modelled".
 - **Mesh preview under the Bone tool** → `BoneOverlay` draws the posed skinning mesh and, with a
   bone selected, that bone's weight field as a heatmap.
 - **Bone names** → `Bone.name`, editable inline in `BoneControls` (falls back to the id).
@@ -904,8 +913,22 @@ Every item that used to be listed here now ships. Kept as a record of what was a
   handle. The solver still preserves the current bend side when no pole is set.
 - **Bone scale keyframing** → `bone.<id>.scaleX|scaleY` are now sampled in `buildSnapshot`.
 
-Genuinely still absent: a **numeric per-vertex weight editor** (painting is brush-only), and AE's
-**Bend pin**.
+Since then, and closing the two items this section used to list as absent:
+
+- **Bend pins** (above) — AE's Bend pin, modelled against the rig rather than as a convenience.
+- **Per-vertex numeric weight editor** → `setVertexWeight` in `weightPaint.ts` + the Vertex Weights
+  card in `BoneControls`, reached by the bone overlay's **Pick Vertex** mode. Editing one weight
+  redistributes the others in proportion and writes the whole vertex, so the typed number is what
+  reads back and what deforms. A single-influence vertex is read-only by construction.
+- **Controllers** → `controllers.ts`, linked to a `bone` or an `ikTarget` by field, drawn at the
+  driven point plus an offset.
+- **Per-chain IK/FK switching** → `ikfk.ts`, keyframeable as `ikMode.<boneId>`, pose-preserving in
+  both directions.
+- **Auto-rig presets** → `rigPresets.ts`, biped and quadruped, gated on `validateRig`, one undo
+  entry each, reachable from the Rigging panel and the Command Palette.
+
+Nothing from the original gap list remains open. Out of scope by decision, not omission:
+controllers driving puppet pins (see §1).
 
 ### 12.10 Riggable-kind inconsistency around text — **FIXED**
 
