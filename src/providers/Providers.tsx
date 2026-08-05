@@ -26,7 +26,7 @@ import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
-import { useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
+import { attachHistoryBaselineSync, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
 import { Button } from '@components/Button';
 import { Logo } from '@components/Logo';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
@@ -1540,6 +1540,11 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           }));
           // Structural edits (add/delete/reparent) are their own action.
           track(getEventBus().on('SceneGraphChanged', () => h().schedule('scene')));
+          // Baseline sync — INSIDE boot for the same reason as the
+          // subscriptions above: a module-scope subscription lands on the bus
+          // Application.boot() discards. Without it every commanded edit also
+          // recorded a generic snapshot.
+          track(attachHistoryBaselineSync());
         } catch { /* ignore */ }
 
         // Dirty tracking + autosave (crash recovery). Edits mark the active
