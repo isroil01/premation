@@ -1000,12 +1000,68 @@ underneath. A green gate means *"nothing changed by more than the band"*, never
 `packages/render-tests/scripts/comparator.mjs`, since that is where someone reads
 the tolerance and forms the wrong impression of it.
 
+## 2b-septendecies. Release note — animated dash offset (stroke design, 1 of 4)
+
+Dashes rendered but could not move: `Stroke.dash` had no offset and no track, so
+the half of the feature that draws lines on, marches borders and fills progress
+rings did not exist. `Stroke.dashOffset` carries it now, keyframeable through the
+`strokeDashOffset` track.
+
+**Arc length, with no new mechanism for it.** The offset is a distance along the
+path in the same layer-local px `dash` is measured in — exactly what Canvas2D's
+`lineDashOffset` already means — so `applyStrokeStyle`, the single place stroke
+state reaches the canvas, sets it and the rasterizer does the rest.
+
+`trimSegments` / `trimPolyline` were considered and deliberately NOT used. They
+do provide arc length, but over a POLYLINE SAMPLING of the curve: dashes on a
+circle or a bezier would land at subtly wrong distances, every dash would get
+butt ends regardless of `cap`, and joins inside a dash would be lost. It would
+also be a second dashing implementation beside the one the canvas already applies
+for the static pattern (§2·0). Trim's walk is the right mechanism for CUTTING a
+path and the wrong one for phase-shifting a pattern already being laid down.
+
+**Cache invalidation came free, and was checked rather than assumed.** An
+animated offset only renders if the raster cache key moves with it.
+`AppTextureProvider`'s `strokeSig` covers width/colour/align only — but
+`contentHashOf` serialises the whole stroke object, so the field entered the key
+by existing. Confirmed at runtime: consecutive frames of a marching border differ
+by ~6,000 px, which cannot happen off one cached raster.
+
+`normalizeStroke` OMITS the key when absent rather than defaulting it to 0, for
+the same reason. Writing `dashOffset: 0` into every normalised stroke would
+change the content hash of every layer in every existing project and discard
+every cached raster on first open — for a value meaning "unchanged".
+
+### Rule 3a, measured rather than argued
+
+Dash patterns are periodic: offset 0 and offset `sum(dash)` draw the same
+picture. All three rendered through the real pipeline, dashed ellipse, `[24, 12]`
+pattern, period 36:
+
+| Comparison | Differing pixels |
+|---|---|
+| offset 0 vs 9 (quarter period) | **3,508 px (3.48%)** in the harness; 6,393 px in-app |
+| offset 0 vs **36 (one whole period)** | **0 px — byte-identical** |
+| animated frame 0 vs frame 30 (one period apart) | **0 px** |
+
+A golden blessed at 0 *or* at a whole period would therefore have been satisfied
+by a build that ignored the offset entirely. `stroke-dash-offset-curve` is
+blessed at **9**, and on an **ellipse** rather than the rect the rest of the
+stroke family uses: offset is an arc-length parameter, and on straight edges any
+monotonic parameterisation looks plausible — curvature is what separates arc
+length from the things that resemble it.
+
+The frame-0-vs-frame-30 zero is a correctness result in itself: a marching border
+returning exactly to its starting phase after one period means the interpolation
+and the arc-length units agree.
+
 ## 2b. Findings logged, not fixed
 
 Catalogued rather than absorbed.
 
 | # | Finding | Severity | Proposed |
 |---|---|---|---|
+| **F34** | **`strokeWidth` is a registered keyframeable property the renderer never reads for a shape stroke — a stopwatch wired to nothing.** It sits in `propertyMeta` (`propertyMeta.ts:226`) with label, unit and default, so the inspector and timeline offer it and `isAnimated` reports true once used. But a shape stroke's width comes from `readNodeStroke(node).width` — the `fx` object — and `buildSnapshot` folds only `stroke_r/g/b/a` into the resolved stroke. `strokeWidth` appears NOWHERE in `buildSnapshot`; its live readers are the text-animator stack and preset preview, presumably where it came from. **Verified in the running app rather than inferred from a grep:** a solid stroke of width 6 with a `strokeWidth` track ramping 6 → 40 rendered **5296 stroke pixels at both ends** — track animated, keyframes present, output identical. Found while adding `strokeDashOffset`, which deliberately copied the `stroke_r` fold instead so as not to inherit this. | **Write-only UI** — the house style calls this worse than a missing feature, because it reads as working | Small: fold `a.get('strokeWidth')` in beside the dash-offset fold, guarded in `dashOffsetSnapshot.test.ts`'s shape. NOT taken here because it changes the rendered output of any project that already carries a dead `strokeWidth` track — a behaviour change wanting its own re-bless and release note, which §2a says not to bundle into an unrelated feature. Worth checking the multi-stroke stack at the same time: animated tracks bind to entry 0 only. |
 | **F33** | **FIXED — see §2b-sexdecies.** ~~ARAP's local step fits the INVERSE of the rotation its own global step applies, and nothing anywhere observes the sign.** The global step rotates rest edges by `R(θ) = [[c,−s],[s,c]]` (`arap.ts:651`, `rbx += w·0.5·(cs·ex − sn·ey)`), so the local step must return the θ maximising `Σ w (R·e_rest)·e_def`. Expanding gives `c·(s00+s11) + s·(s01−s10)`, maximal at **`θ = atan2(s01 − s10, s00 + s11)`**. The code computes `atan2(s10 − s01, s00 + s11)` (`arap.ts:621`) — the negation. Checked numerically as well as on paper: flipping it moves a two-pin ARAP solve's vertex checksum from 13012.214 to 12750.384 (max \|x\| 93.32 → 90.57, ≈3%), so it is load-bearing, not a term that cancels. **And yet flipping it fails NOT ONE of the 188 tests in `src/core/rig`.** The sign is entirely unguarded — every existing assertion is determinism, NaN-freedom, difference, or clamping, and all four are symmetric under a mirrored rotation. This is §2b-quinquies' rule playing out on the solver rather than on an effect: a wrong distortion looks exactly like a right one, and ARAP degrades gracefully (it warm-starts from LBS, and an inverted local step drifts the fixed point toward softer, Laplacian-like behaviour) so there is no obvious tell. Found while deriving the bend-pin rotation convention, which deliberately did NOT reuse this expression for that reason.~~ **The struck text above overstates the coverage gap and should not be quoted.** "Every existing assertion is symmetric" was asserted, not measured; measuring it (§2b-quindecies) found **four of seven** mirror mutations already caught. The real gap was narrow: ARAP's INTERNALLY fitted rotation, unguarded because its ARAP tests compare against LBS on area preservation and rigidity and both survive a mirror. Corrected on `feat/arap-rotation-sign`, with directional guards, the mutation sweep behind them, and five re-blessed rig goldens. | **Correctness, live — visual magnitude unknown** | Not fixed here: outside the bend-pin scope, it changes the rendered output of **every ARAP-rigged layer**, and re-blessing rig goldens for it inside an unrelated change is the attribution mistake §2a forbids. Wants its own branch: add a **directional** guard first (rotate a mesh rigidly by a known +30° through its pins, assert the interior follows by +30°, not −30°), confirm it fails at HEAD, then correct the sign and re-bless with a release note. The guard must be directional — a magnitude or difference assertion reproduces the hole exactly. |
 | **F32** | **Twelfth instance of underestimating what is already built — this time measured across a whole brief.** A pre-implementation sweep of ten requested features found **four already complete**: the advanced-pin on-canvas manipulator (rotation ring *and* scale handle, the part the brief assumed was missing), continuous rasterization (model, UI toggle, render tests), layer-edge/centre snapping (wired end to end through `SelectTool`'s move and resize), and the Numbers and Timecode effects (registered, with keyframeable parameters). **Three more were partial with the engine already done**: `sequenceLayerBars` takes an overlap parameter and is tested, but the only UI caller passes a hardcoded `0`; dashes exist and render, only the offset is missing; gradient strokes exist and are reachable from the inspector. Convert Expression to Keyframes was found **already shipped on the very branch the work was told to stack on**. Only two of ten were genuinely absent. All three search shapes the brief named paid out — the feature under a different name (`sequenceLayerBars` vs the unrelated keyframe-stagger `sequenceLayers`), the algorithm under a domain filename, and the model shipped without UI. | **Process** | No code fix. The standing lesson now has a number: budget the verification sweep as a real phase rather than a formality — here it cost ~15% of the run and removed ~60% of the assumed work. |
 | **F14** | **FIXED (multi-subpath geometry).** ~~Trim Paths does not trim — it only trims the stroke.~~ `buildSnapshot.ts:1986` writes `layer.trim = segs`, and that field has exactly two non-test readers: the content-hash cache key (`contentHash.ts:52`) and `strokeTrimmed`, called only inside the stroke branch (`Canvas2DVectorRasterizer.ts:458`). The fill runs `shapePath → ctx.fill()` **unconditionally**, above it and independent of it (`Canvas2DVectorRasterizer.ts:445-452`). AE's Trim Paths cuts **the path itself**, so the fill follows the trim. Ours is wrong against AE for **any filled shape**, today, in shipped builds — and a new shape layer defaults to a solid fill (`#2B7EFF`), so this is the common case, not an edge one. Found while deciding whether `trim` folds into `fx.pathOps`. **This is a correctness defect, not a missing feature** — "trim doesn't fold into the stack" and "trim doesn't trim fills" get prioritised very differently, and the second is the true one. | **Correctness, live** | Fix = the multi-subpath prerequisite: lift `Pt[][]` — already produced by `trimPolyline` (`trimPath.ts:191`), the only such producer, currently consumed entirely inside `strokeTrimmed` and never escaping into the render contract — into `RenderLayer`, and teach the **rasterizer, content hash, hit-testing and bbox** about subpath lists. **The fix and the `trim`/`rep` fold-in prerequisite are the same work**; one change unblocks both. **Deliberately breaks byte-identity** for filled+trimmed shapes, so it ships as an announced **behaviour change with a release note**, not a silent migration — same treatment as the curves interpolation change and F1's error surfacing (M8b). Design context: `PREMATION_COMPLETE_REFERENCE.md` §17.5. |
