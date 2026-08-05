@@ -8,7 +8,9 @@
  * that no unit on either side observes (F30). Registering the property in
  * `propertyMeta` puts a stopwatch in the inspector whether or not the renderer
  * reads the track, which is precisely how `strokeWidth` came to be a
- * keyframeable property that changes nothing (F34).
+ * keyframeable property that changes nothing (F34 — since FIXED, and now guarded
+ * by `strokeWidthSnapshot.test.ts` beside this one, plus the derived sweep over
+ * the whole class in `__tests__/animatablePropertyReaders.test.ts`).
  *
  * So this asserts the crossing itself, at the only place both halves meet.
  */

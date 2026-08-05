@@ -917,6 +917,91 @@ palette; running the quadruped entry → 14 bones, one Undo → 0. Pick Vertex �
 vertex #135 highlighted, panel showing four bones at 29.3 / 28.4 / 24.2 / 18.1 %,
 total 100%. Typed values landed exactly and one Undo reverted exactly one edit.
 
+## 2b-duodevicies-bis. Release note — animated stroke width (F34, FIXED)
+
+**A behaviour change for any project that already carries a `strokeWidth`
+track**, which is why it gets a note rather than a line in a finding table.
+
+**What changed.** A keyframed stroke width now animates. It did not before:
+`strokeWidth` was registered in `propertyMeta`, so the inspector and the timeline
+both offered a stopwatch, and `buildSnapshot` folded the sampled value into the
+resolved stroke *nowhere*. The original measurement: a 6 → 40 ramp rendered 5296
+stroke pixels at BOTH ends.
+
+**Who is affected.** Anyone who set stroke-width keyframes and concluded the
+feature was broken. Their file already contains the track; opening it after this
+change makes the stroke move for the first time. Nobody's stored data changes —
+only what is drawn from it.
+
+**Re-bless: NONE required, and that was checked rather than assumed.** No
+render-test scene references `strokeWidth` at all — `grep` over
+`packages/render-tests/harness/` returns nothing — so no existing golden could
+shift. The predicted diff was therefore *zero goldens*, and the actual diff is
+zero goldens. Scenes that use `cornerRadius` statically are likewise untouched,
+because a static value arrives through the component scan (`num(p.cornerRadius)`)
+and never through the animated fold.
+
+The consequence, stated rather than glossed: **the fix is not covered by the
+pixel gate.** A scene that ramps a stroke width would be a NEW golden, which is a
+new blessing and belongs in its own change — bundling it here would make this
+commit and that blessing unbisectable.
+
+### The guard that should have caught it, and why it could not
+
+The brief expected `contentHashReaders.test.ts` (G1) to be extended. It could not
+have caught this:
+
+- G1's subject set is the fields folded into the rasterizer's CONTENT HASH. The
+  hash folds `st: layer.stroke` — one object — so `stroke.width` was never in the
+  subject set, and the guard does not recurse into nested style objects.
+- More fundamentally the two are different classes. G1 catches
+  **hashed-but-unread** (per-layer `quality`: the texture re-rasterizes and looks
+  identical). F34 is **keyframeable-but-unsampled**: the *stopwatch* writes
+  keyframes nothing reads. Extending G1 would not have found it and will not find
+  the next one.
+
+So there is a second guard, `animatablePropertyReaders.test.ts` (G2), whose
+subject set is the registry's own inventory (`staticPropertyPaths()`, which
+already existed "for tests"). Structural rows are excluded on a PROPERTY of the
+entry — `type: 'group'` — rather than by name, so the synthesized Position row is
+skipped without a hardcoded exemption.
+
+### G2 found a second instance the same day
+
+**F35, logged not fixed: `cornerRadius`.** Registered and keyframeable; the
+static value is read, the animated track is folded nowhere. So a rounded rect
+draws, and a keyframed corner radius does not move. Out of scope here — F34 is
+what this change is, and F35 is its own behaviour change (§2a). No golden
+animates it either, so the fix is cheap when someone takes it.
+
+It is recorded in G2's `KNOWN_UNSAMPLED` map, which is deliberately not an
+exception list: one test fails if anything NEW joins it, and another fails if an
+entry stops being true — so fixing F35 *forces* its removal and the list cannot
+outlive the bugs it describes.
+
+### Guards, and what stays green
+
+`strokeWidthSnapshot.test.ts` samples the crossing itself —
+`buildSnapshot(...).layers[].stroke.width` — mirroring `dashOffsetSnapshot.test.ts`
+next door, whose docstring cited F34 as the cautionary example and has been
+corrected now that it is fixed.
+
+Values derived on paper: 6 at t=0, **23** at t=1 (6 + (40−6)/2), 40 at t=2. Plus
+the one the original symptom demands — the two ends must DIFFER, since "both ends
+equal" is exactly what F34 looked like. Plus composition with animated dash offset
+and animated stroke colour on one layer, because the fold chains off `finalStroke`
+and rebuilding from `baseStroke` would silently drop whichever applied first.
+
+Negative widths clamp to 0: an overshooting ease undershoots between keys, and a
+negative `lineWidth` is a Canvas2D exception rather than a thinner stroke.
+
+Verified to fail: disabling the fold turns 8 of 19 red. Honest limitation — G2 is
+a TEXT guard, so it catches a property referenced nowhere in the pixel path; it
+does not catch a reference that has been disabled in place. That is what the
+instance guard is for.
+
+Suite 600 → 602 files, 7495 → 7514 passing. Lint 0 errors.
+
 ## 2b-undevicies. Release note — one Ctrl+Z per edit (history, FIXED)
 
 **User-visible, app-wide, and not a rigging bug** despite being found while

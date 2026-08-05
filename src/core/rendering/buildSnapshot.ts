@@ -1655,14 +1655,27 @@ export function buildSnapshot(
     // Dash offset folds in exactly the way the stroke colour does — sampled off
     // the animated-value map and written into the RESOLVED stroke rather than
     // read from the stored object.
-    //
-    // Deliberately this pattern and not `strokeWidth`'s: `strokeWidth` is
-    // registered as a keyframeable property in `propertyMeta` and nothing here
-    // ever samples it for a shape stroke (F34, logged not fixed). Copying that
-    // shape would have produced a stopwatch that writes keyframes the renderer
-    // never reads — the exact "write-only UI" the house style forbids.
     if (baseStroke && a?.has('strokeDashOffset')) {
       finalStroke = { ...baseStroke, dashOffset: a.get('strokeDashOffset') ?? 0 };
+    }
+    // F34, FIXED. `strokeWidth` was registered as keyframeable in
+    // `propertyMeta`, offered a stopwatch by the inspector and the timeline, and
+    // sampled by NOTHING for a shape stroke — a 6→40 ramp rendered 5296 stroke
+    // pixels at both ends. The comment that used to sit here cited that as the
+    // reason dash offset did NOT copy its shape; the honest fix is to make
+    // `strokeWidth` behave like dash offset rather than to keep a second
+    // pattern alive as a warning.
+    //
+    // Chained off `finalStroke` for the reason stated below it: width, colour
+    // and dash offset can all be animated on one layer.
+    if (finalStroke && a?.has('strokeWidth')) {
+      const w = a.get('strokeWidth');
+      // A negative width is not a thinner stroke, it is a Canvas2D exception —
+      // and the property's own `min: 0` says so. Clamp rather than trust the
+      // curve, since an overshooting ease can undershoot zero between keys.
+      if (typeof w === 'number' && Number.isFinite(w)) {
+        finalStroke = { ...finalStroke, width: Math.max(0, w) };
+      }
     }
     // Chained off `finalStroke`, not `baseStroke`: colour and dash offset can be
     // animated on the same layer, and rebuilding from `baseStroke` here would
