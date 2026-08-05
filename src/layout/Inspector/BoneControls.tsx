@@ -4,7 +4,13 @@ import { Icon } from '@components/Icon';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings } from '@core/rig/skeletonCommands';
+import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode } from '@core/rig/skeletonCommands';
+import { chainModeOf } from '@core/rig/liveIkTargets';
+import { chainModePropPath, type ChainMode } from '@core/rig/ikfk';
+import { defaultAnimation } from '@motion/animation';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { useActiveWorkspace } from '@stores/projectStore';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { addController, deleteController, updateController } from '@core/rig/skeletonCommands';
 import {
   defaultControllerFor, CONTROLLER_SHAPES, CONTROLLER_SIDES,
@@ -32,6 +38,9 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   const bones = skel?.bones ?? [];
   const ikTargets = skel?.ikTargets ?? [];
   const controllers = skel?.controllers ?? [];
+  // The canonical keyframe axis for this layer — the same forward map the
+  // renderer samples, so a mode keyframe lands where the pose does.
+  const layerT = compToKeyframeTime(nodeId, useActiveWorkspace()?.time ?? 0);
   const hasPuppet = ((readNodePuppet(node)?.pins ?? []).length ?? 0) > 0;
 
   return (
@@ -219,6 +228,35 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               </Button>
             </div>
 
+            {/* IK/FK mode. Only meaningful where a chain exists, so it appears
+                with the IK target rather than on every bone. Switching converts
+                the pose so the limb does not move — see `ikfk.ts`. */}
+            {hasIK && (
+              <div className={styles.paramRow}>
+                <span
+                  className={styles.paramLabel}
+                  title="IK poses the chain from its goal; FK poses it from the bones. Switching preserves the pose."
+                >
+                  Chain Mode
+                </span>
+                <select
+                  value={chainModeOf({ boneId: bone.id, ikMode: ik?.ikMode }, nodeId, layerT)}
+                  aria-label={`${bone.name || bone.id} chain mode`}
+                  onChange={(e) =>
+                    setChainMode(nodeId, bone.id, e.target.value as ChainMode, {
+                      layerT,
+                      keyframe:
+                        usePreferenceStore.getState().timelineAutoKeyframe ||
+                        defaultAnimation.isAnimated(nodeId, chainModePropPath(bone.id)),
+                    })
+                  }
+                  style={selectStyle}
+                >
+                  <option value="ik">IK (pose from the goal)</option>
+                  <option value="fk">FK (pose from the bones)</option>
+                </select>
+              </div>
+            )}
             {hasIK && (
               <div className={styles.paramRow}>
                 <span

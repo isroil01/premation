@@ -77,6 +77,7 @@ import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { resolveLivePins } from '../rig/livePins';
+import { resolveActiveIkTargets } from '../rig/liveIkTargets';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
@@ -1973,26 +1974,10 @@ export function buildSnapshot(
         });
         // IK: each enabled target overrides its chain's rotations so the end
         // bone's tip reaches the (keyframeable) target position.
-        const ikTargets: IkTargetResolved[] = (skelRig!.ikTargets ?? [])
-          .filter((tg) => tg.enabled !== false)
-          .map((tg) => {
-            const liveX = anim.sample(node.id, `ikTarget.${tg.boneId}.x`, rigT);
-            const liveY = anim.sample(node.id, `ikTarget.${tg.boneId}.y`, rigT);
-            const poleX = anim.sample(node.id, `ikPole.${tg.boneId}.x`, rigT);
-            const poleY = anim.sample(node.id, `ikPole.${tg.boneId}.y`, rigT);
-            const pole =
-              typeof poleX === 'number' || typeof poleY === 'number'
-                ? { x: typeof poleX === 'number' ? poleX : (tg.pole?.x ?? 0),
-                    y: typeof poleY === 'number' ? poleY : (tg.pole?.y ?? 0) }
-                : tg.pole;
-            return {
-              boneId: tg.boneId,
-              x: typeof liveX === 'number' ? liveX : tg.x,
-              y: typeof liveY === 'number' ? liveY : tg.y,
-              chainLength: tg.chainLength,
-              ...(pole ? { pole } : {}),
-            };
-          });
+        // Live positions, live poles, and the per-chain IK/FK mode — resolved
+        // in ONE place shared with both overlays, so a chain cannot be FK here
+        // and IK on canvas. See `liveIkTargets.ts`.
+        const ikTargets: IkTargetResolved[] = resolveActiveIkTargets(skelRig!, node.id, rigT, anim);
         const posedBones = applyIk(animatedBones, ikTargets);
         const poseWorld = computeWorldTransforms({ bones: posedBones });
         // Weights bound once per (mesh × rest skeleton) and cached — not

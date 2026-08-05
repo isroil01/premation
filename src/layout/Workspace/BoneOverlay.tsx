@@ -24,6 +24,7 @@ import {
   CONTROLLER_HIT_SLOP, type RigController,
 } from '@core/rig/controllers';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { resolveActiveIkTargets, chainModeOf } from '@core/rig/liveIkTargets';
 import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints } from '@core/rig/puppet';
 import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding, skinRigVertices } from '@core/rig/rigDeform';
@@ -83,6 +84,9 @@ const CONTROLLER_SIDE_COLOR: Record<'left' | 'right' | 'centre', string> = {
 
 /** Halo drawn under every controller so it reads against arbitrary artwork. */
 const CONTROLLER_HALO = 'rgba(0, 0, 0, 0.55)';
+
+/** Inert controller — desaturated grey, so side colour reads as "live". */
+const CONTROLLER_INERT = '#6b7280';
 
 /**
  * The controller shape library, as an SVG path in SCREEN space.
@@ -264,26 +268,9 @@ export function BoneOverlay(): JSX.Element | null {
 
   // Live IK targets (keyframeable) and the SOLVED pose — the overlay previews
   // exactly what buildSnapshot renders.
-  const activeIkTargets: IkTargetResolved[] = ikTargets
-    .filter((tg) => tg.enabled !== false)
-    .map((tg) => {
-      const liveX = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.x`, layerT);
-      const liveY = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.y`, layerT);
-      const poleX = defaultAnimation.sample(node.id, `ikPole.${tg.boneId}.x`, layerT);
-      const poleY = defaultAnimation.sample(node.id, `ikPole.${tg.boneId}.y`, layerT);
-      const pole =
-        typeof poleX === 'number' || typeof poleY === 'number'
-          ? { x: typeof poleX === 'number' ? poleX : (tg.pole?.x ?? 0),
-              y: typeof poleY === 'number' ? poleY : (tg.pole?.y ?? 0) }
-          : tg.pole;
-      return {
-        boneId: tg.boneId,
-        x: typeof liveX === 'number' ? liveX : tg.x,
-        y: typeof liveY === 'number' ? liveY : tg.y,
-        chainLength: tg.chainLength,
-        ...(pole ? { pole } : {}),
-      };
-    });
+  // Shared with buildSnapshot and PuppetOverlay — one reader, so the canvas and
+  // the render cannot disagree about which chains are solving.
+  const activeIkTargets: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
   const posedBones = applyIk(animatedBones, activeIkTargets);
   const worldTransforms = computeWorldTransforms({ bones: posedBones });
 
@@ -319,6 +306,30 @@ export function BoneOverlay(): JSX.Element | null {
   const ikTargetPositions = new Map<string, { x: number; y: number }>(
     activeIkTargets.map((tg) => [tg.boneId, { x: tg.x, y: tg.y }]),
   );
+  /**
+   * Is this controller live in the chain's CURRENT mode?
+   *
+   * An IK controller drives a goal that is not solved in FK, and an FK
+   * controller rotates a bone that IK overwrites — so each is inert in the
+   * other mode. A bone in no chain at all is always FK, so its controller is
+   * always live.
+   *
+   * GREYED, NOT HIDDEN, deliberately. Hiding is less cluttered but tells an
+   * animator the control is gone, which invites re-creating one that already
+   * exists; and the inert control is the visible evidence that the rig HAS the
+   * other mode. Greying keeps the affordance legible while making it clear the
+   * grab will do nothing — the same reason a disabled button is not simply
+   * removed.
+   */
+  const controllerActive = (c: RigController): boolean => {
+    const tg = (skel?.ikTargets ?? []).find((t) =>
+      ikChainIds(animatedBones, t.boneId, t.chainLength).includes(c.link.boneId),
+    );
+    if (!tg) return c.link.kind === 'bone';   // no chain here: FK only
+    const mode = chainModeOf(tg, node.id, layerT);
+    return c.link.kind === 'ikTarget' ? mode === 'ik' : mode === 'fk';
+  };
+
   const controllerLocal = (c: RigController) =>
     controllerPosition(c, { worldTransforms, ikTargets: ikTargetPositions });
   const controllerScreen = (c: RigController) => {
@@ -969,6 +980,7 @@ export function BoneOverlay(): JSX.Element | null {
         const s = controllerScreen(c);
         // A dangling link draws nothing rather than stacking at the origin.
         if (!s) return null;
+        const active = controllerActive(c);
         const isSelected = selectedControllerId === c.id;
         const isHovered = hoveredControllerId === c.id;
         const color = CONTROLLER_SIDE_COLOR[c.side];
@@ -999,13 +1011,18 @@ export function BoneOverlay(): JSX.Element | null {
             {isSelected && drivenScreen && (
               <line
                 x1={s.x} y1={s.y} x2={drivenScreen.x} y2={drivenScreen.y}
-                stroke={color} strokeWidth={1} strokeDasharray="3 3" opacity={0.7}
+                stroke={active ? color : CONTROLLER_INERT} strokeWidth={1} strokeDasharray="3 3" opacity={0.7}
                 pointerEvents="none"
               />
             )}
             {/* Hit target, larger than the drawn shape. Transparent, not
                 `fill: none` — a `none` fill is not hit-testable. */}
-            <circle cx={s.x} cy={s.y} r={c.size + CONTROLLER_HIT_SLOP} fill="transparent" />
+            {/* Inert controllers are not grabbable — the hit target goes away
+                even though the shape stays, so a stray click cannot pose a
+                chain through a control the mode has switched off. */}
+            {active && (
+              <circle cx={s.x} cy={s.y} r={c.size + CONTROLLER_HIT_SLOP} fill="transparent" />
+            )}
             {/* Halo first: a dark wide underlay is what keeps the outline legible
                 on artwork that happens to share the side colour. */}
             <path
@@ -1016,11 +1033,11 @@ export function BoneOverlay(): JSX.Element | null {
               d={d} fill="none" stroke={color}
               strokeWidth={isSelected ? 2.4 : 1.8}
               strokeLinejoin="round"
-              opacity={isHovered || isSelected ? 1 : 0.85}
+              opacity={active ? (isHovered || isSelected ? 1 : 0.85) : 0.28}
               pointerEvents="none"
               style={{ transition: 'stroke-width var(--motion-spring, 220ms cubic-bezier(0.34, 1.56, 0.64, 1))' }}
             />
-            <title>{`${c.name ?? c.id} → ${c.link.kind === 'ikTarget' ? 'IK goal' : 'bone'} ${c.link.boneId}`}</title>
+            <title>{`${c.name ?? c.id} → ${c.link.kind === 'ikTarget' ? 'IK goal' : 'bone'} ${c.link.boneId}${active ? '' : ' (inactive in this mode)'}`}</title>
           </g>
         );
       })}
