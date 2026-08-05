@@ -20,6 +20,14 @@ import {
   type ControllerShape, type ControllerSide,
 } from '@core/rig/controllers';
 import { readNodePuppet } from '@core/rig/puppet';
+import { nodeRestMesh } from '@core/rig/rigMeshInputs';
+import { getSkeletonBinding } from '@core/rig/rigDeform';
+import { setWeightPaint } from '@core/rig/skeletonCommands';
+import {
+  setVertexWeight, emptyWeightPaint, weightPaintMatches, isWeightPaintEmpty,
+} from '@core/rig/weightPaint';
+import { useRigVertexSelection, clearRigVertex } from '@stores/rigVertexStore';
+import { useAssetStore } from '@stores/assetStore';
 import styles from './BoneControls.module.css';
 
 /** Shared <select> chrome — matches PuppetControls so the two rig panels agree. */
@@ -40,6 +48,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   // down. Deleting a selected layer with this panel open is the ordinary way to
   // hit it; `conditionalHooks.test.tsx` exists because it has happened before.
   const workspaceTime = useActiveWorkspace()?.time ?? 0;
+  const selectedVertex = useRigVertexSelection(nodeId);
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
 
@@ -51,6 +60,120 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   // renderer samples, so a mode keyframe lands where the pose does.
   const layerT = compToKeyframeTime(nodeId, workspaceTime);
   const hasPuppet = ((readNodePuppet(node)?.pins ?? []).length ?? 0) > 0;
+
+  /**
+   * The per-vertex weight editor — numbers for what the brush paints by feel.
+   *
+   * A plain function, not a hook and not a child component: it renders only when
+   * a vertex is selected, and a component whose hooks appear and disappear with
+   * the selection is the "Rendered fewer hooks than expected" crash this file's
+   * header is about.
+   *
+   * The mesh comes from `nodeRestMesh` — the same assembly `BoneOverlay` uses —
+   * because the weights are addressed by vertex INDEX. A second derivation at a
+   * different density would not be approximately right, it would be editing a
+   * different part of the artwork.
+   */
+  const renderVertexWeights = (): JSX.Element | null => {
+    if (selectedVertex === null || bones.length === 0) return null;
+    const geom = readGeometry(node);
+    if (!geom) return null;
+    const restMesh = nodeRestMesh(node, geom, (id) =>
+      useAssetStore.getState().assets.find((a) => a.id === id));
+    const numVerts = restMesh.vertices.length / 4;
+    // A selection made against a denser mesh addresses nothing now. Say so
+    // rather than editing whatever vertex happens to hold that index.
+    if (selectedVertex >= numVerts) {
+      return (
+        <div className={styles.card}>
+          <div className={styles.subText}>
+            Vertex {selectedVertex} is from a different mesh resolution. Re-pick a
+            vertex on the canvas.
+          </div>
+        </div>
+      );
+    }
+
+    const binding = getSkeletonBinding(restMesh, bones, skel?.weightPaint);
+    // Strongest first: the order an animator reads them in, and it makes the
+    // dominant bone obvious without comparing four numbers.
+    const influences = [...(binding.weights[selectedVertex] ?? [])]
+      .sort((a, b) => b.weight - a.weight);
+    const nameOf = (id: string): string => bones.find((b) => b.id === id)?.name ?? id;
+    const total = influences.reduce((a, w) => a + w.weight, 0);
+
+    const commit = (boneId: string, percent: number): void => {
+      const base = weightPaintMatches(skel?.weightPaint, numVerts)
+        ? skel!.weightPaint!
+        : emptyWeightPaint(numVerts);
+      const next = setVertexWeight(base, selectedVertex, boneId, percent / 100, influences);
+      // Through the command, so a numeric edit is one undo step exactly like a
+      // brush stroke — and an emptied map is dropped rather than serialised.
+      setWeightPaint(nodeId, isWeightPaintEmpty(next) ? undefined : next);
+    };
+
+    return (
+      <div className={styles.card}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardTitle}>
+            <Icon name="grid" size={13} style={{ opacity: 0.7 }} />
+            <span>Vertex Weights</span>
+            <span className={styles.badge}>#{selectedVertex}</span>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label="Deselect vertex"
+            title="Deselect vertex"
+            onClick={() => clearRigVertex()}
+          >
+            <Icon name="close" size={12} />
+          </Button>
+        </div>
+
+        {influences.length === 0 && (
+          <div className={styles.subText}>
+            No bone reaches this vertex — it stays in its bind position.
+          </div>
+        )}
+
+        {influences.length === 1 && (
+          // The boundary made unrepresentable rather than corrected afterwards:
+          // one influence is 1 by definition, and an editable field here would
+          // renormalise whatever was typed straight back to 100%.
+          <div className={styles.subText}>
+            <strong>{nameOf(influences[0]!.boneId)}</strong> is the only influence
+            here, so it holds 100%. Paint a second bone onto this vertex to divide
+            it.
+          </div>
+        )}
+
+        {influences.length > 1 && influences.map((w) => (
+          <div key={w.boneId} className={styles.paramRow}>
+            <span className={styles.paramLabel} title={w.boneId}>{nameOf(w.boneId)}</span>
+            <ValueField
+              value={w.weight * 100}
+              min={0}
+              max={100}
+              unit="%"
+              precision={1}
+              aria-label={`${nameOf(w.boneId)} weight at vertex ${selectedVertex}`}
+              onChange={(v) => commit(w.boneId, v)}
+            />
+          </div>
+        ))}
+
+        {influences.length > 1 && (
+          <div className={styles.subText} style={{ marginTop: 4 }}>
+            {/* Read back from the binding, not from what was typed — so this
+                reports the weights that actually deform. */}
+            Total {(total * 100).toFixed(0)}%. Editing one weight redistributes
+            the rest in proportion.
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className={styles.root}>
@@ -160,6 +283,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           </div>
         </div>
       )}
+
+      {renderVertexWeights()}
 
       {/* Bone list cards */}
       {bones.map((bone) => {

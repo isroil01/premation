@@ -12,8 +12,14 @@
  * both callers now go through the helpers here. Anything that changes how a
  * mesh input is resolved changes it for both, by construction.
  *
- * Pure resolution only — no solving, no caching of meshes. The coverage mask
- * itself is cached by asset identity inside `imageAlphaCoverage`.
+ * Resolution, plus the one ASSEMBLY that composes it (`nodeRestMesh`). No
+ * solving. The coverage mask is cached by asset identity inside
+ * `imageAlphaCoverage` and the mesh by node identity inside `getCachedRestMesh`;
+ * neither cache is owned here.
+ *
+ * `lookupAsset` stays INJECTED throughout, so this module never reaches for a
+ * store: each caller keeps its own cache strategy while the resolution ORDER
+ * cannot diverge.
  */
 
 import type { SceneNode } from '@core/types';
@@ -23,6 +29,10 @@ import { readNodeSequence, sequenceSrcAt } from '@core/scene/imageSequence';
 import { svgLayerSrc } from '@core/svg/svgLayer';
 import { getImageCoverageMask } from '@core/rendering/imageAlphaCoverage';
 import { resolveMediaSrc, type ProxyRecord } from '@core/assets/proxy';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { rasterPadding } from '@core/rendering/raster/vectorDraw';
+import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints } from './puppet';
+import { readNodeSkeleton } from './skeletonCommands';
 import type { PuppetCoverageMask, PuppetSilhouette } from './puppet';
 
 /** The media reference scanned off a node's components (mirrors readBase). */
@@ -132,4 +142,59 @@ export function rigCoverageMask(
   if (silhouette) return undefined;
   if (layerKind !== 'image' || !src) return undefined;
   return getImageCoverageMask(assetId ?? src, src);
+}
+
+/**
+ * The REST MESH for a node's rig, assembled from the inputs above.
+ *
+ * This assembly used to live inline in `BoneOverlay`, ~30 lines of node
+ * scanning. The moment a second reader needed it — the numeric weight editor in
+ * the Rigging panel — copying it would have recreated exactly the drift this
+ * module was written to stop: two derivations of one mesh, agreeing until one of
+ * them is edited. §2·0.
+ *
+ * Vertex INDICES are the reason this matters more than the usual duplication
+ * argument. A weight override is stored against an index, so two callers that
+ * build meshes of different density are not slightly inconsistent — they are
+ * addressing different vertices, and the editor would write weights onto parts
+ * of the artwork the user never touched.
+ *
+ * The puppet mesh WINS when the layer has pins: the two rigs compose, the puppet
+ * refines the mesh first, and the skeleton pose carries it. A skeleton-only
+ * layer falls back to its own density/expansion settings.
+ */
+export function nodeRestMesh(
+  node: SceneNode,
+  geom: { width: number; height: number; ellipse: boolean },
+  lookupAsset: (id: string) => RigAssetRef | undefined,
+): ReturnType<typeof getCachedRestMesh> {
+  const skel = readNodeSkeleton(node);
+  const puppetRig = readNodePuppet(node);
+  const meshRig = (puppetRig?.pins?.length ?? 0) > 0
+    ? puppetRig!
+    : { pins: [], meshDensity: skel?.meshDensity, meshExpansion: skel?.meshExpansion };
+
+  const geometryComponent = node.components.find((c) => c.type === 'Geometry');
+  const silhouette = silhouetteFromPathPoints(
+    geometryComponent?.props.points as Array<{ x: number; y: number }> | undefined,
+    geometryComponent?.props.open === true,
+  );
+  const kind = readNodeKind(node);
+  const media = readNodeMediaRef(node);
+  const coverage = rigCoverageMask(
+    rigLayerKind(kind),
+    resolveRigImageSrc(node, kind, media, 0, lookupAsset),
+    media.assetId,
+    silhouette,
+  );
+  // `rasterPadding` reads the paint/stroke shape the rasterizer pads for, so the
+  // mesh covers the drawn pixels rather than the geometric box.
+  const pad = rasterPadding({
+    kind: geom.ellipse ? 'shape' : 'rect',
+    stroke: node.components.find((c) => c.type === 'Stroke')?.props.stroke,
+    strokes: node.components.find((c) => c.type === 'Strokes')?.props.strokes,
+    paint: node.components.find((c) => c.type === 'Paint')?.props.paint,
+  } as never);
+
+  return getCachedRestMesh(node.id, geom.width, geom.height, pad, meshRig, silhouette, coverage);
 }
