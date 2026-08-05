@@ -1648,12 +1648,27 @@ export function buildSnapshot(
 
     const baseStroke = readNodeStroke(node);
     let finalStroke = baseStroke;
-    if (baseStroke && a?.has('stroke_r')) {
+    // Dash offset folds in exactly the way the stroke colour does — sampled off
+    // the animated-value map and written into the RESOLVED stroke rather than
+    // read from the stored object.
+    //
+    // Deliberately this pattern and not `strokeWidth`'s: `strokeWidth` is
+    // registered as a keyframeable property in `propertyMeta` and nothing here
+    // ever samples it for a shape stroke (F34, logged not fixed). Copying that
+    // shape would have produced a stopwatch that writes keyframes the renderer
+    // never reads — the exact "write-only UI" the house style forbids.
+    if (baseStroke && a?.has('strokeDashOffset')) {
+      finalStroke = { ...baseStroke, dashOffset: a.get('strokeDashOffset') ?? 0 };
+    }
+    // Chained off `finalStroke`, not `baseStroke`: colour and dash offset can be
+    // animated on the same layer, and rebuilding from `baseStroke` here would
+    // silently drop whichever was applied first.
+    if (finalStroke && a?.has('stroke_r')) {
       const r = a.get('stroke_r') ?? 0;
       const g = a.get('stroke_g') ?? 0;
       const b = a.get('stroke_b') ?? 0;
       const alpha = a.get('stroke_a') ?? 1;
-      finalStroke = { ...baseStroke, color: Color.toHex({ r, g, b, a: alpha }) };
+      finalStroke = { ...finalStroke, color: Color.toHex({ r, g, b, a: alpha }) };
     }
 
     // Multi-fill / multi-stroke stacks. Animated tracks (fill_* / stroke_* /

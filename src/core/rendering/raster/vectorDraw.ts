@@ -311,6 +311,25 @@ export function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: Stroke, 
   ctx.lineCap = stroke.cap;
   ctx.lineJoin = stroke.join;
   ctx.setLineDash(stroke.dash.length ? stroke.dash : []);
+  // Dash offset is ARC LENGTH along the path, which is exactly what Canvas2D's
+  // `lineDashOffset` already means — so this reuses the rasterizer's own dashing
+  // rather than cutting the path up first.
+  //
+  // The alternative considered and rejected: walk the path with
+  // `trimSegments`/`trimPolyline` and emit each dash as its own subpath. Those
+  // do provide arc length, but they provide it over a POLYLINE SAMPLING of the
+  // curve — so dashes on a circle or a bezier would land at subtly wrong
+  // distances, every dash would get butt ends regardless of `cap`, and joins
+  // inside a dash would be lost. It would also be a second dashing
+  // implementation sitting next to the one the canvas already applies for the
+  // static pattern, which is §2·0's shape. Trim's polyline walk is the right
+  // mechanism for CUTTING a path; it is the wrong one for phase-shifting a
+  // pattern the rasterizer is already laying down.
+  //
+  // Always assigned, never left to persist: `ctx` is shared across every layer
+  // in a frame, so skipping the write when the offset is 0 would inherit the
+  // previous layer's phase.
+  ctx.lineDashOffset = stroke.dashOffset ?? 0;
 }
 
 /**
@@ -463,6 +482,7 @@ export function strokeShape(ctx: CanvasRenderingContext2D, stroke: Stroke, trace
   trace();
   ctx.stroke();
   ctx.setLineDash([]);
+  ctx.lineDashOffset = 0;
   ctx.restore();
 }
 

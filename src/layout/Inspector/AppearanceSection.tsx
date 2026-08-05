@@ -27,13 +27,20 @@ import { groupSelectedNodes, ungroupSelectedNode } from '@core/scene/sceneInsert
 import { useSelectionStore } from '@stores/selectionStore';
 
 /**
- * One gradient-geometry row (angle / center / radius) — a ValueField plus a
- * keyframe toggle. The engine tracks (fillAngle, fillCenterX/Y, fillRadius)
- * have always been honored by the renderer (buildSnapshot samples them); this
- * row is the UI that was missing. `scale` converts between the display unit
- * and the engine/paint value (e.g. % ↔ 0..1).
+ * One keyframeable paint scalar — a ValueField plus a keyframe toggle.
+ *
+ * Started as the gradient-geometry row (angle / centre / radius) and was WIDENED
+ * rather than copied when stroke dash offset needed the same control. Every
+ * property it drives shares one contract: a scalar engine track that
+ * `buildSnapshot` samples by name, with label / unit / range / step read from
+ * the property registry — so this row and the timeline row for the same track
+ * cannot disagree about what the number means. A second component would have
+ * been a second place for that agreement to break (§2·0).
+ *
+ * `scale` converts between the display unit and the engine value (e.g. % ↔ 0..1).
+ * Dash offset is 1:1 — both sides are layer-local px of arc length.
  */
-function GradientGeomRow({
+function AnimatablePaintRow({
   nodeId,
   prop,
   label: labelOverride,
@@ -41,7 +48,7 @@ function GradientGeomRow({
   onStatic,
 }: {
   nodeId: string;
-  prop: 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius';
+  prop: 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius' | 'strokeDashOffset';
   /** Overrides the registry label — the panel shows "Angle" under a Fill
    *  heading where the timeline needs the unambiguous "Fill Angle". */
   label?: string;
@@ -439,7 +446,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             )}
 
             {fill && fill.type === 'linear' && (
-              <GradientGeomRow
+              <AnimatablePaintRow
                 nodeId={nodeId}
                 prop="fillAngle"
                 label="Angle"
@@ -450,21 +457,21 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
             {fill && fill.type === 'radial' && (
               <>
-                <GradientGeomRow
+                <AnimatablePaintRow
                   nodeId={nodeId}
                   prop="fillCenterX"
                   label="Center X"
                   value={fill.cx}
                   onStatic={(cx) => setNodeFill(nodeId, { ...fill, cx })}
                 />
-                <GradientGeomRow
+                <AnimatablePaintRow
                   nodeId={nodeId}
                   prop="fillCenterY"
                   label="Center Y"
                   value={fill.cy}
                   onStatic={(cy) => setNodeFill(nodeId, { ...fill, cy })}
                 />
-                <GradientGeomRow
+                <AnimatablePaintRow
                   nodeId={nodeId}
                   prop="fillRadius"
                   label="Radius"
@@ -623,6 +630,20 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                     style={{ width: 100, height: 24, padding: '2px 6px' }}
                   />
                 </div>
+
+                {/* Offset is only meaningful against a pattern, so it appears
+                    with one. Shown unconditionally it would be a control that
+                    provably does nothing — worse than a missing one, because it
+                    reads as working. */}
+                {(stroke?.dash ?? []).length > 0 && (
+                  <AnimatablePaintRow
+                    nodeId={nodeId}
+                    prop="strokeDashOffset"
+                    label="Dash Offset"
+                    value={stroke?.dashOffset ?? 0}
+                    onStatic={(v) => updateNodeStroke(nodeId, { dashOffset: v })}
+                  />
+                )}
 
                 {/* Gradient stroke: an optional paint that overrides the solid
                     colour (Canvas2D builds the gradient in layer space). */}
