@@ -995,6 +995,27 @@ open in two of them:
    apparent messiness — and where reachability is a numeric accident, SWEEP for
    a case rather than guessing one. The sweep is three lines and it answers the
    question the eye cannot.
+
+   **Second worked example: the capture-speed ANCHOR.** Added 2026-08-06, from
+   Motion Sketch, and it is the best application of this rule so far for one
+   reason — the brief listed three things a casual path excludes, and DERIVING
+   found a fourth that nobody had named.
+
+   Capture speed rescales a recording's sample times. The question rule 3a asks
+   is "what can my fixture never produce?", and the answer was: a first sample
+   at anything other than zero. Scaling times about ZERO and scaling them about
+   the FIRST SAMPLE are the same operation when the first sample is zero, and
+   completely different otherwise — at 50% speed a take starting at t=2 either
+   stays at 2 (correct) or jumps to 4 (wrong), and a fixture recorded from t=0
+   cannot tell those apart. Every capture-speed fixture therefore starts at
+   t=2, and breaking the anchor fails three tests.
+
+   Nothing about the anchor was messy, surprising, or flagged in advance. It
+   was found by asking the rule's question mechanically about a value —
+   `t0` — that the obvious fixture would have set to zero without a thought.
+   Which is the argument for asking it every time rather than when something
+   looks suspicious: **the excluded case is usually the one chosen by default,
+   and defaults do not look like choices.**
 3b. **A test's stated rationale is an assertion too — measure it, and rewrite
    it when it is wrong.** Added 2026-08-05.
 
@@ -1229,6 +1250,29 @@ open in two of them:
    move from `(30,0)` to `(100,110)` and landed there exactly. What rule 5
    actually teaches is the ORDER of prediction and observation. Pixels were only
    ever one way to observe.
+
+   **The cleanest instance so far is F29 (§2b-quinquiesdecies), because the test
+   file PREDICTED its own blind spot and was then proved right.** Motion Sketch's
+   guards are complete and correct about the reduction, the capture speed, the
+   splice and the two-track fan-out — and every one of them passes with the
+   recorder never fed a single sample, because they construct their own arrays.
+   The header says exactly that, in advance:
+
+   > *What it CANNOT see is that the samples are in the right SPACE … Nothing
+   > here would change if the wiring fed it screen pixels. That is a wiring
+   > fact, checked in the running app.*
+
+   And that is precisely where the bug was. `moveNodes` only keyframes when
+   Auto-Keyframe is on or the layer already has an x/y track, so on a fresh
+   layer the recorder was never called at all — the commonest case, silent, no
+   error, with a fully green suite. Naming the blind spot did not close it; only
+   changing medium did.
+
+   Which is the rule's real content. **A test header that names what the medium
+   cannot sample is a promissory note, not a guard.** It tells the next person
+   where to look, and it obliges THIS person to go and look there before calling
+   the feature done — in another medium, not by writing more tests in the same
+   one.
 
 5. **A golden is not independent evidence.** It records whatever the code did on
    the day it was blessed. Spherize's golden was blessed from the bug and had to
@@ -1502,6 +1546,67 @@ to build is already there, under a name that does not mention it". The search
 that finds it is not `grep -i "motion sketch"` — that correctly returns nothing.
 It is noticing that `puppetSketch` in the rig folder is a general algorithm with
 a domain-specific filename.
+
+### The search heuristic this gives us
+
+**When a feature seems absent, search for the ALGORITHM it needs, not the name
+it has.** A name search answers "has anyone built this feature", which is the
+question you already suspect the answer to. The algorithm search answers "does
+the hard part exist", which is the one that changes the estimate.
+
+For Motion Sketch the feature name returned nothing, correctly, while the
+algorithm — reduce a timed point stream to keyframes — was sitting complete and
+tested two folders away. Concretely, the searches that would have found it:
+`Douglas`, `simplify`, `tolerance`, `Recorder`, `samples`, `{ x, y, t }`.
+
+Filenames encode the first caller, not the capability. `puppetSketch` is generic
+over `{x, y, t}` and mentions pins nowhere in its logic; `layerSpace` serves
+expressions, overlays and rig handles alike; `puppetSketch`'s reduction now
+serves two features under a name that still names one. That is not a mistake to
+go and fix — renaming churns imports for no behaviour — but it IS a permanent
+reason to search by what a thing DOES.
+
+Stated as a check to run before estimating: name the operation in the abstract
+("reduce a timed point stream", "map layer-local to screen", "undo the
+layer-relative offset"), then grep for that, across `src/` **and** `packages/`.
+
+### F28 is what the standard is FOR
+
+Both findings below are real, but they are not equal. F29 was caught by running
+the thing; a careful person catches it eventually, because an empty take is
+visible the first time anyone tries the feature. **F28 would have shipped**, and
+shipped looking fine: smoothing on by default produces a plausible curve from
+any recording, and the only symptom is that pauses you performed are not in the
+result — which reads as "I must have drifted", not as a bug.
+
+It was caught before a line of the feature was written, by asking what
+Douglas–Peucker does to a stationary hold and answering it on paper: a hold is
+exactly collinear, the test is `distance > tol`, therefore the hold is dropped
+at every tolerance including zero. No fixture, no run, no debugging. That is the
+entire argument for deriving on paper first — the cost was five minutes and the
+alternative was a feature that quietly discards the thing it was built to
+record.
+
+### `simplify: false` — the right shape for changing a shared engine
+
+The fix needed the shared reduction to stop reducing, and the tempting spellings
+were both wrong. `tolerance: 0` does not mean "keep everything" (the test is
+`distance > tol`, so collinear points still go). Forking the function for
+Motion Sketch would have made two implementations of the one algorithm, drifting
+on exactly the cases nobody re-tests.
+
+What went in instead is worth naming as a pattern:
+
+* **ADDITIVE.** A new optional flag, defaulting to the existing behaviour, so
+  every existing caller is untouched by construction rather than by inspection.
+* **The existing consumer's suite stays green THROUGH THE BREAK SET.**
+  `phase3.test.ts` — Puppet Sketch's own guards — passed on every one of the
+  seven breaks run against the new code, including the break that removes the
+  flag's effect entirely. That is the evidence the change is additive, and it is
+  stronger than reading the diff.
+* **The new behaviour is documented at the shared function**, not only at the
+  new caller, because the next person to reach for the engine needs to know the
+  reduction is spatial and what that costs.
 
 | # | Finding | Severity | Status |
 |---|---|---|---|
