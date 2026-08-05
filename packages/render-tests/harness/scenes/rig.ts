@@ -20,6 +20,13 @@
  * asymmetric was never the property that mattered; the TEXTURE being asymmetric
  * is. `rig-uv-orientation` below is the scene that closes it.
  *
+ * TWO UV PATHS, and both are now covered. A plain bbox layer meshes on the GRID
+ * path; a layer with a CLOSED path silhouette meshes on `buildSilhouetteMesh`,
+ * which has its own UV write. `rig-uv-orientation` covers the first and
+ * `rig-uv-orientation-silhouette` the second — the same swap is a separate bug
+ * in each, and the first mutation attempt during this work hit the silhouette
+ * site while every scene took the grid one, so green meant nothing.
+ *
  * TRIANGLE WINDING, also measured, and NOT a gap. Reversing the winding at both
  * emission sites leaves the gate green — correctly, because nothing in the
  * renderer culls (`grep cullMode|cullFace|CULL_FACE` finds no state anywhere),
@@ -75,6 +82,65 @@ function texturedBar(graph: SceneGraph): void {
 }
 
 export const rigScenes: Scene[] = [
+  defineScene({
+    id: 'rig-uv-orientation-silhouette',
+    description:
+      'The SILHOUETTE mesh path with a directional ramp — the second UV write site, which the grid scene cannot reach.',
+    size: SIZE,
+    comp: COMP,
+    fps: 30,
+    frames: [0],
+    build(graph: SceneGraph) {
+      // A CLOSED path of >=3 points is what routes the mesh through
+      // `buildSilhouetteMesh` instead of the bbox grid — see
+      // `silhouetteFromPathPoints`. Deliberately not a rectangle and not
+      // symmetric about either axis, so the outline itself carries orientation.
+      graph.addNode(node('bar', {
+        kind: 'shape',
+        position: { x: 180, y: 120 },
+        transform: { width: 240, height: 90 },
+        style: { fill: '#4cc9f0' },
+        components: [
+          {
+            id: 'sil_g',
+            type: 'Geometry',
+            props: {
+              points: [
+                { x: -120, y: -20 }, { x: -30, y: -45 }, { x: 60, y: -30 },
+                { x: 120, y: 10 }, { x: 40, y: 45 }, { x: -70, y: 30 },
+              ].map((pt) => ({ ...pt, inX: pt.x, inY: pt.y, outX: pt.x, outY: pt.y })),
+            },
+          },
+        ],
+      }));
+      graph.setFill('bar', {
+        type: 'linear',
+        angle: 0,
+        stops: [
+          { id: 'u0', offset: 0, color: '#ff0040' },
+          { id: 'u1', offset: 0.25, color: '#ff9e00' },
+          { id: 'u2', offset: 0.5, color: '#00d4ff' },
+          { id: 'u3', offset: 0.75, color: '#7a00ff' },
+          { id: 'u4', offset: 1, color: '#00ff88' },
+        ],
+      });
+      graph.setPuppet('bar', {
+        // meshMode is what actually routes to `buildSilhouetteMesh`; a closed
+        // outline alone only CULLS the grid. Without this the scene rendered a
+        // convincing hexagon and still took the grid path — which is exactly
+        // how the first version of this scene failed to catch its own subject.
+        meshMode: 'silhouette',
+        meshDensity: 12,
+        meshExpansion: 0,
+        pins: [
+          { id: 'p0', name: 'L', x: -90, y: 0 },
+          { id: 'p1', name: 'R', x: 90, y: 0 },
+          { id: 'p2', name: 'M', x: 0, y: -30 },
+        ],
+      });
+    },
+  }),
+
   defineScene({
     id: 'rig-uv-orientation',
     description:
