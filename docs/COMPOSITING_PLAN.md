@@ -805,6 +805,108 @@ same way the missing-clear hypothesis was.
   output, different encoding — worth confirming how much of the standing
   webgpu-vs-webgl2 parity gap on partial-alpha scenes this accounts for.
 
+## 2b-undevicies. Release note — one Ctrl+Z per edit (history, FIXED)
+
+**User-visible, app-wide, and not a rigging bug** despite being found while
+driving the rig panels.
+
+**What changed.** Undo now takes one press per edit. It used to take two for any
+edit backed by a command, and the History panel listed a generic `Edit 7` row
+next to the real one — a row corresponding to nothing the user did. Jumping to
+one of those rows worked, which is why it read as clutter rather than as a bug.
+
+**Also fixed, same cause:** after an undo or redo, the *next* snapshot's "before"
+state was the pre-undo state. Undo → edit → undo could therefore land somewhere
+the user had never been.
+
+**Root cause — neither of the two candidates carried into this run.** Not Vite
+duplicate module instances, and not two closures over one variable. The
+`lastState` binding was fine: one module instance, `hasLast=true` at record time.
+The listener that refreshes it **never fired once**.
+
+`historyStore` subscribed to `UndoStackChanged` at MODULE SCOPE.
+`Application.boot()` calls `setEventBus(new EventBus())` (`Application.ts:80`), so
+a subscription made before boot resolves is attached to a bus that is then
+discarded. The listener existed, was correct, and was wired to nothing. With the
+baseline never refreshed, `statesEqual` compared every capture against a stale
+state, always saw a change, and recorded a snapshot on top of the command's own
+entry.
+
+`Providers.tsx` already carried a written note about this exact hazard, for the
+cross-window sync: anything subscribing before boot resolves lands on a bus that
+is thrown away. **Second victim, same trap.** The asymmetry that proves it: the
+`schedule` subscriptions beside it DO fire, and they are registered inside boot.
+
+**Where the fix went, and why not the other two places.** At the subscription.
+The suppression logic was already correct — it never received its input. Fixing
+the emitter or the suppression rule would have compensated for a dead listener
+while leaving it dead, and the stale-baseline-after-undo bug would have survived
+untouched, because that one is not about counting entries at all.
+
+**§2·0 — the wiring is now one call.** The four subscriptions that make up
+recording were four separate `track(...)` lines in boot, and three worked while
+the fourth was missing. Nothing owned "recording is wired", so nothing could be
+missing it. They are now `attachHistoryRecording()` in `historyStore`, called
+once from boot: `schedule` decides WHEN to capture and the baseline decides
+WHETHER the capture is redundant, and half of that pair is not a degraded version
+of it — it is this bug.
+
+**Accreted consumers, checked rather than assumed.** A behaviour eight months old
+grows dependents, and re-activating a dead listener is a behaviour change:
+
+- **The "Open" baseline survives because it is `named`.** `baselineHistory()`
+  calls `reset()` (whose `clear()` emits `UndoStackChanged`) and then
+  `record('Open', true)`. With the listener live, that emit now sets `lastState`
+  to the current state — so an unnamed baseline would compare equal and push
+  nothing, and the document's opening state would have no row to return to. The
+  `named` bypass already in `record` is exactly what absorbs this, and its
+  comment describes the failure as historical. It was in fact **pre-emptive**:
+  the condition it guards against only became reachable with this fix.
+- **The coalescing rule is untouched.** `schedule`'s key comparison governs the
+  timer, not the baseline; a burst on one target still collapses to one step and
+  a move to a different target still commits the previous one first.
+- **`Edit N` labels have no consumers.** `seq` is module-local and the History
+  panel prints whatever label it is given. The numbering is now sparser (commanded
+  edits no longer consume a number) and nothing reads it.
+- **The History panel and TopNav both subscribe inside `useEffect`**, so they were
+  never victims of the same trap, and both simply see fewer entries.
+
+**What this could have broken, and what proves it did not.** The snapshot is the
+catch-all for edits with NO command; suppressing it wrongly would silently delete
+undo for everything uncommanded. Both sides verified:
+
+| | before | after |
+|---|---|---|
+| commanded edits (rig panels, 18 controls) | 2 entries | **1**, with real labels |
+| uncommanded edits (raw `setSkeleton` + `bumpScene`) | 1 entry | **1**, unchanged |
+
+**The guard, and why the old ones were green throughout.**
+`rigGestureUndo.test.tsx` already asserted "one gesture, one step" and passed the
+whole time — it never wires the snapshot path, so it measured the command layer
+alone, where the count is trivially right. Rule 5·0: the observable is the number
+of History rows one edit adds; the layer is `HistoryService`'s entry list, fed
+from two independent places; **the medium has to sample both.**
+
+`inspectorHistoryGranularity.test.tsx` runs `attachHistoryRecording()` exactly as
+boot does, then drives every drivable control in every inspector section — 70
+probes across 12 sections, of which 63 provably changed captured state — and
+asserts each added exactly one entry. Subjects come from the directory, not a
+list (F25, fourth instance). Probes that changed nothing are excluded rather than
+counted as passes, because 0 is the correct answer there and counting it would
+let the suite go green on a harness where nothing landed.
+
+Verified to fail: reverting the baseline sync turns 18 probes red at `added 2`,
+across `BoneControls` and `PuppetControls` — the command-backed sections. The
+other 45 landed probes are snapshot-only edits, which were always 1; a positive
+control asserts the probe set reaches the two sections that CAN exhibit the bug,
+so a broad-but-blind probe set fails instead of reassuring.
+
+**F30 / rule 4c — the seam.** The three unit tests on the baseline sync were
+green for as long as it was broken, because they guarded the unit and not the
+CROSSING. `historyBaselineSync.test.ts` now also asserts that boot reaches the
+wiring, and that no module-scope `getEventBus().on(` has crept back into the
+store.
+
 ## 2b-quaterdecies. 2026-08-06 — the pre-launch ten, verified before building
 
 Existence verdicts for the pre-launch feature round, recorded so the next run

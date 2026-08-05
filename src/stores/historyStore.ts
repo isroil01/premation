@@ -276,3 +276,39 @@ export function attachHistoryBaselineSync(): { dispose(): void } {
     lastState = captureState();
   });
 }
+
+/**
+ * Wire the WHOLE recording mechanism: the debounced edit capture and the
+ * baseline sync that decides whether a capture is redundant.
+ *
+ * These four subscriptions were four separate `track(...)` lines in the boot
+ * sequence, and three of them worked while the fourth had been attached at
+ * module scope and never fired. Splitting them across two files is what let
+ * that happen and what kept it invisible: nothing owned "recording is wired",
+ * so nothing could be missing it.
+ *
+ * They belong together because they are not independent — `schedule` decides
+ * WHEN to capture and the baseline decides WHETHER the capture is a real
+ * change. With the baseline missing, `schedule` fires into a permanently stale
+ * comparison and every commanded edit records a second, generic entry on top of
+ * the command's own. Half of this wiring is not a degraded version of it; it is
+ * the bug (§2·0 — one attach point makes the half-wired state unrepresentable).
+ *
+ * MUST be called from inside boot, never at module scope: `Application.boot()`
+ * calls `setEventBus(new EventBus())` and discards whatever a module-scope
+ * subscription attached to. Returns one disposer for all four.
+ */
+export function attachHistoryRecording(): { dispose(): void } {
+  const h = (): HistoryStore => useHistoryStore.getState();
+  const subs = [
+    getEventBus().on('AnimationChanged', () => h().schedule('anim')),
+    getEventBus().on('NodeUpdated', (e) => {
+      const p = e as { nodeId?: string; propName?: string } | undefined;
+      h().schedule(p?.nodeId ? `node:${p.nodeId}:${p.propName ?? ''}` : 'node');
+    }),
+    // Structural edits (add/delete/reparent) are their own action.
+    getEventBus().on('SceneGraphChanged', () => h().schedule('scene')),
+    attachHistoryBaselineSync(),
+  ];
+  return { dispose(): void { for (const s of subs) s.dispose(); } };
+}

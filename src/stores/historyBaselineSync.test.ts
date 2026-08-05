@@ -25,8 +25,10 @@
  * subscribe INSIDE boot.
  */
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { EventBus, setEventBus, getEventBus } from '@core/events/EventBus';
-import { attachHistoryBaselineSync } from './historyStore';
+import { attachHistoryBaselineSync, attachHistoryRecording } from './historyStore';
 
 describe('attachHistoryBaselineSync', () => {
   it('subscribes to the bus that is live WHEN IT IS CALLED, not at import time', () => {
@@ -70,5 +72,54 @@ describe('attachHistoryBaselineSync', () => {
     getEventBus().emit('UndoStackChanged', { canUndo: false, canRedo: false });
     // The unrelated listener still fires — only ours was removed.
     expect(after).toBe(1);
+  });
+});
+
+/**
+ * F30 / rule 4c — the seam.
+ *
+ * The three tests above guard the baseline sync as a UNIT, and it was a correct
+ * unit the whole time it was broken. What failed was the CROSSING: nothing
+ * asserted that boot ever attached it. Guarding both sides of a seam and not the
+ * seam itself is precisely how a listener stays green while wired to nothing.
+ *
+ * `attachHistoryRecording` now owns the whole set, so the crossing is one call.
+ * These two tests watch it from both ends: the function wires all four, and the
+ * boot sequence calls the function.
+ */
+describe('attachHistoryRecording — the crossing, not just the units', () => {
+  const EVENTS = ['AnimationChanged', 'NodeUpdated', 'SceneGraphChanged', 'UndoStackChanged'] as const;
+
+  it('wires every event the recording mechanism needs', () => {
+    // Derived from the event list rather than asserted one-by-one, so dropping
+    // one subscription fails here by name instead of degrading in silence.
+    setEventBus(new EventBus());
+    const rec = attachHistoryRecording();
+    const unheard = EVENTS.filter((ev) => getEventBus().listenerCount(ev) === 0);
+    rec.dispose();
+    expect(unheard).toEqual([]);
+  });
+
+  it('disposing removes ALL of them, not just the last', () => {
+    setEventBus(new EventBus());
+    const rec = attachHistoryRecording();
+    rec.dispose();
+    const stillListening = EVENTS.filter((ev) => getEventBus().listenerCount(ev) > 0);
+    expect(stillListening).toEqual([]);
+  });
+
+  it('the boot sequence calls it — the crossing that was never guarded', () => {
+    // Structural, and honest about being so: the alternative is mounting the
+    // whole Providers tree, which this suite cannot do. What it pins is the one
+    // fact whose absence caused the bug — that boot reaches the wiring at all.
+    const providers = readFileSync(
+      path.join(__dirname, '..', 'providers', 'Providers.tsx'),
+      'utf8',
+    );
+    expect(providers).toContain('attachHistoryRecording()');
+    // And that nothing re-introduced a module-scope subscription in the store.
+    const store = readFileSync(path.join(__dirname, 'historyStore.ts'), 'utf8');
+    const moduleScopeSub = /^getEventBus\(\)\.on\(/m.test(store);
+    expect({ moduleScopeSubscription: moduleScopeSub }).toEqual({ moduleScopeSubscription: false });
   });
 });

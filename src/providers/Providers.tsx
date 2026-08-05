@@ -26,7 +26,7 @@ import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
-import { attachHistoryBaselineSync, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
+import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
 import { Button } from '@components/Button';
 import { Logo } from '@components/Logo';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
@@ -1532,19 +1532,16 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // different layer/property commits the previous one first. A bare
           // `schedule` merged anything that happened to land inside the same
           // 700 ms — two unrelated edits, one Ctrl+Z, both gone.
-          const h = (): ReturnType<typeof useHistoryStore.getState> => useHistoryStore.getState();
-          track(getEventBus().on('AnimationChanged', () => h().schedule('anim')));
-          track(getEventBus().on('NodeUpdated', (e) => {
-            const p = e as { nodeId?: string; propName?: string } | undefined;
-            h().schedule(p?.nodeId ? `node:${p.nodeId}:${p.propName ?? ''}` : 'node');
-          }));
-          // Structural edits (add/delete/reparent) are their own action.
-          track(getEventBus().on('SceneGraphChanged', () => h().schedule('scene')));
-          // Baseline sync — INSIDE boot for the same reason as the
-          // subscriptions above: a module-scope subscription lands on the bus
-          // Application.boot() discards. Without it every commanded edit also
-          // recorded a generic snapshot.
-          track(attachHistoryBaselineSync());
+          //
+          // ONE attach point, deliberately. These were four separate `track`
+          // lines here and three of them worked; the baseline sync had been
+          // subscribed at MODULE SCOPE, so it landed on the bus this boot
+          // discards and never fired once — every commanded edit then also
+          // recorded a generic snapshot and Ctrl+Z took two presses, app-wide.
+          // Keeping the set together in `historyStore` makes the half-wired
+          // state unrepresentable, and lets the guard suite drive the same unit
+          // boot does rather than a re-typed copy of it.
+          track(attachHistoryRecording());
         } catch { /* ignore */ }
 
         // Dirty tracking + autosave (crash recovery). Edits mark the active
