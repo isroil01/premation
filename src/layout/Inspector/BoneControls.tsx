@@ -5,8 +5,23 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings } from '@core/rig/skeletonCommands';
+import { addController, deleteController, updateController } from '@core/rig/skeletonCommands';
+import {
+  defaultControllerFor, CONTROLLER_SHAPES, CONTROLLER_SIDES,
+  type ControllerShape, type ControllerSide,
+} from '@core/rig/controllers';
 import { readNodePuppet } from '@core/rig/puppet';
 import styles from './BoneControls.module.css';
+
+/** Shared <select> chrome — matches PuppetControls so the two rig panels agree. */
+const selectStyle: React.CSSProperties = {
+  padding: '3px 8px',
+  fontSize: 11,
+  borderRadius: 4,
+  background: 'var(--color-surface, #1e1e1e)',
+  color: 'var(--color-text-primary, #fff)',
+  border: '1px solid var(--color-border, #333)',
+};
 
 export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
@@ -16,6 +31,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   const skel = readNodeSkeleton(node);
   const bones = skel?.bones ?? [];
   const ikTargets = skel?.ikTargets ?? [];
+  const controllers = skel?.controllers ?? [];
   const hasPuppet = ((readNodePuppet(node)?.pins ?? []).length ?? 0) > 0;
 
   return (
@@ -234,6 +250,97 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           </div>
         );
       })}
+
+      {/* ── Controllers ────────────────────────────────────────────
+          The grab handles. Listed after the bones because a controller is
+          defined BY the bone it drives — the link is picked from the bones
+          above, so there is nothing to configure before one exists. */}
+      {bones.length > 0 && (
+        <div className={styles.card}>
+          <div className={styles.cardHeader}>
+            <div className={styles.cardTitle}>
+              <Icon name="puppet-pin" size={13} style={{ opacity: 0.7 }} />
+              <span>Controllers</span>
+              <span className={styles.badge}>{controllers.length}</span>
+            </div>
+          </div>
+
+          {controllers.length === 0 && (
+            <div className={styles.subText} style={{ margin: "2px 0 8px" }}>
+              Add a handle to pose a bone or an IK goal without grabbing the joint.
+            </div>
+          )}
+
+          {controllers.map((c) => (
+            <div key={c.id} className={styles.paramRow} style={{ flexWrap: "wrap", gap: 4 }}>
+              <span className={styles.paramLabel} style={{ flexBasis: "100%" }}>
+                {c.name ?? c.id} → {c.link.kind === "ikTarget" ? "IK goal" : "bone"} {c.link.boneId}
+              </span>
+              <select
+                value={c.shape}
+                aria-label={`${c.name ?? c.id} shape`}
+                onChange={(e) => updateController(nodeId, c.id, { shape: e.target.value as ControllerShape })}
+                style={selectStyle}
+              >
+                {CONTROLLER_SHAPES.map((sh) => (<option key={sh} value={sh}>{sh}</option>))}
+              </select>
+              <select
+                value={c.side}
+                aria-label={`${c.name ?? c.id} side`}
+                onChange={(e) => updateController(nodeId, c.id, { side: e.target.value as ControllerSide })}
+                style={selectStyle}
+              >
+                {CONTROLLER_SIDES.map((sd) => (<option key={sd} value={sd}>{sd}</option>))}
+              </select>
+              <ValueField
+                value={c.size}
+                min={4}
+                unit="px"
+                aria-label={`${c.name ?? c.id} size`}
+                onChange={(v) => updateController(nodeId, c.id, { size: Math.max(4, v) })}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Delete controller ${c.name ?? c.id}`}
+                onClick={() => deleteController(nodeId, c.id)}
+              >
+                <Icon name="trash" size={12} />
+              </Button>
+            </div>
+          ))}
+
+          {/* One add per bone, and the LINK KIND is chosen here rather than
+              edited afterwards: an IK controller and an FK controller drive
+              different things, so the choice belongs at creation. */}
+          <div className={styles.paramRow} style={{ flexWrap: "wrap", gap: 4 }}>
+            <select
+              value=""
+              aria-label="Add controller"
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!v) return;
+                const [kind, boneId] = v.split(":") as ["bone" | "ikTarget", string];
+                addController(nodeId, defaultControllerFor({ kind, boneId }, controllers, bones));
+                e.currentTarget.value = "";
+              }}
+              style={selectStyle}
+            >
+              <option value="">Add controller…</option>
+              {bones.map((b) => (
+                <option key={`fk-${b.id}`} value={`bone:${b.id}`}>
+                  {b.name ?? b.id} (FK bone)
+                </option>
+              ))}
+              {ikTargets.map((t) => (
+                <option key={`ik-${t.boneId}`} value={`ikTarget:${t.boneId}`}>
+                  {bones.find((b) => b.id === t.boneId)?.name ?? t.boneId} (IK goal)
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1055,6 +1055,124 @@ The frame-0-vs-frame-30 zero is a correctness result in itself: a marching borde
 returning exactly to its starting phase after one period means the interpolation
 and the arc-length units agree.
 
+## 2b-duodevicies. 2026-08-06 — rig controllers: existence sweep and the design calls, BEFORE any code
+
+The posing surface (DUIK's controller layer) verified against the tree first.
+**Nothing was built this run** — see "Why this stopped here" at the end.
+
+### Existence table
+
+Searched for the CAPABILITY, not the word: a null carrying drawn geometry, a
+link from a null to an IK target, a shape-carrying transform-only layer.
+
+| Capability | Verdict | Evidence |
+|---|---|---|
+| Bone hierarchy, FK | **COMPLETE** | `Bone` with `parentId`/`length`/`x`/`y`/`rotation`/`scaleX/Y`; `bone.<id>.rotation` keyframeable |
+| IK targets | **COMPLETE, and keyframeable** | `IKTarget { boneId, x, y, enabled, chainLength, pole }` (`skeletonCommands.ts:21`); live values sampled from `ikTarget.<boneId>.x/.y`, poles from `ikPole.<boneId>.x/.y` |
+| Pole vectors | **COMPLETE** | `pole?: {x,y}`, keyframeable, already drawn and draggable |
+| Two-bone analytic + FABRIK | **COMPLETE** | pre-existing |
+| Weight painting | **COMPLETE** | `weightPaint?: WeightPaintMap` |
+| Puppet + skeleton on one layer | **COMPLETE** | composition order documented in `rigDeform.ts` |
+| **On-canvas posing of bones / IK / poles** | **COMPLETE** | `BoneOverlay.tsx` (778 lines) — drag modes `'fk' | 'ik' | 'pole'`, writes keyframes at `layerT`, wrapped in `beginAnimEdit`/`recordAnimEdit` |
+| **Controller as a distinct concept** | **ABSENT** | No `kind: 'controller'`, no controller record on `SkeletonRig`, no link field anywhere |
+| Null objects | **PRESENT, but not controllers** | `insertNull()` (`parenting.ts:143`) — comment already calls them "invisible controller layers". Transform-only, **draws no geometry**, no link to a bone or IK target. This is the AE workaround, present but unwired |
+| `rigLogo` | **PRESENT, unrelated** | Decides which layer is *riggable* (`RIGGABLE_KINDS = shape | image`); not a controller |
+| `create_skeleton_rig` / `pose_skeleton` | **PRESENT, AI-side** | `toolHandlers.ts:1616-1617`. They author and pose a skeleton; neither creates a controller |
+| Viewport-only exclusion | **COMPLETE and reusable** | `readIsGuideLayer` + ONE exclusion site, `buildSnapshot.ts:1791`, gated on `comp.forExport` |
+
+So the hard half really is done, and the missing piece is exactly the grab
+surface — plus one thing the brief did not anticipate, below.
+
+### Reuse verdict: the effect-handle overlay does NOT fit; `BoneOverlay` does
+
+The brief expected a sixth entry in the shared handle registry. It does not fit,
+and the reason is structural rather than stylistic:
+
+* `EFFECT_HANDLES` is `Partial<Record<EffectType, HandleSpec[]>>` — **keyed by
+  effect type** (`effectHandles.ts:137`). A controller is not an effect; it has
+  no entry in an effect param bag and no `effectId`.
+* `EffectHandleOverlay` is driven by `useEffectHandleStore` (`nodeId` +
+  `effectId`) and commits through `writeEffectParams`. A controller drag must
+  write `ikTarget.<boneId>.x/.y` or `bone.<boneId>.rotation` through
+  `SkeletonEditCommand`. Nothing on that path is shared.
+
+**`BoneOverlay` is the right host, and reusing it is a bigger win than the
+registry would have been.** It already carries every mechanism the brief asks
+for: the shared `layerScreenMapping` projection (explicitly the
+no-third-copy one), screen-constant sizing, the `'fk' | 'ik' | 'pole'` drag
+modes a controller would delegate to verbatim, keyframe writes on the layer's
+own axis, and one-gesture-one-undo via `beginAnimEdit`. A controller grab is the
+EXISTING ik/fk drag entered from a different target — so the work is a grab
+target and a link, not a drag implementation.
+
+### Design call: controllers are RIG DATA, not layers
+
+The brief says "controller layers", which is DUIK's shape because **AE has no rig
+model** — a null layer plus an expression is the only place to put one. The same
+argument the brief makes for links ("you have real IK and do not need AE's
+workaround") applies one level up: this project has a real `SkeletonRig`, so a
+controller belongs on it as `controllers?: Controller[]`, beside `ikTargets`,
+which it resembles exactly (positioned, keyframeable, drawn on canvas, owned by
+the rig).
+
+Consequences, all of them favourable:
+
+* undo, persistence and autosave come from `SceneGraph.setFx` with no new code,
+  the same way the guide flag did;
+* **no new `SceneKind`**, so no migration, no timeline/layer-list/renderer surface;
+* an optional field absent from every existing document, absence meaning "no
+  controllers" — additive, so no version bump (same reasoning as `PinKind`);
+* **viewport-only by construction.** Rig data is never a render layer, so there
+  is nothing to exclude.
+
+That last point answers the brief's question directly: **the guide-layer
+exclusion is the right mechanism for the wrong problem here.** It is needed when
+a real layer must be dropped at export; a controller never becomes a layer, so
+reusing `forExport` would be adding a check that can never fire. The guard for
+"controllers do not render" therefore has to observe something else — rule 5·0:
+the observable is that an exported frame is byte-identical with and without
+controllers present, which no snapshot-layer assertion can see.
+
+### The UI bar has an unresolved question — surfaced, not guessed
+
+The brief says to colour-code by side using the existing `--color-layer-*` tokens
+and not to invent a palette. Measured against the tree, that instruction cannot
+be followed as written:
+
+* `--color-layer-*` (`tokens/colors.css:60-68`) encodes layer **KIND** —
+  text/shape/image/video/audio/camera/light/null/3d. There is no left/right/centre
+  triple. Mapping sides onto three kind tokens (rose = left, blue = right,
+  yellow = centre) would give a rig colour a meaning the token does not carry,
+  and would drift the moment someone retints "video".
+* **Every existing canvas overlay hardcodes hex** — `BoneOverlay` uses
+  `#00e699`, `#ff0055`, `#a855f7` directly. No overlay resolves a token, so
+  "resolve at runtime from the theme" would be a new convention, not a reused one.
+* The one documented runtime resolver carries a perf warning:
+  `useWorkspace.ts:1932` notes `getComputedStyle` + `getPropertyValue` forces a
+  style recalculation — and an overlay redraws per frame during a drag.
+
+Three defensible options, needing a decision rather than a guess: add three named
+`--color-rig-side-*` tokens in `colors.css` following its existing conventions;
+reuse three kind tokens and accept the semantic drift; or hardcode hex to match
+every other overlay. Left open deliberately.
+
+### Deferred, not started (per the brief)
+
+IK/FK switching per chain; auto-rig presets (biped/quadruped) with controllers
+pre-linked; controllers driving puppet pins directly.
+
+### Why this stopped here
+
+The merge, verification and this sweep consumed the run. Controllers need a
+model, commands, the overlay grab surface (drawing, hover/active, halo, enlarged
+hit target, link indicator), inspector wiring, five guard categories each
+verified-to-fail, and runtime verification. Starting that with insufficient room
+to guard it produces exactly the half-shipped result the standard forbids, so
+nothing was begun. The sweep is the deliverable: it removes the wrong host
+(`EffectHandleOverlay`), names the right one (`BoneOverlay`), settles the storage
+question against the tree, and surfaces the one instruction that cannot be
+followed as written.
+
 ## 2b. Findings logged, not fixed
 
 Catalogued rather than absorbed.
