@@ -36,18 +36,6 @@ export function ikPolePropPath(boneId: string, axis: 'x' | 'y'): string {
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /**
- * Resolve a rig's IK targets at `timeSec`: live positions, live poles, and the
- * per-chain mode applied.
- *
- * A chain in **FK mode is omitted entirely** rather than passed through with a
- * flag. `applyIk` overrides the local rotations of every chain it is given, so a
- * target that reached it in FK mode would drive the chain no matter what any
- * downstream check said — the only way for FK to mean FK is for the target not
- * to arrive. Omission is also what makes the mode free at the solver: bones
- * outside every chain already keep their FK pose untouched, which is exactly
- * the behaviour FK mode wants.
- */
-/**
  * Every ENABLED target with its live position and pole — the mode NOT applied.
  *
  * Split from `resolveActiveIkTargets` after runtime verification caught the
