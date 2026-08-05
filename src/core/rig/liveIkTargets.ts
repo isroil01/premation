@@ -47,7 +47,17 @@ const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
  * outside every chain already keep their FK pose untouched, which is exactly
  * the behaviour FK mode wants.
  */
-export function resolveActiveIkTargets(
+/**
+ * Every ENABLED target with its live position and pole — the mode NOT applied.
+ *
+ * Split from `resolveActiveIkTargets` after runtime verification caught the
+ * consequence of conflating the two: an IK controller vanished in FK mode,
+ * because the overlay placed it from the mode-filtered list and FK emptied it.
+ * Placement and solving are different questions about the same targets —
+ * "where is this goal" has an answer in both modes, "does it drive the chain"
+ * does not. One reader for the SAMPLING, with the mode layered on top.
+ */
+export function resolveIkTargets(
   rig: Pick<SkeletonRig, 'ikTargets'> | undefined,
   nodeId: string,
   timeSec: number,
@@ -56,8 +66,6 @@ export function resolveActiveIkTargets(
   const out: IkTargetResolved[] = [];
   for (const tg of rig?.ikTargets ?? []) {
     if (tg.enabled === false) continue;
-    if (chainModeOf(tg, nodeId, timeSec, anim) === 'fk') continue;
-
     const liveX = anim.sample(nodeId, ikTargetPropPath(tg.boneId, 'x'), timeSec);
     const liveY = anim.sample(nodeId, ikTargetPropPath(tg.boneId, 'y'), timeSec);
     const poleX = anim.sample(nodeId, ikPolePropPath(tg.boneId, 'x'), timeSec);
@@ -66,7 +74,6 @@ export function resolveActiveIkTargets(
       num(poleX) || num(poleY)
         ? { x: num(poleX) ? poleX : (tg.pole?.x ?? 0), y: num(poleY) ? poleY : (tg.pole?.y ?? 0) }
         : tg.pole;
-
     out.push({
       boneId: tg.boneId,
       x: num(liveX) ? liveX : tg.x,
@@ -76,6 +83,29 @@ export function resolveActiveIkTargets(
     });
   }
   return out;
+}
+
+/**
+ * The targets that actually DRIVE their chains this frame.
+ *
+ * A chain in FK mode is omitted entirely rather than passed through with a
+ * flag. `applyIk` overrides the local rotations of every chain it is given, so
+ * a target that reached it in FK mode would drive the chain no matter what any
+ * downstream check said — the only way for FK to mean FK is for the target not
+ * to arrive. Omission is also what makes the mode free at the solver: bones
+ * outside every chain already keep their FK pose untouched.
+ */
+export function resolveActiveIkTargets(
+  rig: Pick<SkeletonRig, 'ikTargets'> | undefined,
+  nodeId: string,
+  timeSec: number,
+  anim: IkSampler = defaultAnimation,
+): IkTargetResolved[] {
+  const byId = new Map((rig?.ikTargets ?? []).map((t) => [t.boneId, t]));
+  return resolveIkTargets(rig, nodeId, timeSec, anim).filter((t) => {
+    const stored = byId.get(t.boneId);
+    return stored ? chainModeOf(stored, nodeId, timeSec, anim) === 'ik' : true;
+  });
 }
 
 /** A chain's mode at a time — the track wins over the stored value. */

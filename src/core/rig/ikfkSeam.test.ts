@@ -20,7 +20,7 @@ import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/command
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import type { SceneNode } from '@core/types';
 import { readNodeSkeleton, setChainMode, type SkeletonRig } from './skeletonCommands';
-import { resolveActiveIkTargets } from './liveIkTargets';
+import { resolveActiveIkTargets, resolveIkTargets } from './liveIkTargets';
 import { chainModePropPath } from './ikfk';
 import { computeWorldTransforms, type Bone } from './skeleton';
 import { applyIk } from './rigDeform';
@@ -199,5 +199,39 @@ describe('the switch command', () => {
   it('does nothing for a bone with no chain', () => {
     setChainMode(ID, 'upper', 'fk', { layerT: 0, keyframe: false });
     expect(rigOf().ikTargets![0]!.ikMode).toBeUndefined();
+  });
+});
+
+describe('placement survives FK — the bug runtime verification found', () => {
+  /**
+   * An IK controller must still be PLACED while its chain is in FK, so it can be
+   * drawn greyed. Placing it from the mode-filtered list made it vanish instead:
+   * FK empties that list, `controllerPosition` found no goal, and the overlay
+   * skipped it. jsdom never saw this — the overlay is only exercised in the app,
+   * so the observable is "the controller has a position", not "a component
+   * rendered".
+   */
+  it('resolveIkTargets keeps an FK chain, resolveActiveIkTargets drops it', () => {
+    const anim = new AnimationEngine();
+    const rig = { bones: BONES, ikTargets: [{ ...GOAL, ikMode: 'fk' as const }] } as SkeletonRig;
+    // Placement: still there, with its live position.
+    const placed = resolveIkTargets(rig, 's', 0, anim);
+    expect(placed).toHaveLength(1);
+    expect({ x: placed[0]!.x, y: placed[0]!.y }).toEqual({ x: GOAL.x, y: GOAL.y });
+    // Solving: gone.
+    expect(resolveActiveIkTargets(rig, 's', 0, anim)).toEqual([]);
+  });
+
+  it('and the two agree while the chain is in IK — the split is only about mode', () => {
+    const anim = new AnimationEngine();
+    const rig = { bones: BONES, ikTargets: [{ ...GOAL, ikMode: 'ik' as const }] } as SkeletonRig;
+    expect(resolveActiveIkTargets(rig, 's', 0, anim)).toEqual(resolveIkTargets(rig, 's', 0, anim));
+  });
+
+  it('placement still honours live keyframes, so a greyed handle is not stale', () => {
+    const anim = new AnimationEngine();
+    anim.setKeyframe('s', 'ikTarget.fore.x', 0, -33);
+    const rig = { bones: BONES, ikTargets: [{ ...GOAL, ikMode: 'fk' as const }] } as SkeletonRig;
+    expect(resolveIkTargets(rig, 's', 0, anim)[0]!.x).toBe(-33);
   });
 });

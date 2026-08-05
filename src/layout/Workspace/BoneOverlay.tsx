@@ -24,7 +24,7 @@ import {
   CONTROLLER_HIT_SLOP, type RigController,
 } from '@core/rig/controllers';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { resolveActiveIkTargets, chainModeOf } from '@core/rig/liveIkTargets';
+import { resolveActiveIkTargets, resolveIkTargets, chainModeOf } from '@core/rig/liveIkTargets';
 import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints } from '@core/rig/puppet';
 import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding, skinRigVertices } from '@core/rig/rigDeform';
@@ -303,8 +303,12 @@ export function BoneOverlay(): JSX.Element | null {
   // the shape is drawn exactly where it is hit-tested and where the drag
   // measures from. The overlay contributes no placement maths of its own.
   const controllers = skel?.controllers ?? [];
+  // PLACEMENT uses every enabled target, not just the solving ones. An IK
+  // controller must still be drawn (greyed) while its chain is in FK — placing
+  // it from the mode-filtered list made it VANISH instead, which runtime
+  // verification caught and jsdom could not.
   const ikTargetPositions = new Map<string, { x: number; y: number }>(
-    activeIkTargets.map((tg) => [tg.boneId, { x: tg.x, y: tg.y }]),
+    resolveIkTargets(skel, node.id, layerT).map((tg) => [tg.boneId, { x: tg.x, y: tg.y }]),
   );
   /**
    * Is this controller live in the chain's CURRENT mode?
@@ -1030,7 +1034,7 @@ export function BoneOverlay(): JSX.Element | null {
               strokeWidth={4} strokeLinejoin="round" pointerEvents="none"
             />
             <path
-              d={d} fill="none" stroke={color}
+              d={d} fill="none" stroke={active ? color : CONTROLLER_INERT}
               strokeWidth={isSelected ? 2.4 : 1.8}
               strokeLinejoin="round"
               opacity={active ? (isHovered || isSelected ? 1 : 0.85) : 0.28}
