@@ -17,6 +17,16 @@ import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { Pt } from '@core/scene/trimPath';
 import { layerSubpaths, hasPathGeometry } from './subpaths';
+import { flattenOutline } from '@core/scene/mergePaths';
+import { offsetAlongNormals, closedRibbon } from '@motion/scene';
+import {
+  taperWidthFactorAt, waveOffsetAt, isIdentityTaper, isIdentityWave,
+} from '@core/scene/strokeProfile';
+
+/** Bezier samples per segment when flattening for a profiled stroke. Matches
+ *  the boolean-ops default; a tapered edge is a fill boundary, so it wants the
+ *  same smoothness the outline ops already settled on. */
+const TAPER_FLATTEN_PER_SEG = 8;
 import { effectNumber } from '@core/effects/effects';
 import { layerIsBaked } from '@core/effects/effectBake';
 
@@ -484,6 +494,99 @@ export function strokeShape(ctx: CanvasRenderingContext2D, stroke: Stroke, trace
   ctx.setLineDash([]);
   ctx.lineDashOffset = 0;
   ctx.restore();
+}
+
+/**
+ * Stroke a path as a FILLED variable-width ribbon — AE's Taper and Wave.
+ *
+ * Canvas2D strokes at a single `lineWidth` and cannot vary it, so a tapered or
+ * waved stroke is not a parameter change but a change of DRAWING OPERATION:
+ * flatten the path, walk it by arc length, offset it, and fill the outline.
+ *
+ * ## The primitive is used TWICE, which is DECISION D4 landing
+ *
+ * D4 predicted that taper and wave differ only in what they do with the two
+ * offset sides — wave moves them TOGETHER (it displaces the centreline), taper
+ * moves them OPPOSITELY (it varies the width). That is literally the code:
+ *
+ *   centre = offsetAlongNormals(poly, waveOffset).left     ← one side
+ *   ring   = closedRibbon(offsetAlongNormals(centre, halfWidth))  ← both sides
+ *
+ * ## Returns FALSE rather than drawing, for cases it does not own
+ *
+ * The caller then strokes normally. Refusing loudly in code beats a silent
+ * near-miss, and each refusal is a scope boundary rather than a bug:
+ *
+ *   • identity profiles — nothing to do, and skipping keeps an untapered stroke
+ *     BYTE-identical rather than merely numerically equal (§2·0);
+ *   • non-path primitives — rect/ellipse taper is not modelled yet;
+ *   • DASHED strokes — dash + taper is a real AE combination and a deferred one
+ *     here. Dashing is shipped behaviour; silently dropping it to apply a new
+ *     feature would be the worse trade. The UI step must surface this rather
+ *     than leaving a control that quietly does nothing.
+ */
+export function strokeShapeProfiled(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke,
+  layer: RenderLayer,
+  w = 100,
+  h = 100,
+): boolean {
+  if (stroke.width <= 0) return false;
+  const taper = stroke.taper;
+  const wave = stroke.wave;
+  if (isIdentityTaper(taper) && isIdentityWave(wave)) return false;
+  if (layer.primitive !== 'path') return false;
+  if (stroke.dash.length > 0) return false;
+
+  const runs = layerSubpaths(layer);
+  if (runs.length === 0) return false;
+
+  ctx.save();
+  ctx.globalAlpha *= Math.max(0, Math.min(1, stroke.opacity));
+  // The ribbon is FILLED, so the stroke's paint becomes a fill style. A gradient
+  // stroke gets easier here rather than harder: a filled outline takes a fill
+  // gradient directly, instead of Canvas2D's stroke-gradient special case.
+  ctx.fillStyle =
+    stroke.paint && stroke.paint.type !== 'solid'
+      ? fillStyleFor(ctx, stroke.paint, stroke.color, w, h)
+      : (stroke.paint?.type === 'solid' ? stroke.paint.color : stroke.color);
+
+  let drew = false;
+  for (const run of runs) {
+    const open = run.open === true;
+    const poly = flattenOutline(run.points, TAPER_FLATTEN_PER_SEG, open);
+    if (poly.length < 2) continue;
+
+    // Cumulative arc length. Taper is a FRACTION of it; wave is measured in the
+    // same px, so both read off this one walk.
+    const arc: number[] = [0];
+    for (let i = 1; i < poly.length; i++) {
+      arc.push(arc[i - 1]! + Math.hypot(poly[i]!.x - poly[i - 1]!.x, poly[i]!.y - poly[i - 1]!.y));
+    }
+    const total = arc[arc.length - 1] || 1;
+
+    const centre = isIdentityWave(wave)
+      ? poly
+      : offsetAlongNormals(poly, (i) => waveOffsetAt(wave!, arc[i]!)).left;
+
+    const ring = closedRibbon(
+      offsetAlongNormals(centre, (i) => {
+        const factor = taper ? taperWidthFactorAt(taper, arc[i]! / total) : 1;
+        return (stroke.width * factor) / 2;
+      }),
+    );
+    if (ring.length < 3) continue;
+
+    ctx.beginPath();
+    ctx.moveTo(ring[0]!.x, ring[0]!.y);
+    for (let i = 1; i < ring.length; i++) ctx.lineTo(ring[i]!.x, ring[i]!.y);
+    ctx.closePath();
+    ctx.fill();
+    drew = true;
+  }
+  ctx.restore();
+  return drew;
 }
 
 export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

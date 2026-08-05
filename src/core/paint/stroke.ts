@@ -22,6 +22,8 @@ export type StrokeAlign = 'inside' | 'center' | 'outside';
 export type StrokeCap = 'butt' | 'round' | 'square';
 export type StrokeJoin = 'miter' | 'round' | 'bevel';
 
+import type { StrokeTaper, StrokeWave } from '@core/scene/strokeProfile';
+
 export interface Stroke {
   enabled: boolean;
   color: string;
@@ -55,6 +57,16 @@ export interface Stroke {
   /** Optional gradient paint — when set (linear/radial) it overrides `color`;
    *  `color` remains the fallback for renderers without gradient strokes. */
   paint?: FillPaint;
+  /**
+   * AE's Taper and Wave groups. Absent means identity, so every stroke authored
+   * before them renders bit-identically — the profiles are skipped structurally
+   * rather than computing 1 everywhere (see `isIdentityTaper`).
+   *
+   * Both are consumed by `strokeShapeProfiled`, which FILLS a variable-width
+   * outline; Canvas2D strokes at one `lineWidth` and cannot vary it.
+   */
+  taper?: StrokeTaper;
+  wave?: StrokeWave;
 }
 
 export const STROKE_ALIGNS: ReadonlyArray<{ value: StrokeAlign; label: string }> = [
