@@ -1,0 +1,241 @@
+.root { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
+
+/* Dropping a package anywhere on the list installs it — the retired manager
+   modal's drop zone, moved to the surface the user is already looking at. */
+.rootDropping { outline: 2px dashed var(--color-primary); outline-offset: -3px; }
+
+.dropHint {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  /* `none`, so the drag events keep reaching the container underneath. An
+     overlay that swallows them cancels the drop it exists to advertise. */
+  pointer-events: none;
+  background: var(--color-surface-0);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.searchRow {
+  display: flex;
+  /* `stretch`, not `center`: the button takes the field's height instead of
+     sitting 5px shorter than it, which reads as two controls that happen to be
+     near each other rather than one strip. */
+  align-items: stretch;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  flex: 0 0 auto;
+}
+.search {
+  /* `min-width: 0` so the field yields to the button instead of overflowing the
+     row: a flex item's default `min-width: auto` refuses to shrink below its
+     intrinsic size, and at 280px that pushes the button out of view. */
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-field-border);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-label);
+}
+.search:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -1px; }
+
+/*
+ * Add plugin.
+ *
+ * Sits beside the search field at the same height, so the row reads as one
+ * control strip rather than a field with something bolted next to it. Secondary
+ * chrome on purpose: installing from disk is the rarer path — most plugins
+ * arrive from the registry, through a row's own Install button — and a filled
+ * accent button here would outrank every one of them.
+ */
+.addBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+}
+.addBtn:hover { background: var(--color-hover); color: var(--color-text-primary); }
+.addBtn:active { transform: translateY(1px); }
+.addBtn:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+
+/* Icon-only, for the dock column. The caret stays: it is the only thing that
+   says this opens a choice rather than doing something immediately. */
+.addBtnCompact { padding: 0 4px; gap: 1px; }
+
+.hiddenInput { display: none; }
+
+.list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+
+/*
+ * The pager, pinned below the scrolling list.
+ *
+ * Inside `.list` it would scroll away, and a control the reader never reaches
+ * is indistinguishable from a list that ended. The shared `Pagination` already
+ * wraps its own count line above the buttons when the column is narrow.
+ */
+.pagerRow {
+  flex: 0 0 auto;
+  padding: 0 var(--space-2) var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/*
+ * A plugin row is SCANNED, not read. Icon, name, publisher, installs, one line
+ * of description — anything taller buys nothing and costs the number of
+ * plugins visible at once, which is the only thing that matters in a list.
+ */
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--space-2);
+  border: none;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row:hover { background: var(--color-hover); }
+.row:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; }
+
+.rowIcon {
+  width: 28px; height: 28px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+.rowIcon img { width: 100%; height: 100%; object-fit: cover; }
+
+.rowBody { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.rowTop { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; }
+.rowName {
+  font-size: var(--font-size-label);
+  color: var(--color-text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rowPublisher {
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rowVerified { color: var(--color-primary); flex: 0 0 auto; display: inline-flex; }
+.rowDesc {
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rowMeta { display: flex; gap: var(--space-2); font-size: var(--font-size-micro, 10px); color: var(--color-text-tertiary); }
+
+.rowActions { display: flex; gap: 4px; flex: 0 0 auto; align-items: center; }
+.mini {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm, 3px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro, 10px);
+  cursor: pointer;
+}
+.mini:hover { background: var(--color-hover); }
+.miniPrimary { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-primary-foreground); }
+.mini:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+
+/* Status must be legible at a glance and never contradict the toggle. */
+.status { display: inline-flex; align-items: center; gap: 3px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.statusRunning { color: var(--color-success); }
+.statusInactive { color: var(--color-text-tertiary); }
+.statusStopped { color: var(--color-text-muted); }
+.statusError { color: var(--color-danger); }
+.statusStarting { color: var(--color-warning); }
+
+/* Empty and failure states say what happened and what to do. */
+.state {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+}
+.stateTitle { color: var(--color-text-primary); }
+.stateAction {
+  margin-top: var(--space-2);
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+}
+
+.skelRow { display: flex; gap: var(--space-2); padding: var(--space-2); align-items: center; }
+.skelIcon, .skelText {
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--color-surface-1), var(--color-surface-2), var(--color-surface-1));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.skelIcon { width: 28px; height: 28px; flex: 0 0 auto; }
+.skelText { height: 10px; flex: 1 1 auto; }
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skelIcon, .skelText { animation: none; } }
+
+/* A footnote under the results, never in place of them. */
+.listNote {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-tertiary);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Listing editor fields. Restored with the editor, not left over from the
+   removed filter chips — these are pressable toggles, not links. */
+.filters { display: flex; gap: var(--space-1); flex-wrap: wrap; padding-block: var(--space-1); }
+.chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro, 10px);
+  cursor: pointer;
+}
+.chipActive { background: var(--color-primary-subtle); border-color: var(--color-primary); color: var(--color-text-primary); }
+.chip:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+
+.textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-field-border);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro, 10px);
+  resize: vertical;
+}
+.textarea:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -1px; }

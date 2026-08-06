@@ -1,0 +1,220 @@
+/*
+ * The consent screen's own styles.
+ *
+ * Split out of `PluginsModal.module.css` when the modal was retired. Consent is
+ * the one screen in this flow that outlives every container it has ever been
+ * shown in — it is raised from the plugin list, from a detail tab, and from a
+ * `premation://` deep link — so it owns its styles rather than borrowing a
+ * manager's.
+ */
+
+.consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 520px;
+  max-width: 620px;
+  padding: var(--space-5);
+}
+
+.consentHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.iconLg {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.35;
+}
+
+.consentDesc {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+/* The homepage URL, printed in full rather than as friendly link text. It is
+   the one provenance signal the package carries, and the URL IS the
+   information — "Homepage" as link text hides exactly the part that matters. */
+.consentHomepage {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: calc(var(--space-2) * -1) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.consentHomepage a {
+  color: var(--color-text-secondary);
+}
+
+.permBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+}
+
+.permTitle {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.permList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.permItem {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.permItem strong {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.permNone {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.permCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+}
+
+.permCheck input {
+  margin-top: 2px;
+  flex: 0 0 auto;
+  accent-color: var(--color-primary);
+}
+
+.permWarn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-warning);
+}
+
+.sandboxNote {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.consentActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.primary,
+.secondary {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: 1px solid transparent;
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.secondary {
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.secondary:hover {
+  color: var(--color-text-primary);
+}
+
+/*
+ * A real overlay, always. Consent is the one screen in this flow that must not
+ * be dismissable by clicking past it, or lost behind whatever the user was
+ * looking at when the install started.
+ */
+.consentOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 200);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--color-overlay-scrim);
+}
+
+.consentHost {
+  width: min(560px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-lg, 0 16px 48px rgb(0 0 0 / 0.45));
+}

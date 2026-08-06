@@ -1,0 +1,567 @@
+/**
+ * Every plugin, in one searchable list.
+ *
+ * There are no Browse / Installed / My Plugins tabs, and removing them is the
+ * point. A user looking for a plugin does not know, and should not have to
+ * decide, whether the thing they want is already installed — that is a fact
+ * about their machine, not a category of software. Tabs made them choose a
+ * container before they could search, and split one answer across three places:
+ * search "easing" in the wrong tab and it simply is not there.
+ *
+ * So: one query, one list, and each row STATES whether it is installed rather
+ * than being filed under it.
+ *
+ * The list is also a UNION, not just the registry's answer. A plugin installed
+ * from a folder — an author's own work in progress — exists on this machine and
+ * in no registry, and a list that only showed registry results would hide the
+ * plugin its user is actively building.
+ */
+
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { Icon } from '@components/Icon';
+import { Pagination } from '@components/Pagination';
+import { cn } from '@utils/cn';
+import { usePluginStore } from '@stores/pluginStore';
+import pluginHost from '@core/plugins/PluginHost';
+import {
+  browseRegistry,
+  checkForUpdates,
+  registryMediaUrl,
+  type RegistryPlugin,
+  type RegistryUpdate,
+} from '@core/plugins/registry';
+import { panelPlacements } from './pluginPanelDefs';
+import { openPluginTab } from './openPluginTab';
+import { installFromRegistry } from './installFromRegistry';
+import { AddPluginButton } from './AddPluginButton';
+import { ReportPluginDialog } from './ReportPluginDialog';
+import { useDiskInstall } from './useDiskInstall';
+import { openContextMenu } from '@stores/contextMenuStore';
+import styles from './PluginsPanel.module.css';
+
+/**
+ * One page of registry results.
+ *
+ * Fixed, and the same on both surfaces this list appears on. A per-surface page
+ * size would mean the sidebar and the dashboard disagree about which plugins
+ * are "on page 2", and the only thing a reader could do with that is be wrong
+ * about where they saw something.
+ */
+const PAGE_SIZE = 20;
+
+/**
+ * One row's worth of truth, whatever the plugin's origin.
+ *
+ * `installed` and `registry` are both optional and at least one is always set:
+ * a plugin can be on this machine only (folder install), in the registry only
+ * (not installed yet), or both.
+ */
+interface Row {
+  id: string;
+  name: string;
+  description: string;
+  publisher: string;
+  verified: boolean;
+  iconUrl: string | null;
+  installs: number | null;
+  version: string;
+  installed: boolean;
+  enabled: boolean;
+  status: string;
+  hasUpdate: boolean;
+  /** Present when the registry knows it — the only way to install or update. */
+  registry: RegistryPlugin | null;
+}
+
+export function PluginsList({
+  /**
+   * Icon-only chrome for the add control. Set by the dock panel, where the
+   * column is 280px wide; the dashboard has room for the label and is the page
+   * a user goes to when they are looking for how to add one.
+   */
+  compactActions = false,
+}: {
+  compactActions?: boolean;
+} = {}): JSX.Element {
+  // Re-render when a plugin starts, stops or crashes: the row shows status.
+  useSyncExternalStore((cb) => pluginHost.subscribe(cb), () => pluginHost.getRevision());
+
+  const installedPlugins = usePluginStore((s) => s.plugins);
+  // Drop a `.zip` anywhere on the list. This is what the retired manager
+  // modal's drop zone became: the same gesture, on the surface a user is
+  // already looking at, instead of behind a menu.
+  const { takeFile, sheet } = useDiskInstall();
+  const [dragging, setDragging] = useState(false);
+  const [query, setQuery] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [registryItems, setRegistryItems] = useState<RegistryPlugin[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [registryAvailable, setRegistryAvailable] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [updates, setUpdates] = useState<RegistryUpdate[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    setRegistryItems(null);
+    setFailed(false);
+    // Debounced — a request per keystroke against an endpoint whose search has
+    // no index behind it.
+    const timer = setTimeout(() => {
+      void browseRegistry({ q: query, limit: PAGE_SIZE, offset })
+        .then((r) => {
+          if (!alive) return;
+          setRegistryAvailable(r.available);
+          setRegistryItems(r.available ? r.items : []);
+          setTotal(r.available ? r.total : 0);
+        })
+        .catch(() => { if (alive) { setFailed(true); setRegistryItems([]); setTotal(0); } });
+    }, 250);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [query, offset]);
+
+  // A plugin withdrawn between two requests can leave `offset` past the end of
+  // a list that shrank. Without this the user sits on a page that renders
+  // nothing, with a pager insisting the page exists.
+  useEffect(() => {
+    if (total > 0 && offset >= total) setOffset(0);
+  }, [total, offset]);
+
+  const installedKey = installedPlugins
+    .map((p) => `${p.manifest.id}@${p.manifest.version}`)
+    .join(',');
+
+  useEffect(() => {
+    let alive = true;
+    // Read from the store rather than closing over `installedPlugins`, so the
+    // effect can depend on `installedKey` alone. The store replaces its array
+    // on every unrelated change, so depending on the array itself would re-run
+    // this — a network call — on things like a plugin merely starting up.
+    const installed = usePluginStore.getState().plugins
+      .map((p) => ({ id: p.manifest.id, version: p.manifest.version }));
+    void checkForUpdates(installed)
+      .then((found) => { if (alive) setUpdates(found); })
+      .catch(() => { /* an update check that fails costs a badge, not a session */ });
+    return () => { alive = false; };
+  }, [installedKey]);
+
+  const rows = useMemo<Row[]>(() => {
+    const byId = new Map<string, Row>();
+
+    /*
+      Installed plugins ride along with the FIRST page only.
+      They are not part of the registry's paged stream — they are a fact about
+      this machine — so repeating them on every page would show the same plugin
+      eight times in a list whose whole job is to be a list of distinct
+      plugins. Page one is where they belong: it is the page a user lands on,
+      and the one they return to. A plugin that is both installed and in the
+      registry's page 3 still appears there, once, marked installed.
+    */
+    const localRows = offset === 0 ? installedPlugins : [];
+
+    // Installed first, so a locally-installed plugin always has a row even when
+    // the registry has never heard of it.
+    for (const entry of localRows) {
+      const info = pluginHost.info(entry.manifest.id);
+      byId.set(entry.manifest.id, {
+        id: entry.manifest.id,
+        name: entry.manifest.name,
+        description: entry.manifest.description,
+        publisher: entry.manifest.author ?? '',
+        verified: false,
+        iconUrl: null,
+        installs: null,
+        version: entry.manifest.version,
+        installed: true,
+        enabled: entry.enabled,
+        status: info.status,
+        hasUpdate: false,
+        registry: null,
+      });
+    }
+
+    // Then the registry, filling in what only it knows: publisher identity,
+    // install count, icon, and the key an install has to verify against.
+    for (const item of registryItems ?? []) {
+      // From the STORE, not from `byId` — on any page after the first there is
+      // no local row to merge with, and reading install state off the map would
+      // report every plugin on page 2 as not installed while its Install button
+      // sat next to a copy the user already has.
+      const local = installedPlugins.find((p) => p.manifest.id === item.id);
+      const info = local ? pluginHost.info(item.id) : null;
+      byId.set(item.id, {
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        publisher: item.publisher.displayName || item.publisher.namespace,
+        verified: item.publisher.verified,
+        iconUrl: item.iconUrl,
+        installs: item.installs,
+        version: local?.manifest.version ?? item.latestVersion,
+        installed: !!local,
+        enabled: local?.enabled ?? false,
+        status: info?.status ?? 'stopped',
+        hasUpdate: local ? local.manifest.version !== item.latestVersion : false,
+        registry: item,
+      });
+    }
+
+    // A locally-installed plugin is filtered CLIENT-SIDE; the registry already
+    // applied the query to its own results.
+    const q = query.trim().toLowerCase();
+    const all = [...byId.values()].filter((r) =>
+      !q || r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q)
+      || r.id.toLowerCase().includes(q),
+    );
+
+    return all
+      .map((r) => ({ ...r, hasUpdate: r.hasUpdate || updates.some((u) => u.id === r.id && !u.blocked) }))
+      .sort((a, b) => {
+        // Installed first — they are the ones the user acts on most — then by
+        // reach, then by name so the order never reshuffles between renders.
+        if (a.installed !== b.installed) return a.installed ? -1 : 1;
+        if ((b.installs ?? -1) !== (a.installs ?? -1)) return (b.installs ?? -1) - (a.installs ?? -1);
+        return a.name.localeCompare(b.name);
+      });
+  }, [installedPlugins, registryItems, query, updates, offset]);
+
+  const loading = registryItems === null;
+
+  return (
+    <div
+      className={cn(styles.root, dragging && styles.rootDropping)}
+      onDragOver={(e) => {
+        // Only claim the drop when the drag actually carries files. Without
+        // this, dragging a layer across the panel would light it up as if it
+        // were about to install something.
+        if (!e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
+      onDrop={async (e) => {
+        if (!e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        setDragging(false);
+        const file = e.dataTransfer.files[0];
+        if (file) await takeFile(file);
+      }}
+    >
+      {dragging && (
+        <div className={styles.dropHint} aria-hidden="true">
+          <Icon name="upload" size={18} />
+          <span>Drop a .zip or .mplugin package to install</span>
+        </div>
+      )}
+
+      <div className={styles.searchRow}>
+        <input
+          className={styles.search}
+          type="search"
+          placeholder="Search plugins"
+          aria-label="Search plugins"
+          value={query}
+          // Back to page one on every edit. Staying on page 4 of the previous
+          // search would show a page of a list that no longer exists.
+          onChange={(e) => { setQuery(e.target.value); setOffset(0); }}
+        />
+        <AddPluginButton compact={compactActions} />
+      </div>
+
+      <div className={styles.list}>
+        {loading && <SkeletonRows />}
+
+        {!loading && rows.length === 0 && (
+          <EmptyState query={query} registryAvailable={registryAvailable} failed={failed} />
+        )}
+
+        {!loading && rows.map((row) => <PluginRow key={row.id} row={row} />)}
+
+        {/* Said at the FOOT of the results, not instead of them: a self-hosted
+            user still has their installed plugins listed above, and telling
+            them "nothing published yet" would be both false and unactionable. */}
+        {!loading && !registryAvailable && rows.length > 0 && (
+          <p className={styles.listNote}>
+            Only your installed plugins are shown — the registry isn&rsquo;t available in this
+            edition.
+          </p>
+        )}
+      </div>
+
+      {/*
+        Outside the scrolling list, not at the bottom of it.
+        A pager that scrolls away is a pager nobody finds: the reader reaches
+        the last row, sees no control, and concludes that is every plugin there
+        is. Rendering it as a fixed foot of the panel is the whole reason paging
+        is honest here rather than a silent cap.
+
+        `Pagination` returns null at total 0, so the local edition — which has
+        no registry and therefore no pages — gets no empty control.
+      */}
+      {registryAvailable && (
+        <div className={styles.pagerRow}>
+          <Pagination
+            total={total}
+            limit={PAGE_SIZE}
+            offset={offset}
+            busy={loading}
+            itemLabel="plugin"
+            // Fixed at PAGE_SIZE. A rows-per-page select is a third control in
+            // a 280px column, and it buys a reader nothing they cannot get by
+            // pressing Next.
+            showPageSizes={false}
+            onChange={(p) => setOffset(p.offset)}
+          />
+        </div>
+      )}
+
+      {sheet}
+    </div>
+  );
+}
+
+function PluginRow({ row }: { row: Row }): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const icon = registryMediaUrl(row.iconUrl);
+
+  const install = async (e: React.MouseEvent): Promise<void> => {
+    e.stopPropagation();
+    if (!row.registry) return;
+    setBusy(true);
+    try {
+      await installFromRegistry(row.id, row.registry.latestVersion, row.registry.publisherKey);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Enter opens a PINNED tab and switches to it; a single click previews. Both
+  // land on the same detail view — the difference is only whether the tab
+  // survives the next thing the user clicks.
+  const open = (preview: boolean): void => { openPluginTab(row.id, row.name, { preview }); };
+
+  /*
+    Reporting lives in the row's context menu rather than as a fourth button.
+
+    This column is 280px wide and already carries Install/Update, Enable/Disable
+    and a status pill. A visible Report button would crowd the two actions
+    people use constantly in order to surface one they will use twice a year —
+    and a row that cannot fit its primary action is a worse trade than a
+    secondary action costing a right-click. The detail tab, which has room,
+    shows it outright.
+  */
+  const openRowMenu = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu(e.clientX, e.clientY, [
+      { id: 'open', label: 'Open', onSelect: () => open(false) },
+      ...(row.installed
+        ? [{
+            id: 'toggle',
+            label: row.enabled ? 'Disable' : 'Enable',
+            onSelect: () => pluginHost.setEnabled(row.id, !row.enabled),
+          }]
+        : []),
+      { id: 'sep', separator: true },
+      { id: 'report', label: 'Report…', danger: true, onSelect: () => setReporting(true) },
+    ]);
+  };
+
+  return (
+    <div
+      className={styles.row}
+      role="button"
+      tabIndex={0}
+      title={row.description}
+      onClick={() => open(true)}
+      onDoubleClick={() => open(false)}
+      onContextMenu={openRowMenu}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(false); }
+      }}
+    >
+      <span className={styles.rowIcon}>
+        {icon ? <img src={icon} alt="" /> : <Icon name="plugin" size={14} />}
+      </span>
+
+      <span className={styles.rowBody}>
+        <span className={styles.rowTop}>
+          <span className={styles.rowName}>{row.name}</span>
+          {row.publisher && <span className={styles.rowPublisher}>{row.publisher}</span>}
+          {row.verified && (
+            <span className={styles.rowVerified} title="Verified publisher">
+              <Icon name="success" size={10} />
+            </span>
+          )}
+        </span>
+
+        <span className={styles.rowDesc}>{row.description}</span>
+
+        <span className={styles.rowMeta}>
+          {/* Reach, when the registry knows it. A locally-installed plugin has
+              no install count and showing "0" would be a claim, not a blank. */}
+          {row.installs !== null && <span>{formatInstalls(row.installs)} installs</span>}
+          <span>{row.version}</span>
+          {row.installed && <InstalledPill row={row} />}
+          {row.installed && <PanelLocationNote pluginId={row.id} />}
+        </span>
+      </span>
+
+      <span className={styles.rowActions}>
+        {row.hasUpdate && row.registry && (
+          <button
+            type="button"
+            className={cn(styles.mini, styles.miniPrimary)}
+            disabled={busy}
+            onClick={(e) => void install(e)}
+          >
+            {busy ? '…' : 'Update'}
+          </button>
+        )}
+        {!row.installed && row.registry && (
+          <button
+            type="button"
+            className={cn(styles.mini, styles.miniPrimary)}
+            disabled={busy}
+            onClick={(e) => void install(e)}
+          >
+            {busy ? '…' : 'Install'}
+          </button>
+        )}
+        {row.installed && (
+          <button
+            type="button"
+            className={styles.mini}
+            title={row.enabled ? 'Disable this plugin' : 'Enable this plugin'}
+            onClick={(e) => {
+              e.stopPropagation();
+              pluginHost.setEnabled(row.id, !row.enabled);
+            }}
+          >
+            {row.enabled ? 'Disable' : 'Enable'}
+          </button>
+        )}
+      </span>
+
+      <ReportPluginDialog
+        pluginId={row.id}
+        pluginName={row.name}
+        // Only when this machine actually has it. A version taken from the
+        // registry row would open a case against the newest build rather than
+        // the one the reporter is looking at.
+        {...(row.installed ? { version: row.version } : {})}
+        open={reporting}
+        onClose={() => setReporting(false)}
+      />
+    </div>
+  );
+}
+
+/**
+ * Whether this machine has it, and what it is doing.
+ *
+ * The fact a tab used to encode, said in the row instead. It has to be legible
+ * at a glance and never contradict the button beside it — "Disabled" next to a
+ * control reading "Enable" is consistent; next to one reading "Enabled" it is a
+ * contradiction the user cannot resolve.
+ */
+function InstalledPill({ row }: { row: Row }): JSX.Element {
+  const [label, cls] =
+    !row.enabled ? ['Disabled', styles.statusStopped]
+    : row.status === 'running' ? ['Running', styles.statusRunning]
+    : row.status === 'starting' ? ['Starting…', styles.statusStarting]
+    : row.status === 'error' ? ['Error', styles.statusError]
+    : row.status === 'inactive' ? ['Installed', styles.statusInactive]
+    : ['Not running', styles.statusStopped];
+
+  return (
+    <span className={cn(styles.status, cls)}>
+      <span className={styles.dot} />
+      {label}
+    </span>
+  );
+}
+
+/**
+ * Where this plugin's UI ended up.
+ *
+ * The row is the only honest place for this. A plugin that asked for its own
+ * sidebar tab and did not get one (the rail hands out a fixed number of slots —
+ * see `pluginPanelDefs.ts`) still works and still opens; it just opens somewhere
+ * else. Saying nothing would leave the author's screenshot and the user's editor
+ * disagreeing, with no way to find out why. This is also the row that explains
+ * where to go looking after an install, which is the question every plugin that
+ * ships UI raises and none of them can answer for themselves.
+ */
+function PanelLocationNote({ pluginId }: { pluginId: string }): JSX.Element | null {
+  const placements = panelPlacements().filter((p) => p.pluginId === pluginId);
+  if (placements.length === 0) return null;
+
+  const demoted = placements.find((p) => p.demoted);
+  if (demoted) {
+    const where = demoted.requested === 'sidebar' ? 'Sidebar' : 'Inspector';
+    return (
+      <span title={`This plugin asked for its own ${where.toLowerCase()} tab. Disable a plugin that has one to free a slot.`}>
+        {where} full — in Plugin Panels
+      </span>
+    );
+  }
+
+  const granted = placements[0]!.granted;
+  if (granted === 'sidebar') return <span>Own tab, left sidebar</span>;
+  if (granted === 'inspector') return <span>Own tab, right inspector</span>;
+  return <span>In Plugin Panels</span>;
+}
+
+/** 12345 → "12.3k". A six-figure number in a 28px row is just noise. */
+function formatInstalls(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+function EmptyState({
+  query, registryAvailable, failed,
+}: {
+  query: string;
+  registryAvailable: boolean;
+  failed: boolean;
+}): JSX.Element {
+  if (failed) {
+    return (
+      <div className={styles.state}>
+        <span className={styles.stateTitle}>Couldn&rsquo;t reach the registry.</span>
+        <span>Your installed plugins are still available. Check your connection.</span>
+      </div>
+    );
+  }
+  if (!registryAvailable) {
+    return (
+      <div className={styles.state}>
+        <span className={styles.stateTitle}>The plugin registry isn&rsquo;t available in this edition.</span>
+        <span>You can still install plugins from a folder or a .zip package.</span>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.state}>
+      <span className={styles.stateTitle}>
+        {query.trim() ? `No plugins match “${query.trim()}”.` : 'No plugins yet.'}
+      </span>
+      <span>{query.trim() ? 'Try a broader search.' : 'Published plugins will appear here.'}</span>
+    </div>
+  );
+}
+
+function SkeletonRows(): JSX.Element {
+  return (
+    <div aria-busy="true" aria-label="Loading plugins">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div key={i} className={styles.skelRow}>
+          <span className={styles.skelIcon} />
+          <span className={styles.skelText} />
+        </div>
+      ))}
+    </div>
+  );
+}

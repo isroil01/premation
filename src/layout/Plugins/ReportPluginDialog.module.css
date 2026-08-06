@@ -1,0 +1,186 @@
+/*
+ * The report dialog's styles.
+ *
+ * Borrows the button shapes from `ConsentSheet.module.css` deliberately — these
+ * two are the pair of dialogs in this flow that ask a user to commit to
+ * something about a plugin, and a report that looked like a different product
+ * from the consent screen would read as less official than it is.
+ *
+ * Every value is a token. See the editor token mirror note: hardcoding a colour
+ * here means it stops following the theme the day someone changes one.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 380px;
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.lede {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-danger, var(--color-border));
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-danger, var(--color-text-primary));
+}
+
+/* ── Categories ─────────────────────────────────────────────────────────── */
+
+.categories {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/*
+ * The whole row is the target, not just the radio.
+ *
+ * A 12px radio is a hard thing to hit while irritated, which is the state
+ * everyone reaching this dialog is in.
+ */
+.category {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.category:hover {
+  background: var(--color-surface-2);
+}
+
+.category[data-selected] {
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
+}
+
+.category input {
+  margin-top: 2px;
+  flex: none;
+  accent-color: var(--color-primary);
+}
+
+.categoryText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.categoryLabel {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.categoryHint {
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+/* ── Message ────────────────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fieldLabel {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.textarea {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+/* ── Actions ────────────────────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+
+.primary,
+.secondary {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: 1px solid transparent;
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.secondary {
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.secondary:hover {
+  color: var(--color-text-primary);
+}
+
+.secondary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
