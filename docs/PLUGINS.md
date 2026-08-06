@@ -736,3 +736,121 @@ fixture signed by the real operator private key, and the server's
 `revocation.service.spec.ts` verifies its own output with the client's exact
 primitives (`spki` import, 64-byte IEEE P1363). Rotate the key and both must be
 regenerated — the tests failing is the intended way to find out.
+
+---
+
+## 11. Trust and safety
+
+Signing says *who*. Permissions say *what*. Neither says whether the author
+meant well, and no amount of cryptography will — a correctly signed package
+from a verified publisher, asking only for permissions it genuinely uses, can
+still do something nobody consented to. Everything in this section exists
+because that gap is real and is not closable by better cryptography.
+
+### Reporting a plugin
+
+Anyone can report one, from the plugin's detail tab or from the row's context
+menu in the Plugins panel. Five categories — malicious behaviour, impersonation,
+broken or abandoned, inappropriate content, license violation — plus an optional
+message.
+
+**No account is required.** The endpoint takes an identity when the caller has
+one and refuses nobody, because the moment worth reporting is often *before*
+installing: the person best placed to notice a listing impersonating another
+plugin has not signed up, and a dialog demanding an account first would simply
+lose the report.
+
+**The publisher is never told who reported them.** Both halves matter and they
+pull in opposite directions: a report we cannot attribute is one we cannot meter
+or weigh, so the reporter is recorded server-side; a reporter the accused can
+identify gets retaliated against and stops reporting, so nothing publisher-facing
+or reviewer-facing carries it. Addresses are stored as a salted HMAC, never raw —
+the IPv4 space is small enough to enumerate, so an unsalted digest of an address
+is a lookup table, not a one-way function.
+
+**Reports collapse into cases.** A plugin that starts misbehaving gets reported
+by forty people in an hour, all about the same version, all correct. Forty rows
+in an inbox is forty decisions about one artefact, and a reviewer makes most of
+them badly out of fatigue. So reports attach to a case keyed on (plugin,
+version), and the count becomes signal — forty people noticed — rather than
+volume to wade through.
+
+**A dismissed case reopens when someone reports it again.** Without that, one
+dismissal is permanent immunity: every later report lands on a closed case
+nobody looks at, and the reviewer who was wrong in week one never finds out in
+week six. A plugin that turns malicious *after* review is exactly what the queue
+is for.
+
+### Publish-time scanning
+
+Automated, advisory, and fast. It gates **review**, not publication.
+
+The package is scanned after the signature verifies and the manifest parses,
+never before — the same order the client uses on install, and for the same
+reason: unverified bytes must not reach a parser. Checks cover obfuscation
+heuristics, very long single lines, base64 blobs that *decode to code*, computed
+dynamic `import()`, `eval` and the `Function` constructor, decode-then-execute
+pairs, and panel-bridge use by a package that declares no panel.
+
+The highest-signal check is **permission/behaviour mismatch**, and it is
+interesting in both directions. A package asking for `scene:write` that never
+writes is either a copy-pasted manifest or someone establishing a permission to
+use later, after the reviews stop — either way the consent screen overstates
+what the code does, and a consent screen that overstates is one users learn to
+click through. A package calling a method it never asked for will be refused at
+runtime, so it is untested code or a build against a different manifest.
+
+Results attach to the version as a risk score plus findings. Above the
+threshold the version is stored but **not live**: it is not downloadable, it
+does not become `latestVersion`, and the plugin does not appear in browse if it
+has no approved version. Below it, the version publishes immediately — which is
+almost everything.
+
+> **The scanner is not the security boundary. The sandbox is.** Every check is a
+> pattern match over source a hostile author controls completely, and every one
+> can be evaded by someone who reads the source — which is public. If the
+> platform's safety ever depends on a finding here, the platform is not safe.
+> Findings are prompts for a person, never verdicts.
+
+### The reviewer queue
+
+Admin-only, at `/admin/plugins/review`. Held versions and open cases on one
+page, ordered by signal strength rather than age — a queue sorted oldest-first
+puts a low-risk package from Tuesday above eleven reports of data theft that
+arrived this morning, which is the ordering that gets a queue abandoned.
+
+Per-case actions: approve, request changes (with a note the publisher reads),
+block the version, block the plugin, suspend the publisher. Every one requires
+a reason, and every one is recorded in the shared audit log with actor,
+timestamp and reason.
+
+**The reason is the product.** For a block it is written to `blockedReason`,
+signed into the revocation list, and shown to the user when their copy stops
+mid-session. The sentence an operator types in the console is the sentence a
+stranger reads when their work is interrupted — which is why a minimum length is
+enforced. "No" is indistinguishable from a bug, and the user's next move is to
+reinstall the thing that was just taken away from them.
+
+**Blocking writes the revocation list directly.** There is no separate "publish
+the revocation" step: `RevocationService` derives its signed list from the same
+`blocked` column the block sets. A kill switch with a manual second stage is one
+that gets left half-pulled.
+
+Two deliberate separations:
+
+- **Blocking a version ≠ blocking a plugin.** One build being bad does not mean
+  users on the previous version should lose it.
+- **Suspending a publisher leaves their plugins up.** Taking down everything an
+  author ever shipped punishes every user of every one of their plugins for
+  something the author did. Block the ones that need blocking, explicitly, so
+  the audit log shows each was a decision rather than a side effect.
+
+### What a publisher sees
+
+Their own shelf carries the review state of any version of theirs that is not
+live, with the reviewer's note — so a held version is never an unexplained
+silence they have to email someone about.
+
+They do **not** see the risk score or the findings. The score is an internal
+triage number that reads as a rating, and the findings are a list of the exact
+patterns the scanner looks for, which is the evasion guide.
