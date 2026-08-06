@@ -223,7 +223,7 @@
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   cursor: pointer;
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard),

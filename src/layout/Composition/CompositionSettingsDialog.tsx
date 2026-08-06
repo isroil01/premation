@@ -97,7 +97,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'general' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('general')}
         >
-          <Icon name="sliders-h" size={13} />
+          <Icon name="sliders-h" size="sm" />
           General
         </button>
         <button
@@ -107,7 +107,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'background' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('background')}
         >
-          <Icon name="brush" size={13} />
+          <Icon name="brush" size="sm" />
           Background
         </button>
         <button
@@ -117,7 +117,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'grid' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('grid')}
         >
-          <Icon name="grid" size={13} />
+          <Icon name="grid" size="sm" />
           Grid & Guides
         </button>
         <button
@@ -127,7 +127,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'time' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('time')}
         >
-          <Icon name="keyframe" size={13} />
+          <Icon name="keyframe" size="sm" />
           Time
         </button>
       </div>
@@ -271,7 +271,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
 
                 {bgPaint.type !== 'solid' && (
                   <div className={styles.stopsContainer}>
-                    <span className={styles.colorCardLabel} style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Gradient Stops</span>
+                    <span className={styles.colorCardLabel} style={{ fontSize: 'var(--font-size-micro)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Gradient Stops</span>
                     {sortedStops(bgPaint.stops).map((stop) => (
                       <div key={stop.id} className={styles.stopRow}>
                         <ColorPicker
@@ -297,14 +297,14 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                           onClick={() => removeStop(stop.id)}
                           style={{ height: 24, width: 24, padding: 0, display: 'grid', placeItems: 'center' }}
                         >
-                          <Icon name="trash" size={12} />
+                          <Icon name="trash" size="sm" />
                         </button>
                       </div>
                     ))}
                     <Button
                       variant="ghost"
                       size="sm"
-                      leftIcon={<Icon name="plus" size={12} />}
+                      leftIcon={<Icon name="plus" size="sm" />}
                       onClick={addStop}
                       style={{ alignSelf: 'flex-start', marginTop: 2 }}
                     >
@@ -429,7 +429,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         <Button variant="secondary" size="sm" onClick={close}>
           Cancel
         </Button>
-        <Button variant="primary" size="sm" leftIcon={<Icon name="check" size={14} />} onClick={close}>
+        <Button variant="primary" size="sm" leftIcon={<Icon name="check" size="md" />} onClick={close}>
           Done
         </Button>
       </div>

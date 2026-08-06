@@ -235,7 +235,7 @@ export function AiSettingsSection(): JSX.Element {
               >
                 <div className={styles.rowInfo}>
                   <span className={styles.rowLabel}>
-                    <Icon name={s.present ? 'lock' : 'keyframe'} size={14} className={s.present ? styles.lockIconSecure : styles.lockIconInactive} />
+                    <Icon name={s.present ? 'lock' : 'keyframe'} size="md" className={s.present ? styles.lockIconSecure : styles.lockIconInactive} />
                     {p.label}
                   </span>
                   {s.present ? (

@@ -37,12 +37,12 @@ export function FocusBreadcrumb(): JSX.Element | null {
 
   return (
     <div className={styles.bar} role="navigation" aria-label="Focus location">
-      <Icon name="crosshair" size={12} className={styles.focusIcon} />
+      <Icon name="crosshair" size="sm" className={styles.focusIcon} />
       {crumbs.map((c, i) => {
         const last = i === crumbs.length - 1;
         return (
           <span key={`${c.index}_${c.label}`} className={styles.crumbWrap}>
-            {i > 0 ? <Icon name="chevron-right" size={12} className={styles.sep} /> : null}
+            {i > 0 ? <Icon name="chevron-right" size="sm" className={styles.sep} /> : null}
             <button
               type="button"
               className={cn(styles.crumb, last && styles.crumbCurrent)}
@@ -55,7 +55,7 @@ export function FocusBreadcrumb(): JSX.Element | null {
         );
       })}
       <button type="button" className={styles.exit} onClick={() => exitOne()} title="Step up (Esc)">
-        <Icon name="close" size={12} />
+        <Icon name="close" size="sm" />
       </button>
     </div>
   );

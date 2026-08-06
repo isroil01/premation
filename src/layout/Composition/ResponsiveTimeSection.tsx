@@ -93,7 +93,7 @@ export function ResponsiveTimeSection(): JSX.Element {
           absorbs the change, so one lower-third works at any length.
         </p>
         <button type="button" className={styles.segmentBtn} onClick={enable}>
-          <Icon name="plus" size={12} /> Mark a protected region
+          <Icon name="plus" size="sm" /> Mark a protected region
         </button>
       </div>
     );
@@ -159,7 +159,7 @@ export function ResponsiveTimeSection(): JSX.Element {
             onClick={() => removeRegion(i)}
             aria-label={`Remove protected region ${i + 1}`}
           >
-            <Icon name="trash" size={12} />
+            <Icon name="trash" size="sm" />
           </button>
         </div>
       ))}
@@ -171,7 +171,7 @@ export function ResponsiveTimeSection(): JSX.Element {
         disabled={noRoom}
         title={noRoom ? 'No unprotected gap large enough for another region' : undefined}
       >
-        <Icon name="plus" size={12} /> Add region
+        <Icon name="plus" size="sm" /> Add region
       </button>
     </div>
   );

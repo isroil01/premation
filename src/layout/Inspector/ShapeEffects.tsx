@@ -79,7 +79,7 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
           placement="left-start"
           trigger={
             <button type="button" className={styles.add} aria-label="Add shape effect">
-              <Icon name="plus" size={12} />
+              <Icon name="plus" size="sm" />
               <span>Add</span>
             </button>
           }

@@ -530,7 +530,7 @@ export function TopNav(): JSX.Element {
               className={styles.back}
               onClick={() => navigate('/')}
             >
-              <Icon name="arrow-left" size={18} />
+              <Icon name="arrow-left" size="md" />
             </IconButton>
           )}
 
@@ -548,8 +548,8 @@ export function TopNav(): JSX.Element {
                   className={isPointerActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${pointerDropdownTool.label}${pointerDropdownTool.shortcut ? ` (${pointerDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={pointerDropdownTool.icon} size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name={pointerDropdownTool.icon} size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={POINTER_TOOLS.map((t) => ({
@@ -570,8 +570,8 @@ export function TopNav(): JSX.Element {
                   className={isPenActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${penDropdownTool.label}${penDropdownTool.shortcut ? ` (${penDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={penDropdownTool.icon} size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name={penDropdownTool.icon} size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={PEN_TOOLS.map((t) => ({
@@ -590,7 +590,7 @@ export function TopNav(): JSX.Element {
               title={`${TEXT_TOOL.label} (${TEXT_TOOL.shortcut})`}
               onClick={() => setTool(TEXT_TOOL.id)}
             >
-              <Icon name={TEXT_TOOL.icon} size={18} />
+              <Icon name={TEXT_TOOL.icon} size="md" />
             </button>
 
             {/* Shape Tools Dropdown */}
@@ -602,8 +602,8 @@ export function TopNav(): JSX.Element {
                   className={isShapeActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${shapeDropdownTool.label}${shapeDropdownTool.shortcut ? ` (${shapeDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={shapeDropdownTool.icon} size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name={shapeDropdownTool.icon} size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={SHAPE_TOOLS.map((t) => ({
@@ -631,7 +631,7 @@ export function TopNav(): JSX.Element {
                       title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
                       onClick={() => setTool(tool.id)}
                     >
-                      <Icon name={tool.icon} size={18} />
+                      <Icon name={tool.icon} size="md" />
                     </button>
                   );
                 })}
@@ -645,7 +645,7 @@ export function TopNav(): JSX.Element {
                       disabled={!canRig}
                       onClick={() => setTool(PUPPET_TOOL.id)}
                     >
-                      <Icon name={PUPPET_TOOL.icon} size={18} />
+                      <Icon name={PUPPET_TOOL.icon} size="md" />
                     </button>
                     <button
                       type="button"
@@ -654,7 +654,7 @@ export function TopNav(): JSX.Element {
                       disabled={!canRig}
                       onClick={() => setTool(BONE_TOOL.id)}
                     >
-                      <Icon name={BONE_TOOL.icon} size={18} />
+                      <Icon name={BONE_TOOL.icon} size="md" />
                     </button>
                   </>
                 )}
@@ -670,8 +670,8 @@ export function TopNav(): JSX.Element {
               placement="bottom-start"
               trigger={
                 <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New layer…">
-                  <Icon name="plus" size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name="plus" size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={[
@@ -731,8 +731,8 @@ export function TopNav(): JSX.Element {
                     title={selectedId ? 'Animate the selected layer…' : 'Select a layer to animate'}
                     disabled={!selectedId}
                   >
-                    <Icon name="keyframe" size={18} />
-                    <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                    <Icon name="keyframe" size="md" />
+                    <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                   </button>
                 }
                 items={buildAnimateItems(selectedIds, isTextLayer, playhead)}
@@ -753,7 +753,7 @@ export function TopNav(): JSX.Element {
                   title={snap ? 'Snapping ON — click to disable' : 'Snapping OFF — click to enable'}
                   onClick={toggleSnap}
                 >
-                  <Icon name="magnet" size={18} />
+                  <Icon name="magnet" size="md" />
                 </button>
               </div>
             </>
@@ -778,7 +778,7 @@ export function TopNav(): JSX.Element {
                   placement="bottom-end"
                   trigger={
                     <button type="button" className={styles.tool} aria-label="More tools" title="More tools">
-                      <Icon name="more-horizontal" size={18} />
+                      <Icon name="more-horizontal" size="md" />
                     </button>
                   }
                   items={overflowItems}
@@ -800,7 +800,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canUndo}
                   onClick={() => performUndo()}
                 >
-                  <Icon name="undo" size={18} />
+                  <Icon name="undo" size="md" />
                 </button>
                 <button
                   type="button"
@@ -810,7 +810,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canRedo}
                   onClick={() => performRedo()}
                 >
-                  <Icon name="redo" size={18} />
+                  <Icon name="redo" size="md" />
                 </button>
               </div>
             </>
@@ -830,8 +830,8 @@ export function TopNav(): JSX.Element {
                       aria-label="Workspaces"
                       title="Workspaces & Layout Presets"
                     >
-                      <Icon name="layout" size={18} />
-                      <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                      <Icon name="layout" size="md" />
+                      <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                     </button>
                   }
                   items={buildWorkspaceItems()}
@@ -843,7 +843,7 @@ export function TopNav(): JSX.Element {
                   title="Customize (Shortcuts, Workspaces, Appearance)"
                   onClick={() => openCustomizeDialog()}
                 >
-                  <Icon name="settings" size={18} />
+                  <Icon name="settings" size="md" />
                 </button>
               </div>
             </>
@@ -859,7 +859,7 @@ export function TopNav(): JSX.Element {
                   title="Preview presentation (Fullscreen)"
                   onClick={() => enterPresentation()}
                 >
-                  <Icon name="play" size={13} weight="fill" />
+                  <Icon name="play" size="sm" weight="fill" />
                   <span>Preview</span>
                 </button>
                 <button
@@ -868,7 +868,7 @@ export function TopNav(): JSX.Element {
                   title="Export composition…"
                   onClick={() => openExportDialog(compDuration, compFps)}
                 >
-                  <Icon name="export" size={13} weight="bold" />
+                  <Icon name="export" size="sm" weight="bold" />
                   <span>Export</span>
                 </button>
               </div>

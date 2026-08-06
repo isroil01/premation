@@ -8,7 +8,7 @@
   min-height: 0;
   background: var(--color-panel);
   color: var(--color-text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 /* ── Header ─────────────────────────────────────────────────────── */
@@ -28,7 +28,7 @@
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   letter-spacing: 0.02em;
 }
 
@@ -96,7 +96,7 @@
 .historyTime {
   flex: 0 0 auto;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 /* ── Thread ─────────────────────────────────────────────────────── */
@@ -210,7 +210,7 @@
   background: var(--color-surface-2);
   padding: 1px 4px;
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .errorMsg {
@@ -235,7 +235,7 @@
 }
 
 .planTitle {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -323,7 +323,7 @@
 }
 
 .previewHeader {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -351,7 +351,7 @@
   justify-content: center;
   height: 100%;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .previewPlay {
@@ -376,7 +376,7 @@
 
 .previewChanges {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .previewActions {
@@ -394,7 +394,7 @@
   padding: 6px 0;
   border-radius: var(--radius-control);
   border: 1px solid transparent;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   cursor: pointer;
 }
@@ -486,7 +486,7 @@
   background: transparent;
   color: #ffffff;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.5;
   padding: 0;
   outline: none;
@@ -544,7 +544,7 @@
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #e2e8f0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
   transition: var(--motion-hover-transition);
@@ -621,7 +621,7 @@
 }
 
 .popoverHeader {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -639,7 +639,7 @@
 }
 
 .groupLabel {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
   color: #94a3b8;
   padding: 2px 8px;
@@ -706,7 +706,7 @@
 }
 
 .optionSub {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: #64748b;
   margin-top: 1px;
 }
@@ -728,7 +728,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   color: #94a3b8;
   cursor: pointer;
@@ -789,7 +789,7 @@
 }
 
 .presetTitle {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -823,12 +823,12 @@
 
 .presetChipName {
   font-weight: 600;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-accent);
 }
 
 .presetChipDesc {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--color-text-muted);
 }
 
@@ -851,7 +851,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   color: #94a3b8;
   cursor: pointer;
@@ -914,7 +914,7 @@
   color: var(--color-text-primary);
   text-align: left;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .directionOption:hover { background: var(--color-hover); }
@@ -924,7 +924,7 @@
 }
 
 .directionOptionIntent {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.35;
   color: var(--color-text-tertiary);
   white-space: normal;
@@ -944,7 +944,7 @@
 }
 
 .directionValue {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   min-width: 42px;
   text-align: right;

@@ -33,10 +33,10 @@ export function OnboardingOverlay({ onDone }: { onDone: () => void }): JSX.Eleme
   return createPortal(
     <div className={styles.scrim} role="dialog" aria-label="Welcome tour" aria-modal="true">
       <div className={styles.card}>
-        <div className={styles.badge}><Icon name="sparkles" size={16} /></div>
+        <div className={styles.badge}><Icon name="sparkles" size="md" /></div>
         <h2 className={styles.title}>{s.title}</h2>
         <p className={styles.body}>{s.body}</p>
-        <div className={styles.hint}><Icon name="info" size={12} /> {s.hint}</div>
+        <div className={styles.hint}><Icon name="info" size="sm" /> {s.hint}</div>
 
         <div className={styles.dots}>
           {TOUR_STEPS.map((_, i) => (

@@ -142,14 +142,14 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <button
                   type="button"
                   onClick={() => { setPoiX(undefined); setPoiY(undefined); setPoiZ(undefined); }}
-                  style={{ height: 20, padding: '0 8px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
+                  style={{ height: 20, padding: '0 8px', fontSize: 'var(--font-size-micro)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Remove target (aim by angle)
                 </button>
               </>
             ) : (
               <>
-                <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
                   Direction alone can only swing this light within the comp plane —
                   it can never aim at a layer sitting at a different depth. A target
                   aims it in real 3D.
@@ -157,7 +157,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <button
                   type="button"
                   onClick={() => { setPoiX(compWidth / 2); setPoiY(compHeight / 2); setPoiZ(0); }}
-                  style={{ height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
+                  style={{ height: 22, padding: '0 10px', fontSize: 'var(--font-size-micro)', fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Add target
                 </button>
@@ -181,7 +181,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
           </>
         )}
-        <p style={{ margin: '6px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           {type === 'ambient'
             ? 'A uniform lift brightening the whole frame (screen blend).'
             : type === 'spot'

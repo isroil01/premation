@@ -17,7 +17,7 @@ import type { NodeId, SceneGraphPort, SelectionPort } from '../ports';
 import type { HitTester } from '../hit/HitTester';
 import { Marquee, type MarqueeMode } from './Marquee';
 import type { Corners } from '../math/OrientedBox';
-import { computeHandles, type Handle } from './handles';
+import { computeHandles, orientedHandles, type Handle } from './handles';
 
 export class SelectionController {
   readonly marquee = new Marquee();
@@ -169,7 +169,23 @@ export class SelectionController {
     if (ids.length === 1) {
       const only = this.scene.getNode(ids[0]!);
       if (only?.is3D) return [];
+      // ONE layer: put the grips on its own ORIENTED box.
+      //
+      // They used to come from the axis-aligned bounds even here, so rotating a
+      // layer turned the artwork and the hairline outline (`selectionBoxes`,
+      // which has always been oriented) while the eight grips stayed in an
+      // upright rectangle around them. That upright rectangle is what reads as
+      // "the selection border did not rotate" — the outline had, but the grips
+      // are the louder shape.
+      //
+      // The tool resizes in LOCAL space to match (see `SelectTool.onDrag`), so
+      // a grip drawn on the rotated corner also drags along the layer's own
+      // axes. Moving the grips without that would be worse than leaving them:
+      // the handle would sit in one place and act in another.
+      if (only?.worldCorners) return orientedHandles(only.worldCorners);
     }
+    // A MULTI-selection has no single orientation to honour, so its grips stay
+    // on the union AABB — which is also the box the move/marquee math uses.
     return computeHandles(bounds);
   }
 

@@ -30,7 +30,7 @@
   background: transparent;
   border: none;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   letter-spacing: 0.01em;
   transition: color 0.12s;
@@ -50,7 +50,7 @@
 }
 
 .hint {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   font-style: italic;
   padding: 0 8px;
@@ -65,7 +65,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   padding: 0 6px;
   border-left: 1px solid var(--color-border-strong);

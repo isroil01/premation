@@ -32,7 +32,7 @@ import styles from './MotionEditorPanel.module.css';
 function MotionPathBlock({ nodeId }: { nodeId: string }): JSX.Element {
   return (
     <>
-      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
+      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 'var(--font-size-xs)', fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
         Motion Path &amp; Orientation
       </div>
       <MotionControls nodeId={nodeId} />
@@ -399,7 +399,7 @@ export function MotionEditorPanel(): JSX.Element {
       </svg>
 
       {/* Easing Presets (Always Visible) */}
-      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>Easing Presets</div>
+      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 'var(--font-size-xs)', fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>Easing Presets</div>
       <div className={styles.easings} role="radiogroup" aria-label="Easing">
         {EASINGS.map((e) => {
           const isActive = selectedKf && (selectedKf.easing ?? 'linear') === e.kind;
@@ -524,7 +524,7 @@ export function MotionEditorPanel(): JSX.Element {
             onClick={() => copyEase(makeKeyframeId(primary, prop, selectedKf.t))}
             title="Copy this keyframe's easing"
           >
-            <Icon name="copy" size={12} /> Copy Ease
+            <Icon name="copy" size="sm" /> Copy Ease
           </button>
           <button
             type="button"
@@ -533,7 +533,7 @@ export function MotionEditorPanel(): JSX.Element {
             onClick={() => pasteEase([makeKeyframeId(primary, prop, selectedKf.t)])}
             title={hasCopiedEase ? 'Paste the copied easing here' : 'Nothing copied yet'}
           >
-            <Icon name="download" size={12} /> Paste Ease
+            <Icon name="download" size="sm" /> Paste Ease
           </button>
         </div>
       )}

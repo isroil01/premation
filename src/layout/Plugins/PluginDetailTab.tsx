@@ -240,7 +240,7 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
         <div className={styles.icon}>
           {registryMediaUrl(detail?.iconUrl ?? null)
             ? <img src={registryMediaUrl(detail!.iconUrl)!} alt="" />
-            : <Icon name="plugin" size={24} />}
+            : <Icon name="plugin" size="lg" />}
         </div>
 
         <div className={styles.headText}>
@@ -249,7 +249,7 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
             {publisher}
             {detail?.publisher.verified && (
               <span className={styles.verified} title="Verified publisher">
-                <Icon name="success" size={12} /> Verified
+                <Icon name="success" size="sm" /> Verified
               </span>
             )}
           </span>
@@ -357,7 +357,7 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
 
       {detail?.blocked && (
         <div className={styles.blocked}>
-          <Icon name="warning" size={14} />
+          <Icon name="warning" size="md" />
           <span>
             This plugin was withdrawn from the registry
             {detail.blockedReason ? `: ${detail.blockedReason}` : '.'} An installed copy keeps
@@ -368,7 +368,7 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
 
       {info?.error && (
         <div className={styles.blocked}>
-          <Icon name="warning" size={14} />
+          <Icon name="warning" size="md" />
           <span>{info.error}</span>
           <button type="button" className={styles.linkBtn} onClick={() => pluginHost.restart(pluginId)}>
             Restart
@@ -490,13 +490,13 @@ function ContributionList({
     <ul className={styles.permList}>
       {commands.map((c) => (
         <li key={c.id} className={styles.permItem}>
-          <Icon name={(c.icon as never) ?? 'zap'} size={13} />
+          <Icon name={(c.icon as never) ?? 'zap'} size="sm" />
           <span className={styles.permText}>{c.label}</span>
         </li>
       ))}
       {panels.map((p) => (
         <li key={p.id} className={styles.permItem}>
-          <Icon name="layout" size={13} />
+          <Icon name="layout" size="sm" />
           <span className={styles.permText}>{p.title} panel</span>
         </li>
       ))}
@@ -540,7 +540,7 @@ function PermissionSection({
             const withheld = !!entry && !entry.granted.includes(p);
             return (
               <li key={p} className={cn(styles.permItem, withheld && styles.permWithheld)}>
-                <Icon name={withheld ? 'eye-off' : 'lock'} size={13} />
+                <Icon name={withheld ? 'eye-off' : 'lock'} size="sm" />
                 <span className={styles.permText}>
                   {/* The SAME strings the consent screen uses. Two descriptions
                       of one permission is worse than none: whichever the user

@@ -86,7 +86,7 @@ export function TimeControls({ nodeId }: { nodeId: string }): JSX.Element {
           trigger={
             <button type="button" className={styles.blendTrigger}>
               {FRAME_BLENDS.find((b) => b.value === time.frameBlend)?.label ?? 'Off'}
-              <Icon name="chevron-down" size={12} />
+              <Icon name="chevron-down" size="sm" />
             </button>
           }
           items={blendItems}

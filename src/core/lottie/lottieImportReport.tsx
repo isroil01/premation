@@ -28,7 +28,7 @@ function openReport(fileLabel: string, layerCount: number, warnings: readonly st
   openModal({
     title: (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Icon name="warning" size={18} style={{ color: 'var(--color-warning, #f59e0b)' }} />
+        <Icon name="warning" size="md" style={{ color: 'var(--color-warning, #f59e0b)' }} />
         <span>Import report</span>
       </div>
     ),

@@ -262,7 +262,7 @@ function PanelFrame({ pluginId, panelId }: { pluginId: string; panelId: string }
   if (blocked) {
     return (
       <div className={styles.empty}>
-        <Icon name="plugin" size={22} />
+        <Icon name="plugin" size="lg" />
         <span className={styles.emptyTitle}>{entry.manifest.name}</span>
         <p className={styles.emptyBody}>{blocked.text}</p>
         {blocked.retry && (
@@ -383,7 +383,7 @@ export function PluginsDockPanel(): JSX.Element {
     >
       {available.length === 0 ? (
         <div className={styles.empty}>
-          <Icon name="plugin" size={22} />
+          <Icon name="plugin" size="lg" />
           <span className={styles.emptyTitle}>No plugin panels here</span>
           <p className={styles.emptyBody}>
             Plugins that ship a small interface show it here. Ones that ask for a

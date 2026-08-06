@@ -43,9 +43,9 @@ export function AddPluginButton({
             title="Add a plugin from this computer"
             aria-label="Add a plugin"
           >
-            <Icon name="plus" size={13} />
+            <Icon name="plus" size="sm" />
             {!compact && <span>Add plugin</span>}
-            <Icon name="chevron-down" size={11} />
+            <Icon name="chevron-down" size="sm" />
           </button>
         }
         items={[

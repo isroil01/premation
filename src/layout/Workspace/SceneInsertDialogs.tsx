@@ -94,7 +94,7 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
 
       <div className={styles.footer}>
         <Button variant="ghost" size="md" onClick={close}>Cancel</Button>
-        <Button variant="primary" size="md" leftIcon={<Icon name="check" size={14} />} onClick={create}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={create}>
           Create camera
         </Button>
       </div>
@@ -193,7 +193,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
 
       <div className={styles.footer}>
         <Button variant="ghost" size="md" onClick={close}>Cancel</Button>
-        <Button variant="primary" size="md" leftIcon={<Icon name="check" size={14} />} onClick={create}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={create}>
           Create light
         </Button>
       </div>

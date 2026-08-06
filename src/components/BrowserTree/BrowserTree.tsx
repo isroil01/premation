@@ -83,9 +83,9 @@ export function BrowserFolder({
         onClick={() => { if (!forceOpen) setOpen((v) => !v); }}
       >
         <span className={styles.twisty} aria-hidden>
-          <Icon name={isOpen ? 'chevron-down' : 'chevron-right'} size={11} />
+          <Icon name={isOpen ? 'chevron-down' : 'chevron-right'} size="sm" />
         </span>
-        {icon ? <Icon name={icon} size={14} className={styles.folderIcon} /> : null}
+        {icon ? <Icon name={icon} size="md" className={styles.folderIcon} /> : null}
         <span className={styles.folderName}>{label}</span>
         {count !== undefined && <span className={styles.count}>{count}</span>}
       </button>
@@ -149,7 +149,7 @@ export function BrowserRow({
       onDragStart={onDragStart}
     >
       {leading ?? (fx ? <span className={styles.fx} aria-hidden>fx</span> : null)}
-      {!leading && !fx && icon ? <Icon name={icon} size={12} className={styles.rowIcon} /> : null}
+      {!leading && !fx && icon ? <Icon name={icon} size="sm" className={styles.rowIcon} /> : null}
       <span className={styles.rowLabel}>{label}</span>
       {right ? <span className={styles.rowRight}>{right}</span> : null}
     </button>

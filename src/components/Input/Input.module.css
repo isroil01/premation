@@ -26,7 +26,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-3);
-  height: 24px;
+  height: var(--control-height-md);
   padding: 0 var(--space-3);
   /* recessed style */
   background: var(--color-surface-0);
@@ -57,8 +57,8 @@
  * every one of them wants the same thing and a per-panel override is how these
  * eight fields would end up eight different heights again.
  */
-.field.size-xs { height: 18px; padding: 0 var(--space-2); font-size: var(--font-size-xs); border-radius: var(--radius-control); }
-.field.size-sm { height: 28px; padding: 0 var(--space-3); font-size: var(--font-size-md); border-radius: var(--radius-control); }
+.field.size-xs { height: var(--control-height-2xs); padding: 0 var(--space-2); font-size: var(--font-size-xs); border-radius: var(--radius-control); }
+.field.size-sm { height: var(--control-height-lg); padding: 0 var(--space-3); font-size: var(--font-size-md); border-radius: var(--radius-control); }
 .field.size-md { height: 30px; padding: 0 var(--space-3); font-size: var(--font-size-md); border-radius: var(--radius-control); }
 .field.size-lg { height: 34px; padding: 0 var(--space-4); font-size: var(--font-size-lg); border-radius: var(--radius-control); }
 
@@ -94,7 +94,7 @@
   align-items: center;
   justify-content: center;
   width: 18px;
-  height: 18px;
+  height: var(--control-height-2xs);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-tertiary);

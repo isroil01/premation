@@ -33,7 +33,7 @@
   background: transparent;
   border: 1px solid transparent;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
@@ -79,7 +79,7 @@
 }
 
 .label {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -110,7 +110,7 @@
 }
 
 .fieldLabel {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
   color: var(--color-text-muted);
 }
@@ -129,7 +129,7 @@
   background: var(--color-surface-1);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
@@ -174,7 +174,7 @@
   background: transparent;
   border: 1px solid transparent;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -213,7 +213,7 @@
   background: var(--color-surface-1);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   padding: 5px 8px;
   border-radius: var(--radius-lg);
@@ -246,7 +246,7 @@
 }
 
 .colorCardLabel {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-text-secondary);
 }
@@ -285,7 +285,7 @@
 
 .hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   line-height: 1.4;
 }

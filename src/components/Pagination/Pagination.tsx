@@ -139,7 +139,7 @@ export function Pagination({
               disabled={busy || current === 1}
               aria-label="Previous page"
             >
-              <Icon name="chevron-left" size={13} />
+              <Icon name="chevron-left" size="sm" />
             </button>
 
             {pages.map((p, i) =>
@@ -169,7 +169,7 @@ export function Pagination({
               disabled={busy || current === pageCount}
               aria-label="Next page"
             >
-              <Icon name="chevron-right" size={13} />
+              <Icon name="chevron-right" size="sm" />
             </button>
           </div>
         )}

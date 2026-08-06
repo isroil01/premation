@@ -100,7 +100,7 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
           title={compName}
           onClick={() => activate(SCENE_TAB_ID)}
         >
-          <Icon name="frame" size={13} />
+          <Icon name="frame" size="sm" />
           <span className={styles.tabLabel}>{compName}</span>
         </button>
 
@@ -120,7 +120,7 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
             onDoubleClick={() => pin(tab.id)}
             onAuxClick={(e) => onAuxClick(e, tab.id)}
           >
-            <Icon name="plugin" size={13} />
+            <Icon name="plugin" size="sm" />
             <span className={styles.tabLabel}>{tab.title}</span>
             <span
               // A span, not a nested <button>: a button inside a button is
@@ -131,7 +131,7 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
               className={styles.close}
               onClick={(e) => { e.stopPropagation(); close(tab.id); }}
             >
-              <Icon name="close" size={10} />
+              <Icon name="close" size="sm" />
             </span>
           </button>
         ))}
@@ -145,7 +145,7 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
             onClick={() => setOverflowOpen((v) => !v)}
             title="All open tabs"
           >
-            <Icon name="chevron-down" size={12} />
+            <Icon name="chevron-down" size="sm" />
           </button>
         )}
       </div>

@@ -68,13 +68,13 @@
   border: 1px solid var(--color-border);
   background: var(--color-surface-raised);
   color: var(--color-text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   text-align: center;
 }
 
 .renderError strong {
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .renderError span {
@@ -185,7 +185,7 @@
   background: color-mix(in srgb, var(--color-surface-0) 82%, transparent);
   border: 1px solid var(--color-border-strong);
   backdrop-filter: blur(4px);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-family: var(--font-family-mono);
   color: var(--color-text-muted);
   letter-spacing: 0.04em;

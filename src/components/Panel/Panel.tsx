@@ -58,14 +58,14 @@ export function Panel({
       {hideHeader ? null : (
         <header className={styles.header}>
           <div className={styles.titleGroup}>
-            {icon ? <Icon name={icon} size={14} className={styles.icon} /> : null}
+            {icon ? <Icon name={icon} size="md" className={styles.icon} /> : null}
             <span className={styles.title}>{title}</span>
           </div>
           <div className={styles.actions}>
             {actions}
             {onClose ? (
               <IconButton aria-label="Close panel" size="xs" onClick={onClose}>
-                <Icon name="close" size={12} />
+                <Icon name="close" size="sm" />
               </IconButton>
             ) : null}
           </div>

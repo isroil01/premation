@@ -89,7 +89,7 @@ function openUpgradeProModal(): void {
     id: 'upgrade-pro',
     title: (
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <Icon name="sparkles" size={18} style={{ color: 'var(--color-warning)' }} />
+        <Icon name="sparkles" size="md" style={{ color: 'var(--color-warning)' }} />
         <span>Upgrade to Motion Studio Pro</span>
       </div>
     ),
@@ -671,7 +671,7 @@ export function DashboardPage(): JSX.Element {
             {mostRecentProject && (
               <div className={styles.heroBanner}>
                 <div className={styles.heroBadge}>
-                  <Icon name="sparkles" size={13} />
+                  <Icon name="sparkles" size="sm" />
                   <span>Pick up where you left off</span>
                 </div>
                 <h2 className={styles.heroTitle}>{mostRecentProject.name}</h2>
@@ -684,7 +684,7 @@ export function DashboardPage(): JSX.Element {
                     className={styles.heroBtnPrimary}
                     onClick={() => navigate(`/editor/${mostRecentProject.id}`)}
                   >
-                    <Icon name="play" size={15} />
+                    <Icon name="play" size="md" />
                     <span>Resume Editing</span>
                   </button>
                 </div>
@@ -708,7 +708,7 @@ export function DashboardPage(): JSX.Element {
                   >
                     <div className={styles.launchpadHeader}>
                       <div className={styles.launchpadIcon} style={{ background: `color-mix(in srgb, ${tmpl.color} 15%, transparent)`, color: tmpl.color }}>
-                        <Icon name={tmpl.icon} size={18} />
+                        <Icon name={tmpl.icon} size="md" />
                       </div>
                       <span className={styles.launchpadBadge}>{tmpl.badge}</span>
                     </div>
@@ -723,7 +723,7 @@ export function DashboardPage(): JSX.Element {
             <div className={styles.statsGrid}>
               <div className={styles.statCard}>
                 <div className={styles.statIcon} style={{ background: 'rgba(41, 136, 255, 0.1)', color: 'var(--color-primary)' }}>
-                  <Icon name="folder" size={16} />
+                  <Icon name="folder" size="md" />
                 </div>
                 <div className={styles.statMeta}>
                   <div className={styles.statValue}>{overview.projects.toLocaleString()}</div>
@@ -732,7 +732,7 @@ export function DashboardPage(): JSX.Element {
               </div>
               <div className={styles.statCard}>
                 <div className={styles.statIcon} style={{ background: 'rgba(245, 184, 75, 0.1)', color: 'var(--color-warning)' }}>
-                  <Icon name="video" size={16} />
+                  <Icon name="video" size="md" />
                 </div>
                 <div className={styles.statMeta}>
                   <div className={styles.statValue}>{overview.activeRenders.toLocaleString()}</div>
@@ -741,7 +741,7 @@ export function DashboardPage(): JSX.Element {
               </div>
               <div className={styles.statCard}>
                 <div className={styles.statIcon} style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)' }}>
-                  <Icon name="image" size={16} />
+                  <Icon name="image" size="md" />
                 </div>
                 <div className={styles.statMeta}>
                   <div className={styles.statValue}>{formatBytes(account?.storageBytes ?? 0)}</div>
@@ -803,12 +803,12 @@ export function DashboardPage(): JSX.Element {
                   onClick={handleNewFolder}
                   title="Create new folder"
                 >
-                  <Icon name="folder-plus" size={14} />
+                  <Icon name="folder-plus" size="md" />
                   <span>New Folder</span>
                 </button>
 
                 <label className={styles.btnSecondary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
-                  <Icon name="folder-open" size={14} />
+                  <Icon name="folder-open" size="md" />
                   <span>Import Folder</span>
                   <input
                     type="file"
@@ -824,7 +824,7 @@ export function DashboardPage(): JSX.Element {
                 </label>
 
                 <label className={styles.btnPrimary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
-                  <Icon name="plus" size={14} />
+                  <Icon name="plus" size="md" />
                   <span>{assetsBusy ? 'Uploading…' : 'Import Asset'}</span>
                   <input
                     type="file"
@@ -869,7 +869,7 @@ export function DashboardPage(): JSX.Element {
 
             {subfoldersInView.length === 0 && visibleAssetsInView.length === 0 ? (
               <div className={styles.emptyState}>
-                <Icon name="folder" size={32} />
+                <Icon name="folder" size="lg" />
                 <p>{currentFolderId === null ? 'No assets yet. Import files, upload a folder, or create a new folder.' : 'This folder is empty. Import assets or create subfolders here.'}</p>
               </div>
             ) : (
@@ -887,7 +887,7 @@ export function DashboardPage(): JSX.Element {
                       onClick={() => { if (renamingFolderId !== folder.id) setCurrentFolderId(folder.id); }}
                     >
                       <div className={styles.assetPreview} style={{ color: 'var(--color-primary)' }}>
-                        <Icon name="folder" size={20} />
+                        <Icon name="folder" size="lg" />
                       </div>
                       <div className={styles.assetMeta}>
                         {renamingFolderId === folder.id ? (
@@ -920,7 +920,7 @@ export function DashboardPage(): JSX.Element {
                         title="Delete folder"
                         onClick={(e) => { e.stopPropagation(); void handleDeleteFolder(folder); }}
                       >
-                        <Icon name="trash" size={13} />
+                        <Icon name="trash" size="sm" />
                       </button>
                     </div>
                   );
@@ -935,7 +935,7 @@ export function DashboardPage(): JSX.Element {
                       ) : (
                         <Icon
                           name={asset.type === 'video' ? 'video' : 'audio'}
-                          size={24}
+                          size="lg"
                           className={styles.assetPreviewIcon}
                         />
                       )}
@@ -953,7 +953,7 @@ export function DashboardPage(): JSX.Element {
                       title="Delete asset"
                       onClick={() => void handleDeleteAsset(asset.id, asset.name)}
                     >
-                      <Icon name="trash" size={13} />
+                      <Icon name="trash" size="sm" />
                     </button>
                   </div>
                 ))}
@@ -990,7 +990,7 @@ export function DashboardPage(): JSX.Element {
                   onClick={() => setActiveTab('projects')}
                   style={{ marginTop: '8px' }}
                 >
-                  <Icon name="folder" size={14} />
+                  <Icon name="folder" size="md" />
                   <span>Go to Projects</span>
                 </button>
               </div>
@@ -1017,7 +1017,7 @@ export function DashboardPage(): JSX.Element {
                       <tr key={job.id}>
                         <td>
                           <div className={styles.jobCell}>
-                            <Icon name="video" size={16} style={{ color: 'var(--color-primary)' }} />
+                            <Icon name="video" size="md" style={{ color: 'var(--color-primary)' }} />
                             <span style={{ fontWeight: 600 }}>{project?.name ?? 'Untitled render'}</span>
                           </div>
                         </td>
@@ -1056,7 +1056,7 @@ export function DashboardPage(): JSX.Element {
                               className={styles.actionBtn}
                               title="Download result"
                             >
-                              <Icon name="download" size={14} />
+                              <Icon name="download" size="md" />
                             </a>
                           ) : job.status === 'queued' || job.status === 'running' ? (
                             <button
@@ -1065,7 +1065,7 @@ export function DashboardPage(): JSX.Element {
                               title="Cancel render"
                               onClick={() => void handleCancelRender(job.id)}
                             >
-                              <Icon name="close" size={14} />
+                              <Icon name="close" size="md" />
                             </button>
                           ) : null}
                         </td>
@@ -1098,7 +1098,7 @@ export function DashboardPage(): JSX.Element {
               </div>
             ) : trash.items.length === 0 ? (
               <div className={styles.emptyState}>
-                <Icon name="trash" size={28} />
+                <Icon name="trash" size="lg" />
                 <p>The trash is empty. Deleted projects rest here for 30 days before they're gone for good.</p>
               </div>
             ) : (
@@ -1118,7 +1118,7 @@ export function DashboardPage(): JSX.Element {
                         setSelectedTrashIds(new Set());
                       }}
                     >
-                      <Icon name="undo" size={13} />
+                      <Icon name="undo" size="sm" />
                       <span>Restore selected ({selectedTrashIds.size})</span>
                     </button>
                     <button
@@ -1142,7 +1142,7 @@ export function DashboardPage(): JSX.Element {
                         void refreshOverview();
                       }}
                     >
-                      <Icon name="trash" size={13} />
+                      <Icon name="trash" size="sm" />
                       <span>Delete permanently ({selectedTrashIds.size})</span>
                     </button>
                   </div>
@@ -1192,7 +1192,7 @@ export function DashboardPage(): JSX.Element {
                               <div className={styles.projectThumb}>
                                 {p.thumbnailUrl
                                   ? <img src={p.thumbnailUrl} alt="" className={styles.thumbImg} />
-                                  : <Icon name="video" size={18} className={styles.thumbIcon} />}
+                                  : <Icon name="video" size="md" className={styles.thumbIcon} />}
                               </div>
                               <div>
                                 <div className={styles.projectName}>{p.name}</div>
@@ -1215,7 +1215,7 @@ export function DashboardPage(): JSX.Element {
                                 className={styles.btnSecondary}
                                 onClick={() => void handleRestore(p.id)}
                               >
-                                <Icon name="undo" size={13} />
+                                <Icon name="undo" size="sm" />
                                 <span>Restore</span>
                               </button>
                               <button
@@ -1224,7 +1224,7 @@ export function DashboardPage(): JSX.Element {
                                 title="Delete permanently"
                                 onClick={() => void handleDestroy(p.id, p.name)}
                               >
-                                <Icon name="trash" size={14} />
+                                <Icon name="trash" size="md" />
                               </button>
                             </div>
                           </td>
@@ -1259,7 +1259,7 @@ export function DashboardPage(): JSX.Element {
             <div className={styles.settingsCard}>
               <div className={styles.profileHeaderRow}>
                 <div className={styles.profileAvatarLarge}>
-                  <Icon name="user" size={24} />
+                  <Icon name="user" size="lg" />
                 </div>
                 <div className={styles.profileMetaInfo}>
                   <div className={styles.profileDisplayName}>
@@ -1319,7 +1319,7 @@ export function DashboardPage(): JSX.Element {
                   onClick={() => openCustomizeDialog()}
                   style={{ width: '100%', justifyContent: 'center' }}
                 >
-                  <Icon name="settings" size={16} style={{ marginRight: 8 }} />
+                  <Icon name="settings" size="md" style={{ marginRight: 8 }} />
                   Open Customize…
                 </Button>
               </div>
@@ -1341,7 +1341,7 @@ export function DashboardPage(): JSX.Element {
 
         {status === 'error' && (
           <div className={styles.errorState}>
-            <Icon name="warning" size={24} />
+            <Icon name="warning" size="lg" />
             <p>{error}</p>
             <button type="button" className={styles.btnSecondary} onClick={() => void load()}>
               Retry
@@ -1360,7 +1360,7 @@ export function DashboardPage(): JSX.Element {
               onClick={onCreate}
               disabled={creating}
             >
-              <Icon name="plus" size={14} />
+              <Icon name="plus" size="md" />
               <span>Create a project</span>
             </button>
           </div>
@@ -1408,7 +1408,7 @@ export function DashboardPage(): JSX.Element {
                           {thumb ? (
                             <img src={thumb} alt="" className={styles.thumbImg} />
                           ) : (
-                            <Icon name="video" size={18} className={styles.thumbIcon} />
+                            <Icon name="video" size="md" className={styles.thumbIcon} />
                           )}
                         </div>
                         <div>
@@ -1438,7 +1438,7 @@ export function DashboardPage(): JSX.Element {
                         onClick={() => onDelete(p.id, p.name)}
                         title="Delete project"
                       >
-                        <Icon name="trash" size={14} />
+                        <Icon name="trash" size="md" />
                       </button>
                     </td>
                   </tr>
@@ -1516,7 +1516,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'home' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('home')}
           >
-            <Icon name="home" size={16} className={styles.navIcon} />
+            <Icon name="home" size="md" className={styles.navIcon} />
             <span>Home</span>
           </button>
           <button
@@ -1524,7 +1524,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'projects' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('projects')}
           >
-            <Icon name="folder" size={16} className={styles.navIcon} />
+            <Icon name="folder" size="md" className={styles.navIcon} />
             <span>Projects & Drafts</span>
           </button>
           <button
@@ -1532,7 +1532,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'assets' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('assets')}
           >
-            <Icon name="image" size={16} className={styles.navIcon} />
+            <Icon name="image" size="md" className={styles.navIcon} />
             <span>Assets Library</span>
           </button>
           <button
@@ -1540,7 +1540,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'plugins' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('plugins')}
           >
-            <Icon name="plugin" size={16} className={styles.navIcon} />
+            <Icon name="plugin" size="md" className={styles.navIcon} />
             <span>Plugins</span>
           </button>
           <button
@@ -1548,7 +1548,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'renders' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('renders')}
           >
-            <Icon name="queue" size={16} className={styles.navIcon} />
+            <Icon name="queue" size="md" className={styles.navIcon} />
             <span>Render Queue</span>
           </button>
           <button
@@ -1556,7 +1556,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'trash' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('trash')}
           >
-            <Icon name="trash" size={16} className={styles.navIcon} />
+            <Icon name="trash" size="md" className={styles.navIcon} />
             <span>Trash</span>
           </button>
           <button
@@ -1564,7 +1564,7 @@ export function DashboardPage(): JSX.Element {
             className={`${styles.navLink} ${activeTab === 'settings' ? styles.navLinkActive : ''}`}
             onClick={() => setActiveTab('settings')}
           >
-            <Icon name="settings" size={16} className={styles.navIcon} />
+            <Icon name="settings" size="md" className={styles.navIcon} />
             <span>Settings</span>
           </button>
         </nav>
@@ -1573,7 +1573,7 @@ export function DashboardPage(): JSX.Element {
           <div className={styles.upgradeCardBox}>
             <div className={styles.upgradeCardHeader}>
               <div className={styles.upgradeCardBadge}>
-                <Icon name="sparkles" size={13} />
+                <Icon name="sparkles" size="sm" />
               </div>
               <span className={styles.upgradeCardTitle}>Upgrade to Pro</span>
             </div>
@@ -1595,7 +1595,7 @@ export function DashboardPage(): JSX.Element {
             onClick={logout}
             title="Sign out of account"
           >
-            <Icon name="lock" size={15} className={styles.logoutIcon} />
+            <Icon name="lock" size="md" className={styles.logoutIcon} />
             <span>Log out</span>
           </button>
         </div>
@@ -1618,7 +1618,7 @@ export function DashboardPage(): JSX.Element {
             <div className={styles.actionBar}>
               <div className={styles.filterGroup}>
                 <div className={styles.searchWrapper}>
-                  <Icon name="search" size={14} className={styles.inputSearchIcon} />
+                  <Icon name="search" size="md" className={styles.inputSearchIcon} />
                   <input
                     type="text"
                     placeholder="Search projects..."
@@ -1662,14 +1662,14 @@ export function DashboardPage(): JSX.Element {
                       }
                     }}
                   >
-                    <Icon name="trash" size={14} />
+                    <Icon name="trash" size="md" />
                     <span>Move to trash ({selectedIds.size})</span>
                   </button>
                 )}
 
                 <button type="button" className={styles.btnSecondary} disabled>
                   <span>Actions</span>
-                  <Icon name="chevron-down" size={12} />
+                  <Icon name="chevron-down" size="sm" />
                 </button>
 
                 <button
@@ -1678,7 +1678,7 @@ export function DashboardPage(): JSX.Element {
                   onClick={onCreate}
                   disabled={creating}
                 >
-                  <Icon name="plus" size={14} />
+                  <Icon name="plus" size="md" />
                   <span>{creating ? 'Creating…' : 'Create project'}</span>
                 </button>
               </div>
@@ -1887,7 +1887,7 @@ export function DashboardPage(): JSX.Element {
               type="submit"
               disabled={creating}
               loading={creating}
-              leftIcon={<Icon name="check" size={14} />}
+              leftIcon={<Icon name="check" size="md" />}
             >
               Create & Launch Editor
             </Button>

@@ -38,7 +38,7 @@ export function AlignSection(): JSX.Element | null {
             onClick={() => setAlignTo('selection')}
             title="Align relative to selected layers bounding box"
           >
-            <Icon name="select-all" size={12} />
+            <Icon name="select-all" size="sm" />
             <span>Selection</span>
           </button>
           <button
@@ -47,7 +47,7 @@ export function AlignSection(): JSX.Element | null {
             onClick={() => setAlignTo('composition')}
             title="Align relative to active composition canvas boundaries"
           >
-            <Icon name="solid" size={12} />
+            <Icon name="solid" size="sm" />
             <span>Composition</span>
           </button>
         </div>
@@ -74,7 +74,7 @@ export function AlignSection(): JSX.Element | null {
               disabled={isDisabled}
               onClick={() => alignNodes([...selectedIds], a.id, alignTo, compWidth, compHeight)}
             >
-              <Icon name={a.icon} size={14} />
+              <Icon name={a.icon} size="md" />
             </button>
           );
         })}

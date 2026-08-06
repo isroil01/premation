@@ -82,7 +82,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  height: 24px;
+  height: var(--control-height-md);
   padding: 0 var(--space-5);
   background: var(--color-panel-header);
   border-top: 1px solid var(--color-border-subtle);

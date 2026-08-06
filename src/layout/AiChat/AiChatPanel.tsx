@@ -291,7 +291,7 @@ export function AiChatPanel(): JSX.Element {
       {/* ── Header: title + new chat + history ─────────────────────── */}
       <div className={styles.header}>
         <span className={styles.headerTitle}>
-          <Icon name="sparkles" size={13} /> Assistant
+          <Icon name="sparkles" size="sm" /> Assistant
         </span>
         <div className={styles.headerActions}>
           <button
@@ -303,7 +303,7 @@ export function AiChatPanel(): JSX.Element {
               newChat();
             }}
           >
-            <Icon name="plus" size={14} />
+            <Icon name="plus" size="md" />
           </button>
           <button
             type="button"
@@ -311,7 +311,7 @@ export function AiChatPanel(): JSX.Element {
             title="Chat history"
             onClick={() => setShowHistory((v) => !v)}
           >
-            <Icon name="history" size={14} />
+            <Icon name="history" size="md" />
           </button>
         </div>
       </div>
@@ -340,7 +340,7 @@ export function AiChatPanel(): JSX.Element {
                   void removeConversation(c.id);
                 }}
               >
-                <Icon name="trash" size={12} />
+                <Icon name="trash" size="sm" />
               </button>
             </div>
           ))}
@@ -380,7 +380,7 @@ export function AiChatPanel(): JSX.Element {
           {messages.length === 0 && ready && (
             <div>
               <div className={styles.betaNotice}>
-                <Icon name="sparkles" size={14} />
+                <Icon name="sparkles" size="md" />
                 <span>
                   <strong>The AI assistant is still experimental.</strong> Right now it can
                   handle simple actions reliably, but not complex, multi-step scenes yet. Feel
@@ -467,7 +467,7 @@ export function AiChatPanel(): JSX.Element {
               {pipelineStages.map((s, i) => (
                 <div key={i} className={styles.planRow} data-status={s.status}>
                   <span className={styles.planMark}>
-                    {s.status === 'done' ? <Icon name="check" size={11} /> : s.status === 'active' ? <span className={styles.spinner} /> : ''}
+                    {s.status === 'done' ? <Icon name="check" size="sm" /> : s.status === 'active' ? <span className={styles.spinner} /> : ''}
                   </span>
                   {s.label}
                 </div>
@@ -483,9 +483,9 @@ export function AiChatPanel(): JSX.Element {
                 <div key={it.id} className={styles.planRow} data-status={it.status}>
                   <span className={styles.planMark}>
                     {it.status === 'done' ? (
-                      <Icon name="check" size={11} />
+                      <Icon name="check" size="sm" />
                     ) : it.status === 'error' ? (
-                      <Icon name="close" size={11} />
+                      <Icon name="close" size="sm" />
                     ) : (
                       <span className={styles.spinner} />
                     )}
@@ -527,7 +527,7 @@ export function AiChatPanel(): JSX.Element {
                   title={isPlayingPreview ? 'Pause' : 'Play preview'}
                   onClick={togglePlayPreview}
                 >
-                  <Icon name={isPlayingPreview ? 'pause' : 'play'} size={14} />
+                  <Icon name={isPlayingPreview ? 'pause' : 'play'} size="md" />
                 </button>
               </div>
               {filmstrip.length > 1 && (
@@ -544,10 +544,10 @@ export function AiChatPanel(): JSX.Element {
               )}
               <div className={styles.previewActions}>
                 <button type="button" className={styles.applyButton} onClick={acceptPending}>
-                  <Icon name="check" size={13} /> Apply
+                  <Icon name="check" size="sm" /> Apply
                 </button>
                 <button type="button" className={styles.declineButton} onClick={discardPending}>
-                  <Icon name="close" size={13} /> Decline
+                  <Icon name="close" size="sm" /> Decline
                 </button>
               </div>
             </div>
@@ -568,7 +568,7 @@ export function AiChatPanel(): JSX.Element {
               title="Look pack - fixes palette, type, shape language, pacing and motion vocabulary"
               onClick={() => setOpenChip((c) => (c === 'look' ? null : 'look'))}
             >
-              <Icon name="sparkles" size={11} />
+              <Icon name="sparkles" size="sm" />
               {packs.find((pk) => pk.id === direction.lookPackId)?.displayName ?? 'Any look'}
               {direction.lookPackId && (
                 <span
@@ -577,7 +577,7 @@ export function AiChatPanel(): JSX.Element {
                   aria-label="Clear look"
                   onClick={(e) => { e.stopPropagation(); setDirection({ lookPackId: undefined }); }}
                 >
-                  <Icon name="close" size={9} />
+                  <Icon name="close" size="sm" />
                 </span>
               )}
               {openChip === 'look' && (
@@ -617,7 +617,7 @@ export function AiChatPanel(): JSX.Element {
               title="Energy, length and brand colour"
               onClick={() => setOpenChip((c) => (c === 'shape' ? null : 'shape'))}
             >
-              <Icon name="settings" size={11} />
+              <Icon name="settings" size="sm" />
               Shape
               {openChip === 'shape' && (
                 <div className={styles.directionPopover} onClick={(e) => e.stopPropagation()}>
@@ -678,7 +678,7 @@ export function AiChatPanel(): JSX.Element {
               title="Emit several alternatives and rank them - costs no extra model calls"
               onClick={() => setOpenChip((c) => (c === 'variants' ? null : 'variants'))}
             >
-              <Icon name="copy" size={11} />
+              <Icon name="copy" size="sm" />
               {direction.variants > 1 ? `${direction.variants} directions` : '1 direction'}
               {openChip === 'variants' && (
                 <div className={styles.directionPopover} onClick={(e) => e.stopPropagation()}>
@@ -714,7 +714,7 @@ export function AiChatPanel(): JSX.Element {
                       className={styles.attachRemove}
                       onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))}
                     >
-                      <Icon name="close" size={9} />
+                      <Icon name="close" size="sm" />
                     </button>
                   </span>
                 ))}
@@ -750,7 +750,7 @@ export function AiChatPanel(): JSX.Element {
                   title="Attach reference image"
                   onClick={() => fileRef.current?.click()}
                 >
-                  <Icon name="plus" size={14} />
+                  <Icon name="plus" size="md" />
                 </button>
                 <input
                   ref={fileRef}
@@ -772,7 +772,7 @@ export function AiChatPanel(): JSX.Element {
                 >
                   {renderProviderIcon(aiProvider)}
                   <span className={styles.modelPickerLabel}>{getModelLabel(dropdownValue)}</span>
-                  <Icon name="chevron-down" size={9} className={`${styles.chevron} ${modelDropdownOpen ? styles.chevronOpen : ''}`} />
+                  <Icon name="chevron-down" size="sm" className={`${styles.chevron} ${modelDropdownOpen ? styles.chevronOpen : ''}`} />
 
                   {modelDropdownOpen && (
                     <div className={styles.customPopoverMenu} onClick={(e) => e.stopPropagation()}>
@@ -805,7 +805,7 @@ export function AiChatPanel(): JSX.Element {
                                   }}
                                 >
                                   <span className={styles.optionLabel}>{getModelLabel(val)}</span>
-                                  {active && <Icon name="check" size={11} className={styles.optionCheck} />}
+                                  {active && <Icon name="check" size="sm" className={styles.optionCheck} />}
                                 </button>
                               );
                             })}
@@ -824,9 +824,9 @@ export function AiChatPanel(): JSX.Element {
                   title={`Execution mode: ${isManualMode ? 'Manual (Review preview)' : 'Auto (Direct apply)'}`}
                   onClick={() => setModeDropdownOpen((o) => !o)}
                 >
-                  <Icon name={isManualMode ? 'eye' : 'sparkles'} size={13} className={styles.modeIcon} />
+                  <Icon name={isManualMode ? 'eye' : 'sparkles'} size="sm" className={styles.modeIcon} />
                   <span className={styles.modePickerLabel}>{isManualMode ? 'Manual' : 'Auto'}</span>
-                  <Icon name="chevron-down" size={9} className={`${styles.chevron} ${modeDropdownOpen ? styles.chevronOpen : ''}`} />
+                  <Icon name="chevron-down" size="sm" className={`${styles.chevron} ${modeDropdownOpen ? styles.chevronOpen : ''}`} />
 
                   {modeDropdownOpen && (
                     <div className={styles.customPopoverMenuRight} onClick={(e) => e.stopPropagation()}>
@@ -843,7 +843,7 @@ export function AiChatPanel(): JSX.Element {
                           <div className={styles.optionLabel}>Auto (Direct apply)</div>
                           <div className={styles.optionSub}>AI changes apply immediately</div>
                         </div>
-                        {!isManualMode && <Icon name="check" size={11} className={styles.optionCheck} />}
+                        {!isManualMode && <Icon name="check" size="sm" className={styles.optionCheck} />}
                       </button>
                       <button
                         type="button"
@@ -857,7 +857,7 @@ export function AiChatPanel(): JSX.Element {
                           <div className={styles.optionLabel}>Manual (Review preview)</div>
                           <div className={styles.optionSub}>Review preview before applying</div>
                         </div>
-                        {isManualMode && <Icon name="check" size={11} className={styles.optionCheck} />}
+                        {isManualMode && <Icon name="check" size="sm" className={styles.optionCheck} />}
                       </button>
                     </div>
                   )}
@@ -869,7 +869,7 @@ export function AiChatPanel(): JSX.Element {
                   onClick={busy ? cancel : send}
                   disabled={!busy && !value.trim() && pendingImages.length === 0}
                 >
-                  <Icon name={busy ? 'stop' : 'arrow-up'} size={15} />
+                  <Icon name={busy ? 'stop' : 'arrow-up'} size="md" />
                 </button>
               </div>
             </div>

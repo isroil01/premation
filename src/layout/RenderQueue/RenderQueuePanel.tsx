@@ -145,7 +145,7 @@ export function RenderQueuePanel(): JSX.Element {
       {/* ── Toolbar ──────────────────────────────────────────────── */}
       <div className={styles.toolbar}>
         <button type="button" className={styles.toolbarBtn} onClick={() => setShowDialog(true)} title="Add current composition to queue">
-          <Icon name="plus" size={12} /> Add Comp
+          <Icon name="plus" size="sm" /> Add Comp
         </button>
 
         {canChooseOutputDir() && (
@@ -155,7 +155,7 @@ export function RenderQueuePanel(): JSX.Element {
             onClick={() => void chooseOutputDir()}
             title={outputDir ? `Renders are written to ${outputDir}` : 'Choose where renders are written'}
           >
-            <Icon name="folder" size={12} />
+            <Icon name="folder" size="sm" />
             {outputDir ? (outputDir.split(/[\\/]/).pop() || outputDir) : 'Output folder…'}
           </button>
         )}
@@ -185,12 +185,12 @@ export function RenderQueuePanel(): JSX.Element {
           disabled={jobs.length === 0}
           title={isRunning ? 'Stop rendering — discards progress on the current job' : 'Render all queued'}
         >
-          <Icon name={isRunning ? 'stop' : 'play'} size={12} />
+          <Icon name={isRunning ? 'stop' : 'play'} size="sm" />
           {isRunning ? 'Stop' : 'Render All'}
         </button>
 
         <button type="button" className={styles.toolbarBtnDanger} onClick={clearFinished} disabled={doneCount === 0}>
-          <Icon name="close" size={12} /> Clear Done
+          <Icon name="close" size="sm" /> Clear Done
         </button>
       </div>
 
@@ -198,7 +198,7 @@ export function RenderQueuePanel(): JSX.Element {
       <div className={styles.jobList}>
         {jobs.length === 0 && (
           <div className={styles.emptyState}>
-            <Icon name="queue" size={32} className={styles.emptyIcon} />
+            <Icon name="queue" size="lg" className={styles.emptyIcon} />
             <span>No render jobs. Click "Add Comp" to queue a composition.</span>
           </div>
         )}
@@ -221,7 +221,7 @@ export function RenderQueuePanel(): JSX.Element {
                   title="Duplicate this job"
                   onClick={() => duplicateJob(job.id)}
                 >
-                  <Icon name="copy" size={10} />
+                  <Icon name="copy" size="sm" />
                 </button>
                 {job.status === 'queued' && (
                   <button
@@ -230,7 +230,7 @@ export function RenderQueuePanel(): JSX.Element {
                     title="Skip this job — leave it in the list but don't render it"
                     onClick={() => skipJob(job.id)}
                   >
-                    <Icon name="skip-forward" size={10} />
+                    <Icon name="skip-forward" size="sm" />
                   </button>
                 )}
                 <button
@@ -239,7 +239,7 @@ export function RenderQueuePanel(): JSX.Element {
                   title="Remove job"
                   onClick={() => removeJob(job.id)}
                 >
-                  <Icon name="close" size={10} />
+                  <Icon name="close" size="sm" />
                 </button>
               </div>
             </div>
@@ -277,7 +277,7 @@ export function RenderQueuePanel(): JSX.Element {
                   failure looked identical and none of them were actionable. */}
               {job.error && (
                 <div className={styles.jobError} title={job.error}>
-                  <Icon name="warning" size={11} />
+                  <Icon name="warning" size="sm" />
                   <span>{job.error}</span>
                 </div>
               )}
@@ -288,7 +288,7 @@ export function RenderQueuePanel(): JSX.Element {
 
       {/* ── Footer ───────────────────────────────────────────────── */}
       <div className={styles.footer}>
-        <Icon name="queue" size={11} />
+        <Icon name="queue" size="sm" />
         {jobs.length} job{jobs.length !== 1 ? 's' : ''} · {queuedCount} queued · {doneCount} done
         {isRunning && <span style={{ color: 'var(--color-primary)' }}> · Rendering…</span>}
       </div>

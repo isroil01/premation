@@ -91,7 +91,7 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
             aria-label="Collapse Transformations (join the host composition's 3D space)"
           />
         </div>
-        <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           {collapsed
             ? 'This composition’s layers render in the host: they meet its camera, depth sort and lights, and are not cropped to their own frame.'
             : 'This composition renders to its own frame first, then composites as one flat layer — so its 3D layers cannot meet the host’s camera.'}
@@ -125,7 +125,7 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
             aria-label="Continuous Rasterization (re-render vector content at the scale it is drawn)"
           />
         </div>
-        <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           {cr
             ? 'Re-rendered at the size it is actually drawn, so it stays sharp past 400% and as a 3D camera moves in. Costs memory in proportion to scale²; Draft and reduced preview resolution cap it.'
             : 'Rasterized once and scaled like an image, so it softens past 400%. Turn on for a logo or title that a camera pushes into.'}

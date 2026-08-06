@@ -60,7 +60,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       {/* Puppet summary card */}
       <div className={styles.headerCard}>
         <div className={styles.headerTitle}>
-          <Icon name="puppet-pin" size={14} />
+          <Icon name="puppet-pin" size="md" />
           <span>Deformation Mesh</span>
           <span className={styles.badge}>{pins.length} pins</span>
         </div>
@@ -69,7 +69,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           variant="secondary"
           onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
         >
-          <Icon name="plus" size={12} /> Add Pin
+          <Icon name="plus" size="sm" /> Add Pin
         </Button>
       </div>
 
@@ -77,7 +77,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       <div className={styles.card}>
         <div className={styles.cardHeader}>
           <div className={styles.cardTitle}>
-            <Icon name="grid" size={13} style={{ opacity: 0.7 }} />
+            <Icon name="grid" size="sm" style={{ opacity: 0.7 }} />
             <span>Mesh Settings</span>
           </div>
         </div>
@@ -207,7 +207,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
             style={{ marginTop: 8 }}
           >
-            <Icon name="puppet-pin" size={12} /> Place Pins with Puppet Tool (Ctrl+P)
+            <Icon name="puppet-pin" size="sm" /> Place Pins with Puppet Tool (Ctrl+P)
           </Button>
         </div>
       )}
@@ -217,7 +217,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         <div key={pin.id} className={styles.card}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>
-              <Icon name="push-pin" size={13} style={{ opacity: 0.7 }} />
+              <Icon name="push-pin" size="sm" style={{ opacity: 0.7 }} />
               <span>{pin.name || pin.id}</span>
             </div>
             <Button
@@ -227,7 +227,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
               aria-label={`Delete pin ${pin.name || pin.id}`}
               title="Delete pin"
             >
-              <Icon name="trash" size={12} />
+              <Icon name="trash" size="sm" />
             </Button>
           </div>
 

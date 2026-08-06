@@ -28,11 +28,11 @@ export function NotificationHost(): JSX.Element | null {
       {notifications.map((n) => (
         <div key={n.id} className={styles.toast} data-level={n.level} role="status">
           <span className={styles.toastIcon}>
-            <Icon name={LEVEL_ICON[n.level]} size={14} />
+            <Icon name={LEVEL_ICON[n.level]} size="md" />
           </span>
           <span className={styles.toastMessage}>{n.message}</span>
           <IconButton aria-label="Dismiss" size="sm" onClick={() => dismiss(n.id)}>
-            <Icon name="close" size={12} />
+            <Icon name="close" size="sm" />
           </IconButton>
         </div>
       ))}

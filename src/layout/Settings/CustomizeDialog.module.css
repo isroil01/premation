@@ -81,7 +81,7 @@
 }
 
 .badge {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--color-text-tertiary);

@@ -97,7 +97,7 @@ function pickTrigger(label: string): JSX.Element {
   return (
     <button type="button" className={styles.pick}>
       <span>{label}</span>
-      <Icon name="chevron-down" size={11} />
+      <Icon name="chevron-down" size="sm" />
     </button>
   );
 }
@@ -297,7 +297,7 @@ function SelectorPanel({
               aria-label={`Remove selector ${selIndex + 1}`}
               title="Remove selector"
             >
-              <Icon name="minus" size={12} />
+              <Icon name="minus" size="sm" />
             </button>
           )}
         </div>
@@ -484,7 +484,7 @@ function ExpressionSelectorBody({
             width: '100%',
             resize: 'vertical',
             fontFamily: 'var(--font-mono, monospace)',
-            fontSize: 'var(--font-size-xs)',
+            fontSize: 11,
             padding: 6,
             borderRadius: 'var(--radius-sm)',
             border: '1px solid var(--color-border)',
@@ -492,7 +492,7 @@ function ExpressionSelectorBody({
             color: 'var(--color-text-primary)',
           }}
         />
-        <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+        <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', marginTop: 4 }}>
           Returns 0–100. Sees <code>textIndex</code>, <code>textTotal</code>,{' '}
           <code>selectorValue</code>, <code>time</code>, <code>Math</code>.
         </div>
@@ -533,7 +533,7 @@ function AnimatorGroup({
             placement="left-start"
             trigger={
               <button type="button" className={styles.remove} title="Add selector" aria-label="Add selector">
-                <Icon name="plus" size={12} />
+                <Icon name="plus" size="sm" />
               </button>
             }
             items={addItems}
@@ -545,7 +545,7 @@ function AnimatorGroup({
             aria-label={`Remove animator ${index + 1}`}
             title="Remove animator"
           >
-            <Icon name="minus" size={12} />
+            <Icon name="minus" size="sm" />
           </button>
         </div>
       </div>
@@ -621,7 +621,7 @@ function ColorRow({
               aria-label={`Clear ${label}`}
               title="Clear colour"
             >
-              <Icon name="close" size={12} />
+              <Icon name="close" size="sm" />
             </button>
           </>
         ) : (
@@ -662,7 +662,7 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
           aria-label="Add text animator"
           title="Add animator"
         >
-          <Icon name="plus" size={12} />
+          <Icon name="plus" size="sm" />
           <span>Add</span>
         </button>
       </div>
@@ -689,7 +689,7 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
           }}
           title="Auto-creates typewriter rig keyframed over 1.5s"
         >
-          <Icon name="type" size={13} />
+          <Icon name="type" size="sm" />
           <span>Auto-Animate Typing</span>
         </button>
       </div>

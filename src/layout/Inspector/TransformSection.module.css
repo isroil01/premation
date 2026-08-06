@@ -166,7 +166,7 @@
 }
 
 .colorHex {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: var(--font-family-mono);
   color: var(--color-text-secondary);
   user-select: none;
@@ -207,7 +207,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -244,7 +244,7 @@
 }
 
 .cellLabel {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
   font-weight: 600;
   display: flex;
@@ -257,7 +257,7 @@
 }
 
 .cellValue {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
   white-space: nowrap;
@@ -290,7 +290,7 @@
 
 .popoverContent h5 {
   margin: 0 0 4px 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-text-tertiary);
   text-transform: uppercase;
@@ -309,7 +309,7 @@
 }
 
 .popoverLabel {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   font-weight: 500;
   min-width: 76px;

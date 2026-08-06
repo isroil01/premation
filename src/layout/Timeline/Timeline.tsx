@@ -1034,9 +1034,9 @@ function Timeline({
           {/* Column heads for the switches and modes (AE layout). */}
           <div className={styles.colHeads}>
             <div className={styles.colHeadPreInfo} aria-hidden>
-              <span className={styles.colHeadItem}><Icon name="eye" size={12} title="Video Visibility" /></span>
-              <span className={styles.colHeadItem}><Icon name="circle" size={11} title="Solo" /></span>
-              <span className={styles.colHeadItem}><Icon name="lock" size={12} title="Lock" /></span>
+              <span className={styles.colHeadItem}><Icon name="eye" size="sm" title="Video Visibility" /></span>
+              <span className={styles.colHeadItem}><Icon name="circle" size="sm" title="Solo" /></span>
+              <span className={styles.colHeadItem}><Icon name="lock" size="sm" title="Lock" /></span>
             </div>
             <span className={styles.colHeadLayer}>
               <span style={{ color: '#888888', marginRight: 4 }} aria-hidden>#</span>
@@ -1051,7 +1051,7 @@ function Timeline({
                 aria-label="Pop out timeline into a separate window"
                 style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, marginLeft: 6, display: 'inline-flex' }}
               >
-                <Icon name="export" size={12} />
+                <Icon name="export" size="sm" />
               </button>
             </span>
             {/* Legend for the per-layer switch column below — one glyph per
@@ -1060,12 +1060,12 @@ function Timeline({
                 every row between adjustment and 3D, and a legend that skips a
                 live switch is worse than no legend. */}
             <span className={styles.colHeadAeSwitches} aria-hidden>
-              <span className={styles.colHeadItem}><Icon name="shy" size={12} title="Shy" /></span>
-              <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects" style={{ fontSize: 12 }}>fx</span></span>
-              <span className={styles.colHeadItem}><Icon name="motion-blur" size={12} title="Motion Blur" /></span>
-              <span className={styles.colHeadItem}><Icon name="adjustment" size={12} title="Adjustment Layer" /></span>
-              <span className={styles.colHeadItem}><Icon name="frame" size={12} title="Guide Layer (not rendered)" /></span>
-              <span className={styles.colHeadItem}><Icon name="3d" size={12} title="3D Layer" /></span>
+              <span className={styles.colHeadItem}><Icon name="shy" size="sm" title="Shy" /></span>
+              <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects" style={{ fontSize: 'var(--font-size-sm)' }}>fx</span></span>
+              <span className={styles.colHeadItem}><Icon name="motion-blur" size="sm" title="Motion Blur" /></span>
+              <span className={styles.colHeadItem}><Icon name="adjustment" size="sm" title="Adjustment Layer" /></span>
+              <span className={styles.colHeadItem}><Icon name="frame" size="sm" title="Guide Layer (not rendered)" /></span>
+              <span className={styles.colHeadItem}><Icon name="3d" size="sm" title="3D Layer" /></span>
             </span>
             <span className={styles.colHeadMode}>Mode</span>
             <span className={styles.colHeadMatte}>T</span>
@@ -1409,7 +1409,7 @@ function Timeline({
                 aria-hidden
               >
                 <span className={styles.markerFlag} title={m.label}>
-                  <Icon name="marker" size={12} />
+                  <Icon name="marker" size="sm" />
                 </span>
               </div>
             ))}
@@ -1704,7 +1704,7 @@ const TrackHeader = memo(function TrackHeader({
           title={hidden ? 'Hide' : 'Show (Video)'}
           onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
         >
-          <Icon name={hidden ? 'eye-off' : 'eye'} size={10} />
+          <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
         </button>
         <button
           type="button"
@@ -1715,7 +1715,7 @@ const TrackHeader = memo(function TrackHeader({
           title={solo ? 'Unsolo' : 'Solo'}
           onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
         >
-          <Icon name="circle" size={9} />
+          <Icon name="circle" size="sm" />
         </button>
         <button
           type="button"
@@ -1726,7 +1726,7 @@ const TrackHeader = memo(function TrackHeader({
           title={locked ? 'Unlock' : 'Lock'}
           onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
         >
-          <Icon name="lock" size={10} />
+          <Icon name="lock" size="sm" />
         </button>
       </div>
 
@@ -1736,7 +1736,7 @@ const TrackHeader = memo(function TrackHeader({
           title="Drag to reorder"
           onPointerDown={onReorderStart}
         >
-          <Icon name="grip-vertical" size={11} />
+          <Icon name="grip-vertical" size="sm" />
         </div>
         <span className={styles.trackIndex}>{index}</span>
         {typeof track.nodeColor === 'string' && (
@@ -1761,14 +1761,14 @@ const TrackHeader = memo(function TrackHeader({
             if (hasProps) onToggleExpand();
           }}
         >
-          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={11} />
+          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size="sm" />
         </button>
         <span
           className={styles.trackIcon}
           style={{ color: track.color ?? 'var(--color-accent)' }}
           title={track.kind}
         >
-          <Icon name={(track.icon as IconName) ?? 'layers'} size={12} />
+          <Icon name={(track.icon as IconName) ?? 'layers'} size="sm" />
         </span>
         {editing ? (
           <input
@@ -1804,7 +1804,7 @@ const TrackHeader = memo(function TrackHeader({
           title="Toggle Shy Layer"
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
         >
-          <Icon name="shy" size={10} />
+          <Icon name="shy" size="sm" />
         </button>
 
         <button
@@ -1826,7 +1826,7 @@ const TrackHeader = memo(function TrackHeader({
           title="Toggle Motion Blur"
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
         >
-          <Icon name="motion-blur" size={10} />
+          <Icon name="motion-blur" size="sm" />
         </button>
         <button
           type="button"
@@ -1836,7 +1836,7 @@ const TrackHeader = memo(function TrackHeader({
           title="Toggle Adjustment Layer"
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
         >
-          <Icon name="adjustment" size={10} />
+          <Icon name="adjustment" size="sm" />
         </button>
         <button
           type="button"
@@ -1852,7 +1852,7 @@ const TrackHeader = memo(function TrackHeader({
               jobs — visibility over in the pre-info column, guide-layer here —
               and the pair read as one control duplicated. A guide layer is
               reference framing the render skips, which is what `frame` says. */}
-          <Icon name="frame" size={10} />
+          <Icon name="frame" size="sm" />
         </button>
         <button
           type="button"
@@ -1862,7 +1862,7 @@ const TrackHeader = memo(function TrackHeader({
           title="Toggle 3D Layer"
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
         >
-          <Icon name="3d" size={11} />
+          <Icon name="3d" size="sm" />
         </button>
       </div>
 
@@ -2142,7 +2142,7 @@ const TrackContent = memo(function TrackContent({
                   onClipMuteToggle(clip.nodeId);
                 }}
               >
-                <Icon name={clipMuted ? 'audio-off' : 'audio'} size={11} />
+                <Icon name={clipMuted ? 'audio-off' : 'audio'} size="sm" />
               </button>
             )}
             <span className={styles.clipLabel}>{clip.label ?? clip.id}</span>
@@ -2265,10 +2265,10 @@ function TrackCategoryHeader({
   return (
     <div className={styles.categoryHeader} style={style} onClick={onToggle}>
       <span className={styles.disclosure}>
-        <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={10} />
+        <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size="sm" />
       </span>
       <span className={styles.categoryIcon}>
-        <Icon name={icon} size={11} />
+        <Icon name={icon} size="sm" />
       </span>
       <span className={styles.categoryName}>{label}</span>
       <span className={styles.categoryBadge}>{count}</span>

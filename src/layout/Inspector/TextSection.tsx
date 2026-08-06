@@ -254,7 +254,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
               onClick={() => handleChange(resetVal)}
               className={styles.resetBtn}
             >
-              <Icon name="rotate" size={10} />
+              <Icon name="rotate" size="sm" />
             </button>
           )}
         </div>
@@ -314,7 +314,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
             type="button"
             onClick={clearRunStyling}
             className={styles.presetChip}
-            style={{ fontSize: 10, padding: '2px 8px' }}
+            style={{ fontSize: 'var(--font-size-micro)', padding: '2px 8px' }}
             title="Remove per-character styling from the selection"
           >
             Reset
@@ -340,7 +340,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
             aria-pressed={sourceAnimated}
             aria-label="Toggle Source Text keyframes"
           >
-            <Icon name="keyframe" size={10} />
+            <Icon name="keyframe" size="sm" />
           </button>
           <input
             type="text"
@@ -519,7 +519,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
               type="button"
               onClick={() => applyPreset(preset)}
               className={styles.presetChip}
-              style={{ fontSize: 10, padding: '4px 8px' }}
+              style={{ fontSize: 'var(--font-size-micro)', padding: '4px 8px' }}
             >
               {preset.label}
             </button>

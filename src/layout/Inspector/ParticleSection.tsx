@@ -166,7 +166,7 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
         </div>
         {StaticNum('seed', 'Random Seed', 0)}
 
-        <p style={{ margin: '6px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Deterministic emitter — scrubbing is stable. The layer transform moves the whole system; keyframe it to fly the emitter.
         </p>
       </div>

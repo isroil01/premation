@@ -33,8 +33,8 @@
 }
 
 /* Sizes */
-.sm .tab { height: 26px; padding: 0 var(--space-3); font-size: var(--font-size-sm); }
-.md .tab { height: 28px; padding: 0 var(--space-4); font-size: var(--font-size-md); }
+.sm .tab { height: var(--control-height-row); padding: 0 var(--space-3); font-size: var(--font-size-sm); }
+.md .tab { height: var(--control-height-lg); padding: 0 var(--space-4); font-size: var(--font-size-md); }
 
 .tab {
   position: relative;

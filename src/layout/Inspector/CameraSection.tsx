@@ -137,11 +137,11 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
         </div>
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Focal length</span>
-          <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
             {focalMm.toFixed(1)} mm
           </span>
         </div>
-        <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Film size is the virtual sensor width. It changes the millimetre
           reading only — the actual view is set by Zoom / Angle of View.
         </p>
@@ -152,7 +152,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             re-aiming the camera — the third orientation axis, which the yaw +
             pitch pair alone could not express. */}
         <KeyframeRow nodeId={nodeId} prop="orientationZ" label="Roll" value={typeof rollRaw === 'number' ? rollRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setRoll(v)} />
-        <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Swings the camera around its point of interest, keeping it framed.
           On canvas: Alt+drag orbits, Shift+Alt+drag (or Alt+middle-drag)
           tracks XY, Alt+wheel dollies. Tick a stopwatch to keyframe any of these.
@@ -174,12 +174,12 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                       setPoiY(compHeight / 2);
                       setPoiZ(0);
                     }}
-                    style={{ height: 22, padding: '0 10px', fontSize: 10, fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
+                    style={{ height: 22, padding: '0 10px', fontSize: 'var(--font-size-micro)', fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                   >
                     Enable target (two-node camera)
                   </button>
                 </div>
-                <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
                   A two-node camera always aims at a Point of Interest — move the
                   camera and it re-frames the target. Keyframe the POI to lead a
                   shot across the scene.
@@ -201,7 +201,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                     setPoiY(undefined);
                     setPoiZ(undefined);
                   }}
-                  style={{ height: 20, padding: '0 8px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
+                  style={{ height: 20, padding: '0 8px', fontSize: 'var(--font-size-micro)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Remove target (free camera)
                 </button>
@@ -279,7 +279,7 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             </button>
           )}
         </div>
-        <p style={{ margin: '6px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           The camera moves layers with the 3D switch enabled (also per-layer in
           the timeline's switch column). Position and Z live in Transform above;
           shorter focal length = wider, more dramatic perspective.

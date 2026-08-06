@@ -184,7 +184,7 @@ function AuthForm({ onDone }: { onDone: () => void }): JSX.Element {
             }}
             tabIndex={-1}
           >
-            <Icon name={showPassword ? 'eye-off' : 'eye'} size={14} />
+            <Icon name={showPassword ? 'eye-off' : 'eye'} size="md" />
           </button>
         </div>
       </div>

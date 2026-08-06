@@ -68,7 +68,7 @@ export function ConsentSheet({
   return (
     <div className={styles.consent}>
       <div className={styles.consentHead}>
-        <div className={styles.iconLg}><Icon name="plugin" size={22} /></div>
+        <div className={styles.iconLg}><Icon name="plugin" size="lg" /></div>
         <div className={styles.body}>
           <span className={styles.name}>{manifest.name}</span>
           <span className={styles.desc}>
@@ -87,7 +87,7 @@ export function ConsentSheet({
           full, not as friendly link text: the URL IS the information. */}
       {manifest.homepage && (
         <p className={styles.consentHomepage}>
-          <Icon name="link" size={12} />
+          <Icon name="link" size="sm" />
           <a href={manifest.homepage} target="_blank" rel="noreferrer noopener">{manifest.homepage}</a>
         </p>
       )}
@@ -116,7 +116,7 @@ export function ConsentSheet({
         )}
         {manifest.permissions.length > 0 && chosen.length < manifest.permissions.length && (
           <p className={styles.permWarn}>
-            <Icon name="warning" size={12} />
+            <Icon name="warning" size="sm" />
             <span>
               Withholding access is supported, but the plugin may not work. A refused call
               tells it which permission is missing, so a well-written plugin degrades instead of failing.

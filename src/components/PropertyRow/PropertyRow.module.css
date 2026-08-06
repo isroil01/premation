@@ -26,7 +26,7 @@
     var(--prop-reset-col, 18px);
   align-items: center;
   column-gap: 6px;
-  min-height: 26px;
+  min-height: var(--control-height-row);
   width: 100%;
   box-sizing: border-box;
   /* The name column is the one that yields; without this the grid grows past
@@ -36,12 +36,12 @@
 
 /* Compact variant for dense panels (effect params). */
 .compact {
-  min-height: 22px;
+  min-height: var(--control-height-sm);
   column-gap: 4px;
 }
 
 .name {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -82,7 +82,7 @@
   align-items: center;
   justify-content: center;
   width: 18px;
-  height: 18px;
+  height: var(--control-height-2xs);
   padding: 0;
   border: none;
   border-radius: var(--radius-xs);
@@ -156,7 +156,7 @@
   align-items: center;
   justify-content: center;
   width: 18px;
-  height: 18px;
+  height: var(--control-height-2xs);
   padding: 0;
   border: none;
   border-radius: var(--radius-xs);

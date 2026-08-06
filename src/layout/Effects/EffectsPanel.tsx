@@ -249,7 +249,7 @@ export function EffectsPanel(): JSX.Element {
           title="Copy this layer's whole effect stack"
           onClick={() => { copyAllEffects(primary); bumpClipboard((n) => n + 1); }}
         >
-          <Icon name="copy" size={11} /> Copy Stack
+          <Icon name="copy" size="sm" /> Copy Stack
         </button>
         <button
           type="button"
@@ -258,7 +258,7 @@ export function EffectsPanel(): JSX.Element {
           title={hasEffectClipboard() ? `Paste ${effectClipboardSize()} effect(s) onto this layer` : 'Nothing copied yet'}
           onClick={() => { pasteEffects([primary]); bumpClipboard((n) => n + 1); }}
         >
-          <Icon name="plus" size={11} /> Paste
+          <Icon name="plus" size="sm" /> Paste
         </button>
         <button
           type="button"
@@ -277,7 +277,7 @@ export function EffectsPanel(): JSX.Element {
             })();
           }}
         >
-          <Icon name="star" size={11} /> Save Preset
+          <Icon name="star" size="sm" /> Save Preset
         </button>
       </div>
       {presets.length > 0 && (
@@ -294,7 +294,7 @@ export function EffectsPanel(): JSX.Element {
                 bumpClipboard((n) => n + 1);
               }}
             >
-              <Icon name="sparkles" size={11} /> {p.name}
+              <Icon name="sparkles" size="sm" /> {p.name}
             </button>
           ))}
         </div>
@@ -350,10 +350,10 @@ export function EffectsPanel(): JSX.Element {
       <div className={styles.sectionTitle}>Masks</div>
       <div className={styles.addRow}>
         <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, rectangleMask(maskW, maskH))}>
-          <Icon name="plus" size={11} /> Rectangle
+          <Icon name="plus" size="sm" /> Rectangle
         </button>
         <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, ellipseMask(maskW, maskH))}>
-          <Icon name="plus" size={11} /> Ellipse
+          <Icon name="plus" size="sm" /> Ellipse
         </button>
         {masks.length > 0 && (
           <button
@@ -362,7 +362,7 @@ export function EffectsPanel(): JSX.Element {
             title={node && hasMaskAnim(node) ? 'Remove mask animation' : 'Keyframe the mask shape at the playhead (animate the mask)'}
             onClick={() => (node && hasMaskAnim(node) ? clearMaskAnim(primary) : keyframeMask(primary, maskTime))}
           >
-            <Icon name="keyframe" size={11} /> {node && hasMaskAnim(node) ? 'Un-animate' : 'Keyframe shape'}
+            <Icon name="keyframe" size="sm" /> {node && hasMaskAnim(node) ? 'Un-animate' : 'Keyframe shape'}
           </button>
         )}
       </div>
@@ -377,7 +377,7 @@ export function EffectsPanel(): JSX.Element {
             <div key={m.id} className={styles.effectCardItem}>
               <div className={styles.effectCardHead}>
                 <span className={styles.maskMark} aria-hidden>
-                  <Icon name="mask-square" size={13} />
+                  <Icon name="mask-square" size="sm" />
                 </span>
                 <span className={styles.itemLabel}>Mask {i + 1}</span>
                 <Dropdown
@@ -385,7 +385,7 @@ export function EffectsPanel(): JSX.Element {
                   trigger={
                     <button type="button" className={styles.blendTrigger}>
                       {MASK_MODES.find((x) => x.mode === m.mode)?.label ?? 'Add'}
-                      <Icon name="chevron-down" size={12} />
+                      <Icon name="chevron-down" size="sm" />
                     </button>
                   }
                   items={MASK_MODES.map((x) => ({
@@ -404,7 +404,7 @@ export function EffectsPanel(): JSX.Element {
                     title={`Remove Mask ${i + 1}`}
                     onClick={() => removeMaskPath(primary, m.id)}
                   >
-                    <Icon name="close" size={12} />
+                    <Icon name="close" size="sm" />
                   </button>
                 </div>
               </div>

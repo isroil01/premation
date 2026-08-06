@@ -134,7 +134,7 @@ function ZoomField(): JSX.Element {
   return (
     <span className={styles.zoomGroup}>
       <button type="button" className={styles.tool} onClick={() => getWorkspaceController().zoomOut()} title="Zoom out (-)">
-        <Icon name="zoom-out" size={12} />
+        <Icon name="zoom-out" size="sm" />
       </button>
       <ScrubField
         value={zoom}
@@ -153,7 +153,7 @@ function ZoomField(): JSX.Element {
         placement="bottom-end"
         trigger={
           <button type="button" className={styles.tool} title="Magnification presets" aria-label="Magnification presets">
-            <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+            <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
           </button>
         }
         items={[
@@ -169,7 +169,7 @@ function ZoomField(): JSX.Element {
         ]}
       />
       <button type="button" className={styles.tool} onClick={() => getWorkspaceController().zoomIn()} title="Zoom in (+)">
-        <Icon name="zoom-in" size={12} />
+        <Icon name="zoom-in" size="sm" />
       </button>
       {/* No key is advertised here because none is registered — the tooltip
           used to promise Shift+F, which did nothing. */}
@@ -179,7 +179,7 @@ function ZoomField(): JSX.Element {
         onClick={() => getWorkspaceController().fitComposition()}
         title="Fit comp in view"
       >
-        <Icon name="fit" size={12} />
+        <Icon name="fit" size="sm" />
       </button>
     </span>
   );
@@ -258,8 +258,8 @@ export function ViewControls(): JSX.Element {
             className={styles.toolDropdownTrigger}
             title="View Options"
           >
-            <Icon name="sliders-h" size={16} />
-            <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
+            <Icon name="sliders-h" size="md" />
+            <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
           </button>
         }
         items={[

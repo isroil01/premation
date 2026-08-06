@@ -64,7 +64,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        <span style={{ fontSize: 'var(--font-size-micro)', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
           Face Materials
         </span>
         <button
@@ -82,14 +82,14 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
             border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer',
           }}
         >
-          <Icon name="mouse-pointer" size={9} /> Pick
+          <Icon name="mouse-pointer" size="sm" /> Pick
         </button>
         {anyOverride && (
           <button
             type="button"
             onClick={() => clearNodeFaceMaterials(nodeId)}
             title="Back to one colour for the whole object"
-            style={{ height: 18, padding: '0 6px', fontSize: 10, background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
+            style={{ height: 18, padding: '0 6px', fontSize: 'var(--font-size-micro)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
           >
             Reset
           </button>
@@ -97,9 +97,9 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
       </div>
 
       <div className={styles.row}>
-        <span className={styles.label} style={{ fontSize: 11, opacity: 0.7 }}>Front</span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--color-text-tertiary)' }}>
-          <Icon name="arrow-up" size={10} /> layer fill
+        <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)', opacity: 0.7 }}>Front</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+          <Icon name="arrow-up" size="sm" /> layer fill
         </span>
       </div>
 
@@ -116,7 +116,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
               ? { background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', borderRadius: 4, boxShadow: 'inset 2px 0 0 var(--color-accent)' }
               : undefined}
           >
-            <span className={styles.label} style={{ fontSize: 11, fontWeight: picked ? 600 : undefined }}>{label}</span>
+            <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)', fontWeight: picked ? 600 : undefined }}>{label}</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <ColorPicker
                 compact
@@ -131,7 +131,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   title={`Track the layer fill again instead of a fixed ${label.toLowerCase()} colour`}
                   style={{ height: 18, width: 18, display: 'grid', placeItems: 'center', background: 'transparent', color: 'var(--color-text-tertiary)', border: 'none', cursor: 'pointer' }}
                 >
-                  <Icon name="close" size={10} />
+                  <Icon name="close" size="sm" />
                 </button>
               ) : (
                 // Derived from the layer fill: the gain is what shades it.
@@ -150,13 +150,13 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
       })}
 
       {pickMode && (
-        <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-accent)', lineHeight: 1.5 }}>
+        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-accent)', lineHeight: 1.5 }}>
           {pickedKind
             ? `${pickedKind[0]!.toUpperCase()}${pickedKind.slice(1)} face selected — click another side, or Pick again to leave.`
             : 'Click a side of the object on canvas.'}
         </p>
       )}
-      <p style={{ margin: '2px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+      <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
         {lit
           ? 'Accepts Lights is on, so scene lights shade these faces — the colours still apply, the brightness percentages do not.'
           : 'Pick a colour to fix a face, or set a brightness to keep it tracking the layer fill.'}

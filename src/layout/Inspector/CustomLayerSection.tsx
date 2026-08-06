@@ -91,7 +91,7 @@ export function CustomLayerSection({ nodeId }: { nodeId: string }): JSX.Element 
     <div className={styles.section}>
       {inert && (
         <div className={own.banner} role="status">
-          <Icon name="warning" size={13} />
+          <Icon name="warning" size="sm" />
           <span>{describeState(state)}</span>
           {/*
             Non-blocking, and it OFFERS rather than acts. The plugin's page is

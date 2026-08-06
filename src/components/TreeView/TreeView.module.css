@@ -19,7 +19,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 26px;
+  height: var(--control-height-row);
   padding-right: var(--space-4);
   cursor: pointer;
   user-select: none;
@@ -106,7 +106,7 @@
 .renameInput {
   flex: 1;
   min-width: 0;
-  height: 18px;
+  height: var(--control-height-2xs);
   padding: 0 var(--space-1);
   font: inherit;
   font-weight: var(--font-weight-medium);

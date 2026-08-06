@@ -248,7 +248,7 @@ export function PluginsList({
     >
       {dragging && (
         <div className={styles.dropHint} aria-hidden="true">
-          <Icon name="upload" size={18} />
+          <Icon name="upload" size="md" />
           <span>Drop a .zip or .mplugin package to install</span>
         </div>
       )}
@@ -381,7 +381,7 @@ function PluginRow({ row }: { row: Row }): JSX.Element {
       }}
     >
       <span className={styles.rowIcon}>
-        {icon ? <img src={icon} alt="" /> : <Icon name="plugin" size={14} />}
+        {icon ? <img src={icon} alt="" /> : <Icon name="plugin" size="md" />}
       </span>
 
       <span className={styles.rowBody}>
@@ -390,7 +390,7 @@ function PluginRow({ row }: { row: Row }): JSX.Element {
           {row.publisher && <span className={styles.rowPublisher}>{row.publisher}</span>}
           {row.verified && (
             <span className={styles.rowVerified} title="Verified publisher">
-              <Icon name="success" size={10} />
+              <Icon name="success" size="sm" />
             </span>
           )}
         </span>

@@ -41,7 +41,7 @@ export function PresentationModeWindow(): JSX.Element {
     <div className={styles.root}>
       {/* Clean Full Viewport Frame */}
       <div className={styles.canvasContainer}>
-        <div style={{ color: 'rgba(255, 255, 255, 0.4)', fontSize: 13, fontFamily: 'sans-serif' }}>
+        <div style={{ color: 'rgba(255, 255, 255, 0.4)', fontSize: 'var(--font-size-md)', fontFamily: 'sans-serif' }}>
           [ Presentation Canvas — Synchronized 60 FPS Viewport ]
         </div>
       </div>
@@ -54,7 +54,7 @@ export function PresentationModeWindow(): JSX.Element {
           onClick={togglePlay}
           title={isPlaying ? 'Pause' : 'Play'}
         >
-          <Icon name={isPlaying ? 'pause' : 'play'} size={16} />
+          <Icon name={isPlaying ? 'pause' : 'play'} size="md" />
         </button>
 
         <span className={styles.timeReadout}>
@@ -70,7 +70,7 @@ export function PresentationModeWindow(): JSX.Element {
           onClick={toggleFullscreen}
           title={fullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
         >
-          <Icon name={fullscreen ? 'minimize' : 'maximize'} size={16} />
+          <Icon name={fullscreen ? 'minimize' : 'maximize'} size="md" />
         </button>
       </div>
     </div>

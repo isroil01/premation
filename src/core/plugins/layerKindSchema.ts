@@ -13,7 +13,7 @@
  * A layer that cannot draw is either a controller or a puppeteer of real
  * layers, and which one it is changes everything downstream — what the document
  * stores, what happens when the plugin is missing, what the viewport shows. So
- * `render` is required and has exactly two supported values:
+ * `render` is required and has exactly three supported values:
  *
  *   `"none"`   A controller. It draws nothing itself; its animatable properties
  *              exist to drive other layers through expressions or the plugin's
@@ -26,11 +26,19 @@
  *              makes a document survive the plugin being uninstalled — the
  *              children are ordinary layers and keep rendering.
  *
- * `"shader"` is a KNOWN value that is refused with a version message rather
- * than an unknown-value message. Phase 4 adds the shader render path; reserving
- * the name now means it does not need another `apiVersion` bump, and an author
- * who tries it today gets "not supported in this version" instead of "unknown
- * render strategy", which are different problems with different fixes.
+ *   `"shader"` The kind draws itself, from an effect the plugin also declares.
+ *              Live as of API 4 — it was a reserved value refused with a
+ *              VERSION message before that, which is why an author who tried it
+ *              early was told "not supported in this version" rather than
+ *              "unknown render strategy". Those are different problems.
+ *
+ *              What a document stores for one of these is the kind and its
+ *              props, exactly as for `"none"`. The difference from `"proxy"` is
+ *              what survives an uninstall: a proxy leaves ordinary layers
+ *              behind and keeps rendering, a shader kind does not draw at all
+ *              without the plugin that provides its shader. That is a real cost
+ *              and authors should pick `"proxy"` when the output can be
+ *              expressed as native layers.
  *
  * ── Why only some types animate ──────────────────────────────────────────────
  *
@@ -45,12 +53,18 @@
  */
 
 /** How a kind gets on screen. See the module comment. */
-export type LayerRenderStrategy = 'none' | 'proxy';
+export type LayerRenderStrategy = 'none' | 'proxy' | 'shader';
 
-/** Reserved for Phase 4. Refused with a version message, not an unknown-value one. */
-export const RESERVED_RENDER_STRATEGIES = ['shader'] as const;
+/**
+ * Reserved render strategies, refused with a VERSION message rather than an
+ * unknown-value one — those are different problems with different fixes.
+ *
+ * Empty as of API 4, when 'shader' became real. Kept as the mechanism, for the
+ * same reason RESERVED_CONTRIBUTION_KEYS is.
+ */
+export const RESERVED_RENDER_STRATEGIES: readonly string[] = [];
 
-export const RENDER_STRATEGIES = ['none', 'proxy'] as const;
+export const RENDER_STRATEGIES = ['none', 'proxy', 'shader'] as const;
 
 /** What a declared property may be. */
 export type LayerPropType = 'number' | 'string' | 'boolean' | 'enum' | 'color' | 'asset';
@@ -118,8 +132,14 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
  * its own `min`/`max`, or is not a member of its own `enum`, produces a layer
  * that is invalid the instant it is created — and the author does not find out
  * until a user creates one, because nothing before that ever reads the value.
+ *
+ * Exported so `effectSchema.ts` validates effect parameters with the SAME code
+ * rather than a second implementation of the same rules. Effect params have the
+ * shape layer-kind props have precisely so an animatable one becomes an
+ * ordinary track with no new machinery in the animation engine — and two
+ * validators over one shape is how that stops being true.
  */
-function parseProp(
+export function parseProp(
   at: string,
   name: string,
   raw: unknown,

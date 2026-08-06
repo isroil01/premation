@@ -63,7 +63,7 @@ export function ReadOnlyBanner(): JSX.Element | null {
 
   return (
     <div className={styles.bar} role="status">
-      <Icon name="lock" size={13} className={styles.icon} />
+      <Icon name="lock" size="sm" className={styles.icon} />
       <span className={styles.message}>{exportError || message}</span>
       <div className={styles.actions}>
         <button

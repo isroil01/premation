@@ -65,7 +65,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Left Sidebar"
               onClick={() => useLayoutStore.getState().toggleRegion('leftSidebar')}
             >
-              <Icon name="panel-left" size={16} />
+              <Icon name="panel-left" size="md" />
             </IconButton>
             <IconButton
               aria-label="Toggle Bottom Timeline"
@@ -75,7 +75,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Bottom Timeline"
               onClick={() => useLayoutStore.getState().toggleRegion('bottomTimeline')}
             >
-              <Icon name="panel-bottom" size={16} />
+              <Icon name="panel-bottom" size="md" />
             </IconButton>
             <IconButton
               aria-label="Toggle Right Inspector"
@@ -85,7 +85,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Right Inspector"
               onClick={() => useLayoutStore.getState().toggleRegion('rightInspector')}
             >
-              <Icon name="panel-right" size={16} />
+              <Icon name="panel-right" size="md" />
             </IconButton>
             <span className={styles.menuDivider} aria-hidden />
             <button
@@ -94,7 +94,7 @@ export function TitleBar(): JSX.Element | null {
               title="Preview presentation (Fullscreen)"
               onClick={() => enterPresentation()}
             >
-              <Icon name="play" size={13} weight="fill" />
+              <Icon name="play" size="sm" weight="fill" />
               <span>Preview</span>
             </button>
             <button
@@ -103,7 +103,7 @@ export function TitleBar(): JSX.Element | null {
               title="Export composition…"
               onClick={() => openExportDialog(compDuration, compFps)}
             >
-              <Icon name="export" size={13} weight="bold" />
+              <Icon name="export" size="sm" weight="bold" />
               <span>Export</span>
             </button>
           </div>

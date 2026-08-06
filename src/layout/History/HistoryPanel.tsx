@@ -60,7 +60,7 @@ export function HistoryPanel(): JSX.Element {
           aria-label="Snapshot current state"
           onClick={() => record('Snapshot', true)}
         >
-          <Icon name="marker" size={13} />
+          <Icon name="marker" size="sm" />
         </button>
       </div>
 
@@ -96,7 +96,7 @@ export function HistoryPanel(): JSX.Element {
               >
                 <Icon
                   name={e.named ? 'marker' : 'keyframe'}
-                  size={13}
+                  size="sm"
                   className={cn(styles.rowIcon, e.named && styles.rowIconNamed)}
                 />
                 {editing === i ? (

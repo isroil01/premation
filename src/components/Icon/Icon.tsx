@@ -1,7 +1,7 @@
 /**
  * Icon system — backed entirely by the Phosphor Icon library.
  *
- * The app-wide API is unchanged (`<Icon name="play" size={16} />`) and the
+ * The app-wide API is unchanged (`<Icon name="play" size="md" />`) and the
  * `IconName` union is stable, so every call site keeps working. Each name maps
  * to a single Phosphor glyph in `PHOSPHOR_MAP`; glyphs inherit `currentColor`.
  */
@@ -235,9 +235,37 @@ const PHOSPHOR_MAP: Record<IconName, PhosphorIcon> = {
   'magic-wand': MagicWand,
 };
 
+/**
+ * The icon scale. THREE sizes, and that is the whole point.
+ *
+ * Before this there was no icon token at all, so every call site guessed and
+ * the app ended up with twenty distinct sizes — including 9, 10, 11, 12 and 13
+ * all doing the same job of "a glyph on a row", separated by a pixel each. That
+ * is not a design decision made twenty times, it is the absence of one: there
+ * was nothing to be consistent WITH.
+ *
+ * Named rather than numeric at the call site, because `size="sm"` states intent
+ * and `size={13}` states a measurement — and a measurement is what drifts. The
+ * numeric form still works for the handful of DISPLAY graphics (empty-state art,
+ * the 320px logo) that are not chrome and do not belong on a chrome scale.
+ *
+ * `iconScaleGuard.test.ts` fails on any new numeric size in the chrome band.
+ */
+export const ICON_SIZE = {
+  /** Row glyphs, tree twisties, inline chips. */
+  sm: 13,
+  /** Toolbar and panel buttons, asset type icons. */
+  md: 16,
+  /** Empty states, section headers. */
+  lg: 22,
+} as const;
+
+export type IconSizeName = keyof typeof ICON_SIZE;
+
 export interface IconProps {
   name: IconName;
-  size?: number;
+  /** A scale name (preferred) or a raw px number for display graphics. */
+  size?: number | IconSizeName;
   weight?: IconWeight;
   className?: string;
   style?: CSSProperties;
@@ -250,7 +278,7 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 
 function IconInner({
   name,
-  size = 16,
+  size = 'md',
   weight = 'regular',
   className,
   style,
@@ -260,7 +288,8 @@ function IconInner({
 }: IconProps): JSX.Element {
   const iconScale = usePreferenceStore((s) => s.iconSize);
   const scaleMult = iconScale === 'sm' ? 0.82 : iconScale === 'lg' ? 1.25 : 1.0;
-  const computedSize = Math.max(10, Math.round(size * scaleMult));
+  const basePx = typeof size === 'number' ? size : ICON_SIZE[size];
+  const computedSize = Math.max(10, Math.round(basePx * scaleMult));
 
   const transform = TRANSFORMS[name];
   const mergedStyle: CSSProperties = {

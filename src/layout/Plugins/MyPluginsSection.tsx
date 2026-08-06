@@ -177,14 +177,14 @@ function RegisterNamespace({
 function PublisherRow({ publisher }: { publisher: PublisherRecord }): JSX.Element {
   return (
     <div className={styles.row} style={{ alignItems: 'center' }}>
-      <span className={styles.rowIcon}><Icon name="user" size={14} /></span>
+      <span className={styles.rowIcon}><Icon name="user" size="md" /></span>
       <span className={styles.rowBody}>
         <span className={styles.rowTop}>
           <span className={styles.rowName}>{publisher.namespace}</span>
           <span className={styles.rowPublisher}>{publisher.displayName}</span>
           {publisher.verified && (
             <span className={styles.rowVerified} title="Verified publisher">
-              <Icon name="success" size={10} />
+              <Icon name="success" size="sm" />
             </span>
           )}
         </span>

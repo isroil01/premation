@@ -145,7 +145,7 @@ function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }
         title="Fade this gradient independently of its colours"
         onClick={() => write(defaultOpacityStops())}
       >
-        <Icon name="plus" size={11} /> Add opacity ramp
+        <Icon name="plus" size="sm" /> Add opacity ramp
       </button>
     );
   }
@@ -181,7 +181,7 @@ function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }
             // leaving one stop behind, which would read as a constant fade.
             onClick={() => write(ramp.length <= 2 ? undefined : ramp.filter((x) => x.id !== o.id))}
           >
-            <Icon name="close" size={12} />
+            <Icon name="close" size="sm" />
           </button>
         </div>
       ))}
@@ -190,7 +190,7 @@ function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }
         className={effStyles.addChip}
         onClick={() => write([...ramp, makeOpacityStop(0.5, 0.5)])}
       >
-        <Icon name="plus" size={11} /> Add opacity stop
+        <Icon name="plus" size="sm" /> Add opacity stop
       </button>
     </>
   );
@@ -252,7 +252,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
           : 'Keyframe the gradient stops at the playhead (positions and colors tween)'}
         style={stopsAnimated ? { color: 'var(--color-primary, #4c8dff)' } : undefined}
       >
-        <Icon name="keyframe" size={11} /> {stopsAnimated ? 'Stops keyframed' : 'Animate stops'}
+        <Icon name="keyframe" size="sm" /> {stopsAnimated ? 'Stops keyframed' : 'Animate stops'}
       </button>
       {stops.map((s, i) => (
         <div key={s.id} className={effStyles.stopRow}>
@@ -277,7 +277,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
             disabled={stops.length <= 2}
             onClick={() => write(stops.filter((x) => x.id !== s.id))}
           >
-            <Icon name="close" size={12} />
+            <Icon name="close" size="sm" />
           </button>
         </div>
       ))}
@@ -286,7 +286,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
         className={effStyles.addChip}
         onClick={() => write([...stops, makeStop(0.5, '#888888')])}
       >
-        <Icon name="plus" size={11} /> Add stop
+        <Icon name="plus" size="sm" /> Add stop
       </button>
 
       <OpacityStopList nodeId={nodeId} paint={paint} />
@@ -394,7 +394,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             style={{ flex: 1, justifyContent: 'center', background: 'var(--color-primary, #4c8dff)', color: '#ffffff' }}
             onClick={() => groupSelectedNodes()}
           >
-            <Icon name="folder" size={12} /> Group Parts (⌘G)
+            <Icon name="folder" size="sm" /> Group Parts (⌘G)
           </button>
         )}
         {isGroupNode && (
@@ -404,7 +404,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             style={{ flex: 1, justifyContent: 'center', borderColor: 'var(--color-border-glass)' }}
             onClick={() => ungroupSelectedNode(nodeId)}
           >
-            <Icon name="layout" size={12} /> Detach Parts (Ungroup)
+            <Icon name="layout" size="sm" /> Detach Parts (Ungroup)
           </button>
         )}
       </div>
@@ -483,7 +483,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
             {fill && (fill.type === 'linear' || fill.type === 'radial') && (
               <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span className={styles.popoverLabel} style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>Stops:</span>
+                <span className={styles.popoverLabel} style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>Stops:</span>
                 <StopList nodeId={nodeId} paint={fill} />
               </div>
             )}
@@ -527,7 +527,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
               aria-label={`Remove fill ${i + 2}`}
               onClick={() => setNodeFills(nodeId, fills.filter((_, fi) => fi !== i + 1))}
             >
-              <Icon name="close" size={12} />
+              <Icon name="close" size="sm" />
             </button>
           </div>
         ))}
@@ -537,7 +537,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             className={effStyles.addChip}
             onClick={() => setNodeFills(nodeId, [...fills, solidFill('#ffffff')])}
           >
-            <Icon name="plus" size={11} /> Add fill
+            <Icon name="plus" size="sm" /> Add fill
           </button>
         )}
 
@@ -683,7 +683,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                       }}
                       aria-label="Stroke gradient start color"
                     />
-                    <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}>→</span>
+                    <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>→</span>
                     <ColorPicker
                       compact
                       value={sortedStops(stroke.paint.stops).slice(-1)[0]?.color ?? '#000000'}
@@ -733,7 +733,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
               aria-label={`Remove stroke ${i + 2}`}
               onClick={() => setNodeStrokes(nodeId, strokes.filter((_, si) => si !== i + 1))}
             >
-              <Icon name="close" size={12} />
+              <Icon name="close" size="sm" />
             </button>
           </div>
         ))}
@@ -743,7 +743,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             className={effStyles.addChip}
             onClick={() => setNodeStrokes(nodeId, [...(strokes.length ? strokes : [defaultStroke()]), normalizeStroke({ ...defaultStroke('#ffffff'), width: 2 })])}
           >
-            <Icon name="plus" size={11} /> Add stroke
+            <Icon name="plus" size="sm" /> Add stroke
           </button>
         )}
 

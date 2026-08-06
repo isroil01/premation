@@ -240,7 +240,7 @@ function PathOpCard({
             aria-label={`Move ${typeLabel} up`}
             title="Move up — operators apply top to bottom"
           >
-            <Icon name="chevron-up" size={12} />
+            <Icon name="chevron-up" size="sm" />
           </button>
         )}
         {index < count - 1 && (
@@ -251,7 +251,7 @@ function PathOpCard({
             aria-label={`Move ${typeLabel} down`}
             title="Move down — operators apply top to bottom"
           >
-            <Icon name="chevron-down" size={12} />
+            <Icon name="chevron-down" size="sm" />
           </button>
         )}
         <button
@@ -261,7 +261,7 @@ function PathOpCard({
           aria-label={`Remove ${typeLabel}`}
           title="Remove path operator"
         >
-          <Icon name="minus" size={12} />
+          <Icon name="minus" size="sm" />
         </button>
       </div>
       {/* No type picker on a Trim or Repeater card. Retyping either into a
@@ -276,7 +276,7 @@ function PathOpCard({
             trigger={
               <button type="button" className={styles.pick}>
                 <span>{typeLabel}</span>
-                <Icon name="chevron-down" size={11} />
+                <Icon name="chevron-down" size="sm" />
               </button>
             }
             items={items}
@@ -295,7 +295,7 @@ function PathOpCard({
             trigger={
               <button type="button" className={styles.pick}>
                 <span>{op.composite === 'below' ? 'Below' : 'Above'}</span>
-                <Icon name="chevron-down" size={11} />
+                <Icon name="chevron-down" size="sm" />
               </button>
             }
             items={COMPOSITE.map((c) => ({

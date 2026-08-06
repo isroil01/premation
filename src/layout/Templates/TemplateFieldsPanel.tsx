@@ -112,7 +112,7 @@ function AnimPresetCard({ preset }: { preset: AnimPreset }): JSX.Element {
       <span className={styles.previewFrame} data-aspect="16:9">
         {poster && <img className={styles.poster} src={poster} alt="" aria-hidden />}
         <canvas ref={canvasRef} className={styles.previewCanvas} aria-hidden />
-        <span className={styles.addBadge} aria-hidden><Icon name="plus" size={13} /></span>
+        <span className={styles.addBadge} aria-hidden><Icon name="plus" size="sm" /></span>
       </span>
       <span className={styles.cardLabel}>{preset.name}</span>
     </button>
@@ -166,7 +166,7 @@ function AuthoringSection(): JSX.Element {
       <Button
         variant="secondary"
         size="sm"
-        leftIcon={<Icon name="plus" size={12} />}
+        leftIcon={<Icon name="plus" size="sm" />}
         onClick={exposeSelected}
         disabled={!selectedId}
       >
@@ -190,7 +190,7 @@ function AuthoringSection(): JSX.Element {
                   title="Remove field"
                   onClick={() => removeAuthoredField(f.id)}
                 >
-                  <Icon name="trash" size={12} />
+                  <Icon name="trash" size="sm" />
                 </button>
               </div>
             ))}
@@ -236,7 +236,7 @@ export function ActiveTemplateFields(): JSX.Element {
           <div className={styles.templateName}>{active.name}</div>
           <div className={styles.templateHint}>Editing template content</div>
         </div>
-        <Button variant="ghost" size="sm" leftIcon={<Icon name="grid" size={12} />} onClick={exit}>
+        <Button variant="ghost" size="sm" leftIcon={<Icon name="grid" size="sm" />} onClick={exit}>
           Change
         </Button>
       </div>
@@ -295,12 +295,12 @@ function FieldRow({ field }: { field: TemplateField }): JSX.Element {
       {field.kind === 'image' && (
         <div className={styles.imageField}>
           <span className={styles.imageThumb} aria-hidden>
-            {value ? <img src={String(value)} alt="" /> : <Icon name="media" size={16} />}
+            {value ? <img src={String(value)} alt="" /> : <Icon name="media" size="md" />}
           </span>
           <Button
             variant="secondary"
             size="sm"
-            leftIcon={<Icon name="media" size={12} />}
+            leftIcon={<Icon name="media" size="sm" />}
             onClick={() => fileRef.current?.click()}
           >
             {value ? 'Replace image' : 'Choose image'}

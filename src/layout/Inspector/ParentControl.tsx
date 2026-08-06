@@ -49,7 +49,7 @@ export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | nul
         trigger={
           <button type="button" className={styles.trigger} aria-label="Parent layer">
             <span className={styles.value}>{currentName}</span>
-            <Icon name="chevron-down" size={12} />
+            <Icon name="chevron-down" size="sm" />
           </button>
         }
         items={items}

@@ -100,7 +100,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
     <div className={styles.root}>
       <div className={styles.header}>
         <span className={styles.title}>
-          <Icon name="track" size={12} className={styles.fx} /> Expression · {prop}
+          <Icon name="track" size="sm" className={styles.fx} /> Expression · {prop}
         </span>
         {attached ? (
           <span className={styles.headerActions}>
@@ -117,7 +117,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
                 });
               }}
             >
-              <Icon name={enabled ? 'eye' : 'eye-off'} size={12} />
+              <Icon name={enabled ? 'eye' : 'eye-off'} size="sm" />
             </button>
             <button
               type="button"
@@ -131,7 +131,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
                 });
               }}
             >
-              <Icon name="close" size={12} />
+              <Icon name="close" size="sm" />
             </button>
           </span>
         ) : null}
@@ -192,7 +192,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
             <span className={styles.at}>@ {time.toFixed(2)}s</span>
           </span>
         ) : preview.error ? (
-          <span className={styles.error}><Icon name="warning" size={11} /> {preview.error}</span>
+          <span className={styles.error}><Icon name="warning" size="sm" /> {preview.error}</span>
         ) : draft.trim() ? (
           <span className={styles.value}>= {preview.value === null ? '—' : Array.isArray(preview.value) ? `[${preview.value.map((v) => v.toFixed(2)).join(', ')}]` : preview.value.toFixed(2)} <span className={styles.at}>@ {time.toFixed(2)}s</span></span>
         ) : (
@@ -211,7 +211,7 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
 
       {/* AI-assist */}
       <div className={styles.assist}>
-        <Icon name="sparkles" size={13} className={styles.assistIcon} />
+        <Icon name="sparkles" size="sm" className={styles.assistIcon} />
         <input
           className={styles.assistInput}
           value={intent}

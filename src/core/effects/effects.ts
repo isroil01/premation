@@ -182,10 +182,17 @@ export interface EffectDef {
   /** Build the CSS filter function. Empty for GPU-only effects. */
   css: (p: EffectParams) => string;
   /**
-   * Renders only on the GPU backend (a real WGSL/GLSL shader pass), with no
-   * CSS-filter equivalent. On Canvas2D — the DEFAULT backend — adding one of
-   * these does nothing at all, so the UI must say so rather than offering it
-   * as if it worked.
+   * Renders only as a real shader pass (WGSL or GLSL), with no CSS-filter
+   * equivalent — so the UI marks it rather than offering it as if it were free.
+   *
+   * This used to read "on Canvas2D — the DEFAULT backend — adding one of these
+   * does nothing at all". That stopped being true in Phase 5, when
+   * `Canvas2DBackend` was removed: the tiering is WebGPU → WebGL2 with no CPU
+   * tier at all, and `'software'` means the viewport cannot paint rather than
+   * "slower but working" (see `renderBackendStore.ts`). Corrected because a
+   * comment pointing at a deleted backend is worse than none — anyone reasoning
+   * about what a `gpuOnly` effect does on a weak machine would have reasoned
+   * from a fallback that does not exist.
    */
   gpuOnly?: boolean;
 }

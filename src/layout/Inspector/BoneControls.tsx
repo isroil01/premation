@@ -116,7 +116,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       <div className={styles.card}>
         <div className={styles.cardHeader}>
           <div className={styles.cardTitle}>
-            <Icon name="grid" size={13} style={{ opacity: 0.7 }} />
+            <Icon name="grid" size="sm" style={{ opacity: 0.7 }} />
             <span>Vertex Weights</span>
             <span className={styles.badge}>#{selectedVertex}</span>
           </div>
@@ -127,7 +127,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             title="Deselect vertex"
             onClick={() => clearRigVertex()}
           >
-            <Icon name="close" size={12} />
+            <Icon name="close" size="sm" />
           </Button>
         </div>
 
@@ -180,7 +180,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       {/* Skeleton summary card */}
       <div className={styles.headerCard}>
         <div className={styles.headerTitle}>
-          <Icon name="bone" size={14} />
+          <Icon name="bone" size="md" />
           <span>Skeleton Hierarchy</span>
           <span className={styles.badge}>{bones.length} bones</span>
         </div>
@@ -189,7 +189,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           variant="secondary"
           onClick={() => useUIStore.getState().setActiveTool('bone')}
         >
-          <Icon name="plus" size={12} /> Add Joint
+          <Icon name="plus" size="sm" /> Add Joint
         </Button>
       </div>
 
@@ -237,7 +237,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             onClick={() => useUIStore.getState().setActiveTool('bone')}
             style={{ marginTop: 8 }}
           >
-            <Icon name="bone" size={12} /> Draw Bones with Bone Tool (Ctrl+B)
+            <Icon name="bone" size="sm" /> Draw Bones with Bone Tool (Ctrl+B)
           </Button>
         </div>
       )}
@@ -256,7 +256,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>
-              <Icon name="grid" size={13} style={{ opacity: 0.7 }} />
+              <Icon name="grid" size="sm" style={{ opacity: 0.7 }} />
               <span>Skinning Mesh</span>
             </div>
           </div>
@@ -295,7 +295,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           <div key={bone.id} className={styles.card}>
             <div className={styles.cardHeader}>
               <div className={styles.cardTitle}>
-                <Icon name="bone" size={13} style={{ opacity: 0.7 }} />
+                <Icon name="bone" size="sm" style={{ opacity: 0.7 }} />
                 {/* Editable label. The card used to print the raw generated id
                     (`bone_x8f2a1`), which is unreadable on a real character. */}
                 <input
@@ -331,7 +331,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 aria-label={`Delete bone ${bone.name || bone.id}`}
                 title="Delete bone"
               >
-                <Icon name="trash" size={12} />
+                <Icon name="trash" size="sm" />
               </Button>
             </div>
 
@@ -392,7 +392,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   })
                 }
               >
-                <Icon name="crosshair" size={12} />
+                <Icon name="crosshair" size="sm" />
                 {hasIK ? 'IK Active' : 'Enable IK Target'}
               </Button>
             </div>
@@ -466,7 +466,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>
-              <Icon name="puppet-pin" size={13} style={{ opacity: 0.7 }} />
+              <Icon name="puppet-pin" size="sm" style={{ opacity: 0.7 }} />
               <span>Controllers</span>
               <span className={styles.badge}>{controllers.length}</span>
             </div>
@@ -512,7 +512,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 aria-label={`Delete controller ${c.name ?? c.id}`}
                 onClick={() => deleteController(nodeId, c.id)}
               >
-                <Icon name="trash" size={12} />
+                <Icon name="trash" size="sm" />
               </Button>
             </div>
           ))}

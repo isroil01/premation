@@ -127,7 +127,7 @@ export function ProjectPanel(): JSX.Element {
           aria-label="New composition"
           onClick={() => openNewCompositionDialog()}
         >
-          <Icon name="plus" size={13} />
+          <Icon name="plus" size="sm" />
         </button>
       </div>
 
@@ -167,7 +167,7 @@ export function ProjectPanel(): JSX.Element {
                   }
                 }}
               >
-                <Icon name="layers" size={13} className={styles.rowIcon} />
+                <Icon name="layers" size="sm" className={styles.rowIcon} />
                 <div className={styles.rowBody}>
                   {renamingId === c.id ? (
                     <input
@@ -206,7 +206,7 @@ export function ProjectPanel(): JSX.Element {
                   aria-label={`Options for ${c.name}`}
                   onClick={(e) => openMenu(c.id, e)}
                 >
-                  <Icon name="menu" size={12} />
+                  <Icon name="menu" size="sm" />
                 </button>
               </div>
             );

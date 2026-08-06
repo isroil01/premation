@@ -71,7 +71,7 @@ export function OutputModuleDialog({
         <div className={styles.header}>
           <h2>Output Module Settings</h2>
           <button type="button" className={styles.closeBtn} onClick={onCancel}>
-            <Icon name="close" size={16} />
+            <Icon name="close" size="md" />
           </button>
         </div>
 

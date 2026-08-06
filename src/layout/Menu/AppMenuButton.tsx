@@ -60,7 +60,7 @@ export function AppMenuButton(): JSX.Element {
   return (
     <div ref={ref} style={{ display: 'inline-flex' }}>
       <IconButton aria-label="Menu" size="md" active={open} onClick={toggle}>
-        <Icon name="menu" size={14} />
+        <Icon name="menu" size="md" />
       </IconButton>
       {open && anchor
         ? createPortal(

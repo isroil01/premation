@@ -1125,7 +1125,7 @@ function EditorShellInner(): JSX.Element {
                     e.currentTarget.style.backgroundColor = 'var(--color-surface-hover, rgba(255, 255, 255, 0.05))';
                   }}
                 >
-                  <Icon name="layers" size={11} style={{ color: 'var(--color-text-tertiary)' }} />
+                  <Icon name="layers" size="sm" style={{ color: 'var(--color-text-tertiary)' }} />
                   <span style={{ fontWeight: 500 }}>{activeTitle ?? 'Untitled'}</span>
                   <span style={{ fontFamily: 'var(--font-family-mono)', fontSize: '10px', color: 'var(--color-text-secondary)' }}>
                     {compWidth}×{compHeight} · {compFps}fps
@@ -1159,7 +1159,7 @@ function EditorShellInner(): JSX.Element {
                       color: 'var(--color-text-secondary)', cursor: 'pointer', font: 'inherit',
                     }}
                   >
-                    <Icon name="search" size={11} />
+                    <Icon name="search" size="sm" />
                     Search
                     <kbd style={{
                       fontFamily: 'var(--font-family-mono)', fontSize: 10,

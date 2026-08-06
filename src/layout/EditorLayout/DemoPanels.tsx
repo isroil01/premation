@@ -172,14 +172,14 @@ function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
     label = (
       <span className={styles.pluginManagedRow} title={`Managed by ${owner}. Editing it takes it over.`}>
         {label}
-        <Icon name="plugin" size={10} />
+        <Icon name="plugin" size="sm" />
       </span>
     );
   } else if (inert) {
     label = (
       <span className={styles.pluginInertRow} title={`Needs the plugin "${custom!.pluginId}".`}>
         {label}
-        <Icon name="warning" size={10} />
+        <Icon name="warning" size="sm" />
       </span>
     );
   }
@@ -451,7 +451,7 @@ export function ScenePanel(): JSX.Element {
                   aria-label={hidden ? 'Show layer' : 'Hide layer'}
                   onClick={(e) => { e.stopPropagation(); toggleVisible(node.id); }}
                 >
-                  <Icon name={hidden ? 'eye-off' : 'eye'} size={12} />
+                  <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
                 </button>
               );
             }}
@@ -791,13 +791,13 @@ export function AssetsPanel(): JSX.Element {
 
       <div className={styles.assetTools}>
         <button type="button" className={styles.toolBtnPrimary} onClick={() => fileInputRef.current?.click()} title="Import media files">
-          <Icon name="upload" size={13} /> Import
+          <Icon name="upload" size="sm" /> Import
         </button>
         <button type="button" className={styles.toolBtn} onClick={() => folderInputRef.current?.click()} title="Import a folder (keeps its structure)">
-          <Icon name="folder-open" size={13} /> Folder
+          <Icon name="folder-open" size="sm" /> Folder
         </button>
         <button type="button" className={styles.toolBtn} onClick={handleNewFolder} title="New folder">
-          <Icon name="folder-plus" size={13} /> New
+          <Icon name="folder-plus" size="sm" /> New
         </button>
         <input
           type="file"
@@ -870,13 +870,13 @@ export function AssetsPanel(): JSX.Element {
                 >
                   <Icon
                     name={expandedFolders.has(row.folder.id) ? 'chevron-down' : 'chevron-right'}
-                    size={12}
+                    size="sm"
                     className={styles.assetTwisty}
                   />
                   {/* No wrapper around the glyph. The bordered tile that used to
                       sit here made every row look like a card in a list of
                       cards; a file row is a line of text with an icon on it. */}
-                  <Icon name={expandedFolders.has(row.folder.id) ? 'folder-open' : 'folder'} size={16} className={styles.assetGlyphFolder} />
+                  <Icon name={expandedFolders.has(row.folder.id) ? 'folder-open' : 'folder'} size="md" className={styles.assetGlyphFolder} />
                   {renamingId === row.folder.id ? (
                     <input
                       autoFocus
@@ -924,7 +924,7 @@ export function AssetsPanel(): JSX.Element {
                       you scan for. */}
                   <Icon
                     name={ASSET_TYPE_ICON[row.asset.type] ?? 'file'}
-                    size={16}
+                    size="md"
                     className={`${styles.assetGlyph} ${ASSET_TYPE_CLASS[row.asset.type] ?? styles.assetGlyphFile}`}
                   />
                   <span className={styles.assetRowName}>{row.asset.name}</span>
@@ -1341,10 +1341,10 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
         action={
           <>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('bone')}>
-              <Icon name="bone" size={13} /> Bone tool
+              <Icon name="bone" size="sm" /> Bone tool
             </Button>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
-              <Icon name="puppet-pin" size={13} /> Puppet pin tool
+              <Icon name="puppet-pin" size="sm" /> Puppet pin tool
             </Button>
           </>
         }
@@ -1451,7 +1451,7 @@ export function ComponentsPanel(): JSX.Element {
               title={hasSelection ? 'Save the current selection as a reusable component' : 'Select layer(s) first'}
               onClick={() => setShowSaveInput(true)}
             >
-              <Icon name="plus" size={14} /> Save selection as component
+              <Icon name="plus" size="md" /> Save selection as component
             </button>
           ) : (
             <div style={{ display: 'flex', gap: 6 }}>
@@ -1506,7 +1506,7 @@ export function ComponentsPanel(): JSX.Element {
                           style={{ objectFit: 'contain', borderRadius: 4, background: 'var(--color-surface-0)' }}
                         />
                       ) : (
-                        <Icon name="component" size={24} />
+                        <Icon name="component" size="lg" />
                       );
                     })()}
                     <span className={styles.libChipLabel}>{c.name}</span>
@@ -1516,7 +1516,7 @@ export function ComponentsPanel(): JSX.Element {
                     aria-label={`Delete ${c.name}`}
                     title="Delete component"
                     onClick={() => removeComponent(c.id)}
-                    style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: '50%', border: '1px solid var(--color-border)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 11, lineHeight: 1 }}
+                    style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: '50%', border: '1px solid var(--color-border)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 'var(--font-size-xs)', lineHeight: 1 }}
                   >✕</button>
                 </div>
               ))}
@@ -1986,7 +1986,7 @@ export function LibraryPanel(): JSX.Element {
             className={section === s.id ? styles.libTabActive : styles.libTab}
             title={s.label}
             onClick={() => setSection(s.id)}>
-            <Icon name={s.icon} size={13} />
+            <Icon name={s.icon} size="sm" />
             {s.label}
           </button>
         ))}

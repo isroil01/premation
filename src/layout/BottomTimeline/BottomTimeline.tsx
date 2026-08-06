@@ -116,7 +116,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
 
             {/* Timeline Search/Filter Bar */}
             <div className={styles.searchContainer}>
-              <Icon name="search" size={12} className={styles.searchIcon} />
+              <Icon name="search" size="sm" className={styles.searchIcon} />
               <input
                 type="text"
                 placeholder="Filter layers/properties..."
@@ -132,7 +132,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   onClick={() => setSearchQuery('')}
                   title="Clear search filter"
                 >
-                  <Icon name="close" size={12} />
+                  <Icon name="close" size="sm" />
                 </button>
               )}
             </div>
@@ -147,7 +147,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 title="Go to Start (Home)"
                 onClick={() => getTimelineController().goToStart()}
               >
-                <Icon name="skip-back" size={13} />
+                <Icon name="skip-back" size="sm" />
               </button>
               <button
                 type="button"
@@ -155,7 +155,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 title="Previous Frame (Page Up)"
                 onClick={() => getTimelineController().previousFrame()}
               >
-                <Icon name="chevron-left" size={13} />
+                <Icon name="chevron-left" size="sm" />
               </button>
               <button
                 type="button"
@@ -163,7 +163,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 title={ws?.playing ? 'Pause Playback (Space)' : 'Start Playback (Space)'}
                 onClick={() => getTimelineController().togglePlay()}
               >
-                <Icon name={ws?.playing ? 'pause' : 'play'} size={14} weight={ws?.playing ? 'regular' : 'fill'} />
+                <Icon name={ws?.playing ? 'pause' : 'play'} size="md" weight={ws?.playing ? 'regular' : 'fill'} />
               </button>
               <button
                 type="button"
@@ -171,7 +171,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 title="Next Frame (Page Down)"
                 onClick={() => getTimelineController().nextFrame()}
               >
-                <Icon name="chevron-right" size={13} />
+                <Icon name="chevron-right" size="sm" />
               </button>
               <button
                 type="button"
@@ -179,7 +179,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 title="Go to End (End)"
                 onClick={() => getTimelineController().goToEnd()}
               >
-                <Icon name="skip-forward" size={13} />
+                <Icon name="skip-forward" size="sm" />
               </button>
               <button
                 type="button"
@@ -190,7 +190,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   setLoopingState(!looping);
                 }}
               >
-                <Icon name="loop" size={13} />
+                <Icon name="loop" size="sm" />
               </button>
               <button
                 type="button"
@@ -206,7 +206,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   ctrl.addMarkerAtPlayhead();
                 }}
               >
-                <Icon name="marker" size={13} />
+                <Icon name="marker" size="sm" />
               </button>
             </div>
 
@@ -226,9 +226,9 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                     type="button"
                     className={cn(styles.transportBtn, previewResolution !== 1 && styles.transportBtnActive)}
                     title="Preview Quality"
-                    style={{ width: 'auto', padding: '0 6px', gap: 4, fontSize: 11 }}
+                    style={{ width: 'auto', padding: '0 6px', gap: 4, fontSize: 'var(--font-size-xs)' }}
                   >
-                    <Icon name="graph-speed" size={12} />
+                    <Icon name="graph-speed" size="sm" />
                     <span>{RESOLUTION_LABELS[previewResolution]}</span>
                   </button>
                 }
@@ -255,7 +255,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   bumpScene();
                 }}
               >
-                <Icon name="scissors" size={13} />
+                <Icon name="scissors" size="sm" />
               </button>
               <button
                 type="button"
@@ -266,7 +266,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   bumpScene();
                 }}
               >
-                <Icon name="trim-in" size={13} />
+                <Icon name="trim-in" size="sm" />
               </button>
               <button
                 type="button"
@@ -277,7 +277,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   bumpScene();
                 }}
               >
-                <Icon name="trim-out" size={13} />
+                <Icon name="trim-out" size="sm" />
               </button>
             </div>
 
@@ -312,7 +312,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 aria-pressed={graphEditorOpen}
                 onClick={() => setGraphEditorOpen(!graphEditorOpen)}
               >
-                <Icon name="track" size={13} />
+                <Icon name="track" size="sm" />
               </button>
 
               <button
@@ -323,7 +323,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 aria-pressed={globalShy}
                 onClick={() => setGlobalShy(!globalShy)}
               >
-                <Icon name="shy" size={12} />
+                <Icon name="shy" size="sm" />
               </button>
 
               <button
@@ -334,7 +334,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 aria-pressed={motionBlurEnabled}
                 onClick={() => setMotionBlurEnabled(!motionBlurEnabled)}
               >
-                <Icon name="motion-blur" size={12} />
+                <Icon name="motion-blur" size="sm" />
               </button>
 
               <button
@@ -345,7 +345,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 aria-pressed={draftQuality}
                 onClick={() => setDraftQuality(!draftQuality)}
               >
-                <Icon name="zap" size={12} />
+                <Icon name="zap" size="sm" />
               </button>
 
               {/* Row Height Size Changer Button */}
@@ -358,7 +358,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                   setRowTrackHeight((h) => (h === 22 ? 26 : h === 26 ? 30 : 22));
                 }}
               >
-                <Icon name="layers" size={12} />
+                <Icon name="layers" size="sm" />
               </button>
             </div>
           </>
@@ -478,7 +478,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 disabled={!onZoom || pps <= ZOOM_MIN}
                 onClick={() => onZoom?.(clampZoom(pps / ZOOM_STEP))}
               >
-                <Icon name="zoom-out" size={11} />
+                <Icon name="zoom-out" size="sm" />
               </button>
               <input
                 type="range"
@@ -505,7 +505,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 disabled={!onZoom || pps >= ZOOM_MAX}
                 onClick={() => onZoom?.(clampZoom(pps * ZOOM_STEP))}
               >
-                <Icon name="zoom-in" size={11} />
+                <Icon name="zoom-in" size="sm" />
               </button>
             </div>
           </div>

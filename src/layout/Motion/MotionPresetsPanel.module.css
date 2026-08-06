@@ -29,7 +29,7 @@
   padding-left: 28px !important;
   padding-right: 24px !important;
   height: 28px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .clearSearchBtn {
@@ -395,7 +395,7 @@
   gap: 1.5px;
   font-family: var(--font-family-sans);
   font-weight: 800;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-primary);
   text-shadow: 0 0 6px rgba(84, 160, 255, 0.45);
   z-index: 2;

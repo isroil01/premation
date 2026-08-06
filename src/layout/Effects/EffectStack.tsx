@@ -306,7 +306,7 @@ function EffectParamRow({
       title={sliderOpen ? 'Hide slider' : 'Show slider'}
       onClick={() => setSliderOpen((v) => !v)}
     >
-      <Icon name={sliderOpen ? 'chevron-down' : 'chevron-right'} size={10} />
+      <Icon name={sliderOpen ? 'chevron-down' : 'chevron-right'} size="sm" />
     </button>
   ) : undefined;
 
@@ -468,7 +468,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
               onDragEnd={() => { setDragId(null); setDropIndex(null); }}
             >
               <span className={panel.dragGrip} aria-hidden title="Drag to reorder">
-                <Icon name="grip-vertical" size={12} />
+                <Icon name="grip-vertical" size="sm" />
               </span>
               <button
                 type="button"
@@ -476,7 +476,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 onClick={() => toggleEffectCard(e.id, isCollapsed)}
                 title={isCollapsed ? 'Expand effect parameters' : 'Collapse effect parameters'}
               >
-                <Icon name={isCollapsed ? 'chevron-right' : 'chevron-down'} size={12} />
+                <Icon name={isCollapsed ? 'chevron-right' : 'chevron-down'} size="sm" />
               </button>
 
               <Checkbox
@@ -522,7 +522,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   disabled={i === 0}
                   onClick={() => moveEffect(nodeId, e.id, -1)}
                 >
-                  <Icon name="arrow-up" size={12} />
+                  <Icon name="arrow-up" size="sm" />
                 </button>
                 <button
                   type="button"
@@ -531,7 +531,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   disabled={i === effects.length - 1}
                   onClick={() => moveEffect(nodeId, e.id, 1)}
                 >
-                  <Icon name="arrow-down" size={12} />
+                  <Icon name="arrow-down" size="sm" />
                 </button>
                 <button
                   type="button"
@@ -539,7 +539,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   aria-label={`Remove ${name}`}
                   onClick={() => removeEffect(nodeId, e.id)}
                 >
-                  <Icon name="close" size={12} />
+                  <Icon name="close" size="sm" />
                 </button>
               </div>
             </div>

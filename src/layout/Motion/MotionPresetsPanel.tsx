@@ -237,13 +237,13 @@ export function MotionPresetsPanel(): JSX.Element {
             aria-label="Save as preset"
             onClick={beginSave}
           >
-            <Icon name="plus" size={12} />
+            <Icon name="plus" size="sm" />
           </button>
           <Dropdown
             placement="bottom-end"
             trigger={
               <button type="button" className={styles.sortBtn} title="Sort presets">
-                <Icon name="settings" size={12} />
+                <Icon name="settings" size="sm" />
               </button>
             }
             items={sortItems}
@@ -271,7 +271,7 @@ export function MotionPresetsPanel(): JSX.Element {
               disabled={!saveName.trim()}
               onClick={commitSave}
             >
-              <Icon name="check" size={12} />
+              <Icon name="check" size="sm" />
             </button>
             <button
               type="button"
@@ -280,7 +280,7 @@ export function MotionPresetsPanel(): JSX.Element {
               aria-label="Cancel save preset"
               onClick={() => { setSaving(false); setSaveName(''); }}
             >
-              <Icon name="close" size={12} />
+              <Icon name="close" size="sm" />
             </button>
           </div>
         )}
@@ -352,7 +352,7 @@ export function MotionPresetsPanel(): JSX.Element {
                             bumpScene();
                           }}
                         >
-                          <Icon name="trash" size={11} />
+                          <Icon name="trash" size="sm" />
                         </button>
                       )}
                     </div>
@@ -363,7 +363,7 @@ export function MotionPresetsPanel(): JSX.Element {
           </BrowserTree>
         ) : (
           <div className={styles.emptyState}>
-            <Icon name="sparkles" size={16} className={styles.emptyIcon} />
+            <Icon name="sparkles" size="md" className={styles.emptyIcon} />
             <span className={styles.emptyText}>No presets found for "{search}"</span>
           </div>
         )}

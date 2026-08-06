@@ -63,7 +63,7 @@ function VersionHistory(): JSX.Element {
           }}
         />
         <button type="button" className={styles.saveBtn} onClick={() => void onSave()}>
-          <Icon name="marker" size={13} />
+          <Icon name="marker" size="sm" />
           Save version
         </button>
       </div>

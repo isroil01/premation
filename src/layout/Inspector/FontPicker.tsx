@@ -186,7 +186,7 @@ export function FontPicker({ value, onChange }: FontPickerProps): JSX.Element {
           <span className={styles.triggerLabel} style={{ fontFamily: value }}>
             {value}
           </span>
-          <Icon name="chevron-down" size={12} className={styles.chevron} />
+          <Icon name="chevron-down" size="sm" className={styles.chevron} />
         </button>
       }
     >
@@ -238,7 +238,7 @@ export function FontPicker({ value, onChange }: FontPickerProps): JSX.Element {
                     {family}
                   </span>
                   {family === value ? (
-                    <Icon name="check" size={12} className={styles.check} />
+                    <Icon name="check" size="sm" className={styles.check} />
                   ) : null}
                 </button>
               )}

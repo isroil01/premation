@@ -18,7 +18,7 @@
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 28px;
+  height: var(--control-height-lg);
   border-radius: var(--radius-control);
   background: var(--ib-bg);
   color: var(--ib-fg);
@@ -85,8 +85,8 @@
 }
 
 /* Heights match Button's ladder exactly — see the note at the top. */
-.root[data-size="xs"] { width: 18px; height: 18px; }
-.root[data-size="sm"] { width: 22px; height: 22px; }
-.root[data-size="md"] { width: 28px; height: 28px; }
+.root[data-size="xs"] { width: 18px; height: var(--control-height-2xs); }
+.root[data-size="sm"] { width: 22px; height: var(--control-height-sm); }
+.root[data-size="md"] { width: 28px; height: var(--control-height-lg); }
 .root[data-size="lg"] { width: 34px; height: 34px; }
 .root[data-size="xl"] { width: 42px; height: 42px; }

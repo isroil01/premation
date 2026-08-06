@@ -110,7 +110,7 @@ export function EditorLayout({
     <div className={styles.workspacePane} key="viewport">
       {isViewportExternal ? (
           <div className={styles.detached}>
-            <Icon name="export" size={24} />
+            <Icon name="export" size="lg" />
             <span className={styles.detachedLabel}>Preview Canvas is open in an external window</span>
             <button className={styles.detachedAction} onClick={() => dockPanel('viewport')}>
               Re-dock preview
@@ -158,7 +158,7 @@ export function EditorLayout({
     <div className={styles.timelinePane} key="timeline">
       {isTimelineExternal ? (
           <div className={`${styles.detached} ${styles.detachedRow}`}>
-            <Icon name="export" size={16} />
+            <Icon name="export" size="md" />
             <span className={styles.detachedLabel}>Timeline is open in an external window</span>
             <button className={styles.detachedAction} onClick={() => dockPanel('timeline')}>
               Re-dock timeline

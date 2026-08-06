@@ -527,14 +527,14 @@
       }
     },
     {
-      "name": "the shader render strategy is reserved",
-      "valid": false,
+      "name": "the shader render strategy is live at apiVersion 4",
+      "valid": true,
       "manifest": {
         "id": "com.example.shader",
         "name": "Kinds",
         "version": "1.0.0",
         "description": "Declares a layer kind.",
-        "apiVersion": 3,
+        "apiVersion": 4,
         "main": "main.js",
         "contributes": {
           "layerKinds": [
@@ -567,7 +567,8 @@
             }
           ]
         }
-      }
+      },
+      "note": "Reserved before API 4 and refused with a VERSION message, not an unknown-value one. Both validators had to change together, which is what this shared corpus is for."
     },
     {
       "name": "an unknown render strategy is refused",
@@ -1089,6 +1090,125 @@
               "entry": "panel.html",
               "placement": "shared",
               "icon": "layers"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an effect with a shader and typed params",
+      "valid": true,
+      "note": "The happy path for API 4. Both validators must accept it.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "params": {
+                "amount": {
+                  "type": "number",
+                  "default": 1,
+                  "min": 0,
+                  "max": 2,
+                  "animatable": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "effects require apiVersion 4",
+      "valid": false,
+      "note": "A NON-EMPTY block is what uses the feature. An API-3 manifest spelling out effects: [] stays valid — see the next case.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "params": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an empty effects block stays valid on an older apiVersion",
+      "valid": true,
+      "note": "effects was a RESERVED key validated as must-be-empty under API 1-3, so packages declaring nothing must not break.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "effects": []
+        }
+      }
+    },
+    {
+      "name": "an effect parameter must be a type a shader can take",
+      "valid": false,
+      "note": "A string has no bytes in a uniform block. Refused at publish rather than discovered from a black frame.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "params": {
+                "mode": {
+                  "type": "string",
+                  "default": "x"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an effect must declare a shader",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "params": {}
             }
           ]
         }

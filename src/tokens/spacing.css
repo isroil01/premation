@@ -33,10 +33,30 @@
 
      Before this existed the chrome shipped 20/22/24/26/30px side by side in
      the same bar, which is what made it read as unordered. */
+  --control-height-2xs: 18px;
   --control-height-xs: 20px;
   --control-height-sm: 22px;
   --control-height-md: 24px;
+  --control-height-row: 26px;
   --control-height-lg: 28px;
+
+  /* TWO tiers added because the app already had them and this scale did not
+     name them, which is worse than having them:
+
+       2xs 18px — every component's `xs` size variant (Button, IconButton,
+                  Input, PropertyRow, TreeView's rename field)
+       row 26px — the compact ROW: Tabs.sm, TreeView and BrowserTree rows,
+                  transport buttons, the menu-bar groups
+
+     They were not stray values. Snapping them to the nearest existing token
+     would have resized the xs variant of every control in the library and
+     every tree row in the app — a visible change in dozens of places, made to
+     satisfy a scale that the design had already outgrown. Naming them costs
+     nothing and makes them greppable.
+
+     SIX tiers between 18 and 28 is probably two too many, and collapsing them
+     is a real design decision with app-wide reach — deliberately NOT made here
+     on the way past. */
 
   /* ── Chrome bar heights ───────────────────────────────────────────
      The horizontal bands stacked down the editor frame. Each clears its

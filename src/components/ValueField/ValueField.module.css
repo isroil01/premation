@@ -3,7 +3,7 @@
   align-items: center;
   width: auto;
   min-width: 32px;
-  height: 20px;
+  height: var(--control-height-xs);
   padding: 0 4px;
   background: transparent;
   border: 1px solid transparent;

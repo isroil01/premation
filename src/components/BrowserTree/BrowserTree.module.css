@@ -34,7 +34,7 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  height: 28px;
+  height: var(--control-height-lg);
   padding: 0 var(--space-3) 0 var(--space-2);
   background: transparent;
   border: none;
@@ -121,7 +121,7 @@
   align-items: center;
   gap: 7px;
   width: 100%;
-  min-height: 26px;
+  min-height: var(--control-height-row);
   /* 26px indent = twisty + gap above, so leaf names hang under the folder NAME
      rather than under its triangle. */
   padding: 0 var(--space-3) 0 26px;

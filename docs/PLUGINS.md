@@ -887,3 +887,123 @@ took over an account would want accepted quietly.
 
 If the editor's key-change prompt is unavailable for any reason, the update is
 **refused**, not accepted. A missing dialog is not consent.
+
+---
+
+## 12. Effects (API 4)
+
+A plugin can draw pixels. It ships **WGSL and a typed parameter schema**; it
+does not ship a callback.
+
+### Shaders as data, never JS in the frame loop
+
+This is the constraint everything else follows from, and it is structural
+rather than a performance preference. Plugin code lives in a Worker, so reaching
+it means `postMessage`, which means awaiting a reply inside what has to be a
+synchronous render. One async hop per effect per frame is playback that stutters
+and an export that takes minutes, and no amount of batching fixes an
+architecture that has to ask another thread what colour a pixel is.
+
+So your JS registers an effect and drives its parameters. It is never in the
+loop — which is also why your effect keeps working in a document opened by
+someone whose editor never started your worker.
+
+```json
+{
+  "apiVersion": 4,
+  "contributes": {
+    "effects": [{
+      "id": "tint",
+      "label": "Tint",
+      "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv) * params.amount;\n}",
+      "params": {
+        "amount": { "type": "number", "default": 1, "min": 0, "max": 2, "animatable": true }
+      }
+    }]
+  }
+}
+```
+
+### Parameters are ordinary properties
+
+`params` uses the same schema `layerKinds.props` does, validated by the same
+code. An `animatable` parameter becomes a keyframe track keyed exactly like
+every other property — no new machinery in the animation engine, nothing
+special in the timeline or the graph editor.
+
+Only `number`, `color` and `boolean` are accepted. `string` has no bytes in a
+uniform block, `asset` is a reference rather than a value, and `enum` would need
+an index mapping you had to keep in your head and in step with your schema. All
+three are refused at install rather than discovered from a black frame.
+
+### The host writes the bindings
+
+Write your `@fragment` entry point and read `params.<name>`, `src` and `samp`.
+Do **not** declare `@group` or `@binding` — it is refused. The host generates
+the parameter block, prepends it, and binds to it. Two reasons: hand-written
+uniform layout is a padding bug that surfaces as wrong colours rather than an
+error, and the host has to own the binding numbers to bind anything to them.
+
+The generated struct orders members by **alignment, descending** — every `vec4`
+first. A scalar before a `vec4` would leave a 12-byte hole that the struct does
+not describe, and every member after it would read shifted bytes: no compile
+error, no exception, just wrong colours that look like your maths.
+
+### What the validator refuses, and why
+
+A GPU cannot be preempted. A fragment shader that takes too long is not slow —
+it is a hang, and the operating system's answer is to reset the device, which on
+Windows destroys every GPU context in the process. So one plugin's shader can
+black out a viewport for a document that has nothing else wrong with it.
+
+Refused before compilation:
+
+- **A loop whose bound is not a literal.** `for (var i = 0; i < params.count; …)`
+  lets a slider decide how long the GPU spends per pixel. Bounds must be
+  literal, at most 256 per loop, nested at most 3 deep — bounds multiply.
+- **`while` and `loop`**, which have no syntactic bound at all.
+- **`discard`** — effects composite, so a discarded fragment shows the layer
+  beneath rather than transparency. Use `alpha = 0.0`.
+- **Storage buffers, atomics, `@compute`** — an effect reads its declared
+  parameters and the input texture, and nothing else.
+- Sources over 64 KB, or roughly 2000 statements.
+
+Unlike the publish-time package scanner, which is advisory because it reasons
+about intent, this refuses **syntax**. A loop whose bound is not a literal has
+no bounded cost whoever wrote it and whatever they meant.
+
+### When it goes wrong anyway
+
+- **Compilation is bounded.** A driver that has not answered in 5 seconds is not
+  waited on further.
+- **Failure is passthrough, never a broken frame.** An effect that cannot
+  compile renders its input unchanged. A missing or black layer reads as "my
+  project is corrupted".
+- **Device loss is attributed.** If the graphics device resets while one of your
+  effects is drawing, that effect is disabled by name and the user is told which
+  plugin. This is a *suspicion* and is worded as one — a device can also be lost
+  because a driver updated or another application hung the GPU, and a loss with
+  no plugin effect drawing blames nobody. The user can turn it back on, which
+  recompiles it and puts it through every gate again.
+
+### `render: "shader"` on a layer kind
+
+Live as of API 4. It was a reserved value refused with a *version* message
+before that, so an author who tried it early was told "not supported in this
+version" rather than "unknown render strategy".
+
+Note the cost against `"proxy"`: a proxy leaves ordinary layers behind and keeps
+rendering after an uninstall, and a shader kind does not draw at all without the
+plugin that provides its shader. Prefer `"proxy"` when your output can be
+expressed as native layers.
+
+### Known limits, stated
+
+- **WGSL only, so WebGPU only.** The renderer falls back to WebGL2, which needs
+  GLSL. A plugin effect does not render on that tier. Requiring both languages
+  from every author to serve a fallback was judged the worse trade — but this is
+  a real gap, not a detail, and it is why the effect list marks these the way it
+  marks built-in GPU-only effects.
+- **The statement ceiling is a proxy for cost, not a cost model.** A real one
+  would mean writing a WGSL front end, and a hand-written parser fed hostile
+  input is a worse liability than the thing it would protect.

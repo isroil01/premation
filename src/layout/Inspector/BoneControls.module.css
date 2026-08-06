@@ -21,7 +21,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-text-primary);
   min-width: 0;
@@ -69,7 +69,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-text-primary);
   min-width: 0;
@@ -79,7 +79,7 @@
 }
 
 .subText {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
   font-weight: 400;
   flex-shrink: 0;
@@ -95,7 +95,7 @@
 }
 
 .paramLabel {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;

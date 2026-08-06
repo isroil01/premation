@@ -73,7 +73,7 @@ function ViewportStatus(): JSX.Element | null {
           onClick={() => setCamera3dMode('active')}
           title="Viewing through a 3D view — click to return to Active Camera (1)"
         >
-          <Icon name="camera" size={13} />
+          <Icon name="camera" size="sm" />
           <span style={{ marginLeft: 4 }}>{CAMERA_VIEW_LABEL[camera3dMode]}</span>
         </button>
       )}
@@ -88,7 +88,7 @@ function ViewportStatus(): JSX.Element | null {
       */}
       {isSoftware && (
         <span className={styles.softwareBadge} title="Both WebGPU and WebGL2 failed to initialize, so the preview cannot render. Close other GPU-heavy windows and reopen the project.">
-          <Icon name="warning" size={13} />
+          <Icon name="warning" size="sm" />
           GPU unavailable
         </span>
       )}
@@ -162,14 +162,14 @@ export function ViewportTools(): JSX.Element {
             aria-pressed={motionPathVisible}
             title={motionPathVisible ? 'Hide Motion Path (Ctrl+Alt+M)' : 'Show Motion Path (Ctrl+Alt+M)'}
           >
-            <Icon name="path" size={14} />
+            <Icon name="path" size="md" />
           </button>
           <button
             className={styles.headerBtn}
             onClick={() => singleId && runAnimEdit('Smooth motion path', () => smoothMotionPath(singleId!))}
             title="Auto-Bezier: smooth path through all keyframes (Ctrl+Alt+S)"
           >
-            <Icon name="curvature" size={14} />
+            <Icon name="curvature" size="md" />
           </button>
           {hasTangents && (
             <button
@@ -177,7 +177,7 @@ export function ViewportTools(): JSX.Element {
               onClick={() => singleId && runAnimEdit('Straighten motion path', () => straightenMotionPath(singleId!))}
               title="Straighten: remove spatial tangents"
             >
-              <Icon name="line" size={14} />
+              <Icon name="line" size="md" />
             </button>
           )}
           <span className={styles.sep} />
@@ -187,7 +187,7 @@ export function ViewportTools(): JSX.Element {
       {hasAnyAnim && !hasPositionAnim && (
         <div className={styles.group}>
           <span className={styles.animatedChip} title="This layer has keyframes (twirl it open in the timeline)">
-            <Icon name="stopwatch" size={13} />
+            <Icon name="stopwatch" size="sm" />
             Animated
           </span>
           <span className={styles.sep} />
@@ -207,7 +207,7 @@ export function ViewportTools(): JSX.Element {
                 : `Make ${eligible3D.length > 1 ? `${eligible3D.length} selected layers` : 'the selected layer'} 3D (adds Z position + X/Y rotation)`
             }
           >
-            <Icon name="3d" size={14} />
+            <Icon name="3d" size="md" />
           </button>
           <span className={styles.sep} />
         </div>
@@ -221,7 +221,7 @@ export function ViewportTools(): JSX.Element {
           aria-pressed={autoKeyframe}
           title={autoKeyframe ? 'Auto-Keyframe Mode is ON (Click to turn OFF)' : 'Auto-Keyframe Mode is OFF (Click to turn ON)'}
         >
-          <Icon name="stopwatch" size={14} />
+          <Icon name="stopwatch" size="md" />
           {autoKeyframe && <span className={styles.recLabel}>REC</span>}
         </button>
         <ViewControls />
@@ -234,7 +234,7 @@ export function ViewportTools(): JSX.Element {
           title="Pop Out Viewport Preview into Window"
           style={{ marginLeft: 4 }}
         >
-          <Icon name="pop-out" size={14} />
+          <Icon name="pop-out" size="md" />
         </button>
       </div>
     </div>

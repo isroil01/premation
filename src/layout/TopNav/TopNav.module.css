@@ -100,7 +100,7 @@
   background: var(--color-primary-subtle);
   color: var(--color-primary);
   border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   letter-spacing: -0.01em;
   cursor: pointer;
@@ -130,7 +130,7 @@
   background: var(--color-primary);
   color: var(--color-primary-foreground, #ffffff);
   border: 1px solid transparent;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   letter-spacing: -0.01em;
   cursor: pointer;

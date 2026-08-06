@@ -72,6 +72,10 @@ export class SelectTool implements Tool {
   private startBounds: Rect | null = null;
   /** Scale at the moment a resize drag began — the base the ratio applies to. */
   private startScale: { x: number; y: number } | null = null;
+  /** The layer's own box, unrotated and unscaled — the space resize works in. */
+  private startLocalBounds: Rect | null = null;
+  /** local to world at drag start. Frozen: it must not follow the live edit. */
+  private startMatrix: Mat.Mat2D | null = null;
   private appliedDelta: Vec2 = { x: 0, y: 0 };
   private excludeIds: Set<string> = new Set();
   // Transform (single-node) state.
@@ -202,6 +206,12 @@ export class SelectTool implements Tool {
       this.startBounds = ctx.selection.selectionBounds();
       this.mode = 'resize';
       const rn = ctx.scene.getNode(this.transformId);
+      // The LAYER's own frame at the moment the drag began. The grips sit on
+      // the oriented box now (`orientedHandles`), so `nw` means the layer's
+      // top-left rather than the world's -- and the maths has to agree, or the
+      // handle would sit in one place and act in another.
+      this.startLocalBounds = rn?.localBounds ?? null;
+      this.startMatrix = rn ? { ...rn.worldMatrix } : null;
       // Scale happens about the ANCHOR — the one point the renderer leaves
       // fixed when Scale changes (`position + R*S*(local - anchor)`). Scaling
       // about the opposite corner instead moves Position as a side effect, so a
@@ -260,9 +270,83 @@ export class SelectTool implements Tool {
       return;
     }
     if (this.mode === 'resize' && this.transformId && this.startBounds && this.downHandle) {
-      // Shift = constrain aspect ratio. Alt keeps its old meaning — scale
-      // symmetrically about the BOX CENTRE rather than the anchor — so the
-      // modifier still does something distinct now that the default pivot moved.
+      const base = this.startScale ?? { x: 1, y: 1 };
+
+      /*
+       * Resize runs in the LAYER's local frame.
+       *
+       * It used to run in world axis-aligned bounds. That was survivable while
+       * the grips were axis-aligned too, but they now sit on the layer's
+       * oriented box — so dragging the visual `nw` corner of a 30-degree layer
+       * has to widen it along ITS axis, not along world x. That same drag also
+       * changes the world AABB's other dimension, so in the old space a pure
+       * sideways pull silently resized both.
+       *
+       * Local space makes the handle honest: map the pointer through the
+       * inverse of the start matrix, resize there, and the ratio comes out in
+       * the layer's own units. `resizeRotated.test.ts` pins that ratio contract
+       * and is space-agnostic, so it still holds.
+       */
+      if (this.startLocalBounds && this.startMatrix && this.startLocalBounds.width > 0) {
+        const inv = Mat.invert(this.startMatrix);
+        const pointerLocal = Mat.apply(inv, e.currentWorld);
+        const from = this.startLocalBounds;
+
+        // Alt keeps its old meaning: scale about the BOX CENTRE rather than the
+        // anchor, so the modifier still does something distinct.
+        const pivotLocal = e.modifiers.alt
+          ? { x: from.x + from.width / 2, y: from.y + from.height / 2 }
+          : Mat.apply(inv, this.transformPivot ?? e.startWorld);
+
+        const local = e.modifiers.alt
+          ? resizeBounds(from, this.downHandle, pointerLocal, true, undefined, e.modifiers.shift)
+          : resizeBoundsAboutPivot(
+              from, this.downHandle, pointerLocal, pivotLocal, undefined, e.modifiers.shift,
+            );
+
+        const scale = {
+          x: base.x * (local.width / from.width),
+          y: from.height > 0 ? base.y * (local.height / from.height) : base.y,
+        };
+
+        /*
+         * Where the resized box's centre lands in the world.
+         *
+         * The renderer places a layer as `pos + R*S*(local - anchor)`, and
+         * scaling about the pivot leaves the PIVOT's world position fixed. So
+         * the new centre is the pivot's world point, plus the local offset from
+         * pivot to centre, scaled by the NEW scale and turned by the layer's
+         * rotation. Pushing the new centre through the START matrix instead
+         * would apply the OLD scale, and the box would creep a little further
+         * on every tick.
+         */
+        const m = this.startMatrix;
+        const rot = Math.atan2(m.b, m.a);
+        const cos = Math.cos(rot);
+        const sin = Math.sin(rot);
+        const cl = { x: local.x + local.width / 2, y: local.y + local.height / 2 };
+        const d = { x: (cl.x - pivotLocal.x) * scale.x, y: (cl.y - pivotLocal.y) * scale.y };
+        const pivotWorld = e.modifiers.alt
+          ? Mat.apply(m, pivotLocal)
+          : (this.transformPivot ?? e.startWorld);
+        const center = {
+          x: pivotWorld.x + d.x * cos - d.y * sin,
+          y: pivotWorld.y + d.x * sin + d.y * cos,
+        };
+
+        // `bounds` is only the fallback for callers that send no scale, so it
+        // carries the new size around the new centre rather than a second
+        // derivation that could disagree with the one above.
+        const w = Math.abs(local.width * scale.x);
+        const h = Math.abs(local.height * scale.y);
+        const bounds = R.rect(center.x - w / 2, center.y - h / 2, w, h);
+        ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center));
+        ctx.requestRender();
+        return;
+      }
+
+      // No local box to work in (a node kind that reports none). Falls back to
+      // the world-AABB path every layer used before, still correct unrotated.
       const bounds = e.modifiers.alt
         ? resizeBounds(this.startBounds, this.downHandle, e.currentWorld, true, undefined, e.modifiers.shift)
         : resizeBoundsAboutPivot(
@@ -273,17 +357,11 @@ export class SelectTool implements Tool {
             undefined,
             e.modifiers.shift,
           );
-      // Express the drag as a ratio of the STARTING bounds and apply it to the
-      // starting scale. Absolute-AABB-over-local-width made rotated and 3D
-      // layers lurch and grow (see ResizeNodePayload).
       const from = this.startBounds;
-      const base = this.startScale ?? { x: 1, y: 1 };
       const scale = {
         x: from.width > 0 ? base.x * (bounds.width / from.width) : base.x,
         y: from.height > 0 ? base.y * (bounds.height / from.height) : base.y,
       };
-      // The AABB of a rotated rectangle stays centred on the rectangle, so the
-      // AABB centre is the layer's position even when rotated.
       const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
       ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center));
       ctx.requestRender();
@@ -317,6 +395,8 @@ export class SelectTool implements Tool {
     this.downRotate = false;
     this.transformId = null;
     this.startBounds = null;
+    this.startLocalBounds = null;
+    this.startMatrix = null;
     this.moveIds = [];
     ctx.requestRender();
   }

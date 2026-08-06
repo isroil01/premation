@@ -59,24 +59,27 @@ describe('a well-formed kind', () => {
 });
 
 describe('the render strategy', () => {
-  it.each(['none', 'proxy'])('accepts %s', (render) => {
+  it.each(['none', 'proxy', 'shader'])('accepts %s', (render) => {
     const { errors } = parseOne({ ...VALID, render });
     expect(errors).toEqual([]);
   });
 
-  it('refuses "shader" as RESERVED, not as unknown', () => {
-    // Two different problems with two different fixes: "wait for Phase 4" and
-    // "you made a typo". An author told "unknown render strategy" goes looking
-    // for the correct spelling of something that does not exist yet.
-    const { errors } = parseOne({ ...VALID, render: 'shader' });
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/reserved and not supported in this version/);
-    expect(errors[0]).not.toMatch(/must be one of/);
+  it('★ accepts "shader" — reserved before API 4, live now', () => {
+    /*
+      It used to be refused with a VERSION message rather than an unknown-value
+      one, because "wait for the next release" and "you made a typo" are
+      different problems with different fixes. Asserted as a real acceptance
+      rather than merely as the absence of that error, so emptying the reserved
+      list without teaching the parser about the value would still fail here.
+    */
+    const { kinds, errors } = parseOne({ ...VALID, render: 'shader' });
+    expect(errors).toEqual([]);
+    expect(kinds[0]?.render).toBe('shader');
   });
 
   it('refuses an unknown strategy by listing what is valid', () => {
     const { errors } = parseOne({ ...VALID, render: 'canvas' });
-    expect(errors[0]).toMatch(/must be one of: none, proxy/);
+    expect(errors[0]).toMatch(/must be one of: none, proxy, shader/);
   });
 
   it('requires one at all', () => {

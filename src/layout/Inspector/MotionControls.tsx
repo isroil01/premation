@@ -54,7 +54,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </span>
         <select
           className={styles.select}
-          style={{ width: 128, fontSize: 11 }}
+          style={{ width: 128, fontSize: 'var(--font-size-xs)' }}
           value={autoOrient}
           onChange={(e) => setAutoOrientMode(nodeId, e.currentTarget.value as AutoOrientMode)}
           aria-label="Auto-orient"

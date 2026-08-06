@@ -143,7 +143,7 @@
 .channelInput {
   width: 100%;
   min-width: 0;
-  height: 22px;
+  height: var(--control-height-sm);
   padding: 0 var(--space-1);
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);
@@ -198,7 +198,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  height: 24px;
+  height: var(--control-height-md);
   padding: 0 var(--space-2);
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);

@@ -90,7 +90,7 @@
 /* The auto-keyframe button's "REC" word. Inline styles before — which meant it
    could not be targeted by the collapse rules below. */
 .recLabel {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   margin-left: 2px;
   text-transform: uppercase;

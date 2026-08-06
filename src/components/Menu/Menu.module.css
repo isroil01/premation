@@ -26,7 +26,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 24px;
+  height: var(--control-height-md);
   padding: 0 var(--space-4);
   border: none;
   background: transparent;

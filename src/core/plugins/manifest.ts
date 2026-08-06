@@ -27,6 +27,7 @@
 
 import { ICON_NAMES } from '@components/Icon/iconNames';
 import { parseLayerKinds, type LayerKindContribution } from './layerKindSchema';
+import { parseEffects, type EffectContribution } from './effectSchema';
 
 /**
  * Host API generation. Bump on a BREAKING change to the plugin-facing API.
@@ -36,8 +37,14 @@ import { parseLayerKinds, type LayerKindContribution } from './layerKindSchema';
  *     ones. This is a version bump rather than an additive feature because it
  *     changes what a DOCUMENT contains: a project that uses a custom layer now
  *     references the plugin that defines it, which nothing before API 3 did.
+ *
+ * 4 — `contributes.effects`. A plugin can draw pixels: WGSL plus a typed
+ *     parameter schema, compiled and bound by the host. A version bump for the
+ *     same reason 3 was — a document using a plugin effect references the
+ *     plugin that provides it — and because `render: "shader"` on a layer kind
+ *     stops being a reserved value and starts meaning something.
  */
-export const HOST_API_VERSION = 3;
+export const HOST_API_VERSION = 4;
 
 /** Everything a plugin may ask for. Nothing outside this list is grantable. */
 export const PERMISSIONS = {
@@ -154,12 +161,24 @@ export interface PluginContributes {
    * rather than a runtime choice, and why only some property types animate.
    */
   layerKinds: LayerKindContribution[];
-  /** Reserved. The shader/effect render path is Phase 4. */
-  effects: never[];
+  /**
+   * Effects this plugin draws. Requires `apiVersion: 4`.
+   *
+   * See `effectSchema.ts` — including why the shader is DATA rather than a
+   * callback, and why the host writes the bindings rather than the author.
+   */
+  effects: EffectContribution[];
 }
 
-/** Keys that are recognised but must be empty in this version. */
-export const RESERVED_CONTRIBUTION_KEYS = ['effects'] as const;
+/**
+ * Keys that are recognised but must be empty in this version.
+ *
+ * Empty as of API 4, when `effects` became real. Kept as a mechanism rather
+ * than deleted: it is how the NEXT reserved key gets refused with a version
+ * message instead of an unknown-key one, and those are different problems for
+ * an author — one means "wait", the other means "you made a typo".
+ */
+export const RESERVED_CONTRIBUTION_KEYS: readonly string[] = [];
 
 /**
  * What wakes a plugin's worker up.
@@ -316,6 +335,22 @@ function parseContributes(
       // and "not supported in this version" sends the author looking for a
       // newer editor they already have.
       errors.push('"contributes.layerKinds" requires "apiVersion": 3.');
+    }
+  }
+
+  if (c.effects !== undefined) {
+    if (apiVersion >= 4) {
+      out.effects = parseEffects(c.effects, errors);
+    } else if (!Array.isArray(c.effects)) {
+      errors.push('"contributes.effects" must be an array.');
+    } else if (c.effects.length > 0) {
+      // Same back-compat rule as `layerKinds`, and it matters more here: every
+      // manifest written against API 1–3 was allowed to spell out
+      // `effects: []`, because the key was RESERVED and validated as
+      // must-be-empty. Requiring API 4 for an empty block would break packages
+      // that declared nothing, which is the opposite of what a version gate is
+      // for.
+      errors.push('"contributes.effects" requires "apiVersion": 4.');
     }
   }
 

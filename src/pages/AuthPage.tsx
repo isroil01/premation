@@ -238,7 +238,7 @@ export function AuthPage({ mode }: { mode: AuthMode }): JSX.Element {
                     tabIndex={-1}
                     title={showPassword ? 'Hide password' : 'Show password'}
                   >
-                    <Icon name={showPassword ? 'eye-off' : 'eye'} size={15} />
+                    <Icon name={showPassword ? 'eye-off' : 'eye'} size="md" />
                   </button>
                 </div>
               </div>

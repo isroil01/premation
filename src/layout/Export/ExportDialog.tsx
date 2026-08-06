@@ -266,7 +266,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
           <Button
             variant="secondary"
             size="md"
-            leftIcon={<Icon name="queue" size={14} />}
+            leftIcon={<Icon name="queue" size="md" />}
             onClick={queueJob}
             disabled={busy}
             title="Queue this render in the Render Queue (F6) instead of exporting now"
@@ -277,7 +277,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         <Button
           variant="primary"
           size="md"
-          leftIcon={<Icon name="export" size={14} />}
+          leftIcon={<Icon name="export" size="md" />}
           onClick={doExport}
           disabled={busy}
           title={activePreset?.hint}

@@ -205,10 +205,10 @@ export function MenuItem({
         onPointerEnter={() => { if (children) openSub(); }}
         onPointerLeave={() => { if (children) scheduleCloseSub(); }}
       >
-        {icon ? <Icon name={icon} size={14} className={styles.itemIcon} /> : <span className={styles.itemIconSpacer} />}
+        {icon ? <Icon name={icon} size="md" className={styles.itemIcon} /> : <span className={styles.itemIconSpacer} />}
         <span className={styles.itemLabel}>{label}</span>
         {shortcut ? <span className={styles.itemShortcut}>{shortcut}</span> : null}
-        {children ? <Icon name="chevron-right" size={12} className={styles.itemChevron} /> : null}
+        {children ? <Icon name="chevron-right" size="sm" className={styles.itemChevron} /> : null}
       </button>
       {subOpen && children ? createPortal(
         <div
@@ -272,7 +272,7 @@ export function MenuCheckbox({ id, label, checked, onChange, disabled = false }:
       onKeyDown={onKey}
     >
       <span className={cn(styles.itemIconSpacer, checked && styles.itemIconActive)}>
-        {checked ? <Icon name="check" size={12} /> : null}
+        {checked ? <Icon name="check" size="sm" /> : null}
       </span>
       <span className={cn(styles.itemLabel, checked && styles.itemLabelActive)}>{label}</span>
     </button>
