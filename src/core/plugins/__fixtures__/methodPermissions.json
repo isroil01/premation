@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "The method → permission mapping, for the permissions that HAVE one.",
+    "Byte-identical in motion-editor (src/core/plugins/__fixtures__/) and",
+    "motion-back (src/plugins/__fixtures__/); each side asserts its own copy.",
+    "",
+    "Methods mapping to null are omitted on purpose. They need no permission, so",
+    "the two sides genuinely do not have to agree on them — and forcing them to",
+    "would make this fixture churn every time a convenience method is added.",
+    "",
+    "What breaks if this drifts: the publish-time scanner infers which",
+    "permissions a package actually uses by matching these method names in its",
+    "source. A stale entry makes it report a permission as unused when it is",
+    "used, which sends a clean package to manual review; a missing entry makes",
+    "it miss a package calling something it never asked for."
+  ],
+  "methodPermissions": {
+    "scene.getSelection": "scene:read",
+    "scene.setSelection": "scene:read",
+    "scene.getLayers": "scene:read",
+    "scene.getLayer": "scene:read",
+    "scene.createLayer": "scene:write",
+    "scene.setProxyChildren": "scene:write",
+    "scene.onLayerChanged": "scene:read",
+    "scene.setProperty": "scene:write",
+    "scene.renameLayer": "scene:write",
+    "scene.deleteLayer": "scene:write",
+    "animation.getTracks": "animation:read",
+    "animation.sample": "animation:read",
+    "animation.setKeyframe": "animation:write",
+    "animation.setKeyframes": "animation:write",
+    "animation.removeKeyframe": "animation:write",
+    "animation.setExpression": "animation:write",
+    "assets.getImage": "assets:read",
+    "assets.createImage": "assets:write",
+    "timeline.getTime": "timeline",
+    "timeline.setTime": "timeline"
+  }
+}

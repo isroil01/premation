@@ -18,6 +18,7 @@
     "dev": "vite",
     "dev:local": "cross-env VITE_EDITION=local MOTION_EDITION=local vite",
     "test": "jest",
+    "test:e2e": "npm run electron:compile && playwright test",
     "build": "tsc -b && vite build",
     "build:local": "tsc -b && cross-env VITE_EDITION=local MOTION_EDITION=local vite build",
     "preview": "vite preview",
@@ -69,6 +70,7 @@
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.2",
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^14.0.0",
     "@types/jest": "^29.5.3",

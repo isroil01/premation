@@ -30,7 +30,8 @@
  * a settings file read by main, not in a message from the renderer.
  */
 
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { handle } from './ipcGuard';
 import { randomUUID } from 'node:crypto';
 import { getKeyForProvider, VAULT_PROVIDERS, type VaultProvider } from './aiKeyVault';
 
@@ -187,7 +188,7 @@ async function startStream(
 }
 
 export function registerAiProxyIpc(): void {
-  ipcMain.handle(
+  handle(
     'ai:stream',
     async (
       event: IpcMainInvokeEvent,
@@ -210,7 +211,7 @@ export function registerAiProxyIpc(): void {
     },
   );
 
-  ipcMain.handle('ai:cancel', (_event, requestId: unknown): boolean => {
+  handle('ai:cancel', (_event, requestId: unknown): boolean => {
     if (typeof requestId !== 'string') return false;
     const controller = inFlight.get(requestId);
     if (!controller) return false;

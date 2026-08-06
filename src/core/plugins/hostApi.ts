@@ -28,13 +28,21 @@ import { runDocumentEdit } from '@core/commands/documentEdit';
 import { insertPrimitive } from '@core/scene/sceneInsert';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { bumpScene } from '@stores/sceneStore';
+import { insertImageNode } from '@core/scene/sceneInsert';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
+import { checkOwnership } from './layerKindRegistry';
+import { buildCustomLayerNode, isReservedPropPath, readCustomLayer } from './customLayers';
+import { regenerateProxyChildren } from './proxySubtree';
+import { onLayerChanged } from './layerChangeNotifier';
 import type { PluginManifest } from './manifest';
 import type { PluginCommandSpec } from './protocol';
+import { createImageAsset, readAssetPixels, requireAsset } from './assets';
 
-/** What a plugin may create. Deliberately the primitives, not every internal
- *  node kind — a plugin has no business minting a camera or a comp root. */
-const CREATABLE: SceneKind[] = ['shape', 'text', 'group', 'null'];
+/** What a plugin may create. Deliberately the primitives plus `image`, not
+ *  every internal node kind — a plugin has no business minting a camera or a
+ *  comp root. `image` is here because the asset API would otherwise be able to
+ *  make a picture and have nowhere to put it. */
+const CREATABLE: SceneKind[] = ['shape', 'text', 'group', 'null', 'image'];
 
 const MAX_STRING = 500;
 const MAX_KEYFRAMES_PER_CALL = 5000;
@@ -93,11 +101,42 @@ export function createHostApi(
   manifest: PluginManifest,
   hooks: {
     registerCommand: (spec: PluginCommandSpec) => void;
-    openPanel: () => void;
-    closePanel: () => void;
+    openPanel: (panelId: string) => void;
+    closePanel: (panelId: string) => void;
+    /** Write a line to this plugin's log — used to nudge authors toward
+     *  declaring what they register, without breaking anything today. */
+    warn: (text: string) => void;
+    /** Deliver an authored-edit event to the plugin's worker. */
+    emitLayerChanged?: (event: unknown) => void;
   },
 ): Record<string, (...args: unknown[]) => unknown> {
   const edit = <T>(what: string, fn: () => T): T => runDocumentEdit(`${manifest.name}: ${what}`, fn);
+
+  /**
+   * Which panel a panel-shaped call means.
+   *
+   * The id is optional and defaults to the sole panel, because the
+   * overwhelmingly common plugin has exactly one and `openPanel()` reading
+   * naturally matters more than uniformity. With two or more, guessing would
+   * open the wrong one silently — so it is an error that names the choices.
+   */
+  const panelId = (raw: unknown): string => {
+    const panels = manifest.contributes.panels;
+    if (panels.length === 0) {
+      return fail('This plugin declares no panels in its manifest, so there is no panel to open.');
+    }
+    if (raw === undefined || raw === null) {
+      if (panels.length === 1) return panels[0]!.id;
+      return fail(
+        `This plugin declares ${panels.length} panels — name one: ${panels.map((p) => p.id).join(', ')}.`,
+      );
+    }
+    const id = str(raw, 'panel id');
+    if (!panels.some((p) => p.id === id)) {
+      return fail(`No panel "${id}" in this plugin's manifest. Declared: ${panels.map((p) => p.id).join(', ')}.`);
+    }
+    return id;
+  };
 
   return {
     // ── UI / core ────────────────────────────────────────────────────────
@@ -112,21 +151,30 @@ export function createHostApi(
       });
       return true;
     },
-    'ui.openPanel': () => {
-      // Refuse rather than open an empty frame: a plugin that forgot to declare
-      // `panel` in its manifest has a bug, and it should read as one.
-      if (!manifest.panel) {
-        return fail('This plugin declares no "panel" in its manifest, so there is no panel to open.');
-      }
-      hooks.openPanel();
-      return true;
-    },
-    'ui.closePanel': () => { hooks.closePanel(); return true; },
+    // Refuses rather than opening an empty frame: a plugin that forgot to
+    // declare its panel has a bug, and it should read as one.
+    'ui.openPanel': (id) => { hooks.openPanel(panelId(id)); return true; },
+    'ui.closePanel': (id) => { hooks.closePanel(panelId(id)); return true; },
 
     'commands.register': (spec) => {
       const s = spec as Partial<PluginCommandSpec>;
+      const id = str(s?.id, 'command id');
+      // Still supported, and still works — this is how every API-1 plugin
+      // contributes. But an undeclared command cannot appear in the palette
+      // until the worker has booted, which is the whole thing `contributes`
+      // exists to fix, so an API-2 author gets told. A warning, not an error:
+      // the goal is migration, not breakage.
+      if (
+        manifest.apiVersion >= 2 &&
+        !manifest.contributes.commands.some((c) => c.id === id)
+      ) {
+        hooks.warn(
+          `command "${id}" was registered at runtime but is not in "contributes.commands" — ` +
+          'declare it so it appears before the plugin starts.',
+        );
+      }
       hooks.registerCommand({
-        id: str(s?.id, 'command id'),
+        id,
         label: str(s?.label, 'command label').slice(0, 80),
         ...(typeof s?.icon === 'string' ? { icon: s.icon } : {}),
         ...(s?.needsSelection === true ? { needsSelection: true } : {}),
@@ -162,10 +210,79 @@ export function createHostApi(
     'scene.createLayer': (opts) => {
       const o = (opts ?? {}) as Record<string, unknown>;
       const kind = String(o.kind ?? 'shape') as SceneKind;
+
+      /*
+        A plugin's own layer kind.
+
+        Recognised by the dot: a native kind is a bare word (`shape`, `text`),
+        a custom one is always `<pluginId>.<kindId>`. Ownership is checked
+        HOST-side against the registry, on the resolved string, because this
+        argument crossed `postMessage` and is untrusted text — and a plugin
+        that could create another's layers could forge the authored interface
+        of software the user trusts differently.
+      */
+      if (kind.includes('.')) {
+        const check = checkOwnership(manifest.id, kind);
+        if (!check.ok) return fail(check.message);
+        const { kind: schema } = check.entry;
+
+        const name = typeof o.name === 'string' && o.name.trim()
+          ? o.name.trim().slice(0, 80)
+          : schema.label;
+        const rawProps = o.props && typeof o.props === 'object' && !Array.isArray(o.props)
+          ? (o.props as Record<string, unknown>)
+          : {};
+
+        return edit(`create ${name}`, () => {
+          const id = `n_${Math.random().toString(36).slice(2, 10)}`;
+          // `buildCustomLayerNode` seeds every declared prop from its default
+          // and validates each override against the schema, so a value the
+          // plugin sent that its own manifest forbids never reaches the graph.
+          defaultSceneGraph.addNode(buildCustomLayerNode(id, manifest.id, schema, {
+            name,
+            ...(o.x !== undefined ? { x: finite(o.x, 'x') } : {}),
+            ...(o.y !== undefined ? { y: finite(o.y, 'y') } : {}),
+            props: rawProps,
+          }));
+          bumpScene();
+          return id;
+        });
+      }
+
       if (!CREATABLE.includes(kind)) {
         return fail(`Cannot create a "${kind}" layer. Creatable kinds: ${CREATABLE.join(', ')}.`);
       }
       const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim().slice(0, 80) : kind;
+
+      // An image layer is not a primitive — it needs a source, and the only
+      // source a plugin can name is an asset id it either read or created.
+      if (kind === 'image') {
+        const asset = requireAsset(str(o.assetId, 'assetId'));
+        return edit(`create ${name}`, () => {
+          const id = insertImageNode({
+            name: name === 'image' ? asset.name : name,
+            src: asset.src,
+            width: asset.metadata?.width ?? 400,
+            height: asset.metadata?.height ?? 400,
+            ...(o.x !== undefined ? { x: finite(o.x, 'x') } : {}),
+            ...(o.y !== undefined ? { y: finite(o.y, 'y') } : {}),
+          });
+          // Bind the layer back to the library entry, exactly as a drag-drop
+          // import does — without this the picture works but is not the asset,
+          // so reinterpretation and proxying skip it.
+          //
+          // Through `writeProp`, NOT `t.props.assetId = …`. The node is already
+          // in the graph by this point, so `getNode` hands back a copy and a
+          // direct assignment is discarded in silence — the layer would render
+          // correctly and simply never be linked to the asset.
+          const n = defaultSceneGraph.getNode(id);
+          const t = n?.components.find((c) => c.type === 'Transform');
+          if (t) defaultSceneGraph.writeProp(id, t.id, 'assetId', asset.id);
+          bumpScene();
+          return id;
+        });
+      }
+
       return edit(`create ${name}`, () => {
         insertPrimitive(kind, name);
         const id = useSelectionStore.getState().ids[0];
@@ -183,9 +300,75 @@ export function createHostApi(
       });
     },
 
+    /**
+     * Replace a proxy layer's generated children.
+     *
+     * DIFFED against what is there, not recreated — a child whose `key` is
+     * unchanged keeps its scene-graph id, so selection, parenting and other
+     * layers' expressions keep working across a parameter tweak.
+     */
+    'scene.setProxyChildren': (layerId, children) => {
+      const n = node(layerId);
+      const record = readCustomLayer(n);
+      if (!record) return fail('That layer is not a plugin layer kind.');
+
+      const check = checkOwnership(manifest.id, record.kind);
+      if (!check.ok) return fail(check.message);
+      if (check.entry.kind.render !== 'proxy') {
+        return fail(`"${record.kind}" declares render: "${check.entry.kind.render}", so it has no generated children.`);
+      }
+      if (!Array.isArray(children)) return fail('`children` must be an array.');
+
+      const specs = children.map((raw, i) => {
+        const c = (raw ?? {}) as Record<string, unknown>;
+        const key = typeof c.key === 'string' && c.key ? c.key : '';
+        if (!key) return fail(`children[${i}].key is required, and must be stable across regenerations.`);
+        return {
+          key,
+          kind: typeof c.kind === 'string' ? c.kind : 'shape',
+          ...(typeof c.name === 'string' ? { name: c.name } : {}),
+          ...(c.props && typeof c.props === 'object' ? { props: c.props as Record<string, unknown> } : {}),
+          ...(c.expressions && typeof c.expressions === 'object'
+            ? { expressions: c.expressions as Record<string, string> }
+            : {}),
+        };
+      });
+
+      const result = regenerateProxyChildren(n.id, manifest.id, manifest.name, specs, Date.now());
+      if (result.refused === 'detached') {
+        return fail(
+          'The user has edited these layers, so this plugin no longer manages them. '
+          + 'Silently overwriting them is what the ownership mark exists to prevent.',
+        );
+      }
+      return result;
+    },
+
+    /**
+     * Be told when a user AUTHORS one of this plugin's layers.
+     *
+     * Never fires for animated value changes — see `layerChangeNotifier.ts`.
+     * Animated values reach generated children through expression bindings the
+     * engine evaluates, with no plugin involved at runtime.
+     */
+    'scene.onLayerChanged': (kindId) => {
+      const id = str(kindId, 'layer kind id');
+      const check = checkOwnership(manifest.id, `${manifest.id}.${id}`);
+      if (!check.ok) return fail(check.message);
+      onLayerChanged(manifest.id, id, (event) => hooks.emitLayerChanged?.(event));
+      return true;
+    },
+
     'scene.setProperty': (id, prop, value) => {
       const n = node(id);
       const p = str(prop, 'property name');
+      // Reserved. A plugin's own declared props are addressed by name through
+      // its layer kind, not by their internal track path — writing one here
+      // would create a junk key on the Transform component that renders
+      // nothing and animates nothing.
+      if (isReservedPropPath(p)) {
+        return fail(`"${p}" is reserved. Set a layer kind's own property by its declared name.`);
+      }
       if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
         return fail('Property values must be a number, string or boolean.');
       }
@@ -269,7 +452,57 @@ export function createHostApi(
       const n = node(id);
       const p = str(prop, 'property') as never;
       const src = str(source, 'expression source');
-      return edit(`expression ${String(prop)}`, () => { defaultAnimation.setExpression(n.id, p, src); return true; });
+      return edit(`expression ${String(prop)}`, () => {
+        // Stamped with the plugin id. This is the one API that writes text the
+        // engine will later EXECUTE, and what it writes outlives the plugin:
+        // the expression is saved into the document, survives uninstalling the
+        // plugin, and re-evaluates for collaborators who never had it. Without
+        // the stamp, a user looking at wrong animation cannot tell a formula
+        // they wrote from one a plugin left behind.
+        defaultAnimation.setExpression(n.id, p, src, manifest.id);
+        return true;
+      });
+    },
+
+    // ── Assets ───────────────────────────────────────────────────────────
+    /**
+     * Read an image's pixels, by asset id or by the layer showing it.
+     *
+     * `{ layerId }` is the ref that makes the API usable: a plugin acting on
+     * the selection has layer ids and nothing else, and making it look up an
+     * asset id first would mean exposing the layer's internal props to find one.
+     */
+    'assets.getImage': async (ref) => {
+      const r = (ref ?? {}) as Record<string, unknown>;
+      if (typeof r.assetId === 'string') {
+        return readAssetPixels(manifest.id, requireAsset(r.assetId));
+      }
+      if (typeof r.layerId === 'string') {
+        const n = node(r.layerId);
+        const t = n.components.find((c) => 'assetId' in (c.props as Record<string, unknown>));
+        const assetId = t?.props.assetId;
+        if (typeof assetId !== 'string') {
+          return fail(`Layer "${n.name}" is not showing an image from the asset library.`);
+        }
+        return readAssetPixels(manifest.id, requireAsset(assetId));
+      }
+      return fail('getImage expects { layerId } or { assetId }.');
+    },
+
+    'assets.createImage': async (opts) => {
+      const o = (opts ?? {}) as Record<string, unknown>;
+      // NOT wrapped in `edit`: adding to the asset library is not a document
+      // mutation, and `addAsset` is async — an async body inside `runDocumentEdit`
+      // would close the undo entry before the work finished and produce an
+      // empty one. The undoable step is `scene.createLayer`, which is where the
+      // picture actually enters the composition.
+      return createImageAsset(manifest.id, {
+        width: o.width,
+        height: o.height,
+        bytes: o.bytes,
+        mime: o.mime,
+        name: o.name,
+      });
     },
 
     // ── Timeline ─────────────────────────────────────────────────────────

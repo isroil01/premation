@@ -23,9 +23,10 @@
  * about plugins, at a moment the user is already looking at them.
  */
 
-import { request } from '@core/api/client';
+import { request, apiBaseUrl } from '@core/api/client';
 import { pluginRegistryEnabled } from '@core/config/edition';
-import type { PluginPermission } from './manifest';
+import { HOST_API_VERSION, type PluginPermission } from './manifest';
+import type { ReportCategory } from './reportCategories';
 
 /** What browse returns for one plugin. Never includes package bytes. */
 export interface RegistryPlugin {
@@ -40,6 +41,56 @@ export interface RegistryPlugin {
   installs: number;
   /** SPKI, base64. Pinned on install so later updates can be checked against it. */
   publisherKey: string;
+  /** Namespace identity. Empty strings for a plugin published before namespaces. */
+  publisher: { namespace: string; displayName: string; verified: boolean };
+  categories: string[];
+  license: string | null;
+  /** Registry-relative path, or null. Resolve with `registryMediaUrl`. */
+  iconUrl: string | null;
+  contributes: { commands: unknown[]; panels: unknown[] };
+  updatedAt: string;
+}
+
+/** What the detail endpoint adds. */
+export interface RegistryDetail extends RegistryPlugin {
+  /** Server-rendered and sanitised. Never rendered from Markdown on this side. */
+  readmeHtml: string;
+  /** The Markdown SOURCE, so a publisher editing their listing round-trips it
+   *  rather than being handed back the HTML we generated from it. */
+  readme: string;
+  changelog: string;
+  screenshots: Array<{ id: string; url: string; width: number; height: number }>;
+  versionHistory: Array<{ version: string; apiVersion: number; size: number; createdAt: string }>;
+  contributesDetail: {
+    commands: Array<{ id: string; label: string; icon?: string; needsSelection?: boolean }>;
+    panels: Array<{ id: string; title: string }>;
+  };
+  blocked: boolean;
+  blockedReason: string | null;
+}
+
+/**
+ * A browse result that can say WHY it is empty.
+ *
+ * The local edition ships no hosted registry, and the previous version of this
+ * returned `[]` for that case — indistinguishable from "nothing matched your
+ * search". So the Browse pane told a self-hosted user "Nothing published yet",
+ * which is both false and unactionable: there is nothing they can do, because
+ * the feature is not in their build. The two states are separated HERE, in the
+ * data layer, rather than guessed at from an empty array by the UI.
+ */
+export type BrowseResult =
+  | { available: false }
+  | { available: true; items: RegistryPlugin[]; total: number };
+
+export interface BrowseQuery {
+  q?: string;
+  category?: string;
+  sort?: 'installs' | 'updated' | 'new';
+  /** Filter to what THIS editor can run. Defaults to the host API version. */
+  apiVersion?: number;
+  limit?: number;
+  offset?: number;
 }
 
 export interface RegistryUpdate {
@@ -99,20 +150,69 @@ export async function verifyPackageSignature(
   }
 }
 
-/** Search the registry. */
-export async function browseRegistry(q?: string): Promise<RegistryPlugin[]> {
-  // No hosted registry in the local edition. An empty result is the same answer
-  // the browse UI already handles for "nothing matched", so it degrades to an
-  // empty list instead of an error — and installing from a local file, which
-  // never touched the network, is unaffected.
-  if (!pluginRegistryEnabled()) return [];
-  const query = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+/**
+ * Search the registry.
+ *
+ * Returns `{ available: false }` in the local edition rather than an empty
+ * list, so the UI can say "not available in this edition" instead of "nothing
+ * published yet". Those are different facts and only one of them is true.
+ */
+export async function browseRegistry(query: BrowseQuery = {}): Promise<BrowseResult> {
+  if (!pluginRegistryEnabled()) return { available: false };
+
+  const params = new URLSearchParams();
+  if (query.q?.trim()) params.set('q', query.q.trim());
+  if (query.category) params.set('category', query.category);
+  if (query.sort) params.set('sort', query.sort);
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.offset !== undefined) params.set('offset', String(query.offset));
+  // Always sent. Without it a user finds a package their editor refuses, and
+  // that reads as a broken marketplace rather than a version mismatch.
+  params.set('apiVersion', String(query.apiVersion ?? HOST_API_VERSION));
+
   // `request` and not a bare fetch: it carries the bearer, refreshes it when it
   // has expired, and turns an error body into a message. A hand-rolled fetch
-  // here would send a stale token an hour into a session.
-  const body = await request<{ items: RegistryPlugin[] }>(`/plugins${query}`);
-  return body.items ?? [];
+  // here would send a stale token an hour into a session. Browse is public
+  // now, but the same client still handles the signed-in calls beside it.
+  const body = await request<{ items: RegistryPlugin[]; total: number }>(
+    `/plugins?${params.toString()}`,
+  );
+  return { available: true, items: body.items ?? [], total: body.total ?? 0 };
 }
+
+/** One plugin's full listing. `null` when the registry has no such plugin. */
+export async function fetchRegistryDetail(id: string): Promise<RegistryDetail | null> {
+  if (!pluginRegistryEnabled()) return null;
+  if (!REGISTRY_ID_RE.test(id)) return null;
+  try {
+    return await request<RegistryDetail>(`/plugins/${encodeURIComponent(id)}`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Absolute URL for a registry-relative media path.
+ *
+ * The path comes from the registry, so it is checked against the shape we
+ * issue rather than concatenated blindly — a value that reached an <img src>
+ * unchecked would be a redirect primitive pointed at whatever the response
+ * said.
+ */
+export function registryMediaUrl(path: string | null | undefined): string | null {
+  if (!path || !/^\/plugins\/media\/[A-Za-z0-9-]+$/.test(path)) return null;
+  return `${apiBaseUrl()}${path}`;
+}
+
+/**
+ * Plugin ids that may be routed on.
+ *
+ * Deep links and tab state both carry one, and both are untrusted input by the
+ * time they arrive: a link is whatever was in the URL bar, and tab state
+ * survived a reload in localStorage. Validated before it reaches a fetch or a
+ * store lookup.
+ */
+export const REGISTRY_ID_RE = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 
 /**
  * Fetch and verify a package.
@@ -180,5 +280,119 @@ export async function checkForUpdates(
     });
   } catch {
     return [];
+  }
+}
+
+// ── Publishing, from inside the editor ────────────────────────────────────
+
+/**
+ * A publisher identity the signed-in user owns.
+ *
+ * `verified` is granted by an operator, never self-served. A publisher cannot
+ * award themselves the badge, which is the only thing that makes it worth
+ * anything to a reader.
+ */
+export interface PublisherRecord {
+  id: string;
+  namespace: string;
+  displayName: string;
+  verified: boolean;
+  verifiedDomain: string | null;
+}
+
+/**
+ * Everything the signed-in user has published.
+ *
+ * `[]` in the local edition rather than an error: there is no registry to have
+ * published to, and the caller's empty state already reads correctly.
+ */
+export async function myPublishedPlugins(): Promise<RegistryPlugin[]> {
+  if (!pluginRegistryEnabled()) return [];
+  return request<RegistryPlugin[]>('/plugins/mine/list');
+}
+
+export async function myPublishers(): Promise<PublisherRecord[]> {
+  if (!pluginRegistryEnabled()) return [];
+  return request<PublisherRecord[]>('/publishers/mine');
+}
+
+export async function registerPublisher(
+  namespace: string,
+  displayName: string,
+): Promise<PublisherRecord> {
+  return request<PublisherRecord>('/publishers', {
+    method: 'POST',
+    body: JSON.stringify({ namespace, displayName }),
+  });
+}
+
+/** The category vocabulary the registry accepts. Served at `/plugins/categories`. */
+export const REGISTRY_CATEGORIES = [
+  'animation', 'effects', 'text', 'shapes', 'import-export', 'workflow',
+  'rigging', '3d', 'color', 'audio', 'developer', 'other',
+] as const;
+
+/**
+ * Edit a listing WITHOUT publishing a version.
+ *
+ * The whole reason this exists separately from `publish`: a typo in a README is
+ * a typo, and fixing it should not mean cutting a new signed version and asking
+ * every installed copy to update.
+ *
+ * Note what is NOT here: `name` and `description`. Those are read out of the
+ * SIGNED package at publish time, so a listing cannot claim something the
+ * package does not say. To change them, change `plugin.json` and publish.
+ */
+export async function updateListing(
+  id: string,
+  patch: { readme?: string; changelog?: string; categories?: string[]; license?: string },
+): Promise<void> {
+  await request<unknown>(`/plugins/${encodeURIComponent(id)}/listing`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+/**
+ * Report a plugin.
+ *
+ * No account required — the endpoint takes an identity if the caller has one
+ * and refuses nobody. That is deliberate on the server, and it matters here
+ * too: the moment worth reporting is often *before* installing, and a dialog
+ * that demanded a sign-in first would simply lose the report.
+ *
+ * Errors are thrown rather than swallowed. This is the one registry call where
+ * a silent failure is unacceptable — a reporter told "thank you" who was not
+ * heard has been actively misled, and will not bother a second time.
+ */
+export async function reportPlugin(
+  id: string,
+  input: { category: ReportCategory; version?: string; message?: string },
+): Promise<{ caseId: string; reportCount: number }> {
+  return request<{ caseId: string; reportCount: number }>(
+    `/plugins/${encodeURIComponent(id)}/report`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+/**
+ * The signed revocation list.
+ *
+ * A plain GET with no body and no auth — see `revocation.ts` for why that is a
+ * requirement rather than a convenience. Returns null in the local edition and
+ * on any failure, because a client that cannot reach the list keeps enforcing
+ * the last one it verified.
+ */
+export async function fetchRevocationList(): Promise<{ payload: string; signature: string } | null> {
+  if (!pluginRegistryEnabled()) return null;
+  try {
+    const res = await fetch(`${apiBaseUrl()}/plugins/revocations`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { payload?: string; signature?: string };
+    return body?.payload && body?.signature
+      ? { payload: body.payload, signature: body.signature }
+      : null;
+  } catch {
+    return null;
   }
 }

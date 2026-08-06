@@ -1,3 +1,4 @@
+import { notePluginPropWrite } from './pluginPropWrites';
 import { SceneNode, Transform, Component, ID } from '../types';
 import {
   Scene,
@@ -436,6 +437,19 @@ export class SceneGraph {
       if (dc.data[CID] === componentId) {
         dc.set(propName, value);
         e.touch(`prop:${propName}`);
+        /*
+          Plugin bookkeeping, hooked at the ONE place an authored property
+          write happens.
+
+          Two things follow from putting it here rather than in the inspector.
+          A user editing a plugin-generated layer detaches it from plugin
+          ownership wherever the edit came from — inspector, canvas, a menu
+          command — rather than only from the surfaces someone remembered to
+          instrument. And `onLayerChanged` cannot fire during playback as a
+          matter of STRUCTURE rather than discipline: animation samples tracks,
+          it never writes props, so it cannot reach this line at all.
+        */
+        notePluginPropWrite(nodeId, componentId, propName);
         return true;
       }
     }

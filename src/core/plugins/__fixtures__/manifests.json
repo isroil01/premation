@@ -1,0 +1,1098 @@
+{
+  "_comment": [
+    "Shared manifest corpus. This exact file is duplicated in motion-back at",
+    "src/plugins/__fixtures__/manifests.json, and BOTH validators run it.",
+    "",
+    "The two run in different processes on different machines and neither can",
+    "import the other, so 'the registry accepts what the editor accepts' cannot",
+    "be guaranteed by sharing code. It can be guaranteed by sharing CASES: a",
+    "package the registry accepts and the editor then refuses is a user who",
+    "installed something that does not work, and a package the registry refuses",
+    "and the editor would have accepted is a publisher who cannot ship.",
+    "",
+    "Keep the two copies byte-identical. Add a case to both or to neither."
+  ],
+  "cases": [
+    {
+      "name": "api-1 minimal",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.one",
+        "name": "One",
+        "version": "1.0.0",
+        "description": "A minimal API 1 package.",
+        "apiVersion": 1,
+        "main": "main.js"
+      }
+    },
+    {
+      "name": "api-1 legacy panel string",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.legacy",
+        "name": "Legacy",
+        "version": "1.0.0",
+        "description": "Declares a panel the old way.",
+        "apiVersion": 1,
+        "main": "main.js",
+        "panel": "panel.html"
+      }
+    },
+    {
+      "name": "api-2 with contributes",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "bounce",
+              "label": "Bounce selection",
+              "icon": "zap",
+              "needsSelection": true
+            }
+          ],
+          "panels": [
+            {
+              "id": "main",
+              "title": "Easing Lab",
+              "entry": "panel.html"
+            }
+          ]
+        },
+        "activationEvents": [
+          "onCommand:bounce",
+          "onPanel:main"
+        ]
+      }
+    },
+    {
+      "name": "api-2 reserved keys present but empty",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.reserved",
+        "name": "Reserved",
+        "version": "1.0.0",
+        "description": "Reserved keys are known, and empty is fine.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [],
+          "effects": []
+        }
+      }
+    },
+    {
+      "name": "api-2 asset permissions",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.assets",
+        "name": "Assets",
+        "version": "1.0.0",
+        "description": "Reads and writes images.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "permissions": [
+          "assets:read",
+          "assets:write"
+        ]
+      }
+    },
+    {
+      "name": "an apiVersion beyond this host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.future",
+        "name": "Future",
+        "version": "1.0.0",
+        "description": "Built against a host generation that does not exist yet.",
+        "apiVersion": 99,
+        "main": "main.js"
+      }
+    },
+    {
+      "name": "contributes under apiVersion 1",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.mismatch",
+        "name": "Mismatch",
+        "version": "1.0.0",
+        "description": "Declares API 2 features at API 1.",
+        "apiVersion": 1,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "both panel and contributes.panels",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.both",
+        "name": "Both",
+        "version": "1.0.0",
+        "description": "Declares a panel twice, two different ways.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "panel": "panel.html",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Main",
+              "entry": "panel.html"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "reserved layerKinds non-empty",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.layerkinds",
+        "name": "LayerKinds",
+        "version": "1.0.0",
+        "description": "Uses a Phase 2 feature.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "orb"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "reserved effects non-empty",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.effects",
+        "name": "Effects",
+        "version": "1.0.0",
+        "description": "Uses a Phase 3 feature.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "duplicate command id",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dupe",
+        "name": "Dupe",
+        "version": "1.0.0",
+        "description": "Two commands with one id.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go"
+            },
+            {
+              "id": "go",
+              "label": "Go again"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "command id with a dot",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dotted",
+        "name": "Dotted",
+        "version": "1.0.0",
+        "description": "The host joins on dots, so ids cannot contain one.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "a.b",
+              "label": "Dotted"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "unknown icon name",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.icon",
+        "name": "Icon",
+        "version": "1.0.0",
+        "description": "Refused at validation, not silently at render.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go",
+              "icon": "definitely-not-an-icon"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "panel entry escapes the package",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.traversal",
+        "name": "Traversal",
+        "version": "1.0.0",
+        "description": "A panel entry that climbs out of the package.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Main",
+              "entry": "../../etc/passwd"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "panel entry is absolute",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.absolute",
+        "name": "Absolute",
+        "version": "1.0.0",
+        "description": "An absolute panel entry.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Main",
+              "entry": "/etc/passwd"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "activation event names a command that does not exist",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dangling",
+        "name": "Dangling",
+        "version": "1.0.0",
+        "description": "An event that can never fire.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go"
+            }
+          ]
+        },
+        "activationEvents": [
+          "onCommand:nope"
+        ]
+      }
+    },
+    {
+      "name": "activation event names a panel that does not exist",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.danglingpanel",
+        "name": "DanglingPanel",
+        "version": "1.0.0",
+        "description": "An event that can never fire.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "activationEvents": [
+          "onPanel:main"
+        ]
+      }
+    },
+    {
+      "name": "unknown activation event",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.unknownevent",
+        "name": "UnknownEvent",
+        "version": "1.0.0",
+        "description": "Not one of the three.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "activationEvents": [
+          "onSaturday"
+        ]
+      }
+    },
+    {
+      "name": "unknown permission",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.perm",
+        "name": "Perm",
+        "version": "1.0.0",
+        "description": "Asks for something that does not exist.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "permissions": [
+          "filesystem:write"
+        ]
+      }
+    },
+    {
+      "name": "main escapes the package",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.mainescape",
+        "name": "MainEscape",
+        "version": "1.0.0",
+        "description": "An entry module outside the package.",
+        "apiVersion": 2,
+        "main": "../../../main.js"
+      }
+    },
+    {
+      "name": "a layer kind with every property type",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.kinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a controller kind draws nothing and is still valid",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.controller",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "rig",
+              "label": "Depth Image",
+              "render": "none",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "layerKinds at apiVersion 2 is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.oldapi",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an empty layerKinds block stays valid at apiVersion 2",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.emptykinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": []
+        }
+      }
+    },
+    {
+      "name": "the shader render strategy is reserved",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.shader",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "shader",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an unknown render strategy is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.badrender",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "canvas",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a string property cannot be animatable",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.animstring",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "title": {
+                  "type": "string",
+                  "default": "x",
+                  "animatable": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a default below its own min is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.baddefault",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": -1,
+                  "min": 0,
+                  "max": 10
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an enum default outside its own values is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.badenum",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "a",
+                    "b"
+                  ],
+                  "default": "c"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a missing default is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.nodefault",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an asset property may not carry a default",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.assetdefault",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "source": {
+                  "type": "asset",
+                  "default": "asset-7"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a kind id that is not camelCase is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.badid",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depth-image",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a duplicate kind id is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dupekind",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            },
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a kind with no properties is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.nopropskind",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a missing schemaVersion is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.noschemaversion",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel with no placement is accepted (it defaults to the shared host)",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelnoplacement",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel asking for its own sidebar tab, with an icon, is accepted",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelsidebar",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "sidebar",
+              "icon": "layers"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel asking for its own inspector tab, with an icon, is accepted",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelinspector",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "inspector",
+              "icon": "sliders-h"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an unknown placement is refused rather than defaulted",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.panelbadplacement",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "left",
+              "icon": "layers"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel that asks for its own tab without an icon is refused (the rail is icon-only)",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.panelnoicon",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "sidebar"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel icon the editor does not have is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.panelbadicon",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "sidebar",
+              "icon": "not-a-real-glyph"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a shared panel may still carry an icon",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelsharedicon",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "shared",
+              "icon": "layers"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

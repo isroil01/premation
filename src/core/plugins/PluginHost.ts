@@ -29,20 +29,46 @@
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { asCommandId, type CommandId } from '@app-types/common';
 import { useUIStore } from '@stores/uiStore';
+import { registerLayerKinds, unregisterLayerKinds } from './layerKindRegistry';
+import { clearLayerChangeListeners, notifyAuthoredChange } from './layerChangeNotifier';
+import { revocationFor, refreshRevocations } from './revocation';
+import { fetchRevocationList } from './registry';
+import { noteManualEdit } from './proxySubtree';
+import { setPluginPropWriteHandler } from '@core/scene/pluginPropWrites';
+import { readCustomLayer, customLayerComponent } from './customLayers';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { splitKind } from './layerKindSchema';
 import { usePluginStore, type InstalledPlugin } from '@stores/pluginStore';
 import { createHostApi } from './hostApi';
 import { spawnPluginWorker } from './spawnPluginWorker';
 import {
   METHOD_PERMISSIONS,
+  collectTransferables,
   type HostMessage,
   type WorkerMessage,
   type PluginCommandSpec,
   type PluginLogLevel,
 } from './protocol';
 import type { PluginPackage } from './pluginPackage';
-import type { PluginPermission } from './manifest';
+import { activatesOnStartup, type PluginPermission } from './manifest';
+import { releaseAssetBudget } from './assets';
 
-export type PluginStatus = 'stopped' | 'starting' | 'running' | 'error';
+/**
+ * Where a plugin is, from the user's point of view.
+ *
+ * `inactive` is the one that earns its place. Three of these look identical in
+ * a naive UI — "not running" — and the user resolves them three different ways:
+ *
+ *   • `stopped`  — the user turned it off. Turn it back on.
+ *   • `inactive` — installed, enabled, contributions known, worker not spawned.
+ *     Nothing is wrong. Use it and it starts.
+ *   • `error`    — it tried and failed. Read the log.
+ *
+ * Collapsing `inactive` into `stopped` would make every lazily-activated plugin
+ * look broken; collapsing it into `running` would promise a worker that is not
+ * there. It is its own state because it is its own situation.
+ */
+export type PluginStatus = 'stopped' | 'inactive' | 'starting' | 'running' | 'error';
 
 /** One line of a plugin's own output, kept for the manager's log view. */
 export interface PluginLogLine {
@@ -85,9 +111,20 @@ interface Runtime {
   bootTimer: ReturnType<typeof setTimeout> | null;
   missedPings: number;
   pingSeq: number;
+  /** Commands this plugin registered AT RUNTIME. Declared ones outlive the
+   *  worker — they are what makes an inactive plugin usable — so they are
+   *  tracked separately, against enabled-ness rather than against a process. */
   commandIds: CommandId[];
-  /** Set by the panel host component while a panel iframe is mounted. */
-  postToPanel?: (data: unknown) => void;
+  /** Panel id → poster, set by each mounted panel iframe. */
+  panelPosters: Map<string, (data: unknown) => void>;
+  /**
+   * Resolved when `activate()` returns, or rejected-as-false when boot fails.
+   *
+   * Lazy activation needs this: invoking a command on an inactive plugin has to
+   * wait for the worker to come up before dispatching, and several invocations
+   * can arrive during the same boot.
+   */
+  activationWaiters: Array<(ok: boolean) => void>;
 }
 
 class PluginHost {
@@ -96,11 +133,15 @@ class PluginHost {
   private selectionProvider: () => ReadonlyArray<string> = () => [];
   /** Show / hide a plugin's panel in the dock. Injected — this file must not
    *  import React, and the host is booted in tests where there is no dock. */
-  private showPanelHook: ((pluginId: string) => void) | null = null;
-  private hidePanelHook: ((pluginId: string) => void) | null = null;
+  private showPanelHook: ((pluginId: string, panelId: string) => void) | null = null;
+  private hidePanelHook: ((pluginId: string, panelId: string) => void) | null = null;
   /** Plugin frames allowed on the postMessage bridge → their expected origin. */
   private readonly frames = new Map<MessageEventSource, string>();
   private workerFactory: WorkerFactory | null = null;
+  /** Commands registered from a plugin's MANIFEST. Keyed by plugin id and tied
+   *  to enabled-ness, not to a running worker — an inactive plugin's commands
+   *  are in the palette, which is what lets invoking one start it. */
+  private readonly declaredCommandIds = new Map<string, CommandId[]>();
 
   constructor() {
     this.setupPostMessageBridge();
@@ -116,16 +157,69 @@ class PluginHost {
    */
   configure(opts: {
     getSelection: () => ReadonlyArray<string>;
-    /** Reveal `pluginId`'s panel in the dock. Absent in tests and pop-outs. */
-    showPanel?: (pluginId: string) => void;
+    /** Reveal one of `pluginId`'s panels in the dock. Absent in tests and pop-outs. */
+    showPanel?: (pluginId: string, panelId: string) => void;
     /** Hide it again — also called when a plugin stops, so a panel cannot
      *  outlive the worker that was answering it. */
-    hidePanel?: (pluginId: string) => void;
+    hidePanel?: (pluginId: string, panelId: string) => void;
   }): void {
+    // Enforced, not documented. "`hydrate()` must run before `configure()`" is
+    // call-order discipline, and call-order discipline is violated eventually —
+    // by a refactor that moves a line, or by a new entry point (a pop-out
+    // window, a test harness) written by someone who never read the note.
+    //
+    // The failure it prevents is quiet and expensive: without payloads, every
+    // installed plugin has an empty `files`, so `start()` reports "the entry
+    // module is missing from the package" for all of them at once. That reads
+    // as every plugin the user installed being corrupt, and the real cause —
+    // two lines in the wrong order at boot — is nowhere in the message.
+    if (!usePluginStore.getState().hydrated) {
+      throw new Error(
+        'pluginHost.configure() was called before usePluginStore.hydrate() finished. '
+        + 'Package payloads live in IndexedDB and are loaded asynchronously; starting '
+        + 'plugins before they arrive makes every one of them look broken.',
+      );
+    }
     this.selectionProvider = opts.getSelection;
     this.showPanelHook = opts.showPanel ?? null;
     this.hidePanelHook = opts.hidePanel ?? null;
-    this.startEnabled();
+
+    /*
+      Two plugin behaviours, hooked at the ONE place an authored property write
+      happens (`SceneGraph.writeProp`).
+
+      Doing it here rather than in the inspector is what makes both structural:
+      a user editing a plugin-generated layer detaches it wherever the edit came
+      from, and `onLayerChanged` cannot fire during playback at all — animation
+      samples tracks, it never writes props, so it cannot reach that path.
+    */
+    setPluginPropWriteHandler((nodeId, componentId, propName) => {
+      // A generated child the user touched: the plugin stops managing it.
+      noteManualEdit(nodeId);
+
+      // An authored edit on a custom layer's OWN property: tell its plugin.
+      const node = defaultSceneGraph.getNode(nodeId);
+      if (!node) return;
+      const record = readCustomLayer(node);
+      if (!record) return;
+      // Only the component carrying the declared props, so a transform nudge
+      // is not reported as a schema change.
+      if (customLayerComponent(node)?.id !== componentId) return;
+      if (propName.startsWith('__')) return;
+      notifyAuthoredChange(nodeId, record.kind, propName);
+    });
+
+    this.bringUpEnabled();
+
+    /*
+      The kill switch, checked once at boot.
+
+      Deliberately not awaited: an editor that delayed its own startup because a
+      revocation check had not answered would be worse than the problem, and
+      working offline is normal. Anything it finds is enforced the moment it
+      arrives rather than at the next restart.
+    */
+    void refreshRevocations(fetchRevocationList, () => this.enforceRevocations());
   }
 
   /**
@@ -159,6 +253,14 @@ class PluginHost {
     origin: { source?: 'folder' | 'file' | 'registry'; publisherKey?: string } = {},
   ): string | null {
     const id = pkg.manifest.id;
+
+    // Refused, with the operator's reason. A revoked plugin that can be
+    // reinstalled is a revocation the user can undo by accident.
+    const revoked = revocationFor(id, pkg.manifest.version);
+    if (revoked) {
+      return `"${pkg.manifest.name}" was withdrawn by the registry and cannot be installed: ${revoked.reason}`;
+    }
+
     const existing = usePluginStore.getState().get(id);
     if (existing) this.stop(id);
 
@@ -184,12 +286,13 @@ class PluginHost {
       return 'Could not save the plugin — the browser storage quota is full.';
     }
     this.emit();
-    this.start(entry);
+    this.bringUp(entry);
     return null;
   }
 
   uninstall(id: string): void {
     this.stop(id);
+    this.unregisterContributions(id);
     usePluginStore.getState().remove(id);
     this.logs.delete(id);
     this.errors.delete(id);
@@ -217,12 +320,25 @@ class PluginHost {
   }
 
   setEnabled(id: string, enabled: boolean): void {
+    if (enabled) {
+      // Same rule as install: while it is on the list, it does not run.
+      const entry = usePluginStore.getState().get(id);
+      const revoked = entry && revocationFor(id, entry.manifest.version);
+      if (revoked) {
+        this.appendLog(id, 'error', `Withdrawn by the registry: ${revoked.reason}`);
+        return;
+      }
+    }
     usePluginStore.getState().setEnabled(id, enabled);
     if (enabled) {
       const entry = usePluginStore.getState().get(id);
-      if (entry) this.start(entry);
+      if (entry) this.bringUp(entry);
     } else {
       this.stop(id);
+      // Disabling takes the contributions out of the palette too. An inactive
+      // plugin's commands are meant to be there; a DISABLED one's are not, and
+      // leaving them would make "off" mean nothing the user can see.
+      this.unregisterContributions(id);
     }
     this.emit();
   }
@@ -237,10 +353,26 @@ class PluginHost {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
-  private startEnabled(): void {
+  private bringUpEnabled(): void {
     for (const entry of usePluginStore.getState().plugins) {
-      if (entry.enabled) this.start(entry);
+      if (entry.enabled) this.bringUp(entry);
     }
+  }
+
+  /**
+   * Make a plugin's contributions live, and start it only if it asked to start.
+   *
+   * This is the whole point of the phase. Under API 1 every enabled plugin was
+   * spawned here, because the only way to find out what it contributed was to
+   * run it — with forty installed that is forty workers at launch, each racing
+   * the same 8-second boot timeout, for a user who will use two of them.
+   * Contributions are declared now, so the palette can be complete while almost
+   * nothing is running.
+   */
+  private bringUp(entry: InstalledPlugin): void {
+    this.registerContributions(entry);
+    if (activatesOnStartup(entry.manifest)) this.start(entry);
+    this.emit();
   }
 
   private start(entry: InstalledPlugin): void {
@@ -264,13 +396,26 @@ class PluginHost {
       missedPings: 0,
       pingSeq: 0,
       commandIds: [],
+      panelPosters: new Map(),
+      activationWaiters: [],
     };
     this.runtimes.set(id, rt);
 
     const api = createHostApi(entry.manifest, {
       registerCommand: (spec) => this.registerPluginCommand(entry, spec),
-      openPanel: () => this.setPanelOpen(id, true),
-      closePanel: () => this.setPanelOpen(id, false),
+      openPanel: (panelId) => this.setPanelOpen(id, panelId, true),
+      closePanel: (panelId) => this.setPanelOpen(id, panelId, false),
+      warn: (text) => this.appendLog(id, 'warn', text),
+      emitLayerChanged: (event) => {
+        // Guarded: a worker that died between the edit and the coalesce window
+        // is the normal case for a plugin that crashed mid-drag.
+        const live = this.runtimes.get(id);
+        if (!live || live.info.status === 'stopped' || live.info.status === 'error') return;
+        const e = event as { layerId: string; kindId: string; props: string[] };
+        try {
+          live.worker.postMessage({ k: 'layerChanged', ...e } satisfies HostMessage);
+        } catch { /* terminated between the check and the send */ }
+      },
     });
 
     worker.onmessage = (ev: MessageEvent<WorkerMessage>) => {
@@ -306,15 +451,22 @@ class PluginHost {
   stop(id: string): void {
     const rt = this.runtimes.get(id);
     if (!rt) return;
-    // Take the panel down with the worker. A frame left on screen after its
+    // Take the panels down with the worker. A frame left on screen after its
     // plugin is disabled, uninstalled or killed still accepts clicks and
     // answers nothing — it reads as the editor being broken.
-    this.hidePanelHook?.(id);
+    const entry = usePluginStore.getState().get(id);
+    for (const panel of entry?.manifest.contributes.panels ?? []) this.hidePanelHook?.(id, panel.id);
     if (rt.pingTimer) clearInterval(rt.pingTimer);
     if (rt.bootTimer) clearTimeout(rt.bootTimer);
+    // Only the RUNTIME-registered commands. Declared ones survive: the plugin
+    // is going inactive, not away, and its commands are how it comes back.
     for (const cid of rt.commandIds) getCommandRegistry().unregister(cid);
+    // Anyone still waiting on this boot is waiting forever otherwise.
+    for (const w of rt.activationWaiters.splice(0)) w(false);
     try { rt.worker.terminate(); } catch { /* already gone */ }
     this.runtimes.delete(id);
+    // Its image budget goes back at the same moment its memory does.
+    releaseAssetBudget(id);
     this.emit();
   }
 
@@ -361,11 +513,7 @@ class PluginHost {
         this.errors.delete(id);
         rt.info = { ...rt.info, status: 'running', error: undefined };
         rt.pingTimer = setInterval(() => this.beat(id), PING_INTERVAL_MS);
-        // A plugin with a panel gets one command for free, so its UI is
-        // reachable from the palette and the Plugins menu without the user
-        // going through the manager. Registered on activation, not on install:
-        // a panel whose plugin is not running has nothing to talk to.
-        if (entry.manifest.panel) this.registerPanelCommand(entry, rt);
+        for (const w of rt.activationWaiters.splice(0)) w(true);
         this.emit();
         break;
       }
@@ -379,7 +527,9 @@ class PluginHost {
         break;
 
       case 'toPanel':
-        rt.postToPanel?.(msg.data);
+        // Only the named panel's frame. A plugin with two panels sending to one
+        // must not have the message appear in the other.
+        rt.panelPosters.get(msg.panelId)?.(msg.data);
         break;
 
       case 'log':
@@ -388,7 +538,16 @@ class PluginHost {
 
       case 'call': {
         const required = METHOD_PERMISSIONS[msg.method];
-        const reply = (m: HostMessage): void => { try { rt.worker.postMessage(m); } catch { /* terminated */ } };
+        const reply = (m: HostMessage): void => {
+          try {
+            // Binary results (an image's pixels) are TRANSFERRED, not cloned.
+            // For a 4K frame that is the difference between a pointer and 33 MB
+            // of copy on the main thread.
+            const transfer = collectTransferables(m);
+            if (transfer.length > 0) rt.worker.postMessage(m, transfer);
+            else rt.worker.postMessage(m);
+          } catch { /* terminated */ }
+        };
 
         if (required === undefined) {
           reply({ k: 'result', id: msg.id, ok: false, error: `Unknown API method "${msg.method}".` });
@@ -408,11 +567,38 @@ class PluginHost {
           });
           return;
         }
+        const failed = (err: unknown): void => {
+          const message = err instanceof Error ? err.message : String(err);
+          /*
+            Logged, not only returned.
+
+            A permission refusal above is logged for a reason that applies just
+            as well here: the plugin may swallow the rejection, and then the
+            refusal is invisible to everyone including its author. That became
+            load-bearing with layer kinds — a plugin refused for reaching at
+            ANOTHER plugin's kind must leave a trace, both because it is the
+            author's only clue and because it is the one refusal that describes
+            an attempt to act as someone else.
+          */
+          this.appendLog(id, 'warn', `${msg.method} refused — ${message}`);
+          reply({ k: 'result', id: msg.id, ok: false, error: message });
+        };
         try {
           const value = api[msg.method]!(...(Array.isArray(msg.args) ? msg.args : []));
-          reply({ k: 'result', id: msg.id, ok: true, value: value === undefined ? null : value });
+          // The asset methods decode and encode, so they are async. Awaited
+          // here rather than resolved worker-side, because a rejected promise
+          // that nobody adopts is an unhandled rejection in the HOST realm —
+          // and the plugin's call would hang with no error either way.
+          if (value instanceof Promise) {
+            void value.then(
+              (v) => reply({ k: 'result', id: msg.id, ok: true, value: v === undefined ? null : v }),
+              failed,
+            );
+          } else {
+            reply({ k: 'result', id: msg.id, ok: true, value: value === undefined ? null : value });
+          }
         } catch (err) {
-          reply({ k: 'result', id: msg.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+          failed(err);
         }
         break;
       }
@@ -432,12 +618,148 @@ class PluginHost {
     try { rt.worker.postMessage({ k: 'ping', id: rt.pingSeq } satisfies HostMessage); } catch { /* terminated */ }
   }
 
-  // ── Commands ───────────────────────────────────────────────────────────
+  // ── Contributions ──────────────────────────────────────────────────────
 
+  /**
+   * Put a plugin's DECLARED commands and panels in the palette.
+   *
+   * Called when a plugin becomes enabled, not when its worker starts — that
+   * separation is the feature. Every command here is enabled and invokable
+   * while the plugin is inactive; invoking one is what starts it.
+   */
+  private registerContributions(entry: InstalledPlugin): void {
+    const pid = entry.manifest.id;
+    if (this.declaredCommandIds.has(pid)) this.unregisterContributions(pid);
+    const ids: CommandId[] = [];
+
+    for (const spec of entry.manifest.contributes.commands) {
+      const cid = asCommandId(`plugin.${pid}.${spec.id}`);
+      getCommandRegistry().register({
+        id: cid,
+        label: `${entry.manifest.name}: ${spec.label}`,
+        icon: spec.icon ?? 'plugin',
+        // Deliberately NOT gated on the plugin running. A command that greys
+        // out until you have started the thing it starts is a loop the user
+        // cannot get into.
+        enabled: () => (spec.needsSelection ? this.selectionProvider().length > 0 : true),
+        execute: () => { void this.invokeCommand(pid, spec.id); },
+      });
+      ids.push(cid);
+    }
+
+    // One "open" command per declared panel, so a plugin's UI is reachable from
+    // the palette without going through the manager. These are kept OUT of
+    // `info.commands`: that list is what the PLUGIN contributed and the manager
+    // counts it, so counting a command the host invented would misreport it.
+    for (const panel of entry.manifest.contributes.panels) {
+      const cid = asCommandId(`plugin.${pid}.panel.${panel.id}`);
+      getCommandRegistry().register({
+        id: cid,
+        label: `${entry.manifest.name}: ${panel.title}`,
+        icon: 'plugin',
+        enabled: () => true,
+        execute: () => { void this.showPanel(pid, panel.id); },
+      });
+      ids.push(cid);
+    }
+
+    this.declaredCommandIds.set(pid, ids);
+
+    /*
+      Layer kinds, registered on ENABLE rather than on start — the same rule the
+      commands above follow, and for the same reason. A declared kind has to be
+      creatable before its worker has ever booted, or every plugin that defines
+      one has to start at launch just so its layer type appears in a menu, which
+      is exactly what `activationEvents` exists to avoid.
+    */
+    registerLayerKinds(pid, entry.manifest.name, entry.manifest.contributes.layerKinds);
+  }
+
+  private unregisterContributions(id: string): void {
+    for (const cid of this.declaredCommandIds.get(id) ?? []) getCommandRegistry().unregister(cid);
+    this.declaredCommandIds.delete(id);
+    // A stopped plugin's kinds must not stay creatable: a menu that offers a
+    // layer nothing can drive, and a document that gains a reference to a
+    // plugin the user has already turned off.
+    unregisterLayerKinds(id);
+    // Its callbacks go with its kinds. A listener for a plugin that is no
+    // longer running is a message posted into a dead worker every time a user
+    // touches a layer it used to manage.
+    clearLayerChangeListeners(id);
+  }
+
+  /**
+   * Start a plugin if it is not already up, and resolve once it has activated.
+   *
+   * Returns false when it could not be started — the error path has already
+   * notified and logged by then, so callers do not report it a second time.
+   */
+  private ensureActive(pid: string): Promise<boolean> {
+    const rt = this.runtimes.get(pid);
+    if (rt?.info.status === 'running') return Promise.resolve(true);
+
+    const entry = usePluginStore.getState().get(pid);
+    if (!entry || !entry.enabled) return Promise.resolve(false);
+
+    if (!rt) {
+      this.start(entry);
+      this.emit();
+    }
+    const live = this.runtimes.get(pid);
+    if (!live) return Promise.resolve(false);
+    if (live.info.status === 'running') return Promise.resolve(true);
+    // Several invocations can arrive during one boot; they all wait on the same
+    // list and are answered together by `activated` or by `stop`.
+    return new Promise<boolean>((resolve) => { live.activationWaiters.push(resolve); });
+  }
+
+  /**
+   * Run one of a plugin's commands, activating it first if need be.
+   *
+   * The boot deadline is the existing 8-second one — a lazily started plugin
+   * fails exactly the way an eagerly started one does, with the same message,
+   * because it is the same code path.
+   */
+  private async invokeCommand(pid: string, commandId: string): Promise<void> {
+    const started = await this.ensureActive(pid);
+    const live = this.runtimes.get(pid);
+    if (!started || !live) {
+      // `setError` already told the user when boot failed. This branch is the
+      // other case: disabled, or uninstalled between palette and keystroke.
+      if (!this.errors.has(pid)) {
+        useUIStore.getState().notify({
+          level: 'warning',
+          message: `${usePluginStore.getState().get(pid)?.manifest.name ?? pid} is not available.`,
+          durationMs: 4000,
+        });
+      }
+      return;
+    }
+    live.worker.postMessage({
+      k: 'invoke',
+      commandId,
+      selection: [...this.selectionProvider()],
+    } satisfies HostMessage);
+  }
+
+  /**
+   * A command registered at RUNTIME by `commands.register`.
+   *
+   * Still the only route for API-1 plugins, and still supported for API-2 ones
+   * — `hostApi` logs a nudge when an API-2 plugin registers something it did
+   * not declare. Skipped when the id was already declared, so a plugin that
+   * both declares and registers (the migration state) does not get two palette
+   * entries for one command.
+   */
   private registerPluginCommand(entry: InstalledPlugin, spec: PluginCommandSpec): void {
     const pid = entry.manifest.id;
     const rt = this.runtimes.get(pid);
     if (!rt) return;
+    if (entry.manifest.contributes.commands.some((c) => c.id === spec.id)) {
+      rt.info = { ...rt.info, commands: [...rt.info.commands, spec] };
+      this.emit();
+      return;
+    }
     // Namespaced with the plugin id: two vendors may both ship "apply", and the
     // command registry is a flat id space.
     const cid = asCommandId(`plugin.${pid}.${spec.id}`);
@@ -446,47 +768,12 @@ class PluginHost {
       label: `${entry.manifest.name}: ${spec.label}`,
       icon: spec.icon ?? 'plugin',
       enabled: () => (spec.needsSelection ? this.selectionProvider().length > 0 : true),
-      execute: () => {
-        const live = this.runtimes.get(pid);
-        if (!live) {
-          useUIStore.getState().notify({
-            level: 'warning',
-            message: `${entry.manifest.name} is not running.`,
-            durationMs: 4000,
-          });
-          return;
-        }
-        live.worker.postMessage({
-          k: 'invoke',
-          commandId: spec.id,
-          selection: [...this.selectionProvider()],
-        } satisfies HostMessage);
-      },
+      execute: () => { void this.invokeCommand(pid, spec.id); },
     };
     getCommandRegistry().register(cmd);
     rt.commandIds.push(cid);
     rt.info = { ...rt.info, commands: [...rt.info.commands, spec] };
     this.emit();
-  }
-
-  /**
-   * The implicit "open my panel" command.
-   *
-   * Kept OUT of `info.commands`: that list is what the plugin itself
-   * contributed, and the manager counts it ("3 commands"). Counting a command
-   * the host invented would misreport the plugin.
-   */
-  private registerPanelCommand(entry: InstalledPlugin, rt: Runtime): void {
-    const pid = entry.manifest.id;
-    const cid = asCommandId(`plugin.${pid}.panel`);
-    getCommandRegistry().register({
-      id: cid,
-      label: `${entry.manifest.name}: Open Panel`,
-      icon: 'plugin',
-      enabled: () => this.isRunning(pid),
-      execute: () => this.showPanel(pid),
-    });
-    rt.commandIds.push(cid);
   }
 
   // ── Panels ─────────────────────────────────────────────────────────────
@@ -499,32 +786,125 @@ class PluginHost {
    * on screen, and the user had to find it in the manager. The flag is still
    * kept — the manager reads it — but the hook is what actually opens the dock.
    */
-  private setPanelOpen(id: string, open: boolean): void {
-    if (open) this.showPanelHook?.(id);
-    else this.hidePanelHook?.(id);
+  private setPanelOpen(id: string, panelId: string, open: boolean): void {
+    if (open) this.showPanelHook?.(id, panelId);
+    else this.hidePanelHook?.(id, panelId);
     const rt = this.runtimes.get(id);
     if (!rt) return;
     rt.info = { ...rt.info, panelOpen: open };
     this.emit();
   }
 
-  /** Public entry for the manager's "Open" button and the Plugins menu. */
-  showPanel(id: string): void {
-    this.setPanelOpen(id, true);
+  /**
+   * Public entry for the manager's "Open" button, the Plugins menu and the
+   * palette. Activates the plugin first — `onPanel:<id>` is an activation
+   * event, and a panel frame whose worker is not running answers nothing.
+   *
+   * `panelId` is optional and defaults to the plugin's sole panel, which is the
+   * overwhelmingly common case.
+   */
+  async showPanel(id: string, panelId?: string): Promise<void> {
+    const entry = usePluginStore.getState().get(id);
+    const panels = entry?.manifest.contributes.panels ?? [];
+    const target = panelId ?? panels[0]?.id;
+    if (!target) return;
+    // Shown first, then activated: the dock opening immediately is the pending
+    // state. Opening it only after an 8-second boot would read as a dead click.
+    this.setPanelOpen(id, target, true);
+    await this.ensureActive(id);
   }
 
-  /** Called by the panel component while its iframe is mounted. */
-  attachPanel(id: string, postToPanel: (data: unknown) => void): () => void {
+  /**
+   * Wake the plugins a just-opened document depends on.
+   *
+   * `onLayerKind:<id>` is the activation event that makes lazy activation work
+   * for layer kinds: a plugin that defines one should start when a project
+   * containing it is opened, and at no other time. Without this the manifest
+   * validates the event and nothing ever raises it — so a document full of
+   * custom layers would sit inert until the user happened to run one of the
+   * plugin's commands.
+   *
+   * Deliberately fire-and-forget. Opening a project must not wait on a worker
+   * boot; the layers render from their proxy children meanwhile, and go live
+   * when their plugin is up.
+   */
+  activateForDocument(kinds: readonly string[]): void {
+    const wanted = new Set<string>();
+    for (const kind of kinds) {
+      const split = splitKind(kind);
+      if (split) wanted.add(split.pluginId);
+    }
+    for (const pid of wanted) {
+      const entry = usePluginStore.getState().get(pid);
+      // Not installed, or the user turned it off. Both are states the layer
+      // already knows how to render inert — starting it is not our call.
+      if (!entry?.enabled) continue;
+      void this.ensureActive(pid);
+    }
+  }
+
+  /**
+   * Stop every installed plugin that is on the revocation list.
+   *
+   * Called after a list is adopted, NOT only at boot. Waiting for a restart
+   * would leave the window open for as long as the user keeps the app running,
+   * which is the exact failure a revocation list exists to close — a takedown
+   * that arrives an hour after the user opened the editor has to land now.
+   *
+   * The package is not deleted and nothing the user made is destroyed,
+   * consistent with the blocked-plugin rule: documents that reference it keep
+   * opening, and a `proxy` layer's children keep rendering. Breaking someone's
+   * project is usually a bigger harm than the one a takedown addresses.
+   */
+  enforceRevocations(): Array<{ id: string; reason: string }> {
+    const stopped: Array<{ id: string; reason: string }> = [];
+
+    for (const entry of usePluginStore.getState().plugins) {
+      const id = entry.manifest.id;
+      const revoked = revocationFor(id, entry.manifest.version);
+      if (!revoked) continue;
+
+      const wasRunning = this.runtimes.get(id)?.info.status === 'running';
+      // Disabled rather than merely stopped: a stop alone would be undone by
+      // the next thing that lazily activates it.
+      usePluginStore.getState().setEnabled(id, false);
+      this.stop(id);
+      this.unregisterContributions(id);
+
+      // The operator's own words. A plugin that disappears with no explanation
+      // is worse than the takedown it implements — the user assumes a bug and
+      // goes looking for the plugin, or reinstalls it.
+      this.appendLog(id, 'error', `Withdrawn by the registry: ${revoked.reason}`);
+      if (wasRunning) {
+        // A toast only when it was actually RUNNING. A plugin that was already
+        // inactive stopping is not news; one that vanished mid-session is.
+        useUIStore.getState().notify({
+          level: 'error',
+          message: `"${entry.manifest.name}" was withdrawn by the registry: ${revoked.reason}`,
+          durationMs: 12000,
+        });
+      }
+      stopped.push({ id, reason: revoked.reason });
+    }
+
+    if (stopped.length > 0) this.emit();
+    return stopped;
+  }
+
+  /** Called by each panel component while its iframe is mounted. */
+  attachPanel(id: string, panelId: string, postToPanel: (data: unknown) => void): () => void {
     const rt = this.runtimes.get(id);
     if (!rt) return () => {};
-    rt.postToPanel = postToPanel;
-    return () => { if (rt.postToPanel === postToPanel) rt.postToPanel = undefined; };
+    rt.panelPosters.set(panelId, postToPanel);
+    return () => {
+      if (rt.panelPosters.get(panelId) === postToPanel) rt.panelPosters.delete(panelId);
+    };
   }
 
-  /** Deliver a message from a plugin's panel to that plugin's worker. */
-  deliverPanelMessage(id: string, data: unknown): void {
+  /** Deliver a message from one of a plugin's panels to that plugin's worker. */
+  deliverPanelMessage(id: string, panelId: string, data: unknown): void {
     const rt = this.runtimes.get(id);
-    rt?.worker.postMessage({ k: 'panelMessage', data } satisfies HostMessage);
+    rt?.worker.postMessage({ k: 'panelMessage', panelId, data } satisfies HostMessage);
   }
 
   // ── Logs ───────────────────────────────────────────────────────────────
@@ -555,11 +935,38 @@ class PluginHost {
 
   // ── Reads for the UI ───────────────────────────────────────────────────
 
+  /**
+   * What the manager renders.
+   *
+   * The order matters. An error outranks everything — it is the state the user
+   * has to act on. Otherwise a live runtime speaks for itself.
+   *
+   * With neither, the answer turns on what the plugin ASKED FOR. A lazily
+   * activated plugin with no worker is `inactive`: nothing is wrong, and it
+   * starts when used. An `onStartup` plugin with no worker is a plugin that
+   * said it wanted to be running and is not — that is `stopped`, and the
+   * manager labels it "Not running". Reporting both as `inactive` would tell a
+   * user whose plugin failed to launch that everything is fine.
+   */
   info(id: string): PluginRuntimeInfo {
+    const error = this.errors.get(id);
+    if (error) return { status: 'error', error, commands: [], panelOpen: false };
     const rt = this.runtimes.get(id);
     if (rt) return rt.info;
-    const error = this.errors.get(id);
-    return { status: error ? 'error' : 'stopped', error, commands: [], panelOpen: false };
+    const entry = usePluginStore.getState().get(id);
+    if (entry?.enabled && !activatesOnStartup(entry.manifest)) {
+      return {
+        status: 'inactive',
+        // From the MANIFEST, without running anything — which is the point.
+        commands: [...entry.manifest.contributes.commands],
+        panelOpen: false,
+      };
+    }
+    return {
+      status: 'stopped',
+      commands: entry?.enabled ? [...entry.manifest.contributes.commands] : [],
+      panelOpen: false,
+    };
   }
 
   isRunning(id: string): boolean {
@@ -615,21 +1022,24 @@ class PluginHost {
       // are ours, not the panel's — forwarding one would wake the plugin's
       // `onPanelMessage` handler with `undefined`.
       if (!('data' in data)) return;
-      // A panel talks to its OWN plugin's worker and nothing else. It cannot
-      // name a method, a node or a plugin — routing is by which frame sent it.
-      const pluginId = this.panelOwners.get(event.source!);
-      if (!pluginId) return;
-      this.deliverPanelMessage(pluginId, (data as { data?: unknown }).data);
+      // A panel talks to its OWN plugin's worker, as its OWN panel, and nothing
+      // else. Both halves of that come from which FRAME sent the message —
+      // never from the body. A panel that names another plugin's panel id in
+      // its payload is describing itself inaccurately, and is ignored, because
+      // nothing here reads the payload to decide where it goes.
+      const owner = this.panelOwners.get(event.source!);
+      if (!owner) return;
+      this.deliverPanelMessage(owner.pluginId, owner.panelId, (data as { data?: unknown }).data);
     };
     window.addEventListener('message', listener);
     return () => window.removeEventListener('message', listener);
   }
 
-  private readonly panelOwners = new Map<MessageEventSource, string>();
+  private readonly panelOwners = new Map<MessageEventSource, { pluginId: string; panelId: string }>();
 
-  /** Bind a registered frame to the plugin that owns it. */
-  claimFrame(source: MessageEventSource, pluginId: string): () => void {
-    this.panelOwners.set(source, pluginId);
+  /** Bind a registered frame to the plugin AND panel that own it. */
+  claimFrame(source: MessageEventSource, pluginId: string, panelId: string): () => void {
+    this.panelOwners.set(source, { pluginId, panelId });
     return () => { this.panelOwners.delete(source); };
   }
 }

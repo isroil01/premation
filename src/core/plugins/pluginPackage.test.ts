@@ -139,7 +139,7 @@ describe('package reading', () => {
     });
     const { pkg, errors } = readPluginZip(zip);
     expect(pkg).toBeNull();
-    expect(errors.join(' ')).toMatch(/larger than/);
+    expect(errors.join(' ')).toMatch(/unpacks to more than/);
   });
 
   it('refuses unreadable bytes rather than throwing', () => {

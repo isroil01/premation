@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "The canonical abuse-report vocabulary. This file is duplicated",
+    "BYTE-IDENTICALLY in motion-editor (src/core/plugins/__fixtures__/) and",
+    "motion-back (src/plugins/__fixtures__/), and a test in each repo asserts its",
+    "own copy against it.",
+    "",
+    "Why a duplicated file rather than one repo importing the other: they deploy",
+    "separately and neither can build against the other's source. The failure",
+    "this prevents is quiet and one-directional — the editor offers a category",
+    "the server's enum does not accept, and every report of that kind 400s while",
+    "the reporter is told nothing useful. That is the class of bug that is",
+    "invisible until the day it matters."
+  ],
+  "categories": ["malicious", "impersonation", "broken", "inappropriate", "license"]
+}

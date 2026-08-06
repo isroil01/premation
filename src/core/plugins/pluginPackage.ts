@@ -18,8 +18,16 @@ import { parseManifest, type PluginManifest } from './manifest';
 /** A plugin package that parsed and validated. */
 export interface PluginPackage {
   manifest: PluginManifest;
-  /** Package-relative path → file text. Entry module and panel included. */
+  /** Package-relative path → file text. Entry module and panels included. */
   files: Record<string, string>;
+  /**
+   * Package-relative path → raw bytes, for the media a package may now ship.
+   *
+   * Separate from `files` rather than a union type, because every existing
+   * reader of `files` wants text and would otherwise have to start narrowing.
+   * Empty for the overwhelming majority of packages.
+   */
+  binaries: Record<string, Uint8Array>;
 }
 
 export interface PackageResult {
@@ -40,9 +48,29 @@ export const MAX_PACKAGE_BYTES = 8 * 1024 * 1024;
 const MAX_FILES = 200;
 
 /** Text extensions a package may contain. Anything else is dropped. */
-const TEXT_EXT = /\.(js|mjs|json|html|htm|css|svg|txt|md)$/i;
+const TEXT_EXT = /\.(js|mjs|json|html|htm|css|svg|txt|md|wgsl|glsl)$/i;
+
+/**
+ * Binary media a package may ship.
+ *
+ * Added with the asset API: a plugin that applies a look needs to be able to
+ * carry its own lookup texture or example image, and the alternative was
+ * base64 in a `.js` file, which is the same bytes plus 33% and no size check.
+ * SVG stays in `TEXT_EXT` — it is markup, and treating it as opaque bytes
+ * would lose the one thing that makes it useful in a panel.
+ */
+const BINARY_EXT = /\.(png|jpg|jpeg|webp)$/i;
 
 const MANIFEST_NAME = 'plugin.json';
+
+/**
+ * Largest inflation ratio a single file may claim before we call it hostile.
+ *
+ * The real defence is the absolute `originalSize` check below — this is the
+ * second one, for the shape of archive that stays under the absolute ceiling
+ * while still being pathological.
+ */
+const MAX_INFLATION_RATIO = 200;
 
 /** Normalise a zip/dir entry path: forward slashes, no leading `./`. */
 function normalize(path: string): string {
@@ -57,19 +85,33 @@ function normalize(path: string): string {
  * Only stripped when EVERY entry shares the prefix, so a flat archive and a
  * multi-folder one are both left alone.
  */
-function stripCommonRoot(files: Record<string, string>): Record<string, string> {
-  const paths = Object.keys(files);
-  if (paths.length === 0 || paths.includes(MANIFEST_NAME)) return files;
+function commonRoot(paths: readonly string[]): string | null {
+  if (paths.length === 0 || paths.includes(MANIFEST_NAME)) return null;
   const first = paths[0]!.split('/')[0];
-  if (!first || !paths.every((p) => p.startsWith(`${first}/`))) return files;
-  const out: Record<string, string> = {};
-  for (const [p, v] of Object.entries(files)) out[p.slice(first.length + 1)] = v;
+  if (!first || !paths.every((p) => p.startsWith(`${first}/`))) return null;
+  return first;
+}
+
+function stripPrefix<T>(map: Record<string, T>, prefix: string | null): Record<string, T> {
+  if (!prefix) return map;
+  const out: Record<string, T> = {};
+  for (const [p, v] of Object.entries(map)) {
+    out[p.startsWith(`${prefix}/`) ? p.slice(prefix.length + 1) : p] = v;
+  }
   return out;
 }
 
 /** Validate a raw path→text map as a package. Shared by both entry points. */
-export function readPluginFiles(rawFiles: Record<string, string>): PackageResult {
-  const files = stripCommonRoot(rawFiles);
+export function readPluginFiles(
+  rawFiles: Record<string, string>,
+  rawBinaries: Record<string, Uint8Array> = {},
+): PackageResult {
+  // The prefix is decided by ALL the package's paths at once — computing it
+  // from the text files alone would leave a media subdirectory unstripped and
+  // every path in the manifest pointing at nothing.
+  const prefix = commonRoot([...Object.keys(rawFiles), ...Object.keys(rawBinaries)]);
+  const files = stripPrefix(rawFiles, prefix);
+  const binaries = stripPrefix(rawBinaries, prefix);
   const manifestText = files[MANIFEST_NAME];
   if (manifestText === undefined) {
     return {
@@ -92,46 +134,106 @@ export function readPluginFiles(rawFiles: Record<string, string>): PackageResult
   if (files[main] === undefined) {
     return { pkg: null, errors: [`"main" points at ${manifest.main}, which is not in the package.`] };
   }
-  if (manifest.panel !== undefined && files[normalize(manifest.panel)] === undefined) {
-    return { pkg: null, errors: [`"panel" points at ${manifest.panel}, which is not in the package.`] };
+  // Every declared panel, not just the one legacy `panel` — a manifest naming a
+  // panel that is not in the package produces an empty frame at open time,
+  // which is a long way from where the mistake was made.
+  for (const panel of manifest.contributes.panels) {
+    if (files[normalize(panel.entry)] === undefined) {
+      return {
+        pkg: null,
+        errors: [`Panel "${panel.id}" points at ${panel.entry}, which is not in the package.`],
+      };
+    }
   }
 
-  return { pkg: { manifest, files }, errors: [] };
+  return { pkg: { manifest, files, binaries }, errors: [] };
 }
 
-/** Read a `.zip` / `.mplugin` archive. Never throws. */
+/** Should this entry be read at all? Shared by the filter and the folder path. */
+function isPackageFile(path: string): boolean {
+  if (path.endsWith('/')) return false; // directory entry
+  if (path.split('/').includes('..')) return false; // zip-slip
+  if (path.split('/').some((s) => s.startsWith('__MACOSX') || s === '.DS_Store')) return false;
+  return path === MANIFEST_NAME || TEXT_EXT.test(path) || BINARY_EXT.test(path);
+}
+
+/**
+ * Read a `.zip` / `.mplugin` archive. Never throws.
+ *
+ * ZIP BOMBS. The size checks used to run entirely after `unzipSync(bytes)`,
+ * which inflates the WHOLE archive into memory first — so the 8 MB ceiling was
+ * being applied to the compressed bytes, and a compliant 8 MB archive could
+ * expand to gigabytes and take the app out before a single check ran. The
+ * ceilings only mean anything if they are applied to the DECLARED uncompressed
+ * size, in the filter, before fflate allocates for an entry. They are also
+ * re-checked against the real inflated length afterwards, because the declared
+ * size is a field in an attacker-supplied header and believing it is the same
+ * mistake one level down.
+ */
 export function readPluginZip(bytes: Uint8Array): PackageResult {
   if (bytes.byteLength > MAX_PACKAGE_BYTES) {
     return { pkg: null, errors: [`Package is larger than ${Math.round(MAX_PACKAGE_BYTES / 1024 / 1024)} MB.`] };
   }
+
+  // Set by the filter. fflate's filter cannot abort the whole read, so the
+  // refusal is recorded and reported once it returns.
+  let refusal: string | null = null;
+  let declaredTotal = 0;
+  let kept = 0;
+
   let entries: Record<string, Uint8Array>;
   try {
-    entries = unzipSync(bytes);
+    entries = unzipSync(bytes, {
+      filter: (file) => {
+        const path = normalize(file.name);
+        if (!isPackageFile(path)) return false;
+        if (refusal) return false;
+
+        if (file.originalSize > MAX_FILE_BYTES) {
+          refusal = `${path} unpacks to more than ${Math.round(MAX_FILE_BYTES / 1024)} KB.`;
+          return false;
+        }
+        // A file that claims to be 200× its stored size is not a plugin.
+        if (file.size > 0 && file.originalSize / file.size > MAX_INFLATION_RATIO) {
+          refusal = `${path} is compressed ${Math.round(file.originalSize / file.size)}× — refused as a zip bomb.`;
+          return false;
+        }
+        declaredTotal += file.originalSize;
+        if (declaredTotal > MAX_PACKAGE_BYTES) {
+          refusal = `Package unpacks to more than ${Math.round(MAX_PACKAGE_BYTES / 1024 / 1024)} MB.`;
+          return false;
+        }
+        kept += 1;
+        if (kept > MAX_FILES) {
+          refusal = `Package contains more than ${MAX_FILES} files.`;
+          return false;
+        }
+        return true;
+      },
+    });
   } catch (err) {
     return { pkg: null, errors: [`Could not read the archive: ${(err as Error).message}`] };
   }
+  if (refusal) return { pkg: null, errors: [refusal] };
 
   const files: Record<string, string> = {};
+  const binaries: Record<string, Uint8Array> = {};
   let total = 0;
-  let count = 0;
   for (const [rawPath, data] of Object.entries(entries)) {
     const path = normalize(rawPath);
-    if (path.endsWith('/')) continue; // directory entry
-    if (path.split('/').includes('..')) continue; // zip-slip
-    if (path.split('/').some((s) => s.startsWith('__MACOSX') || s === '.DS_Store')) continue;
-    if (path !== MANIFEST_NAME && !TEXT_EXT.test(path)) continue;
+    if (!isPackageFile(path)) continue;
+    // Verified against what actually came out, not what the header promised.
     if (data.byteLength > MAX_FILE_BYTES) {
       return { pkg: null, errors: [`${path} is larger than ${Math.round(MAX_FILE_BYTES / 1024)} KB.`] };
     }
     total += data.byteLength;
-    count += 1;
     if (total > MAX_PACKAGE_BYTES) {
       return { pkg: null, errors: [`Package is larger than ${Math.round(MAX_PACKAGE_BYTES / 1024 / 1024)} MB.`] };
     }
-    if (count > MAX_FILES) return { pkg: null, errors: [`Package contains more than ${MAX_FILES} files.`] };
-    files[path] = strFromU8(data);
+    if (BINARY_EXT.test(path)) binaries[path] = data;
+    else files[path] = strFromU8(data);
   }
-  return readPluginFiles(files);
+  return readPluginFiles(files, binaries);
 }
 
 /**
@@ -145,21 +247,23 @@ export async function readPluginFolder(fileList: readonly File[]): Promise<Packa
   if (fileList.length > MAX_FILES) return { pkg: null, errors: [`Folder contains more than ${MAX_FILES} files.`] };
 
   const files: Record<string, string> = {};
+  const binaries: Record<string, Uint8Array> = {};
   let total = 0;
   for (const f of fileList) {
     const rel = normalize((f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name);
-    if (rel.split('/').includes('..')) continue;
-    if (rel.endsWith('.DS_Store')) continue;
     const base = rel.split('/').pop() ?? rel;
-    if (base !== MANIFEST_NAME && !TEXT_EXT.test(base)) continue;
+    // A folder has no compression, so there is no bomb here — but the same
+    // predicate decides membership, so the two entry points cannot drift.
+    if (!isPackageFile(rel) || (base !== MANIFEST_NAME && !TEXT_EXT.test(base) && !BINARY_EXT.test(base))) continue;
     if (f.size > MAX_FILE_BYTES) return { pkg: null, errors: [`${rel} is larger than ${Math.round(MAX_FILE_BYTES / 1024)} KB.`] };
     total += f.size;
     if (total > MAX_PACKAGE_BYTES) {
       return { pkg: null, errors: [`Folder is larger than ${Math.round(MAX_PACKAGE_BYTES / 1024 / 1024)} MB.`] };
     }
-    files[rel] = await f.text();
+    if (BINARY_EXT.test(base)) binaries[rel] = new Uint8Array(await f.arrayBuffer());
+    else files[rel] = await f.text();
   }
-  return readPluginFiles(files);
+  return readPluginFiles(files, binaries);
 }
 
 /** Route a picked file by extension. Zip magic is checked, not trusted from the name. */

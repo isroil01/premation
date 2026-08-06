@@ -57,3 +57,8 @@ skills-lock.json
 .gemini/
 .codex/
 .impeccable/
+
+# playwright (electron main-process e2e)
+/test-results
+/playwright-report
+/blob-report

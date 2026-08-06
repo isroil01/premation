@@ -8,13 +8,36 @@
  * function (which is what the previous plugin object was) cannot support an
  * informed install decision, because there is nothing to show but the name.
  *
+ * API 2 extends that principle from *permissions* to *contributions*. Under
+ * API 1 a plugin's commands existed only after its worker booted and its
+ * `activate()` called `commands.register` — so the only way to find out what a
+ * plugin offered was to run it. That is backwards for two reasons at once:
+ *
+ *   • A listing page cannot say "6 commands, 1 panel" before install.
+ *   • Every installed plugin has to be started at launch just in case, and with
+ *     forty of them that is forty workers racing an 8-second boot timeout.
+ *
+ * So `contributes` is DECLARED, read without executing anything, and
+ * `activationEvents` says what should actually wake the worker up.
+ *
  * Validation is strict and returns *messages*, not booleans: "this plugin did
  * not install" with no reason is the second-least actionable thing a plugin
  * manager can say, after saying nothing at all.
  */
 
-/** Host API generation. Bump on a BREAKING change to the plugin-facing API. */
-export const HOST_API_VERSION = 1;
+import { ICON_NAMES } from '@components/Icon/iconNames';
+import { parseLayerKinds, type LayerKindContribution } from './layerKindSchema';
+
+/**
+ * Host API generation. Bump on a BREAKING change to the plugin-facing API.
+ *
+ * 3 — `contributes.layerKinds`. A plugin can declare a layer type the editor
+ *     has never heard of, with animatable properties that behave like native
+ *     ones. This is a version bump rather than an additive feature because it
+ *     changes what a DOCUMENT contains: a project that uses a custom layer now
+ *     references the plugin that defines it, which nothing before API 3 did.
+ */
+export const HOST_API_VERSION = 3;
 
 /** Everything a plugin may ask for. Nothing outside this list is grantable. */
 export const PERMISSIONS = {
@@ -34,6 +57,14 @@ export const PERMISSIONS = {
     label: 'Modify your animation',
     detail: 'Create and change keyframes and expressions. Every change is undoable.',
   },
+  'assets:read': {
+    label: 'Read images in your project',
+    detail: 'Read the pixels of images already in your composition. Plugins cannot access the internet.',
+  },
+  'assets:write': {
+    label: 'Add images to your project',
+    detail: 'Create new images and place them as layers. Every change is undoable.',
+  },
   timeline: {
     label: 'Control the playhead',
     detail: 'Read the current time and move the playhead.',
@@ -43,6 +74,107 @@ export const PERMISSIONS = {
 export type PluginPermission = keyof typeof PERMISSIONS;
 
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as PluginPermission[];
+
+/** A command declared in the manifest — and, identically, one registered at
+ *  runtime. One shape, so a declared command and a registered one cannot drift. */
+export interface PluginCommandContribution {
+  /** Plugin-local id; the host namespaces it as `plugin.<pluginId>.<id>`. */
+  id: string;
+  label: string;
+  /** Icon name from the editor's vocabulary. Checked here, at validation time,
+   *  rather than at render time — an unknown name that silently falls back to
+   *  the generic glyph is a typo the author never finds out about. */
+  icon?: string;
+  /** When true the host only enables it with a non-empty selection. */
+  needsSelection?: boolean;
+}
+
+/**
+ * Where the host should put a panel.
+ *
+ * One field with three values rather than two orthogonal ones (dock × shape),
+ * because two would spell four combinations of which only three are real — and
+ * the fourth ("shared, but in the left sidebar") would need a second shared host
+ * nobody asked for. Each value names a destination the user can point at.
+ *
+ *  • `shared` — a tab inside the one "Plugin Panels" panel in the right
+ *    inspector. Costs no rail space, so it is the default and the right answer
+ *    for the common case: a small panel of controls for the current selection.
+ *  • `sidebar` — its OWN rail tab in the left sidebar, beside Scene, Assets and
+ *    Library. For a plugin that is a place you go rather than a control you
+ *    reach for: a browser, a library, an asset generator.
+ *  • `inspector` — its own rail tab in the right inspector, beside Properties
+ *    and Effects. For a full editor that still belongs to the selection.
+ *
+ * A rail tab is not granted just because it is asked for — see
+ * `layout/Plugins/pluginPanelDefs.ts`, which caps how many a rail will give out.
+ */
+export type PluginPanelPlacement = 'shared' | 'sidebar' | 'inspector';
+
+export const PANEL_PLACEMENTS: readonly PluginPanelPlacement[] = ['shared', 'sidebar', 'inspector'];
+
+/** A panel declared in the manifest. */
+export interface PluginPanelContribution {
+  id: string;
+  title: string;
+  /** Package-relative path to the panel's HTML. */
+  entry: string;
+  /**
+   * Always set after parsing — `shared` when the manifest says nothing, which is
+   * what every plugin written before this field existed gets, and is exactly
+   * the behaviour it already had.
+   */
+  placement: PluginPanelPlacement;
+  /**
+   * Rail glyph, for a panel that gets its own tab.
+   *
+   * Validated against the editor's icon set at PARSE time, like `command.icon`:
+   * the rail is icon-ONLY, so a name that silently falls back to the generic
+   * plugin glyph is a typo whose only symptom is a tab the author cannot tell
+   * apart from someone else's.
+   */
+  icon?: string;
+}
+
+/**
+ * What a plugin contributes, readable without executing it.
+ *
+ * Always normalised by `parseManifest` — every key present, arrays possibly
+ * empty — so no consumer has to write `contributes?.commands ?? []`. A field
+ * that is sometimes absent and sometimes empty is two representations of one
+ * state, and every reader has to know about both.
+ */
+export interface PluginContributes {
+  commands: PluginCommandContribution[];
+  panels: PluginPanelContribution[];
+  /**
+   * Layer types this plugin invents. Requires `apiVersion: 3`.
+   *
+   * See `layerKindSchema.ts` — including why `render` is part of the schema
+   * rather than a runtime choice, and why only some property types animate.
+   */
+  layerKinds: LayerKindContribution[];
+  /** Reserved. The shader/effect render path is Phase 4. */
+  effects: never[];
+}
+
+/** Keys that are recognised but must be empty in this version. */
+export const RESERVED_CONTRIBUTION_KEYS = ['effects'] as const;
+
+/**
+ * What wakes a plugin's worker up.
+ *
+ * `onStartup` is the API-1 behaviour and stays the default, because a plugin
+ * that does not say when it is needed has to be assumed to be needed always.
+ */
+export type ActivationEvent =
+  | 'onStartup'
+  | `onCommand:${string}`
+  | `onPanel:${string}`
+  // Fired when a document containing this kind is opened. Declaring a kind
+  // implies it (see `activatesOnLayerKind`); the spelling exists so an
+  // author can be explicit, and so the set is readable from the manifest.
+  | `onLayerKind:${string}`;
 
 export interface PluginManifest {
   /** Reverse-DNS, e.g. `studio.acme.easing-lab`. Namespaced so two vendors
@@ -59,13 +191,24 @@ export interface PluginManifest {
   apiVersion: number;
   /** Package-relative path to the entry ES module. */
   main: string;
-  /** Package-relative path to an HTML panel, when the plugin has UI. */
-  panel?: string;
   permissions: PluginPermission[];
+  /** Always present after parsing — see `PluginContributes`. A legacy
+   *  `panel: "panel.html"` string is normalised into `panels` here, so nothing
+   *  downstream needs to know that spelling ever existed. */
+  contributes: PluginContributes;
+  /** Always non-empty after parsing; `['onStartup']` when unspecified. */
+  activationEvents: ActivationEvent[];
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
 const VERSION_RE = /^\d+\.\d+\.\d+(-[\w.]+)?$/;
+/** Contribution-local ids: no dots, because the host joins on dots. */
+const LOCAL_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+const ICONS: ReadonlySet<string> = new Set(ICON_NAMES);
+
+/** The panel id a legacy `panel: "…"` string is normalised to. */
+export const LEGACY_PANEL_ID = 'main';
 
 /**
  * A package-relative path that cannot escape the package.
@@ -89,6 +232,280 @@ export interface ManifestResult {
   manifest: PluginManifest | null;
   /** Empty exactly when `manifest` is non-null. */
   errors: string[];
+}
+
+/** An empty, fully-normalised contribution block. */
+function emptyContributes(): PluginContributes {
+  return { commands: [], panels: [], layerKinds: [], effects: [] };
+}
+
+/**
+ * Validate `contributes`, pushing messages rather than throwing.
+ *
+ * Takes `name` because a legacy panel has no declared title and the plugin's
+ * own name is the only honest thing to put in the tab.
+ */
+function parseContributes(
+  raw: unknown,
+  legacyPanel: unknown,
+  name: string,
+  apiVersion: number,
+  errors: string[],
+): PluginContributes {
+  const out = emptyContributes();
+
+  if (raw !== undefined && apiVersion < 2) {
+    errors.push('"contributes" requires "apiVersion": 2. Bump it, or remove the block.');
+    return out;
+  }
+  if (raw !== undefined && legacyPanel !== undefined) {
+    // Whichever one won, the other would be silently ignored, and the author
+    // would be debugging a panel that "does not open" while looking at a
+    // manifest that declares it twice.
+    errors.push('Declare a panel either as "panel" or in "contributes.panels" — not both.');
+    return out;
+  }
+
+  if (raw === undefined) {
+    // API 1 shape. A bare `panel` string becomes the one declared panel.
+    if (legacyPanel !== undefined) {
+      if (!isSafePath(legacyPanel)) {
+        errors.push('"panel", when present, must be a package-relative path to an HTML file.');
+      } else {
+        // `shared`, like every other undeclared panel. An API-1 package predates
+        // placement entirely, and the one thing it must keep doing is what it
+        // did before.
+        out.panels.push({
+          id: LEGACY_PANEL_ID,
+          title: name || LEGACY_PANEL_ID,
+          entry: legacyPanel,
+          placement: 'shared',
+        });
+      }
+    }
+    return out;
+  }
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    errors.push('"contributes" must be an object.');
+    return out;
+  }
+  const c = raw as Record<string, unknown>;
+
+  for (const key of RESERVED_CONTRIBUTION_KEYS) {
+    const v = c[key];
+    if (v === undefined) continue;
+    if (!Array.isArray(v)) {
+      errors.push(`"contributes.${key}" must be an array.`);
+    } else if (v.length > 0) {
+      errors.push(`"contributes.${key}" is not supported in this version.`);
+    }
+  }
+
+  if (c.layerKinds !== undefined) {
+    if (apiVersion >= 3) {
+      out.layerKinds = parseLayerKinds(c.layerKinds, errors, ICONS);
+    } else if (!Array.isArray(c.layerKinds)) {
+      errors.push('"contributes.layerKinds" must be an array.');
+    } else if (c.layerKinds.length > 0) {
+      // Only a NON-EMPTY block is using the feature. An API-2 manifest that
+      // spells out `layerKinds: []` was valid before this version shipped and
+      // stays valid — refusing it would break packages that declared nothing.
+      //
+      // The message names the version, because the fix is a one-character edit
+      // and "not supported in this version" sends the author looking for a
+      // newer editor they already have.
+      errors.push('"contributes.layerKinds" requires "apiVersion": 3.');
+    }
+  }
+
+  if (c.commands !== undefined) {
+    if (!Array.isArray(c.commands)) {
+      errors.push('"contributes.commands" must be an array.');
+    } else {
+      const seen = new Set<string>();
+      c.commands.forEach((entry, i) => {
+        const at = `contributes.commands[${i}]`;
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`"${at}" must be an object.`);
+          return;
+        }
+        const e = entry as Record<string, unknown>;
+        const id = typeof e.id === 'string' ? e.id : '';
+        if (!LOCAL_ID_RE.test(id)) {
+          errors.push(`"${at}.id" must be lowercase letters, digits and dashes (1–64 characters).`);
+          return;
+        }
+        if (seen.has(id)) {
+          errors.push(`"${at}.id" duplicates an earlier command id "${id}".`);
+          return;
+        }
+        seen.add(id);
+
+        const label = typeof e.label === 'string' ? e.label.trim() : '';
+        if (!label || label.length > 80) {
+          errors.push(`"${at}.label" is required (1–80 characters).`);
+          return;
+        }
+        if (e.icon !== undefined && (typeof e.icon !== 'string' || !ICONS.has(e.icon))) {
+          errors.push(`"${at}.icon" is not an icon this editor has. Omit it to use the plugin glyph.`);
+          return;
+        }
+        out.commands.push({
+          id,
+          label,
+          ...(typeof e.icon === 'string' ? { icon: e.icon } : {}),
+          ...(e.needsSelection === true ? { needsSelection: true } : {}),
+        });
+      });
+    }
+  }
+
+  if (c.panels !== undefined) {
+    if (!Array.isArray(c.panels)) {
+      errors.push('"contributes.panels" must be an array.');
+    } else {
+      const seen = new Set<string>();
+      c.panels.forEach((entry, i) => {
+        const at = `contributes.panels[${i}]`;
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`"${at}" must be an object.`);
+          return;
+        }
+        const e = entry as Record<string, unknown>;
+        const id = typeof e.id === 'string' ? e.id : '';
+        if (!LOCAL_ID_RE.test(id)) {
+          errors.push(`"${at}.id" must be lowercase letters, digits and dashes (1–64 characters).`);
+          return;
+        }
+        if (seen.has(id)) {
+          errors.push(`"${at}.id" duplicates an earlier panel id "${id}".`);
+          return;
+        }
+        seen.add(id);
+
+        const title = typeof e.title === 'string' ? e.title.trim() : '';
+        if (!title || title.length > 80) {
+          errors.push(`"${at}.title" is required (1–80 characters) — it is the tab label.`);
+          return;
+        }
+        // Same rule as `main`: a panel entry is a path the host will read out
+        // of the package, so it gets the same traversal check.
+        if (!isSafePath(e.entry)) {
+          errors.push(`"${at}.entry" must be a package-relative path to an HTML file.`);
+          return;
+        }
+
+        // Refused rather than defaulted. A typo like "left" would otherwise mean
+        // the panel quietly appears somewhere the author never chose, and the
+        // only symptom is "my panel is in the wrong place" with nothing to read.
+        let placement: PluginPanelPlacement = 'shared';
+        if (e.placement !== undefined) {
+          if (typeof e.placement !== 'string' || !PANEL_PLACEMENTS.includes(e.placement as PluginPanelPlacement)) {
+            errors.push(
+              `"${at}.placement" must be one of ${PANEL_PLACEMENTS.map((p) => `"${p}"`).join(', ')}.`,
+            );
+            return;
+          }
+          placement = e.placement as PluginPanelPlacement;
+        }
+
+        if (e.icon !== undefined && (typeof e.icon !== 'string' || !ICONS.has(e.icon))) {
+          errors.push(`"${at}.icon" is not an icon this editor has. Omit it to use the plugin glyph.`);
+          return;
+        }
+        // Not an error, because the panel still works — it just gets the generic
+        // glyph, and on an icon-only rail that is worth saying out loud once.
+        // Refusing it outright would make `icon` mandatory in all but name for
+        // the two placements where it matters.
+        if (placement !== 'shared' && e.icon === undefined) {
+          errors.push(
+            `"${at}" asks for its own tab, so it needs an "icon" — the sidebar rail shows glyphs, not titles.`,
+          );
+          return;
+        }
+
+        out.panels.push({
+          id,
+          title,
+          entry: e.entry,
+          placement,
+          ...(typeof e.icon === 'string' ? { icon: e.icon } : {}),
+        });
+      });
+    }
+  }
+
+  return out;
+}
+
+/** Validate `activationEvents` against what the plugin actually declares. */
+function parseActivationEvents(
+  raw: unknown,
+  contributes: PluginContributes,
+  errors: string[],
+): ActivationEvent[] {
+  // Missing or empty both mean "no opinion", and the safe reading of no opinion
+  // is the API-1 behaviour: start it.
+  if (raw === undefined) return ['onStartup'];
+  if (!Array.isArray(raw)) {
+    errors.push('"activationEvents" must be an array.');
+    return ['onStartup'];
+  }
+  if (raw.length === 0) return ['onStartup'];
+
+  const commandIds = new Set(contributes.commands.map((c) => c.id));
+  const panelIds = new Set(contributes.panels.map((p) => p.id));
+  const layerKindIds = new Set(contributes.layerKinds.map((k) => k.id));
+  const out: ActivationEvent[] = [];
+
+  for (const ev of raw) {
+    if (typeof ev !== 'string') {
+      errors.push('Every entry in "activationEvents" must be a string.');
+      continue;
+    }
+    if (ev === 'onStartup') {
+      if (!out.includes('onStartup')) out.push('onStartup');
+      continue;
+    }
+    const command = /^onCommand:(.*)$/.exec(ev);
+    if (command) {
+      // A reference to something that does not exist is an event that can never
+      // fire — which presents to the user as a plugin that simply never starts,
+      // with nothing anywhere saying why.
+      if (!commandIds.has(command[1]!)) {
+        errors.push(`"activationEvents" refers to command "${command[1]}", which is not in "contributes.commands".`);
+        continue;
+      }
+      if (!out.includes(ev as ActivationEvent)) out.push(ev as ActivationEvent);
+      continue;
+    }
+    const panel = /^onPanel:(.*)$/.exec(ev);
+    if (panel) {
+      if (!panelIds.has(panel[1]!)) {
+        errors.push(`"activationEvents" refers to panel "${panel[1]}", which is not in "contributes.panels".`);
+        continue;
+      }
+      if (!out.includes(ev as ActivationEvent)) out.push(ev as ActivationEvent);
+      continue;
+    }
+    const layerKind = /^onLayerKind:(.*)$/.exec(ev);
+    if (layerKind) {
+      if (!layerKindIds.has(layerKind[1]!)) {
+        errors.push(
+          `"activationEvents" refers to layer kind "${layerKind[1]}", which is not in "contributes.layerKinds".`,
+        );
+        continue;
+      }
+      if (!out.includes(ev as ActivationEvent)) out.push(ev as ActivationEvent);
+      continue;
+    }
+    errors.push(
+      `Unknown activation event "${ev}". Valid: onStartup, onCommand:<id>, onPanel:<id>, onLayerKind:<id>.`,
+    );
+  }
+
+  return out.length > 0 ? out : ['onStartup'];
 }
 
 /** Validate raw parsed JSON as a manifest. Never throws. */
@@ -124,9 +541,9 @@ export function parseManifest(raw: unknown): ManifestResult {
   }
 
   if (!isSafePath(r.main)) errors.push('"main" must be a package-relative path to the entry module.');
-  if (r.panel !== undefined && !isSafePath(r.panel)) {
-    errors.push('"panel", when present, must be a package-relative path to an HTML file.');
-  }
+
+  const contributes = parseContributes(r.contributes, r.panel, name, apiVersion, errors);
+  const activationEvents = parseActivationEvents(r.activationEvents, contributes, errors);
 
   const permsRaw = r.permissions;
   const permissions: PluginPermission[] = [];
@@ -153,12 +570,13 @@ export function parseManifest(raw: unknown): ManifestResult {
       description,
       apiVersion,
       main: r.main as string,
-      ...(isSafePath(r.panel) ? { panel: r.panel } : {}),
       ...(typeof r.author === 'string' && r.author.trim() ? { author: r.author.trim().slice(0, 80) } : {}),
       ...(typeof r.homepage === 'string' && /^https?:\/\//i.test(r.homepage)
         ? { homepage: r.homepage.slice(0, 300) }
         : {}),
       permissions,
+      contributes,
+      activationEvents,
     },
     errors: [],
   };
@@ -173,4 +591,57 @@ export function parseManifest(raw: unknown): ManifestResult {
 export function describePermissions(permissions: readonly PluginPermission[]): string {
   if (permissions.length === 0) return 'Runs sandboxed. Asks for no access to your project.';
   return permissions.map((p) => PERMISSIONS[p].label).join(' · ');
+}
+
+/**
+ * One line summarising what a plugin adds — "6 commands · 1 panel".
+ *
+ * The point of declaring contributions is that this can be shown on a listing
+ * page BEFORE install, so it takes the counts and not a running plugin.
+ */
+export function describeContributions(contributes: PluginContributes): string {
+  const parts: string[] = [];
+  const { commands, panels, layerKinds } = contributes;
+  if (commands.length > 0) parts.push(`${commands.length} command${commands.length === 1 ? '' : 's'}`);
+  if (panels.length > 0) parts.push(`${panels.length} panel${panels.length === 1 ? '' : 's'}`);
+  // Listed because it is the contribution that changes a DOCUMENT. A user
+  // deciding whether to uninstall should be able to see that this one leaves
+  // something behind in their projects.
+  if (layerKinds.length > 0) {
+    parts.push(`${layerKinds.length} layer type${layerKinds.length === 1 ? '' : 's'}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : 'Adds no commands or panels.';
+}
+
+/**
+ * Does this plugin want to start as soon as the editor does?
+ *
+ * The one question the host asks at boot, and the difference between spawning
+ * forty workers and spawning none.
+ */
+export function activatesOnStartup(manifest: PluginManifest): boolean {
+  return manifest.activationEvents.includes('onStartup');
+}
+
+/** Does `manifest` declare an activation event for this command / panel id? */
+export function activatesOnCommand(manifest: PluginManifest, commandId: string): boolean {
+  return manifest.activationEvents.includes(`onCommand:${commandId}`);
+}
+
+export function activatesOnPanel(manifest: PluginManifest, panelId: string): boolean {
+  return manifest.activationEvents.includes(`onPanel:${panelId}`);
+}
+
+/**
+ * Does `manifest` want to wake when a document containing one of its layer
+ * kinds is opened?
+ *
+ * Implicit rather than declared: a plugin that defines a layer kind and does
+ * NOT start when one appears is a plugin whose layers sit inert in a project
+ * that has it installed. There is no coherent reason to opt out, and making it
+ * opt-in would mean every author gets it wrong once.
+ */
+export function activatesOnLayerKind(manifest: PluginManifest, kindId: string): boolean {
+  return manifest.contributes.layerKinds.some((k) => k.id === kindId)
+    || manifest.activationEvents.includes(`onLayerKind:${kindId}` as ActivationEvent);
 }

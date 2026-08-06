@@ -30,11 +30,13 @@ function send(source: MessageEventSource | null, origin: string, data: unknown):
 }
 
 /** Capture what the bridge forwards, without booting a real worker. */
-function spyOnDelivery(): { calls: Array<[string, unknown]>; restore: () => void } {
-  const calls: Array<[string, unknown]> = [];
-  const host = pluginHost as unknown as { deliverPanelMessage: (id: string, data: unknown) => void };
+function spyOnDelivery(): { calls: Array<[string, string, unknown]>; restore: () => void } {
+  const calls: Array<[string, string, unknown]> = [];
+  const host = pluginHost as unknown as {
+    deliverPanelMessage: (id: string, panelId: string, data: unknown) => void;
+  };
   const original = host.deliverPanelMessage;
-  host.deliverPanelMessage = (id, data) => { calls.push([id, data]); };
+  host.deliverPanelMessage = (id, panelId, data) => { calls.push([id, panelId, data]); };
   return { calls, restore: () => { host.deliverPanelMessage = original; } };
 }
 
@@ -56,16 +58,16 @@ describe('plugin panel postMessage bridge', () => {
 
   it('forwards a registered, claimed frame to its own plugin', () => {
     const offFrame = pluginHost.registerFrame(frameA, 'null');
-    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
     send(frameA, 'null', { data: { hello: 1 } });
-    expect(spy.calls).toEqual([['com.example.a', { hello: 1 }]]);
+    expect(spy.calls).toEqual([['com.example.a', 'main', { hello: 1 }]]);
     offOwner();
     offFrame();
   });
 
   it('rejects a registered frame that has navigated to another origin', () => {
     const offFrame = pluginHost.registerFrame(frameA, 'null');
-    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
     send(frameA, 'https://evil.example', { data: { hello: 1 } });
     expect(spy.calls).toEqual([]);
     offOwner();
@@ -74,7 +76,7 @@ describe('plugin panel postMessage bridge', () => {
 
   it('does not let one registered frame speak for another window', () => {
     const offFrame = pluginHost.registerFrame(frameA, 'null');
-    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
     send(frameB, 'null', { data: { hello: 1 } });
     expect(spy.calls).toEqual([]);
     offOwner();
@@ -93,7 +95,7 @@ describe('plugin panel postMessage bridge', () => {
 
   it('stops forwarding once the frame is unregistered', () => {
     const offFrame = pluginHost.registerFrame(frameA, 'null');
-    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
     offFrame();
     send(frameA, 'null', { data: { hello: 1 } });
     expect(spy.calls).toEqual([]);
@@ -105,7 +107,7 @@ describe('plugin panel postMessage bridge', () => {
     // That is OUR message, not the panel's: forwarding it would wake the
     // plugin's onPanelMessage handler with `undefined` on every mount.
     const offFrame = pluginHost.registerFrame(frameA, 'null');
-    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
     send(frameA, 'null', { __panelReady: true });
     expect(spy.calls).toEqual([]);
     offOwner();
@@ -114,11 +116,40 @@ describe('plugin panel postMessage bridge', () => {
 
   it('cannot address a plugin other than the one that owns the frame', () => {
     const offFrame = pluginHost.registerFrame(frameA, 'null');
-    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
     // The payload names a different plugin. Routing ignores it entirely.
     send(frameA, 'null', { pluginId: 'com.example.victim', data: { hello: 1 } });
-    expect(spy.calls).toEqual([['com.example.a', { hello: 1 }]]);
+    expect(spy.calls).toEqual([['com.example.a', 'main', { hello: 1 }]]);
     offOwner();
     offFrame();
+  });
+
+  it('cannot address a panel other than the one that owns the frame', () => {
+    // A plugin may now contribute several panels, so the payload has a second
+    // thing worth forging. The panel id comes from the CLAIM, exactly as the
+    // plugin id does — a frame describing itself as `inspector` when it was
+    // claimed as `main` is describing itself inaccurately, and is ignored.
+    const offFrame = pluginHost.registerFrame(frameA, 'null');
+    const offOwner = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
+    send(frameA, 'null', { panelId: 'inspector', data: { hello: 1 } });
+    expect(spy.calls).toEqual([['com.example.a', 'main', { hello: 1 }]]);
+    offOwner();
+    offFrame();
+  });
+
+  it('routes two panels of one plugin to their own ids', () => {
+    const offFrameA = pluginHost.registerFrame(frameA, 'null');
+    const offOwnerA = pluginHost.claimFrame(frameA, 'com.example.a', 'main');
+    const offFrameB = pluginHost.registerFrame(frameB, 'null');
+    const offOwnerB = pluginHost.claimFrame(frameB, 'com.example.a', 'inspector');
+
+    send(frameA, 'null', { data: 'from-main' });
+    send(frameB, 'null', { data: 'from-inspector' });
+
+    expect(spy.calls).toEqual([
+      ['com.example.a', 'main', 'from-main'],
+      ['com.example.a', 'inspector', 'from-inspector'],
+    ]);
+    offOwnerA(); offFrameA(); offOwnerB(); offFrameB();
   });
 });

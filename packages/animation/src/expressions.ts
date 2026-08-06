@@ -18,6 +18,14 @@
 
 import { parseExpression, evaluateExpression, type ExprNode } from './exprLang';
 
+/**
+ * Ceiling on `wiggle`'s octave count.
+ *
+ * The one loop in this file whose iteration count is chosen by expression
+ * source rather than by the document. See the note at the call site.
+ */
+export const MAX_WIGGLE_OCTAVES = 8;
+
 /** Loop mode for `loopOut`/`loopIn` (AE semantics). Unknown modes fall back
  *  to `'cycle'` so a typo degrades gracefully instead of erroring. */
 export type LoopMode = 'cycle' | 'pingpong' | 'offset';
@@ -296,7 +304,18 @@ export function compileExpression(src: string): CompiledExpression {
         let f = freq;
         let a = amp;
         let maxA = 0;
-        const n = Math.max(1, Math.floor(octaves));
+        // CLAMPED AT BOTH ENDS. This loop count comes straight out of expression
+        // source, and expression source is written by plugins and persists in
+        // saved documents — so `wiggle(2, 30, 1e9)` was a billion iterations on
+        // the main thread, per property, per frame, arriving on the machine of
+        // whoever opened the project. Nothing downstream could catch it: the
+        // worker heartbeat supervises plugin workers, and this runs in the
+        // renderer.
+        //
+        // 8 is not arbitrary. Amplitude is multiplied by `ampMult` (0.5 by
+        // default) every octave, so the eighth contributes 1/256 of the first;
+        // past that the loop buys nothing a viewer could see.
+        const n = Math.min(MAX_WIGGLE_OCTAVES, Math.max(1, Math.floor(octaves) || 1));
         for (let i = 0; i < n; i++) {
           total += (smoothNoise(tt * f + wiggleSeed) * 2 - 1) * a;
           maxA += a;

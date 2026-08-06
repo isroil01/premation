@@ -22,12 +22,23 @@
  * checks each call against the permissions the user granted at install time.
  */
 
-import type { HostMessage, WorkerMessage, PluginCommandSpec } from './protocol';
+import { collectTransferables, type HostMessage, type WorkerMessage, type PluginCommandSpec } from './protocol';
 import type { PluginManifest, PluginPermission } from './manifest';
 
 declare const self: DedicatedWorkerGlobalScope;
 
-const post = (msg: WorkerMessage): void => { self.postMessage(msg); };
+/**
+ * Post, transferring any binary payload rather than copying it.
+ *
+ * `collectTransferables` returns an empty list for every message that has no
+ * buffers in it, which is all of them but `assets.createImage` — so this is the
+ * ordinary path, not a special case someone has to remember to take.
+ */
+const post = (msg: WorkerMessage): void => {
+  const transfer = collectTransferables(msg);
+  if (transfer.length > 0) self.postMessage(msg, transfer);
+  else self.postMessage(msg);
+};
 
 /**
  * Replace the escape hatches with stubs that explain themselves.
@@ -112,9 +123,43 @@ function call(method: string, ...args: unknown[]): Promise<unknown> {
 
 // ── The plugin-facing API ────────────────────────────────────────────────
 const commandHandlers = new Map<string, (ctx: { selection: string[] }) => unknown>();
-const panelListeners: Array<(data: unknown) => void> = [];
+/** Panel id → its listeners. Keyed, because a plugin with two panels must not
+ *  have one panel's handler woken by the other's messages. */
+const panelListeners = new Map<string, Array<(data: unknown) => void>>();
+
+/** Raw pixels as they cross the boundary — see `assets.ts` for the format. */
+export interface PluginImage {
+  assetId: string;
+  width: number;
+  height: number;
+  /** Always `'image/rgba8'` on the way out: straight, un-premultiplied RGBA8. */
+  mime: string;
+  bytes: Uint8Array;
+}
+
+/** `kindId` → the plugin's authored-edit callback. One per kind. */
+const layerChangeListeners = new Map<string, (e: { layerId: string; props: string[] }) => void>();
 
 function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
+  const panels = manifest.contributes?.panels ?? [];
+  /**
+   * Resolve an optional panel id worker-side too.
+   *
+   * The host validates this again — it must, the argument crossed a
+   * `postMessage` from third-party code — but resolving here means
+   * `onPanelMessage(fn)` on a single-panel plugin can subscribe to the right
+   * key without a round trip.
+   */
+  const solePanel = (id?: string): string => {
+    if (id !== undefined) return id;
+    if (panels.length === 1) return panels[0]!.id;
+    throw new Error(
+      panels.length === 0
+        ? 'This plugin declares no panels in its manifest.'
+        : `This plugin declares ${panels.length} panels — pass one of: ${panels.map((p) => p.id).join(', ')}.`,
+    );
+  };
+
   return {
     manifest,
     /** Exactly what the user granted — a plugin can degrade instead of failing. */
@@ -124,11 +169,34 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
     ui: {
       notify: (message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') =>
         call('ui.notify', String(message), level),
-      openPanel: () => call('ui.openPanel'),
-      closePanel: () => call('ui.closePanel'),
-      /** Messages from this plugin's own panel iframe. */
-      onPanelMessage: (fn: (data: unknown) => void) => { panelListeners.push(fn); },
-      sendToPanel: (data: unknown) => { post({ k: 'toPanel', data }); },
+      /** The id is optional when the plugin declares exactly one panel. */
+      openPanel: (panelId?: string) => call('ui.openPanel', panelId),
+      closePanel: (panelId?: string) => call('ui.closePanel', panelId),
+      /**
+       * Messages from one of this plugin's own panel iframes.
+       *
+       * Both spellings are supported, and they are told apart by ARITY, not by
+       * argument type. `sendToPanel('hi')` on a single-panel plugin has to mean
+       * "send the string 'hi'", while `sendToPanel('side', 'hi')` means "send
+       * 'hi' to the panel called side" — sniffing the type of the first
+       * argument would make the first of those unsendable, and it is the older
+       * of the two spellings.
+       */
+      onPanelMessage: (...args: unknown[]) => {
+        const [id, handler] = args.length >= 2
+          ? [solePanel(args[0] as string), args[1] as (data: unknown) => void]
+          : [solePanel(), args[0] as (data: unknown) => void];
+        if (typeof handler !== 'function') throw new Error('onPanelMessage expects a function.');
+        const list = panelListeners.get(id) ?? [];
+        list.push(handler);
+        panelListeners.set(id, list);
+      },
+      sendToPanel: (...args: unknown[]) => {
+        const [id, payload] = args.length >= 2
+          ? [solePanel(args[0] as string), args[1]]
+          : [solePanel(), args[0]];
+        post({ k: 'toPanel', panelId: id, data: payload });
+      },
     },
 
     commands: {
@@ -152,8 +220,46 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
         id: string; name: string; kind: string; parent: string | null; visible: boolean; locked: boolean;
       }>>,
       getLayer: (id: string) => call('scene.getLayer', id),
-      createLayer: (opts: { kind: string; name?: string; x?: number; y?: number }) =>
+      createLayer: (opts: { kind: string; name?: string; x?: number; y?: number; props?: Record<string, unknown> }) =>
         call('scene.createLayer', opts) as Promise<string>,
+
+      /**
+       * Replace this layer's generated children.
+       *
+       * `key` must be STABLE across regenerations: the host diffs on it, and a
+       * child whose key is unchanged keeps its layer id. Churn the keys and the
+       * user's selection jumps and other layers' expressions referencing your
+       * output go dead.
+       *
+       * Bind rather than bake. A child property set to
+       * `layer('<your layer name>', 'plugin.focal')` is evaluated by the
+       * animation engine, so your subtree keeps animating without you — and
+       * keeps animating in a document opened without your plugin installed.
+       */
+      setProxyChildren: (
+        layerId: string,
+        children: Array<{
+          key: string;
+          kind: string;
+          name?: string;
+          props?: Record<string, unknown>;
+          expressions?: Record<string, string>;
+        }>,
+      ) => call('scene.setProxyChildren', layerId, children),
+
+      /**
+       * Be told when a user AUTHORS one of your layers.
+       *
+       * **Never fires for animated value changes.** An animatable property
+       * changes every frame during playback; if that reached you, regenerating
+       * sixty times a second would be the normal case rather than a bug. Bursts
+       * are coalesced, so a drag delivers one call.
+       */
+      onLayerChanged: (kindId: string, fn: (e: { layerId: string; props: string[] }) => void) => {
+        layerChangeListeners.set(kindId, fn);
+        void call('scene.onLayerChanged', kindId);
+        return () => layerChangeListeners.delete(kindId);
+      },
       setProperty: (id: string, prop: string, value: unknown) => call('scene.setProperty', id, prop, value),
       renameLayer: (id: string, name: string) => call('scene.renameLayer', id, name),
       deleteLayer: (id: string) => call('scene.deleteLayer', id),
@@ -173,6 +279,30 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
         call('animation.removeKeyframe', id, prop, time),
       setExpression: (id: string, prop: string, source: string) =>
         call('animation.setExpression', id, prop, source),
+    },
+
+    assets: {
+      /**
+       * Read an image's pixels — by the layer showing it, or by asset id.
+       *
+       * `bytes` is straight (un-premultiplied) RGBA8, `width * height * 4` long,
+       * the same layout `getImageData` produces. It arrives by transfer, so it
+       * costs a pointer rather than a copy.
+       */
+      getImage: (ref: { layerId?: string; assetId?: string }) =>
+        call('assets.getImage', ref) as Promise<PluginImage>,
+      /**
+       * Add an image to the project's asset library.
+       *
+       * `mime` may be `'image/rgba8'` (raw, and then `bytes.length` must be
+       * exactly `width * height * 4`) or `image/png` `image/jpeg` `image/webp`,
+       * in which case the real dimensions come from decoding and the declared
+       * ones are ignored. Use `scene.createLayer({ kind: 'image', assetId })` to
+       * put it in the composition.
+       */
+      createImage: (opts: {
+        width?: number; height?: number; bytes: Uint8Array; mime?: string; name?: string;
+      }) => call('assets.createImage', opts) as Promise<{ assetId: string; width: number; height: number }>,
     },
 
     timeline: {
@@ -251,8 +381,21 @@ self.onmessage = (ev: MessageEvent<HostMessage>): void => {
       }
       break;
     }
+    case 'layerChanged': {
+      const fn = layerChangeListeners.get(msg.kindId);
+      // No listener is normal: most plugins never register one, and the host
+      // only sends this for kinds that did.
+      if (fn) {
+        try { fn({ layerId: msg.layerId, props: msg.props }); }
+        catch (err) { post({ k: 'log', level: 'error', text: `onLayerChanged threw: ${String(err)}` }); }
+      }
+      break;
+    }
     case 'panelMessage':
-      for (const fn of panelListeners) {
+      // Delivered only to the listeners for the panel it came from. The host
+      // decides which panel that is, from which FRAME sent it — never from
+      // anything in the message body.
+      for (const fn of panelListeners.get(msg.panelId) ?? []) {
         try { fn(msg.data); } catch { /* one bad listener must not stop the rest */ }
       }
       break;

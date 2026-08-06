@@ -36,6 +36,45 @@ export type ControlProvider = (name: string, t: number) => number;
  *  accessor. Injected by the host (the engine doesn't know scene names).
  *  `null` = no such layer. */
 export type LayerResolver = (name: string) => string | null;
+
+/**
+ * The prefix that makes a cross-layer reference survive a rename.
+ *
+ * `layer('Hero depth', 'x')` resolves a NAME at evaluation time, every frame,
+ * which means renaming the layer silently breaks the reference — and the
+ * symptom (a value quietly reading 0) appears nowhere near the rename that
+ * caused it.
+ *
+ * `layer('#n_a1b2c3', 'x')` names the layer's stable id instead. The `#` is
+ * what makes the two unambiguous: without it, a layer whose NAME happened to
+ * equal another layer's id would resolve to the wrong one, and that bug would
+ * be essentially undiagnosable.
+ *
+ * Fixed HERE, in the one place every cross-layer read passes through, rather
+ * than in the proxy path that found it. `layer`, `layerAt`, `toComp` and every
+ * other name-taking API gets it from one change, and a user-authored
+ * expression can use the id form the same way a plugin-written one does.
+ */
+export const LAYER_ID_PREFIX = '#';
+
+/** True for a reference that names an id rather than a layer name. */
+export function isLayerIdRef(ref: string): boolean {
+  return ref.startsWith(LAYER_ID_PREFIX);
+}
+
+/** `#<id>` → the id; anything else → whatever the host's name lookup says. */
+export function resolveLayerRef(ref: string, byName: LayerResolver): string | null {
+  if (isLayerIdRef(ref)) {
+    const id = ref.slice(LAYER_ID_PREFIX.length);
+    return id.length > 0 ? id : null;
+  }
+  return byName(ref);
+}
+
+/** `n_a1b2c3` → `#n_a1b2c3`. What an author-time resolution should write. */
+export function layerIdRef(nodeId: string): string {
+  return `${LAYER_ID_PREFIX}${nodeId}`;
+}
 /** Supplies a node's static/base value for a prop (e.g. the Transform
  *  component's x/y) when a cross-layer read finds no keyframe track. Injected
  *  by the host; `undefined` = no base value either. */
@@ -112,6 +151,8 @@ function componentIndexOf(prop: PropPath): number {
 interface ExpressionEntry {
   compiled: CompiledExpression;
   enabled: boolean;
+  /** See `ExpressionState.authoredBy`. */
+  authoredBy?: string;
 }
 
 /**
@@ -125,6 +166,25 @@ interface ExpressionEntry {
 export interface ExpressionState {
   src: string;
   enabled: boolean;
+  /**
+   * The plugin id that wrote this expression, when a plugin did.
+   *
+   * Absent means a person typed it, which is the overwhelmingly common case and
+   * the reason this is optional rather than defaulted.
+   *
+   * It exists because an expression written through `animation.setExpression`
+   * PERSISTS IN THE SAVED DOCUMENT and re-evaluates for whoever opens the
+   * project next — it survives uninstalling the plugin, and it travels to
+   * collaborators who never had it. Without provenance, a user seeing wrong
+   * animation has no way to tell a formula they wrote from one a plugin left
+   * behind, and no way to find the rest of them.
+   *
+   * One field, and it is what makes an origin label, a "this project contains
+   * expressions from a plugin you do not have" state, and a bulk revert
+   * possible at all. None of those can be added later to expressions already
+   * written without it.
+   */
+  authoredBy?: string;
 }
 
 /** Small deterministic string hash → a noise-phase seed (NOT crypto). */
@@ -662,7 +722,7 @@ export class AnimationEngine {
     visited: Set<string>,
     depth: number,
   ): number | undefined {
-    const targetNodeId = this.layerResolver(name);
+    const targetNodeId = resolveLayerRef(name, this.layerResolver);
     if (!targetNodeId) return undefined;
     return this.sampleInternal(targetNodeId, prop, t, visited, depth);
   }
@@ -874,13 +934,66 @@ export class AnimationEngine {
    * expression is enabled, which is the only sensible default for something the
    * user just typed.
    */
-  setExpression(nodeId: string, prop: PropPath, src: string): void {
+  setExpression(nodeId: string, prop: PropPath, src: string, authoredBy?: string): void {
     if (src.trim() === '') { this.removeExpression(nodeId, prop); return; }
     let byProp = this.expressions.get(nodeId);
     if (!byProp) { byProp = new Map(); this.expressions.set(nodeId, byProp); }
     const enabled = byProp.get(prop)?.enabled ?? true;
-    byProp.set(prop, { compiled: compileExpression(src), enabled });
+    // Authorship is REPLACED, not inherited. Editing a plugin-written
+    // expression by hand makes it yours — carrying the old plugin id forward
+    // would mislabel the user's own work, and a bulk "revert what this plugin
+    // wrote" would then silently discard it.
+    byProp.set(prop, {
+      compiled: compileExpression(src),
+      enabled,
+      ...(authoredBy ? { authoredBy } : {}),
+    });
     this.notifyChange(nodeId);
+  }
+
+  /**
+   * Every (node, prop) carrying an expression a given plugin wrote.
+   *
+   * The read that makes provenance worth storing: it backs an origin label, a
+   * "this project contains expressions from a plugin you do not have" notice,
+   * and a bulk revert.
+   */
+  expressionsAuthoredBy(pluginId: string): Array<{ nodeId: string; prop: PropPath }> {
+    const out: Array<{ nodeId: string; prop: PropPath }> = [];
+    for (const [nodeId, byProp] of this.expressions) {
+      for (const [prop, entry] of byProp) {
+        if (entry.authoredBy === pluginId) out.push({ nodeId, prop });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Every expression in the document, with its source and its provenance.
+   *
+   * `expressionsAuthoredBy` answers "which are this plugin's". This answers
+   * "which exist at all", which is what any operation over expression TEXT
+   * needs — repairing cross-layer references after a rename, most of all.
+   * Filtering to one author cannot serve that: the references at risk are
+   * overwhelmingly the ones a person typed.
+   *
+   * A read, and a copy. Handing out the live `ExpressionEntry` would expose the
+   * compiled form, and a caller that mutated it would corrupt evaluation with
+   * no path back to who did it.
+   */
+  allExpressions(): Array<{ nodeId: string; prop: PropPath; src: string; authoredBy?: string }> {
+    const out: Array<{ nodeId: string; prop: PropPath; src: string; authoredBy?: string }> = [];
+    for (const [nodeId, byProp] of this.expressions) {
+      for (const [prop, entry] of byProp) {
+        out.push({
+          nodeId,
+          prop,
+          src: entry.compiled.src,
+          ...(entry.authoredBy ? { authoredBy: entry.authoredBy } : {}),
+        });
+      }
+    }
+    return out;
   }
 
   removeExpression(nodeId: string, prop: PropPath): void {
@@ -953,7 +1066,11 @@ export class AnimationEngine {
     if (!state || state.src.trim() === '') { this.removeExpression(nodeId, prop); return; }
     let byProp = this.expressions.get(nodeId);
     if (!byProp) { byProp = new Map(); this.expressions.set(nodeId, byProp); }
-    byProp.set(prop, { compiled: compileExpression(state.src), enabled: state.enabled });
+    byProp.set(prop, {
+      compiled: compileExpression(state.src),
+      enabled: state.enabled,
+      ...(state.authoredBy ? { authoredBy: state.authoredBy } : {}),
+    });
     this.notifyChange(nodeId);
   }
 
@@ -994,7 +1111,15 @@ export class AnimationEngine {
     for (const [nodeId, byProp] of this.expressions) {
       const props: Record<string, ExpressionState> = {};
       for (const [prop, entry] of byProp) {
-        props[prop] = { src: entry.compiled.src, enabled: entry.enabled };
+        props[prop] = {
+          src: entry.compiled.src,
+          enabled: entry.enabled,
+          // Carried into the snapshot, which IS the saved document. A field
+          // that lived only in memory would answer 'who wrote this' for the
+          // session that wrote it and for nobody who opens the file later —
+          // which is the only audience that needs the answer.
+          ...(entry.authoredBy ? { authoredBy: entry.authoredBy } : {}),
+        };
       }
       expressions[nodeId] = props;
     }
@@ -1066,7 +1191,11 @@ export class AnimationEngine {
         // the two shapes drift — same precedent as fx.repeater in 1.5.0.
         const state = props[prop];
         if (state?.src) {
-          byProp.set(prop, { compiled: compileExpression(state.src), enabled: state.enabled !== false });
+          byProp.set(prop, {
+            compiled: compileExpression(state.src),
+            enabled: state.enabled !== false,
+            ...(state.authoredBy ? { authoredBy: state.authoredBy } : {}),
+          });
         }
       }
       if (byProp.size) this.expressions.set(nodeId, byProp);

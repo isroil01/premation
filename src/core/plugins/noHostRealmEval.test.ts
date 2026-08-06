@@ -16,13 +16,16 @@
  * — rather than a specific method returning something.
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { compileExpression } from '@motion/animation';
 import pluginHost from './PluginHost';
 
 const SRC = join(__dirname, '..', '..');
+const ROOT = join(SRC, '..');
 
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8');
+const readRoot = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
 
 /** Strip block and line comments so the prose explaining the ban does not
  *  itself trip the ban. */
@@ -38,7 +41,9 @@ describe('no host-realm evaluation of plugin code', () => {
     'core/plugins/pluginPackage.ts',
     'core/plugins/manifest.ts',
     'core/plugins/spawnPluginWorker.ts',
-    'layout/Plugins/PluginsModal.tsx',
+    'layout/Plugins/ConsentSheet.tsx',
+    'layout/Plugins/PluginDetailTab.tsx',
+    'layout/Plugins/useDiskInstall.tsx',
     'layout/Plugins/PluginPanel.tsx',
   ];
 
@@ -106,7 +111,7 @@ describe('no host-realm evaluation of plugin code', () => {
   });
 
   it('the panel shell keeps its own policy tighter than the app for everything but inline script', () => {
-    const shell = readFileSync(join(SRC, '..', 'public', 'plugin-panel.html'), 'utf8');
+    const shell = readFileSync(join(ROOT, 'public', 'plugin-panel.html'), 'utf8');
     const meta = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(shell)?.[1] ?? '';
     expect(meta).toContain("default-src 'none'");
     // The point of the shell is inline script. Everything a panel could use to
@@ -114,5 +119,109 @@ describe('no host-realm evaluation of plugin code', () => {
     // URL would have bought scripting at the price of exfiltration.
     expect(meta).toContain("connect-src 'none'");
     expect(meta).not.toMatch(/script-src[^;]*https?:/);
+  });
+});
+
+/**
+ * The same rules, applied to the expression evaluator.
+ *
+ * The suite above guards the sandbox: plugin code runs in a Worker, never in
+ * the host realm. But `animation.setExpression` is a hole in the shape of that
+ * guard — it lets a plugin holding `animation:write` write arbitrary SOURCE
+ * TEXT into the document, which the evaluator then runs, in the host realm,
+ * every frame. If that evaluator ever compiles with `new Function`, the entire
+ * Worker sandbox is decorative: a plugin reaches the renderer's realm through
+ * the document instead of through its own module, and the renderer holds the
+ * account JWT and the user's plaintext AI provider keys in localStorage.
+ *
+ * It does not today — `exprLang.ts` is a parser and a tree-walking interpreter,
+ * written that way deliberately after `new Function` was found to be refused by
+ * the app's CSP. That is precisely why it needs a guard: the reason it is safe
+ * lives in a comment, and "just use new Function, it's simpler" is a plausible
+ * refactor for someone who has not read it.
+ *
+ * The second suite is behavioural rather than textual, because the interpreter
+ * has its own way of failing open: an expression escapes through the prototype
+ * chain (`value.constructor.constructor('...')()` is the classic) without any
+ * banned token appearing in evaluator source at all.
+ */
+describe('no host-realm evaluation of expression source', () => {
+  /**
+   * Derived from the directories, not hand-listed.
+   *
+   * A hand-written list covers the files someone remembered on the day they
+   * wrote it. The failure this guard exists for is a NEW evaluator file, or a
+   * rewrite that moves compilation somewhere else — exactly the cases a static
+   * list misses silently.
+   */
+  function evaluatorFiles(): string[] {
+    const out: string[] = [];
+    for (const dir of ['packages/animation/src', 'src/core/animation']) {
+      for (const f of readdirSync(join(ROOT, dir))) {
+        if (!f.endsWith('.ts') || f.endsWith('.test.ts') || !/expr/i.test(f)) continue;
+        out.push(`${dir}/${f}`);
+      }
+    }
+    // Not named for expressions, but it is what compiles, stores, snapshots
+    // and restores them — the evaluator's actual host.
+    out.push('packages/animation/src/AnimationEngine.ts');
+    return out;
+  }
+
+  const EXPR_FILES = evaluatorFiles();
+
+  it('the sweep actually found the evaluator', () => {
+    // Without this, a rename that empties the sweep turns every `it.each`
+    // below into zero test cases, and the suite goes green by covering
+    // nothing. A derived subject list needs a floor.
+    expect(EXPR_FILES).toEqual(
+      expect.arrayContaining([
+        'packages/animation/src/exprLang.ts',
+        'packages/animation/src/expressions.ts',
+      ]),
+    );
+  });
+
+  it.each(EXPR_FILES)('%s contains no new Function / eval', (rel) => {
+    const src = code(readRoot(rel));
+    expect({ file: rel, newFunction: /new\s+Function\s*\(/.test(src) }).toEqual({ file: rel, newFunction: false });
+    expect({ file: rel, evalCall: /[^.\w]eval\s*\(/.test(src) }).toEqual({ file: rel, evalCall: false });
+  });
+
+  it.each(EXPR_FILES)('%s never dynamically imports a non-literal specifier', (rel) => {
+    const src = code(readRoot(rel));
+    const dynamic = [...src.matchAll(/[^.\w]import\s*\(([^)]*)\)/g)].map((m) => m[1]!.trim());
+    const nonLiteral = dynamic.filter((arg) => !/^['"][^'"]+['"]$/.test(arg));
+    expect({ file: rel, nonLiteralImports: nonLiteral }).toEqual({ file: rel, nonLiteralImports: [] });
+  });
+
+  it('an expression cannot climb the prototype chain back into the realm', () => {
+    // The escape that needs no banned token in evaluator source. Each of these
+    // is a real published sandbox break against naive interpreters.
+    const escapes = [
+      'value.constructor',
+      'value.__proto__',
+      'value["constructor"]',
+      'Math.constructor',
+      'wiggle.constructor',
+      'time.constructor.constructor',
+      '[].constructor',
+      '"".constructor',
+    ];
+    for (const src of escapes) {
+      const { value, error } = compileExpression(src).run({ time: 0, value: 1 });
+      // Refused, and refused LOUDLY — a silent null would read to the user as
+      // a broken expression rather than a blocked one.
+      expect({ src, value, blocked: error !== null }).toEqual({ src, value: null, blocked: true });
+    }
+  });
+
+  it('an expression reaches no host global', () => {
+    // The scope is a closed set of bound names. Anything not bound must be an
+    // error, not `undefined` — `undefined` is how a leak stays quiet.
+    for (const src of ['globalThis', 'window', 'self', 'fetch', 'localStorage', 'process', 'require']) {
+      const { value, error } = compileExpression(src).run({ time: 0, value: 1 });
+      expect({ src, value, blocked: error !== null }).toEqual({ src, value: null, blocked: true });
+    }
   });
 });

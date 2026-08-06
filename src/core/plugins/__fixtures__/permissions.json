@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "The canonical permission text. This file is duplicated BYTE-IDENTICALLY in",
+    "motion-editor (src/core/plugins/__fixtures__/) and motion-back",
+    "(src/plugins/__fixtures__/), and a test in each repo asserts its own copy of",
+    "the strings matches this one.",
+    "",
+    "Why it matters more than most shared data: this is the text on the screen",
+    "where a user decides what to trust a plugin with. Two different sentences",
+    "describing one permission is worse than none — whichever the reader saw last",
+    "is the one they believe they agreed to, and if the two disagree at all, one",
+    "of them is a lie told at the exact moment trust is being established.",
+    "",
+    "Change it in one place and both suites fail until the other is updated."
+  ],
+  "permissions": {
+    "scene:read": {
+      "label": "Read your layers",
+      "detail": "See the names, structure and properties of layers in your composition."
+    },
+    "scene:write": {
+      "label": "Modify your layers",
+      "detail": "Create, change and delete layers. Every change is undoable."
+    },
+    "animation:read": {
+      "label": "Read your animation",
+      "detail": "See keyframes and sample animated values over time."
+    },
+    "animation:write": {
+      "label": "Modify your animation",
+      "detail": "Create and change keyframes and expressions. Every change is undoable."
+    },
+    "assets:read": {
+      "label": "Read images in your project",
+      "detail": "Read the pixels of images already in your composition. Plugins cannot access the internet."
+    },
+    "assets:write": {
+      "label": "Add images to your project",
+      "detail": "Create new images and place them as layers. Every change is undoable."
+    },
+    "timeline": {
+      "label": "Control the playhead",
+      "detail": "Read the current time and move the playhead."
+    }
+  }
+}
