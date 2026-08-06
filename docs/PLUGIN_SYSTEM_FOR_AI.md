@@ -145,7 +145,9 @@ inline script.
 | Install / supervise / permission gate / panel bridge | `src/core/plugins/PluginHost.ts` |
 | Registry client + **signature verification** | `src/core/plugins/registry.ts` |
 | Persistence (localStorage) | `src/stores/pluginStore.ts` |
-| Manager UI, consent screen, Browse tab, log, perms editor | `src/layout/Plugins/PluginsModal.tsx` |
+| The plugin list, searchable and paged | `src/layout/Plugins/PluginsList.tsx` |
+| A plugin's page: listing, status, log, perms editor, reload | `src/layout/Plugins/PluginDetailTab.tsx` |
+| Consent screen | `src/layout/Plugins/ConsentSheet.tsx` |
 | Docked panel + sandboxed frame | `src/layout/Plugins/PluginPanel.tsx` |
 | Panel host document (its own CSP) | `public/plugin-panel.html` |
 | Plugins menu, built from what is installed | `src/layout/Menu/pluginMenu.ts` |
@@ -635,14 +637,123 @@ These are real, current, and small. Listed so nobody rediscovers them as bugs.
 
 ---
 
+## 14b. Documents DO reference plugins (API 3)
+
+**This replaces a guarantee that used to be listed under "out of scope", and the
+old wording is still worth reading: *"A plugin's output is ordinary keyframes, so
+a project opens identically with the plugin uninstalled."* That was true and it
+was load-bearing. API 3 ends it: a project containing a
+`studio.acme.lab.depthImage` layer names a plugin, and there is no way to give
+plugins first-class layer types without that.**
+
+The guarantee is replaced rather than dropped. What follows is the full
+contract.
+
+### What a document stores for a custom layer
+
+One component whose TYPE carries the namespace, on an otherwise ordinary node:
+
+```jsonc
+{ "type": "pluginLayer:studio.acme.lab.depthImage",
+  "props": {
+    "__kind": "studio.acme.lab.depthImage",
+    "__pluginId": "studio.acme.lab",
+    "__kindId": "depthImage",
+    "__schemaVersion": 1,
+    "focal": 72, "mode": "displace", "source": "asset-3"   // declared props
+  } }
+```
+
+Declared properties sit directly on that component under their own names,
+because that is what makes them **ordinary properties**: `writeProp` addresses
+`(nodeId, componentId, propName)` and the animation engine keys on the same
+triple, so the timeline and the graph editor need no special case for them. If
+they ever do, the props are modelled wrong.
+
+Namespacing by component TYPE rather than by a prop-name prefix is what stops
+two plugins that both declare `focal` from colliding, with no name mangling.
+
+Animation tracks use a separate, FIXED prefix: `plugin.focal`. Tracks are keyed
+by a concatenated `(nodeId, propPath)` string, and a plugin is free to declare a
+prop called `opacity` — unprefixed, animating it would have addressed the
+layer's native opacity and silently faded the layer out. The prefix is fixed
+rather than per-plugin because a stored track key must not depend on which
+plugin is installed. `plugin.` is reserved: no native property may begin with
+it, enforced by `reservedPropPrefix.test.ts` and refused at
+`scene.setProperty`.
+
+The document also carries a top-level list of the plugins it references:
+
+```jsonc
+"plugins": [ { "id": "studio.acme.lab", "version": "1.2.0",
+               "publisher": "Acme Studio", "kinds": ["depthImage"] } ]
+```
+
+Derived from the document's CONTENTS at capture time, **never** from what
+happens to be installed — a project saved on a machine missing the plugin must
+still list it, because that is exactly the machine whose user needs to be told.
+`version` and `publisher` are absent when the plugin is not installed; the id
+alone is enough for `premation://plugin/<id>`.
+
+### When the plugin is absent
+
+1. **The layer is never lost.** Not on uninstall, not on open, not on
+   save-and-reopen. Silently discarding a user's work because software is
+   missing is the worst outcome available.
+2. **It still renders**, if it is `render: "proxy"` — see below.
+3. **It is inert and says so**: properties read-only, plugin logic not run, a
+   non-blocking banner naming what is missing.
+4. **Keyframes survive untouched.** They live on the node's properties like any
+   others, so nothing has to preserve them — which is the point.
+5. **Reinstalling reactivates it in place**, with the original values.
+
+### What `render: "proxy"` guarantees, and what it does not
+
+A `proxy` kind maintains a subtree of **native** layers as children, and the
+host renders those. They are ordinary layers in the document, so:
+
+**Guaranteed without the plugin:** the project opens, the subtree draws, and it
+ANIMATES — children reference the parent's animated properties through ordinary
+expressions evaluated by the engine, so animation needs no plugin at runtime.
+
+**Not guaranteed:** the authored interface. The custom layer's own properties
+are read-only, so changing `focal` does nothing until the plugin is back. The
+subtree is a frozen snapshot of the last regeneration.
+
+`render: "none"` has no subtree by definition. It is a controller whose
+properties drive other layers, and without its plugin it is an inert gizmo that
+still holds its values and its keyframes.
+
+`render: "shader"` is reserved and refused with a version message. It is the one
+strategy that could NOT survive its plugin being absent, which is why `proxy`
+ships first.
+
+### Schema versions
+
+`schemaVersion` is monotonic and stored per layer.
+
+- **Plugin newer than the document** → the plugin gets one chance to migrate via
+  `onMigrateLayer(oldProps, fromVersion)`, run inside `runDocumentEdit` as one
+  undo entry. Its return value is validated like any other plugin input.
+  Anything that fails validation falls back to that property's DEFAULT — but a
+  property the migration did not mention KEEPS its value if it still validates.
+  Defaulting an unrelated, still-valid, animated property because a plugin
+  author shipped a bad migration is destructive; keeping it is at worst
+  occasionally wrong. On any drop, the pre-migration props are QUARANTINED on
+  the node under `__preMigration`, so a reset is recoverable rather than merely
+  reported. Keyframes are never touched.
+- **Plugin OLDER than the document** (a downgrade) → marked **inert, never
+  guessed**. The older plugin cannot know what the newer one stored, so running
+  it would silently discard whatever the newer schema added.
+
+---
+
 ## 15. Deliberately out of scope
 
 - **Render-path (shader / WASM) plugins.** A plugin **cannot draw pixels**. The old
   `registerEffect` claimed to and never did. If this arrives it will be a *separate*
   class with a synchronous, deterministic contract, not an extension of this one.
 - **Multi-file entry modules.** `main` is a single ES module; bundle first.
-- **Documents referencing plugins.** A plugin's output is ordinary keyframes, so a
-  project opens identically with the plugin uninstalled.
 - **Rating, comments, curation.** The registry lists what was published; it does not
   editorialise, and there is no ranking signal beyond install count.
 - **Plugin-to-plugin communication.** Each plugin gets its own worker and its own frame;
