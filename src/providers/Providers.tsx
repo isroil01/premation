@@ -13,6 +13,8 @@ import {
   applyPreferencesToDocument,
   usePreferenceStore,
 } from '@stores/preferenceStore';
+import { allLayerKinds } from '@core/plugins/layerKindRegistry';
+import { createCustomLayerFromMenu } from '@core/plugins/createCustomLayerFromMenu';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
@@ -32,7 +34,7 @@ import { Logo } from '@components/Logo';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
 import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
 import pluginHost from '@core/plugins/PluginHost';
-import { openPluginsModal } from '@layout/Plugins/PluginsModal';
+import { usePluginStore } from '@stores/pluginStore';
 import { showPluginPanel, hidePluginPanel } from '@layout/Plugins/PluginPanel';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -65,7 +67,7 @@ import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
-import { defaultAnimation } from '@motion/animation';
+import { resolveLayerRef, defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { applyRigPreset } from '@core/rig/skeletonCommands';
@@ -149,6 +151,14 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'star', label: 'Star Tool' },
     { tool: 'mask-rect', label: 'Rectangle Mask Tool' },
     { tool: 'mask-ellipse', label: 'Ellipse Mask Tool' },
+    // Split out of tools that used to switch into them implicitly: `paint` was
+    // the Brush whenever the cursor happened to be over the selected layer, and
+    // `mask-pen` was the Pen whenever exactly one layer was selected. Both are
+    // chosen deliberately now, so both must be reachable and bindable like every
+    // other tool — which is what `toolCommands.test.ts` enforces.
+    { tool: 'paint', label: 'Paint Tool' },
+    { tool: 'eraser', label: 'Eraser Tool' },
+    { tool: 'mask-pen', label: 'Pen Mask Tool' },
   ];
   // Every tool used 'crosshair', so the palette/menus showed eleven identical
   // icons — give each tool its actual glyph.
@@ -1327,9 +1337,16 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           const comp = useCompositionStore.getState().comp();
           let nodeId: string | null = self;
           if (name !== null) {
-            nodeId = null;
-            defaultSceneGraph.traverse((n) => {
-              if (nodeId === null && n.name === name) nodeId = n.id;
+            // Through the same resolution as `layer()`, so a `#<id>` reference
+            // survives a rename here too. Two lookups with different rules
+            // would mean `layer('#id', …)` worked and `toComp` on the same
+            // reference silently did not.
+            nodeId = resolveLayerRef(name, (n: string) => {
+              let found: string | null = null;
+              defaultSceneGraph.traverse((node) => {
+                if (found === null && node.name === n) found = node.id;
+              });
+              return found;
             });
           }
           if (nodeId === null) return undefined;
@@ -1369,15 +1386,20 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
 
         // Plugin host + UI commands (searchable in the Command Palette).
         try {
-          // Also starts every plugin the user has enabled — installs persist
-          // across reloads, so this is what makes them come back.
+          // Registers the contributions of every plugin the user has enabled —
+          // installs persist across reloads, so this is what makes them come
+          // back — and starts only the ones that asked to start (`onStartup`).
+          // The rest stay inactive, with their commands live, until used.
+          // Package bytes live in IndexedDB now, so they have to be back in
+          // memory before anything tries to spawn a worker from them.
+          await usePluginStore.getState().hydrate();
           pluginHost.configure({
             getSelection: () => useSelectionStore.getState().ids,
             // What makes `motion.ui.openPanel()` real. The host cannot import
             // the dock itself (it must stay React-free and testable), so the
             // shell hands it the two calls it needs.
-            showPanel: (id) => showPluginPanel(id),
-            hidePanel: (id) => hidePluginPanel(id),
+            showPanel: (id, panelId) => showPluginPanel(id, panelId),
+            hidePanel: (id, panelId) => hidePluginPanel(id, panelId),
           });
           const registry = getCommandRegistry();
           registry.register({
@@ -1410,9 +1432,53 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             id: asCommandId('view.presentation'), label: 'Present (Preview)', icon: 'tv',
             enabled: () => true, execute: () => usePresentationStore.getState().enter(),
           });
+          // ONE command, because there is now one surface. `view.plugins` used
+          // to open a manager modal beside this, and two managers over one
+          // plugin drift: the modal reported what the user had GRANTED, the
+          // detail tab reported what the manifest ASKED FOR, and whichever
+          // screen the user happened to open decided what they believed. The
+          // modal is retired — its log, permission editor and folder reload
+          // live on the plugin's own page, beside everything else about it.
+          /*
+            One "New layer" command per registered plugin kind.
+
+            This closes the gap that made layer kinds unusable in practice:
+            nothing could create the FIRST layer of a custom kind. The plugin
+            has to create it, and the plugin is not running — its
+            `onLayerKind` event fires when a document CONTAINING the kind is
+            opened, which is a chicken-and-egg the author cannot break from
+            their side.
+
+            Registered off `allLayerKinds()`, which lists kinds from ENABLED
+            plugins whether or not their worker is up — so choosing one wakes
+            the plugin lazily, exactly as opening a document does. A disabled
+            plugin's kinds are absent from that list and therefore from this
+            menu, consistent with `activateForDocument` refusing to wake
+            software the user turned off.
+          */
+          for (const entry of allLayerKinds()) {
+            const kind = `${entry.pluginId}.${entry.kind.id}`;
+            registry.register({
+              id: asCommandId(`layer.new.${kind}`),
+              label: `New ${entry.kind.label}`,
+              icon: (entry.kind.icon as never) ?? 'plugin',
+              enabled: () => true,
+              execute: () => { void createCustomLayerFromMenu(kind); },
+            });
+          }
+
           registry.register({
-            id: asCommandId('view.plugins'), label: 'Manage Plugins…', icon: 'plugin',
-            enabled: () => true, execute: () => openPluginsModal(),
+            id: asCommandId('view.marketplace'), label: 'Plugins', icon: 'plugin',
+            enabled: () => true,
+            execute: () => useLayoutStore.getState().openPanel('marketplace'),
+          });
+          // Pre-existing gap, found by `onDemandPanelsReachable.test.ts`: the
+          // History panel is registered, has a renderer, and had nothing that
+          // opened it — so undo history was a panel no user could reach.
+          registry.register({
+            id: asCommandId('view.history'), label: 'History', icon: 'history',
+            enabled: () => true,
+            execute: () => useLayoutStore.getState().openPanel('history'),
           });
           registry.register({
             id: asCommandId('help.tour'), label: 'Take a Tour', icon: 'tour',
@@ -1450,7 +1516,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true, execute: () => useGuidesStore.getState().toggleRulers(),
           });
           registry.register({
-            // The ViewportHeader tooltip has advertised this chord all along —
+            // The ViewportTools tooltip has advertised this chord all along —
             // it just was never bound. Motion paths draw for selected layers
             // with position keyframes; this hides/shows them globally.
             id: asCommandId('view.motionPath'), label: 'Toggle Motion Paths', icon: 'path',

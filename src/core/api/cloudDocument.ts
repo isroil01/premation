@@ -21,6 +21,11 @@ import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import { migrateDocument } from '@core/project/migrations';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { usePluginStore } from '@stores/pluginStore';
+import { collectPluginReferences, type DocumentPluginReference } from '@core/plugins/customLayers';
+import { migratePluginBindings } from '@core/plugins/bindingMigration';
+import type { SceneNode } from '@core/types';
 
 export interface EditorDocument {
   version: string;
@@ -33,6 +38,24 @@ export interface EditorDocument {
   /** Render-affecting; must round-trip or exports change after a reload. */
   motionBlur?: MotionBlurSettings;
   guides?: GuidesSettings;
+  /**
+   * The plugins this document's custom layers depend on.
+   *
+   * New in Track B, and the reason it exists is the invariant it replaces:
+   * documents never used to reference plugins at all. Now one can, so a
+   * document has to be able to SAY which — otherwise the editor can tell a user
+   * "this layer needs a plugin" and not which plugin, and an id alone is not
+   * enough to explain a missing dependency or to fetch it.
+   *
+   * Derived from the document's CONTENTS at capture time, never from what
+   * happens to be installed. A project saved on a machine that is missing the
+   * plugin must still list it — that machine is exactly the one whose user
+   * needs to be told.
+   *
+   * Optional, so every document written before this reads back unchanged and
+   * needs no migration: absent and empty both mean "no custom layers".
+   */
+  plugins?: DocumentPluginReference[];
   /** Legacy: single active comp. Read on restore, no longer written. */
   comp?: CompositionSettings;
 }
@@ -47,7 +70,34 @@ export function captureDocument(): EditorDocument {
     timelines: getTimelineController().capture(),
     motionBlur: useMotionBlurStore.getState().settings(),
     guides: useGuidesStore.getState().settings(),
+    ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
   };
+}
+
+/**
+ * Which plugins this document depends on, read off the node tree.
+ *
+ * Version and publisher come from the INSTALLED copy when there is one, and are
+ * simply absent when there is not — which is the honest answer, and still
+ * leaves the id, which is what `premation://plugin/<id>` needs.
+ */
+function pluginReferences(): DocumentPluginReference[] {
+  const nodes: SceneNode[] = [];
+  const walk = (id: string): void => {
+    const node = defaultSceneGraph.getNode(id);
+    if (!node) return;
+    nodes.push(node);
+    for (const child of defaultSceneGraph.getChildren(id)) walk(child.id);
+  };
+  for (const root of defaultSceneGraph.getRoots()) walk(root.id);
+
+  const installed = new Map(
+    usePluginStore.getState().plugins.map((p) => [
+      p.manifest.id,
+      { version: p.manifest.version, ...(p.manifest.author ? { author: p.manifest.author } : {}) },
+    ]),
+  );
+  return collectPluginReferences(nodes, installed);
 }
 
 /**
@@ -73,6 +123,20 @@ export function restoreDocument(doc: EditorDocument): void {
   // comps must exist before the timeline reads their frame rate.
   if (doc.scene) sceneProjectIO.restore(doc.scene);
   if (doc.animation) defaultAnimation.restore(doc.animation);
+
+  /*
+    Repair plugin bindings that reference their parent by NAME.
+
+    Documents written before the id form existed carry
+    `layer('Hero depth', 'plugin.focal')`, resolved every frame — so renaming
+    that layer silently breaks every child. Rewritten once, here, after both
+    the scene and the animation are in place (the rewrite needs to resolve
+    names against the restored tree).
+
+    Runs on every load and is idempotent: after the first pass there is nothing
+    left matching, so it costs one regex over plugin-authored expressions.
+  */
+  migratePluginBindings();
 
   if (doc.comps) {
     useProjectStore.getState().actions.replaceComps(doc.comps);
