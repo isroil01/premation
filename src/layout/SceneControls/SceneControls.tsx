@@ -5,10 +5,10 @@
  * manipulates, it does not create.
  *
  * Deliberately NOT here (each had exactly one other, better home):
- *  - Free/Fixed workspace lock → ViewportHeader, next to the canvas it locks.
+ *  - Free/Fixed workspace lock → ViewportTools, in the timeline's tool row.
  *  - Insert camera / light / cube / sphere / cylinder / 3D text → the TopNav
  *    "New layer" dropdown, the single home for creating layers.
- *  - "CPU fallback" badge → ViewportHeader, beside the comp it describes.
+ *  - "CPU fallback" badge → ViewportTools, in the timeline's tool row.
  *
  * Icon note: orbit/pan/dolly and the ground plane use dedicated glyphs
  * (`orbit`, `hand-grab`, `perspective`, `ground-grid`) instead of borrowing

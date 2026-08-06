@@ -194,6 +194,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.presentation', label: 'Present (Preview)' },
       { separator: true },
       { commandId: 'view.project', label: 'Project' },
+      { commandId: 'view.history', label: 'History' },
       { commandId: 'view.effectControls', label: 'Effects' },
       { commandId: 'view.renderQueue', label: 'Render Queue' },
       { commandId: 'view.graphEditor', label: 'Graph Editor' },

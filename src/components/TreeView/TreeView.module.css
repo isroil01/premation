@@ -7,17 +7,25 @@
   padding: var(--space-1) 0;
 }
 
+/**
+ * 26px, matching the effects and presets browser rows.
+ *
+ * The layer tree, the effect library and the preset library are the app's three
+ * scannable lists, and they sat at three different row heights. One height is
+ * most of what makes the left sidebar and the right sidebar read as one
+ * product rather than as two panels that happen to dock together.
+ */
 .row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 24px;
+  height: 26px;
   padding-right: var(--space-4);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
   border-left: 2px solid transparent;
-  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   transition: var(--motion-hover-transition);
 }
 
@@ -44,8 +52,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   color: var(--color-text-tertiary);
   flex: none;
   transition: transform var(--motion-duration-fast) var(--motion-ease-standard);

@@ -1950,3 +1950,46 @@
 }
 
 
+
+/* ── Plugins tab ────────────────────────────────────────────────────────── */
+
+.pluginsSubtitle {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary, #9a9a9a);
+  max-width: 62ch;
+}
+
+/*
+ * Host for the shared PluginsPanel.
+ *
+ * Height-bounded on purpose. `PluginsPanel` is a dock panel whose list scrolls
+ * INSIDE itself; dropped into a page that also scrolls it would produce two
+ * nested scrollbars and a list with no end. Bounding it here keeps the panel's
+ * own scrolling the only scrolling.
+ */
+.pluginsPanelHost {
+  height: clamp(420px, calc(100vh - 260px), 900px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border, #2c2c2c);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-panel, #1c1c1c);
+}
+
+/* Separates the publisher flow from the list above it. This used to be an
+   inline `marginTop` on the element; it is spacing, so it belongs here. */
+.publishingHeader {
+  margin-top: 28px;
+}
+
+/* Publisher flow on the dashboard. Shorter than the list host: it is a form,
+   not a feed, and it grows with its own content rather than filling the page. */
+.publishingHost {
+  max-height: 560px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border, #2c2c2c);
+  border-radius: 8px;
+  background: var(--color-panel, #1c1c1c);
+}

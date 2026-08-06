@@ -15,12 +15,33 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
  *
  * Shared by the kitchen-sink Effects panel and the dedicated Effect Controls
  * panel so the stack lives in exactly one component (no duplicated logic).
+ *
+ * ── The AE Effect Controls treatment ────────────────────────────────────────
+ * Three things AE has that a list of labelled number fields does not, all of
+ * them added here:
+ *
+ *   `▸ Width  68.0`   Ranged numbers carry a DISCLOSURE TRIANGLE that reveals
+ *                     a slider under the row. Typing 68 needs the field;
+ *                     finding the value you want needs the slider, and hunting
+ *                     for it by dragging a number is guesswork.
+ *   the dial          Angles get AE's dial, not a number that means nothing
+ *                     until you drag it. Detected off the param's declared
+ *                     `unit === '°'`, so a new angle param gets one for free.
+ *   `Gaussian Blur 2` Two of a kind are numbered by stack order, so four
+ *                     stacked Smears are four distinguishable rows rather than
+ *                     four identical labels (see `effectDisplayNames`).
+ *
+ * The header is AE's too: `▾ fx Name ............ Reset`, the selected effect
+ * banded, its actions revealed on hover.
  */
 
+import { useState as useLocalState } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
+import { Slider } from '@components/Slider';
+import { AngleDial } from '@components/AngleDial';
 import { PropertyRow } from '@components/PropertyRow';
 import { ColorPicker } from '@components/ColorPicker';
 import { CurveEditor } from './CurveEditor';
@@ -41,6 +62,8 @@ import {
   dragEffectTo,
   effectPropPath,
   effectParam,
+  effectDisplayNames,
+  resetEffectParams,
   resolveChannelColor,
   type Effect,
   type EffectDef,
@@ -52,6 +75,37 @@ import { buildPropertyMenu } from '@core/inspector/propertyMenu';
 import { openContextMenu } from '@stores/contextMenuStore';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
+
+/**
+ * One parameter line: AE's disclosure gutter, then the row, then whatever the
+ * disclosure reveals.
+ *
+ * The gutter is a real column that every line reserves, expandable or not —
+ * a triangle that only some rows carry would otherwise indent those rows'
+ * names 14px past the rest, and a parameter list whose labels do not share a
+ * left edge is exactly the misalignment PropertyRow's grid exists to prevent.
+ * `PropertyRow` itself is untouched: its columns are shared with the timeline,
+ * and this gutter is a fact about the effect panel, not about property rows.
+ */
+function ParamLine({
+  expander,
+  children,
+  below,
+}: {
+  expander?: JSX.Element;
+  children: React.ReactNode;
+  below?: React.ReactNode;
+}): JSX.Element {
+  return (
+    <div className={panel.paramLine}>
+      <div className={panel.paramLineHead}>
+        {expander ?? <span className={panel.paramGutter} aria-hidden />}
+        <div className={panel.paramLineBody}>{children}</div>
+      </div>
+      {below}
+    </div>
+  );
+}
 
 /** One parameter of one effect: a stopwatch (numbers only) plus its control. */
 function EffectParamRow({
@@ -67,6 +121,10 @@ function EffectParamRow({
 }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
+  // Declared with the other hooks, ABOVE the `resolved` early return below —
+  // a `useState` after it would change this component's hook count the moment
+  // an effect with a resolved param (Audio Spectrum) entered the stack.
+  const [sliderOpen, setSliderOpen] = useLocalState(false);
 
   const value = effectParam(effect, param.key);
   const label = `${def.label} ${param.label}`;
@@ -114,32 +172,36 @@ function EffectParamRow({
       }
     };
     return (
-      <PropertyRow label={param.label} animated={animated} onStopwatch={toggleColorAnim} compact>
-        <ColorPicker
-          value={displayed}
-          onChange={(hex) => {
-            if (animated) writeChannels(hex, `Set ${label}`);
-            else updateEffectParam(nodeId, effect.id, param.key, hex);
-          }}
-          aria-label={label}
-          compact
-        />
-      </PropertyRow>
+      <ParamLine>
+        <PropertyRow label={param.label} animated={animated} onStopwatch={toggleColorAnim} compact>
+          <ColorPicker
+            value={displayed}
+            onChange={(hex) => {
+              if (animated) writeChannels(hex, `Set ${label}`);
+              else updateEffectParam(nodeId, effect.id, param.key, hex);
+            }}
+            aria-label={label}
+            compact
+          />
+        </PropertyRow>
+      </ParamLine>
     );
   }
 
   if (param.type === 'checkbox') {
     return (
-      <div className={row.paramRow}>
-        <div style={{ width: 14 }} />
-        <span className={row.paramLabel}>{param.label}</span>
-        <Checkbox
-          checked={value === true}
-          onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.checked)}
-          aria-label={label}
-          style={{ width: 14, height: 14 }}
-        />
-      </div>
+      <ParamLine>
+        <div className={row.paramRow}>
+          <div style={{ width: 14 }} />
+          <span className={row.paramLabel}>{param.label}</span>
+          <Checkbox
+            checked={value === true}
+            onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.checked)}
+            aria-label={label}
+            style={{ width: 14, height: 14 }}
+          />
+        </div>
+      </ParamLine>
     );
   }
 
@@ -154,7 +216,8 @@ function EffectParamRow({
     const current = typeof value === 'string' ? value : '';
     const stale = current !== '' && !siblings.some((s) => s.id === current);
     return (
-      <div className={row.paramRow}>
+      <ParamLine>
+        <div className={row.paramRow}>
         <div style={{ width: 14 }} />
         <span className={row.paramLabel}>{param.label}</span>
         <select
@@ -178,19 +241,22 @@ function EffectParamRow({
             <option key={s.id} value={s.id}>{s.name || s.id}</option>
           ))}
         </select>
-      </div>
+        </div>
+      </ParamLine>
     );
   }
 
   if (param.type === 'curve') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
-        <span className={row.paramLabel}>{param.label}</span>
-        <CurveEditor
-          value={Array.isArray(value) ? (value as CurvePoints) : [[0, 0], [255, 255]]}
-          onChange={(points) => updateEffectParam(nodeId, effect.id, param.key, points)}
-        />
-      </div>
+      <ParamLine>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
+          <span className={row.paramLabel}>{param.label}</span>
+          <CurveEditor
+            value={Array.isArray(value) ? (value as CurvePoints) : [[0, 0], [255, 255]]}
+            onChange={(points) => updateEffectParam(nodeId, effect.id, param.key, points)}
+          />
+        </div>
+      </ParamLine>
     );
   }
 
@@ -222,43 +288,95 @@ function EffectParamRow({
   // which reads them off this effect's own definition — so the timeline row and
   // this row describe the same parameter identically.
   const meta = resolvePropertyMeta(path, nodeId);
-  return (
-    <PropertyRow
-      label={param.label}
-      animated={animated}
-      onStopwatch={toggle}
-      onReset={
-        typeof meta.defaultValue === 'number' && meta.resettable
-          ? () => updateEffectParam(nodeId, effect.id, param.key, meta.defaultValue as number)
-          : undefined
-      }
-      onContextMenu={(e) => {
-        e.preventDefault();
-        openContextMenu(
-          e.clientX,
-          e.clientY,
-          buildPropertyMenu({
-            nodeId,
-            prop: path,
-            layerT,
-            value: display,
-            setValue: (v) => updateEffectParam(nodeId, effect.id, param.key, v),
-          }),
-        );
-      }}
-      compact
+
+  // A slider needs BOTH ends of the range to mean anything. Distance (0–200)
+  // gets one; Angle and Position X, declared without bounds, do not — a slider
+  // over an invented range is a control that silently clamps.
+  const ranged = Number.isFinite(meta.min) && Number.isFinite(meta.max);
+  // AE's dial, chosen off the declared unit rather than a hand-kept list of
+  // param names, so a new `unit: '°'` param gets one the day it is added.
+  const isAngle = meta.unit === '°';
+
+  const expander = ranged ? (
+    <button
+      type="button"
+      className={panel.paramExpander}
+      aria-expanded={sliderOpen}
+      aria-label={`${sliderOpen ? 'Hide' : 'Show'} ${label} slider`}
+      title={sliderOpen ? 'Hide slider' : 'Show slider'}
+      onClick={() => setSliderOpen((v) => !v)}
     >
-      <ValueField
-        value={display}
-        min={meta.min}
-        max={meta.max}
-        unit={meta.unit}
-        step={meta.step}
-        precision={meta.precision}
-        onChange={onChange}
-        aria-label={label}
-      />
-    </PropertyRow>
+      <Icon name={sliderOpen ? 'chevron-down' : 'chevron-right'} size={10} />
+    </button>
+  ) : undefined;
+
+  return (
+    <ParamLine
+      expander={expander}
+      below={
+        ranged && sliderOpen ? (
+          <div className={panel.paramSlider}>
+            <Slider
+              value={display}
+              min={meta.min as number}
+              max={meta.max as number}
+              step={meta.step ?? 1}
+              size="sm"
+              // Same writer as the field: the slider must keyframe when the
+              // property is animated, exactly as typing a value does.
+              onChange={onChange}
+              // Named, not captioned — the row directly above already says
+              // "Distance", and `label` would print it a second time.
+              aria-label={label}
+            />
+          </div>
+        ) : undefined
+      }
+    >
+      <PropertyRow
+        label={param.label}
+        animated={animated}
+        onStopwatch={toggle}
+        onReset={
+          typeof meta.defaultValue === 'number' && meta.resettable
+            ? () => updateEffectParam(nodeId, effect.id, param.key, meta.defaultValue as number)
+            : undefined
+        }
+        onContextMenu={(e) => {
+          e.preventDefault();
+          openContextMenu(
+            e.clientX,
+            e.clientY,
+            buildPropertyMenu({
+              nodeId,
+              prop: path,
+              layerT,
+              value: display,
+              setValue: (v) => updateEffectParam(nodeId, effect.id, param.key, v),
+            }),
+          );
+        }}
+        compact
+      >
+        {/* Inside the value cell, left of the number — the placement the
+            transform panel's rotation dial uses, which is what keeps the
+            numbers in one column across rows that have a dial and rows
+            that do not. */}
+        {isAngle && (
+          <AngleDial value={display} onChange={onChange} aria-label={`${label} dial`} />
+        )}
+        <ValueField
+          value={display}
+          min={meta.min}
+          max={meta.max}
+          unit={meta.unit}
+          step={meta.step}
+          precision={meta.precision}
+          onChange={onChange}
+          aria-label={label}
+        />
+      </PropertyRow>
+    </ParamLine>
   );
 }
 
@@ -266,6 +384,13 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   useSceneRevision((s) => s.rev);
   const effects = getNodeEffects(nodeId);
   const defByType = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
+  // "Gaussian Blur 2" for the second of a kind — see effectDisplayNames.
+  const names = effectDisplayNames(effects);
+  // Which effect owns the canvas handles. Subscribed, not read via getState():
+  // the band marking the selected effect has to repaint when the selection
+  // moves, and a getState() read would leave it stale until something else
+  // re-rendered the panel.
+  const selectedEffectId = useEffectHandleStore((s) => (s.nodeId === nodeId ? s.effectId : null));
 
   const [userToggledIds, setUserToggledIds] = useState<Map<string, boolean>>(new Map());
   /** Effect being dragged, and the gap index the drop indicator sits in. */
@@ -293,6 +418,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
       {effects.map((e, i) => {
         const def = defByType.get(e.type);
         if (!def) return null;
+        const name = names.get(e.id) ?? def.label;
         const off = e.enabled === false;
         const defaultCollapsed = i > 0;
         const isCollapsed = userToggledIds.has(e.id) ? userToggledIds.get(e.id)! : defaultCollapsed;
@@ -324,9 +450,12 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
               setDropIndex(null);
             }}
           >
-            {/* Accordion Header: Disclosure Chevron + Checkbox + Effect Label + Actions */}
+            {/* AE Effect Controls header: ▾ fx Name .......... Reset */}
             <div
-              className={panel.effectCardHead}
+              className={cn(
+                panel.effectCardHead,
+                selectedEffectId === e.id && panel.effectCardHeadSelected,
+              )}
               // The HEADER is the drag handle, not the whole card — dragging
               // from the body would fight every scrubby slider inside it.
               draggable
@@ -357,6 +486,8 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 style={{ width: 15, height: 15, flexShrink: 0 }}
               />
 
+              <span className={panel.fxMark} aria-hidden>fx</span>
+
               <span
                 className={off ? panel.itemLabelOff : panel.itemLabel}
                 // Selecting the card is what shows its canvas handles. Twelve
@@ -367,26 +498,27 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   if (hasEffectHandles(e.type)) useEffectHandleStore.getState().select(nodeId, e.id);
                   toggleEffectCard(e.id, isCollapsed);
                 }}
-                style={{
-                  flex: 1,
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: off ? 'var(--color-text-muted)' : 'var(--color-text-primary)',
-                  letterSpacing: '0.01em',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
               >
-                {def.label}
+                {name}
               </span>
+
+              {/* AE's Reset link. A word, not another icon: the header already
+                  carries five glyphs, and this is the one control here whose
+                  meaning an icon would not carry. */}
+              <button
+                type="button"
+                className={panel.resetLink}
+                title={`Restore every ${name} parameter to its default`}
+                onClick={() => resetEffectParams(nodeId, e.id)}
+              >
+                Reset
+              </button>
 
               <div className={panel.itemActions}>
                 <button
                   type="button"
                   className={panel.remove}
-                  aria-label={`Move ${def.label} up`}
+                  aria-label={`Move ${name} up`}
                   disabled={i === 0}
                   onClick={() => moveEffect(nodeId, e.id, -1)}
                 >
@@ -395,7 +527,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 <button
                   type="button"
                   className={panel.remove}
-                  aria-label={`Move ${def.label} down`}
+                  aria-label={`Move ${name} down`}
                   disabled={i === effects.length - 1}
                   onClick={() => moveEffect(nodeId, e.id, 1)}
                 >
@@ -404,7 +536,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 <button
                   type="button"
                   className={panel.remove}
-                  aria-label={`Remove ${def.label}`}
+                  aria-label={`Remove ${name}`}
                   onClick={() => removeEffect(nodeId, e.id)}
                 >
                   <Icon name="close" size={12} />

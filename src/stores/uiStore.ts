@@ -22,6 +22,14 @@ export type Tool =
   | 'pen'
   | 'pencil'
   | 'brush'
+  // AE's Paint effect — strokes onto an EXISTING layer. Split out of `brush`,
+  // which used to switch between the two based on what happened to be under
+  // the cursor, so a second brush stroke silently became a paint stroke.
+  | 'paint'
+  // Paint with `mode: 'erase'` forced. Not a checkbox on the brush: an eraser
+  // that can lay down colour because a shared setting was left on is not an
+  // eraser, it is a trap.
+  | 'eraser'
   | 'curvature'
   | 'line'
   | 'text'
@@ -31,6 +39,10 @@ export type Tool =
   | 'star'
   | 'mask-rect'
   | 'mask-ellipse'
+  // The pen, aimed at the selected layer's masks. The plain `pen` used to do
+  // this implicitly whenever exactly one layer was selected — which, because
+  // drawing selects what it draws, was always.
+  | 'mask-pen'
   | 'puppet-pin'
   | 'bone';
 

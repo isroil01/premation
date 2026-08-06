@@ -183,17 +183,26 @@
   gap: var(--space-1);
 }
 
-.toolDropdownTrigger {
+/* Same two-state pairing as .tool / .toolActive below, for the same reason. */
+.toolDropdownTrigger,
+.toolDropdownTriggerActive {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   height: var(--control-height-lg);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-3);
   border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
   border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: var(--motion-hover-transition);
+}
+
+.toolDropdownTrigger {
+  background: transparent;
+  color: var(--color-text-secondary);
 }
 
 .toolDropdownTrigger:hover {
@@ -202,17 +211,21 @@
 }
 
 .toolDropdownTriggerActive {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: var(--control-height-lg);
-  padding: 0 var(--space-4);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: var(--motion-hover-transition);
   background: var(--color-primary-subtle);
   color: var(--color-primary);
-  border: 1px solid transparent;
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+.toolDropdownTriggerActive:hover {
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  color: var(--color-primary-hover);
+  border-color: var(--color-primary);
+}
+
+.toolDropdownTrigger:focus-visible,
+.toolDropdownTriggerActive:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 .toolGroup {
@@ -228,40 +241,62 @@
   background: var(--color-border);
 }
 
-.tool {
-  width: var(--control-height-lg);
-  height: var(--control-height-lg);
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.tool:hover {
-  background: var(--color-surface-3);
-  color: var(--color-text-primary);
-  border-color: transparent;
-}
-
-.tool:active {
-  transform: scale(0.92);
-}
-
-/* Active tool — background color only, no border, no bottom line */
+/**
+ * Viewport toggles — Rulers, Safe Areas, the ground plane, bounding boxes.
+ *
+ * `.tool` and `.toolActive` are ONE button in two states, so they share one
+ * geometry block. They used to be two independent rules that happened to agree,
+ * and the copy had drifted: the active one carried no `:hover` and no
+ * `:active`, so the moment you turned Rulers ON the button stopped responding
+ * to the pointer — it lit up and then behaved like a label. Turning a toggle
+ * back off is exactly as common as turning it on, and that was the state with
+ * no affordance at all.
+ */
+.tool,
 .toolActive {
   width: var(--control-height-lg);
   height: var(--control-height-lg);
   display: grid;
   place-items: center;
   border-radius: var(--radius-md);
+  border: 1px solid transparent;
   cursor: pointer;
-  transition: var(--motion-hover-transition);
+  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tool {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.tool:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+/* ON. The tinted fill carries the state and the hairline gives it an edge, so
+   it reads as pressed among a row of flat icons rather than merely bluer. */
+.toolActive {
   background: var(--color-primary-subtle);
   color: var(--color-primary);
-  border: 1px solid transparent;
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+.toolActive:hover {
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  color: var(--color-primary-hover);
+  border-color: var(--color-primary);
+}
+
+.tool:active,
+.toolActive:active {
+  transform: scale(0.92);
+}
+
+.tool:focus-visible,
+.toolActive:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 .layoutToggle {
@@ -335,3 +370,20 @@
 }
 
 
+
+
+/*
+ * Inside the timeline's tool row (container `tl-toolbar`), the zoom group is
+ * the first thing to go when space runs short.
+ *
+ * It is the largest single cluster here and the most redundant: wheel zoom, the
+ * +/- keys and "Fit in view" inside the View Options dropdown all survive, so
+ * nothing becomes unreachable. The rule lives in this file, next to the class
+ * it hides, because a container query matches on the ancestor chain — the
+ * container's NAME is global even though these class names are not.
+ */
+@container tl-toolbar (max-width: 1040px) {
+  .zoomGroup {
+    display: none;
+  }
+}

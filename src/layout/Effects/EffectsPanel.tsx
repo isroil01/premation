@@ -6,12 +6,14 @@
  */
 
 import { useState, useMemo } from 'react';
-import { Icon } from '@components/Icon';
+import { Icon, type IconName } from '@components/Icon';
 import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
+import { Checkbox } from '@components/Checkbox';
+import { PropertyRow } from '@components/PropertyRow';
 import { EmptyState } from '@components/EmptyState';
 import { Dropdown } from '@components/Dropdown';
-import { Accordion, type AccordionItem } from '@components/Accordion';
+import { BrowserTree, BrowserFolder, BrowserRow, BrowserTag, BrowserEmpty } from '@components/BrowserTree';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -158,6 +160,25 @@ const EFFECT_CATEGORY_ORDER: readonly string[] = [
   'Distort', 'Keying', 'Time', 'Transition',
 ];
 
+/**
+ * One glyph per folder, naming what the folder DOES.
+ *
+ * Eight rows carrying the same mark is a label repeated eight times, not a set
+ * of distinctions — and the row you are scanning for is found by shape long
+ * before it is found by reading. Keyed by the same strings as
+ * `EFFECT_CATEGORY_ORDER`, so a new folder is a compile error until it has one.
+ */
+const EFFECT_CATEGORY_ICON: Record<string, IconName> = {
+  'Blur & Sharpen': 'blur',
+  'Color Correction': 'palette',
+  Stylize: 'brush',
+  Generate: 'gradient',
+  Distort: 'waves',
+  Keying: 'eraser',
+  Time: 'clock',
+  Transition: 'wipe',
+};
+
 export function EffectsPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
   useSceneRevision((s) => s.rev);
@@ -180,10 +201,10 @@ export function EffectsPanel(): JSX.Element {
   // Every effect in EFFECT_DEFS renders on the unified GPU engine, so nothing
   // is locked. The availability check that used to gate this returned a constant
   // `{ ok: true }`, which left the lock icon, the `disabled` attribute and the
-  // `effectRowCardUnavailable` style permanently unreachable — dead branches
-  // that read as if a real capability check were still running. Removed rather
-  // than kept as a stub; reinstate a real predicate here if a backend ever
-  // stops supporting an effect again.
+  // unavailable styling permanently unreachable — dead branches that read as if
+  // a real capability check were still running. Removed rather than kept as a
+  // stub; reinstate a real predicate here if a backend ever stops supporting an
+  // effect again.
   const node = hasSelection ? defaultSceneGraph.getNode(primary!) : undefined;
   const kind = node ? readNodeKind(node) : 'shape';
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
@@ -200,42 +221,10 @@ export function EffectsPanel(): JSX.Element {
     return groups;
   }, [browserDefs]);
 
-  const browserAccordionItems = useMemo((): AccordionItem[] => {
-    return Object.entries(effectGroups)
-      .filter(([_, items]) => items.length > 0)
-      .map(([cat, items], index) => ({
-        id: cat,
-        title: cat,
-        badge: <span className={styles.catBadge}>{items.length}</span>,
-        defaultOpen: index === 0,
-        content: (
-          <div className={styles.effectRowsList}>
-            {items.map((d) => {
-              return (
-                <button
-                  key={d.type}
-                  type="button"
-                  className={styles.effectRowCard}
-                  draggable
-                  onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
-                  title={`Add ${d.label} — or drag onto a layer`}
-                  onClick={() => { if (primary) addEffect(primary, d.type); }}
-                >
-                  <div className={styles.effectIconWrapper}>
-                    <Icon name="sparkles" size={12} />
-                  </div>
-                  <div className={styles.effectInfo}>
-                    <span className={styles.effectLabelText}>{d.label}</span>
-                    {d.gpuOnly && <span className={styles.gpuBadge}>GPU</span>}
-                  </div>
-                  <Icon name="plus" size={12} className={styles.effectAddIcon} />
-                </button>
-              );
-            })}
-          </div>
-        )
-      }));
-  }, [effectGroups, primary]);
+  const browserFolders = useMemo(
+    () => Object.entries(effectGroups).filter(([, items]) => items.length > 0),
+    [effectGroups],
+  );
 
   // Every hook above has run — returning here is now hook-count-stable.
   if (!hasSelection || !primary) {
@@ -312,8 +301,8 @@ export function EffectsPanel(): JSX.Element {
       )}
       <EffectStack nodeId={primary} />
 
-      {/* Effects & presets browser — list of effect types to add */}
-      <div className={styles.sectionTitle}>Add Effect &amp; Presets</div>
+      {/* Effects & Presets browser — the AE library tree of effect types. */}
+      <div className={styles.sectionTitle}>Effects &amp; Presets</div>
       <div className={styles.browser}>
         <Input
           value={effectQuery}
@@ -321,12 +310,40 @@ export function EffectsPanel(): JSX.Element {
           size="sm"
           fullWidth
           leftIcon="search"
+          clearable
+          onClear={() => setEffectQuery('')}
           onChange={(e) => setEffectQuery(e.currentTarget.value)}
         />
-        {browserAccordionItems.length > 0 ? (
-          <Accordion items={browserAccordionItems} />
+        {browserFolders.length > 0 ? (
+          <BrowserTree>
+            {browserFolders.map(([cat, items], index) => (
+              <BrowserFolder
+                key={cat}
+                label={cat}
+                icon={EFFECT_CATEGORY_ICON[cat]}
+                count={items.length}
+                defaultOpen={index === 0}
+                // Typing is hunting, not browsing: every folder still holding a
+                // match opens, and stays open for as long as the query does.
+                forceOpen={!!q}
+              >
+                {items.map((d) => (
+                  <BrowserRow
+                    key={d.type}
+                    label={d.label}
+                    fx
+                    right={d.gpuOnly ? <BrowserTag>GPU</BrowserTag> : undefined}
+                    title={`Add ${d.label} — or drag onto a layer`}
+                    draggable
+                    onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
+                    onClick={() => { if (primary) addEffect(primary, d.type); }}
+                  />
+                ))}
+              </BrowserFolder>
+            ))}
+          </BrowserTree>
         ) : (
-          <div className={styles.hint}>No effects match “{effectQuery}”.</div>
+          <BrowserEmpty>No effects match “{effectQuery}”.</BrowserEmpty>
         )}
       </div>
 
@@ -351,10 +368,17 @@ export function EffectsPanel(): JSX.Element {
       </div>
 
       {masks.length > 0 && (
-        <div className={styles.list}>
+        <div className={styles.stackList}>
           {masks.map((m, i) => (
-            <div key={m.id} className={styles.item}>
-              <div className={styles.itemHead}>
+            // Same card as an applied effect: header band, then the parameters
+            // under it. A mask IS a per-layer item with a mode and a handful of
+            // values, exactly like an effect, and the panel showing the two in
+            // two different shapes was the only reason they read as unrelated.
+            <div key={m.id} className={styles.effectCardItem}>
+              <div className={styles.effectCardHead}>
+                <span className={styles.maskMark} aria-hidden>
+                  <Icon name="mask-square" size={13} />
+                </span>
                 <span className={styles.itemLabel}>Mask {i + 1}</span>
                 <Dropdown
                   placement="left-start"
@@ -372,38 +396,42 @@ export function EffectsPanel(): JSX.Element {
                     onSelect: () => updateMaskPath(primary, m.id, { mode: x.mode }, maskTime),
                   }))}
                 />
-                <button
-                  type="button"
-                  className={styles.remove}
-                  aria-label={`Remove Mask ${i + 1}`}
-                  onClick={() => removeMaskPath(primary, m.id)}
-                >
-                  <Icon name="close" size={12} />
-                </button>
+                <div className={styles.itemActions}>
+                  <button
+                    type="button"
+                    className={styles.remove}
+                    aria-label={`Remove Mask ${i + 1}`}
+                    title={`Remove Mask ${i + 1}`}
+                    onClick={() => removeMaskPath(primary, m.id)}
+                  >
+                    <Icon name="close" size={12} />
+                  </button>
+                </div>
               </div>
-              <div className={styles.maskControls}>
-                <label className={styles.maskField}>
-                  <span>Feather</span>
+              <div className={styles.effectParamsBody}>
+                {/* One PropertyRow per value, so a mask's Feather sits in the
+                    same column as an effect's Softness rather than in a
+                    three-up strip of its own. */}
+                <PropertyRow label="Feather" compact>
                   <ValueField value={m.feather} min={0} max={200} precision={0} unit="px"
                     onChange={(v) => updateMaskPath(primary, m.id, { feather: v }, maskTime)} aria-label="Mask feather" />
-                </label>
-                <label className={styles.maskField}>
-                  <span>Opacity</span>
+                </PropertyRow>
+                <PropertyRow label="Opacity" compact>
                   <ValueField value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
                     onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 }, maskTime)} aria-label="Mask opacity" />
-                </label>
-                <label className={styles.maskField}>
-                  <span>Expansion</span>
+                </PropertyRow>
+                <PropertyRow label="Expansion" compact>
                   <ValueField value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
                     onChange={(v) => updateMaskPath(primary, m.id, { expansion: v }, maskTime)} aria-label="Mask expansion" />
-                </label>
-                <button
-                  type="button"
-                  className={m.inverted ? styles.invertOn : styles.addChip}
-                  onClick={() => updateMaskPath(primary, m.id, { inverted: !m.inverted }, maskTime)}
-                >
-                  Invert
-                </button>
+                </PropertyRow>
+                <PropertyRow label="Inverted" compact>
+                  <Checkbox
+                    checked={!!m.inverted}
+                    onChange={() => updateMaskPath(primary, m.id, { inverted: !m.inverted }, maskTime)}
+                    aria-label={`Invert Mask ${i + 1}`}
+                    style={{ width: 14, height: 14 }}
+                  />
+                </PropertyRow>
               </div>
             </div>
           ))}

@@ -21,9 +21,9 @@ import pluginHost from '@core/plugins/PluginHost';
 import { usePluginStore } from '@stores/pluginStore';
 import type { MenuGroupModel, MenuItemModel } from './menuModel';
 
-/** Label suffix for a plugin that is installed but has no live worker. */
+/** Label suffix for a plugin the user cannot currently use. */
 function stoppedNote(status: string): string {
-  return status === 'error' ? ' (stopped — see Manage Plugins…)' : ' (disabled)';
+  return status === 'error' ? ' (stopped — see its log)' : ' (disabled)';
 }
 
 export function buildPluginsMenuGroup(): MenuGroupModel {
@@ -37,24 +37,32 @@ export function buildPluginsMenuGroup(): MenuGroupModel {
     const { manifest } = entry;
     const info = pluginHost.info(manifest.id);
 
-    if (info.status !== 'running') {
+    // `inactive` belongs with `running`, not with `stopped`. Its commands are
+    // registered and invoking one starts it, so greying them out would hide a
+    // working plugin behind a state the user never chose and cannot clear.
+    if (info.status === 'stopped' || info.status === 'error') {
       // No commandId ⇒ the renderers draw it disabled. Present, but honest.
       items.push({ label: `${manifest.name}${stoppedNote(info.status)}` });
       items.push({ separator: true });
       continue;
     }
 
-    if (manifest.panel) {
-      items.push({ commandId: `plugin.${manifest.id}.panel`, label: `${manifest.name}: Panel` });
+    for (const panel of manifest.contributes.panels) {
+      items.push({ commandId: `plugin.${manifest.id}.panel.${panel.id}` });
     }
-    for (const cmd of info.commands) {
+    // Declared commands come from the manifest, so they are listed whether or
+    // not the worker has ever run. A plugin that also registers commands at
+    // runtime adds those on top, once it is up.
+    const declared = manifest.contributes.commands.map((c) => c.id);
+    const runtimeOnly = info.commands.map((c) => c.id).filter((id) => !declared.includes(id));
+    for (const id of [...declared, ...runtimeOnly]) {
       // No label override — the registry's label is already "Name: Label", and
       // duplicating that string here is how the two drift apart.
-      items.push({ commandId: `plugin.${manifest.id}.${cmd.id}` });
+      items.push({ commandId: `plugin.${manifest.id}.${id}` });
     }
-    // A running plugin that contributes nothing is a real state (it may only
-    // react to selection), and it should still be visible as installed.
-    if (!manifest.panel && info.commands.length === 0) {
+    // A plugin that contributes nothing is a real state (it may only react to
+    // selection), and it should still be visible as installed.
+    if (manifest.contributes.panels.length === 0 && declared.length === 0 && runtimeOnly.length === 0) {
       items.push({ label: `${manifest.name} (no commands)` });
     }
     items.push({ separator: true });
@@ -65,7 +73,11 @@ export function buildPluginsMenuGroup(): MenuGroupModel {
     items.push({ separator: true });
   }
 
-  items.push({ commandId: 'view.plugins', label: 'Manage Plugins…' });
+  // One route in, because there is one surface. Finding, installing, managing,
+  // adjusting permissions and reading a plugin's log all happen in the Plugins
+  // panel and the plugin pages it opens. There is no second manager to offer,
+  // and offering one was how the two of them drifted.
+  items.push({ commandId: 'view.marketplace', label: 'Plugins' });
 
   return { id: 'plugins', label: 'Plugins', items };
 }

@@ -17,7 +17,16 @@ export interface SliderProps {
   max?: number;
   step?: number;
   disabled?: boolean;
+  /** Renders a visible caption above the track, and names the input. */
   label?: string;
+  /**
+   * Names the input WITHOUT drawing a caption — for a slider sitting under a
+   * row that already carries the property's name. Passing `label` there printed
+   * the name twice ("Distance 6 px", then "Drop Shadow Distance" underneath);
+   * omitting it left the range input with no accessible name at all. Ignored
+   * when `label` is set, which already names the input.
+   */
+  'aria-label'?: string;
   showValue?: boolean;
   onChange?: (value: number) => void;
   className?: string;
@@ -37,6 +46,7 @@ export function Slider({
   step = 1,
   disabled = false,
   label,
+  'aria-label': ariaLabel,
   showValue = false,
   onChange,
   className,
@@ -100,7 +110,7 @@ export function Slider({
           onInput={onInput}
           onKeyDown={onKeyDown}
           className={styles.input}
-          aria-label={label}
+          aria-label={label ?? ariaLabel}
         />
       </div>
     </div>

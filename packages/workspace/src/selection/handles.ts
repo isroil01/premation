@@ -4,14 +4,20 @@
  * overlay/tool decides. Handle ids follow compass conventions so a resize tool
  * can map a grabbed handle to an axis.
  *
- * ── There is deliberately no rotation handle ─────────────────────────
+ * ── There is deliberately no rotation HANDLE ─────────────────────────
  * A rotate grip floating off one corner buys one gesture and costs three
  * things: a dead zone between the corner and the grip where clicks do nothing,
  * accidental rotation whenever a user reaches slightly wide for a corner, and a
  * gizmo whose affordances no longer read as "this box has eight symmetric
- * grips". Rotation is a TOOL MODE here (`RotateTool`, W), which also pivots on
- * the anchor — the same point keyframed rotation revolves around — so the two
- * cannot disagree.
+ * grips". So this list stays eight resize grips.
+ *
+ * Rotation is available two other ways, and neither is a handle. `RotateTool`
+ * (W) is the tool mode. `SelectTool` also rotates from a ZONE just outside each
+ * corner (`ROTATE_RING_PX`) — which is not a grip: it is drawn nowhere, it sits
+ * entirely outside the box so there is no gap to fall into, and `pickHandle`
+ * runs first so the corner grip keeps every pixel it had. All three pivot on the
+ * ANCHOR — the same point keyframed rotation revolves around — so none of them
+ * can disagree with a keyframe.
  *
  * ── Degrading at small sizes ─────────────────────────────────────────
  * Eight 8px handles on a 30px box is not a gizmo, it is a blob. Below a

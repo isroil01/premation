@@ -1,36 +1,9 @@
 /*
- * The bar sizes to --bar-height-panel (32px) so it clears a 24px control with
- * a 4px ring top and bottom. It used to be 28px, which left only 2px around
- * the 24px buttons inside it and made them look jammed against the seams.
- * Gap-based spacing replaces the per-child margins the children used to carry.
+ * `.root` is gone with `ViewportHeader` — there is no bar above the canvas any
+ * more. So are `.compName` / `.compLabel`: the composition name is the Scene
+ * tab's label now (`layout/Tabs/EditorTabs.tsx`), styled by the tab strip like
+ * every other tab.
  */
-.root {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: var(--bar-height-panel);
-  min-height: var(--bar-height-panel);
-  background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid var(--color-border);
-  padding: 0 var(--space-4);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-sans);
-  user-select: none;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  position: relative;
-  z-index: 40;
-}
-
-.root::-webkit-scrollbar {
-  display: none;
-}
 
 .group {
   display: flex;
@@ -41,47 +14,27 @@
   white-space: nowrap;
 }
 
-.spacer {
-  flex: 1 1 auto;
-  min-width: var(--space-4);
-}
-
-
-.compName {
+/*
+ * The tool cluster, INSIDE the timeline's tool row.
+ *
+ * Every property that made it a floating pill is gone: the border, the radius,
+ * the shadow, the backdrop blur and its own surface colour. All of those exist
+ * to separate a thing from the canvas it hovers over, and it does not hover
+ * over anything now — it sits in a row beside Play and the trim buttons, so it
+ * has to read as part of that row rather than as an object resting on it.
+ *
+ * Still shrink-wrapped and `nowrap`: most of these controls are contextual, and
+ * the row scrolls rather than reflows when they all appear at once.
+ */
+.tools {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: 100%;
-  background: transparent;
-  border: none;
-  border-right: 1px solid var(--color-border);
-  color: var(--color-text-primary);
+  gap: var(--space-1);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  padding: 0 var(--space-5);
-  margin-right: var(--space-2);
-  min-width: 120px;
-  max-width: 200px;
-  letter-spacing: 0.01em;
-  transition: background var(--motion-duration-fast) var(--motion-ease-standard);
-  flex-shrink: 0;
+  font-family: var(--font-family-sans);
+  user-select: none;
   white-space: nowrap;
-}
-
-.compName:hover {
-  background: var(--color-hover);
-}
-
-.compIcon {
-  color: var(--color-primary);
   flex-shrink: 0;
-}
-
-.compLabel {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /*
@@ -132,6 +85,16 @@
   background: color-mix(in srgb, var(--color-primary) 25%, transparent);
   color: var(--color-primary);
   border-color: transparent;
+}
+
+/* The auto-keyframe button's "REC" word. Inline styles before — which meant it
+   could not be targeted by the collapse rules below. */
+.recLabel {
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .sep {
@@ -217,9 +180,7 @@
  * text on these badges were two shades apart.
  */
 .animatedChip,
-.softwareBadge,
-.engineBadge,
-.engineBadgeFallback {
+.softwareBadge {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -245,19 +206,32 @@
   border-color: color-mix(in srgb, var(--color-warning) 25%, transparent);
 }
 
-/* Active render engine. Neutral on WebGPU (the expected state — an always-on
-   green badge would just be chrome noise); amber on the WebGL2 fallback, which
-   is genuinely worth noticing. */
-.engineBadge {
-  /* Secondary, not tertiary: this chip sits on --color-surface-3, where
-     tertiary measures 3.76:1 (under AA) and secondary 5.19:1. */
-  color: var(--color-text-secondary);
-  background: var(--color-surface-3);
-  border-color: var(--color-border-subtle);
+/*
+ * Progressive collapse, driven by the TIMELINE ROW's width (`tl-toolbar`).
+ *
+ * This cluster is 300-400px of controls dropped into a row that was already
+ * using nearly all of its space, so on a narrow window it pushed the tools at
+ * the right edge out of view. Rather than let that happen silently, the cluster
+ * gives up its own least-valuable controls first, in a deliberate order — each
+ * one chosen because it has ANOTHER route, so nothing becomes unreachable:
+ *
+ *   1. Pop out viewport — also on the panel's grip menu.
+ *   2. Zoom group      — wheel zoom, +/- keys, and "Fit in view" inside the
+ *                        View Options dropdown, which stays.
+ *   3. The REC label   — the auto-keyframe button keeps its glyph and its
+ *                        active colour; only the word goes.
+ *
+ * A container query, not a media query: this row sits between two docks, so the
+ * window's width says nothing useful about how much room it actually has.
+ */
+@container tl-toolbar (max-width: 1180px) {
+  .tools .popOut {
+    display: none;
+  }
 }
 
-.engineBadgeFallback {
-  color: var(--color-warning);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-warning) 22%, transparent);
+@container tl-toolbar (max-width: 920px) {
+  .tools .recLabel {
+    display: none;
+  }
 }

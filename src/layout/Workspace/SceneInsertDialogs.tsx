@@ -1,7 +1,7 @@
 /**
  * SceneInsertDialogs — AE-parity "New Camera" / "New Light" creation dialogs.
  *
- * The ViewportHeader's +Camera / +Light buttons open these instead of silently
+ * The +Camera / +Light buttons open these instead of silently
  * inserting hardcoded seeds. Both collect a small set of options and hand them
  * to insertCamera / insertLight (whose no-arg call keeps the legacy defaults,
  * so AI tools and other programmatic callers are unaffected).

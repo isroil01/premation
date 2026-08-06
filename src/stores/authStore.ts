@@ -102,7 +102,13 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
       set({ user: res.user, status: 'authenticated', error: null });
       await afterAuth(res.user.id);
     } catch (err) {
-      set({ status: 'idle', error: (err as Error).message || 'Sign in failed' });
+      // A sign-in can fail *after* the server has already minted the session —
+      // anything past `api.login` throws with a live refresh token sitting in
+      // the keystore. Leaving it is what produced the ghost: the screen said
+      // sign-in failed, and the next launch came up signed in anyway. If we
+      // report failure, there must be no session left to restore.
+      await clearSession().catch(() => undefined);
+      set({ status: 'idle', user: null, error: (err as Error).message || 'Sign in failed' });
       throw err;
     }
   },
@@ -116,7 +122,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
       set({ user: res.user, status: 'authenticated', error: null });
       await afterAuth(res.user.id);
     } catch (err) {
-      set({ status: 'idle', error: (err as Error).message || 'Registration failed' });
+      // Same reasoning as `login`: a failure reported after the account was
+      // created must not leave a restorable session behind.
+      await clearSession().catch(() => undefined);
+      set({ status: 'idle', user: null, error: (err as Error).message || 'Registration failed' });
       throw err;
     }
   },

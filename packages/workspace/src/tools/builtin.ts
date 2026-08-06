@@ -25,7 +25,7 @@ import { commands } from '../commands/WorkspaceCommands';
 import * as Mat from '../math/Mat2D';
 import type { HandleId } from '../selection/handles';
 import { resizeBounds, resizeBoundsAboutPivot, rotationDelta } from '../selection/transform';
-import { handleCursor, visibleHandleIds } from '../selection/handles';
+import { handleCursor, visibleHandleIds, CORNER_HANDLES } from '../selection/handles';
 import type { CursorType } from '../cursor/CursorManager';
 import type { Tool, ToolContext, ToolPointerEvent, ToolDragEvent, ToolKeyEvent } from './Tool';
 
@@ -35,6 +35,23 @@ const DEFAULT_CREATE_SIZE = 100;
 /** Screen-pixel radius for grabbing a selection handle. */
 const HANDLE_PICK_RADIUS = 9;
 
+/**
+ * How far OUTSIDE a corner grip the rotate zone reaches, in screen px.
+ *
+ * `handles.ts` argues against a rotate GRIP floating off a corner, and it is
+ * right: a detached grip creates a dead gap between corner and grip, steals
+ * clicks meant for the corner, and breaks the read of "eight symmetric grips".
+ * None of those apply to a zone that lives entirely OUTSIDE the box — there is
+ * nothing between it and the corner to fall into, it is drawn nowhere, and the
+ * grips are untouched.
+ *
+ * The ordering is what makes it safe: `pickHandle` runs FIRST and wins, so the
+ * corner dot keeps every pixel it had. Rotation only sees a press the resize
+ * handle already declined. That is the "must not interrupt the resize dot"
+ * requirement, expressed as precedence rather than as a gap.
+ */
+const ROTATE_RING_PX = 26;
+
 // ── Select ─────────────────────────────────────────────────────────
 export class SelectTool implements Tool {
   readonly id = 'select';
@@ -42,9 +59,15 @@ export class SelectTool implements Tool {
   readonly shortcut = 'v';
   readonly cursor = 'default' as const;
 
-  private mode: 'idle' | 'marquee' | 'move' | 'resize' = 'idle';
+  private mode: 'idle' | 'marquee' | 'move' | 'resize' | 'rotate' = 'idle';
   private downNodeId: NodeId | null = null;
   private downHandle: HandleId | null = null;
+  /** Set on press when the pointer was in a corner's rotate ring. */
+  private downRotate = false;
+  /** Layer rotation (radians) when a rotate drag began. */
+  private startRotation = 0;
+  /** Pointer angle about the pivot when a rotate drag began. */
+  private startAngle = 0;
   private moveIds: NodeId[] = [];
   private startBounds: Rect | null = null;
   /** Scale at the moment a resize drag began — the base the ratio applies to. */
@@ -94,7 +117,11 @@ export class SelectTool implements Tool {
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext): void {
     // A handle grab (single selection) takes priority over hit-testing nodes.
     this.downHandle = this.pickHandle(e.screen, ctx);
-    this.downNodeId = this.downHandle ? null : ctx.hitTester.hitTest(e.world)?.id ?? null;
+    // Resize wins. The rotate ring only ever sees a press the corner grip has
+    // already declined, which is what keeps the grip's hit area intact.
+    this.downRotate = !this.downHandle && this.inRotateRing(e.screen, ctx);
+    this.downNodeId =
+      this.downHandle || this.downRotate ? null : ctx.hitTester.hitTest(e.world)?.id ?? null;
   }
 
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext): void {
@@ -104,8 +131,16 @@ export class SelectTool implements Tool {
     if (this.mode !== 'idle') return;
     const handle = this.pickHandle(e.screen, ctx);
     this.cursorPop?.();
-    this.cursorPop = handle
-      ? ctx.cursor.pushOverride(handleCursor(handle, this.selectionRotation(ctx)) as CursorType)
+    if (handle) {
+      this.cursorPop = ctx.cursor.pushOverride(
+        handleCursor(handle, this.selectionRotation(ctx)) as CursorType,
+      );
+      return;
+    }
+    // Just outside a corner: the rotate cursor, so the gesture is discoverable
+    // by hovering rather than by knowing it exists.
+    this.cursorPop = this.inRotateRing(e.screen, ctx)
+      ? ctx.cursor.pushOverride('rotate' as CursorType)
       : null;
   }
 
@@ -119,7 +154,10 @@ export class SelectTool implements Tool {
 
   onClick(e: ToolPointerEvent, ctx: ToolContext): void {
     // Clicking a handle (no drag) shouldn't change the selection.
-    if (this.downHandle) return;
+    // Clicking a handle OR the rotate ring (no drag) must not change the
+    // selection — a click just outside a corner is a rotation the user thought
+    // better of, not a click on the empty canvas behind it.
+    if (this.downHandle || this.downRotate) return;
     ctx.selection.clickAt(e.world, e.modifiers);
     ctx.requestRender();
   }
@@ -138,7 +176,27 @@ export class SelectTool implements Tool {
 
   onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
     const sel = currentSelection(ctx);
-    // Handle drag → resize/rotate the single selected node.
+    // Drag from just outside a corner → rotate, no tool change needed.
+    //
+    // Pivots on the ANCHOR, exactly as `RotateTool` does. That is not a detail:
+    // the anchor is what keyframed rotation revolves around, so pivoting on
+    // anything else here would make a drag and an equivalent keyframe disagree
+    // about where the layer ends up.
+    if (this.downRotate && sel.length === 1) {
+      this.transformId = sel[0]!;
+      const rn = ctx.scene.getNode(this.transformId);
+      if (rn) {
+        this.mode = 'rotate';
+        this.transformPivot = anchorWorld(rn);
+        this.startRotation = Math.atan2(rn.worldMatrix.b, rn.worldMatrix.a);
+        this.startAngle = Math.atan2(
+          e.startWorld.y - this.transformPivot.y,
+          e.startWorld.x - this.transformPivot.x,
+        );
+        return;
+      }
+    }
+    // Handle drag → resize the single selected node.
     if (this.downHandle && sel.length === 1) {
       this.transformId = sel[0]!;
       this.startBounds = ctx.selection.selectionBounds();
@@ -180,6 +238,24 @@ export class SelectTool implements Tool {
   onDrag(e: ToolDragEvent, ctx: ToolContext): void {
     if (this.mode === 'marquee') {
       ctx.selection.updateMarquee(e.currentWorld);
+      ctx.requestRender();
+      return;
+    }
+    if (this.mode === 'rotate' && this.transformId && this.transformPivot) {
+      // Angle DELTA from where the drag began, not the raw pointer angle —
+      // otherwise the layer snaps to point at the cursor on the first pixel of
+      // movement instead of turning with it.
+      const angle = Math.atan2(
+        e.currentWorld.y - this.transformPivot.y,
+        e.currentWorld.x - this.transformPivot.x,
+      );
+      let next = this.startRotation + (angle - this.startAngle);
+      // Shift = 15° increments, the same constraint the Rotate tool uses.
+      if (e.modifiers.shift) {
+        const step = Math.PI / 12;
+        next = Math.round(next / step) * step;
+      }
+      ctx.execute(commands.rotateNode(this.transformId, next, this.transformPivot));
       ctx.requestRender();
       return;
     }
@@ -236,6 +312,9 @@ export class SelectTool implements Tool {
     this.mode = 'idle';
     this.downNodeId = null;
     this.downHandle = null;
+    // Left set, a stale `downRotate` makes the NEXT plain click on the canvas
+    // silently refuse to change the selection (see `onClick`).
+    this.downRotate = false;
     this.transformId = null;
     this.startBounds = null;
     this.moveIds = [];
@@ -248,6 +327,40 @@ export class SelectTool implements Tool {
   }
 
   /** Which selection handle is under a screen point, if any. */
+  /**
+   * True when `screen` is in a corner's rotate ring: near a corner, and further
+   * from the box centre than that corner is.
+   *
+   * The "further from the centre" half is what makes this OUTSIDE-only, and it
+   * is expressed as a distance comparison rather than as a rectangle test on
+   * purpose — a rotated layer's corners are not axis-aligned, so an AABB test
+   * would put the zone in the wrong place for exactly the layers most likely to
+   * be rotated again.
+   *
+   * Requires the corner to be VISIBLE (`visibleIds`): on a box too small to draw
+   * grips, a rotate zone hovering around it would be a gesture with nothing on
+   * screen to explain it.
+   */
+  private inRotateRing(screen: Vec2, ctx: ToolContext): boolean {
+    if (ctx.selectionIds().length !== 1) return false;
+    const bounds = ctx.selection.selectionBounds();
+    if (!bounds) return false;
+    const allowed = new Set(this.visibleIds(ctx));
+    const centre = ctx.camera.worldToScreen(R.center(bounds));
+    const distFromCentre = Math.hypot(screen.x - centre.x, screen.y - centre.y);
+
+    for (const h of ctx.selection.handles()) {
+      if (!CORNER_HANDLES.includes(h.id) || !allowed.has(h.id)) continue;
+      const s = ctx.camera.worldToScreen(h.position);
+      const d = Math.hypot(s.x - screen.x, s.y - screen.y);
+      if (d > ROTATE_RING_PX) continue;
+      // Outside the corner, not inside the box.
+      const cornerFromCentre = Math.hypot(s.x - centre.x, s.y - centre.y);
+      if (distFromCentre > cornerFromCentre) return true;
+    }
+    return false;
+  }
+
   private pickHandle(screen: Vec2, ctx: ToolContext): HandleId | null {
     if (ctx.selectionIds().length !== 1) return null;
     // Only the handles that are actually drawn — an invisible grip that still
@@ -501,11 +614,40 @@ export class MaskEllipseTool extends CreateMaskShapeTool {
 }
 
 // ── Pen (AE-style bezier path builder) ──────────────────────────
+/**
+ * The Pen builds a PATH LAYER. It does not quietly turn into a mask tool.
+ *
+ * It used to: `finish` passed the single selected node as `maskTargetId`, so
+ * with one layer selected the drawn path became a MASK on that layer instead of
+ * a layer of its own. Two things made that destructive rather than clever:
+ *
+ *  1. **Every drawing tool selects what it just made** (`ports.ts` createNode
+ *     ends with `selection.set([node.id])`). So after drawing anything at all,
+ *     exactly one layer is selected — the one you just drew — and the pen was
+ *     therefore in mask mode essentially always, without ever being put there.
+ *  2. **An `add` mask clips its layer to the mask shape.** So the previous
+ *     stroke was cut down to whatever the new path enclosed, and the new path
+ *     never appeared as a layer. Both read as "my drawing was deleted", which is
+ *     exactly what it looked like.
+ *
+ * There was no indication of which mode the tool was in and no way to choose.
+ * Meanwhile this editor already says how masking is selected: it is a separate
+ * TOOL (`mask-rect`, `mask-ellipse`, and now `mask-pen`), never a hidden mode of
+ * a drawing tool. So the pen follows that rule like everything else, and the
+ * bezier-mask capability keeps a home in `MaskPenTool` below.
+ */
 export class PenTool implements Tool {
-  readonly id = 'pen';
-  readonly label = 'Pen';
-  readonly shortcut = 'g';
+  readonly id: string = 'pen';
+  readonly label: string = 'Pen';
+  readonly shortcut: string = 'g';
   readonly cursor = 'pen' as const;
+
+  /**
+   * When true the finished path becomes a mask on the selected layer instead of
+   * a new layer. Only `MaskPenTool` sets it — and it is still gated on a single
+   * selection, because a mask needs exactly one layer to belong to.
+   */
+  protected readonly maskMode: boolean = false;
 
   /** Committed bezier points in WORLD space (converted to local on finish). */
   private points: BezierPoint[] = [];
@@ -599,14 +741,35 @@ export class PenTool implements Tool {
         inX: p.inX - cx, inY: p.inY - cy,
         outX: p.outX - cx, outY: p.outY - cy,
       }));
-      // If exactly one node is selected, create this path as a mask for it
+      // A mask target ONLY in mask mode. In plain pen mode this is always
+      // undefined, so the path is always a layer — see the class comment.
       const selection = ctx.selectionIds();
-      const maskTargetId = selection.length === 1 ? selection[0] : undefined;
+      const maskTargetId =
+        this.maskMode && selection.length === 1 ? selection[0] : undefined;
       ctx.execute(commands.createNode('Path', bounds, localPoints, maskTargetId));
     }
     this.points = [];
     ctx.requestRender();
   }
+}
+
+/**
+ * The bezier mask tool — the pen, aimed at the selected layer's mask list.
+ *
+ * This is where the behaviour that used to be hidden inside `PenTool` lives, so
+ * nothing was lost by taking it out of there: it is now something the user picks
+ * from the mask group beside Rectangle Mask and Ellipse Mask, rather than
+ * something that happened to them because a layer was selected.
+ *
+ * With nothing selected it falls back to creating a path layer, exactly as the
+ * pen does — a mask with no layer to belong to is not a thing that can exist,
+ * and refusing the stroke would throw away the user's work.
+ */
+export class MaskPenTool extends PenTool {
+  override readonly id = 'mask-pen';
+  override readonly label = 'Pen Mask';
+  override readonly shortcut = '';
+  protected override readonly maskMode = true;
 }
 
 // ── Freehand pencil (drag to scribble an open stroked path) ─────────
@@ -1415,6 +1578,7 @@ export function createBuiltinTools(): Tool[] {
     new EllipseTool(),
     new MaskRectangleTool(),
     new MaskEllipseTool(),
+    new MaskPenTool(),
     new PolygonTool(),
     new StarTool(),
     new LineTool(),

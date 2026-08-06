@@ -8,7 +8,7 @@
  * against a mock transport. This layer is verified on-device against the server.
  */
 
-import { apiBaseUrl, getToken } from '@core/api/client';
+import { request, type ApiError } from '@core/api/client';
 import type { RemoteState, SyncTransport } from './SyncEngine';
 
 function bytesToB64(bytes: Uint8Array): string {
@@ -24,17 +24,22 @@ function b64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
+/**
+ * One sync call.
+ *
+ * Goes through the shared `request` helper rather than a hand-built fetch,
+ * which is what moved the bearer out of this file: on desktop the header is
+ * attached in the main process and this realm never sees the token. The 404 →
+ * null translation stays here, because "the vault has no copy of this project"
+ * is a normal answer to `getRemote`, not a failure.
+ */
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${apiBaseUrl()}${path}`, { ...init, headers });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`sync request failed: ${res.status}`);
-  const text = await res.text();
-  return text ? (JSON.parse(text) as T) : null;
+  try {
+    return (await request<T>(path, init)) ?? null;
+  } catch (err) {
+    if ((err as ApiError)?.status === 404) return null;
+    throw new Error(`sync request failed: ${(err as ApiError)?.status ?? 0}`);
+  }
 }
 
 export class HttpSyncTransport implements SyncTransport {

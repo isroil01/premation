@@ -1748,6 +1748,55 @@ export function updateEffectParam(
   );
 }
 
+/**
+ * Restore every parameter of one effect to its declared default — AE's `Reset`
+ * link in the Effect Controls header.
+ *
+ * ONE write, not one per parameter. Looping `updateEffectParam` over a def would
+ * emit an `AnimationChanged` per key, and history records per edit — resetting
+ * Bevel (nine params) would cost nine undo steps to walk back.
+ *
+ * Deliberately does NOT touch keyframes. A reset in AE restores the value the
+ * property rests at; removing the user's animation as a side effect of a control
+ * labelled "Reset" is the kind of surprise that costs work. The stopwatch is
+ * still the one thing that deletes tracks.
+ */
+export function resetEffectParams(nodeId: string, effectId: string): void {
+  const effects = getNodeEffects(nodeId);
+  const target = effects.find((e) => e.id === effectId);
+  const def = target ? DEF.get(target.type) : undefined;
+  if (!target || !def) return;
+  writeNodeEffects(
+    nodeId,
+    // `amount` goes too: it is the legacy scalar `paramsOf` folds in ahead of
+    // the defaults, so leaving it would make a reset effect keep its old look.
+    effects.map((e) => (e.id === effectId ? { ...e, params: defaultParams(def), amount: undefined } : e)),
+  );
+}
+
+/**
+ * Display names for a stack, AE-style: the second Gaussian Blur on a layer is
+ * "Gaussian Blur 2", the third "Gaussian Blur 3".
+ *
+ * Four identically-labelled rows is not a list, it is a guess — the AE
+ * screenshot users compare against reads "CC Smear / CC Smear 2 / CC Smear 3 /
+ * CC Smear 4", and stacking two blurs is ordinary practice, not a corner case.
+ *
+ * Numbering follows STACK ORDER and only starts at the second instance, so the
+ * first of a kind keeps its plain name whatever else is on the layer.
+ */
+export function effectDisplayNames(effects: ReadonlyArray<Effect>): Map<string, string> {
+  const seen = new Map<string, number>();
+  const out = new Map<string, string>();
+  for (const e of effects) {
+    const label = DEF.get(e.type)?.label ?? e.type;
+    const n = (seen.get(e.type) ?? 0) + 1;
+    seen.set(e.type, n);
+    out.set(e.id, n === 1 ? label : `${label} ${n}`);
+  }
+  return out;
+}
+
 /** Set an effect's primary parameter (what the old single-scalar API meant). */
 export function updateEffect(nodeId: string, effectId: string, amount: number): void {
   const effect = getNodeEffects(nodeId).find((e) => e.id === effectId);

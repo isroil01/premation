@@ -20,7 +20,6 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { framesToTimecode } from '@core/time/timecode';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
-import { applyEasingToSelection } from '@core/animation/easingSelection';
 import { applyEasingToKeyframes } from '@core/animation/keyframeAssistants';
 import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
 import { viewportFrameCache } from '@core/rendering/frameCache';
@@ -47,6 +46,9 @@ import { BottomTimeline } from '@layout/BottomTimeline';
 import { TopNav } from '@layout/TopNav';
 import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
+import { PluginConsentHost } from '@layout/Plugins/PluginConsentHost';
+import { PluginDeepLink } from '@layout/Plugins/PluginDeepLink';
+import { usePluginPanelRegistration } from '@layout/Plugins/usePluginPanels';
 import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineClip } from '@layout/Timeline';
 import type { TrackId } from '@app-types/common';
@@ -203,6 +205,12 @@ function EditorShellInner(): JSX.Element {
       if (p.onDemand && !openBefore.has(p.id)) useLayoutStore.getState().closePanel(p.id);
     }
   }, [registerPanel]);
+
+  // The panels that are NOT known at build time: one per plugin panel that asked
+  // for a tab of its own and got one. Registered by their own hook because the
+  // set changes while the app is running — install, uninstall, enable, disable —
+  // and the effect above deliberately runs once.
+  usePluginPanelRegistration();
 
 
   // Bumped when the engine's layers/clips change (add/remove/move/trim/split),
@@ -970,17 +978,6 @@ function EditorShellInner(): JSX.Element {
     const comp = node.components.find((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number');
     if (comp) updateNodeComponentProp(defaultSceneGraph, trackId, comp.id, prop, value);
   };
-  // Timeline easing pills (Linear/Ease/EaseIn/EaseOut/Hold). Apply to the
-  // currently selected keyframes; if none are selected, fall back to every
-  // keyframe on the selected layers so the pill always has a visible effect.
-  const handleSetEasing = (preset: EasingPreset): void => {
-    if (applyEasingToSelection(preset)) return;
-    useUIStore.getState().notify({
-      level: 'info',
-      message: 'Select keyframes first, then choose an easing.',
-      durationMs: 3000,
-    });
-  };
   const handleKeyframeContextMenu = (kfId: string, x: number, y: number): void => {
     const ref = parseKeyframeId(kfId);
     if (!ref) return;
@@ -1180,7 +1177,6 @@ function EditorShellInner(): JSX.Element {
             <BottomTimeline
               model={timelineModel}
               onScrub={handleScrub}
-              onSetEasing={handleSetEasing}
               onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
               onClipMove={handleClipMove}
               onClipTrim={handleClipTrim}
@@ -1270,6 +1266,12 @@ function EditorShellInner(): JSX.Element {
           sidebarRenderers={getAllPanelRenderers()}
           inspectorRenderers={getAllPanelRenderers()}
         />
+        {/* Consent, raised from anywhere: the sidebar, a detail tab or a
+            premation:// link. Mounted once, at app level, so no install path
+            can exist without it. */}
+        <PluginConsentHost />
+        {/* premation://plugin/<id> — focuses the Plugins panel and its tab. */}
+        <PluginDeepLink />
       </div>
     </div>
   );

@@ -32,6 +32,7 @@ import { useCompositionStore, type CompositionSettings } from '@stores/compositi
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import type { EditorDocument } from '@core/api/cloudDocument';
+import { DashboardPluginsTab } from './DashboardPluginsTab';
 import styles from './DashboardPage.module.css';
 
 function timeAgo(iso: string): string {
@@ -46,7 +47,7 @@ function timeAgo(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-type TabType = 'home' | 'projects' | 'assets' | 'renders' | 'trash' | 'settings';
+type TabType = 'home' | 'projects' | 'assets' | 'plugins' | 'renders' | 'trash' | 'settings';
 
 type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -661,6 +662,8 @@ export function DashboardPage(): JSX.Element {
   // Render Page Content based on selected sidebar Tab
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'plugins':
+        return <DashboardPluginsTab />;
       case 'home':
         return (
           <>
@@ -1482,6 +1485,11 @@ export function DashboardPage(): JSX.Element {
           title: 'Assets library',
           desc: 'Upload and organize media, audio backdrops, and overlays for your timelines.',
         };
+      case 'plugins':
+        return {
+          title: 'Plugins',
+          desc: 'Find, install and manage plugins. They run sandboxed, with no network access.',
+        };
       case 'renders':
         return {
           title: 'Render queue',
@@ -1526,6 +1534,14 @@ export function DashboardPage(): JSX.Element {
           >
             <Icon name="image" size={16} className={styles.navIcon} />
             <span>Assets Library</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.navLink} ${activeTab === 'plugins' ? styles.navLinkActive : ''}`}
+            onClick={() => setActiveTab('plugins')}
+          >
+            <Icon name="plugin" size={16} className={styles.navIcon} />
+            <span>Plugins</span>
           </button>
           <button
             type="button"

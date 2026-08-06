@@ -16,6 +16,35 @@
   overflow: hidden;
   user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /**
+   * ── The track-header column model ────────────────────────────────────────
+   *
+   * ONE set of widths, read by both the column HEADS (`.colHeads`) and the
+   * track ROWS (`.trackHeader`). They used to be two independent sets, and had
+   * drifted in two ways at once:
+   *
+   *   1. `.trackHeader` had `gap: var(--space-2)`; `.colHeads` had none. So
+   *      every column boundary added 4px of drift — measured in the running
+   *      app as +43px at the switches, +47 at Mode, +51 at T, +55 at Parent.
+   *   2. Both name columns were `flex: 1` inside `min-width: max-content`
+   *      containers whose intrinsic contents differ, so flex resolved them to
+   *      99px (head) against 134px (row) — 35px more drift underneath that.
+   *
+   * The visible result: the shy / fx / motion-blur / adjustment / guide / 3D
+   * legend sat 43px left of the switches it labels, and Mode / T / Parent &
+   * Link named the wrong columns too. Fixed widths on both sides make the two
+   * unable to disagree.
+   */
+  --tl-col-gap: var(--space-2);
+  --tl-col-name: 134px;
+  /* 6 switches × 22px + 5 gaps × 4px. It was 126px, so the switches OVERFLOWED
+     their own column by 26px and, being centre-justified, spilled ~13px past
+     each edge. That right-hand spill is what drove the 3D switch into the Mode
+     column's divider rule. */
+  --tl-col-switches: 152px;
+  /* Clearance between the last switch and Mode's divider rule. */
+  --tl-col-divider-space: var(--space-4);
 }
 
 .headerCol {
@@ -539,8 +568,11 @@
   background: #3ea0ff;
 }
 
+/* Fixed width, matching `.colHeadLayer` — the pair is what keeps every column
+   to their right (switches, Mode, T, Parent) under its own legend. */
 .layerInfoCol {
-  flex: 1;
+  width: var(--tl-col-name);
+  flex: none;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -560,14 +592,16 @@
   opacity: 0.6;
 }
 
+/* The divider rule needs air on BOTH sides: 8px was not enough once the 3D
+   switch had spilled out of its column, and the glyph sat on the line. */
 .modeCol {
   width: 76px;
   flex: none;
   display: flex;
   align-items: center;
   min-width: 0;
-  margin-left: 8px;
-  padding-left: 8px;
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
   border-left: 1px solid var(--color-border);
 }
 
@@ -588,8 +622,17 @@
   min-width: 0;
 }
 
+/**
+ * The six AE layer switches: shy · fx · motion blur · adjustment · guide · 3D.
+ *
+ * 152px, not 126px. Six 22px squares with five 4px gaps need 152, so at 126 the
+ * row overflowed its own column by 26px and — being centre-justified — spilled
+ * ~13px past each edge. The right-hand spill is what drove the 3D switch into
+ * the Mode column's divider rule; the left-hand spill is why the legend above
+ * could not be squared up by adjusting either side on its own.
+ */
 .aeSwitchesCol {
-  width: 126px;
+  width: var(--tl-col-switches);
   flex: none;
   display: flex;
   align-items: center;
@@ -628,6 +671,24 @@
   transition: all var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+/**
+ * Mode / T / Parent & Link fill their column.
+ *
+ * `inline-flex` sized these to their CONTENT, so a "None" parent was a 40px
+ * pill sitting under a 110px column headed "Parent & Link" — 70px of dead
+ * space, and the control looked unrelated to the label above it. Mode was 50 of
+ * 76 and T was 40 of 60, the same defect in smaller doses.
+ *
+ * Filling the column also buys room: a real parent layer's name gets ~110px
+ * before it ellipsises instead of ~40px, so most names now read in full.
+ */
+.modeCol .timelineSelectTrigger,
+.matteCol .timelineSelectTrigger,
+.parentCol .timelineSelectTrigger {
+  flex: 1;
+  min-width: 0;
+}
+
 .timelineSelectTrigger:hover {
   background: #222222;
   border-color: #3e3e3e;
@@ -638,8 +699,14 @@
   transform: scale(0.95);
 }
 
-/* Column heads for the switch columns — sit in the ruler strip, right-aligned
-   over the eye/lock columns below. */
+/**
+ * Column heads — the legend that sits in the ruler strip above the tracks.
+ *
+ * Its gap, its padding and every column width MUST equal `.trackHeader`'s, or
+ * the legend names the wrong column. It had NO gap while `.trackHeader` had
+ * `var(--space-2)`, so each boundary shifted the heads 4px left of the controls
+ * they label — cumulatively 43px by the switches and 55px by Parent & Link.
+ */
 .colHeads {
   position: absolute;
   left: 0;
@@ -648,6 +715,7 @@
   bottom: 0;
   display: flex;
   align-items: center;
+  gap: var(--tl-col-gap);
   padding: 0 var(--space-2);
   min-width: max-content;
   box-sizing: border-box;
@@ -672,17 +740,22 @@
   flex: none;
 }
 
+/* Fixed, not `flex: 1` — see the column model on `.root`. Flex resolved this to
+   99px here against 134px on the row, because the two containers' intrinsic
+   widths differ under `min-width: max-content`. */
 .colHeadLayer {
-  flex: 1;
+  width: var(--tl-col-name);
+  flex: none;
   text-align: left;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   padding-left: 0;
+  overflow: hidden;
 }
 
 .colHeadAeSwitches {
-  width: 126px;
+  width: var(--tl-col-switches);
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -693,6 +766,7 @@
   font-weight: var(--font-weight-medium);
 }
 
+/* Matches `.modeCol` exactly — same width, same divider, same spacing. */
 .colHeadMode {
   width: 76px;
   flex: none;
@@ -700,8 +774,8 @@
   font-size: var(--font-size-xs);
   color: #a0a0a0;
   font-weight: var(--font-weight-medium);
-  margin-left: 8px;
-  padding-left: 8px;
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
   border-left: 1px solid var(--color-border);
 }
 

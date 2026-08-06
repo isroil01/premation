@@ -109,10 +109,49 @@
   user-select: none;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: none;
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+
+  /*
+   * A CONTAINER, so the clusters inside can respond to the space this row
+   * actually has rather than to the window. The row sits between two docks
+   * whose widths the viewport knows nothing about, so a `@media` query would
+   * be measuring the wrong box — open both panels on a wide screen and this
+   * row is narrower than it is on a small laptop with them closed.
+   */
+  container-type: inline-size;
+  container-name: tl-toolbar;
+}
+
+/*
+ * The scrollbar is VISIBLE now, and that is the point.
+ *
+ * It was `scrollbar-width: none` on an `overflow-x: auto` row, which is the
+ * worst of both: content past the right edge was reachable only by a horizontal
+ * wheel gesture, with nothing on screen saying it existed. Controls did not
+ * "crash" — they were scrolled off and silently unreachable.
+ *
+ * Below the breakpoints in `ViewportTools.module.css` the row sheds its
+ * lowest-value controls instead, so this bar should now be a rare last resort
+ * rather than the normal state. Thin and dim so it reads as a hint.
+ */
+.header {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.header::-webkit-scrollbar {
+  height: 4px;
+}
+
+.header::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 2px;
+}
+
+.header::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .header::-webkit-scrollbar {
@@ -257,11 +296,18 @@
   border-radius: var(--radius-md, 6px);
   padding: 0 8px;
   height: 26px;
-  flex: 0 0 160px;
-  min-width: 100px;
+  flex: 1 1 160px;
+  min-width: 92px;
   max-width: 220px;
   transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-  flex-shrink: 0;
+}
+
+/* Nothing else in the row can shrink without losing a button, so the filter
+   gives up its space first and then itself. */
+@container tl-toolbar (max-width: 980px) {
+  .searchContainer {
+    display: none;
+  }
 }
 
 .searchContainer:hover {

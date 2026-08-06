@@ -36,6 +36,13 @@ const TOOL_MAP: Record<UITool, string> = {
   'direct-select': 'direct-select',
   'mask-rect': 'mask-rect',
   'mask-ellipse': 'mask-ellipse',
+  'mask-pen': 'mask-pen',
+  // Like puppet-pin and bone, the HOST owns this gesture: `useWorkspace`'s paint
+  // branch captures the pointer and returns before the engine sees it. The
+  // mapping only decides what happens when paint has no valid target, and there
+  // it is nothing — that branch returns rather than falling through to a marquee.
+  paint: 'select',
+  eraser: 'select',
   'puppet-pin': 'select',
   bone: 'select',
 };

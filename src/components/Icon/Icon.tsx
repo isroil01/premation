@@ -23,7 +23,7 @@ import {
   Image, FilmStrip, SpeakerHigh, SpeakerSlash, Shapes, Stack,
   MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut, ArrowsOut, ArrowsIn,
   Info, Warning, XCircle, CheckCircle, DotsSixVertical, DotsSix, Hand,
-  CaretDoubleUp, CaretDoubleDown, DiamondsFour, ListBullets, Flag,
+  CaretDoubleUp, CaretDoubleDown, ListBullets, Flag,
   Sparkle, Cube, Heart, Moon, Diamond, Sliders, Ghost, Camera, Lightbulb, User,
   AlignLeft, AlignCenterHorizontal, AlignRight, AlignTop, AlignCenterVertical, AlignBottom,
   ArrowsHorizontal, ArrowsVertical, Magnet, GridFour, Ruler, Scissors,
@@ -34,8 +34,14 @@ import {
   Export, ClockCounterClockwise, ShareNetwork, Link, PushPin, Bone, House,
   Globe, HandGrabbing, Perspective, VectorThree, GridNine, Sphere, Cylinder,
   Textbox, PictureInPicture, GraphicsCard,
+  // Effect-browser folder glyphs. Every folder in the browser used to carry the
+  // same mark, which is a label rather than a distinction — eight identical
+  // rows tell you nothing about which one holds Gaussian Blur.
+  Drop, Palette, Gradient, Waves, Eraser, Clock, SquareHalf, MagicWand,
   type Icon as PhosphorIcon, type IconWeight
 } from '@phosphor-icons/react';
+
+import { ICON_NAMES, type IconName } from './iconNames';
 
 export type { IconWeight };
 
@@ -44,52 +50,12 @@ const TRANSFORMS: Partial<Record<IconName, string>> = {
   'panel-bottom': 'rotate(-90deg)',
 };
 
-export const ICON_NAMES = [
-  'arrow-down', 'arrow-left', 'arrow-right', 'arrow-up', 'download',
-  'check', 'close', 'plus', 'minus',
-  'chevron-down', 'chevron-up', 'chevron-left', 'chevron-right',
-  'search', 'settings', 'menu', 'more-horizontal', 'more-vertical',
-  'eye', 'eye-off', 'lock', 'unlock',
-  'play', 'pause', 'stop', 'skip-back', 'skip-forward',
-  'refresh', 'rotate-cw', 'rotate', 'anchor',
-  'move',
-  'panel-left', 'panel-right', 'panel-bottom', 'layout',
-  'crosshair', 'theme', 'undo', 'redo',
-  'select-all', 'deselect', 'mouse-pointer', 'pen', 'type', 'square', 'circle',
-  'mask-square', 'mask-circle',
-  'pencil', 'line', 'star', 'polygon', 'curvature',
-  'copy', 'group', 'ungroup', 'trash',
-  'folder', 'folder-open', 'folder-plus', 'upload', 'file', 'image', 'video', 'audio', 'audio-off', 'media', 'shape', 'layers',
-  'component', 'zap',
-  'zoom-in', 'zoom-out', 'fit', 'maximize', 'minimize',
-  'info', 'warning', 'error', 'success',
-  'drag', 'grip-vertical', 'grip-horizontal', 'hand',
-  'collapse', 'expand',
-  'keyframe', 'track', 'marker', 'stopwatch',
-  'sparkles',
-  '3d', 'box', 'cube', 'scale', 'heart', 'cross', 'crescent', 'diamond', 'adjustment', 'shy',
-  'camera', 'light',
-  'user',
-  'align-left', 'align-center', 'align-right',
-  'align-top', 'align-middle', 'align-bottom',
-  'distribute-horizontal', 'distribute-vertical',
-  'magnet', 'grid', 'ruler',
-  'scissors',
-  'queue', 'plugin', 'path', 'ease', 'frame', 'select-arrow', 'sliders-h',
-  'brush', '3d-focus',
-  'loop', 'motion-blur', 'trim-in', 'trim-out', 'solid',
-  'graph-value', 'graph-speed', 'export', 'history', 'share', 'link', 'puppet-pin', 'push-pin', 'bone',
-  'home', 'app', 'voice', 'sound', 'mic', 'ai', 'brain', 'tv', 'tour', 'text-left', 'text-center', 'text-right',
-  // 3D viewport vocabulary — each of these exists because the glyph it replaced
-  // was already spoken for by a DIFFERENT action in the same toolbar (orbit was
-  // `refresh` = undo-ish, pan-camera was `hand` = the Hand tool, dolly was
-  // `zoom-in` = the Zoom tool, the ground plane was `grid` = the 2D grid
-  // overlay, and the 3D primitives borrowed the shape/text tool glyphs).
-  'orbit', 'hand-grab', 'pan-camera', 'perspective', 'axis-3d', 'ground-grid',
-  'sphere', 'cylinder', 'text-3d', 'pop-out', 'gpu',
-] as const;
-
-export type IconName = (typeof ICON_NAMES)[number];
+// The vocabulary itself lives in `iconNames.ts` — pure data, no React — so the
+// plugin manifest validator can check a third-party icon name without importing
+// a component. Re-exported here so `@components/Icon` stays the single import
+// site for everything else.
+export { ICON_NAMES };
+export type { IconName };
 
 const PHOSPHOR_MAP: Record<IconName, PhosphorIcon> = {
   'arrow-down': ArrowDown,
@@ -179,7 +145,11 @@ const PHOSPHOR_MAP: Record<IconName, PhosphorIcon> = {
   hand: Hand,
   collapse: CaretDoubleUp,
   expand: CaretDoubleDown,
-  keyframe: DiamondsFour,
+  // The keyframe diamond, singular. `DiamondsFour` — a 2×2 arrangement of four
+  // diamonds — was standing in for it everywhere the app draws a keyframe: the
+  // timeline, the property-row navigator, the stopwatch column. It reads as a
+  // grid glyph, not as the mark AE users are looking for.
+  keyframe: Diamond,
   track: ListBullets,
   marker: Flag,
   stopwatch: Timer,
@@ -255,6 +225,14 @@ const PHOSPHOR_MAP: Record<IconName, PhosphorIcon> = {
   'text-3d': Textbox,
   'pop-out': PictureInPicture,
   gpu: GraphicsCard,
+  blur: Drop,
+  palette: Palette,
+  gradient: Gradient,
+  waves: Waves,
+  eraser: Eraser,
+  clock: Clock,
+  wipe: SquareHalf,
+  'magic-wand': MagicWand,
 };
 
 export interface IconProps {

@@ -1064,7 +1064,7 @@ function Timeline({
               <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects" style={{ fontSize: 12 }}>fx</span></span>
               <span className={styles.colHeadItem}><Icon name="motion-blur" size={12} title="Motion Blur" /></span>
               <span className={styles.colHeadItem}><Icon name="adjustment" size={12} title="Adjustment Layer" /></span>
-              <span className={styles.colHeadItem}><Icon name="eye-off" size={12} title="Guide Layer (not rendered)" /></span>
+              <span className={styles.colHeadItem}><Icon name="frame" size={12} title="Guide Layer (not rendered)" /></span>
               <span className={styles.colHeadItem}><Icon name="3d" size={12} title="3D Layer" /></span>
             </span>
             <span className={styles.colHeadMode}>Mode</span>
@@ -1847,7 +1847,12 @@ const TrackHeader = memo(function TrackHeader({
           title={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
         >
-          <Icon name="eye-off" size={10} />
+          {/* NOT `eye-off`. That is the glyph the VISIBILITY switch shows when
+              a layer is hidden, so every row carried two eyes doing unrelated
+              jobs — visibility over in the pre-info column, guide-layer here —
+              and the pair read as one control duplicated. A guide layer is
+              reference framing the render skips, which is what `frame` says. */}
+          <Icon name="frame" size={10} />
         </button>
         <button
           type="button"

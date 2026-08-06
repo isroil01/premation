@@ -235,57 +235,19 @@ export function ViewControls(): JSX.Element {
     <div className={styles.toolGroup}>
       <span className={styles.toolDivider} aria-hidden />
 
-      {/* Direct Rulers quick toggle */}
-      <button
-        type="button"
-        className={rulers ? styles.toolActive : styles.tool}
-        aria-label="Toggle Rulers"
-        aria-pressed={rulers}
-        title={rulers ? 'Hide Rulers (Ctrl+R)' : 'Show Rulers (Ctrl+R)'}
-        onClick={toggleRulers}
-      >
-        <Icon name="ruler" size={14} />
-      </button>
+      {/*
+        Rulers, Safe Areas and the channel picker used to sit here as three
+        standalone controls, immediately to the LEFT of a dropdown that already
+        offers all three ("Rulers", "Safe Areas", "Show Channel: …"). They were
+        duplicates a centimetre apart — two controls for one piece of state,
+        which is how the two of them drift.
 
-      {/* Direct Safe Areas quick toggle */}
-      <button
-        type="button"
-        className={safeArea ? styles.toolActive : styles.tool}
-        aria-label="Toggle Safe Areas"
-        aria-pressed={safeArea}
-        title={safeArea ? 'Hide Safe Areas' : 'Show Safe Areas'}
-        onClick={toggleSafeArea}
-      >
-        <Icon name="frame" size={14} />
-      </button>
-
-      {/* Direct Channel Selector */}
-      <Dropdown
-        placement="bottom-end"
-        trigger={
-          <button
-            type="button"
-            className={styles.toolDropdownTrigger}
-            title={`Channel View: ${CHANNEL_LABEL[channel]}`}
-          >
-            <span style={{ fontSize: '11px', fontWeight: 600, padding: '0 2px' }}>{CHANNEL_LABEL[channel]}</span>
-            <Icon name="chevron-down" size={10} style={{ opacity: 0.6 }} />
-          </button>
-        }
-        items={([
-          ['rgb', 'RGB (color)'],
-          ['red', 'Red Channel'],
-          ['green', 'Green Channel'],
-          ['blue', 'Blue Channel'],
-          ['alpha', 'Alpha Channel (Matte)'],
-        ] as const).map(([c, label]) => ({
-          type: 'checkbox' as const,
-          id: `toolbar-channel-${c}`,
-          label,
-          checked: channel === c,
-          onChange: () => setChannel(c),
-        }))}
-      />
+        They came out when this cluster moved into the timeline's tool row,
+        where the 104px they cost is the difference between the row fitting and
+        the row hiding controls off its right edge. The dropdown is one extra
+        click for three settings nobody changes mid-drag; scrolling a toolbar to
+        find a button you cannot see is worse than that click.
+      */}
 
       {/* View Options & Overlays Dropdown */}
       <Dropdown

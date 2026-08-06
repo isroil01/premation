@@ -854,3 +854,36 @@ silence they have to email someone about.
 They do **not** see the risk score or the findings. The score is an internal
 triage number that reads as a rating, and the findings are a list of the exact
 patterns the scanner looks for, which is the evasion guide.
+
+### Changing a signing key
+
+Trust-on-first-use used to mean a key change was refused permanently, and a
+publisher who lost their key republished under a new id. That is defensible as
+a guarantee and brutal as a product: it discards the install base, the install
+count, and the id every existing document references — and it punishes the one
+thing we most want authors to do, which is not keep a signing key somewhere
+that survives losing a laptop.
+
+Rotation replaces "never" with "only with something else you already proved".
+There are three gates, and a stolen account clears exactly one of them:
+
+1. **Authorising a key needs the account password**, re-entered. Either register
+   a backup alongside your first publish — the one moment it is free of risk,
+   since there is no install base to hijack yet — or add one from the dashboard
+   later. Publishing can never authorise a key: if it could, a stolen session
+   would be enough to take a plugin.
+2. **Rotating needs a package actually signed with that key.** An authorisation
+   that never ships anything changes nothing, and the authorisation is *spent*
+   on use — two keys that can both sign forever is what rotation exists to end.
+3. **Every installed copy needs its own user to accept.** The editor never
+   re-pins silently. It shows "the publisher's signing key changed", explains
+   that this is also what an account takeover looks like, and offers keeping the
+   current version as the emphasised choice. Declining is not an error; the
+   installed plugin goes on working.
+
+The change is on the plugin's public listing — when it happened and how it was
+authorised — because "the publisher's key changed" is precisely what someone who
+took over an account would want accepted quietly.
+
+If the editor's key-change prompt is unavailable for any reason, the update is
+**refused**, not accepted. A missing dialog is not consent.

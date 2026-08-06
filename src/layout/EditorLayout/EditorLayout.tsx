@@ -28,6 +28,8 @@ import { SplitPane } from '@components/SplitPane';
 import { LeftSidebar } from '@layout/LeftSidebar';
 import { RightInspector } from '@layout/RightInspector';
 import { WorkspaceViewport, type WorkspaceViewportProps } from '@layout/Workspace';
+import { EditorTabs } from '@layout/Tabs/EditorTabs';
+import { PluginDetailTab } from '@layout/Plugins/PluginDetailTab';
 import { Icon } from '@components/Icon';
 import { useLayoutStore } from '@stores/layoutStore';
 import styles from './EditorLayout.module.css';
@@ -115,7 +117,14 @@ export function EditorLayout({
             </button>
           </div>
         ) : (
-          <WorkspaceViewport {...(workspaceExtras ?? {})} />
+          // The viewport is handed to the tab strip as its permanent
+          // background rather than rendered beside it. `EditorTabs` keeps it
+          // mounted at all times and hides it with CSS — see the note there,
+          // because rendering it conditionally destroys the GPU context.
+          <EditorTabs
+            scene={<WorkspaceViewport {...(workspaceExtras ?? {})} />}
+            renderTab={(tab) => <PluginDetailTab pluginId={tab.ref} />}
+          />
         )}
     </div>
   );

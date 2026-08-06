@@ -17,9 +17,9 @@
 
 import { useMemo, useState } from 'react';
 import { Panel } from '@components/Panel';
-import { Accordion, type AccordionItem } from '@components/Accordion';
+import { BrowserTree, BrowserFolder, BrowserRow } from '@components/BrowserTree';
 import { Input } from '@components/Input';
-import { Icon } from '@components/Icon';
+import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import {
   listPresets,
@@ -45,6 +45,38 @@ type SortOrder = 'default' | 'alphabetical-asc' | 'alphabetical-desc';
 
 /** Folders that open on first paint — the ones a user most often wants. */
 const OPEN_BY_DEFAULT = new Set(['Entrances', 'Text/Animate In', USER_PRESET_FOLDER]);
+
+/** The row's preview canvas, in CSS px. Must match `.rowPreview` in the
+ *  stylesheet: the canvas is sized from these numbers, the box from those, and
+ *  a disagreement between them clips the drawing. */
+const PREVIEW_W = 48;
+const PREVIEW_H = 22;
+
+/**
+ * A glyph per folder, matching the Effects tab's folders — the two browsers sit
+ * beside each other and one carrying subject icons while the other carries none
+ * reads as two different components rather than one library.
+ *
+ * Folders come from preset DATA (`presetFolder`), not from a closed list, so
+ * this is a lookup with a fallback rather than an exhaustive Record: a preset
+ * authored into a new folder gets the generic folder glyph, never a crash.
+ */
+const PRESET_FOLDER_ICON: Record<string, IconName> = {
+  Entrances: 'trim-in',
+  Exits: 'trim-out',
+  'Emphases & Loops': 'loop',
+  '3D Motions': '3d',
+  Behaviors: 'ease',
+  Transitions: 'wipe',
+  Backgrounds: 'image',
+  [USER_PRESET_FOLDER]: 'user',
+};
+
+function folderIcon(folder: string): IconName {
+  // Text presets live in five `Text/…` sub-folders; they are all text.
+  if (folder.startsWith('Text/')) return 'type';
+  return PRESET_FOLDER_ICON[folder] ?? 'folder';
+}
 
 export function MotionPresetsPanel(): JSX.Element {
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -176,70 +208,7 @@ export function MotionPresetsPanel(): JSX.Element {
     },
   ];
 
-  const accordionItems = useMemo(
-    (): AccordionItem[] =>
-      folders.map(([folder, items]) => ({
-        id: folder,
-        title: folder,
-        badge: <span className={styles.catBadge}>{items.length}</span>,
-        // Searching means the user is hunting, not browsing — open everything.
-        defaultOpen: !!search.trim() || OPEN_BY_DEFAULT.has(folder),
-        content: (
-          <div className={styles.presetGrid}>
-            {items.map((preset) => {
-              const unavailable = preset.requires === 'text' && !!selectedIds[0] && !selectionIsText;
-              return (
-                <div key={preset.name} className={styles.presetCardWrapper}>
-                  <button
-                    type="button"
-                    className={styles.presetCard}
-                    title={
-                      unavailable
-                        ? `${preset.name} — needs a text layer`
-                        : `${preset.description ?? preset.name}\nClick to apply, or drag onto a layer.`
-                    }
-                    draggable
-                    onDragStart={(e) => setCanvasDrag(e, { kind: 'motionPreset', name: preset.name })}
-                    onClick={() => apply(preset)}
-                    // Double-click applies too: AE users reach for it, and a
-                    // second apply is undoable, so the duplicate is harmless.
-                    onDoubleClick={() => apply(preset)}
-                    style={unavailable ? { opacity: 0.45 } : undefined}
-                  >
-                    <div className={styles.presetPreview}>
-                      <PresetPreview preset={preset} />
-                    </div>
-                    <div className={styles.presetInfo}>
-                      <span className={styles.presetName}>{preset.name}</span>
-                      <span className={styles.presetDesc}>
-                        {preset.description ?? 'Custom user motion preset.'}
-                      </span>
-                    </div>
-                  </button>
-                  {!preset.builtin ? (
-                    <button
-                      type="button"
-                      className={styles.deleteBtn}
-                      title="Delete custom preset"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deletePreset(preset.name);
-                        notify({ level: 'success', message: `Deleted preset "${preset.name}"`, durationMs: 2000 });
-                        // The panel refreshes off the scene revision.
-                        bumpScene();
-                      }}
-                    >
-                      <Icon name="trash" size={12} />
-                    </button>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ),
-      })),
-    [folders, selectedIds, selectionIsText, playhead, search],
-  );
+  const searching = !!search.trim();
 
   return (
     <Panel
@@ -317,8 +286,81 @@ export function MotionPresetsPanel(): JSX.Element {
         )}
       </div>
       <div className={styles.libBody}>
-        {accordionItems.length > 0 ? (
-          <Accordion items={accordionItems} />
+        {folders.length > 0 ? (
+          <BrowserTree>
+            {folders.map(([folder, items]) => (
+              <BrowserFolder
+                key={folder}
+                label={folder}
+                icon={folderIcon(folder)}
+                count={items.length}
+                defaultOpen={OPEN_BY_DEFAULT.has(folder)}
+                // Searching means the user is hunting, not browsing — open
+                // everything that still holds a match, and keep it open for as
+                // long as the query stands.
+                forceOpen={searching}
+              >
+                {items.map((preset) => {
+                  const unavailable = preset.requires === 'text' && !!selectedIds[0] && !selectionIsText;
+                  return (
+                    // The delete control is a SIBLING of the row, not a child:
+                    // BrowserRow is a <button>, and a button inside a button is
+                    // invalid content that browsers resolve by dropping one of
+                    // them — which is why this overlay has always been a sibling.
+                    <div key={preset.name} className={styles.rowWrapper}>
+                      <BrowserRow
+                        className={styles.presetRow}
+                        label={preset.name}
+                        // The looping preview stays — it is the one thing this
+                        // browser has that AE's does not, and the reason a
+                        // preset can be recognised without applying it. It sets
+                        // this row's height: 28px against the browser's 22, and
+                        // against ~62px for the card it replaces.
+                        //
+                        // The size is passed EXPLICITLY. PresetPreview defaults
+                        // to a 132×56 canvas and its container clips overflow,
+                        // so a smaller slot with no size prop would show the
+                        // top-left corner of the drawing and nothing else.
+                        leading={
+                          <span className={styles.rowPreview}>
+                            <PresetPreview preset={preset} width={PREVIEW_W} height={PREVIEW_H} />
+                          </span>
+                        }
+                        title={
+                          unavailable
+                            ? `${preset.name} — needs a text layer`
+                            : `${preset.description ?? preset.name}\nClick to apply, or drag onto a layer.`
+                        }
+                        disabled={unavailable}
+                        draggable
+                        onDragStart={(e) => setCanvasDrag(e, { kind: 'motionPreset', name: preset.name })}
+                        onClick={() => apply(preset)}
+                        // Double-click applies too: AE users reach for it, and a
+                        // second apply is undoable, so the duplicate is harmless.
+                        onDoubleClick={() => apply(preset)}
+                      />
+                      {!preset.builtin && (
+                        <button
+                          type="button"
+                          className={styles.deleteBtn}
+                          title="Delete custom preset"
+                          aria-label={`Delete preset ${preset.name}`}
+                          onClick={() => {
+                            deletePreset(preset.name);
+                            notify({ level: 'success', message: `Deleted preset "${preset.name}"`, durationMs: 2000 });
+                            // The panel refreshes off the scene revision.
+                            bumpScene();
+                          }}
+                        >
+                          <Icon name="trash" size={11} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </BrowserFolder>
+            ))}
+          </BrowserTree>
         ) : (
           <div className={styles.emptyState}>
             <Icon name="sparkles" size={16} className={styles.emptyIcon} />

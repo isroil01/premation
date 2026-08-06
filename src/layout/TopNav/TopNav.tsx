@@ -78,6 +78,10 @@ const PEN_TOOLS: ToolDef[] = [
   { id: 'pen',      icon: 'pen',        label: 'Pen Tool', shortcut: 'G' },
   { id: 'pencil',   icon: 'pencil',     label: 'Pencil Tool' },
   { id: 'brush',    icon: 'brush',      label: 'Brush Tool (pressure ink)' },
+  // Split out of the Brush, which used to turn into this on its own whenever
+  // the pointer happened to land on the selected layer.
+  { id: 'paint',    icon: 'brush',      label: 'Paint Tool (paints onto the selected layer)' },
+  { id: 'eraser',   icon: 'eraser',     label: 'Eraser Tool (erases paint on the selected layer)' },
   { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen' },
 ];
 
@@ -94,6 +98,9 @@ const TEXT_TOOL: ToolDef = { id: 'text', icon: 'type', label: 'Text Tool', short
 const MASK_TOOLS: ToolDef[] = [
   { id: 'mask-rect',    icon: 'mask-square', label: 'Rectangle Mask Tool' },
   { id: 'mask-ellipse', icon: 'mask-circle', label: 'Ellipse Mask Tool' },
+  // Where the Pen's old implicit masking went, so nothing was lost by making
+  // the plain Pen always draw a path layer.
+  { id: 'mask-pen',     icon: 'pen',         label: 'Pen Mask Tool' },
 ];
 
 const PUPPET_TOOL: ToolDef = { id: 'puppet-pin', icon: 'puppet-pin', label: 'Puppet Position Pin Tool', shortcut: 'Ctrl+P' };
@@ -391,8 +398,8 @@ export function TopNav(): JSX.Element {
       label: '3D Options',
       icon: 'zap',
       submenu: [
-        // Workspace Free/Fixed is NOT mirrored here — ViewportHeader owns it and
-        // is always visible, so a copy would be a second switch for one state.
+        // Workspace Free/Fixed is NOT mirrored here — ViewportTools owns it, in
+        // the timeline's tool row, so a copy would be a second switch for one state.
         { type: 'checkbox', id: 'draft-3d', label: 'Draft 3D', checked: draft3d, onChange: () => useGuidesStore.getState().toggleDraft3d() },
         { type: 'checkbox', id: 'ground-grid', label: '3D Ground Plane', checked: groundGridVisible, onChange: () => useGuidesStore.getState().toggleGroundGridVisible() },
         { type: 'checkbox', id: 'layer-boxes', label: 'Layer Bounding Boxes', checked: layerBoxesVisible, onChange: () => usePreferenceStore.getState().set('showLayerBounds', !usePreferenceStore.getState().showLayerBounds) },

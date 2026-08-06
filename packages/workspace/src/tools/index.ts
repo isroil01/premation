@@ -19,6 +19,7 @@ export {
   EllipseTool,
   MaskRectangleTool,
   MaskEllipseTool,
+  MaskPenTool,
   PolygonTool,
   StarTool,
   LineTool,

@@ -3,8 +3,6 @@
  *
  * Structure (AE-style):
  *   ┌──────────────────────────────────────────────────────────┐
- *   │ ViewportHeader  (comp name · W×H · FPS · BG · zoom)     │ ← 28px
- *   ├──────────────────────────────────────────────────────────┤
  *   │                                                          │
  *   │   Stage (dot-grid / checkerboard void)                   │
  *   │     ┌──────────────────────────┐                        │
@@ -12,10 +10,15 @@
  *   │     │  (canvas + overlay)      │                        │
  *   │     └──────────────────────────┘                        │
  *   │                                                          │
- *   │  [TL overlay]              [TR overlay]                  │
- *   │  [BL: info bar]            [BR: zoom controls]          │
- *   │          [BC: AI prompt]                                 │
+ *   │  [TL overlay]                                            │
+ *   │  [BL: AI prompt]                                         │
  *   └──────────────────────────────────────────────────────────┘
+ *
+ * There is no header bar: the composition's name is the Scene tab's label
+ * (`layout/Tabs/EditorTabs.tsx`) and its status badges moved to the timeline's
+ * tool row. The viewport's own controls went with them — `ViewportTools` is
+ * rendered by `BottomTimeline`, not here — so nothing floats over the stage
+ * except the AI prompt and the focus breadcrumb.
  *
  * Interaction and rendering are handled by the framework-independent
  * `@motion/workspace` engine via {@link useWorkspace}.
@@ -50,7 +53,6 @@ import { applyPresetByName } from '@core/animation/animationPresets';
 import { insertAnimPreset } from '@core/template/animPresets';
 import { UI_COMPONENT_PRESETS } from '@core/scene/uiComponents';
 
-import { ViewportHeader } from './ViewportHeader';
 import { SecondaryViewPane } from './SecondaryViewPane';
 import { useGuidesStore } from '@stores/guidesStore';
 import { FocusBreadcrumb } from '@layout/focus/FocusBreadcrumb';
@@ -68,7 +70,6 @@ import styles from './Workspace.module.css';
 
 export interface WorkspaceViewportProps {
   topLeft?: ReactNode;
-  topRight?: ReactNode;
   bottomLeft?: ReactNode;
   bottomRight?: ReactNode;
   className?: string;
@@ -85,7 +86,6 @@ const VIEWPORT_KEYS = new Set([
 
 export function WorkspaceViewport({
   topLeft,
-  topRight,
   bottomLeft,
   bottomRight,
   className,
@@ -288,8 +288,13 @@ export function WorkspaceViewport({
 
   return (
     <div className={cn(styles.wrapper, className)}>
-      {/* AE-style composition panel header */}
-      <ViewportHeader />
+      {/*
+        No header bar. The composition name is the Scene tab's label now, and
+        the two status badges that shared the bar with it moved into the
+        timeline's tool row with the rest of the viewport controls — see
+        `ViewportTools`. What is left above the canvas is nothing, which is the
+        point: the stage starts at the top of the panel.
+      */}
 
       {/* Canvas viewport */}
       <div
@@ -393,12 +398,23 @@ export function WorkspaceViewport({
           </>
         )}
 
-        {/* Corner overlays */}
+        {/*
+          Corner overlays.
+
+          There is no top-right slot any more. Its buttons moved to the pieces
+          of chrome that own them — the header bar and the tool cluster below —
+          and what was left was an empty positioned div sitting over the corner
+          of the stage, catching nothing and showing nothing.
+        */}
         <div className={styles.overlayTL}>{topLeft}</div>
-        <div className={styles.overlayTR}>{topRight}</div>
-        <div className={styles.overlayBL}>
-          {bottomLeft}
-        </div>
+        {/*
+          `ViewportTools` used to float here, over the bottom-left of the stage.
+          It renders in the timeline's tool row now, beside the trim buttons —
+          a pill over the canvas covers the canvas, and covers a different part
+          of it at every zoom level. The slot stays for `bottomLeft`, which is
+          the AI prompt.
+        */}
+        <div className={styles.overlayBL}>{bottomLeft}</div>
         <div className={styles.overlayBR}>{bottomRight}</div>
 
         <FocusBreadcrumb />
@@ -407,4 +423,5 @@ export function WorkspaceViewport({
   );
 }
 
-// ViewportZoomControls was removed — zoom lives in the ViewportHeader bar.
+// ViewportZoomControls was removed — zoom lives in `ViewportTools`, which the
+// timeline's tool row renders.

@@ -85,6 +85,10 @@
   --color-snap-line:         #ff3ba7;
   --color-camera-guide:      #38bdf8;
   --color-light-guide:       #f59e0b;
+  /* Guides the USER drags out of the rulers. Its own token rather than the
+     camera-guide colour it was spelled as a literal beside: a ruler guide and
+     a camera frustum are different objects and must stay tellable apart. */
+  --color-ruler-guide:       #2dd4eb;
   --color-hud-bg:            rgba(20, 22, 30, 0.85);
   --color-hud-border:        rgba(100, 130, 255, 0.5);
   --color-hud-text:          rgba(200, 210, 255, 0.92);

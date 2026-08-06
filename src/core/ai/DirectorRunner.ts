@@ -4,7 +4,8 @@
  */
 
 import { ToolRegistry, type ToolContext } from '@motion/ai-tools';
-import { apiBaseUrl, getToken, type GatewayProviderId } from '@core/api/client';
+import { isAuthenticated, type GatewayProviderId } from '@core/api/client';
+import { streamApi, StreamStartError } from '@core/api/streamRequest';
 import { aiRunsThroughBackend } from '@core/config/edition';
 import { AiError } from './AgentLoop';
 import type { AgentEvents } from './AgentLoop';
@@ -82,8 +83,11 @@ export async function runBackendDirector(
     throw new AiError('coming_soon', 'The director pipeline needs the hosted backend, which this edition does not have.');
   }
 
-  const token = getToken();
-  if (!token) throw new AiError('auth', 'Sign in to run the AI director pipeline.');
+  // Asked of the SESSION, not of a token. The renderer no longer holds one on
+  // desktop, but "is there a session" is a claim rather than a credential — so
+  // a signed-out user still fails here, immediately, instead of building a
+  // whole payload and learning about it from a 401.
+  if (!isAuthenticated()) throw new AiError('auth', 'Sign in to run the AI director pipeline.');
 
   const comp = ctx.comp.get();
   const layers = ctx.scene.all().map((n: any) => ({
@@ -127,35 +131,32 @@ export async function runBackendDirector(
     },
   };
 
-  const res = await fetch(`${apiBaseUrl()}/ai/director/run`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(payload),
-    signal: opts.signal,
-  });
-
-  if (!res.ok) {
-    throw new AiError('backend_unavailable', `Director backend returned ${res.status}`);
+  // No Authorization header is built here any more: on desktop the bearer is
+  // attached in the main process and this realm never holds it. `streamApi`
+  // keeps the shape that matters — headers first, then chunks, and an abort
+  // that reaches the upstream request rather than only this loop.
+  let handle;
+  try {
+    handle = await streamApi(
+      '/ai/director/run',
+      { method: 'POST', body: JSON.stringify(payload) },
+      opts.signal,
+    );
+  } catch (err) {
+    if (err instanceof StreamStartError) {
+      if (err.status === 401) throw new AiError('auth', 'Sign in to run the AI director pipeline.');
+      throw new AiError('backend_unavailable', `Director backend returned ${err.status}`);
+    }
+    throw new AiError('backend_unavailable', (err as Error)?.message ?? 'Director backend unreachable.');
   }
 
-  if (!res.body) {
-    throw new AiError('bad_response', 'Empty body from director endpoint.');
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
   let buffer = '';
   let toolCallCount = 0;
   const changes: string[] = [];
 
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+    for await (const text of handle.chunks) {
+      buffer += text;
       const lines = buffer.split('\n\n');
       buffer = lines.pop() ?? '';
 
@@ -236,9 +237,9 @@ export async function runBackendDirector(
   } catch (err) {
     if (opts.signal.aborted) throw new AiError('cancelled', 'Cancelled.');
     throw err;
-  } finally {
-    void reader.cancel().catch(() => undefined);
   }
+  // No explicit teardown: `streamApi`'s generator cancels upstream in its own
+  // `finally`, which runs whether this loop completes, throws, or is abandoned.
 
   return { ok: true, toolCallCount, changes };
 }

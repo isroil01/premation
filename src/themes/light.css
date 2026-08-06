@@ -59,6 +59,9 @@
   --color-snap-line:         #d81b7f;
   --color-camera-guide:      #0284c7;
   --color-light-guide:       #b45309;
+  /* See dark.css — darkened here so a guide stays visible on a light canvas,
+     which the hardcoded #2dd4eb it replaces did not. */
+  --color-ruler-guide:       #0e8fa3;
   --color-hud-bg:            rgba(255, 255, 255, 0.92);
   --color-hud-border:        rgba(59, 118, 224, 0.45);
   --color-hud-text:          rgba(30, 41, 59, 0.95);

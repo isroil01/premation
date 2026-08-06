@@ -25,17 +25,15 @@ import { useMotionBlurStore } from '@stores/motionBlurStore';
 
 import { useFocusStore } from '@stores/focusStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import type { EasingPreset } from '@core/animation/keyframeAssistants';
 import { bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { ViewportTools } from '@layout/Workspace/ViewportTools';
 import styles from './BottomTimeline.module.css';
 
 export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
   className?: string;
   /** Override the default transport bar. */
   transport?: ReactNode;
-  /** Called when the user clicks an easing preset. */
-  onSetEasing?: (preset: EasingPreset) => void;
 }
 
 const ZOOM_STEP = 1.4;
@@ -44,7 +42,7 @@ const ZOOM_MAX = 800;
 const ZOOM_DEFAULT = 80;
 
 export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
-  const { className, transport, onSetEasing, ...timelineProps } = props;
+  const { className, transport, ...timelineProps } = props;
   const ws = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId] : null));
   // Project tabs (main comp + any group/precomp tabs opened by double-click).
   const tabOrder = useWorkspaceStore((s) => s.tabOrder);
@@ -212,6 +210,38 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </button>
             </div>
 
+            {/*
+              Preview quality, beside the marker button.
+
+              It sits with playback rather than with the clip operations because
+              that is what it is: a playback setting, changed while scrubbing,
+              and it was previously stranded at the far right past three groups
+              of editing tools nobody passes on the way to it.
+            */}
+            <div className={styles.transportCluster}>
+              <Dropdown
+                placement="bottom-start"
+                trigger={
+                  <button
+                    type="button"
+                    className={cn(styles.transportBtn, previewResolution !== 1 && styles.transportBtnActive)}
+                    title="Preview Quality"
+                    style={{ width: 'auto', padding: '0 6px', gap: 4, fontSize: 11 }}
+                  >
+                    <Icon name="graph-speed" size={12} />
+                    <span>{RESOLUTION_LABELS[previewResolution]}</span>
+                  </button>
+                }
+                items={([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
+                  type: 'item' as const,
+                  id: `res-${r}`,
+                  label: `${RESOLUTION_LABELS[r]} · ${RESOLUTION_PERCENT[r]}`,
+                  icon: (r === previewResolution ? 'check' : undefined) as any,
+                  onSelect: () => setResolution(r),
+                }))}
+              />
+            </div>
+
             <div className={styles.transportDivider} />
 
             {/* Layer Clip Operations */}
@@ -253,58 +283,21 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
 
             <div className={styles.transportDivider} />
 
-            {/* Keyframe Easing Presets */}
-            <div className={styles.transportCluster}>
-              {(['Linear', 'Ease', 'EaseIn', 'EaseOut', 'Hold'] as const).map((ease) => (
-                <button
-                  key={ease}
-                  type="button"
-                  className={styles.transportBtn}
-                  style={{ width: 26 }}
-                  title={`Apply ${ease} Easing`}
-                  onClick={() => {
-                    // Route through the host handler: it explains *why* nothing
-                    // happened when no keyframes are selected. Calling
-                    // applyEasingToSelection() directly swallows that failure.
-                    onSetEasing?.(ease);
-                  }}
-                >
-                  <svg width="18" height="10" viewBox="0 0 26 12" fill="none" aria-hidden>
-                    {ease === 'Linear' && <path d="M3 10 L23 2" stroke="currentColor" strokeWidth="1.6" />}
-                    {ease === 'Ease' && <path d="M3 10 C 10 10, 16 2, 23 2" stroke="currentColor" strokeWidth="1.6" />}
-                    {ease === 'EaseIn' && <path d="M3 10 C 13 7, 19 2.5, 23 2" stroke="currentColor" strokeWidth="1.6" />}
-                    {ease === 'EaseOut' && <path d="M3 10 C 7 9.5, 13 5, 23 2" stroke="currentColor" strokeWidth="1.6" />}
-                    {ease === 'Hold' && <path d="M3 10 H 13 V 2 H 23" stroke="currentColor" strokeWidth="1.6" />}
-                  </svg>
-                </button>
-              ))}
-            </div>
+            {/*
+              The viewport's own controls — motion path, the 3D switch,
+              auto-keyframe, rulers/safe/channel, zoom, pop out — plus the two
+              status badges that used to sit in a bar above the canvas.
 
-            <div className={styles.transportDivider} />
-
-            {/* Resolution Quality Dropdown */}
+              They were a pill floating over the bottom-left of the stage. Here
+              they are in the same row as Play and the trim buttons, which is
+              where every other control acting on time and layers already was.
+              Over there they covered the canvas, and covered a different part
+              of it at every zoom level. `ViewportTools` owns its own contextual
+              show/hide, so this is one line rather than a copy of its
+              conditions.
+            */}
             <div className={styles.transportCluster}>
-              <Dropdown
-                placement="bottom-start"
-                trigger={
-                  <button
-                    type="button"
-                    className={cn(styles.transportBtn, previewResolution !== 1 && styles.transportBtnActive)}
-                    title="Preview Quality"
-                    style={{ width: 'auto', padding: '0 6px', gap: 4, fontSize: 11 }}
-                  >
-                    <Icon name="graph-speed" size={12} />
-                    <span>{RESOLUTION_LABELS[previewResolution]}</span>
-                  </button>
-                }
-                items={([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
-                  type: 'item' as const,
-                  id: `res-${r}`,
-                  label: `${RESOLUTION_LABELS[r]} · ${RESOLUTION_PERCENT[r]}`,
-                  icon: (r === previewResolution ? 'check' : undefined) as any,
-                  onSelect: () => setResolution(r),
-                }))}
-              />
+              <ViewportTools />
             </div>
 
 
