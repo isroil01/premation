@@ -39,7 +39,7 @@ const PLUGIN_NAME = 'Acme Glow';
 const contribution = (id = 'glow'): EffectContribution => ({
   id,
   label: 'Glow',
-  shader: '@fragment fn fs_main() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }',
+  shader: '@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }',
   params: { amount: { type: 'number', default: 1 } },
 });
 

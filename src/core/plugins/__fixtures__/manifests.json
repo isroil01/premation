@@ -1111,7 +1111,7 @@
             {
               "id": "tint",
               "label": "Tint",
-              "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
               "params": {
                 "amount": {
                   "type": "number",
@@ -1142,7 +1142,7 @@
             {
               "id": "tint",
               "label": "Tint",
-              "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
               "params": {}
             }
           ]
@@ -1181,7 +1181,7 @@
             {
               "id": "tint",
               "label": "Tint",
-              "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
               "params": {
                 "mode": {
                   "type": "string",

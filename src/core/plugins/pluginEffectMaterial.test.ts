@@ -30,7 +30,7 @@ const effect = (id = 'glow'): EffectContribution => ({
   label: 'Glow',
   shader: `
 @fragment
-fn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   return textureSample(src, samp, uv) * params.amount;
 }`,
   params: {
@@ -76,7 +76,7 @@ describe('the generated shader source', () => {
 
   it('carries the author s entry point through unchanged', () => {
     const { wgsl } = pluginShaderSource(PLUGIN, effect());
-    expect(wgsl).toContain('fn fs_main');
+    expect(wgsl).toContain('fn fs');
     expect(wgsl).toContain('params.amount');
   });
 });
@@ -143,7 +143,7 @@ describe('registering', () => {
     const { registry, sources } = fakeRegistry();
     registerPluginShaders(registry, PLUGIN, [effect()]);
 
-    const updated: EffectContribution = { ...effect(), shader: '@fragment fn fs_main() {} // v2' };
+    const updated: EffectContribution = { ...effect(), shader: '@fragment fn fs() {} // v2' };
     registerPluginShaders(registry, PLUGIN, [updated]);
 
     expect(sources.size).toBe(1);

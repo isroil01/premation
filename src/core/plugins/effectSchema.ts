@@ -196,6 +196,24 @@ const WGSL_SIZE: Record<EffectParamType, { size: number; align: number }> = {
 };
 
 /**
+ * Bytes the renderer's own vertex header occupies before any plugin parameter.
+ *
+ * ★ This is not padding — it is the block every effect material in this
+ * renderer already has, and a plugin effect is just another material.
+ *
+ *   `mvp    : mat3x3<f32>`  48 bytes (std140 pads each column to a vec4)
+ *   `uvRect : vec4<f32>`    16 bytes
+ *
+ * Discovered by reading `packSharpen` and the `sharpen` shader rather than by
+ * reasoning: the first version of this file generated a struct containing ONLY
+ * the plugin's parameters, which would have compiled, bound, and drawn a quad
+ * with a garbage transform — the vertex shader reads `mvp` from exactly these
+ * bytes. Nothing would have errored.
+ */
+export const UNIFORM_HEADER_BYTES = 64;
+const MAT3_STD140_FLOATS = 12;
+
+/**
  * The parameter block, ordered so it is valid without hand-written padding.
  *
  * ★ Order is by ALIGNMENT, descending — every `vec4` first, then the scalars.
@@ -225,8 +243,19 @@ export function parameterBlock(params: Record<string, LayerPropSchema>): {
     .sort((a, b) => WGSL_SIZE[b.type].align - WGSL_SIZE[a.type].align || a.name.localeCompare(b.name));
 
   const layout: Array<{ name: string; type: EffectParamType; offset: number }> = [];
-  let offset = 0;
-  const members: string[] = [];
+  /*
+    Offsets start AFTER the renderer's vertex header, not at zero. `mvp` and
+    `uvRect` occupy the first 64 bytes of every effect material's uniform block
+    in this renderer, and the generated vertex shader below reads them from
+    exactly there. Starting at zero would overlay the plugin's first parameter
+    on the transform — which compiles, binds, and draws a quad in the wrong
+    place with no error anywhere.
+  */
+  let offset = UNIFORM_HEADER_BYTES;
+  const members: string[] = [
+    '  mvp : mat3x3<f32>,',
+    '  uvRect : vec4<f32>,',
+  ];
 
   for (const e of entries) {
     const { size, align } = WGSL_SIZE[e.type];
@@ -236,21 +265,13 @@ export function parameterBlock(params: Record<string, LayerPropSchema>): {
     offset += size;
   }
 
-  /*
-    A uniform buffer's size must be a multiple of 16, and an EMPTY struct is not
-    legal WGSL. An effect with no parameters is a perfectly reasonable thing —
-    a fixed colour grade — so it gets a padding member rather than a compile
-    error the author cannot explain.
-  */
-  if (members.length === 0) {
-    members.push('  _unused : vec4<f32>,');
-    offset = 16;
-  }
-
-  const size = Math.max(16, Math.ceil(offset / 16) * 16);
+  // A uniform buffer's size must be a multiple of 16. The header alone already
+  // makes the struct legal, so an effect with no parameters — a fixed colour
+  // grade, say — needs no padding member of its own.
+  const size = Math.max(UNIFORM_HEADER_BYTES, Math.ceil(offset / 16) * 16);
 
   return {
-    wgsl: `struct PluginParams {\n${members.join('\n')}\n};`,
+    wgsl: `struct Object {\n${members.join('\n')}\n};`,
     layout,
     size,
   };
@@ -269,14 +290,63 @@ export function composeEffectShader(
   const layout = parameterBlock(effect.params);
   const wgsl = [
     layout.wgsl,
-    '@group(0) @binding(0) var<uniform> params : PluginParams;',
+    '@group(0) @binding(0) var<uniform> params : Object;',
     '@group(0) @binding(1) var src : texture_2d<f32>;',
     '@group(0) @binding(2) var samp : sampler;',
+    '',
+    /*
+      The VERTEX shader is generated too, not just the bindings.
+
+      Every effect material in this renderer needs one, and it is the same
+      full-screen quad transform in all of them — so asking each plugin author
+      to write it would be asking them to hand-copy a matrix multiply whose only
+      possible contribution is a bug. It also means the author never has to know
+      that `mvp` and `uvRect` exist, which is what lets the parameter block stay
+      the whole interface they see.
+    */
+    'struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };',
+    '@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {',
+    '  var o : VOut;',
+    '  let p = params.mvp * vec3<f32>(pos, 1.0);',
+    '  o.pos = vec4<f32>(p.xy, 0.0, p.z);',
+    '  o.uv = params.uvRect.xy + pos * params.uvRect.zw;',
+    '  return o;',
+    '}',
     '',
     effect.shader,
   ].join('\n');
 
   return { wgsl, layout };
+}
+
+/**
+ * Pack the renderer's vertex header into a block from `parameterBlock`.
+ *
+ * `mvp` is a column-major 3x3 as nine floats; std140 pads each column out to a
+ * `vec4`, which is the whole reason the header is 64 bytes rather than 52.
+ * Taken as plain arrays so this module does not import the renderer's `Mat3` —
+ * it is the seam between two packages, and a seam that imports both sides is
+ * not a seam.
+ */
+export function packUniformHeader(
+  buffer: ArrayBuffer,
+  mvp: readonly number[],
+  uvRect: { x: number; y: number; width: number; height: number },
+): void {
+  const view = new DataView(buffer);
+  for (let col = 0; col < 3; col++) {
+    for (let row = 0; row < 3; row++) {
+      view.setFloat32((col * 4 + row) * 4, mvp[col * 3 + row] ?? 0, true);
+    }
+    // The pad float each column carries. Written explicitly rather than left as
+    // whatever the buffer held, so a reused buffer cannot leak into it.
+    view.setFloat32((col * 4 + 3) * 4, 0, true);
+  }
+  const at = MAT3_STD140_FLOATS * 4;
+  view.setFloat32(at + 0, uvRect.x, true);
+  view.setFloat32(at + 4, uvRect.y, true);
+  view.setFloat32(at + 8, uvRect.width, true);
+  view.setFloat32(at + 12, uvRect.height, true);
 }
 
 /** `<pluginId>.<effectId>` — the same namespacing layer kinds use. */

@@ -17,12 +17,14 @@ import {
   composeEffectShader,
   MAX_EFFECTS_PER_PLUGIN,
   MAX_PARAMS_PER_EFFECT,
+  UNIFORM_HEADER_BYTES,
+  packUniformHeader,
   type EffectContribution,
 } from './effectSchema';
 
 const SHADER = `
 @fragment
-fn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   return textureSample(src, samp, uv) * params.amount;
 }`;
 
@@ -141,12 +143,31 @@ describe('★ the generated parameter block', () => {
     });
 
     expect(block.layout[0]!.name).toBe('tint');
-    expect(block.layout[0]!.offset).toBe(0);
+    // Offsets start AFTER the renderer's vertex header, not at zero.
+    expect(block.layout[0]!.offset).toBe(UNIFORM_HEADER_BYTES);
     // And every member sits on its own required alignment.
     for (const m of block.layout) {
       const align = m.type === 'color' ? 16 : 4;
       expect(m.offset % align).toBe(0);
     }
+  });
+
+  it('★ reserves the renderer s vertex header before any parameter', () => {
+    /*
+      The bug this catches was real and would have been silent.
+
+      Every effect material in this renderer has `mvp : mat3x3<f32>` and
+      `uvRect : vec4<f32>` at the start of its uniform block — the vertex shader
+      reads the transform from exactly those bytes. The first version of this
+      module generated a struct containing ONLY the plugin's parameters, so the
+      first parameter would have landed on top of `mvp`. That compiles, binds,
+      and draws a quad with a garbage transform. Nothing errors.
+    */
+    const block = parameterBlock({ amount: { type: 'number', default: 0 } });
+
+    expect(block.wgsl).toContain('mvp : mat3x3<f32>');
+    expect(block.wgsl).toContain('uvRect : vec4<f32>');
+    expect(block.layout.every((m) => m.offset >= UNIFORM_HEADER_BYTES)).toBe(true);
   });
 
   it('is stable across runs for the same effect', () => {
@@ -171,13 +192,14 @@ describe('★ the generated parameter block', () => {
   it('★ emits a legal struct for an effect with NO parameters', () => {
     /*
       An empty struct is not legal WGSL, and a fixed colour grade with no knobs
-      is a perfectly reasonable effect. Without the padding member the author
-      gets a compile error about a struct they never wrote.
+      is a perfectly reasonable effect. The vertex header makes it legal without
+      a padding member of its own — but the property worth asserting is that the
+      struct is never empty, not how it avoids being.
     */
     const block = parameterBlock({});
-    expect(block.wgsl).toMatch(/struct PluginParams \{[\s\S]*\}/);
+    expect(block.wgsl).toMatch(/struct Object \{[\s\S]*\}/);
     expect(block.wgsl).not.toMatch(/\{\s*\}/);
-    expect(block.size).toBe(16);
+    expect(block.size).toBe(UNIFORM_HEADER_BYTES);
   });
 });
 
@@ -216,11 +238,12 @@ describe('★ packing values', () => {
     const block = parameterBlock({ tint: { type: 'color', default: '#000' } });
     const buffer = packParameters(block.layout, block.size, { tint: '#ff8000' });
     const view = new DataView(buffer);
+    const at = block.layout[0]!.offset;
 
-    expect(view.getFloat32(0, true)).toBeCloseTo(1);
-    expect(view.getFloat32(4, true)).toBeCloseTo(128 / 255, 2);
-    expect(view.getFloat32(8, true)).toBeCloseTo(0);
-    expect(view.getFloat32(12, true)).toBeCloseTo(1);
+    expect(view.getFloat32(at + 0, true)).toBeCloseTo(1);
+    expect(view.getFloat32(at + 4, true)).toBeCloseTo(128 / 255, 2);
+    expect(view.getFloat32(at + 8, true)).toBeCloseTo(0);
+    expect(view.getFloat32(at + 12, true)).toBeCloseTo(1);
   });
 
   it('writes a boolean as 0.0 / 1.0', () => {
@@ -228,7 +251,7 @@ describe('★ packing values', () => {
     // compile error the author never wrote.
     const block = parameterBlock({ enabled: { type: 'boolean', default: false } });
     const off = packParameters(block.layout, block.size, { enabled: false });
-    expect(new DataView(off).getFloat32(0, true)).toBe(0);
+    expect(new DataView(off).getFloat32(block.layout[0]!.offset, true)).toBe(0);
   });
 
   it('substitutes zero for a missing or non-finite value rather than NaN', () => {
@@ -244,8 +267,9 @@ describe('★ packing values', () => {
     const block = parameterBlock({ tint: { type: 'color', default: '#000' } });
     const buffer = packParameters(block.layout, block.size, { tint: [2, -1, 0.5, 1] });
     const view = new DataView(buffer);
-    expect(view.getFloat32(0, true)).toBe(1);
-    expect(view.getFloat32(4, true)).toBe(0);
+    const at = block.layout[0]!.offset;
+    expect(view.getFloat32(at + 0, true)).toBe(1);
+    expect(view.getFloat32(at + 4, true)).toBe(0);
   });
 });
 
@@ -261,5 +285,60 @@ describe('composing the final shader', () => {
   it("keeps the author's source last, so their entry point is intact", () => {
     const composed = composeEffectShader(parse([effect()]).out[0] as EffectContribution);
     expect(composed.wgsl.endsWith(SHADER)).toBe(true);
+  });
+});
+
+describe('★ the vertex header', () => {
+  const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const RECT = { x: 0, y: 0, width: 1, height: 1 };
+
+  it('pads each mat3 column out to a vec4', () => {
+    /*
+      std140 aligns every column of a `mat3x3<f32>` to 16 bytes, which is the
+      whole reason the header is 64 bytes rather than 52. Packing nine
+      contiguous floats instead would shear the transform — the shader reads
+      column 1 starting from what the CPU wrote as element 3 — and a sheared
+      quad is a layer drawn in the wrong place with nothing erroring.
+    */
+    const block = parameterBlock({ amount: { type: 'number', default: 0 } });
+    const buffer = new ArrayBuffer(block.size);
+    packUniformHeader(buffer, IDENTITY, RECT);
+    const view = new DataView(buffer);
+
+    // Identity: the diagonal sits at float 0, 5 and 10 once padded.
+    expect(view.getFloat32(0 * 4, true)).toBe(1);
+    expect(view.getFloat32(5 * 4, true)).toBe(1);
+    expect(view.getFloat32(10 * 4, true)).toBe(1);
+    // And each column's pad float is written, not left as whatever was there.
+    for (const pad of [3, 7, 11]) expect(view.getFloat32(pad * 4, true)).toBe(0);
+  });
+
+  it('writes uvRect straight after the matrix', () => {
+    const block = parameterBlock({});
+    const buffer = new ArrayBuffer(block.size);
+    packUniformHeader(buffer, IDENTITY, { x: 0.25, y: 0.5, width: 0.75, height: 1 });
+    const view = new DataView(buffer);
+
+    expect(view.getFloat32(48, true)).toBeCloseTo(0.25);
+    expect(view.getFloat32(52, true)).toBeCloseTo(0.5);
+    expect(view.getFloat32(56, true)).toBeCloseTo(0.75);
+    expect(view.getFloat32(60, true)).toBeCloseTo(1);
+  });
+
+  it('★ does not collide with the first parameter', () => {
+    // The two writers share one buffer and must not overlap. This is the
+    // assertion that would have caught the original missing-header bug.
+    const block = parameterBlock({ amount: { type: 'number', default: 0 } });
+    const buffer = new ArrayBuffer(block.size);
+
+    packUniformHeader(buffer, IDENTITY, RECT);
+    const packed = packParameters(block.layout, block.size, { amount: 0.5 });
+    // `packParameters` allocates its own buffer, so copy the header in and
+    // check the parameter survived — the real caller does exactly this.
+    new Uint8Array(packed).set(new Uint8Array(buffer, 0, UNIFORM_HEADER_BYTES), 0);
+
+    const view = new DataView(packed);
+    expect(view.getFloat32(0, true)).toBe(1);
+    expect(view.getFloat32(block.layout[0]!.offset, true)).toBeCloseTo(0.5);
   });
 });

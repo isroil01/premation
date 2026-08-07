@@ -915,7 +915,7 @@ someone whose editor never started your worker.
     "effects": [{
       "id": "tint",
       "label": "Tint",
-      "shader": "@fragment\nfn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv) * params.amount;\n}",
+      "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv) * params.amount;\n}",
       "params": {
         "amount": { "type": "number", "default": 1, "min": 0, "max": 2, "animatable": true }
       }
@@ -936,18 +936,37 @@ uniform block, `asset` is a reference rather than a value, and `enum` would need
 an index mapping you had to keep in your head and in step with your schema. All
 three are refused at install rather than discovered from a black frame.
 
-### The host writes the bindings
+### You write one function. The host writes everything else.
 
-Write your `@fragment` entry point and read `params.<name>`, `src` and `samp`.
-Do **not** declare `@group` or `@binding` — it is refused. The host generates
-the parameter block, prepends it, and binds to it. Two reasons: hand-written
-uniform layout is a padding bug that surfaces as wrong colours rather than an
-error, and the host has to own the binding numbers to bind anything to them.
+Write a `@fragment` entry point **named `fs`**, and read `params.<name>`, `src`
+and `samp`. That is the whole surface.
 
-The generated struct orders members by **alignment, descending** — every `vec4`
-first. A scalar before a `vec4` would leave a 12-byte hole that the struct does
-not describe, and every member after it would read shifted bytes: no compile
-error, no exception, just wrong colours that look like your maths.
+You must **not** declare `@group`, `@binding`, or a `@vertex` shader — all three
+are refused at install. The host generates the parameter block, the input
+texture, the sampler and the vertex stage, and prepends them to your source.
+
+Three reasons, and none of them is tidiness:
+
+- **The vertex stage is identical for every effect** — the same full-screen quad
+  transform. Asking each author to hand-copy a matrix multiply whose only
+  possible contribution is a bug is not an interface.
+- **The uniform block starts with the renderer's own header.** `mvp` and
+  `uvRect` occupy its first 64 bytes and the vertex stage reads the transform
+  from exactly there. A block that began with your first parameter would
+  compile, bind, and draw a quad with a garbage transform — nothing would error.
+- **Hand-written uniform layout is a padding bug** that surfaces as wrong
+  colours rather than as an error.
+
+After the header, the generated struct orders your parameters by **alignment,
+descending** — every `vec4` first. A scalar before a `vec4` would leave a
+12-byte hole the struct does not describe, and every member after it would read
+shifted bytes: no compile error, no exception, just wrong colours that look like
+your maths.
+
+The entry point must be called `fs` because that is the name the render pipeline
+looks for, and every built-in shader here uses it. A differently-named one
+compiles and then fails to bind, with a driver error naming nothing you wrote —
+so it is refused at install with a message that says what to rename.
 
 ### What the validator refuses, and why
 

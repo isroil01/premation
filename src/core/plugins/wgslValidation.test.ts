@@ -33,7 +33,7 @@ const REAL_EFFECT = /* wgsl */ `
 // An author writes only their entry point and reads params.<name>, src, samp.
 
 @fragment
-fn fs_main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var sum : vec4<f32> = vec4<f32>(0.0);
   var weight : f32 = 0.0;
   // A fixed 9-tap kernel — the shape most real effects have.
@@ -226,5 +226,35 @@ describe('reading a loop bound', () => {
       it would be guessing from source the author controls precisely.
     */
     expect(literalLoopBound(header)).toBeNull();
+  });
+});
+
+describe('the entry-point contract', () => {
+  it('★ requires the fragment entry to be called fs', () => {
+    /*
+      That is the name the render pipeline looks for
+      (`entryPoint: desc.fragmentEntry ?? 'fs'`) and what every built-in shader
+      in this renderer uses. A differently-named entry compiles fine and then
+      fails to bind, with a driver error naming nothing the author wrote.
+    */
+    const src = REAL_EFFECT.replace('fn fs(', 'fn main(');
+    expect(rules(src)).toContain('fragment-entry-name');
+  });
+
+  it('★ refuses an author-written vertex shader', () => {
+    /*
+      The host generates it — the same full-screen quad transform for every
+      effect. An author's own would collide with it, and writing one means
+      knowing about `mvp` and `uvRect`, which is exactly the knowledge the
+      generated parameter block exists to spare them.
+    */
+    const src = `@vertex fn vs() {}\n${REAL_EFFECT}`;
+    expect(rules(src)).toContain('author-vertex');
+  });
+
+  it('says what to rename it to', () => {
+    const problem = validateWgsl(REAL_EFFECT.replace('fn fs(', 'fn main('))
+      .problems.find((p) => p.rule === 'fragment-entry-name');
+    expect(problem?.detail).toMatch(/`fs`/);
   });
 });

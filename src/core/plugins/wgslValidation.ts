@@ -194,12 +194,34 @@ export function validateWgsl(source: string): WgslCheck {
     });
   }
 
+  /*
+    Not cost rules — correctness ones, and both are refusals an author can act
+    on in seconds. Without them the compile or the pipeline fails with a driver
+    message that names nothing the author wrote.
+
+    The entry point must be called `fs`, because that is the name the pipeline
+    looks for (`entryPoint: desc.fragmentEntry ?? 'fs'`) and every built-in
+    shader in this renderer uses it. Refusing a differently-named entry here
+    beats a pipeline that fails to create for a reason nothing states.
+  */
   if (!/@fragment\b/.test(code)) {
-    // Not a cost rule — a correctness one. Without an entry point the compile
-    // fails with a driver message the author cannot map back to this.
     problems.push({
       rule: 'no-fragment-entry',
       detail: 'The shader declares no `@fragment` entry point.',
+    });
+  } else if (!/@fragment[\s\S]{0,40}?\bfn\s+fs\s*\(/.test(code)) {
+    problems.push({
+      rule: 'fragment-entry-name',
+      detail:
+        'Name your `@fragment` entry point `fs`. That is the name the render pipeline looks for, and a differently-named one fails to bind with a driver error that names nothing you wrote.',
+    });
+  }
+
+  if (/@vertex\b/.test(code)) {
+    problems.push({
+      rule: 'author-vertex',
+      detail:
+        'Do not write a vertex shader. The host generates it — it is the same full-screen quad transform for every effect, and yours would collide with it.',
     });
   }
 
