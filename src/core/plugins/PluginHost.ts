@@ -30,6 +30,7 @@ import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { asCommandId, type CommandId } from '@app-types/common';
 import { useUIStore } from '@stores/uiStore';
 import { registerLayerKinds, unregisterLayerKinds } from './layerKindRegistry';
+import { registerEffects, unregisterEffects } from './pluginEffects';
 import { clearLayerChangeListeners, notifyAuthoredChange } from './layerChangeNotifier';
 import { revocationFor, refreshRevocations } from './revocation';
 import { fetchRevocationList } from './registry';
@@ -673,6 +674,16 @@ class PluginHost {
       is exactly what `activationEvents` exists to avoid.
     */
     registerLayerKinds(pid, entry.manifest.name, entry.manifest.contributes.layerKinds);
+
+    /*
+      Effects, on ENABLE for the same reason and with one more of its own: an
+      effect is a compiled shader plus a parameter block, and none of that needs
+      the plugin's worker. A document using one keeps rendering with the worker
+      stopped — which is the property that makes an effect worth shipping at
+      all, because a plugin whose output vanishes when it is not running is one
+      nobody can rely on in a project they hand to someone else.
+    */
+    registerEffects(pid, entry.manifest.name, entry.manifest.contributes.effects);
   }
 
   private unregisterContributions(id: string): void {
@@ -686,6 +697,10 @@ class PluginHost {
     // longer running is a message posted into a dead worker every time a user
     // touches a layer it used to manage.
     clearLayerChangeListeners(id);
+    // And its effects. A disabled plugin whose effect stayed registered would
+    // keep drawing — including one the user disabled BECAUSE it was implicated
+    // in a device loss, which is the case where that matters most.
+    unregisterEffects(id);
   }
 
   /**

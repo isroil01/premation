@@ -235,3 +235,62 @@ describe('re-enabling', () => {
     expect(effectById(ID)!.state).toBe('pending');
   });
 });
+
+describe('★ the host lifecycle drives registration', () => {
+  /*
+    Reads the source rather than booting the host, for the same reason
+    `deviceLossWiring.test.ts` does: the defect being guarded against is the
+    ABSENCE of a call. Every other test in this file would pass with these two
+    lines deleted, and a plugin's effects would simply never appear.
+  */
+  const host = require('node:fs')
+    .readFileSync(require('node:path').join(__dirname, 'PluginHost.ts'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  it('registers effects when a plugin is enabled', () => {
+    // On ENABLE, beside layer kinds — not on start. An effect is a compiled
+    // shader and a parameter block; none of it needs the worker.
+    expect(host).toMatch(/registerEffects\s*\(/);
+  });
+
+  it('unregisters them when it is disabled or uninstalled', () => {
+    /*
+      A disabled plugin whose effect stayed registered would keep drawing —
+      including one the user disabled BECAUSE it was implicated in a device
+      loss, which is the case where it matters most.
+    */
+    expect(host).toMatch(/unregisterEffects\s*\(/);
+  });
+
+  it('★ registers them from registerContributions, NOT from start', () => {
+    /*
+      Stated as a call site rather than as a position in the file. `private
+      start` happens to appear EARLIER than `registerContributions`, so
+      comparing offsets asserts file layout and passes or fails for reasons that
+      have nothing to do with behaviour — which is what the first version of
+      this test did.
+
+      Registering from `start` would mean an effect only exists once the worker
+      has booted, which defeats lazy activation: every plugin declaring one
+      would have to start at launch for its effect to appear, and a document
+      using one would render nothing until it did.
+    */
+    const bodyOf = (name: string): string => {
+      const at = host.indexOf(`private ${name}(`);
+      expect(at).toBeGreaterThan(-1);
+      let depth = 0;
+      let i = host.indexOf('{', at);
+      const from = i;
+      for (; i < host.length; i++) {
+        if (host[i] === '{') depth++;
+        else if (host[i] === '}' && --depth === 0) break;
+      }
+      return host.slice(from, i);
+    };
+
+    expect(bodyOf('registerContributions')).toMatch(/registerEffects\s*\(/);
+    expect(bodyOf('start')).not.toMatch(/registerEffects\s*\(/);
+    expect(bodyOf('unregisterContributions')).toMatch(/unregisterEffects\s*\(/);
+  });
+});

@@ -78,6 +78,15 @@ interface GPUDevice {
   createBindGroup(desc: Record<string, unknown>): GPUBindGroup;
   createCommandEncoder(desc?: Record<string, unknown>): GPUCommandEncoder;
   destroy(): void;
+  /**
+   * Resolves — never rejects — when the device is lost.
+   *
+   * The non-rejecting part is what is worth declaring precisely. Written as a
+   * rejection, the obvious `.catch(…)` handler compiles, reads correctly to a
+   * reviewer, and never fires. Typing it as a resolving promise makes the
+   * correct shape the natural one to write.
+   */
+  readonly lost: Promise<{ reason?: string; message?: string }>;
 }
 
 interface GPUAdapter {

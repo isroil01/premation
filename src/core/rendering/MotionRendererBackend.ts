@@ -29,6 +29,7 @@ import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { layerIsBaked } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
+import { noteDeviceLoss } from '@core/plugins/pluginEffects';
 import { markGpuOwned } from './canvasOwnership';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
@@ -231,7 +232,26 @@ export class MotionRendererBackend implements RenderBackend {
 
   private createGpuBackendFor(kind: RendererBackendKind): GpuBackend {
     if (kind === 'null') return new NullBackend();
-    if (kind === 'webgpu') return new WebGPUBackend();
+    if (kind === 'webgpu') {
+      const backend = new WebGPUBackend();
+      /*
+        Attached BEFORE `initialize`, which is where the device is acquired — a
+        handler registered afterwards would miss a device lost during startup,
+        which is a real case on a machine already in trouble.
+
+        This is the production caller for plugin-effect attribution. A GPU
+        cannot be preempted, so a plugin's fragment shader that hangs it causes
+        a device reset that destroys every GPU context in the process. Without
+        this the app learns the viewport died and nothing about why; with it,
+        the effect that was mid-draw is named and disabled.
+
+        `noteDeviceLoss` decides whether a plugin is implicated at all — a loss
+        with nothing plugin-owned drawing blames nobody, which is the common
+        case: driver updates, other applications, waking from sleep.
+      */
+      backend.onDeviceLost((reason) => { noteDeviceLoss(reason); });
+      return backend;
+    }
     return new WebGL2Backend();
   }
 

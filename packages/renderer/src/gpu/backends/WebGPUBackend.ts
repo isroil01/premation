@@ -112,6 +112,12 @@ export class WebGPUBackend implements RenderBackend {
   private context!: GPUCanvasContext;
   private surfaceFormat = 'bgra8unorm';
   private encoder: GPUCommandEncoder | null = null;
+  private deviceLostHandler: ((reason: string) => void) | null = null;
+
+  /** See `RenderBackend.onDeviceLost`. Attach before `initialize`. */
+  onDeviceLost(handler: (reason: string) => void): void {
+    this.deviceLostHandler = handler;
+  }
 
   async initialize(surface?: RenderSurface): Promise<void> {
     const gpu = (globalThis.navigator as Navigator | undefined)?.gpu;
@@ -123,6 +129,20 @@ export class WebGPUBackend implements RenderBackend {
     }
     if (!adapter) throw new Error('No WebGPU adapter');
     this.device = await adapter.requestDevice();
+
+    /*
+      `device.lost` RESOLVES on a device reset — it does not reject. A `.catch`
+      here would never fire, and the handler would look wired while being dead.
+
+      Attached immediately after the device is acquired and before anything is
+      created on it: a device lost during initialisation is exactly the case a
+      later attachment would miss.
+    */
+    void this.device.lost.then((info: { reason?: string; message?: string }) => {
+      const reason = `${info?.reason ?? 'unknown'}: ${info?.message ?? ''}`.trim();
+      this.deviceLostHandler?.(reason);
+    });
+
     this.surfaceFormat = gpu.getPreferredCanvasFormat();
     if (surface) {
       const ctx = surface.canvas.getContext('webgpu') as unknown as GPUCanvasContext | null;
