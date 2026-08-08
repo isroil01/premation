@@ -50,8 +50,12 @@ const post = (msg: WorkerMessage): void => {
 function lockdown(): void {
   const denied = (what: string) => () => {
     throw new Error(
-      `${what} is not available to plugins. Plugins run sandboxed with no network access — ` +
-      'ask the host for what you need through the plugin API.',
+      // Still true, and still the lockdown: a plugin never receives a real
+      // `fetch`. What `net:fetch` added is a MEDIATED verb beside it — so the
+      // message points at that rather than saying "no network" full stop, which
+      // sends an author looking for a workaround instead of the supported path.
+      `${what} is not available to plugins. Plugins have no network of their own — ` +
+      'use `motion.net.fetch(url)`, which reaches only the hosts your manifest declares.',
     );
   };
   const scope = self as unknown as Record<string, unknown>;

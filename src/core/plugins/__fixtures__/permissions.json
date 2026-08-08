@@ -32,7 +32,11 @@
     },
     "assets:read": {
       "label": "Read images in your project",
-      "detail": "Read the pixels of images already in your composition. Plugins cannot access the internet."
+      "detail": "Read the pixels of images already in your composition. Plugins have no network access unless you also grant \"Contact specific websites\"."
+    },
+    "net:fetch": {
+      "label": "Contact specific websites",
+      "detail": "Send and receive data from the websites this plugin lists below — and only those. Combined with permission to read your layers, a plugin could copy your project to them."
     },
     "assets:write": {
       "label": "Add images to your project",

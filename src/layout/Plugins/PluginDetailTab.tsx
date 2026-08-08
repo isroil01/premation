@@ -564,8 +564,9 @@ function PermissionSection({
       {editing && entry && <PermissionEditor entry={entry} onDone={() => setEditing(false)} />}
 
       <span className={styles.sandboxNote}>
-        Plugins run in a sandbox with no network access and no access to your account,
-        your sign-in or your saved API keys. Anything a plugin changes in your project is undoable.
+        Plugins run in a sandbox with no access to your account, your sign-in or your
+        saved API keys, and no network of their own — only the websites a plugin declares,
+        and only if you approve them. Anything a plugin changes in your project is undoable.
       </span>
     </div>
   );

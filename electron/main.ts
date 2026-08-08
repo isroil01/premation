@@ -9,6 +9,7 @@ import { registerIndexIpc } from './localIndexDb';
 import { registerAiKeyIpc } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
+import { registerPluginNetIpc } from './pluginNet';
 import { aiEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
@@ -1095,6 +1096,10 @@ app.whenReady().then(() => {
   registerRenderIpc();
   registerPopoutIpc();
   registerOAuthIpc();
+  // A plugin's outbound requests. Here rather than in the renderer because the
+  // app shell's `connect-src` does not name a plugin's hosts, and widening it
+  // to cover them would widen the whole renderer rather than the plugin.
+  registerPluginNetIpc();
   // The account session, and every authenticated call that uses it.
   //
   // Both tokens live in this process. There is no `credentials:get` any more:

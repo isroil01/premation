@@ -33,6 +33,7 @@
     "animation.setExpression": "animation:write",
     "assets.getImage": "assets:read",
     "assets.createImage": "assets:write",
+    "net.fetch": "net:fetch",
     "timeline.getTime": "timeline",
     "timeline.setTime": "timeline"
   }

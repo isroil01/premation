@@ -108,6 +108,23 @@ export function ConsentSheet({
                   <input type="checkbox" checked={chosen.includes(p)} onChange={() => toggle(p)} />
                   <span>
                     <strong>{PERMISSIONS[p].label}.</strong> {PERMISSIONS[p].detail}
+                    {/*
+                      The declared hosts, VERBATIM, under the permission that
+                      grants them. This is the whole reason hosts are declared
+                      rather than open-ended: "contact websites" is not a
+                      decision anyone can make, and "contact api.acme.com" is.
+
+                      Rendered from the manifest being installed — the same
+                      object the host checks every request against, so what is
+                      shown here and what is enforced cannot differ.
+                    */}
+                    {p === 'net:fetch' && manifest.contributes.net && (
+                      <ul className={styles.netHosts}>
+                        {manifest.contributes.net.hosts.map((host) => (
+                          <li key={host}><code>{host}</code></li>
+                        ))}
+                      </ul>
+                    )}
                   </span>
                 </label>
               </li>
@@ -126,8 +143,9 @@ export function ConsentSheet({
       </div>
 
       <p className={styles.sandboxNote}>
-        Plugins run in a sandbox with no network access and no access to your account,
-        your sign-in or your saved API keys. Anything a plugin changes in your project is undoable.
+        Plugins run in a sandbox with no access to your account, your sign-in or your
+        saved API keys, and no network of their own — only the websites a plugin declares,
+        and only if you approve them. Anything a plugin changes in your project is undoable.
       </p>
 
       <div className={styles.consentActions}>

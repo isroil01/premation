@@ -133,6 +133,35 @@ const bridge = {
   },
 
   /**
+   * A plugin's outbound requests.
+   *
+   * Deliberately NOT the general `fetch(url, init)` bridge the comment above
+   * refuses, and the distinction is what rides along. `api.request` is
+   * dangerous because main attaches the user's bearer to it, so an open relay
+   * would spend that credential on any URL. These verbs attach nothing — no
+   * token, no cookie, no key. They exist because the app shell's CSP does not
+   * name a plugin's hosts, and the alternative was widening `connect-src` for
+   * the whole renderer.
+   *
+   * What still needs defending is the user's own network, and main defends it
+   * at the socket: https only, the RESOLVED address refused if it is private,
+   * one hop per call, a byte cap and a timeout. `ipcGuard` keeps both verbs out
+   * of reach of a plugin panel, which is a subframe.
+   */
+  pluginNet: {
+    /** One hop. A 3xx comes back as a 3xx — main never follows a redirect. */
+    request: (req: unknown) => ipcRenderer.invoke('plugin:net-request', req),
+    /**
+     * Every address a name resolves to.
+     *
+     * The renderer cannot resolve DNS, and without this the rebinding check
+     * cannot run there at all — a declared host pointing at `127.0.0.1` would
+     * pass every check that reads the name as text.
+     */
+    resolve: (hostname: string) => ipcRenderer.invoke('plugin:net-resolve', hostname),
+  },
+
+  /**
    * Session state and the two operations that change it.
    *
    * `status` returns claims — signed in, who, when the access token expires,

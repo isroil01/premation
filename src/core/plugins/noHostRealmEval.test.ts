@@ -120,6 +120,38 @@ describe('no host-realm evaluation of plugin code', () => {
     expect(meta).toContain("connect-src 'none'");
     expect(meta).not.toMatch(/script-src[^;]*https?:/);
   });
+
+  it('a plugin granted net:fetch does NOT get a panel that can reach its hosts', () => {
+    /*
+      The obvious-looking change this exists to refuse.
+
+      `net:fetch` gives a plugin a network path, and the natural next thought is
+      to widen the panel's `connect-src` to the hosts it declared, so its UI can
+      fetch directly instead of routing through the worker. That would hand the
+      capability to the wrong realm. Every `net.fetch` call is checked three
+      times — against `METHOD_PERMISSIONS`, against what the user actually
+      granted, and against that plugin's own manifest — and the request is made
+      by the HOST, which counts bytes, caps redirects and refuses private
+      addresses. A panel with a real `connect-src` bypasses all of it: it is
+      inline script from the package with nothing between it and the socket.
+
+      So the shell's policy stays fixed. It is a static file with no
+      interpolation, and no code assembles a policy from a manifest.
+    */
+    const shell = readFileSync(join(ROOT, 'public', 'plugin-panel.html'), 'utf8');
+    // A static file: no template holes for a host list to be substituted into.
+    expect(shell).not.toMatch(/\$\{|__[A-Z_]+__|%[A-Z_]+%/);
+
+    // And nowhere in the frame path does a policy get assembled, or a declared
+    // host get read. Either one appearing here is the start of that change.
+    for (const rel of ['layout/Plugins/PluginPanel.tsx', 'core/plugins/PluginHost.ts']) {
+      const src = code(read(rel));
+      expect({ rel, buildsPolicy: /connect-src|Content-Security-Policy/i.test(src) })
+        .toEqual({ rel, buildsPolicy: false });
+      expect({ rel, readsDeclaredHosts: /contributes\.net/.test(src) })
+        .toEqual({ rel, readsDeclaredHosts: false });
+    }
+  });
 });
 
 /**

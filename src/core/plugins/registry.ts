@@ -18,9 +18,14 @@
  *      before they are parsed, and parsed before the consent screen — so an
  *      unverified package never reaches the zip reader.
  *
- * Update checks happen only when the user opens the plugin manager. Plugins
- * themselves still have no network path whatsoever; this is the app talking,
- * about plugins, at a moment the user is already looking at them.
+ * Update checks happen only when the user opens the plugin manager. This is the
+ * app talking to the registry, about plugins, at a moment the user is already
+ * looking at them — not a plugin reaching anywhere.
+ *
+ * A plugin's own network path, where it has one at all, is a separate thing
+ * that does not run through this file: `motion.net.fetch`, restricted to the
+ * hosts the plugin declared in its manifest and the user approved by name. See
+ * `pluginNetFetch.ts`.
  */
 
 import { request, apiBaseUrl } from '@core/api/client';

@@ -108,8 +108,15 @@ real URL is the only way to give it a policy of its own.
 
 That policy (in the shell) is **tighter** than the app's for everything except
 inline script: `default-src 'none'`, `connect-src 'none'`. Verified live — a
-panel's `fetch` fails and a remote `<img>` is refused. Panels have no network,
-exactly as the worker has none.
+panel's `fetch` fails and a remote `<img>` is refused.
+
+This stays true now that `net:fetch` exists, and it is deliberate. A plugin
+granted network access does **not** get a panel that can reach its declared
+hosts — widening the shell's `connect-src` would hand the capability to the
+wrong realm. A panel is inline script from the package with nothing between it
+and the socket; a worker's request goes through the host, which checks the
+permission, the grant and that plugin's own manifest, then caps redirects, size
+and rate. `noHostRealmEval.test.ts` refuses the change.
 
 ---
 
@@ -190,6 +197,9 @@ containing `..` are refused at the format level.
 | `scene:write` | Create, change and delete layers |
 | `animation:read` | Read keyframes and sample animated values |
 | `animation:write` | Create and change keyframes and expressions |
+| `assets:read` | Read the pixels of images already in the composition |
+| `assets:write` | Create images and place them as layers |
+| `net:fetch` | Contact the hosts listed in `contributes.net` — **and only those** |
 | `timeline` | Read the current time and move the playhead |
 
 Registering commands, showing notifications, opening the plugin's own panel and
@@ -429,8 +439,9 @@ signature guarantee unusable.
 ### Updates
 
 Checked **only when the manager is opened** — never on a timer, never in the
-background. Plugins themselves still have no network path at all; this is the
-editor asking, on the screen where the answer is the point. A failed check is
+background. This is the editor asking the registry, on the screen where the
+answer is the point — not a plugin reaching anywhere. A plugin's own network
+path, where it has one, is `motion.net.fetch` (§13). A failed check is
 silent, so working offline does not produce errors.
 
 An update that asks for **more permissions than were granted** goes back through
@@ -1065,3 +1076,148 @@ an assertion that pins the current limitation and fails when it is lifted.
 None is fixed here. A gap report that quietly patches what it finds stops being
 a report, and three of these are contract changes both validators would have to
 agree on.
+
+---
+
+## 13. Network (API 4)
+
+A plugin can contact the internet. It declares **which hosts**, the user
+approves them **by name**, and the request is made by the host — never by the
+plugin.
+
+### Why hosts are declared, and why they are exact
+
+Every other permission bounds what a plugin can *touch*. This one bounds where
+it can *send*, and that is a different kind of question. "Can contact websites"
+is not a decision anyone can act on; "can contact `api.acme.com`" is. So the
+manifest lists hosts, the consent screen prints them verbatim, and the host
+checks every request against that same list.
+
+```json
+{
+  "apiVersion": 4,
+  "permissions": ["scene:read", "net:fetch"],
+  "contributes": {
+    "net": { "hosts": ["api.acme.com", "cdn.acme.com"] }
+  }
+}
+```
+
+The permission and the block **imply each other, both ways**. `net:fetch` with
+no hosts puts a permission on the install screen with nothing under it. Hosts
+with no permission is the shape of a plugin that adds the permission in a later
+version, once the list has been sitting in the manifest unread.
+
+Wildcards are refused. `*.example.com` on a consent screen is a category, not
+a destination, and the whole value of the list is that a user can read it and
+recognise what is on it. The cost is real — three subdomains means three
+entries — and it falls on the author who knows their own infrastructure rather
+than on the user deciding whether to trust it. Eight hosts is the cap: a list
+nobody reads is a list nobody checks.
+
+### The consent screen says the dangerous part out loud
+
+`net:fetch` is the one permission whose danger is a **combination**. A plugin
+holding `scene:read` and `net:fetch` together can copy the user's project
+somewhere else. That is not a flaw in the design — it is what the pair means —
+so the text says it in those words rather than listing two capabilities and
+leaving the user to multiply them.
+
+### What the host enforces, per request
+
+The plugin has no `fetch`; `fetch`, `XMLHttpRequest` and `WebSocket` are all
+removed at worker lockdown. `motion.net.fetch(url, init)` is a message, and the
+host checks it like any other:
+
+| Rule | Why |
+|---|---|
+| HTTPS only | Plain HTTP is readable and modifiable by anything on the path, and this traffic carries whatever the plugin was granted |
+| Exact host match | `api.example.com` does not permit `evil.api.example.com`, and neither permits the other |
+| **Every redirect hop re-checked** | `redirect: "manual"`; a 302 off the list is refused, not followed |
+| Max 4 hops | A redirect chain is not a loophole to walk |
+| **Resolved address checked, not just the name** | Below |
+| 8 MB response cap | Counted **as bytes arrive**, not from `content-length` — a header is a claim |
+| 15 s timeout | |
+| 60 requests/minute per plugin | Refused destinations count too, so probing is not free |
+| `credentials: "omit"` | The user's cookies are not the plugin's to spend |
+| Response headers filtered | `content-type`, `content-length`, `etag`, `last-modified` — the rest is fingerprinting surface |
+
+Refusals name **only the host**, never the full URL: the URL is
+attacker-chosen and may end up in a log or a screenshot, and the host is the
+part a user can act on.
+
+### DNS rebinding, which is the interesting one
+
+Declaring `api.acme.com` and blocking `localhost` by *name* stops nothing. A
+host the author controls can resolve to `127.0.0.1` — the name is on the list,
+and the socket lands on the user's own machine. So the check is on the
+**resolved address**: loopback, link-local, RFC1918, carrier-grade NAT,
+benchmark ranges, multicast, IPv6 loopback and unique-local, and
+IPv4-mapped-IPv6 spellings of all of them.
+
+### The request is made by the main process, and why
+
+A renderer cannot resolve DNS, and it cannot reach a plugin's hosts either. The
+app shell ships a CSP whose `connect-src` names our backend, our media origins
+and localhost — `api.acme.com` is not on it, so a renderer-side plugin request
+is refused before a socket opens.
+
+The fix people reach for is to widen `connect-src` to cover every host every
+installed plugin declared. That loosens the policy for the **whole renderer**,
+not for the plugin: any script that ever runs there inherits the widened reach
+as a side effect of a plugin the user installed for something unrelated.
+
+So the request moves instead of the policy. The renderer's ceiling stays exactly
+where it was, and the work is split:
+
+| | Renderer (`pluginNetFetch.ts`) | Main (`electron/pluginNet.ts`) |
+|---|---|---|
+| Which plugin is asking | ✔ | — |
+| Declared hosts, the grant, the budget | ✔ | — |
+| The redirect loop and hop budget | ✔ | — |
+| https only | ✔ | ✔ |
+| Resolved address refused if private | ✔ | ✔ |
+| Byte cap, timeout, no cookies | ✔ | ✔ |
+| Opens the socket | — | ✔ |
+
+The overlap is deliberate. Main is where the connection happens, so it does not
+take a destination on trust from a caller — even one it believes. The renderer
+is where the manifest and the grant live, so main cannot know whether a host was
+declared. Neither side is sufficient alone.
+
+**Redirects are not followed in main.** A hop is a new destination and has to be
+re-checked against the plugin's declared hosts, which main cannot see. So a 3xx
+comes back as a 3xx with its `Location`, and the renderer re-runs the same
+check it ran on the original.
+
+This is **not** a general fetch bridge. `apiProxy.ts` refuses to be one because
+main attaches the user's bearer to its requests, and an open relay would spend
+that credential on any URL. These verbs attach nothing — no token, no cookie, no
+key — and `ipcGuard` keeps them out of reach of a plugin panel, which is a
+subframe. What is left to protect is the user's own network, and the table above
+is how.
+
+`installPluginNetBridge()` runs at the renderer entry, before any plugin host
+boots. In a browser build there is no bridge, the resolver stays null, and
+`netGuardStatus()` reports `rebindingCheck: false` rather than implying a
+protection that is not running.
+
+### The panel stays network-free
+
+A plugin granted `net:fetch` does **not** get a panel that can reach its
+declared hosts. The shell keeps `connect-src 'none'`. Widening it would hand
+the capability to the wrong realm: a panel is inline script from the package
+with nothing between it and the socket, while a worker's request passes the
+permission gate, the grant, the manifest, and every cap above. There is a
+regression guard in `noHostRealmEval.test.ts`, and it fails if either the
+policy loosens or the frame path starts reading `contributes.net`.
+
+### Both validators, one corpus
+
+`motion-back` re-implements every rule above — it must, since it accepts the
+package before any editor sees it, and a package the registry accepts and the
+editor then refuses is a download that cannot work. The two are kept honest by
+`__fixtures__/manifests.json`, byte-identical in both repos, with 13 cases for
+`net` alone. The permission text is shared the same way
+(`permissions.json`), because the sentence a user reads on the marketplace and
+the one they read on the install screen must be the same sentence.

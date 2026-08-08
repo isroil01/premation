@@ -1488,7 +1488,7 @@ export function DashboardPage(): JSX.Element {
       case 'plugins':
         return {
           title: 'Plugins',
-          desc: 'Find, install and manage plugins. They run sandboxed, with no network access.',
+          desc: 'Find, install and manage plugins. They run sandboxed, and can only reach websites you approve by name.',
         };
       case 'renders':
         return {

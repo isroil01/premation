@@ -6,6 +6,7 @@ import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
 import { parseEdition, setEdition } from '@core/config/edition';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
+import { installPluginNetBridge } from '@core/plugins/pluginNetBridge';
 import './styles/global.css';
 
 // FIRST, before any store hydrates or any plugin host boots: remove plaintext
@@ -27,6 +28,16 @@ setEdition(edition);
 // the reverse. Diagnostic only — main never takes its edition from this message.
 // Optional-chained throughout: there is no bridge in a browser build.
 void window.motionEditor?.reportEdition?.(edition);
+
+// Turn on the DNS-rebinding check for plugin network requests. It needs a
+// resolver, the renderer has no way to resolve a name, and without one the
+// check does not run at all — a declared host pointing at 127.0.0.1 would pass
+// every check that reads the name as text. Installed here, before any plugin
+// host boots, for the same reason the key purge above is first: a protection
+// installed after the thing it protects is already running is theatre. No-ops
+// in a browser build, and `netGuardStatus()` reports that rather than implying
+// a guard that is not running.
+installPluginNetBridge();
 
 // Read the LOCAL_FIRST build flag once, here at the entry — `import.meta.env` is
 // a Vite construct, and keeping it out of shared modules avoids Jest's CJS

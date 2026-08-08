@@ -102,6 +102,11 @@ describe('manifest normalisation on load', () => {
       // normalisation, so no consumer needs a `?? []`.
       layerKinds: [],
       effects: [],
+      // `net` is present as `null`, which is the same discipline stated
+      // differently: no network at all is a real state and gets a real value.
+      // The empty list is NOT its zero — "reach nowhere" is refused at parse
+      // rather than normalised into "no access".
+      net: null,
     });
   });
 

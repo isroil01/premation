@@ -28,6 +28,7 @@
 import { ICON_NAMES } from '@components/Icon/iconNames';
 import { parseLayerKinds, type LayerKindContribution } from './layerKindSchema';
 import { parseEffects, type EffectContribution } from './effectSchema';
+import { parseNet, type NetContribution } from './netSchema';
 
 /**
  * Host API generation. Bump on a BREAKING change to the plugin-facing API.
@@ -66,7 +67,26 @@ export const PERMISSIONS = {
   },
   'assets:read': {
     label: 'Read images in your project',
-    detail: 'Read the pixels of images already in your composition. Plugins cannot access the internet.',
+    // Was "Plugins cannot access the internet." That stopped being true when
+    // `net:fetch` shipped, and a reassurance that has quietly become false is
+    // worse than no reassurance — the user reads it while deciding what to
+    // trust. The remaining sentence is still true and still worth saying: a
+    // plugin has NO network of its own, and reaching one is a separate
+    // permission with its own named destinations.
+    detail: 'Read the pixels of images already in your composition. Plugins have no network access unless you also grant "Contact specific websites".',
+  },
+  'net:fetch': {
+    label: 'Contact specific websites',
+    /*
+      The one permission whose danger is a COMBINATION, said plainly.
+
+      Listing "can reach the internet" beside "can read your layers" leaves the
+      user to multiply the two, and most will not. A plugin holding both can
+      take a copy of the project somewhere else, and that is not a flaw in the
+      design — it is what the pair means. The consent screen names the hosts
+      separately, from `contributes.net`.
+    */
+    detail: 'Send and receive data from the websites this plugin lists below — and only those. Combined with permission to read your layers, a plugin could copy your project to them.',
   },
   'assets:write': {
     label: 'Add images to your project',
@@ -168,6 +188,15 @@ export interface PluginContributes {
    * callback, and why the host writes the bindings rather than the author.
    */
   effects: EffectContribution[];
+  /**
+   * Hosts this plugin may contact. Requires `apiVersion: 4` and the
+   * `net:fetch` permission — see `netSchema.ts`.
+   *
+   * `null` means the plugin declared no network block, which is the common
+   * case. That is NOT the same as an empty host list, which is refused:
+   * network access to nowhere is a mistake rather than a configuration.
+   */
+  net: NetContribution | null;
 }
 
 /**
@@ -255,7 +284,7 @@ export interface ManifestResult {
 
 /** An empty, fully-normalised contribution block. */
 function emptyContributes(): PluginContributes {
-  return { commands: [], panels: [], layerKinds: [], effects: [] };
+  return { commands: [], panels: [], layerKinds: [], effects: [], net: null };
 }
 
 /**
@@ -351,6 +380,17 @@ function parseContributes(
       // that declared nothing, which is the opposite of what a version gate is
       // for.
       errors.push('"contributes.effects" requires "apiVersion": 4.');
+    }
+  }
+
+  if (c.net !== undefined) {
+    if (apiVersion >= 4) {
+      out.net = parseNet(c.net, errors);
+    } else {
+      // No empty-block escape hatch here, unlike `effects` and `layerKinds`.
+      // `net` was never a reserved key, so no older manifest can be declaring
+      // it — anything that does is asking for the capability.
+      errors.push('"contributes.net" requires "apiVersion": 4.');
     }
   }
 
@@ -594,6 +634,37 @@ export function parseManifest(raw: unknown): ManifestResult {
         }
       }
     }
+  }
+
+  /*
+    ★ The permission and the host list must agree, in BOTH directions.
+
+    They are two halves of one statement — "this plugin reaches the network, and
+    these are the places" — and either half alone is a manifest that means
+    something different from what it looks like:
+
+      • `net:fetch` with no hosts is a permission the consent screen would show
+        with nothing under it. The user is asked to approve "contact websites"
+        and shown no websites, which is the vaguest possible version of the one
+        permission that most needs to be specific.
+
+      • Hosts with no `net:fetch` is a list the user is never shown, attached to
+        a capability the plugin does not have. Harmless today and exactly the
+        shape of a plugin that adds the permission in its next version, when the
+        hosts have already been sitting in the manifest unread.
+
+    Checked here rather than in `parseNet`, because only this scope can see both.
+  */
+  const wantsNet = permissions.includes('net:fetch');
+  if (wantsNet && !contributes.net) {
+    errors.push(
+      'The "net:fetch" permission requires a "contributes.net.hosts" list — the consent screen names the hosts, and a permission with nothing under it tells the user nothing.',
+    );
+  }
+  if (!wantsNet && contributes.net) {
+    errors.push(
+      '"contributes.net" was declared without the "net:fetch" permission. Ask for the permission, or remove the block.',
+    );
   }
 
   if (errors.length > 0) return { manifest: null, errors };

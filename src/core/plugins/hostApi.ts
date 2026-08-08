@@ -37,6 +37,8 @@ import { onLayerChanged } from './layerChangeNotifier';
 import type { PluginManifest } from './manifest';
 import type { PluginCommandSpec } from './protocol';
 import { createImageAsset, readAssetPixels, requireAsset } from './assets';
+import { pluginNetFetch } from './pluginNetFetch';
+import { mainProcessFetch } from './pluginNetBridge';
 
 /** What a plugin may create. Deliberately the primitives plus `image`, not
  *  every internal node kind — a plugin has no business minting a camera or a
@@ -504,6 +506,35 @@ export function createHostApi(
         name: o.name,
       });
     },
+
+    // ── Network ──────────────────────────────────────────────────────────
+    /**
+     * The one verb that SENDS.
+     *
+     * The declared host list is read from THIS plugin's own manifest, never
+     * from anything the call passes — so a plugin cannot name a destination it
+     * did not disclose and the user did not approve. That is the whole reason
+     * the list lives on the manifest rather than being an argument.
+     *
+     * Every other guard — https, private addresses, redirect re-checking, size,
+     * timeout, rate — is inside `pluginNetFetch`, so there is one place to read
+     * them and one place they can be wrong.
+     */
+    'net.fetch': async (url, init) =>
+      pluginNetFetch(
+        manifest.id,
+        manifest.contributes.net,
+        str(url, 'url'),
+        (init ?? {}) as { method?: string; headers?: Record<string, string>; body?: string },
+        // The transport, not the policy. On the desktop build the request is
+        // made by the MAIN process: the app shell's `connect-src` names our
+        // backend and our media origins, never a plugin's hosts, so a
+        // renderer-side request would be refused before it left — and widening
+        // the policy would widen the whole renderer rather than this plugin.
+        // Falls back to the renderer's own `fetch` in a browser build, where
+        // there is no other process to ask.
+        mainProcessFetch(),
+      ),
 
     // ── Timeline ─────────────────────────────────────────────────────────
     'timeline.getTime': () => getTimelineController().currentSeconds,

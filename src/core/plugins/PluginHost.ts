@@ -7,10 +7,17 @@
  *
  * It runs in a dedicated Worker (`pluginWorker.ts`) with no DOM, no
  * `localStorage` — which is where this app keeps the account bearer token and
- * the user's plaintext AI provider keys — and no network. It reaches the
- * document only by sending a message naming a method, and this file decides,
- * per message, whether the permission that method requires was granted by the
- * user at install time.
+ * the user's plaintext AI provider keys — and no network reachable directly:
+ * `fetch`, `XMLHttpRequest` and `WebSocket` are all removed at lockdown. It
+ * reaches the document only by sending a message naming a method, and this file
+ * decides, per message, whether the permission that method requires was granted
+ * by the user at install time.
+ *
+ * Network is not an exception to that, it is an instance of it. A plugin that
+ * declared hosts and was granted `net:fetch` reaches them by sending the
+ * `net.fetch` message like any other — the request is made HERE, in the host,
+ * against the hosts in that plugin's own manifest. There is still no socket in
+ * the worker realm.
  *
  * What that buys, concretely:
  *
@@ -18,7 +25,7 @@
  *   |---|---|---|
  *   | Plugin loops forever | Editor frozen, needs a kill | Worker terminated, editor untouched |
  *   | Plugin reads the JWT | `localStorage.getItem(…)` | No `localStorage` in the realm |
- *   | Plugin phones home | `fetch(…)` | `fetch` replaced with a throwing stub |
+ *   | Plugin phones home | `fetch(…)` anywhere | Only hosts it declared and the user approved |
  *   | Plugin deletes the project | Direct `defaultSceneGraph` handle | Needs `scene:write`, and it is one undo |
  *   | User reloads | Everything uninstalled | Installs persist |
  *

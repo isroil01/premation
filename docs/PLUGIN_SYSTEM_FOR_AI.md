@@ -27,7 +27,8 @@ checks each message against the permissions actually granted and executes it ins
 `runDocumentEdit`, so anything a plugin changes is a **single undo entry**. A plugin
 that wedges its event loop stops answering a heartbeat and is terminated — the editor
 never notices. Installs persist across reloads. A plugin can also ship an HTML
-**panel**, rendered in a sandboxed iframe with an opaque origin and no network,
+**panel**, rendered in a sandboxed iframe with an opaque origin and no network
+of its own (`connect-src 'none'`, even when the plugin holds `net:fetch`),
 which can talk *only* to its own plugin's worker. There is a hosted **registry** in
 `motion-back` with ECDSA-signed packages and trust-on-first-use publisher keys.
 
@@ -543,7 +544,8 @@ user's machine, before the bytes reach the zip reader.
 - A **registry install is not a shortcut past the permission screen**: verified →
   parsed by the same package reader a local file goes through → the same consent screen.
 - **Update checks fire only when the manager is opened** — never on a timer, never in
-  the background. Plugins themselves still have no network path at all; this is the
+  the background. This is the editor asking the registry, not a plugin reaching
+  anywhere — a plugin's own path is `motion.net.fetch`. This is the
   *editor* asking, on the screen where the answer is the point. **Failure is silent**
   so working offline does not produce errors.
 - An update asking for **more permissions than were granted** goes back through consent.

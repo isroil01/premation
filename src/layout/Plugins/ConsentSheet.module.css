@@ -218,3 +218,34 @@
   border-radius: var(--radius-lg, 8px);
   box-shadow: var(--shadow-lg, 0 16px 48px rgb(0 0 0 / 0.45));
 }
+
+/*
+ * The declared network hosts, under the `net:fetch` permission.
+ *
+ * Monospace and one per line, because these are strings a user compares
+ * character by character against what they expected — `api.acme.com` and
+ * `api.acrne.com` are the same shape in a proportional face, and that
+ * substitution is the entire attack this list exists to make visible.
+ */
+.netHosts {
+  margin: var(--space-2) 0 0;
+  padding: 0 0 0 var(--space-4);
+  list-style: none;
+}
+
+.netHosts li {
+  position: relative;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 1.7;
+  color: var(--color-text-primary);
+  user-select: text;
+}
+
+/* A marker of its own, so the host list does not read as prose. */
+.netHosts li::before {
+  content: '→';
+  position: absolute;
+  left: calc(var(--space-4) * -1);
+  color: var(--color-text-secondary);
+}

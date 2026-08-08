@@ -57,7 +57,14 @@ describe('normalisation', () => {
     const { manifest } = parseManifest({ ...base, apiVersion: 1 });
     // No `?? []` anywhere downstream. A key that is sometimes absent and
     // sometimes empty is two representations of one state.
-    expect(manifest?.contributes).toEqual({ commands: [], panels: [], layerKinds: [], effects: [] });
+    //
+    // `net` is `null` rather than absent for the same reason, and the empty
+    // list is NOT its zero value: no network at all and "network access to
+    // nowhere" are different things, and the second is refused rather than
+    // normalised into the first.
+    expect(manifest?.contributes).toEqual({
+      commands: [], panels: [], layerKinds: [], effects: [], net: null,
+    });
   });
 
   it('turns a legacy panel string into a declared panel titled after the plugin', () => {

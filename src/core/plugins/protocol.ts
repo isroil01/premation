@@ -96,6 +96,10 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
   'assets.getImage': 'assets:read',
   'assets.createImage': 'assets:write',
 
+  // The one verb that SENDS. Gated on the permission, and the host checks the
+  // URL against the plugin's declared hosts before anything leaves the machine.
+  'net.fetch': 'net:fetch',
+
   'timeline.getTime': 'timeline',
   'timeline.setTime': 'timeline',
 };

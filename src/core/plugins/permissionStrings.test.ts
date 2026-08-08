@@ -49,10 +49,31 @@ describe('permission strings have one source', () => {
 
   it('states the network guarantee on the permissions that need it', () => {
     // `assets:read` is the scariest-sounding permission in the list, and the
-    // reason it is safe to grant is that the pixels cannot leave. Saying so
-    // where it is granted is the difference between informed consent and a
-    // warning wall.
-    expect(PERMISSIONS['assets:read'].detail).toMatch(/cannot access the internet/i);
+    // reason it was safe to grant was that the pixels could not leave. That
+    // used to be unconditional ("Plugins cannot access the internet") and
+    // stopped being true the day `net:fetch` shipped. The sentence now states
+    // the condition instead, which is the honest version of the same promise.
+    expect(PERMISSIONS['assets:read'].detail).toMatch(/no network access unless/i);
+  });
+
+  it('names the network permission in the text that defers to it', () => {
+    /*
+      The `assets:read` reassurance is only meaningful if the user can find the
+      permission it points at. It quotes `net:fetch`'s LABEL, so this asserts
+      the two agree rather than asserting a hardcoded phrase — rename the label
+      and this fails, which is the moment to fix the sentence, instead of the
+      sentence silently referring to a permission that no longer exists by that
+      name on the screen right above it.
+    */
+    expect(PERMISSIONS['assets:read'].detail).toContain(`"${PERMISSIONS['net:fetch'].label}"`);
+  });
+
+  it('says the host list is exhaustive, on the permission that grants it', () => {
+    // "Contact websites" is not a decision anyone can make. The whole reason
+    // hosts are declared and rendered verbatim is that the answer is bounded,
+    // and the detail has to say so — otherwise the list beneath it reads as
+    // examples rather than as the limit.
+    expect(PERMISSIONS['net:fetch'].detail).toMatch(/and only those/i);
   });
 
   it.each(SURFACES)('%s imports the strings rather than restating them', (rel) => {

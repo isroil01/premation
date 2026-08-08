@@ -1213,6 +1213,296 @@
           ]
         }
       }
+    },
+    {
+      "name": "a declared host with the matching permission is valid",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "net:fetch without a host list is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ]
+      }
+    },
+    {
+      "name": "a host list without net:fetch is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "an empty host list is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": []
+          }
+        }
+      }
+    },
+    {
+      "name": "a wildcard host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "*.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a host with a scheme is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "https://api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a host with a port is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com:8443"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "localhost is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "localhost"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a .internal host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "db.internal"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "more than eight hosts is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "a1.example.com",
+              "a2.example.com",
+              "a3.example.com",
+              "a4.example.com",
+              "a5.example.com",
+              "a6.example.com",
+              "a7.example.com",
+              "a8.example.com",
+              "a9.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a duplicated host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com",
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "contributes.net needs apiVersion 4",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "eight hosts is accepted",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "a1.example.com",
+              "a2.example.com",
+              "a3.example.com",
+              "a4.example.com",
+              "a5.example.com",
+              "a6.example.com",
+              "a7.example.com",
+              "a8.example.com"
+            ]
+          }
+        }
+      }
     }
   ]
 }
