@@ -5,7 +5,7 @@
  * History / autosave / export.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useSyncExternalStore } from 'react';
 import { Icon, type IconName } from '@components/Icon';
 import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
@@ -19,6 +19,8 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { EFFECT_DEFS, addEffect, getNodeEffects, type EffectType } from '@core/effects/effects';
+import { pluginEffectDefs, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
+import { subscribeToEffects, pluginEffectRevision } from '@core/plugins/pluginEffects';
 import {
   copyAllEffects,
   pasteEffects,
@@ -158,6 +160,18 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
 const EFFECT_CATEGORY_ORDER: readonly string[] = [
   'Blur & Sharpen', 'Color Correction', 'Stylize', 'Generate',
   'Distort', 'Keying', 'Time', 'Transition',
+  /*
+    Last, and its OWN folder rather than sorted into the others by guesswork.
+
+    Someone looking for what a plugin added knows it came from a plugin.
+    Scattering them through folders organised by what an effect DOES would make
+    them findable only by remembering the name — and two plugins may both ship
+    a "Glow", which is why the label carries the plugin's name too.
+
+    Empty for almost everyone; `browserFolders` drops empty groups, so the
+    folder simply does not appear until something is installed.
+  */
+  PLUGIN_EFFECT_CATEGORY,
 ];
 
 /**
@@ -172,6 +186,7 @@ const EFFECT_CATEGORY_ICON: Record<string, IconName> = {
   'Blur & Sharpen': 'blur',
   'Color Correction': 'palette',
   Stylize: 'brush',
+  [PLUGIN_EFFECT_CATEGORY]: 'plugin',
   Generate: 'gradient',
   Distort: 'waves',
   Keying: 'eraser',
@@ -196,8 +211,24 @@ export function EffectsPanel(): JSX.Element {
   // Rules-of-Hooks crash that took the whole editor down with it.
   const hasSelection = !!(primary && defaultSceneGraph.getNode(primary));
 
+  /*
+    Plugin effects are appended to the built-ins, not merged into them.
+
+    `EFFECT_DEFS` is a module-level constant; the plugin set changes while the
+    app runs — a plugin is enabled, disabled, updated, or turned off after a
+    device loss. So it is read through the store's revision, which is what makes
+    this list re-render rather than showing whatever was installed at load.
+  */
+  const pluginRev = useSyncExternalStore(subscribeToEffects, () => pluginEffectRevision());
+  const allDefs = useMemo(
+    () => [...EFFECT_DEFS, ...pluginEffectDefs()],
+    // `pluginRev` is the dependency that matters; `pluginEffectDefs()` reads
+    // module state and would otherwise be memoised against nothing.
+    [pluginRev],
+  );
+
   const q = effectQuery.trim().toLowerCase();
-  const browserDefs = q ? EFFECT_DEFS.filter((d) => d.label.toLowerCase().includes(q)) : EFFECT_DEFS;
+  const browserDefs = q ? allDefs.filter((d) => d.label.toLowerCase().includes(q)) : allDefs;
   // Every effect in EFFECT_DEFS renders on the unified GPU engine, so nothing
   // is locked. The availability check that used to gate this returned a constant
   // `{ ok: true }`, which left the lock icon, the `disabled` attribute and the
@@ -215,7 +246,11 @@ export function EffectsPanel(): JSX.Element {
     const groups: Record<string, typeof browserDefs> = {};
     for (const cat of EFFECT_CATEGORY_ORDER) groups[cat] = [];
     browserDefs.forEach((d) => {
-      const cat = EFFECT_CATEGORY[d.type];
+      // A plugin effect's type is namespaced and so is absent from the
+      // built-in `Record`, which would otherwise file it under `undefined` —
+      // a group `EFFECT_CATEGORY_ORDER` never renders, so the effect would be
+      // installed, listed by `pluginEffectDefs`, and invisible.
+      const cat = EFFECT_CATEGORY[d.type] ?? PLUGIN_EFFECT_CATEGORY;
       (groups[cat] ??= []).push(d);
     });
     return groups;

@@ -1026,3 +1026,42 @@ expressed as native layers.
 - **The statement ceiling is a proxy for cost, not a cost model.** A real one
   would mean writing a WGSL front end, and a hand-written parser fed hostile
   input is a worse liability than the thing it would protect.
+
+### Gaps found rebuilding the depth plugin on shaders
+
+The depth/parallax plugin has now been built three times against this API and
+found a real gap each time — it is the only exercise here written from the
+*outside*. `depthPluginRebuild.test.ts` is the report, executable: each gap is
+an assertion that pins the current limitation and fails when it is lifted.
+
+1. **An effect cannot sample a second texture.** A depth plugin displaces one
+   image by another, and the generated bind group has exactly one texture. The
+   renderer already models this — `DISPLACEMENT_MAP_MATERIAL` carries a second
+   texture at binding 3, and `FrameScene` has `mapLayerId` for naming the layer
+   that supplies it — so the capability exists and the plugin contract cannot
+   reach it. A `layer`-typed parameter plus a fourth binding is the obvious
+   shape; note that `layer` is not in the prop vocabulary at all, so the fix is
+   not only in `EFFECT_PARAM_TYPES`.
+
+2. **A `render: "shader"` layer kind is not connected to an effect.** The
+   strategy says a kind draws itself; nothing says *with what*. A plugin
+   declaring both a kind and an effect has no way to state the relationship, so
+   such a manifest is accepted and means less than it appears to.
+
+3. **An effect cannot read time or composition size.** Both would need a
+   host-filled parameter — the concept the built-in effects already have as
+   `EffectParamDef`'s `'resolved'` type, with no plugin-facing equivalent. The
+   workaround is an animatable number the user keyframes by hand, which is
+   per-document rather than per-effect and breaks when the frame rate changes.
+
+4. **A shader kind is forced to declare properties it does not have.**
+   `parseLayerKinds` refuses a kind with no props — correct for `none` and
+   `proxy`, where props *are* the authored interface, and wrong for `shader`,
+   whose parameters live on its effect. Today an author invents a property to
+   satisfy a rule written before their render strategy existed, and then leaves
+   it unread: a control that does nothing, which is what the rule exists to
+   prevent.
+
+None is fixed here. A gap report that quietly patches what it finds stops being
+a report, and three of these are contract changes both validators would have to
+agree on.

@@ -91,7 +91,21 @@ const listeners = new Set<() => void>();
  */
 let inFlight: string | null = null;
 
+/**
+ * Bumped on every change to the registered set.
+ *
+ * `useSyncExternalStore` needs a snapshot that is stable between changes and
+ * different after one. Returning the array itself would allocate a fresh
+ * identity on every render and loop forever; a counter satisfies both halves
+ * and costs nothing.
+ */
+let revision = 0;
+export function pluginEffectRevision(): number {
+  return revision;
+}
+
 function changed(): void {
+  revision += 1;
   for (const fn of listeners) fn();
 }
 
@@ -275,6 +289,7 @@ export function reenableEffect(id: string): void {
 /** Test seam. Never called by the app. */
 export function resetEffectsForTests(): void {
   effects.clear();
+  revision = 0;
   inFlight = null;
   listeners.clear();
 }

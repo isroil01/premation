@@ -7,6 +7,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
+import { pluginEffectDef } from './pluginEffectDefs';
 import type { SceneNode } from '@core/types';
 
 export type EffectType =
@@ -1464,7 +1465,38 @@ export const EFFECT_DEFS: EffectDef[] = [
   },
 ];
 
-const DEF = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
+const BUILTIN_DEF = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
+
+/**
+ * One effect's definition, built-in or from a plugin.
+ *
+ * ★ Every reader goes through here rather than through the map.
+ *
+ * The map is built at module load from a fixed array, which is correct for
+ * built-ins and cannot describe a plugin's effect — that set is whatever is
+ * installed and changes while the app runs. A reader that consulted only the
+ * map would return `undefined` for a plugin effect, and every call site treats
+ * `undefined` as "unknown effect": no parameters, no CSS, no label, silently
+ * skipped. A document with a plugin effect on a layer would open with the
+ * effect present in the data and absent from every surface.
+ *
+ * Resolved lazily rather than by adding plugin effects to `EFFECT_DEFS`,
+ * because that array is a module-level constant several things capture at load.
+ */
+export function effectDefFor(type: EffectType | string): EffectDef | undefined {
+  return BUILTIN_DEF.get(type as EffectType)
+    // Only consulted on a miss, so the common path is one map lookup.
+    ?? (typeof type === 'string' && type.includes('.') ? pluginEffectDef(type) : undefined);
+}
+
+/**
+ * Kept for the call sites below, which now all read through `effectDefFor`.
+ * Shaped as a `get` so the diff is a rename rather than a rewrite of each.
+ */
+const DEF = {
+  get: (type: EffectType | string) => effectDefFor(type),
+  has: (type: EffectType | string) => effectDefFor(type) !== undefined,
+};
 
 /** Effects that need the GPU backend to render at all. */
 export const GPU_ONLY_EFFECTS: ReadonlySet<EffectType> = new Set(
