@@ -84,6 +84,31 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
   'scene.setProperty': 'scene:write',
   'scene.renameLayer': 'scene:write',
   'scene.deleteLayer': 'scene:write',
+  /*
+    Structure and per-layer state.
+
+    All `scene:write`, and none of them gets a permission of its own. The
+    consent screen is a list somebody reads, and splitting "can change layers"
+    into six lines makes it longer without making it more informative — nobody
+    grants "may reparent" while withholding "may delete". What a user actually
+    decides is whether this plugin may rearrange their project.
+  */
+  'scene.setParent': 'scene:write',
+  'scene.setVisible': 'scene:write',
+  'scene.setLocked': 'scene:write',
+
+  /*
+    The effect stack.
+
+    Reading is `scene:read`, changing is `scene:write` — because that is what an
+    effect is here: a property of a layer, stored on the layer, saved with the
+    document. A separate `effects:*` permission would imply effects are a
+    different kind of thing to grant, and they are not.
+  */
+  'effects.list': 'scene:read',
+  'effects.add': 'scene:write',
+  'effects.remove': 'scene:write',
+  'effects.setParam': 'scene:write',
 
   'animation.getTracks': 'animation:read',
   'animation.sample': 'animation:read',

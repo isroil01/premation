@@ -37,6 +37,10 @@ import { onLayerChanged } from './layerChangeNotifier';
 import type { PluginManifest } from './manifest';
 import type { PluginCommandSpec } from './protocol';
 import { createImageAsset, readAssetPixels, requireAsset } from './assets';
+import { reparentNode } from '@core/scene/parenting';
+import {
+  addEffect, removeEffect, updateEffectParam, getNodeEffects, effectDefFor,
+} from '@core/effects/effects';
 import { pluginNetFetch } from './pluginNetFetch';
 import { mainProcessFetch } from './pluginNetBridge';
 
@@ -396,6 +400,144 @@ export function createHostApi(
       // with it, and no plugin asked for that.
       if (n.parent === null) return fail('That is a composition root, not a layer.');
       return edit(`delete ${n.name}`, () => { defaultSceneGraph.removeNode(n.id); bumpScene(); return true; });
+    },
+
+    /**
+     * Reparent a layer, or move it to the composition root with `null`.
+     *
+     * The world pose is preserved: the child adopts whatever local transform
+     * reproduces where it already sits. Grouping a layer must not move it, and
+     * a plugin compensating by hand would get it wrong for anything rotated or
+     * scaled.
+     *
+     * `canReparent` owns the rules — no cycles, no self-parent, one composition
+     * — and it says in as many words that they live there rather than in the
+     * dropdown BECAUSE scripting paths call this directly. This is one.
+     */
+    'scene.setParent': (id, parentId) => {
+      const n = node(id);
+      const target = parentId === null || parentId === undefined ? null : str(parentId, 'parent id');
+      if (target !== null) node(target); // exists — same message as any bad id
+      return edit(`reparent ${n.name}`, () => {
+        // `reparentNode` returns false rather than throwing, and a false
+        // swallowed here is a plugin believing it built a hierarchy it did not.
+        if (!reparentNode(n.id, target)) {
+          return fail(
+            `"${n.name}" cannot be parented there — a layer cannot be its own ancestor, `
+            + 'and parenting only works within one composition.',
+          );
+        }
+        bumpScene();
+        return true;
+      });
+    },
+
+    /**
+     * Show or hide a layer.
+     *
+     * Assigned through the node VIEW, which writes through to the entity —
+     * unlike `components[].props`, which are rebuilt on read and need
+     * `writeProp`. Both come out of `getNode`, which is why the two look
+     * interchangeable and are not.
+     */
+    'scene.setVisible': (id, visible) => {
+      const n = node(id);
+      if (typeof visible !== 'boolean') return fail('visible must be true or false.');
+      return edit(`${visible ? 'show' : 'hide'} ${n.name}`, () => {
+        n.visible = visible;
+        bumpScene();
+        return true;
+      });
+    },
+
+    /** Lock or unlock a layer. A locked layer refuses edits from the canvas. */
+    'scene.setLocked': (id, locked) => {
+      const n = node(id);
+      if (typeof locked !== 'boolean') return fail('locked must be true or false.');
+      return edit(`${locked ? 'lock' : 'unlock'} ${n.name}`, () => {
+        n.locked = locked;
+        bumpScene();
+        return true;
+      });
+    },
+
+    // ── Effects ──────────────────────────────────────────────────────────
+
+    /** The effect stack on a layer, in draw order. */
+    'effects.list': (id) => {
+      const n = node(id);
+      return getNodeEffects(n.id).map((e) => ({
+        id: e.id,
+        type: e.type,
+        enabled: e.enabled !== false,
+        params: { ...e.params },
+      }));
+    },
+
+    /**
+     * Add an effect to a layer, returning its id.
+     *
+     * ★ The type is checked HERE, before `addEffect` sees it.
+     *
+     * `addEffect` opens with `const def = DEF.get(type); if (!def) return;` — an
+     * unknown type is a silent no-op with no return value and no error. That is
+     * defensible for a menu which can only offer types it has, and exactly
+     * wrong for an API taking a string across `postMessage`: the plugin would
+     * report success, the user would see nothing, and the only evidence would be
+     * an effect stack that did not grow. It is also the shape of the bug that
+     * made plugin-contributed effects unaddable when they first shipped.
+     */
+    'effects.add': (id, type) => {
+      const n = node(id);
+      const t = str(type, 'effect type');
+      if (!effectDefFor(t)) {
+        return fail(
+          `"${t}" is not an effect this editor has. A plugin's own effect is addressed as `
+          + '"<pluginId>.<effectId>", and only once that plugin is running.',
+        );
+      }
+      return edit(`add ${t}`, () => {
+        const before = new Set(getNodeEffects(n.id).map((e) => e.id));
+        addEffect(n.id, t as never);
+        // Read back rather than trusting a requested id: `addEffect` falls back
+        // to a generated one when the id it was given is taken, silently.
+        const added = getNodeEffects(n.id).find((e) => !before.has(e.id));
+        if (!added) return fail(`"${t}" could not be added to "${n.name}".`);
+        bumpScene();
+        return added.id;
+      });
+    },
+
+    'effects.remove': (id, effectId) => {
+      const n = node(id);
+      const fx = str(effectId, 'effect id');
+      // `removeEffect` filters, so removing something absent succeeds quietly.
+      // A plugin removing the wrong id should hear about it.
+      if (!getNodeEffects(n.id).some((e) => e.id === fx)) {
+        return fail(`"${n.name}" has no effect "${fx}".`);
+      }
+      return edit('remove effect', () => {
+        removeEffect(n.id, fx);
+        bumpScene();
+        return true;
+      });
+    },
+
+    'effects.setParam': (id, effectId, key, value) => {
+      const n = node(id);
+      const fx = str(effectId, 'effect id');
+      const k = str(key, 'parameter name');
+      if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
+        return fail('Effect parameter values must be a number, string or boolean.');
+      }
+      if (!getNodeEffects(n.id).some((e) => e.id === fx)) {
+        return fail(`"${n.name}" has no effect "${fx}".`);
+      }
+      return edit(`set ${k}`, () => {
+        updateEffectParam(n.id, fx, k, value as never);
+        bumpScene();
+        return true;
+      });
     },
 
     // ── Animation, read ──────────────────────────────────────────────────

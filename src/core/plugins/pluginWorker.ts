@@ -267,6 +267,35 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
       setProperty: (id: string, prop: string, value: unknown) => call('scene.setProperty', id, prop, value),
       renameLayer: (id: string, name: string) => call('scene.renameLayer', id, name),
       deleteLayer: (id: string) => call('scene.deleteLayer', id),
+
+      /**
+       * Reparent a layer. `null` moves it to the composition root.
+       *
+       * The layer does not move on screen — it adopts the local transform that
+       * reproduces where it already is. Rejected if the move would make a layer
+       * its own ancestor, or cross compositions.
+       */
+      setParent: (id: string, parentId: string | null) => call('scene.setParent', id, parentId),
+      setVisible: (id: string, visible: boolean) => call('scene.setVisible', id, visible),
+      setLocked: (id: string, locked: boolean) => call('scene.setLocked', id, locked),
+    },
+
+    /**
+     * A layer's effect stack.
+     *
+     * `add` takes an effect TYPE and returns the new effect's id; every later
+     * call addresses that id. Your own effects are `<pluginId>.<effectId>` and
+     * can be added only while your plugin is running — a type the host has
+     * never heard of is refused rather than quietly doing nothing.
+     */
+    effects: {
+      list: (layerId: string) => call('effects.list', layerId) as Promise<Array<{
+        id: string; type: string; enabled: boolean; params: Record<string, unknown>;
+      }>>,
+      add: (layerId: string, type: string) => call('effects.add', layerId, type) as Promise<string>,
+      remove: (layerId: string, effectId: string) => call('effects.remove', layerId, effectId),
+      setParam: (layerId: string, effectId: string, key: string, value: number | string | boolean) =>
+        call('effects.setParam', layerId, effectId, key, value),
     },
 
     animation: {

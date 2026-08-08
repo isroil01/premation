@@ -282,9 +282,16 @@ motion.composition.get()                   // { name, width, height, fps, durati
 
 motion.scene.getSelection() / setSelection(ids)
 motion.scene.getLayers() / getLayer(id)
-motion.scene.createLayer({ kind, name, x, y })   // shape | text | group | null
+motion.scene.createLayer({ kind, name, x, y })   // shape | text | group | null | image
 motion.scene.setProperty(id, prop, value)
 motion.scene.renameLayer(id, name) / deleteLayer(id)
+motion.scene.setParent(id, parentId | null)      // null → composition root
+motion.scene.setVisible(id, bool) / setLocked(id, bool)
+
+motion.effects.list(layerId)                     // [{ id, type, enabled, params }]
+motion.effects.add(layerId, type)                // → the new effect's id
+motion.effects.remove(layerId, effectId)
+motion.effects.setParam(layerId, effectId, key, value)
 
 motion.animation.getTracks(id) / sample(id, prop, time)
 motion.animation.setKeyframe(id, prop, time, value, easing)
@@ -298,6 +305,17 @@ motion.timeline.getTime() / setTime(seconds)
 Prefer `setKeyframes` over a loop of `setKeyframe`: the bulk API sorts once and
 notifies once. Writing a generated track a keyframe at a time is quadratic and
 is what used to freeze the app on imports.
+
+`setParent` does not move the layer on screen — it adopts the local transform
+that reproduces where it already is, so grouping is not a nudge. It is refused
+if it would make a layer its own ancestor, or cross compositions.
+
+`effects.add` takes a TYPE and returns the new effect's **id**; everything after
+addresses that id. Your own effects are `<pluginId>.<effectId>` and are addable
+only while your plugin is running. A type this editor does not have is an error
+rather than a silent no-op — as is removing or setting a parameter on an effect
+id that is not on the layer, both of which would otherwise succeed quietly and
+leave you debugging a project that did not change.
 
 ### Panels
 
