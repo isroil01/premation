@@ -24,7 +24,9 @@ import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
 import { isLutEffect } from '@core/effects/colorLut';
 import { readMatte } from '@core/effects/matte';
-import { effectNumber, effectParam, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
+import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
+import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
+import { packParameters } from '@core/plugins/effectSchema';
 import { layerIsBaked } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
@@ -401,7 +403,13 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
  *   neither a CSS form nor a Canvas2D case, so the bake skips them and dropping
  *   them here too made them vanish entirely.
  */
-function extractSpatialEffects(
+/**
+ * Exported for `pluginEffectSnapshot.test.ts`, which asserts what a plugin
+ * effect does and — more importantly — does not emit. Driving it through
+ * `snapshotToFrameScene` would need a whole snapshot to ask a question about
+ * one effect, and the answer would be buried in a scene.
+ */
+export function extractSpatialEffects(
   layer: RenderLayer,
   onlyGpuOnly = false,
 ): import('@motion/renderer').RenderableEffect[] | undefined {
@@ -474,6 +482,49 @@ function extractSpatialEffects(
     }
     if (e.type === 'noise') {
       spatial.push({ type: 'noise', amount: n('amount') / 100, evolution: n('evolution'), monochrome: e.params?.monochrome !== false });
+    }
+    /*
+      A plugin's effect.
+
+      Matched by the DOT in its type rather than against a list, because the set
+      is not knowable at build time — it is whatever is installed. Namespacing
+      (`<pluginId>.<effectId>`) is what makes that safe: no built-in type
+      contains a dot, so this branch cannot swallow one.
+
+      Everything the renderer needs is resolved HERE. The parameter layout comes
+      from the plugin's manifest, which only this side knows about; the pass
+      receives a shader name and packed bytes and stays ignorant of plugins.
+    */
+    if (e.type.includes('.')) {
+      const registered = effectById(e.type);
+      /*
+        Emitted only when READY.
+
+        `pending` has no compiled pipeline yet, `failed` had its shader refused,
+        and `disabled` was implicated in a device loss. Drawing any of them asks
+        the renderer for a pipeline that does not exist — and for `disabled` it
+        would silently undo the protection the user was given, which is the
+        worst of the three.
+      */
+      if (registered?.state === 'ready') {
+        spatial.push({
+          type: 'plugin',
+          shader: registered.id,
+          // `packParameters` hands back an ArrayBuffer; the scene carries a
+          // typed view so the renderer never has to know the element size.
+          params: new Float32Array(packParameters(
+            registered.layout.layout,
+            registered.layout.size,
+            paramsOf(e),
+          )),
+          // The bracket that makes device-loss attribution real. Injected as
+          // callbacks so `packages/renderer` never learns what a plugin is.
+          onDraw: {
+            begin: () => beginEffectDraw(registered.id),
+            end: () => endEffectDraw(),
+          },
+        });
+      }
     }
   }
   return spatial.length > 0 ? spatial : undefined;
