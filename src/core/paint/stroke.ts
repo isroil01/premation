@@ -22,6 +22,8 @@ export type StrokeAlign = 'inside' | 'center' | 'outside';
 export type StrokeCap = 'butt' | 'round' | 'square';
 export type StrokeJoin = 'miter' | 'round' | 'bevel';
 
+import type { StrokeTaper, StrokeWave } from '@core/scene/strokeProfile';
+
 export interface Stroke {
   enabled: boolean;
   color: string;
@@ -55,6 +57,16 @@ export interface Stroke {
   /** Optional gradient paint — when set (linear/radial) it overrides `color`;
    *  `color` remains the fallback for renderers without gradient strokes. */
   paint?: FillPaint;
+  /**
+   * AE's Taper and Wave groups. Absent means identity, so every stroke authored
+   * before them renders bit-identically — the profiles are skipped structurally
+   * rather than computing 1 everywhere (see `isIdentityTaper`).
+   *
+   * Both are consumed by `strokeShapeProfiled`, which FILLS a variable-width
+   * outline; Canvas2D strokes at one `lineWidth` and cannot vary it.
+   */
+  taper?: StrokeTaper;
+  wave?: StrokeWave;
 }
 
 export const STROKE_ALIGNS: ReadonlyArray<{ value: StrokeAlign; label: string }> = [
@@ -107,7 +119,53 @@ export function normalizeStroke(v: unknown): Stroke {
     cap: s.cap === 'round' || s.cap === 'square' ? s.cap : 'butt',
     join: s.join === 'round' || s.join === 'bevel' ? s.join : 'miter',
     ...(validPaint ? { paint } : {}),
+    // Taper and Wave, OMITTED when absent for exactly the reason `dashOffset`
+    // is: `contentHash` serialises the whole stroke as the raster cache key, so
+    // writing an identity profile into every normalised stroke would change the
+    // key for every existing layer and invalidate every cached raster in the
+    // project on first open — for a value that means "unchanged".
+    ...(normTaper(s.taper) ? { taper: normTaper(s.taper)! } : {}),
+    ...(normWave(s.wave) ? { wave: normWave(s.wave)! } : {}),
   };
+}
+
+/**
+ * Normalise a stored Taper, or undefined when it is absent or says nothing.
+ *
+ * Ranges are clamped HERE rather than trusted, because these arrive from a
+ * saved document as well as from the inspector: fractions to 0..1, so a
+ * hand-edited file cannot ask for a 300% ramp and get a stroke that inverts.
+ */
+function normTaper(v: unknown): StrokeTaper | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const t = v as Partial<StrokeTaper>;
+  const n = (x: unknown, d: number): number =>
+    clamp01(Number.isFinite(x) ? (x as number) : d);
+  const out: StrokeTaper = {
+    startWidth: n(t.startWidth, 1), endWidth: n(t.endWidth, 1),
+    startLength: n(t.startLength, 0), endLength: n(t.endLength, 0),
+    startEase: n(t.startEase, 0), endEase: n(t.endEase, 0),
+  };
+  // An identity taper is dropped, not stored — same cache-key argument.
+  const noRamp = out.startLength <= 0 && out.endLength <= 0;
+  const fullWidth = out.startWidth === 1 && out.endWidth === 1;
+  return noRamp || fullWidth ? undefined : out;
+}
+
+/** Normalise a stored Wave, or undefined when it cannot displace anything. */
+function normWave(v: unknown): StrokeWave | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const w = v as Partial<StrokeWave>;
+  const num = (x: unknown, d: number): number => (Number.isFinite(x) ? (x as number) : d);
+  const out: StrokeWave = {
+    amount: num(w.amount, 0),
+    // A negative wavelength is not a backwards wave, it is a sign flip on the
+    // phase — which the phase control already expresses. Clamped so there is
+    // one way to say it.
+    wavelength: Math.max(0, num(w.wavelength, 0)),
+    phase: num(w.phase, 0),
+  };
+  return out.amount === 0 || out.wavelength <= 0 ? undefined : out;
 }
 
 function clamp01(n: number): number {

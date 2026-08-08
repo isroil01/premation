@@ -17,6 +17,32 @@ import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
 import type { Stroke } from '@core/paint/stroke';
 import type { Pt } from '@core/scene/trimPath';
 import { layerSubpaths, hasPathGeometry } from './subpaths';
+import { flattenOutline } from '@core/scene/mergePaths';
+import { offsetAlongNormals, closedRibbon } from '@motion/scene';
+import {
+  taperWidthFactorAt, waveOffsetAt, isIdentityTaper, isIdentityWave,
+  type StrokeWave,
+} from '@core/scene/strokeProfile';
+
+/** Bezier samples per segment when flattening for a profiled stroke. Matches
+ *  the boolean-ops default; a tapered edge is a fill boundary, so it wants the
+ *  same smoothness the outline ops already settled on. */
+const TAPER_FLATTEN_PER_SEG = 8;
+
+/**
+ * Bezier samples per segment when a WAVE is active.
+ *
+ * A wave needs far more samples than a taper: taper varies slowly along the
+ * path, while a wave has to resolve every crest. At the taper default of 8, a
+ * two-segment curve gives ~16 points over ~400px of arc — under eight samples
+ * per period at a 190px wavelength, which reads as a chain of facets.
+ *
+ * HONEST CORRECTION: this was first written claiming it fixed a folded golden.
+ * It did not. That folding was the offset self-intersection limit documented on
+ * `strokeShapeProfiled`, and raising this changed the picture not at all. It is
+ * kept because it genuinely improves wave smoothness, not because it fixed that.
+ */
+const WAVE_FLATTEN_PER_SEG = 64;
 import { effectNumber } from '@core/effects/effects';
 import { layerIsBaked } from '@core/effects/effectBake';
 
@@ -484,6 +510,259 @@ export function strokeShape(ctx: CanvasRenderingContext2D, stroke: Stroke, trace
   ctx.setLineDash([]);
   ctx.lineDashOffset = 0;
   ctx.restore();
+}
+
+/**
+ * Stroke a path as a FILLED variable-width ribbon — AE's Taper and Wave.
+ *
+ * Canvas2D strokes at a single `lineWidth` and cannot vary it, so a tapered or
+ * waved stroke is not a parameter change but a change of DRAWING OPERATION:
+ * flatten the path, walk it by arc length, offset it, and fill the outline.
+ *
+ * ## The primitive is used TWICE, which is DECISION D4 landing
+ *
+ * D4 predicted that taper and wave differ only in what they do with the two
+ * offset sides — wave moves them TOGETHER (it displaces the centreline), taper
+ * moves them OPPOSITELY (it varies the width). That is literally the code:
+ *
+ *   centre = offsetAlongNormals(poly, waveOffset).left     ← one side
+ *   ring   = closedRibbon(offsetAlongNormals(centre, halfWidth))  ← both sides
+ *
+ * ## Returns FALSE rather than drawing, for cases it does not own
+ *
+ * The caller then strokes normally. Refusing loudly in code beats a silent
+ * near-miss, and each refusal is a scope boundary rather than a bug:
+ *
+ *   • identity profiles — nothing to do, and skipping keeps an untapered stroke
+ *     BYTE-identical rather than merely numerically equal (§2·0);
+ *   • non-path primitives — rect/ellipse taper is not modelled yet;
+ * ## A GEOMETRIC LIMIT this shares with every naive offset
+ *
+ * Offsetting a curve along its normals SELF-INTERSECTS wherever the local radius
+ * of curvature is smaller than the offset distance — here, half the stroke
+ * width. A tight wave on a wide stroke therefore folds into a knot rather than
+ * bending. Measured, not theorised: amplitude 14 over a 70px wavelength on an
+ * 18px stroke folds; amplitude 8 over 190px does not. Trimming the
+ * self-intersections is the proper cure and is NOT built — the limit is recorded
+ * here and in the golden scene so the next reader does not chase it through the
+ * sampling code, which is where I chased it.
+ *
+ *   • DASHED strokes — dash + taper is a real AE combination and a deferred one
+ *     here. Dashing is shipped behaviour; silently dropping it to apply a new
+ *     feature would be the worse trade. The UI step must surface this rather
+ *     than leaving a control that quietly does nothing.
+ */
+/**
+ * Samples per wave PERIOD. Below about eight, a sine reads as a polygon.
+ *
+ * A backstop for LONG STRAIGHT runs, where bezier sampling adds nothing because
+ * there is no curve to subdivide: a 400px straight segment carrying a 190px
+ * wave would otherwise get two samples across two periods.
+ *
+ * Not the cure for the faceted first golden — see the note on
+ * `WAVE_FLATTEN_PER_SEG`; that was the offset limit.
+ */
+const WAVE_SAMPLES_PER_PERIOD = 12;
+
+/**
+ * Insert points so no segment spans more than a fraction of the wavelength.
+ *
+ * Linear interpolation is faithful here because the input is ALREADY flattened
+ * — these are chords of the curve, not the curve itself, so subdividing them
+ * adds sample density without inventing geometry.
+ *
+ * Returns the input untouched when there is no wave: taper alone needs no extra
+ * density, and densifying regardless would change every tapered ribbon's vertex
+ * count for nothing.
+ */
+function densifyForWave(
+  poly: Array<{ x: number; y: number }>,
+  wave: StrokeWave | undefined,
+): Array<{ x: number; y: number }> {
+  if (isIdentityWave(wave) || poly.length < 2) return poly;
+  const maxSpan = wave!.wavelength / WAVE_SAMPLES_PER_PERIOD;
+  if (!(maxSpan > 0)) return poly;
+  const out: Array<{ x: number; y: number }> = [poly[0]!];
+  for (let i = 1; i < poly.length; i++) {
+    const a = poly[i - 1]!;
+    const b = poly[i]!;
+    const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / maxSpan);
+    for (let k = 1; k <= steps; k++) {
+      const u = k / steps;
+      out.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
+    }
+  }
+  return out;
+}
+
+/**
+ * The "on" spans of a dash pattern, in ARC LENGTH along the path.
+ *
+ * Canvas2D does this internally for `ctx.stroke()`; a filled ribbon has to do it
+ * explicitly, because there is no stroking step left to hand the pattern to.
+ *
+ * Mirrors Canvas2D's own rules so a dashed taper and a dashed plain stroke break
+ * the path at the SAME places: an odd-length array is doubled (so [8] means
+ * 8 on / 8 off), the offset slides the pattern along the path and is periodic in
+ * the pattern's total length, and a negative offset slides the other way.
+ */
+function dashSpans(
+  total: number,
+  dash: readonly number[],
+  offset: number,
+): Array<readonly [number, number]> {
+  const pattern = dash.filter((n) => Number.isFinite(n) && n >= 0);
+  if (pattern.length === 0) return [[0, total]];
+  // Canvas2D doubles an odd-length pattern; without this [8] would be read as
+  // 8-on and nothing off, i.e. a solid line.
+  const p = pattern.length % 2 === 1 ? [...pattern, ...pattern] : pattern;
+  const period = p.reduce((a, b) => a + b, 0);
+  if (period <= 0) return [[0, total]];
+
+  const spans: Array<readonly [number, number]> = [];
+  // Start one whole period BEFORE zero so a span straddling the origin is not
+  // clipped away — the visible result must not depend on where the walk began.
+  let cursor = -period + (((-offset % period) + period) % period);
+  let idx = 0;
+  let guard = 0;
+  while (cursor < total && guard++ < 100_000) {
+    const len = p[idx % p.length]!;
+    const on = idx % 2 === 0;
+    const end = cursor + len;
+    if (on && end > 0 && cursor < total) {
+      spans.push([Math.max(0, cursor), Math.min(total, end)]);
+    }
+    cursor = end;
+    idx++;
+  }
+  return spans;
+}
+
+/**
+ * The stretch of a polyline between two arc lengths, with the ends interpolated.
+ *
+ * `at` returns, per emitted point, its FRACTIONAL index into the original
+ * polyline — which is what lets a dash read its taper width from the whole
+ * path's arc rather than from its own. Returning positions alone would lose
+ * that, and each dash would taper independently.
+ */
+function subPolyline(
+  pts: ReadonlyArray<{ x: number; y: number }>,
+  arc: readonly number[],
+  s0: number,
+  s1: number,
+): { pts: Array<{ x: number; y: number }>; at: number[] } {
+  const out: Array<{ x: number; y: number }> = [];
+  const at: number[] = [];
+  const lerpAt = (i: number, f: number): void => {
+    const a = pts[i]!;
+    const b = pts[Math.min(pts.length - 1, i + 1)]!;
+    out.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
+    at.push(i + f);
+  };
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a0 = arc[i]!;
+    const a1 = arc[i + 1]!;
+    if (a1 <= s0 || a0 >= s1) continue;
+    const seg = a1 - a0 || 1;
+    if (out.length === 0) lerpAt(i, Math.max(0, (s0 - a0) / seg));
+    const endF = Math.min(1, (s1 - a0) / seg);
+    if (endF >= 1) { out.push({ x: pts[i + 1]!.x, y: pts[i + 1]!.y }); at.push(i + 1); }
+    else lerpAt(i, endF);
+  }
+  return { pts: out, at };
+}
+
+export function strokeShapeProfiled(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke,
+  layer: RenderLayer,
+  w = 100,
+  h = 100,
+): boolean {
+  if (stroke.width <= 0) return false;
+  const taper = stroke.taper;
+  const wave = stroke.wave;
+  if (isIdentityTaper(taper) && isIdentityWave(wave)) return false;
+  if (layer.primitive !== 'path') return false;
+
+
+  const runs = layerSubpaths(layer);
+  if (runs.length === 0) return false;
+
+  ctx.save();
+  ctx.globalAlpha *= Math.max(0, Math.min(1, stroke.opacity));
+  // The ribbon is FILLED, so the stroke's paint becomes a fill style. A gradient
+  // stroke gets easier here rather than harder: a filled outline takes a fill
+  // gradient directly, instead of Canvas2D's stroke-gradient special case.
+  ctx.fillStyle =
+    stroke.paint && stroke.paint.type !== 'solid'
+      ? fillStyleFor(ctx, stroke.paint, stroke.color, w, h)
+      : (stroke.paint?.type === 'solid' ? stroke.paint.color : stroke.color);
+
+  let drew = false;
+  for (const run of runs) {
+    const open = run.open === true;
+    // A wave rides the flattened polyline, so the CURVE has to be sampled finely
+    // before the wave is applied — densifying chords afterwards only adds points
+    // along straight lines between widely-spaced curve samples, which is why the
+    // first golden came out faceted. Raise the bezier sampling instead, then
+    // densify as a backstop for long straight runs.
+    const perSeg = isIdentityWave(wave) ? TAPER_FLATTEN_PER_SEG : WAVE_FLATTEN_PER_SEG;
+    const poly = densifyForWave(flattenOutline(run.points, perSeg, open), wave);
+    if (poly.length < 2) continue;
+
+    // Cumulative arc length. Taper is a FRACTION of it; wave is measured in the
+    // same px, so both read off this one walk.
+    const arc: number[] = [0];
+    for (let i = 1; i < poly.length; i++) {
+      arc.push(arc[i - 1]! + Math.hypot(poly[i]!.x - poly[i - 1]!.x, poly[i]!.y - poly[i - 1]!.y));
+    }
+    const total = arc[arc.length - 1] || 1;
+
+    const centre = isIdentityWave(wave)
+      ? poly
+      : offsetAlongNormals(poly, (i) => waveOffsetAt(wave!, arc[i]!)).left;
+
+    // Dash splits the path into spans; each span becomes its OWN ribbon, and
+    // every vertex still reads its width from the GLOBAL arc position — so a
+    // taper runs across the whole stroke and the dashes sample it, rather than
+    // each dash tapering to itself. That is AE's behaviour and the only reading
+    // under which "dash" and "taper" compose rather than fight.
+    const spans = stroke.dash.length > 0
+      ? dashSpans(total, stroke.dash, stroke.dashOffset ?? 0)
+      : [[0, total] as const];
+
+    const halfWidthAt = (i: number): number => {
+      const factor = taper ? taperWidthFactorAt(taper, arc[i]! / total) : 1;
+      return (stroke.width * factor) / 2;
+    };
+
+    for (const [s0, s1] of spans) {
+      const piece = subPolyline(centre, arc, s0, s1);
+      if (piece.pts.length < 2) continue;
+      const ring = closedRibbon(
+        offsetAlongNormals(piece.pts, (i) => {
+          // `at` maps a piece vertex back onto the WHOLE path's arc, so the
+          // width comes from where the dash SITS, not from its own extent.
+          const a = piece.at[i]!;
+          const lo = Math.max(0, Math.min(arc.length - 1, Math.floor(a)));
+          const hi = Math.max(0, Math.min(arc.length - 1, Math.ceil(a)));
+          const f = a - lo;
+          return halfWidthAt(lo) * (1 - f) + halfWidthAt(hi) * f;
+        }),
+      );
+      if (ring.length < 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(ring[0]!.x, ring[0]!.y);
+      for (let i = 1; i < ring.length; i++) ctx.lineTo(ring[i]!.x, ring[i]!.y);
+      ctx.closePath();
+      ctx.fill();
+      drew = true;
+    }
+  }
+  ctx.restore();
+  return drew;
 }
 
 export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

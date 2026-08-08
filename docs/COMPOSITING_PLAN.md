@@ -917,6 +917,135 @@ palette; running the quadruped entry → 14 bones, one Undo → 0. Pick Vertex �
 vertex #135 highlighted, panel showing four bones at 29.3 / 28.4 / 24.2 / 18.1 %,
 total 100%. Typed values landed exactly and one Undo reverted exactly one edit.
 
+## 2b-duodevicies-ter. Release note — animated corner radius (F35, FIXED)
+
+**A behaviour change for any project carrying a `cornerRadius` track**, and the
+first thing the F34 class guard paid for.
+
+**What changed.** A keyframed corner radius now animates. It did not before: the
+STATIC value was read by the component scan (`num(p.cornerRadius)`), so a rounded
+rect drew correctly and nothing looked broken, while the animated TRACK was folded
+nowhere. The stopwatch wrote keyframes the renderer never read.
+
+**How it was found.** Not by looking. `animatablePropertyReaders.test.ts` — the
+derived sweep added with F34, whose subject set is the registry's own inventory —
+reported it the same day F34 was fixed. Fixing one instance found the next one;
+that is the whole argument for guarding the class.
+
+**Re-bless: NONE, checked the same way F34 was.** Three scenes use `cornerRadius`
+(`composited.ts`, `glass.ts`, `hires.ts`) and all three set it STATICALLY. A
+static value arrives through the component scan and never through the animated
+fold, so no existing golden could shift. Predicted diff: zero goldens. Actual:
+zero. And as with F34, the consequence is that the fix is not covered by the pixel
+gate — a scene ramping a corner radius would be a NEW golden and its own blessing.
+
+**The guard bookkeeping worked as designed, and is worth recording.** `cornerRadius`
+was logged in G2's `KNOWN_UNSAMPLED` when F34 shipped. Fixing it turned
+`and every LOGGED finding is still real` RED — because that test exists precisely
+so a fixed entry cannot linger as a silent exemption. The list is now empty, which
+is the healthy state, not a sign it is unused: it held one entry for one commit
+and emptied itself.
+
+**Guards.** `cornerRadiusSnapshot.test.ts` samples the crossing —
+`buildSnapshot(...).layers[].cornerRadius` — mirroring `strokeWidthSnapshot.test.ts`.
+Values derived on paper: 20 at t=0, **36** at t=1, 52 at t=2. Negative radii clamp
+to 0, because an overshooting ease undershoots between keys and a negative radius
+THROWS in `roundRect` rather than drawing a sharper corner.
+
+**A fixture flaw its own positive control caught.** The first draft ramped 4 → 36
+against a stored 8 — so the ramp crossed the static value partway, and a fold
+still reading `base.cornerRadius` could have matched a row by coincidence instead
+of failing all of them. The ramp now runs 20 → 52, clear of the stored 8.
+
+Verified to fail: reverting the fold turns 7 of 17 red, the class guard included.
+
+Suite 602 → 603 files, 7514 → 7522 passing. Lint 0 errors.
+
+## 2b-duodevicies-bis. Release note — animated stroke width (F34, FIXED)
+
+**A behaviour change for any project that already carries a `strokeWidth`
+track**, which is why it gets a note rather than a line in a finding table.
+
+**What changed.** A keyframed stroke width now animates. It did not before:
+`strokeWidth` was registered in `propertyMeta`, so the inspector and the timeline
+both offered a stopwatch, and `buildSnapshot` folded the sampled value into the
+resolved stroke *nowhere*. The original measurement: a 6 → 40 ramp rendered 5296
+stroke pixels at BOTH ends.
+
+**Who is affected.** Anyone who set stroke-width keyframes and concluded the
+feature was broken. Their file already contains the track; opening it after this
+change makes the stroke move for the first time. Nobody's stored data changes —
+only what is drawn from it.
+
+**Re-bless: NONE required, and that was checked rather than assumed.** No
+render-test scene references `strokeWidth` at all — `grep` over
+`packages/render-tests/harness/` returns nothing — so no existing golden could
+shift. The predicted diff was therefore *zero goldens*, and the actual diff is
+zero goldens. Scenes that use `cornerRadius` statically are likewise untouched,
+because a static value arrives through the component scan (`num(p.cornerRadius)`)
+and never through the animated fold.
+
+The consequence, stated rather than glossed: **the fix is not covered by the
+pixel gate.** A scene that ramps a stroke width would be a NEW golden, which is a
+new blessing and belongs in its own change — bundling it here would make this
+commit and that blessing unbisectable.
+
+### The guard that should have caught it, and why it could not
+
+The brief expected `contentHashReaders.test.ts` (G1) to be extended. It could not
+have caught this:
+
+- G1's subject set is the fields folded into the rasterizer's CONTENT HASH. The
+  hash folds `st: layer.stroke` — one object — so `stroke.width` was never in the
+  subject set, and the guard does not recurse into nested style objects.
+- More fundamentally the two are different classes. G1 catches
+  **hashed-but-unread** (per-layer `quality`: the texture re-rasterizes and looks
+  identical). F34 is **keyframeable-but-unsampled**: the *stopwatch* writes
+  keyframes nothing reads. Extending G1 would not have found it and will not find
+  the next one.
+
+So there is a second guard, `animatablePropertyReaders.test.ts` (G2), whose
+subject set is the registry's own inventory (`staticPropertyPaths()`, which
+already existed "for tests"). Structural rows are excluded on a PROPERTY of the
+entry — `type: 'group'` — rather than by name, so the synthesized Position row is
+skipped without a hardcoded exemption.
+
+### G2 found a second instance the same day
+
+**F35, logged not fixed: `cornerRadius`.** Registered and keyframeable; the
+static value is read, the animated track is folded nowhere. So a rounded rect
+draws, and a keyframed corner radius does not move. Out of scope here — F34 is
+what this change is, and F35 is its own behaviour change (§2a). No golden
+animates it either, so the fix is cheap when someone takes it.
+
+It is recorded in G2's `KNOWN_UNSAMPLED` map, which is deliberately not an
+exception list: one test fails if anything NEW joins it, and another fails if an
+entry stops being true — so fixing F35 *forces* its removal and the list cannot
+outlive the bugs it describes.
+
+### Guards, and what stays green
+
+`strokeWidthSnapshot.test.ts` samples the crossing itself —
+`buildSnapshot(...).layers[].stroke.width` — mirroring `dashOffsetSnapshot.test.ts`
+next door, whose docstring cited F34 as the cautionary example and has been
+corrected now that it is fixed.
+
+Values derived on paper: 6 at t=0, **23** at t=1 (6 + (40−6)/2), 40 at t=2. Plus
+the one the original symptom demands — the two ends must DIFFER, since "both ends
+equal" is exactly what F34 looked like. Plus composition with animated dash offset
+and animated stroke colour on one layer, because the fold chains off `finalStroke`
+and rebuilding from `baseStroke` would silently drop whichever applied first.
+
+Negative widths clamp to 0: an overshooting ease undershoots between keys, and a
+negative `lineWidth` is a Canvas2D exception rather than a thinner stroke.
+
+Verified to fail: disabling the fold turns 8 of 19 red. Honest limitation — G2 is
+a TEXT guard, so it catches a property referenced nowhere in the pixel path; it
+does not catch a reference that has been disabled in place. That is what the
+instance guard is for.
+
+Suite 600 → 602 files, 7495 → 7514 passing. Lint 0 errors.
+
 ## 2b-undevicies. Release note — one Ctrl+Z per edit (history, FIXED)
 
 **User-visible, app-wide, and not a rigging bug** despite being found while
@@ -3066,6 +3195,157 @@ carries no paint, so baking them into geometry to make position meaningful
 drops per-copy `offsetOpacity` — which is keyframeable today. Inert controls
 waste time; a dropped parameter destroys work without telling the user. It
 waits behind per-run paint.
+
+## 2e. DECISION D4 — per-vertex width: ONE geometry primitive, TWO consumers
+
+**Made before building either feature**, because deciding it while building one
+is how it gets decided badly. Stroke taper and variable-width mask feather both
+want "a width that varies along a path", and whether that is one mechanism
+changes the shape of both.
+
+### What already exists — checked, not assumed
+
+`ribbonOutline` in `packages/workspace/src/tools/builtin.ts` is already a general
+variable-width-stroke algorithm, under a brush-tool filename. Its own docstring
+says so: *"Build the closed outline of a variable-width stroke: offset each
+centreline point along its normal by half the local width, walk the left side
+forward and the right side back."* It carries an arc-length taper profile, a
+densifier for short inputs, and a width floor proportional to the brush.
+
+This is the fifteenth-instance trap the brief warned about, and it is real: the
+mechanism exists, it is tested, and it is invisible to a search for "taper" in
+the renderer.
+
+### The decision
+
+**Extract the GEOMETRIC core as one shared primitive. Do NOT force one mechanism
+on both features.**
+
+The shared part is genuinely shared, and it is small:
+
+    offsetAlongNormals(points, distanceAt) → { left[], right[] }
+
+That is the whole of what taper and variable feather have in common — per-vertex
+normals from the local tangent, offset by a per-vertex distance.
+
+Past that point they diverge in a way that a single mechanism would have to
+paper over:
+
+| | stroke taper | variable-width mask feather |
+|---|---|---|
+| consumes the offsets as | ONE closed outline, filled | TWO boundaries bounding a band |
+| output is | geometry (a path to fill) | a gradient//distance ramp — a rasterizer concern |
+| input path is | authored beziers, needs flattening | authored beziers, needs flattening |
+| profile source | two endpoints + an ease | a per-vertex authored value |
+
+A "shared mechanism" that produced both would be a function returning either a
+fill path or a shading band depending on a flag — two features wearing one name,
+which is the shape §2·0 exists to stop.
+
+### What this makes unreachable, stated
+
+A single call cannot give a feathered tapered stroke. That is a real
+composition someone will eventually want (a brush stroke with a soft edge), and
+under this decision it is two passes rather than one primitive. Judged
+acceptable: nothing in the current brief asks for it, and the alternative
+prices every stroke draw with a shading path it does not use.
+
+### The layering constraint this forces
+
+`ribbonOutline` lives in `packages/workspace` — the INTERACTION package. A
+renderer-side taper importing from it would be a layering inversion (the
+rasterizer depending on the tool layer). So the extraction is not optional
+cleanup: the primitive has to move somewhere both can reach before either
+feature is built on it, and `ribbonOutline` then becomes its first caller,
+keeping its brush-specific policy (pressure normalisation, the 0.05 taper floor,
+the 1.4× clamp) where it belongs.
+
+### Sizing taper, measured rather than estimated
+
+Shape strokes are drawn by Canvas2D `ctx.stroke()` with a single `lineWidth`
+(`vectorDraw.ts:310`, `:483`). Canvas2D has no variable-width stroking, so taper
+is not a parameter change — it is a **change of drawing operation**: flatten the
+path, build the outline, `fill()` instead of `stroke()`.
+
+That collides with four things the stroke path already does through Canvas2D and
+would have to re-implement on the filled outline:
+
+- **dashing** — `setLineDash` + `lineDashOffset`, which the dash-offset work
+  deliberately reused rather than cutting the path up (see 2b-septendecies);
+- **cap and join** — free today, hand-built on an outline;
+- **align** (centre/inside/outside), which currently fakes inside/outside by
+  doubling the width and clipping (`vectorDraw.ts:478`);
+- **gradient strokes**, whose paint is built in the layer's local space.
+
+And unlike F34, taper WOULD need new goldens: a tapered stroke is a visible
+change with no existing coverage, so it carries a blessing of its own.
+
+### Amendment — WHERE this sits relative to the GPU engine
+
+The sizing above says "Canvas2D", and on its own that reads like a claim this
+project composites on Canvas2D. It does not, and the ambiguity is worth closing
+here because `blendMode.ts` carried exactly that stale claim for months and it
+was "the reason the remaining AE modes were estimated as far more expensive than
+they are."
+
+The layering, verified:
+
+- **Compositing is GPU** — WebGPU → WebGL2. Blend modes, effects, matte, layer
+  stacking, and the layer-style `stroke` effect (a texture-space alpha dilation,
+  `effect.type === 'stroke'`) all run there.
+- **Vector geometry is rasterized on Canvas2D into a TEXTURE**
+  (`Canvas2DVectorRasterizer` → `AppTextureProvider`), and that texture is what
+  the GPU composites.
+
+A shape's stroke is the second layer, not the first. So taper is a rasterizer
+change, and the GPU is untouched by it.
+
+### The GPU alternative, evaluated and rejected
+
+Taper could instead be a GPU pass, reusing the dilation the layer-style stroke
+already does. Rejected on three counts:
+
+1. **It cannot express the feature.** A texture-space dilation grows the alpha
+   edge uniformly. Taper is a per-vertex offset along a CENTRELINE; the
+   information needed (which end of the path a pixel is near) is not in the
+   texture. It could fake a symmetric fade, not a taper.
+2. **It doubles the dialect surface.** Every GPU branch has to exist in WGSL and
+   in GLSL, and the render-test gate structurally cannot catch a divergence
+   because it runs one backend per invocation — the reason
+   `blendModeParity.test.ts` exists. This same session nearly shipped a
+   GLSL-only branch of Preserve Underlying Transparency.
+3. **It would be a second stroke mechanism.** Vector strokes would then be drawn
+   two ways depending on whether taper was on, and the two would disagree at the
+   edges (§2·0).
+
+### Why the GPU makes the Canvas2D route CHEAPER, not more expensive
+
+This is the part the "our engine is GPU" framing might otherwise hide, and it
+cuts in favour of the plan rather than against it:
+
+Rasterization is **cached and resolution-tiered** — `contentHash` is the
+VectorRasterizer's key, "same content + same scale ⇒ same texture", and it
+deliberately excludes transform, opacity and compositing. So the flatten-and-fill
+cost is paid **when the stroke's content changes**, not per frame and not per
+transform. A tapered stroke that merely moves, scales or fades re-uses its
+texture exactly like an untapered one.
+
+It also means the tapered outline stays crisp at any zoom without any shader
+work: the resolution tier already re-rasterizes vector content per scale.
+
+And because it happens BEFORE the GPU, taper is automatically identical on
+WebGPU and WebGL2 — no parity guard needed, no divergence class to watch.
+
+**Conclusion: taper is an M, not an S**, and its first unit is the primitive
+extraction plus the flatten-and-fill path — not the `taperStart`/`taperEnd`
+properties, which are the cheap half and would otherwise land as a stopwatch
+wired to nothing (exactly F34, one item earlier on this same board).
+
+### Revisit if
+
+A second consumer of the band form appears (a variable-width glow or contour
+shading). At two consumers the shading half earns its own primitive; at one it
+would be a generalisation written for nobody.
 
 ## 2d. DECISION D3 — templates are deliberately de-scoped
 

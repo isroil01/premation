@@ -127,6 +127,12 @@ export interface TimelineTrack {
    * comes back missing it.
    */
   guide?: boolean;
+  /**
+   * PRESERVE UNDERLYING TRANSPARENCY: the layer is clipped to the alpha already
+   * composited beneath it. Shown on the row for the same reason `guide` is —
+   * the layer looks ordinary until something below it changes shape.
+   */
+  preserveTransparency?: boolean;
   /** Per-track color stripe on the header. */
   color?: string;
   /** Ghosted (dimmed) because it's outside the current Focus Mode context. */

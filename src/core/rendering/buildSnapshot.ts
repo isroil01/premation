@@ -17,6 +17,7 @@ const LAYER_STYLE_TRACK_PREFIX = `effect.${layerStyleEffectId('dropShadow')}`.re
 import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
+import { readNodePreserveTransparency } from '@core/effects/preserveTransparency';
 import { readNodeMaskAt } from '@core/effects/mask';
 import { readNodeMatte, readMatte } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
@@ -817,6 +818,7 @@ export function buildSnapshot(
       id: groupNode.id,
       kind: 'shape',
       blend: readNodeBlend(groupNode),
+      ...(readNodePreserveTransparency(groupNode) ? { preserveTransparency: true } : {}),
       mask: frameMask,
       matte: readNodeMatte(groupNode),
       x: gWorld ? gWorld.x : comp.width / 2,
@@ -1315,6 +1317,7 @@ export function buildSnapshot(
           opacity: pOpacity, width: pW, height: pH,
           fill: '#000', visible: node.visible !== false,
           blend: readNodeBlend(node),
+      ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
           particles: cfg,
         }, node);
       }
@@ -1652,14 +1655,62 @@ export function buildSnapshot(
     // Dash offset folds in exactly the way the stroke colour does — sampled off
     // the animated-value map and written into the RESOLVED stroke rather than
     // read from the stored object.
-    //
-    // Deliberately this pattern and not `strokeWidth`'s: `strokeWidth` is
-    // registered as a keyframeable property in `propertyMeta` and nothing here
-    // ever samples it for a shape stroke (F34, logged not fixed). Copying that
-    // shape would have produced a stopwatch that writes keyframes the renderer
-    // never reads — the exact "write-only UI" the house style forbids.
     if (baseStroke && a?.has('strokeDashOffset')) {
       finalStroke = { ...baseStroke, dashOffset: a.get('strokeDashOffset') ?? 0 };
+    }
+    // F34, FIXED. `strokeWidth` was registered as keyframeable in
+    // `propertyMeta`, offered a stopwatch by the inspector and the timeline, and
+    // sampled by NOTHING for a shape stroke — a 6→40 ramp rendered 5296 stroke
+    // pixels at both ends. The comment that used to sit here cited that as the
+    // reason dash offset did NOT copy its shape; the honest fix is to make
+    // `strokeWidth` behave like dash offset rather than to keep a second
+    // pattern alive as a warning.
+    //
+    // Chained off `finalStroke` for the reason stated below it: width, colour
+    // and dash offset can all be animated on one layer.
+    if (finalStroke && a?.has('strokeWidth')) {
+      const w = a.get('strokeWidth');
+      // A negative width is not a thinner stroke, it is a Canvas2D exception —
+      // and the property's own `min: 0` says so. Clamp rather than trust the
+      // curve, since an overshooting ease can undershoot zero between keys.
+      if (typeof w === 'number' && Number.isFinite(w)) {
+        finalStroke = { ...finalStroke, width: Math.max(0, w) };
+      }
+    }
+    // Taper and Wave. Nine tracks, folded HERE for the same reason every other
+    // stroke track is: `propertyMeta` gives them a stopwatch, and a stopwatch
+    // the renderer never samples is F34/F35 — twice on this board already.
+    //
+    // Each falls back to the STORED profile rather than to a constant, so a
+    // taper authored statically survives when only one of its nine is animated.
+    if (finalStroke && a) {
+      const t = finalStroke.taper;
+      const num = (k: string, fallback: number): number => {
+        const v = a.get(k);
+        return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+      };
+      if (
+        a.has('strokeTaperStartWidth') || a.has('strokeTaperEndWidth') ||
+        a.has('strokeTaperStartLength') || a.has('strokeTaperEndLength') ||
+        a.has('strokeTaperStartEase') || a.has('strokeTaperEndEase')
+      ) {
+        finalStroke = { ...finalStroke, taper: {
+          startWidth: num('strokeTaperStartWidth', t?.startWidth ?? 1),
+          endWidth: num('strokeTaperEndWidth', t?.endWidth ?? 1),
+          startLength: num('strokeTaperStartLength', t?.startLength ?? 0),
+          endLength: num('strokeTaperEndLength', t?.endLength ?? 0),
+          startEase: num('strokeTaperStartEase', t?.startEase ?? 0),
+          endEase: num('strokeTaperEndEase', t?.endEase ?? 0),
+        } };
+      }
+      const wv = finalStroke.wave;
+      if (a.has('strokeWaveAmount') || a.has('strokeWaveWavelength') || a.has('strokeWavePhase')) {
+        finalStroke = { ...finalStroke, wave: {
+          amount: num('strokeWaveAmount', wv?.amount ?? 0),
+          wavelength: num('strokeWaveWavelength', wv?.wavelength ?? 0),
+          phase: num('strokeWavePhase', wv?.phase ?? 0),
+        } };
+      }
     }
     // Chained off `finalStroke`, not `baseStroke`: colour and dash offset can be
     // animated on the same layer, and rebuilding from `baseStroke` here would
@@ -1703,6 +1754,7 @@ export function buildSnapshot(
       id: node.id,
       kind: layerKind,
       blend: readNodeBlend(node),
+      ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
       mask: readNodeMaskAt(node, remapOf(node.id)(t)),
       matte: readNodeMatte(node),
       isAdjustment: readNodeAdjustment(node) || undefined,
@@ -1797,7 +1849,20 @@ export function buildSnapshot(
           : (shapeType === 'ellipse' || (!shapeType && /circle|ellip|dot|orb/.test(name)))
             ? 'ellipse'
             : 'rect',
-      cornerRadius: base.cornerRadius,
+      // F35, FIXED. `cornerRadius` was registered keyframeable in `propertyMeta`
+      // and its animated track was folded NOWHERE — the STATIC value is read by
+      // the component scan, so a rounded rect drew correctly and a keyframed
+      // corner radius simply did not move. Found by the derived sweep added with
+      // F34 (`animatablePropertyReaders.test.ts`): same class, and the same
+      // one-line shape as the `backdropBlur` fold immediately below.
+      //
+      // Clamped at 0 for the reason `strokeWidth` is: an overshooting ease
+      // undershoots between keys, and a negative radius is a Canvas2D exception
+      // rather than a sharper corner. The property's own `min: 0` agrees.
+      cornerRadius: (() => {
+        const r = a?.get('cornerRadius');
+        return typeof r === 'number' && Number.isFinite(r) ? Math.max(0, r) : base.cornerRadius;
+      })(),
       // Keyframeable like any numeric prop: an animated track wins over the base,
       // so a panel can frost in over time.
       // Glass owns the backdrop blur when it is on — one control, not two that

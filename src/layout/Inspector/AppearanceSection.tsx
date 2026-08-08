@@ -10,6 +10,7 @@ import { getNodeFill, setNodeFill, getNodeFills, setNodeFills, convertFill, make
   makeOpacityStop,
   type OpacityStop,
 } from '@core/paint/fill';
+import { IDENTITY_TAPER as TAPER_DEFAULTS, IDENTITY_WAVE as WAVE_DEFAULTS, isIdentityTaper, isIdentityWave } from '@core/scene/strokeProfile';
 import { getNodeStroke, updateNodeStroke, getNodeStrokes, setNodeStrokes, defaultStroke, normalizeStroke, type StrokeAlign, type StrokeCap, type StrokeJoin } from '@core/paint/stroke';
 import { Icon } from '@components/Icon';
 import { ColorPicker } from '@components/ColorPicker';
@@ -48,7 +49,12 @@ function AnimatablePaintRow({
   onStatic,
 }: {
   nodeId: string;
-  prop: 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius' | 'strokeDashOffset';
+  prop:
+    | 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius' | 'strokeDashOffset'
+    | 'strokeTaperStartWidth' | 'strokeTaperEndWidth'
+    | 'strokeTaperStartLength' | 'strokeTaperEndLength'
+    | 'strokeTaperStartEase' | 'strokeTaperEndEase'
+    | 'strokeWaveAmount' | 'strokeWaveWavelength' | 'strokeWavePhase';
   /** Overrides the registry label — the panel shows "Angle" under a Fill
    *  heading where the timeline needs the unambiguous "Fill Angle". */
   label?: string;
@@ -196,17 +202,37 @@ function OpacityStopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }
   );
 }
 
-/** Editor for a gradient's stop list (shared by linear + radial fills). */
-function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.Element | null {
+/**
+ * Editor for a gradient's stop list — linear + radial, FILL and STROKE.
+ *
+ * The stroke used to get two lone ColorPickers wired to `stops[0]` and
+ * `stops[n-1]`: a gradient stroke could RENDER any number of stops (the model
+ * and the rasterizer have always supported it) but only its two ends could be
+ * edited and none could be added. Reusing this editor rather than growing a
+ * second one is the point — two stop editors would drift, and this one already
+ * carries the keyframing, the sort and the minimum-two rule.
+ *
+ * `target` selects where a write goes. Stop KEYFRAMING stays fill-only, and
+ * that is honest gating rather than an oversight: the animated stop list is read
+ * from the `fill.stops` data track, and there is no `stroke.stops` equivalent in
+ * the renderer. Offering the stopwatch here would be a control writing keyframes
+ * nothing samples — F34, which this same branch fixed twice.
+ */
+function StopList({
+  nodeId,
+  paint,
+  target = 'fill',
+}: { nodeId: string; paint: FillPaint; target?: 'fill' | 'stroke' }): JSX.Element | null {
   const time = useActiveWorkspace()?.time ?? 0;
   if (paint.type === 'solid') return null;
   const layerT = compToKeyframeTime(nodeId, time);
+  const canAnimate = target === 'fill';
 
   // Gradient-stop keyframes (data track): when live, the rows show the
   // SAMPLED stop list at the playhead and every edit writes a keyframe there —
   // the renderer reads the track, so writing the static paint would be an
   // edit that changes nothing on screen.
-  const stopsAnimated = defaultAnimation.isDataAnimated(nodeId, 'fill.stops');
+  const stopsAnimated = canAnimate && defaultAnimation.isDataAnimated(nodeId, 'fill.stops');
   const sampled = stopsAnimated
     ? (defaultAnimation.sampleData(nodeId, 'fill.stops', layerT) as Array<{ pos: number; color: string }> | undefined)
     : undefined;
@@ -221,6 +247,8 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
           sortedStops(next).map((s) => ({ pos: s.offset, color: s.color })),
         );
       }, `gradStops:${nodeId}`);
+    } else if (target === 'stroke') {
+      updateNodeStroke(nodeId, { paint: { ...paint, stops: next } });
     } else {
       setNodeFill(nodeId, { ...paint, stops: next });
     }
@@ -242,6 +270,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
 
   return (
     <div className={effStyles.list}>
+      {canAnimate && (
       <button
         type="button"
         className={effStyles.addChip}
@@ -254,6 +283,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
       >
         <Icon name="keyframe" size="sm" /> {stopsAnimated ? 'Stops keyframed' : 'Animate stops'}
       </button>
+      )}
       {stops.map((s, i) => (
         <div key={s.id} className={effStyles.stopRow}>
           <ColorPicker
@@ -289,7 +319,7 @@ function StopList({ nodeId, paint }: { nodeId: string; paint: FillPaint }): JSX.
         <Icon name="plus" size="sm" /> Add stop
       </button>
 
-      <OpacityStopList nodeId={nodeId} paint={paint} />
+      {canAnimate && <OpacityStopList nodeId={nodeId} paint={paint} />}
     </div>
   );
 }
@@ -312,6 +342,39 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
   const fill = getNodeFill(nodeId);
   const fills = getNodeFills(nodeId);
   const stroke = getNodeStroke(nodeId);
+  // Progressive disclosure, the same rule the Dash Offset row follows: the
+  // detail controls only appear once the thing they detail is switched on, so
+  // no row is ever shown that provably cannot change a pixel.
+  /**
+   * Patch the taper, SEEDING a ramp when the edit would otherwise be identity.
+   *
+   * Found by driving the real UI: a width alone cannot leave identity, because
+   * identity needs BOTH a non-full width and a ramp length. So setting "Taper
+   * Start = 60%" with the default zero length normalised straight back to
+   * undefined and the field snapped to 100 — a control that could not be moved,
+   * which is worse than one that is missing.
+   *
+   * The model stays honest (identity IS identity, and is dropped so it cannot
+   * bloat the raster cache key); this is the UI affordance that makes the first
+   * edit do something. AE reaches the same place by shipping a non-zero default
+   * length once the group is added.
+   */
+  const DEFAULT_RAMP = 0.5;
+  const patchTaper = (patch: Partial<typeof TAPER_DEFAULTS>) => {
+    const next = { ...TAPER_DEFAULTS, ...stroke?.taper, ...patch };
+    if (next.startWidth < 1 && next.startLength <= 0 && patch.startLength === undefined) next.startLength = DEFAULT_RAMP;
+    if (next.endWidth < 1 && next.endLength <= 0 && patch.endLength === undefined) next.endLength = DEFAULT_RAMP;
+    updateNodeStroke(nodeId, { taper: next });
+  };
+  /** Same trap on the wave: an amplitude with no wavelength is identity. */
+  const DEFAULT_WAVELENGTH = 60;
+  const patchWave = (patch: Partial<typeof WAVE_DEFAULTS>) => {
+    const next = { ...WAVE_DEFAULTS, ...stroke?.wave, ...patch };
+    if (next.amount !== 0 && next.wavelength <= 0 && patch.wavelength === undefined) next.wavelength = DEFAULT_WAVELENGTH;
+    updateNodeStroke(nodeId, { wave: next });
+  };
+  const hasTaper = !isIdentityTaper(stroke?.taper);
+  const hasWave = !isIdentityWave(stroke?.wave);
   const strokes = getNodeStrokes(nodeId);
 
   const [, setSavedFill] = useState<FillPaint | null>(null);
@@ -645,6 +708,76 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                   />
                 )}
 
+                {/* ── Taper and Wave (AE's Stroke group) ──
+                    One group, because AE ships them as one and they share the
+                    same arc-length walk. Every row is keyframeable and every
+                    track is folded in `buildSnapshot` — a stopwatch the renderer
+                    ignores is F34/F35, and the class guard now fails the build
+                    for it.
+
+                    The dashed-stroke warning that used to sit here is gone
+                    because the limitation is gone: dash and taper compose now,
+                    each dash reading its width from where it sits on the whole
+                    path. A warning about a restriction that no longer exists is
+                    worse than none. */}
+
+                <AnimatablePaintRow
+                  nodeId={nodeId} prop="strokeTaperStartWidth" label="Taper Start"
+                  value={stroke?.taper?.startWidth ?? 1}
+                  onStatic={(v) => patchTaper({ startWidth: v })}
+                />
+                <AnimatablePaintRow
+                  nodeId={nodeId} prop="strokeTaperEndWidth" label="Taper End"
+                  value={stroke?.taper?.endWidth ?? 1}
+                  onStatic={(v) => patchTaper({ endWidth: v })}
+                />
+                {hasTaper && (
+                  <>
+                    <AnimatablePaintRow
+                      nodeId={nodeId} prop="strokeTaperStartLength" label="Start Length"
+                      value={stroke?.taper?.startLength ?? 0}
+                      onStatic={(v) => patchTaper({ startLength: v })}
+                    />
+                    <AnimatablePaintRow
+                      nodeId={nodeId} prop="strokeTaperEndLength" label="End Length"
+                      value={stroke?.taper?.endLength ?? 0}
+                      onStatic={(v) => patchTaper({ endLength: v })}
+                    />
+                    <AnimatablePaintRow
+                      nodeId={nodeId} prop="strokeTaperStartEase" label="Start Ease"
+                      value={stroke?.taper?.startEase ?? 0}
+                      onStatic={(v) => patchTaper({ startEase: v })}
+                    />
+                    <AnimatablePaintRow
+                      nodeId={nodeId} prop="strokeTaperEndEase" label="End Ease"
+                      value={stroke?.taper?.endEase ?? 0}
+                      onStatic={(v) => patchTaper({ endEase: v })}
+                    />
+                  </>
+                )}
+
+                <AnimatablePaintRow
+                  nodeId={nodeId} prop="strokeWaveAmount" label="Wave Amount"
+                  value={stroke?.wave?.amount ?? 0}
+                  onStatic={(v) => patchWave({ amount: v })}
+                />
+                {/* Wavelength and phase only mean something against an
+                    amplitude — the same rule the Dash Offset row above follows. */}
+                {hasWave && (
+                  <>
+                    <AnimatablePaintRow
+                      nodeId={nodeId} prop="strokeWaveWavelength" label="Wavelength"
+                      value={stroke?.wave?.wavelength ?? 0}
+                      onStatic={(v) => patchWave({ wavelength: v })}
+                    />
+                    <AnimatablePaintRow
+                      nodeId={nodeId} prop="strokeWavePhase" label="Wave Phase"
+                      value={stroke?.wave?.phase ?? 0}
+                      onStatic={(v) => patchWave({ phase: v })}
+                    />
+                  </>
+                )}
+
                 {/* Gradient stroke: an optional paint that overrides the solid
                     colour (Canvas2D builds the gradient in layer space). */}
                 <div className={styles.popoverRow}>
@@ -668,36 +801,11 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                     <option value="radial">Radial gradient</option>
                   </select>
                 </div>
+                {/* The full stop list, not two lone end-pickers. A gradient
+                    stroke has always RENDERED any number of stops; until now
+                    only its two ends were editable and none could be added. */}
                 {stroke?.paint && stroke.paint.type !== 'solid' && (
-                  <div className={styles.popoverRow}>
-                    <span className={styles.popoverLabel}>Grad</span>
-                    <ColorPicker
-                      compact
-                      value={sortedStops(stroke.paint.stops)[0]?.color ?? '#ffffff'}
-                      onChange={(hex) => {
-                        const p = stroke.paint!;
-                        if (p.type === 'solid') return;
-                        updateNodeStroke(nodeId, {
-                          paint: { ...p, stops: p.stops.map((s, si) => (si === 0 ? { ...s, color: hex } : s)) },
-                        });
-                      }}
-                      aria-label="Stroke gradient start color"
-                    />
-                    <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>→</span>
-                    <ColorPicker
-                      compact
-                      value={sortedStops(stroke.paint.stops).slice(-1)[0]?.color ?? '#000000'}
-                      onChange={(hex) => {
-                        const p = stroke.paint!;
-                        if (p.type === 'solid') return;
-                        const last = p.stops.length - 1;
-                        updateNodeStroke(nodeId, {
-                          paint: { ...p, stops: p.stops.map((s, si) => (si === last ? { ...s, color: hex } : s)) },
-                        });
-                      }}
-                      aria-label="Stroke gradient end color"
-                    />
-                  </div>
+                  <StopList nodeId={nodeId} paint={stroke.paint} target="stroke" />
                 )}
               </div>
             )}

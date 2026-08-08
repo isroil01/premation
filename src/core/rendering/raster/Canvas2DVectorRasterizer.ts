@@ -16,6 +16,7 @@ import {
   fillStyleFor,
   shapePath,
   strokeShape,
+  strokeShapeProfiled,
   subpathBatches,
   traceBatch,
 } from './vectorDraw';
@@ -467,6 +468,10 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         );
         ctx.fill();
         for (const s of batch.paint?.stroke ? [batch.paint.stroke] : strokeStack) {
+          // Taper/Wave fill a variable-width ribbon instead of stroking; the
+          // call returns false for anything it does not own (identity profile,
+          // non-path, dashed) and the ordinary stroke runs.
+          if (strokeShapeProfiled(ctx, s, layer, layer.width, layer.height)) continue;
           strokeShape(ctx, s, trace, layer.width, layer.height);
         }
         ctx.restore();
@@ -487,6 +492,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
         // buildSnapshot, so the ordinary trace already describes the cut path —
         // which is the point: the fill above traces the SAME path and now follows
         // the trim, as it does in AE.
+        if (strokeShapeProfiled(ctx, s, layer, layer.width, layer.height)) continue;
         strokeShape(ctx, s, () => shapePath(ctx, layer), layer.width, layer.height);
       }
     }

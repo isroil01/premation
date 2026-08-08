@@ -14,6 +14,9 @@ export * as Matrix4Math from './utils/matrix4';
 export * as Project3D from './utils/project3d';
 export type { Camera3D, Projected, OrthoView, Ray3D } from './utils/project3d';
 export { uuid, newNodeId } from './utils/id';
+// Per-vertex path offsetting — the shared geometry half of DECISION D4, used by
+// the brush ribbon today and by stroke taper / variable-width feather next.
+export { offsetAlongNormals, closedRibbon, type OffsetPoint, type OffsetSides } from './utils/pathOffset';
 
 // ── Events ────────────────────────────────────────────────────────
 export { TypedEmitter, type Disposable, type Handler, type EventMap } from './events/EventEmitter';

@@ -714,6 +714,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.preserveTransparency ? { preserveTransparency: true } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     // AE's per-layer Quality switch. Only emitted for 'draft' — the linear
@@ -853,6 +854,7 @@ function precompToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpaci
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.preserveTransparency ? { preserveTransparency: true } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     color: Color.white(),
@@ -887,6 +889,7 @@ function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpa
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : fieldAdd ? 'add' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.preserveTransparency ? { preserveTransparency: true } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     color: Color.white(),
@@ -1101,7 +1104,12 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   };
   // Advanced blend layers need the samplable SCENE_COLOR_TARGET (they sample the
   // backdrop), same precondition as effects — force it on when any are present.
-  const hasAdvancedBlend = renderables.some((r) => (r.advancedBlend ?? 0) > 0);
+  // Preserve Underlying Transparency samples the accumulated backdrop's ALPHA,
+  // so it has the same precondition — and it can be on with a Normal blend
+  // (advancedBlend 0), which is the common case, so testing advancedBlend alone
+  // would miss every one of them.
+  const hasAdvancedBlend = renderables.some(
+    (r) => (r.advancedBlend ?? 0) > 0 || !!r.preserveTransparency);
   // Backdrop blur samples the scene beneath the layer — same precondition.
   // Glass samples the backdrop too, and can legitimately run with a blur
   // radius of 0 (clear glass), so testing backdropBlur alone would miss it.

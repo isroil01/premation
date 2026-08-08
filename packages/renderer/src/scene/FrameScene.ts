@@ -147,6 +147,13 @@ export interface Renderable {
    *  BLEND_COMBINE shader instead. 0/undefined = simple blend via `blend`. */
   advancedBlend?: number;
   /**
+   * Preserve Underlying Transparency: composite `source-atop` the accumulated
+   * backdrop instead of `source-over`. Needs the backdrop as a shader input for
+   * exactly the reason `advancedBlend` does, so it routes the same way — and it
+   * COMPOSES with `advancedBlend` rather than replacing it.
+   */
+  preserveTransparency?: boolean;
+  /**
    * Frosted-glass backdrop blur radius in device px (0/undefined = off).
    *
    * Blurs what is BEHIND the layer and shows it through the layer's own alpha —
@@ -302,6 +309,8 @@ export function depthEligible3D(r: Renderable): boolean {
   if (!r.threeD) return false;
   if (r.matteSource || r.matte || r.adjustment || r.precomp) return false;
   if (r.advancedBlend && r.advancedBlend > 0) return false;
+  // Reads the accumulated backdrop's alpha, which the depth pass cannot supply.
+  if (r.preserveTransparency) return false;
   // GLASS / backdrop blur read what is composited BENEATH the layer, which the
   // depth pass cannot supply: it draws into the scene target it would have to
   // sample. render3DGroup has no backdrop branch, so a 3D glass panel used to

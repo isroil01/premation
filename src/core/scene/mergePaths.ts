@@ -70,11 +70,24 @@ function cubicAt(a: BezierPt, b: BezierPt, t: number): { x: number; y: number } 
 
 /** Flatten a closed bezier outline into a polygon (perSeg samples/segment).
  *  Corner-only segments (handles at anchors) emit just the anchor. */
-export function flattenOutline(pts: readonly BezierPt[], perSeg = 8): Array<{ x: number; y: number }> {
+export function flattenOutline(
+  pts: readonly BezierPt[],
+  perSeg = 8,
+  /**
+   * OPEN runs stop at the last anchor instead of wrapping back to the first.
+   *
+   * Defaults to closed, so every caller that predates stroke taper flattens
+   * byte-identically. Added rather than duplicated because the bezier sampling
+   * must stay in ONE place: a tapered stroke and the boolean-ops outline that
+   * already used this walking the same path differently is the §2·0 shape.
+   */
+  open = false,
+): Array<{ x: number; y: number }> {
   const n = pts.length;
   if (n < 3) return pts.map((p) => ({ x: p.x, y: p.y }));
   const out: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i < n; i++) {
+  const segments = open ? n - 1 : n;
+  for (let i = 0; i < segments; i++) {
     const a = pts[i]!;
     const b = pts[(i + 1) % n]!;
     out.push({ x: a.x, y: a.y });
@@ -83,6 +96,9 @@ export function flattenOutline(pts: readonly BezierPt[], perSeg = 8): Array<{ x:
       for (let s = 1; s < perSeg; s++) out.push(cubicAt(a, b, s / perSeg));
     }
   }
+  // The closed loop emits every anchor as it goes; an open one never reaches
+  // its last, because that anchor ends a segment rather than starting one.
+  if (open) out.push({ x: pts[n - 1]!.x, y: pts[n - 1]!.y });
   return out;
 }
 

@@ -138,7 +138,23 @@ function buildAnimateItems(
     { type: 'separator' },
     { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { if (easyEaseAll(id)) notify('Eased all keyframes'); else notify('Layer has no keyframes yet', 'warning'); } },
     { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { if (timeReverseKeyframes(id)) notify('Keyframes reversed'); else notify('Layer has no keyframes yet', 'warning'); } },
-    { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers (bars, end-to-end)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (getTimelineController().sequenceLayerBars(selectedIds, 0)) notify('Layers sequenced end-to-end'); else notify('Select 2+ layers with timeline bars', 'warning'); } },
+    // Overlap is ASKED FOR rather than hardcoded. `sequenceLayerBars` has taken
+    // an `overlapSeconds` since it was written, with a passing test for it, but
+    // the only caller passed 0 — so the overlap shipped unreachable. A non-zero
+    // overlap now also cross-dissolves, which is what an overlap is for.
+    { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void (async () => {
+      const raw = await customPrompt(
+        'Sequence Layers',
+        'Lay the selected layers’ bars end-to-end, in selection order. Overlap in seconds — 0 butts them together; above 0 overlaps the bars by that much and cross-dissolves opacity across the overlap.',
+        '0',
+        { placeholder: 'e.g. 0.5', confirmLabel: 'Sequence' },
+      );
+      if (raw === null) return;
+      const overlap = Number(raw);
+      if (!Number.isFinite(overlap) || overlap < 0) { notify('Overlap must be a number of seconds, 0 or more', 'warning'); return; }
+      if (!getTimelineController().sequenceLayerBars(selectedIds, overlap, { crossfade: overlap > 0 })) { notify('Select 2+ layers with timeline bars', 'warning'); return; }
+      notify(overlap > 0 ? `Layers sequenced with a ${overlap}s cross-dissolve` : 'Layers sequenced end-to-end');
+    })(); } },
     { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (sequenceLayers(selectedIds, 0.3)) notify('Animations staggered'); else notify('Select 2+ animated layers first', 'warning'); } },
     { type: 'separator' },
     {

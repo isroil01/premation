@@ -38,11 +38,13 @@
    */
   --tl-col-gap: var(--space-2);
   --tl-col-name: 134px;
-  /* 6 switches × 22px + 5 gaps × 4px. It was 126px, so the switches OVERFLOWED
-     their own column by 26px and, being centre-justified, spilled ~13px past
-     each edge. That right-hand spill is what drove the 3D switch into the Mode
-     column's divider rule. */
-  --tl-col-switches: 152px;
+  /* 7 switches × 22px + 6 gaps × 4px — shy, fx, motion blur, adjustment,
+     guide, preserve-underlying-transparency, 3D. It was 126px back when there
+     were six, so the switches OVERFLOWED their own column by 26px and, being
+     centre-justified, spilled ~13px past each edge. That right-hand spill is
+     what drove the 3D switch into the Mode column's divider rule. This has to
+     grow whenever a switch is added to the row. */
+  --tl-col-switches: 178px;
   /* Clearance between the last switch and Mode's divider rule. */
   --tl-col-divider-space: var(--space-4);
 }
