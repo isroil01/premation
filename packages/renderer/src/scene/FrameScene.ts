@@ -125,6 +125,34 @@ export type RenderableEffect =
       /** The plugin's parameters, packed at their declared offsets. */
       params: Float32Array;
       /**
+       * This effect's shader declares a fourth binding, so its material must
+       * too — whether or not a map layer has been chosen.
+       *
+       * SEPARATE from `mapLayerId` on purpose, and the distinction is the whole
+       * correctness argument. `mapLayerId` says which layer the user picked;
+       * this says what the compiled shader asks for. An effect that declared a
+       * layer parameter and has not been pointed at anything yet still declares
+       * `@binding(3)`, and a layout missing it is an invalid pipeline — a dead
+       * viewport rather than a missing map. Deriving the layout from
+       * `mapLayerId` would produce exactly that, for every effect in its
+       * default state.
+       */
+      readsMap?: boolean;
+      /**
+       * Renderable id supplying a SECOND texture, bound at 3.
+       *
+       * The same field name and the same unset rule as `displacement-map`
+       * above, deliberately: absent means the effect self-samples rather than
+       * being skipped, so a missing map draws something visibly wrong instead
+       * of nothing at all.
+       *
+       * Present only for effects whose material declared the fourth binding.
+       * Binding a texture the layout does not declare — or declaring one and
+       * binding nothing — are both invalid pipelines, so the two are derived
+       * from one predicate on the app side.
+       */
+      mapLayerId?: string;
+      /**
        * Called around the draw so a device loss can be attributed to this
        * effect. Injected rather than imported: this package must not know that
        * plugins exist, and the app must not have to reach into the pass.

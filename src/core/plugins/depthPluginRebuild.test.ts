@@ -15,6 +15,8 @@
  */
 
 import { parseManifest } from './manifest';
+import { composeEffectShader, UNIFORM_HEADER_BYTES } from './effectSchema';
+import { pluginEffectMaterial } from './pluginEffectMaterial';
 
 const base = {
   id: 'studio.acme.depth',
@@ -76,7 +78,7 @@ describe('what the rebuild CAN express', () => {
   });
 });
 
-describe('★ GAP 1 — an effect cannot sample a SECOND texture', () => {
+describe('★ GAP 1 — CLOSED: an effect can sample a SECOND texture', () => {
   /*
     The finding, and it is the one that matters.
 
@@ -97,20 +99,108 @@ describe('★ GAP 1 — an effect cannot sample a SECOND texture', () => {
     `layer` — which the built-in effects already have — plus a fourth binding is
     the obvious form.
   */
-  it('refuses a `layer` parameter, which is how a depth map would be named', () => {
+  it('accepts a `layer` parameter, and names the binding after it', () => {
+    const { manifest, errors } = parse({
+      effects: [{
+        id: 'parallax',
+        label: 'Depth Parallax',
+        shader: PARALLAX,
+        params: { depthMap: { type: 'layer' } },
+      }],
+    });
+
+    expect(errors).toEqual([]);
+    const effect = manifest!.contributes.effects[0]!;
+    expect(effect.params.depthMap!.type).toBe('layer');
+
+    const { wgsl } = composeEffectShader(effect);
+    expect(wgsl).toContain('@group(0) @binding(3) var depthMap : texture_2d<f32>;');
+  });
+
+  it('★ keeps the layer parameter OUT of the uniform block', () => {
+    /*
+      The offset-corrupting mistake, and the reason `layer` is a separate
+      category rather than another `EFFECT_PARAM_TYPES` entry. A `layer` has no
+      size and no alignment; among the uniform members it would shift every
+      value after it and render wrong colours with no error anywhere — the same
+      class of failure as the missing 64-byte header.
+    */
+    const { manifest } = parse({
+      effects: [{
+        id: 'parallax',
+        label: 'Depth Parallax',
+        shader: PARALLAX,
+        params: {
+          depthMap: { type: 'layer' },
+          focal: { type: 'number', default: 50 },
+        },
+      }],
+    });
+
+    const { layout, wgsl } = composeEffectShader(manifest!.contributes.effects[0]!);
+    expect(layout.layout.map((m) => m.name)).toEqual(['focal']);
+    expect(wgsl).not.toMatch(/^\s*depthMap\s*:/m);
+    // `focal` still lands immediately after the renderer's header — exactly
+    // where it would sit with no layer parameter present at all.
+    expect(layout.layout[0]!.offset).toBe(UNIFORM_HEADER_BYTES);
+  });
+
+  it('widens the material layout to match the generated bindings', () => {
+    const { manifest } = parse({
+      effects: [{
+        id: 'parallax',
+        label: 'Depth Parallax',
+        shader: PARALLAX,
+        params: { depthMap: { type: 'layer' } },
+      }],
+    });
+
+    const material = pluginEffectMaterial('studio.acme.depth', manifest!.contributes.effects[0]!);
+    expect(material.layout.map((e) => e.binding)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('leaves an effect without one at three bindings', () => {
+    // A declared binding with nothing bound is an invalid pipeline, so an
+    // effect that never asked for a second texture must not be handed a slot.
+    const { manifest } = parse({
+      effects: [{ id: 'plain', label: 'Plain', shader: PARALLAX, params: {} }],
+    });
+
+    const material = pluginEffectMaterial('studio.acme.depth', manifest!.contributes.effects[0]!);
+    expect(material.layout.map((e) => e.binding)).toEqual([0, 1, 2]);
+  });
+
+  it('still refuses more than one layer parameter', () => {
     const { errors } = parse({
       effects: [{
         id: 'parallax',
         label: 'Depth Parallax',
         shader: PARALLAX,
-        params: { depthMap: { type: 'layer', default: '' } },
+        params: {
+          depthMap: { type: 'layer' },
+          normalMap: { type: 'layer' },
+        },
       }],
     });
 
-    // `layer` is not even in the layer-kind prop vocabulary, so it fails as an
-    // unknown type rather than as an unsupported effect parameter. Worth
-    // knowing: the fix is not only in `EFFECT_PARAM_TYPES`.
-    expect(errors.join()).toMatch(/type.*must be one of/);
+    expect(errors.join()).toMatch(/layer parameters.*the limit is 1/);
+  });
+
+  it('still refuses `layer` on a layer KIND, where nothing could resolve it', () => {
+    const { errors } = parse({
+      layerKinds: [{
+        id: 'depth',
+        label: 'Depth',
+        render: 'none',
+        // Required, and omitting it made this test pass on the WRONG error —
+        // the validator refused the missing schemaVersion before it ever
+        // reached the rule under test.
+        schemaVersion: 2,
+        props: { source: { type: 'layer' } },
+      }],
+    });
+
+    expect(errors.join()).toMatch(/only valid on an effect parameter/);
   });
 
   it('refuses an author-declared second texture binding', () => {

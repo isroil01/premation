@@ -1503,6 +1503,146 @@
           }
         }
       }
+    },
+    {
+      "name": "API 4 effect with a layer parameter",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "depthMap": {
+                  "type": "layer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a layer parameter cannot carry a default",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "depthMap": {
+                  "type": "layer",
+                  "default": "n_1"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "two layer parameters are refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "a": {
+                  "type": "layer"
+                },
+                "b": {
+                  "type": "layer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a layer parameter beside uniform parameters",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "depthMap": {
+                  "type": "layer"
+                },
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "animatable": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "layer is refused on a layer KIND",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "render": "none",
+              "schemaVersion": 2,
+              "props": {
+                "source": {
+                  "type": "layer"
+                }
+              }
+            }
+          ]
+        }
+      }
     }
   ]
 }

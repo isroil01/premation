@@ -41,9 +41,40 @@
 import { parseProp, type LayerPropSchema } from './layerKindSchema';
 import { validateWgsl } from './wgslValidation';
 
-/** Types that can be a shader uniform. */
-export const EFFECT_PARAM_TYPES = ['number', 'color', 'boolean'] as const;
-export type EffectParamType = (typeof EFFECT_PARAM_TYPES)[number];
+/** Types that can be a shader uniform — a VALUE in the parameter block. */
+export const EFFECT_UNIFORM_TYPES = ['number', 'color', 'boolean'] as const;
+export type EffectParamType = (typeof EFFECT_UNIFORM_TYPES)[number];
+
+/**
+ * Types that become a BINDING rather than a uniform member.
+ *
+ * `layer` names another layer in the composition, and the renderer binds that
+ * layer's texture beside `src`. Deliberately NOT in `EFFECT_UNIFORM_TYPES`: it
+ * has no size, no alignment and no representation in a uniform block, and
+ * admitting it there would shift every offset after it — silently, which is the
+ * same class of failure as the missing 64-byte header.
+ */
+export const EFFECT_BINDING_TYPES = ['layer'] as const;
+
+/** Everything an effect parameter is allowed to be. */
+export const EFFECT_PARAM_TYPES = [...EFFECT_UNIFORM_TYPES, ...EFFECT_BINDING_TYPES] as const;
+
+/**
+ * At most ONE layer parameter per effect.
+ *
+ * The generated bind group has a single slot for it. More would each need their
+ * own binding number, their own resolution in the render graph and their own
+ * behaviour when the referenced layer is gone — none of it free, none of it
+ * asked for.
+ */
+export const MAX_LAYER_PARAMS_PER_EFFECT = 1;
+
+/** The names of an effect's layer-reference parameters, in declaration order. */
+export function layerParamNames(params: Record<string, LayerPropSchema>): string[] {
+  return Object.entries(params)
+    .filter(([, s]) => (EFFECT_BINDING_TYPES as readonly string[]).includes(s.type))
+    .map(([name]) => name);
+}
 
 export interface EffectContribution {
   /** Plugin-local. The host namespaces it as `<pluginId>.<id>`. */
@@ -169,6 +200,16 @@ export function parseEffects(raw: unknown, errors: string[]): EffectContribution
     }
 
     if (bad) return;
+
+    const layers = layerParamNames(params);
+    if (layers.length > MAX_LAYER_PARAMS_PER_EFFECT) {
+      errors.push(
+        `"${at}.params" declares ${layers.length} layer parameters (${layers.join(', ')}); `
+        + `the limit is ${MAX_LAYER_PARAMS_PER_EFFECT}. The generated bind group has one slot for a second texture.`,
+      );
+      return;
+    }
+
     out.push({ id, label, shader, params });
   });
 
@@ -236,6 +277,16 @@ export function parameterBlock(params: Record<string, LayerPropSchema>): {
   size: number;
 } {
   const entries = Object.entries(params)
+    /*
+      Binding-typed parameters are not members of this block at all.
+
+      A `layer` has no size and no alignment, so including it would push every
+      following offset by whatever `WGSL_SIZE` happened to return for it —
+      `undefined`, here, which yields NaN offsets and a struct that no longer
+      describes the bytes the CPU packs. Filtered at the top so the sort, the
+      offsets and the emitted members all see one consistent set.
+    */
+    .filter(([, schema]) => !(EFFECT_BINDING_TYPES as readonly string[]).includes(schema.type))
     .map(([name, schema]) => ({ name, type: schema.type as EffectParamType }))
     // Descending alignment, then name, so the ordering is stable across runs —
     // an unstable order would make the shader cache key change for an unchanged
@@ -288,11 +339,28 @@ export function composeEffectShader(
   effect: EffectContribution,
 ): { wgsl: string; layout: ReturnType<typeof parameterBlock> } {
   const layout = parameterBlock(effect.params);
+  const layers = layerParamNames(effect.params);
   const wgsl = [
     layout.wgsl,
     '@group(0) @binding(0) var<uniform> params : Object;',
     '@group(0) @binding(1) var src : texture_2d<f32>;',
     '@group(0) @binding(2) var samp : sampler;',
+    /*
+      The second texture, named for the parameter that selects it.
+
+      Emitted only when the effect declares a `layer` parameter, because a bind
+      group entry with nothing bound to it is an invalid pipeline — an effect
+      that does not ask for a second texture must not be handed a slot for one.
+
+      Named after the author's parameter rather than a fixed `map`, so the
+      source reads the way the manifest does: declare `params: { depth: {type:
+      "layer"} }` and sample `depth`. There is no `params.depth` — a layer is a
+      binding, not a value, and the two namespaces do not collide because the
+      uniform block never contains it.
+    */
+    ...(layers.length > 0
+      ? [`@group(0) @binding(3) var ${layers[0]} : texture_2d<f32>;`]
+      : []),
     '',
     /*
       The VERTEX shader is generated too, not just the bindings.

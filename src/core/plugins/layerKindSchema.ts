@@ -66,10 +66,21 @@ export const RESERVED_RENDER_STRATEGIES: readonly string[] = [];
 
 export const RENDER_STRATEGIES = ['none', 'proxy', 'shader'] as const;
 
-/** What a declared property may be. */
-export type LayerPropType = 'number' | 'string' | 'boolean' | 'enum' | 'color' | 'asset';
+/**
+ * What a declared property may be.
+ *
+ * `layer` names ANOTHER layer in the composition. It is a reference, like
+ * `asset` — nothing interpolates it and nothing stores its contents. It exists
+ * so an effect can read a SECOND texture (a depth map, a displacement source),
+ * and `parseLayerKinds` refuses it on a layer KIND: the renderer resolves the
+ * reference when it builds an effect's bind group, and a kind has no bind
+ * group, so a `layer` prop there would be a control that changes nothing.
+ */
+export type LayerPropType = 'number' | 'string' | 'boolean' | 'enum' | 'color' | 'asset' | 'layer';
 
-export const LAYER_PROP_TYPES = ['number', 'string', 'boolean', 'enum', 'color', 'asset'] as const;
+export const LAYER_PROP_TYPES = [
+  'number', 'string', 'boolean', 'enum', 'color', 'asset', 'layer',
+] as const;
 
 /**
  * Types the animation engine can interpolate.
@@ -237,11 +248,14 @@ export function parseProp(
 
   // The default, last, so it is checked against everything above it.
   //
-  // An `asset` slot is the one type whose default is legitimately absent: there
-  // is no asset id a package can name that exists in someone else's project.
-  if (t === 'asset') {
+  // `asset` and `layer` are the types whose default is legitimately absent:
+  // both are REFERENCES, and there is no asset id or layer id a package can
+  // name that exists in someone else's project. Without this, `layer` fell
+  // through to `defaultProblem`, whose switch has no case for it — so any
+  // value at all was accepted, including a number.
+  if (t === 'asset' || t === 'layer') {
     if (raw.default !== undefined && raw.default !== null) {
-      errors.push(`"${at}.default" cannot be set for an asset property — an asset id means nothing in another project.`);
+      errors.push(`"${at}.default" cannot be set for ${t === 'asset' ? 'an asset' : 'a layer'} property — ${t === 'asset' ? 'an asset' : 'a layer'} id means nothing in another project.`);
       return null;
     }
     out.default = null;
@@ -380,6 +394,23 @@ export function parseLayerKinds(
     for (const name of names) {
       const parsed = parseProp(`${at}.props.${name}`, name, entry.props[name], errors);
       if (!parsed) { ok = false; continue; }
+      /*
+        `layer` is an EFFECT parameter, not a kind property.
+
+        The reference is resolved when a bind group is built, and a layer kind
+        has no bind group — so this would be a control the user can set that
+        changes nothing, which is the exact failure the "a kind must declare
+        props" rule exists to prevent. Refused here rather than dropped from the
+        vocabulary, because effects share this parser and do need it.
+      */
+      if (parsed.type === 'layer') {
+        errors.push(
+          `"${at}.props.${name}.type": "layer" is only valid on an effect parameter. `
+          + 'A layer kind cannot resolve a layer reference — nothing would read it.',
+        );
+        ok = false;
+        continue;
+      }
       props[name] = parsed;
     }
     if (!ok) return;

@@ -135,7 +135,7 @@ function effectSpreadPx(effects: readonly RenderableEffect[]): number {
  * effect is not a new kind of pass.
  */
 const pluginMaterials = new Map<string, MaterialDescriptor>();
-function pluginMaterial(shader: string): MaterialDescriptor {
+function pluginMaterial(shader: string, readsMap: boolean): MaterialDescriptor {
   let m = pluginMaterials.get(shader);
   if (!m) {
     m = {
@@ -145,6 +145,23 @@ function pluginMaterial(shader: string): MaterialDescriptor {
         { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
         { binding: 1, type: 'texture', stages: ['fragment'] },
         { binding: 2, type: 'sampler', stages: ['fragment'] },
+        /*
+          The fourth binding, for effects that sample a second texture.
+
+          Declared from what the SHADER asks for, never from whether a map
+          layer happens to be chosen: the generated WGSL contains
+          `@binding(3)` as soon as the effect declares a layer parameter, and a
+          layout that omits it is an invalid pipeline for every such effect in
+          its default state.
+
+          Safe to cache by `shader` alone even though this now takes a second
+          argument — `readsMap` is a property of the effect, fixed by its
+          manifest, so the same shader name cannot arrive both ways. It changes
+          only when the plugin is updated, which re-registers the shader.
+        */
+        ...(readsMap
+          ? [{ binding: 3, type: 'texture' as const, stages: ['fragment' as const] }]
+          : []),
       ],
     };
     pluginMaterials.set(shader, m);
@@ -610,12 +627,32 @@ export class CompositionPass extends RenderPass {
           this one names a family, and a shared key would batch two different
           plugin effects into one draw with one pipeline.
         */
+        /*
+          The optional second texture, resolved exactly as displacement-map's
+          is: same helper, same borrow of MATTE_TARGET, same fallback.
+
+          Falling back to `curTex` rather than to nothing matters. The material
+          for an effect that DECLARED a layer parameter carries a fourth
+          binding, and a declared binding with nothing bound is an invalid
+          pipeline — a dead viewport, not a missing map. Self-sampling is the
+          honest degradation and it is what the author sees before they have
+          chosen a layer.
+        */
+        const canUseMap = !pool.includes(MATTE_TARGET);
+        const pluginMapTex =
+          (canUseMap ? this.displacementMapTexture(ctx, byId, effect.mapLayerId, selfId) : null)
+          ?? curTex;
         cmds.add({
           batchKey: `plugin:${effect.shader}`,
-          material: pluginMaterial(effect.shader),
+          material: pluginMaterial(effect.shader, effect.readsMap === true),
           blend: 'normal',
           uniforms: packPluginEffect(mvp, targetUv, effect.params),
           texture: curTex, sampler: clampSampler(),
+          // Keyed off `readsMap`, the SAME predicate the layout uses — never
+          // off `mapLayerId`. Binding 3 is declared as soon as the shader asks
+          // for it, so it must be filled then too, even with no layer chosen
+          // (self-sampling via the `?? curTex` above).
+          ...(effect.readsMap ? { maskTexture: pluginMapTex } : {}),
         });
       }
       if (cmds.length === 0) continue;

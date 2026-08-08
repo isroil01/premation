@@ -26,7 +26,7 @@ import { isLutEffect } from '@core/effects/colorLut';
 import { readMatte } from '@core/effects/matte';
 import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
 import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
-import { packParameters } from '@core/plugins/effectSchema';
+import { layerParamNames, packParameters } from '@core/plugins/effectSchema';
 import { layerIsBaked } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
@@ -507,9 +507,30 @@ export function extractSpatialEffects(
         worst of the three.
       */
       if (registered?.state === 'ready') {
+        /*
+          The second texture, when this effect declared one.
+
+          Same shape and the same unset rule as `displacement-map` above — node
+          id === renderable id, empty or non-string means unset — and the same
+          fallback: unset self-samples rather than being skipped. An effect
+          whose map is missing should draw the layer against itself, which is
+          visibly wrong and debuggable, rather than disappear.
+
+          Read from whatever the manifest named its layer parameter, not a fixed
+          key, so the scene follows the author's own vocabulary.
+        */
+        const [layerParam] = layerParamNames(registered.contribution.params);
+        const mapRaw = layerParam ? paramsOf(e)[layerParam] : undefined;
+        const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
+
         spatial.push({
           type: 'plugin',
           shader: registered.id,
+          // What the SHADER asks for, not what the user chose — see the field's
+          // own note. Set from the declaration so an effect with no map picked
+          // yet still gets a material whose layout matches its bindings.
+          ...(layerParam ? { readsMap: true } : {}),
+          ...(mapLayerId ? { mapLayerId } : {}),
           // `packParameters` hands back an ArrayBuffer; the scene carries a
           // typed view so the renderer never has to know the element size.
           params: new Float32Array(packParameters(

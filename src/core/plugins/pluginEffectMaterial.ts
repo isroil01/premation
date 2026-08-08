@@ -31,7 +31,7 @@
  */
 
 import type { EffectContribution } from './effectSchema';
-import { composeEffectShader, namespacedEffect } from './effectSchema';
+import { composeEffectShader, layerParamNames, namespacedEffect } from './effectSchema';
 
 /** Mirrors `packages/renderer`'s `ShaderSource`. Duplicated, not imported, so
  *  `@core/plugins` does not take a dependency on the renderer package. */
@@ -46,6 +46,21 @@ export const PLUGIN_EFFECT_MATERIAL_LAYOUT = [
   { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
   { binding: 1, type: 'texture', stages: ['fragment'] },
   { binding: 2, type: 'sampler', stages: ['fragment'] },
+] as const;
+
+/**
+ * The layout for an effect that reads a SECOND texture.
+ *
+ * A separate constant rather than always declaring binding 3: a layout entry
+ * with nothing bound to it makes the pipeline invalid, and an invalid pipeline
+ * here is a dead viewport rather than a missing feature. An effect gets the
+ * wider layout only when its manifest declared a `layer` parameter — the same
+ * condition under which `composeEffectShader` emits the binding, so the two
+ * cannot drift.
+ */
+export const PLUGIN_EFFECT_MATERIAL_LAYOUT_WITH_MAP = [
+  ...PLUGIN_EFFECT_MATERIAL_LAYOUT,
+  { binding: 3, type: 'texture', stages: ['fragment'] },
 ] as const;
 
 /**
@@ -106,12 +121,19 @@ export function pluginShaderSource(
 export function pluginEffectMaterial(pluginId: string, effect: EffectContribution): {
   shader: string;
   topology: 'triangle-list';
-  layout: typeof PLUGIN_EFFECT_MATERIAL_LAYOUT;
+  layout: typeof PLUGIN_EFFECT_MATERIAL_LAYOUT | typeof PLUGIN_EFFECT_MATERIAL_LAYOUT_WITH_MAP;
 } {
+  // Same predicate the shader generator uses. Deriving both from
+  // `layerParamNames` is what keeps the declared bindings and the bound
+  // resources in step; two independent conditions here would be a pipeline that
+  // is invalid only for the effects that use the newer feature.
+  const readsSecondTexture = layerParamNames(effect.params).length > 0;
   return {
     shader: namespacedEffect(pluginId, effect.id),
     topology: 'triangle-list',
-    layout: PLUGIN_EFFECT_MATERIAL_LAYOUT,
+    layout: readsSecondTexture
+      ? PLUGIN_EFFECT_MATERIAL_LAYOUT_WITH_MAP
+      : PLUGIN_EFFECT_MATERIAL_LAYOUT,
   };
 }
 
