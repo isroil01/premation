@@ -21,19 +21,20 @@ import { Icon } from '@components/Icon';
 import { pluginRegistryEnabled } from '@core/config/edition';
 import {
   REGISTRY_CATEGORIES,
+  deletePublishedPlugin,
   fetchRegistryDetail,
   myPublishedPlugins,
   myPublishers,
   registerPublisher,
   updateListing,
+  type MyRegistryPlugin,
   type PublisherRecord,
-  type RegistryPlugin,
 } from '@core/plugins/registry';
 import styles from './PluginsPanel.module.css';
 
 export function MyPluginsSection(): JSX.Element {
   const [publishers, setPublishers] = useState<PublisherRecord[] | null>(null);
-  const [published, setPublished] = useState<RegistryPlugin[]>([]);
+  const [published, setPublished] = useState<MyRegistryPlugin[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -95,7 +96,7 @@ export function MyPluginsSection(): JSX.Element {
             </span>
           </div>
           {published.map((p) => (
-            <PublishedRow key={p.id} plugin={p} onError={setError} />
+            <PublishedRow key={p.id} plugin={p} onError={setError} onChanged={() => void reload()} />
           ))}
           {published.length === 0 && <SigningSteps namespace={publishers[0]!.namespace} />}
         </>
@@ -211,12 +212,16 @@ function PublisherRow({ publisher }: { publisher: PublisherRecord }): JSX.Elemen
  * everything a publisher can change without cutting a release.
  */
 function PublishedRow({
-  plugin, onError,
+  plugin, onError, onChanged,
 }: {
-  plugin: RegistryPlugin;
+  plugin: MyRegistryPlugin;
   onError: (e: string | null) => void;
+  onChanged: () => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const [visBusy, setVisBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -273,9 +278,79 @@ function PublishedRow({
       </span>
       <span className={styles.rowMeta}>
         <span>{plugin.installs.toLocaleString()} installs</span>
+        <span>{plugin.visibility === 'private' ? 'Private' : 'Public'}</span>
+        <button
+          type="button"
+          className={styles.mini}
+          disabled={visBusy}
+          onClick={() => {
+            const next = plugin.visibility === 'private' ? 'public' : 'private';
+            setVisBusy(true);
+            onError(null);
+            void updateListing(plugin.id, { visibility: next })
+              .then(onChanged)
+              .catch((err: Error) => onError(err.message || 'Could not change visibility.'))
+              .finally(() => setVisBusy(false));
+          }}
+        >
+          {plugin.visibility === 'private' ? 'Make public' : 'Make private'}
+        </button>
         <button type="button" className={styles.mini} onClick={() => setOpen((v) => !v)}>
           {open ? 'Close' : 'Edit listing'}
         </button>
+      </span>
+
+      {/*
+        Going private is reversible and says so; deleting is not, so it asks.
+        The two sit together because they are the same decision at different
+        strengths — "stop offering this" and "stop offering this and throw away
+        the listing" — and a publisher reaching for the second usually wants the
+        first.
+      */}
+      {plugin.visibility === 'private' && (
+        <span className={styles.rowMeta}>
+          Hidden from the marketplace. Only you can install it — copies already
+          installed elsewhere keep working.
+        </span>
+      )}
+
+      <span className={styles.rowMeta}>
+        {!confirmDelete ? (
+          <button type="button" className={styles.mini} onClick={() => setConfirmDelete(true)}>
+            Withdraw…
+          </button>
+        ) : (
+          <>
+            <span>
+              Withdraw <strong>{plugin.name}</strong> permanently? The listing and every
+              version go. Copies already installed keep working — this stops new
+              installs, it does not recall anything. Consider Make&nbsp;private instead.
+            </span>
+            <button
+              type="button"
+              className={styles.mini}
+              disabled={deleting}
+              onClick={() => {
+                setDeleting(true);
+                onError(null);
+                void deletePublishedPlugin(plugin.id)
+                  .then(onChanged)
+                  .catch((err: Error) => {
+                    // Thrown, not swallowed: a publisher told this worked when
+                    // it did not stops watching a plugin that is still on sale.
+                    onError(err.message || 'Could not withdraw the plugin.');
+                    setDeleting(false);
+                    setConfirmDelete(false);
+                  });
+              }}
+            >
+              {deleting ? 'Withdrawing…' : 'Withdraw permanently'}
+            </button>
+            <button type="button" className={styles.mini} onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </button>
+          </>
+        )}
       </span>
 
       {open && !loaded && <span className={styles.rowMeta}>Loading listing…</span>}

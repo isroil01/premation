@@ -1,0 +1,53 @@
+{
+  "id": "studio.example.parallax3d",
+  "name": "Parallax 3D",
+  "version": "1.0.0",
+  "description": "A GPU parallax effect that fakes depth on a flat image by treating brightness as height. Drag the shift parameters, or keyframe them, to move the camera.",
+  "author": "Premation examples",
+  "apiVersion": 4,
+  "main": "main.js",
+  "permissions": [],
+  "contributes": {
+    "effects": [
+      {
+        "id": "parallax",
+        "label": "Parallax 3D",
+        "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  let luma = vec3<f32>(0.299, 0.587, 0.114);\n\n  // Direction and size of the apparent camera move. 0.08 keeps the useful\n  // range of `depth` around 1 instead of around 0.01.\n  let dir = vec2<f32>(params.shiftX, params.shiftY) * params.depth * 0.08;\n\n  // Walk toward the displaced sample. One step already looks like parallax;\n  // it just smears where the height changes fast, because the offset is taken\n  // from the height at the WRONG point. Each pass re-reads the height where it\n  // last landed and re-solves. Four is where it stops visibly improving.\n  //\n  // The bound is a literal because the validator refuses a loop it cannot\n  // cost, and `textureSampleLevel` avoids depending on implicit derivatives.\n  var p = uv;\n  for (var i : i32 = 0; i < 4; i = i + 1) {\n    let h = dot(textureSampleLevel(src, samp, p, 0.0).rgb, luma);\n    p = uv + dir * (h - params.focus);\n  }\n\n  // Off-image samples clamp to the edge and streak. Fading them out reads as\n  // the picture ending rather than as a smear, which is the honest look.\n  let edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));\n  let fade = clamp(edge * 40.0, 0.0, 1.0);\n\n  return textureSampleLevel(src, samp, p, 0.0) * fade;\n}\n",
+        "params": {
+          "depth": {
+            "type": "number",
+            "label": "Depth",
+            "default": 1,
+            "min": 0,
+            "max": 4,
+            "animatable": true
+          },
+          "shiftX": {
+            "type": "number",
+            "label": "Shift X",
+            "default": 0.5,
+            "min": -2,
+            "max": 2,
+            "animatable": true
+          },
+          "shiftY": {
+            "type": "number",
+            "label": "Shift Y",
+            "default": 0,
+            "min": -2,
+            "max": 2,
+            "animatable": true
+          },
+          "focus": {
+            "type": "number",
+            "label": "Focus plane",
+            "default": 0.5,
+            "min": 0,
+            "max": 1,
+            "animatable": true
+          }
+        }
+      }
+    ]
+  }
+}

@@ -33,6 +33,15 @@ import { pluginRegistryEnabled } from '@core/config/edition';
 import { HOST_API_VERSION, type PluginPermission } from './manifest';
 import type { ReportCategory } from './reportCategories';
 
+/**
+ * Who may see a published plugin, as chosen by its owner.
+ *
+ * Not a boolean. `isPublic: false` arriving over a wire as the string "false"
+ * is a mistake this codebase has already made once, and an enum has no falsy
+ * value to misread.
+ */
+export type PluginVisibility = 'public' | 'private';
+
 /** What browse returns for one plugin. Never includes package bytes. */
 export interface RegistryPlugin {
   id: string;
@@ -64,8 +73,21 @@ export interface RegistryPlugin {
   updatedAt: string;
 }
 
+/**
+ * One of the caller's OWN plugins, from `mine/list`.
+ *
+ * Separate from `RegistryPlugin` because `visibility` is deliberately not in
+ * the public browse projection — there it would be a column whose value is
+ * always "public", since a private plugin never appears in browse at all.
+ */
+export interface MyRegistryPlugin extends RegistryPlugin {
+  visibility: PluginVisibility;
+}
+
 /** What the detail endpoint adds. */
 export interface RegistryDetail extends RegistryPlugin {
+  /** The owner's own setting. Always `public` when a stranger is reading. */
+  visibility: PluginVisibility;
   /** Server-rendered and sanitised. Never rendered from Markdown on this side. */
   readmeHtml: string;
   /** The Markdown SOURCE, so a publisher editing their listing round-trips it
@@ -361,9 +383,9 @@ export interface PublisherRecord {
  * `[]` in the local edition rather than an error: there is no registry to have
  * published to, and the caller's empty state already reads correctly.
  */
-export async function myPublishedPlugins(): Promise<RegistryPlugin[]> {
+export async function myPublishedPlugins(): Promise<MyRegistryPlugin[]> {
   if (!pluginRegistryEnabled()) return [];
-  return request<RegistryPlugin[]>('/plugins/mine/list');
+  return request<MyRegistryPlugin[]>('/plugins/mine/list');
 }
 
 export async function myPublishers(): Promise<PublisherRecord[]> {
@@ -400,12 +422,36 @@ export const REGISTRY_CATEGORIES = [
  */
 export async function updateListing(
   id: string,
-  patch: { readme?: string; changelog?: string; categories?: string[]; license?: string },
+  patch: {
+    readme?: string;
+    changelog?: string;
+    categories?: string[];
+    license?: string;
+    /** `private` hides it from browse and refuses download to everyone else. */
+    visibility?: PluginVisibility;
+  },
 ): Promise<void> {
   await request<unknown>(`/plugins/${encodeURIComponent(id)}/listing`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
+}
+
+/**
+ * Withdraw a plugin you published.
+ *
+ * Errors are thrown, never swallowed. Most calls in this file degrade quietly
+ * because a registry that cannot be reached should not look like a broken
+ * editor — but a publisher told their plugin was removed when it was not would
+ * act on that, and stop watching something still on sale.
+ *
+ * What this does NOT do is uninstall anything. Copies already on other people's
+ * machines keep working; the package stops being obtainable. Recalling
+ * something already installed is the revocation list — an operator action for
+ * safety, not a publisher one for tidiness.
+ */
+export async function deletePublishedPlugin(id: string): Promise<void> {
+  await request<unknown>(`/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 /**
