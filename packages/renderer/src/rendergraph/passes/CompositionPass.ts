@@ -7,8 +7,9 @@ import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
 import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
+import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
 
 /**
@@ -121,6 +122,36 @@ function effectSpreadPx(effects: readonly RenderableEffect[]): number {
 }
 
 /** Gaussian extent the blur shader actually samples, in radii. */
+/**
+ * Material descriptors for plugin effects, memoised by shader name.
+ *
+ * Built lazily rather than declared, because unlike every other material in
+ * this file the SET of them is not known until plugins are installed. Memoised
+ * because a descriptor is compared by identity downstream when deciding whether
+ * a pipeline can be reused — a fresh object per frame would rebuild the
+ * pipeline on every frame, for every plugin effect in the document.
+ *
+ * The layout is the standard effect one: uniform, texture, sampler. A plugin
+ * effect is not a new kind of pass.
+ */
+const pluginMaterials = new Map<string, MaterialDescriptor>();
+function pluginMaterial(shader: string): MaterialDescriptor {
+  let m = pluginMaterials.get(shader);
+  if (!m) {
+    m = {
+      shader,
+      topology: 'triangle-list',
+      layout: [
+        { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+        { binding: 1, type: 'texture', stages: ['fragment'] },
+        { binding: 2, type: 'sampler', stages: ['fragment'] },
+      ],
+    };
+    pluginMaterials.set(shader, m);
+  }
+  return m;
+}
+
 const BLUR_TAIL = 2.5;
 
 /** Margin ceiling, as a fraction of the layer's own size per side. Past this
@@ -568,11 +599,47 @@ export class CompositionPass extends RenderPass {
           uniforms: packNoise(mvp, targetUv, effect.amount, effect.evolution, effect.monochrome),
           texture: curTex, sampler: clampSampler(),
         });
+      } else if (effect.type === 'plugin') {
+        /*
+          A plugin effect is just another material, and this branch knows
+          nothing about plugins: it takes a registered shader name and a
+          pre-packed parameter block, and writes the transform header underneath.
+
+          `batchKey` carries the shader NAME rather than a literal. Every other
+          branch here names ONE material, so a constant is correct for them;
+          this one names a family, and a shared key would batch two different
+          plugin effects into one draw with one pipeline.
+        */
+        cmds.add({
+          batchKey: `plugin:${effect.shader}`,
+          material: pluginMaterial(effect.shader),
+          blend: 'normal',
+          uniforms: packPluginEffect(mvp, targetUv, effect.params),
+          texture: curTex, sampler: clampSampler(),
+        });
       }
       if (cmds.length === 0) continue;
+      /*
+        Bracket the submit for device-loss attribution.
+
+        This is the only place that knows a plugin effect is about to be drawn,
+        and `onDraw` is injected by the app so this package still does not have
+        to know what a plugin is. If the GPU dies inside `execute`, the handler
+        the app registered names the effect that was in flight.
+
+        `end` runs in a `finally`: a throw that skipped it would leave the marker
+        set, and the NEXT device loss — possibly minutes later and caused by
+        something else entirely — would be blamed on this effect.
+      */
+      const marker = effect.type === 'plugin' ? effect.onDraw : undefined;
+      marker?.begin();
       const enc = beginViewportPass(ctx, 'fx', writeAttachment(ctx, f0, Color.transparent()));
-      services.quad.execute(enc, cmds);
-      enc.end();
+      try {
+        services.quad.execute(enc, cmds);
+      } finally {
+        enc.end();
+        marker?.end();
+      }
       const outTex = texOf(f0);
       if (outTex) { curTex = outTex; curName = f0; }
     }

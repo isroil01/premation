@@ -102,7 +102,35 @@ export type RenderableEffect =
   | { type: 'fill'; color: Color }
   | { type: 'stroke'; widthPx: number; color: Color }
   | { type: 'sharpen'; amount: number }
-  | { type: 'noise'; amount: number; evolution: number; monochrome: boolean };
+  | { type: 'noise'; amount: number; evolution: number; monochrome: boolean }
+  /**
+   * An effect a PLUGIN declared, from WGSL the host validated and compiled.
+   *
+   * Deliberately opaque to this package. `shader` names a source the app
+   * registered into `ShaderRegistry`; `params` is the plugin's half of the
+   * uniform block, already packed by the app because only the app knows the
+   * plugin's parameter layout.
+   *
+   * The pass fills in the `mvp`/`uvRect` header before drawing — it is the only
+   * thing that knows the transform, and the transform changes per frame while
+   * the plugin's parameters do not.
+   *
+   * The renderer therefore has no idea what a plugin effect DOES, which is the
+   * point: supporting one must not mean teaching this package about plugins.
+   */
+  | {
+      type: 'plugin';
+      /** Registered shader name — `<pluginId>.<effectId>`. */
+      shader: string;
+      /** The plugin's parameters, packed at their declared offsets. */
+      params: Float32Array;
+      /**
+       * Called around the draw so a device loss can be attributed to this
+       * effect. Injected rather than imported: this package must not know that
+       * plugins exist, and the app must not have to reach into the pass.
+       */
+      onDraw?: { begin(): void; end(): void };
+    };
 
 export interface Renderable {
   id: string;

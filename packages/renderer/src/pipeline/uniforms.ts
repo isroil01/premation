@@ -418,3 +418,28 @@ export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: nu
   out[o + 0] = amount; out[o + 1] = evolution; out[o + 2] = monochrome ? 1 : 0; out[o + 3] = 0;
   return out;
 }
+
+/**
+ * A plugin effect's uniform block: the renderer's header, then the plugin's own
+ * parameters exactly as the app packed them.
+ *
+ * ── Why the two halves are packed in different places ────────────────────────
+ *
+ * Only the APP knows a plugin's parameter layout — it generated the WGSL struct
+ * from the manifest, so it owns the offsets. Only the PASS knows `mvp` and
+ * `uvRect`, which are per-frame and per-layer. Neither can produce the whole
+ * block alone, and duplicating either half so that one of them could is how the
+ * CPU-side packing and the GPU-side struct drift apart.
+ *
+ * So the app hands over its half, already at its own offsets, and this writes
+ * the header underneath it. `params` is copied rather than mutated: the app may
+ * reuse that buffer across frames, and writing a per-frame transform into it
+ * would make the plugin's parameters depend on where the layer happened to be.
+ */
+export function packPluginEffect(mvp: Mat3, uvRect: Rect, params: Float32Array): Float32Array {
+  const out = new Float32Array(Math.max(params.length, MAT3_STD140_FLOATS + 4));
+  out.set(params);
+  let o = packMat3(mvp, out, 0);
+  packRect(uvRect, out, o);
+  return out;
+}
