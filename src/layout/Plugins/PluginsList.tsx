@@ -267,6 +267,8 @@ export function PluginsList({
         <AddPluginButton compact={compactActions} />
       </div>
 
+      <StorageReconciledNotice />
+
       <div className={styles.list}>
         {loading && <SkeletonRows />}
 
@@ -518,6 +520,62 @@ function formatInstalls(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
   return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/**
+ * What boot had to throw away, said out loud.
+ *
+ * An index entry and its package are stored separately — metadata in
+ * `localStorage`, bytes in IndexedDB — so a crash, a quota failure or a cleared
+ * origin can leave one without the other. `hydrate()` reconciles both
+ * directions and records what it did in `lastHydration`, which until now
+ * NOTHING read. The store's own comment called it "the structured channel a
+ * surface should read"; this is that surface.
+ *
+ * Without it a plugin the user installed disappears between sessions with no
+ * message anywhere — the single behaviour most likely to make someone stop
+ * trusting a plugin manager, because it is indistinguishable from the app
+ * quietly deciding for them.
+ *
+ * `orphansRemoved` is reported too, even though nothing visible was lost:
+ * megabytes were freed, and a user who cleared their storage and wonders where
+ * the space went deserves the answer.
+ */
+function StorageReconciledNotice(): JSX.Element | null {
+  const report = usePluginStore((s) => s.lastHydration);
+  const [dismissed, setDismissed] = useState(false);
+
+  const dropped = report?.droppedNoPayload ?? [];
+  const orphans = report?.orphansRemoved ?? [];
+  if (dismissed || (dropped.length === 0 && orphans.length === 0)) return null;
+
+  return (
+    <div className={styles.state} role="status">
+      {dropped.length > 0 && (
+        <>
+          <span className={styles.stateTitle}>
+            {dropped.length === 1
+              ? 'A plugin could not be restored.'
+              : `${dropped.length} plugins could not be restored.`}
+          </span>
+          <span>
+            Their packages were missing from this machine&rsquo;s storage, so the
+            entries were removed: {dropped.join(', ')}. Installing again will fix
+            it — nothing about the plugins themselves is wrong.
+          </span>
+        </>
+      )}
+      {orphans.length > 0 && (
+        <span>
+          {orphans.length === 1 ? 'One leftover package was' : `${orphans.length} leftover packages were`}
+          {' '}cleared from storage.
+        </span>
+      )}
+      <button type="button" className={styles.stateAction} onClick={() => setDismissed(true)}>
+        Dismiss
+      </button>
+    </div>
+  );
 }
 
 function EmptyState({
