@@ -91,14 +91,29 @@ async function measure() {
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => process.stderr.write(dim(String(d))));
     child.on('error', reject);
-    child.on('exit', () => {
-      const line = out.split('\n').find((l) => l.startsWith('RESULT:'));
-      if (!line) return resolve(null);
-      try {
-        resolve(JSON.parse(line.slice('RESULT:'.length)));
-      } catch {
-        resolve(null);
+    child.on('exit', (code) => {
+      const lines = out.split('\n');
+      const find = (p) => lines.find((l) => l.startsWith(p));
+
+      const result = find('RESULT:');
+      if (result) {
+        try {
+          return resolve({ kind: 'measured', values: JSON.parse(result.slice('RESULT:'.length)) });
+        } catch (err) {
+          return resolve({ kind: 'error', message: `unreadable RESULT line: ${err.message}` });
+        }
       }
+
+      const skip = find('SKIP:');
+      if (skip) return resolve({ kind: 'skipped', message: skip.slice('SKIP:'.length) });
+
+      const error = find('ERROR:');
+      if (error) return resolve({ kind: 'error', message: error.slice('ERROR:'.length) });
+
+      // No marker at all: the probe died before it could say anything. That is
+      // a failure, not a skip — treating silence as "no adapter here" is how a
+      // broken probe passes CI on every machine forever.
+      resolve({ kind: 'error', message: `probe exited (code ${code}) without reporting an outcome` });
     });
   });
 }
@@ -126,10 +141,11 @@ function fitLine(xs, ys) {
   return { slope: m, intercept: c, r2: ssTot === 0 ? 0 : 1 - ssRes / ssTot };
 }
 
-const measured = await measure();
+const outcome = await measure();
 
-if (!measured) {
+if (outcome.kind === 'skipped') {
   console.log(yellow('SKIPPED — no WebGPU adapter on this machine.'));
+  console.log(dim(`  ${outcome.message}`));
   console.log(dim('  This probe needs a real adapter: there is no software WebGPU, which is'));
   console.log(dim('  also why the golden-pixel gate runs on WebGL2. Nothing was verified.'));
   // Exit 0. A machine that cannot run the probe has not failed it, and a red
@@ -137,6 +153,18 @@ if (!measured) {
   process.exit(0);
 }
 
+if (outcome.kind === 'error') {
+  // Distinct from a skip on purpose. The probe spent months reporting "no
+  // adapter" while the real cause was its own `data:` URL — a non-secure
+  // origin, where `navigator.gpu` does not exist at any hardware.
+  console.log(red('FAILED — the probe could not complete.'));
+  console.log(`  ${outcome.message}`);
+  console.log(dim('  This is the probe failing, not the machine lacking a GPU. If it were'));
+  console.log(dim('  the latter it would have said SKIP.'));
+  process.exit(1);
+}
+
+const measured = outcome.values;
 const { slope, intercept, r2 } = fitLine(AMOUNTS, measured);
 
 console.log('  amount   mean output');

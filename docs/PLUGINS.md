@@ -1036,6 +1036,28 @@ no bounded cost whoever wrote it and whatever they meant.
   no plugin effect drawing blames nobody. The user can turn it back on, which
   recompiles it and puts it through every gate again.
 
+### The layout is checked against a real GPU
+
+`npm run verify-plugin-effect` renders a plugin-shaped effect at several
+parameter values on an actual WebGPU adapter and fits a line through the
+results. Three outcomes it can tell apart: output tracking the parameter (the
+shader ran and read it from the right offset), output flat at the wrong value
+(read from the wrong offset — the bug that actually shipped, where the generated
+struct omitted the renderer's 64-byte header and the first parameter landed on
+`mvp`), and output flat at the input value (never ran at all).
+
+The golden-pixel gate cannot substitute: it runs WebGL2, where a plugin effect
+is the host-generated passthrough, so the scene would pass while proving
+nothing. `uniformLayoutOracle.test.ts` checks the same property statically and
+runs everywhere; this is the version that asks a device.
+
+**A skip is not a pass.** On a machine with no adapter the probe exits 0 and
+says so, which is deliberate — but a probe that *fails* now exits 1 and says
+which. It did not always: it loaded its page from a `data:` URL, an opaque
+origin where `isSecureContext` is false and `navigator.gpu` therefore does not
+exist at any hardware, and reported that as "no WebGPU adapter on this machine".
+It skipped on every machine, for months, while reading as an environment limit.
+
 ### `render: "shader"` on a layer kind
 
 Live as of API 4. It was a reserved value refused with a *version* message

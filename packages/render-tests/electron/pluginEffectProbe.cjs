@@ -21,6 +21,9 @@
  */
 
 const { app, BrowserWindow } = require('electron');
+const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 
 // Dawn needs these; without them `navigator.gpu` is absent or yields no adapter
 // and the probe reports a SKIP rather than a result.
@@ -43,7 +46,22 @@ async function run(amounts) {
   if (!adapter) return null;
   const device = await adapter.requestDevice();
 
-  const W = 16, H = 16;
+  // A WebGPU validation failure does not throw at the call site — it is
+  // reported asynchronously, and the affected work simply does not happen. For
+  // this probe that means a readback buffer full of zeros, which reads exactly
+  // like "the shader returned black" and would be diagnosed as a shader bug.
+  // Collected and raised instead, so the harness cannot misreport its own
+  // mistakes as the feature failing.
+  const gpuErrors = [];
+  device.addEventListener('uncapturederror', (e) => gpuErrors.push(String(e.error.message)));
+
+  /*
+    64, not 16. \`copyTextureToBuffer\` requires \`bytesPerRow\` to be a multiple
+    of 256, and at 16px wide a tightly packed row is 64 bytes — which fails
+    validation, leaves the readback zeroed, and produces a flat-zero curve
+    indistinguishable from a shader that never ran.
+  */
+  const W = 64, H = 64;
 
   /*
     The SAME struct the host generates: the renderer's mvp/uvRect header first,
@@ -128,23 +146,41 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
     for (let i = 0; i < px.length; i += 4) sum += px[i];
     out.push(sum / (px.length / 4));
   }
+
+  await device.queue.onSubmittedWorkDone();
+  if (gpuErrors.length) throw new Error('WebGPU validation: ' + gpuErrors.join(' | '));
   return out;
 }
 `;
 
+/**
+ * The page this probe runs in, written to disk on the way past.
+ *
+ * MUST NOT be a `data:` URL. WebGPU is secure-context only, and a `data:` URL
+ * is an opaque origin where `isSecureContext` is false — so `navigator.gpu` is
+ * undefined there regardless of the hardware or the flags above. This probe
+ * loaded one for months and reported "no WebGPU adapter on this machine",
+ * which is the harness describing its own bug as the environment's limitation.
+ * A `file://` origin is a secure context and sees the real adapter.
+ */
+const PAGE_PATH = path.join(os.tmpdir(), 'motion-plugin-effect-probe.html');
+
 app.whenReady().then(async () => {
+  fs.writeFileSync(PAGE_PATH, '<!doctype html><title>plugin effect probe</title>');
   const win = new BrowserWindow({ show: false, webPreferences: { offscreen: false } });
-  await win.loadURL('data:text/html,<title>plugin effect probe</title>');
+  await win.loadFile(PAGE_PATH);
   try {
     const result = await win.webContents.executeJavaScript(
       `${PAGE}\nrun(${JSON.stringify(AMOUNTS)})`,
     );
-    // A null result is the SKIP signal — no adapter. The runner distinguishes
-    // it from a measurement, and reports "nothing was verified" rather than
-    // treating silence as success.
+    // Three outcomes, said out loud and distinctly. "No marker at all" used to
+    // mean skip, which quietly swallowed every way this can genuinely break —
+    // a thrown error, a crashed GPU process, a probe that never got started —
+    // and reported all of them as a machine without an adapter, exit 0.
     if (result) console.log(`RESULT:${JSON.stringify(result)}`);
+    else console.log('SKIP:navigator.gpu absent, or requestAdapter returned null');
   } catch (err) {
-    console.error(String(err));
+    console.log(`ERROR:${String((err && err.message) || err)}`);
   }
   app.quit();
 });
