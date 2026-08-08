@@ -119,6 +119,7 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
           pinned,
           detail.publisherKey,
           installed.manifest.name,
+          detail.sha256,
         );
       } finally {
         setBusy(false);
@@ -128,7 +129,12 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
 
     setBusy(true);
     try {
-      const { bytes } = await fetchRegistryPackage(pluginId, detail.latestVersion, pinned);
+      // The digest from the DETAIL response, not from the download. Both come
+      // from the registry today; they stop sharing an origin when package
+      // bytes move to object storage, and that is the case this guards.
+      const { bytes } = await fetchRegistryPackage(
+        pluginId, detail.latestVersion, pinned, detail.sha256,
+      );
       const result = readPluginZip(bytes);
       if (!result.pkg) {
         void customAlert('Update package is not readable', result.errors.join('\n'), { isDanger: true });

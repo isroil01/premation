@@ -171,9 +171,13 @@ describe('the install path is shared', () => {
     */
     setKeyChangeHost(jest.fn().mockResolvedValue(true));
 
-    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing');
+    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing', 'abc123');
 
-    expect(fetchPkg).toHaveBeenCalledWith('studio.acme.thing', '2.0.0', NEW_KEY);
+    // The digest is threaded through to the fetch, which is the only place it
+    // can be checked. It came from the update OFFER — a different response from
+    // the one carrying the bytes, which is the whole reason it is worth
+    // checking at all.
+    expect(fetchPkg).toHaveBeenCalledWith('studio.acme.thing', '2.0.0', NEW_KEY, 'abc123');
     // It reached the reader, which is what `installFromRegistry` does next.
     expect(readZip).toHaveBeenCalled();
   });

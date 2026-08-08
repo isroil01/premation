@@ -1221,3 +1221,88 @@ editor then refuses is a download that cannot work. The two are kept honest by
 `net` alone. The permission text is shared the same way
 (`permissions.json`), because the sentence a user reads on the marketplace and
 the one they read on the install screen must be the same sentence.
+
+---
+
+## 14. Scale, and the metric that decides it
+
+Nothing in this section is built. It is written down so it is not rediscovered
+as an emergency, which is the only reason to write it down before it is needed.
+
+### Package bytes stay in Postgres until one number says otherwise
+
+They are in `PluginVersion.packageBytes` because the client verifies a
+signature over those exact bytes, and every hop that could re-encode them turns
+a delivery detail into a signature failure a user reads as "this plugin is
+compromised".
+
+The number that decides the move is **not** total storage. `totalBytes` is the
+obvious metric and the least urgent — Postgres is comfortable holding tens of
+gigabytes of `Bytea`, and the pain it eventually causes (backup and restore
+windows) arrives slowly and visibly.
+
+The one that bites first is **`peakResponseBytes`**. Serving a download reads
+the whole row into the Node process and base64-encodes it, so an 8 MB package
+becomes ~10.7 MB of string, per concurrent download, in the heap. Ten
+simultaneous installs of the largest allowed package is ~107 MB of transient
+heap on top of everything else. That is what becomes an out-of-memory restart
+under a launch spike, and it is driven by package **size** and **concurrency** —
+neither of which appears in a storage total.
+
+`GET /plugins/admin/storage` (operator only) reports all of it. Watch
+`p95Bytes` and `maxBytes` against download concurrency; when their product
+approaches the process memory limit, move the bytes.
+
+### The precondition is already in place
+
+Moving bytes to object storage means bytes and metadata stop sharing an origin.
+What binds them again is the digest — and the digest has to travel with the
+**metadata**, not with the bytes:
+
+* `sha256` is in the browse listing, the detail response and the update offer.
+* `fetchRegistryPackage` verifies the downloaded bytes against the digest its
+  CALLER was given, and deliberately ignores the `sha256` in the download
+  response. A digest that arrives alongside the bytes it describes cannot
+  detect anything about them.
+* Absent a digest, the install falls back to the signature alone, which is what
+  it always had. The digest is not the security boundary and must never be
+  described as one: it answers "are these the bytes the registry named", while
+  only the pinned publisher key survives a compromised registry.
+
+This shipped before the move rather than during it, because adding a field to a
+response is cheap now and a protocol change made under pressure afterwards.
+
+### Update checks could stop identifying users
+
+`POST /plugins/updates` sends the caller's installed plugin set, which tells
+the server what software is on a specific person's machine. The revocation list
+shows the alternative: a signed, cached, public manifest the client matches
+locally, uploading nothing. If that model is extended to updates,
+`POST /plugins/updates` can be retired.
+
+Gated on the same "when the numbers demand it" rule, and worth noting the
+tension: the manifest grows with the catalogue, so it trades a request that
+scales with one user's installs for a download that scales with every published
+plugin. There is a catalogue size where that stops being a good trade.
+
+### The trusted tier is not being built
+
+Verified publishers only, an unmistakable install-time warning, a Node host with
+filesystem and subprocess access. Defensible as an opt-in tier a user accepts
+with eyes open; catastrophic as a default. **Not before Stage 1 is mature** —
+and Stage 1 shipped days ago, so the answer today is no.
+
+### Route order is load-bearing
+
+Express matches in declaration order and `:id` matches any single segment. The
+signed revocation list was declared below `@Get(':id')` and therefore answered
+404 "no plugin revocations" — the safety mechanism the whole design rests on,
+unreachable, with nothing reporting it because the client swallows that failure
+on purpose so being offline is not an error.
+
+Neither existing test could see it: the guard test reads decorator metadata,
+where the route is present and correctly public. Only the order was wrong.
+`plugins.routes.spec.ts` now refuses it structurally — within one method, a
+leading-literal route must be declared before any same-length route whose first
+segment is a parameter — and `plugins.public.spec.ts` checks the real response
+over real HTTP.

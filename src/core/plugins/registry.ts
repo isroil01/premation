@@ -46,6 +46,14 @@ export interface RegistryPlugin {
   installs: number;
   /** SPKI, base64. Pinned on install so later updates can be checked against it. */
   publisherKey: string;
+  /**
+   * Hex SHA-256 of the latest version's package bytes, as the REGISTRY states it.
+   *
+   * Carried here, in the listing, rather than read from the download — that
+   * is the entire point. A digest that arrives with the bytes it describes
+   * cannot detect anything about them. Passed to `fetchRegistryPackage`.
+   */
+  sha256: string;
   /** Namespace identity. Empty strings for a plugin published before namespaces. */
   publisher: { namespace: string; displayName: string; verified: boolean };
   categories: string[];
@@ -102,6 +110,8 @@ export interface RegistryUpdate {
   id: string;
   latestVersion: string;
   publisherKey: string;
+  /** Digest of the offered version, from THIS response rather than the download. */
+  sha256: string;
   blocked: boolean;
   blockedReason: string | null;
 }
@@ -227,10 +237,22 @@ export const REGISTRY_ID_RE = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
  * installing fresh (that is the trust-on-first-use moment, and it is the same
  * decision the consent screen is about to make explicit).
  */
+/**
+ * Hex SHA-256 of some bytes.
+ *
+ * `crypto.subtle`, which is the same primitive the signature check uses — no
+ * second crypto implementation enters the app for a digest.
+ */
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export async function fetchRegistryPackage(
   id: string,
   version: string,
   expectedKey: string,
+  expectedDigest?: string,
 ): Promise<{ bytes: Uint8Array; publisherKey: string }> {
   // Unreachable through the UI in the local edition (`browseRegistry` returns
   // nothing to install and `checkForUpdates` nothing to update), but this is the
@@ -254,6 +276,34 @@ export async function fetchRegistryPackage(
   }
 
   const bytes = decodeBase64(body.package);
+
+  /*
+    ★ The digest, checked against the copy that came with the METADATA.
+
+    `body.sha256` is in this response too and is deliberately NOT what is
+    compared: it arrives in the same body as the bytes, so anything able to
+    alter one alters the other. `expectedDigest` came from the listing or the
+    update offer — a different response now, and a different ORIGIN once
+    package bytes move to object storage, which is the whole reason this exists
+    before that move rather than during it.
+
+    This is not the security boundary and must not be described as one. The
+    signature below is, and it runs either way. What the digest adds is a
+    specific answer to a specific question: are these the bytes the registry
+    said this version was? A CDN serving a stale or re-encoded object fails
+    here with a message that names the real problem, instead of failing the
+    signature check and telling the user their plugin was tampered with.
+  */
+  if (expectedDigest) {
+    const actual = await sha256Hex(bytes);
+    if (actual !== expectedDigest.toLowerCase()) {
+      throw new Error(
+        'The downloaded package is not the one this version was listed as. It has NOT been '
+        + 'installed — the bytes differ from what the registry described.',
+      );
+    }
+  }
+
   const ok = await verifyPackageSignature(bytes, body.signature, expectedKey);
   if (!ok) {
     throw new Error(

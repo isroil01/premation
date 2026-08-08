@@ -41,6 +41,7 @@ function entry(id: string, name: string, installs = 100): RegistryPlugin {
     hasPanel: false,
     installs,
     publisherKey: 'KEY',
+    sha256: '',
     publisher: { namespace: 'acme', displayName: 'Acme', verified: false },
     categories: [],
     license: null,

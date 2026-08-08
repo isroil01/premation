@@ -89,8 +89,13 @@ describe('installing from the registry', () => {
     // The key is an ARGUMENT to the fetch, so the signature is checked against
     // what the caller pinned. A key read out of the response would verify every
     // package against whatever signed it, which verifies nothing.
+    // The fourth argument is the expected digest, `undefined` here because this
+    // caller had no listing metadata to take one from. That is the documented
+    // fallback — without a digest the install still verifies the signature,
+    // which is the actual boundary. Asserted exactly rather than loosened, so a
+    // digest going missing on a path that HAS one would fail here.
     expect(registry.fetchRegistryPackage).toHaveBeenCalledWith(
-      'studio.acme.thing', '1.0.0', 'PINNED-KEY',
+      'studio.acme.thing', '1.0.0', 'PINNED-KEY', undefined,
     );
   });
 

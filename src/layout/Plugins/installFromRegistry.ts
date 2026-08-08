@@ -74,13 +74,24 @@ export async function installFromRegistry(
   id: string,
   version: string,
   publisherKey: string,
+  /**
+   * Digest the LISTING gave for this version, if the caller had one.
+   *
+   * Optional because not every path has metadata to hand, and because a
+   * registry older than this field simply will not send one. Absent, the
+   * install falls back to exactly the guarantee it had before: the signature,
+   * which is the real boundary and always runs. Present, it also answers
+   * "are these the bytes that listing described" — the question that starts
+   * mattering the moment bytes and metadata come from different origins.
+   */
+  expectedDigest?: string,
 ): Promise<boolean> {
   try {
     // Signature checked inside `fetchRegistryPackage`, against `publisherKey`.
     // That key is the pin: for an update it is the key stored with the
     // installed copy, and for a first install it is the key from the listing
     // the user is looking at — which is the trust-on-first-use moment.
-    const { bytes } = await fetchRegistryPackage(id, version, publisherKey);
+    const { bytes } = await fetchRegistryPackage(id, version, publisherKey, expectedDigest);
 
     // The same reader a picked file goes through. A registry package gets no
     // shortcut past zip-bomb limits, path traversal checks or manifest
@@ -141,6 +152,8 @@ export async function updateFromRegistry(
   /** The key the registry currently lists for this plugin. */
   registryKey: string,
   pluginName: string,
+  /** Digest the UPDATE OFFER gave for this version, if the caller had one. */
+  expectedDigest?: string,
 ): Promise<boolean> {
   if (!pinnedKey) {
     void customAlert(
@@ -180,5 +193,5 @@ export async function updateFromRegistry(
     keyToTrust = registryKey;
   }
 
-  return installFromRegistry(id, version, keyToTrust);
+  return installFromRegistry(id, version, keyToTrust, expectedDigest);
 }
