@@ -6,14 +6,21 @@
  * package open, and sending them to a browser to claim a namespace means
  * leaving the tool to do a step that belongs to it.
  *
- * What stays on the command line is SIGNING, and only signing. The private key
- * must never leave the author's machine — it is the whole basis of "an update
- * came from the same author" — so a UI that offered to take it would defeat the
- * guarantee it exists to provide. Everything around it belongs here.
+ * Publishing happens here too now, including the visibility choice. What has NOT
+ * changed is where the private key lives: it never enters the renderer and the
+ * app never stores it. The form sends package bytes and a visibility to the main
+ * process, which asks for the key file, signs, attaches the session and uploads.
+ * That key is the whole basis of "an update came from the same author", and a UI
+ * that held on to it would defeat the guarantee it exists to provide — so the
+ * cost is one file picker per publish, deliberately.
  *
- * Kept deliberately short. A publisher needs a namespace, the commands to sign
- * with, and somewhere to write their listing. Anything else on this screen is
- * standing between them and publishing.
+ * The command-line path still works and is what a browser tab falls back to,
+ * where there is no file dialog to ask with and no main process to keep it out
+ * of.
+ *
+ * Kept deliberately short. A publisher needs a namespace, a way to publish, and
+ * somewhere to write their listing. Anything else on this screen is standing
+ * between them and publishing.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -28,6 +35,7 @@ import {
   registerPublisher,
   updateListing,
   type MyRegistryPlugin,
+  type PluginVisibility,
   type PublisherRecord,
 } from '@core/plugins/registry';
 import styles from './PluginsPanel.module.css';
@@ -98,7 +106,14 @@ export function MyPluginsSection(): JSX.Element {
           {published.map((p) => (
             <PublishedRow key={p.id} plugin={p} onError={setError} onChanged={() => void reload()} />
           ))}
-          {published.length === 0 && <SigningSteps namespace={publishers[0]!.namespace} />}
+          {/* Always available, not only when the shelf is empty: a publisher's
+              second plugin needs this as much as their first, and hiding it
+              after one publish sent them back to the command line. */}
+          <PublishForm
+            namespace={publishers[0]!.namespace}
+            onDone={() => void reload()}
+            onError={setError}
+          />
         </>
       )}
     </div>
@@ -436,6 +451,118 @@ function PublishedRow({
  * A generic snippet with `<your-namespace>` in it is a snippet everybody pastes
  * wrong exactly once.
  */
+/** The main-process publish verb, or null outside the desktop shell. */
+function publishBridge(): ((req: unknown) => Promise<unknown>) | null {
+  const w = window as unknown as { motionEditor?: { pluginPublish?: (r: unknown) => Promise<unknown> } };
+  return w.motionEditor?.pluginPublish ?? null;
+}
+
+/**
+ * Publish a package, and choose who can see it.
+ *
+ * ── Why the key is not a field here ──────────────────────────────────────────
+ *
+ * There is no key input on this form, and that is the design. The renderer sends
+ * BYTES and a visibility choice; the main process asks for the key file, signs,
+ * attaches the session and uploads. So the private key is never in the renderer,
+ * never stored by the app, and never held past the call — which is what keeps
+ * "this update came from the same author" meaning something. A stolen signing
+ * key cannot be undone by blocking a version; the publisher has to rotate it and
+ * every installed copy has to agree.
+ *
+ * The consequence the user feels is one file picker per publish. That is the
+ * price, and it is stated on the button rather than left as a surprise.
+ */
+function PublishForm({
+  namespace, onDone, onError,
+}: {
+  namespace: string;
+  onDone: () => void;
+  onError: (e: string | null) => void;
+}): JSX.Element {
+  const bridge = publishBridge();
+  const [file, setFile] = useState<File | null>(null);
+  const [visibility, setVisibility] = useState<PluginVisibility>('public');
+  const [busy, setBusy] = useState(false);
+
+  // No bridge means this is a browser tab, where there is no file dialog to ask
+  // for a key and no main process to keep it out of. Say so and show the CLI.
+  if (!bridge) return <SigningSteps namespace={namespace} />;
+
+  const submit = async (): Promise<void> => {
+    if (!file) return;
+    setBusy(true);
+    onError(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const res = (await bridge({ bytes, visibility })) as
+        { ok: boolean; error?: string; cancelled?: boolean };
+      // Cancelling the key picker is not a failure. Reporting it as one teaches
+      // people to ignore the error line.
+      if (!res.ok && !res.cancelled) onError(res.error || 'The publish failed.');
+      if (res.ok) { setFile(null); onDone(); }
+    } catch (err) {
+      onError((err as Error).message || 'The publish failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={styles.state}>
+      <span className={styles.stateTitle}>Publish a plugin.</span>
+      <span>
+        Zip the folder containing <code>plugin.json</code>. Its <code>id</code> must start with{' '}
+        <code>{namespace}.</code> — the registry refuses a package published under
+        someone else&rsquo;s namespace.
+      </span>
+
+      <input
+        type="file"
+        accept=".zip,.mplugin"
+        aria-label="Package"
+        className={styles.search}
+        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+      />
+
+      <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+        <legend className={styles.rowMeta}>Who can see it</legend>
+        {(['public', 'private'] as const).map((v) => (
+          <label key={v} className={styles.rowMeta} style={{ display: 'block' }}>
+            <input
+              type="radio"
+              name="visibility"
+              value={v}
+              checked={visibility === v}
+              onChange={() => setVisibility(v)}
+            />{' '}
+            {v === 'public'
+              ? 'Public — listed in the marketplace, anyone can install it'
+              : 'Private — only you can see or install it'}
+          </label>
+        ))}
+      </fieldset>
+
+      <span className={styles.rowMeta}>
+        You can change this later. Note that going private stops new installs and
+        does not remove copies people already have.
+      </span>
+
+      <button
+        type="button"
+        className={styles.stateAction}
+        disabled={busy || !file}
+        onClick={() => void submit()}
+      >
+        {busy ? 'Publishing…' : 'Choose signing key and publish'}
+      </button>
+      <span className={styles.rowMeta}>
+        Your signing key is read once to sign this package and is never stored.
+      </span>
+    </div>
+  );
+}
+
 function SigningSteps({ namespace }: { namespace: string }): JSX.Element {
   return (
     <div className={styles.state}>

@@ -9,6 +9,7 @@ import { registerIndexIpc } from './localIndexDb';
 import { registerAiKeyIpc } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
+import { installPluginPublishIpc } from './pluginPublish';
 import { registerPluginNetIpc } from './pluginNet';
 import { aiEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
@@ -1108,6 +1109,12 @@ app.whenReady().then(() => {
   // cannot take it somewhere else. See apiSession.ts for the full argument, and
   // apiBase.ts for why this is `api.request(path)` and not `fetch(url)`.
   registerApiProxyIpc();
+
+  // Publishing a plugin. Both secrets involved — the session above and the
+  // publisher's private signing key — stay in this process; the renderer sends
+  // bytes and a visibility choice and gets a result back. See pluginPublish.ts
+  // for why the key is picked per publish rather than remembered.
+  installPluginPublishIpc();
 
   // The assistant. Provider keys live here rather than in the renderer —
   // encrypted with the OS keystore, with NO read-back verb (aiKeyVault.ts) — and

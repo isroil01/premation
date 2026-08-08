@@ -162,6 +162,20 @@ const bridge = {
   },
 
   /**
+   * Publish a package the user chose, signed with a key the app never keeps.
+   *
+   * The renderer hands over BYTES and a visibility choice and receives a
+   * result. Main picks the key file, signs, attaches the session and uploads, so
+   * the two secrets involved — the private signing key and the access token —
+   * are never in the renderer beside the payload.
+   *
+   * Note what is absent and stays absent: there is no verb for "give me the
+   * key" and none for "remember the key". Both would move the one secret whose
+   * theft cannot be undone by blocking a version.
+   */
+  pluginPublish: (req: unknown) => ipcRenderer.invoke('plugin:publish', req),
+
+  /**
    * Session state and the two operations that change it.
    *
    * `status` returns claims — signed in, who, when the access token expires,

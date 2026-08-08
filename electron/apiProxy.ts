@@ -146,6 +146,31 @@ async function sendWithAuth(url: string, init: RequestInit): Promise<Response> {
 }
 
 /**
+ * Send an authenticated multipart POST from MAIN, for callers in this process.
+ *
+ * Exported for exactly one reason: `pluginPublish` uploads a package with the
+ * user's session attached, and the session lives here. Routing it through the
+ * renderer's proxy instead would mean the renderer assembling the body — and
+ * the point of that module is that neither the access token nor the signing key
+ * is ever in the renderer.
+ *
+ * Not a general escape hatch. It takes a `FormData` and returns status plus
+ * text, and no route whose response is a credential is a multipart POST.
+ */
+export async function postMultipartFromMain(
+  path: string,
+  form: FormData,
+): Promise<{ status: number; text: string }> {
+  const resolved = resolveApiUrl(path);
+  if (!resolved.ok) throw new Error('That path is not part of this backend.');
+  // Deliberately no Content-Type header: `fetch` derives the multipart boundary
+  // from the FormData, and setting it by hand yields a body the server cannot
+  // parse — with a 400 that names nothing.
+  const res = await sendWithAuth(resolved.url, { method: 'POST', body: form });
+  return { status: res.status, text: await res.text() };
+}
+
+/**
  * Routes whose RESPONSE is a credential.
  *
  * These cannot go through the generic proxy, because the proxy hands the body
