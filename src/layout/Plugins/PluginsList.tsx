@@ -83,8 +83,22 @@ export function PluginsList({
 }: {
   compactActions?: boolean;
 } = {}): JSX.Element {
-  // Re-render when a plugin starts, stops or crashes: the row shows status.
-  useSyncExternalStore((cb) => pluginHost.subscribe(cb), () => pluginHost.getRevision());
+  /*
+    Re-render when a plugin starts, stops or crashes: the row shows status.
+
+    ★ The revision is KEPT and fed to the `rows` memo below. Subscribing alone
+    is not enough and looked like it was: the store's plugin array is unchanged
+    by a plugin merely finishing its boot, so every dependency of that memo
+    stays identical and the memo returns its previous rows — including the
+    `status` it read from `pluginHost.info()` on the render before. The row sat
+    on "Starting…" until something else remounted the list, at which point the
+    correct status appeared and the whole thing looked like a slow update rather
+    than a stale one.
+  */
+  const hostRevision = useSyncExternalStore(
+    (cb) => pluginHost.subscribe(cb),
+    () => pluginHost.getRevision(),
+  );
 
   const installedPlugins = usePluginStore((s) => s.plugins);
   // Drop a `.zip` anywhere on the list. This is what the retired manager
@@ -222,7 +236,9 @@ export function PluginsList({
         if ((b.installs ?? -1) !== (a.installs ?? -1)) return (b.installs ?? -1) - (a.installs ?? -1);
         return a.name.localeCompare(b.name);
       });
-  }, [installedPlugins, registryItems, query, updates, offset]);
+    // `hostRevision` is read for its IDENTITY, not its value — it is what makes
+    // a status change recompute these rows. See the note at the subscription.
+  }, [installedPlugins, registryItems, query, updates, offset, hostRevision]);
 
   const loading = registryItems === null;
 
