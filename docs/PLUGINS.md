@@ -185,6 +185,16 @@ Zipping the folder is fine — one wrapping directory is stripped automatically.
 Limits: 2 MB per file, 8 MB per package, 200 files, text extensions only. Paths
 containing `..` are refused at the format level.
 
+Those ceilings are on the **uncompressed** size, and both readers check them
+before allocating anything — the editor in fflate's `filter`, the registry
+against the zip's central directory. A ceiling applied after the allocation it
+exists to prevent is not a ceiling: 64 MB of zeros stores in 65 KB, so a
+compliant 8 MB archive checked on its compressed bytes can unpack to gigabytes.
+There is a third check, a 200× inflation ratio, for the archive that stays under
+both absolute limits and is still pathological. The registry counts every entry
+where the editor counts only the files it keeps — deliberately stricter, since
+the promise is one-directional (refuse anything the editor would refuse).
+
 `main` is loaded as **one file** — bundle your plugin if it has dependencies.
 
 ---
