@@ -452,13 +452,23 @@ bigger harm than the one a takedown addresses.
 
 ## 8. Deliberately out of scope
 
+These are settled decisions, written down so they stop being re-proposed.
+
 - **Rating, comments, curation.** The registry lists what was published; it does
   not editorialise, and there is no ranking signal beyond install count.
-- **Render-path (shader / WASM) plugins.** A plugin cannot draw pixels. The
-  previous `registerEffect` claimed to and never did — see the audit §0A. When
-  this arrives it will be a *separate* class with a synchronous, deterministic
-  contract, not an extension of this one.
+- **Plugin-to-plugin communication.** One worker and one frame each, and no
+  shared channel between them. Two plugins that can talk are two plugins whose
+  combined permissions are the union of what the user granted separately, which
+  is not what the consent screen said.
 - **Multi-file entry modules.** `main` is a single ES module; bundle first.
+- **Background or periodic update checks.** Only when the manager is opened. The
+  single exception is the revocation list, which is a safety mechanism and
+  uploads nothing — see §10.
+- ~~**Render-path plugins.**~~ **Shipped in API 4** — see §12. This said "a
+  plugin cannot draw pixels" and stopped being true. It arrived the way this
+  entry predicted: a separate class with a synchronous, deterministic contract
+  (WGSL as data, never JS in the frame loop) rather than an extension of the
+  command API.
 - ~~**Documents referencing plugins.**~~ **No longer true as of API 3** — see §9.
   A document containing a plugin-defined layer names the plugin that defines it.
   The guarantee it replaced is spelled out there in full.
@@ -1306,3 +1316,88 @@ where the route is present and correctly public. Only the order was wrong.
 leading-literal route must be declared before any same-length route whose first
 segment is a parameter — and `plugins.public.spec.ts` checks the real response
 over real HTTP.
+
+---
+
+## 15. Incident runbook
+
+Who blocks a plugin, how, what the user sees, and what is said publicly. Written
+before it is needed, because the first time this path runs should not also be
+the first time anyone reads it.
+
+### Severity, and what it changes
+
+| | What it looks like | First move |
+|---|---|---|
+| **P1** | Actively harmful: exfiltrating projects, destroying documents, a malicious update to a popular plugin | Block immediately, ask questions after |
+| **P2** | Harmful if used: an undisclosed capability, a permission grab, impersonation of another publisher | Hold the version, contact the publisher |
+| **P3** | Wrong but not dangerous: broken package, misleading listing, licence complaint | Normal review queue |
+
+Blocking is reversible and cheap. A P1 judgement call that turns out wrong costs
+a publisher a few hours; the reverse costs users their work. Block first.
+
+### The path
+
+1. **A report arrives** — `POST /plugins/:id/report`, from a user who may not
+   have an account. It lands in the case queue, deduplicated per plugin and
+   version.
+2. **A reviewer triages** at `/admin/plugins/review`. Publish-time scanner
+   findings are attached and are **advisory** — a high score is a reason to
+   look, never a reason to act on its own.
+3. **An operator blocks.** Requires the `admin` role. A reason of at least 8
+   characters is mandatory, and it is not bureaucracy: that string is what the
+   user is shown, so "spam" helps nobody.
+4. **The revocation list picks it up automatically.** `blocked` +
+   `blockedReason` are what `RevocationService` signs. There is no separate
+   "publish the revocation" step to forget.
+5. **Running installs stop at next boot**, and mid-session for anyone who has
+   the manager open.
+
+### What the user sees
+
+They are told the plugin was withdrawn and given the reason string verbatim.
+**Their copy keeps working.** Blocking hides a plugin from browse and refuses
+new downloads; it does not delete anything. Breaking someone's project is
+usually a bigger harm than the one the takedown addresses.
+
+The exception is `DELETE /plugins/:id/admin`, which destroys the bytes and the
+version history and cannot be undone. It exists for content that must not remain
+on our servers at all, and for nothing else. It is not the tool for abuse.
+
+### Verify it actually worked
+
+The failure mode here is silence. `fetchRevocationList` swallows errors on
+purpose so that being offline is not an error a user sees while opening a panel
+— which means a broken revocation path reports nothing at all. It was broken
+exactly this way once (§14).
+
+So after blocking anything, check the list directly:
+
+```bash
+curl -s https://<host>/api/plugins/revocations
+```
+
+Confirm three things: the response has `payload` and `signature` (not a 404
+body — a 404 from a route-order mistake and a genuinely empty list are different
+failures), the plugin id appears in `entries`, and `seq` has increased. A
+client refuses a list whose `seq` is not newer than the one it holds, so a
+stalled sequence means the block does not propagate.
+
+### What is said publicly
+
+- **Name what happened, not who reported it.** Reporters are never identified,
+  including to the publisher.
+- **The reason string is public**, because the user already sees it. Write it
+  knowing that.
+- **Do not describe the exploit** while installs are still running. "This
+  version could read files outside your project" is enough; the method is not.
+- **Say when it is resolved**, in the same place. A withdrawal notice with no
+  follow-up reads as an unresolved accusation forever.
+
+### Key compromise
+
+A stolen publisher key is the one case blocking does not fix, because the
+attacker can sign. Block every affected version, then require rotation — the
+publisher re-authorises with their account **password**, not just a session, and
+every installed copy prompts its own user before accepting the new key. Three
+gates, and a stolen account clears only one.

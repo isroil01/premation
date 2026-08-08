@@ -68,3 +68,52 @@ jobs:
         run: npm test -- --ci
       - if: '!cancelled()'
         run: npm run lint
+
+  # The IPC frame guard, in a real Electron process.
+  #
+  # ── Why this is a separate job ───────────────────────────────────────────
+  # It needs an Electron binary, a display server and `npm ci` WITH scripts —
+  # none of which the verify job wants. Kept apart so a Playwright flake reports
+  # as a Playwright flake instead of making the typecheck job look broken, and
+  # so the fast gate stays fast.
+  #
+  # ── Why it is not optional ───────────────────────────────────────────────
+  # This app deliberately embeds hostile code: a plugin panel is an iframe
+  # running a third-party author's script. `ipcGuard` refusing every subframe is
+  # the control standing between one of those and the entire IPC surface, and
+  # `apiProxy.test.ts` cannot prove it — that suite stubs the frame identity,
+  # which is precisely the thing being decided on. Only a real BrowserWindow
+  # with a real subframe answers it.
+  #
+  # The harness in `e2e/harness/` is deliberately WORSE than the app
+  # (`nodeIntegrationInSubFrames: true`, `webSecurity: false`, a preload handing
+  # every frame `invoke`). If the guard ever depended on the app's own
+  # configuration rather than on itself, that harness is where it shows.
+  e2e:
+    name: electron · sandboxed-frame IPC
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # WITH scripts, unlike the verify job: Electron's postinstall is what
+      # downloads the binary this suite runs.
+      - run: npm ci
+
+      # Electron is a GUI process and a headless runner has no display. `xvfb`
+      # is a virtual one — the alternative is `--headless`, which changes the
+      # window and frame behaviour this suite exists to observe.
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - if: '!cancelled()'
+        run: xvfb-run --auto-servernum npm run test:e2e
+
+      - if: '!cancelled()'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
