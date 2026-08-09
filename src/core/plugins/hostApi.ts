@@ -43,6 +43,9 @@ import {
 } from '@core/effects/effects';
 import { pluginEffectsCanRender } from '@core/effects/pluginEffectDefs';
 import { noteInertPluginEffect } from './pluginEffects';
+import {
+  assertScope, storageDelete, storageGet, storageList, storageSet,
+} from './pluginStorage';
 import { pluginNetFetch } from './pluginNetFetch';
 import { mainProcessFetch } from './pluginNetBridge';
 
@@ -705,5 +708,42 @@ export function createHostApi(
       getTimelineController().seekSeconds(Math.max(0, finite(seconds, 'time')));
       return true;
     },
+
+    // ── Storage ──────────────────────────────────────────────────────────
+    //
+    // Namespaced by `manifest.id` HERE, not by the caller. The scope and key
+    // cross a `postMessage` from third-party code; the identity does not, and
+    // the isolation between plugins rests entirely on that asymmetry — a plugin
+    // that could name the bag could read the one beside it.
+    //
+    // Synchronous. `storage.get` returning a promise would make every plugin
+    // that reads a preference during `activate()` pay a round trip against the
+    // 8 s boot deadline, for a value already in memory. See `pluginStorage.ts`.
+    'storage.get': (scope, key) => storageGet(assertScope(scope), manifest.id, key),
+
+    'storage.set': (scope, key, value) => {
+      const s = assertScope(scope);
+      storageSet(s, manifest.id, key, value);
+      /*
+        A project write marks the document dirty, and is NOT undoable.
+
+        Deliberately outside `edit()`, which every other mutating verb here goes
+        through. Undo is a promise about the user's work, and a plugin
+        remembering a panel's scroll position must not make Ctrl+Z do nothing
+        visible. A plugin that wants undoable state has layer props, which are
+        exactly that.
+      */
+      if (s === 'project') bumpScene();
+      return true;
+    },
+
+    'storage.delete': (scope, key) => {
+      const s = assertScope(scope);
+      storageDelete(s, manifest.id, key);
+      if (s === 'project') bumpScene();
+      return true;
+    },
+
+    'storage.list': (scope, prefix) => storageList(assertScope(scope), manifest.id, prefix),
   };
 }

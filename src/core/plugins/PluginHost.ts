@@ -60,6 +60,7 @@ import {
 import type { PluginPackage } from './pluginPackage';
 import { activatesOnStartup, expandPermissions, type PluginPermission } from './manifest';
 import { checkCapabilities, hostCapabilities } from './capabilities';
+import { forgetGlobalStorage, loadGlobalStorage } from './pluginStorage';
 import { releaseAssetBudget } from './assets';
 
 /**
@@ -239,6 +240,22 @@ class PluginHost {
     */
     this.enforceRevocations();
 
+    /*
+      Global plugin storage, loaded once.
+
+      Not awaited, and that is a real trade rather than an oversight. Awaiting
+      would delay every plugin's `activate()` behind an IndexedDB open, against
+      an 8-second boot deadline, for data most plugins never read. Not awaiting
+      means a plugin that reads a preference in the first turn of `activate()`
+      can see `null` where a value exists.
+
+      The load is one small record and resolves in a microtask or two, so the
+      race needs a plugin that reads storage synchronously at the very top of
+      activation. It is documented rather than engineered around: a plugin that
+      cares reads its settings on first use, which is also when it needs them.
+    */
+    void loadGlobalStorage();
+
     this.bringUpEnabled();
 
     /*
@@ -368,12 +385,29 @@ class PluginHost {
     return null;
   }
 
-  uninstall(id: string): void {
+  /**
+   * Remove a plugin from this machine.
+   *
+   * `keepData` decides what happens to its GLOBAL storage — its settings on
+   * this machine. Default is to delete: uninstall should mean uninstall, and
+   * leaving state behind by default is how an origin accumulates data from
+   * software the user removed years ago. Keeping it is offered because
+   * reinstalling a plugin you removed by mistake, or to try a different
+   * version, should not cost you your configuration.
+   *
+   * PROJECT storage is never touched here, whatever this says. It lives in
+   * documents, not on this machine, and those documents may be open on someone
+   * else's laptop — deleting it would reach into files this uninstall has no
+   * business editing. It is garbage-collected only by an explicit action on the
+   * document itself. See `pluginStorage.ts`.
+   */
+  uninstall(id: string, opts: { keepData?: boolean } = {}): void {
     this.stop(id);
     this.unregisterContributions(id);
     usePluginStore.getState().remove(id);
     this.logs.delete(id);
     this.errors.delete(id);
+    if (!opts.keepData) void forgetGlobalStorage(id);
     this.emit();
   }
 

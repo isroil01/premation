@@ -22,8 +22,20 @@ export interface PluginPayload {
 }
 
 const DB_NAME = 'motion-plugins-db';
-const DB_VERSION = 1;
+/**
+ * 2 adds the `storage` object store — see `pluginStorage.ts`.
+ *
+ * A second store rather than a key inside `packages`, because the two have
+ * opposite lifetimes: a package is replaced wholesale on update and deleted on
+ * uninstall, while a plugin's settings are exactly what should survive both.
+ * Sharing a record would make "update this plugin" and "forget what it
+ * remembered" the same write.
+ */
+const DB_VERSION = 2;
 const STORE_NAME = 'packages';
+const STORAGE_STORE = 'storage';
+/** One record holds every plugin's global bag. See `putStorage`. */
+const STORAGE_KEY = 'all';
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -31,19 +43,26 @@ function open(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      // Both guarded, not just the new one: an upgrade runs from whatever
+      // version the user is on, including a fresh install at 0.
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+      if (!db.objectStoreNames.contains(STORAGE_STORE)) db.createObjectStore(STORAGE_STORE);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error('Could not open the plugin database.'));
   });
 }
 
-function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+function run<T>(
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T>,
+  storeName: string = STORE_NAME,
+): Promise<T> {
   return open().then(
     (db) =>
       new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, mode);
-        const req = fn(tx.objectStore(STORE_NAME));
+        const tx = db.transaction(storeName, mode);
+        const req = fn(tx.objectStore(storeName));
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error ?? new Error('Plugin database request failed.'));
         tx.oncomplete = () => db.close();
@@ -90,6 +109,36 @@ export const PluginDatabase = {
       return ks.filter((k): k is string => typeof k === 'string');
     } catch {
       return [];
+    }
+  },
+
+  /**
+   * Every plugin's `global` storage bag, as one record.
+   *
+   * One record rather than a row per plugin, and the reason is the read: the
+   * host loads all of it once at boot so `storage.get` can answer
+   * synchronously, and a per-plugin layout would turn that into N requests
+   * against a database that has to be opened anyway. The whole thing is small
+   * by construction — 1 MB per plugin, and a machine with twenty plugins that
+   * each filled their quota is not the shape this is for.
+   */
+  async getStorage(): Promise<unknown> {
+    try {
+      return await run<unknown>('readonly', (s) => s.get(STORAGE_KEY), STORAGE_STORE);
+    } catch {
+      // No database, blocked, or a schema this build does not understand. A
+      // plugin loses its remembered settings, which is a bad day and not a
+      // reason to fail the editor's boot.
+      return null;
+    }
+  },
+
+  async putStorage(value: unknown): Promise<boolean> {
+    try {
+      await run('readwrite', (s) => s.put(value, STORAGE_KEY), STORAGE_STORE);
+      return true;
+    } catch {
+      return false;
     }
   },
 };

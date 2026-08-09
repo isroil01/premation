@@ -25,6 +25,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { usePluginStore } from '@stores/pluginStore';
 import { collectPluginReferences, type DocumentPluginReference } from '@core/plugins/customLayers';
 import { migratePluginBindings } from '@core/plugins/bindingMigration';
+import { captureProjectStorage, restoreProjectStorage } from '@core/plugins/pluginStorage';
 import type { SceneNode } from '@core/types';
 
 export interface EditorDocument {
@@ -56,6 +57,22 @@ export interface EditorDocument {
    * needs no migration: absent and empty both mean "no custom layers".
    */
   plugins?: DocumentPluginReference[];
+  /**
+   * Plugin-owned state that belongs to this DOCUMENT.
+   *
+   * Plugin id → key → serialised value. Written by `storage.set('project', …)`,
+   * bounded at 256 KB per plugin, and carried wherever the file goes — which is
+   * the point: "which layer is this plugin's spine bone" is useless without the
+   * layers it names.
+   *
+   * Retained for a plugin that is NOT installed. Opening a project on a machine
+   * that lacks the plugin and saving it must not destroy state that machine
+   * cannot see; garbage collection is an explicit user action, never a side
+   * effect of opening a file.
+   *
+   * Optional, so every document written before this reads back byte-identical.
+   */
+  pluginStorage?: Record<string, Record<string, string>>;
   /** Legacy: single active comp. Read on restore, no longer written. */
   comp?: CompositionSettings;
 }
@@ -71,6 +88,9 @@ export function captureDocument(): EditorDocument {
     motionBlur: useMotionBlurStore.getState().settings(),
     guides: useGuidesStore.getState().settings(),
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
+    // Absent when empty, so a document with no plugin state reads back
+    // byte-identical — the same rule `plugins` follows above.
+    ...(captureProjectStorage() ? { pluginStorage: captureProjectStorage() } : {}),
   };
 }
 
@@ -146,6 +166,10 @@ export function restoreDocument(doc: EditorDocument): void {
       },
     ]),
   );
+
+  // Assigned unconditionally, including for a document that carries none: a
+  // project opened after one that had plugin state must not inherit it.
+  restoreProjectStorage(doc.pluginStorage);
 
   // Scene first: the timeline reconciles its clips against the node tree, and
   // comps must exist before the timeline reads their frame rate.

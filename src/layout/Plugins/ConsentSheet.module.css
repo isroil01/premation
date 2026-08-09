@@ -150,6 +150,23 @@
   color: var(--color-warning);
 }
 
+/*
+ * A fact, not a decision.
+ *
+ * Deliberately quieter than `.permWarn` and than a permission row. This is
+ * disclosure; styling it like something to weigh would make it compete with the
+ * eight things on this screen that genuinely are.
+ */
+.disclosure {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
 .sandboxNote {
   margin: 0;
   font-size: var(--font-size-xs);

@@ -410,6 +410,43 @@ function buildApi(
       getTime: () => call('timeline.getTime') as Promise<number>,
       setTime: (seconds: number) => call('timeline.setTime', seconds),
     },
+
+    /**
+     * Somewhere to keep things between sessions.
+     *
+     * Two scopes, and choosing between them is the only decision here:
+     *
+     *   • `'global'` — this machine. Survives restarts, does NOT travel with
+     *     the project. For preferences: the last folder you imported from, a
+     *     panel's collapsed sections, an API endpoint the user typed once.
+     *     1 MB.
+     *   • `'project'` — inside the document. Travels with the file to another
+     *     machine, and is retained even on a machine where this plugin is not
+     *     installed. For anything that names something IN the project: which
+     *     layer is the spine, which asset a generator came from. 256 KB.
+     *
+     * Getting it wrong is not fatal but is felt: machine settings in `project`
+     * arrive as a colleague's preferences, and document state in `global` is
+     * gone the moment the file moves.
+     *
+     * Needs no permission. Values are JSON, 64 KB each; keys are up to 200
+     * characters with no whitespace and none of `/ \ ' "`. A write past the
+     * quota throws with `code === 'storage-quota-exceeded'` — catch that rather
+     * than matching the message, which is written for a human.
+     *
+     * A `project` write marks the document dirty and is NOT undoable. A plugin
+     * that wants undoable state should put it in layer props.
+     */
+    storage: {
+      get: (scope: 'global' | 'project', key: string) =>
+        call('storage.get', scope, key) as Promise<unknown>,
+      set: (scope: 'global' | 'project', key: string, value: unknown) =>
+        call('storage.set', scope, key, value) as Promise<true>,
+      delete: (scope: 'global' | 'project', key: string) =>
+        call('storage.delete', scope, key) as Promise<true>,
+      list: (scope: 'global' | 'project', prefix?: string) =>
+        call('storage.list', scope, prefix) as Promise<string[]>,
+    },
   };
 }
 

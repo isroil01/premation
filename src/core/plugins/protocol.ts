@@ -155,6 +155,27 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
 
   'timeline.getTime': 'timeline',
   'timeline.setTime': 'timeline',
+
+  /*
+    Storage needs NO permission, and that is a decision rather than an omission.
+
+    Neither scope touches the user's layers. A ninth consent line reading
+    "remembers its own settings" buys nothing and costs attention on the one
+    screen where attention is the entire point — a user who reads eight lines
+    carefully and skims the ninth has been made worse off by the ninth.
+
+    It is disclosed instead, as an informational line on the consent screen when
+    the manifest declares `storage.global` or `storage.project`. That is the
+    honest weight: a fact, not a decision.
+
+    The `project` scope does ride in the user's file, which is the one thing
+    here that could be called their data. It is bounded at 256 KB and disclosed
+    the same way. See `pluginStorage.ts`.
+  */
+  'storage.get': null,
+  'storage.set': null,
+  'storage.delete': null,
+  'storage.list': null,
 };
 
 /**
