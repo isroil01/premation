@@ -30,6 +30,7 @@ import { layerIsBaked } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
 import { noteDeviceLoss } from '@core/plugins/pluginEffects';
+import { setWebgpuAvailable } from '@core/plugins/capabilities';
 import { markGpuOwned } from './canvasOwnership';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
@@ -425,6 +426,22 @@ export class MotionRendererBackend implements RenderBackend {
       // the element): without it, a later backend that preferred the other tier
       // would spend its rungs on getContext calls that can only return null.
       MotionRendererBackend.noteBinding(canvas, attempt.kind);
+
+      /*
+        Tell the plugin system which tier actually won.
+
+        Here, on the successful attempt, rather than from `preferred` at the top
+        of the ladder — `preferred` is a request and this is the answer. Asking
+        for WebGPU on a machine with no adapter steps down to WebGL2, and that
+        exact confusion is what made `kind` unreliable (see its comment above).
+
+        A plugin effect is WGSL; on WebGL2 it renders its input unchanged. So
+        this is not a performance hint — it is the difference between an effect
+        plugin working and being inert, and `capabilities.ts` turns it into an
+        install refusal rather than a silent no-op.
+      */
+      setWebgpuAvailable(attempt.kind === 'webgpu');
+
       if (this.disposed) {
         renderer.dispose();
         break;

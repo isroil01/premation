@@ -111,6 +111,10 @@ export function testPackage(
     apiVersion?: number;
     contributes?: unknown;
     activationEvents?: string[];
+    /** Capabilities the plugin cannot run without. Refused at install if absent. */
+    requires?: string[];
+    /** Capabilities it uses when present. Never gates anything. */
+    optional?: string[];
   } = {},
 ): PluginPackage {
   const { manifest, errors } = parseManifest({
@@ -123,6 +127,8 @@ export function testPackage(
     ...(extra.panel ? { panel: extra.panel } : {}),
     ...(extra.contributes !== undefined ? { contributes: extra.contributes } : {}),
     ...(extra.activationEvents ? { activationEvents: extra.activationEvents } : {}),
+    ...(extra.requires ? { requires: extra.requires } : {}),
+    ...(extra.optional ? { optional: extra.optional } : {}),
     permissions,
   });
   if (!manifest) throw new Error(`testPackage built an invalid manifest: ${errors.join(' ')}`);

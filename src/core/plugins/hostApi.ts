@@ -41,6 +41,8 @@ import { reparentNode } from '@core/scene/parenting';
 import {
   addEffect, removeEffect, updateEffectParam, getNodeEffects, effectDefFor,
 } from '@core/effects/effects';
+import { pluginEffectsCanRender } from '@core/effects/pluginEffectDefs';
+import { noteInertPluginEffect } from './pluginEffects';
 import { pluginNetFetch } from './pluginNetFetch';
 import { mainProcessFetch } from './pluginNetBridge';
 
@@ -504,7 +506,26 @@ export function createHostApi(
         const added = getNodeEffects(n.id).find((e) => !before.has(e.id));
         if (!added) return fail(`"${t}" could not be added to "${n.name}".`);
         bumpScene();
-        return added.id;
+
+        /*
+          Succeeds on the WebGL2 tier, and says it will not draw.
+
+          Not a failure, deliberately. The effect IS in the document, it is
+          saved with it, and it renders the moment that file is opened on a
+          WebGPU machine — refusing here would make a plugin that works
+          everywhere look broken on this laptop and, worse, would tempt an
+          author to strip the effect out of the document to "fix" it.
+
+          A bare id, though, leaves the plugin unable to tell its own user
+          anything, which is the defect: the effect appears in the stack, shows
+          its parameters, and does nothing. The flag is how a plugin says so in
+          its own words. The host says it too, once per session.
+        */
+        const inactive = t.includes('.') && !pluginEffectsCanRender();
+        if (inactive) noteInertPluginEffect(manifest.name);
+        return inactive
+          ? { id: added.id, active: false, reason: 'webgpu-unavailable' }
+          : added.id;
       });
     },
 

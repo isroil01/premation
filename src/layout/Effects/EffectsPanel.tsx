@@ -19,7 +19,7 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { EFFECT_DEFS, addEffect, getNodeEffects, type EffectType } from '@core/effects/effects';
-import { pluginEffectDefs, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
+import { pluginEffectDefs, pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { subscribeToEffects, pluginEffectRevision } from '@core/plugins/pluginEffects';
 import {
   copyAllEffects,
@@ -367,8 +367,28 @@ export function EffectsPanel(): JSX.Element {
                     key={d.type}
                     label={d.label}
                     fx
-                    right={d.gpuOnly ? <BrowserTag>GPU</BrowserTag> : undefined}
-                    title={`Add ${d.label} — or drag onto a layer`}
+                    /*
+                      A plugin effect on the WebGL2 tier is WGSL with no
+                      pipeline to compile it, so it renders its input unchanged.
+                      Tagged here rather than left to be discovered: otherwise
+                      it adds cleanly, shows its parameters, and changes no
+                      pixels — which reads as a broken plugin.
+
+                      Still listed, still addable. It is saved with the project
+                      and draws on a machine that has WebGPU, so hiding it would
+                      make a document depend on which laptop authored it.
+                    */
+                    right={
+                      cat === PLUGIN_EFFECT_CATEGORY && !pluginEffectsCanRender()
+                        ? <BrowserTag>No WebGPU</BrowserTag>
+                        : d.gpuOnly ? <BrowserTag>GPU</BrowserTag> : undefined
+                    }
+                    title={
+                      cat === PLUGIN_EFFECT_CATEGORY && !pluginEffectsCanRender()
+                        ? `${d.label} needs WebGPU — this machine is on the WebGL2 fallback. `
+                          + 'It is saved with your project and renders on a machine that has it.'
+                        : `Add ${d.label} — or drag onto a layer`
+                    }
                     draggable
                     onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
                     onClick={() => { if (primary) addEffect(primary, d.type); }}

@@ -32,6 +32,7 @@ import {
 } from '@core/plugins/registry';
 import { pluginRegistryEnabled } from '@core/config/edition';
 import { revocationListIsStale, revocationsConfirmedAt } from '@core/plugins/revocation';
+import { pluginEffectsCanRender } from '@core/effects/pluginEffectDefs';
 import { panelPlacements } from './pluginPanelDefs';
 import { openPluginTab } from './openPluginTab';
 import { installFromRegistry } from './installFromRegistry';
@@ -398,6 +399,30 @@ function TakedownNotice({ pluginId, installed }: { pluginId: string; installed: 
   );
 }
 
+/**
+ * This plugin contributes effects, and this machine cannot render them.
+ *
+ * Permanent, not a toast. The toast fires once when an effect is added; this is
+ * what a user sees when they come back tomorrow and wonder why the plugin they
+ * installed appears to do nothing. Without it the only evidence is an effect
+ * that sits in the stack showing parameters and changing no pixels, which reads
+ * as a broken plugin rather than as a machine that lacks WebGPU.
+ *
+ * Deliberately not phrased as an error. The plugin is fine, the effects are
+ * saved with the project, and they will draw on a machine that has the backend.
+ */
+function InertEffectsNote({ pluginId, installed }: { pluginId: string; installed: boolean }): JSX.Element | null {
+  const entry = usePluginStore((s) => s.get(pluginId));
+  if (!installed || pluginEffectsCanRender()) return null;
+  if ((entry?.manifest.contributes.effects.length ?? 0) === 0) return null;
+
+  return (
+    <span className={styles.rowInert}>
+      Effects need WebGPU — this machine is on the WebGL2 fallback.
+    </span>
+  );
+}
+
 function PluginRow({ row }: { row: Row }): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -477,6 +502,7 @@ function PluginRow({ row }: { row: Row }): JSX.Element {
         <span className={styles.rowDesc}>{row.description}</span>
 
         <TakedownNotice pluginId={row.id} installed={row.installed} />
+        <InertEffectsNote pluginId={row.id} installed={row.installed} />
 
         <span className={styles.rowMeta}>
           {/* Reach, when the registry knows it. A locally-installed plugin has
