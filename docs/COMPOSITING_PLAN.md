@@ -1,8 +1,26 @@
 # Compositing Plan — milestones
 
+> ## ⚠️ HISTORICAL — this is not the current state of the product
+>
+> **Written 2026-08-03. Retained for one reason only:** four source files cite
+> its F-numbers and `§2b-*` sections in comments — `buildSnapshot.ts`,
+> `writeEffectParams.ts`, `menuModel.ts` and `render-tests/scripts/comparator.mjs`.
+> It is a **delivery ledger for work that has since shipped**, not a description
+> of what exists.
+>
+> The "Status: awaiting approval, no code written" line below was true when
+> written and has been false ever since. Most of these milestones landed.
+>
+> **For what the editor actually does today, read
+> [`EDITOR_REFERENCE.md`](./EDITOR_REFERENCE.md)** — its counts are derived from
+> the registries by `scripts/featureCounts.cjs` and pinned by a test.
+>
+> The audit this plan followed, and the M0.5 group-boundary spike it produced,
+> were point-in-time snapshots and have been deleted; `git log -- docs/` recovers
+> them if a decision's provenance is ever needed.
+
 **Written:** 2026-08-03 · **Revised:** 2026-08-03 (r2)
-**Follows:** [`COMPOSITING_AUDIT.md`](./COMPOSITING_AUDIT.md)
-**Status:** awaiting approval. No code written.
+**Status (as written):** awaiting approval. No code written.
 
 ---
 
@@ -119,7 +137,8 @@ irrelevant to every milestone here. The only live renderer question is the
 
 ### M0.5 — Compositing-group boundary spike · **design only, ~1 afternoon**
 
-No implementation, no schema change. Deliverable: `docs/COMPOSITING_GROUPS_SPIKE.md`.
+No implementation, no schema change. Deliverable: the M0.5 group-boundary spike
+(written, verdict "generalisation", since deleted — see `git log -- docs/`).
 
 **The central question, per your point 3 — the fallback severity asymmetry:**
 
@@ -340,7 +359,7 @@ makes it worse.
 ### M8 — Stencil / Silhouette · **L** *(estimate confirmed by M0.5)*
 
 > ### DECISION POINT D1 — generalisation or rewrite? — **RESOLVED 2026-08-03**
-> **Owner:** engineering · **Input:** [`COMPOSITING_GROUPS_SPIKE.md`](./COMPOSITING_GROUPS_SPIKE.md)
+> **Owner:** engineering · **Input:** the M0.5 group-boundary spike (deleted; `git log -- docs/`)
 > **Resolution: generalisation. L stands, not revised.** The boundary
 > (`prepareIsolatedPrecomp`), the target pool, the "a group is just a layer"
 > downstream contract and out-of-render-loop allocation all already exist.

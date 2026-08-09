@@ -283,6 +283,12 @@ Security issues should **not** be filed as public issues — see
 
 ## Documentation
 
+**Start here:** [`docs/EDITOR_REFERENCE.md`](docs/EDITOR_REFERENCE.md) — what the
+editor does, what it does not, and an honest gap analysis against After Effects.
+Its feature counts are derived from the registries by `scripts/featureCounts.cjs`
+and pinned by `src/__tests__/docFeatureCounts.test.ts`, so they cannot silently
+go stale.
+
 Deep dives on individual subsystems:
 
 - [`docs/3d-layer-model.md`](docs/3d-layer-model.md) — the 3D model, and where it
