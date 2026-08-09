@@ -38,14 +38,26 @@ function unionMembers(rel, typeName) {
   return members;
 }
 
+/**
+ * Top-level keys of an `export const X … = { a: …, b: … };` object literal, from
+ * source TEXT.
+ *
+ * Split from the file-reading wrapper so a test can splice a registry and prove
+ * the derived count actually moves — otherwise "the count comes from the
+ * registry" is itself an unverified claim, which is the genus of bug this whole
+ * script exists to kill.
+ */
+function objectKeysIn(src, constName, where = 'source') {
+  const m = src.match(new RegExp(`export const ${constName}[^=]*=\\s*\\{([\\s\\S]*?)\\n\\};`, 'm'));
+  if (!m) throw new Error(`featureCounts: no object \`${constName}\` in ${where}`);
+  const keys = [...m[1].matchAll(/^ {2}([A-Za-z][A-Za-z0-9_]*)\s*:/gm)].map((x) => x[1]);
+  if (keys.length === 0) throw new Error(`featureCounts: object \`${constName}\` in ${where} is empty`);
+  return keys;
+}
+
 /** Top-level keys of an `export const X … = { a: …, b: … };` object literal. */
 function objectKeys(rel, constName) {
-  const src = read(rel);
-  const m = src.match(new RegExp(`export const ${constName}[^=]*=\\s*\\{([\\s\\S]*?)\\n\\};`, 'm'));
-  if (!m) throw new Error(`featureCounts: no object \`${constName}\` in ${rel}`);
-  const keys = [...m[1].matchAll(/^ {2}([A-Za-z][A-Za-z0-9_]*)\s*:/gm)].map((x) => x[1]);
-  if (keys.length === 0) throw new Error(`featureCounts: object \`${constName}\` in ${rel} is empty`);
-  return keys;
+  return objectKeysIn(read(rel), constName, rel);
 }
 
 function featureCounts() {
@@ -56,11 +68,19 @@ function featureCounts() {
   // and reading it instead is how 36 gets mis-reported as 16.
   const blendModes = unionMembers('src/core/effects/blendMode.ts', 'LayerBlendMode');
 
-  // Nine styles compile to effects and live in LAYER_STYLE_LABEL. Glass is the
-  // tenth and is deliberately NOT in that map: it is a function of the backdrop,
-  // so it resolves onto the renderable instead of compiling to an effect (see
-  // glassResolve.ts). Counting only the map undercounts by exactly one.
-  const layerStyles = [...objectKeys('src/core/effects/layerStyles.ts', 'LAYER_STYLE_LABEL'), 'glass'];
+  // Two registries, summed. Most styles compile to an effect and live in
+  // LAYER_STYLE_LABEL; the backdrop-resolved ones cannot (they are a function of
+  // what is composited behind the layer, so they resolve onto the renderable —
+  // see glassResolve.ts) and live in BACKDROP_STYLES.
+  //
+  // This used to append a literal 'glass': a hand-written number inside the
+  // script that exists to eliminate hand-written numbers. Shipping a second
+  // backdrop-resolved style would have left the doc's count wrong while the
+  // guard test stayed green — the exact failure mode being guarded against.
+  const layerStyles = [
+    ...objectKeys('src/core/effects/layerStyles.ts', 'LAYER_STYLE_LABEL'),
+    ...objectKeys('src/core/effects/layerStyles.ts', 'BACKDROP_STYLES'),
+  ];
 
   // 'none' is the empty slot, not an operator.
   const pathOps = unionMembers('src/core/scene/pathOps.ts', 'PathOpType').filter((t) => t !== 'none');
@@ -103,7 +123,7 @@ function featureSizes() {
   return Object.fromEntries(Object.entries(featureCounts()).map(([k, v]) => [k, v.length]));
 }
 
-module.exports = { featureCounts, featureSizes };
+module.exports = { featureCounts, featureSizes, objectKeysIn };
 
 if (require.main === module) {
   const all = featureCounts();

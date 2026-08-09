@@ -20,8 +20,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const { featureSizes } = require('../../scripts/featureCounts.cjs') as {
+const { featureSizes, objectKeysIn } = require('../../scripts/featureCounts.cjs') as {
   featureSizes: () => Record<string, number>;
+  objectKeysIn: (src: string, constName: string, where?: string) => string[];
 };
 
 const DOC = 'docs/EDITOR_REFERENCE.md';
@@ -80,4 +81,55 @@ describe('docs/EDITOR_REFERENCE.md feature counts', () => {
       expect(documented[key]).toBe(actual[key]);
     });
   }
+
+  /**
+   * Layer styles come from TWO registries, and the second one is the interesting
+   * one: Glass does not compile to an effect, so it cannot live in
+   * `LAYER_STYLE_LABEL`, and the script used to append it as a literal `'glass'`
+   * — a hand-written number inside the script that exists to eliminate
+   * hand-written numbers. A second backdrop-resolved style would have left the
+   * documented count wrong with every test still green.
+   *
+   * Asserting the sum is not enough on its own; that would hold for a hardcoded
+   * `+ 1` too. So this also splices a registry and checks the derived count
+   * MOVES.
+   */
+  describe('layer styles are summed from two registries, not one plus a literal', () => {
+    const src = readFileSync(join(__dirname, '../core/effects/layerStyles.ts'), 'utf8');
+
+    it('the total is exactly both registries', () => {
+      const compiled = objectKeysIn(src, 'LAYER_STYLE_LABEL');
+      const backdrop = objectKeysIn(src, 'BACKDROP_STYLES');
+      expect(backdrop.length).toBeGreaterThan(0);
+      expect(actual.layerStyles).toBe(compiled.length + backdrop.length);
+    });
+
+    it('a new BACKDROP_STYLES entry moves the count', () => {
+      const before = objectKeysIn(src, 'BACKDROP_STYLES');
+      // Splice a sibling for Glass into the real source text. If the script ever
+      // reverts to a literal, the count stops tracking this and the test fails.
+      // `\r?\n` because this repo checks out CRLF on Windows; an LF-only splice
+      // matches nothing and the test passes by never having tested anything.
+      const spliced = src.replace(
+        /(export const BACKDROP_STYLES\b[^=]*=\s*\{\r?\n)/,
+        (m) => `${m}  frost: 'Frost',\n`,
+      );
+      expect(spliced).not.toBe(src); // the splice actually applied
+      const after = objectKeysIn(spliced, 'BACKDROP_STYLES');
+      expect(after.length).toBe(before.length + 1);
+      expect(after).toContain('frost');
+    });
+
+    it('the script reads the registry rather than naming Glass', () => {
+      // The arithmetic checks above cannot catch a revert on their own: while
+      // BACKDROP_STYLES holds exactly one entry, `LABEL.length + 1` and
+      // `LABEL.length + BACKDROP.length` are the same number, so a hardcoded
+      // literal would satisfy them both. This is the assertion that actually
+      // pins the mechanism.
+      const script = readFileSync(join(__dirname, '../../scripts/featureCounts.cjs'), 'utf8');
+      const code = script.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      expect(code).toContain('BACKDROP_STYLES');
+      expect(code).not.toMatch(/['"]glass['"]/i);
+    });
+  });
 });
