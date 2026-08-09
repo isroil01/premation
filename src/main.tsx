@@ -52,6 +52,27 @@ setLocalFirst(
     import.meta.env.VITE_LOCAL_FIRST === 'true',
 );
 
+/**
+ * Apply the async document-font stylesheet.
+ *
+ * index.html parks it at `media="print"` so it does not block first paint; this
+ * flips it to `all` once it has loaded. It lives here rather than in an inline
+ * `onload` attribute because the app's own CSP (`script-src 'self'`) refuses
+ * inline event handlers — which it did, on every boot, so `media` stayed
+ * `print` and every user-selectable font silently fell back.
+ *
+ * `sheet` is non-null once a stylesheet has loaded, which covers the race where
+ * it finished before this module ran; otherwise wait for `load`. Failure is
+ * deliberately silent: a missing webfont costs a fallback face, and the local
+ * edition may have no network at all by design.
+ */
+const docFonts = document.getElementById('doc-fonts') as HTMLLinkElement | null;
+if (docFonts) {
+  const apply = (): void => { docFonts.media = 'all'; };
+  if (docFonts.sheet) apply();
+  else docFonts.addEventListener('load', apply, { once: true });
+}
+
 const rootEl = document.getElementById('root');
 if (!rootEl) {
   throw new Error('Root element #root not found in index.html');

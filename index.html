@@ -18,12 +18,25 @@
     <link rel="icon" type="image/png" href="./favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Async font loading: render immediately with system fonts, swap when ready -->
+    <!--
+      Async document fonts: parsed at low priority under `media="print"`, then
+      flipped to `all` once loaded so they apply without blocking first paint.
+
+      The flip happens in the app entry (src/main.tsx, keyed off this id), NOT in
+      an inline `onload` handler. The handler was the original spelling and the
+      app's own CSP blocked it on every single boot — `script-src 'self'` refuses
+      inline event handlers — so `media` never became `all` and none of these
+      families ever applied. A document font picked in the text inspector
+      silently rendered in a fallback.
+
+      (The UI's own faces come from the `@import` in styles/global.css, which is
+      why the app looked fine and only user-chosen fonts were affected.)
+    -->
     <link
+      id="doc-fonts"
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Fira+Code:wght@300;400;500;700&family=Montserrat:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&family=PT+Sans:ital,wght@0,400;0,700;1,400&family=Open+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap"
       rel="stylesheet"
       media="print"
-      onload="this.media='all'"
     />
     <noscript>
       <link
