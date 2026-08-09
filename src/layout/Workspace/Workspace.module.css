@@ -94,13 +94,34 @@
   background: radial-gradient(circle at center, #242426 0%, var(--color-slate-950) 100%);
 }
 
-/* Transparent-mode: show checkerboard beneath the comp.
-   Checker literals stay hardcoded on purpose: the pattern represents alpha
-   transparency (a fixed neutral checker, like AE/Photoshop), not themed UI. */
-.stageTransparent {
+/* Transparency checkerboard, CLIPPED TO THE COMP RECT.
+ *
+ * This was a `.stageTransparent` variant of the stage itself — `position:
+ * absolute; inset: 0` — so switching a comp to transparent checkered the WHOLE
+ * viewport. The comp rect and its surround then looked identical, which reads
+ * as "the panel around the comp changed instead of the comp" and is exactly
+ * how the defect was reported. The comp really was transparent; nothing showed
+ * you where it ended.
+ *
+ * Sized and positioned imperatively from the same camera the renderer draws
+ * through — see TransparencyGrid in Workspace.tsx. It sits BEHIND the canvas,
+ * so the browser compositor blends the canvas over it: partial alpha
+ * composites correctly with no premultiplication reasoning, and the renderer's
+ * output is untouched (no FrameScene field, no preview/export seam, no
+ * golden-image impact).
+ *
+ * Checker literals stay hardcoded on purpose: the pattern represents alpha
+ * transparency (a fixed neutral checker, like AE/Photoshop), not themed UI. It
+ * has to read identically against a light or a dark editor theme, which a
+ * themed token would not guarantee. `background-size` is in px, so the squares
+ * are screen-space and stay a constant size at any zoom.
+ */
+.transparencyGrid {
   position: absolute;
-  inset: 0;
-  overflow: hidden;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
   background-color: #1a1a1a;
   background-image:
     linear-gradient(45deg, #252525 25%, transparent 25%),

@@ -31,6 +31,7 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { compScreenRect } from './compScreenRect';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
 import {
   insertShape,
@@ -83,6 +84,45 @@ const VIEWPORT_KEYS = new Set([
   'Space', 'Delete', 'Backspace', 'Escape',
   'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
 ]);
+
+/**
+ * Alpha checkerboard under a transparent composition, clipped to the comp rect.
+ *
+ * Positioned imperatively rather than through React state: it has to track the
+ * camera, and re-rendering the whole viewport on every wheel tick to move one
+ * background would be a poor trade. Writing three style properties on a ref is
+ * what a pan should cost.
+ *
+ * Driven off `CameraChanged`/`ViewportChanged` — the same state that feeds the
+ * renderer's `backdropMvp` — so the DOM rect and the GPU-drawn comp rect cannot
+ * drift apart. See compScreenRect for the rounding rule that keeps the seam
+ * stable at fractional zoom.
+ */
+function TransparencyGrid(): JSX.Element {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const compWidth = useCompositionStore((s) => s.width);
+  const compHeight = useCompositionStore((s) => s.height);
+
+  useEffect(() => {
+    const ws = getWorkspaceController().ws;
+    const place = (): void => {
+      const el = ref.current;
+      if (!el) return;
+      const r = compScreenRect((p) => ws.worldToScreen(p), compWidth, compHeight);
+      el.style.transform = `translate(${r.left}px, ${r.top}px)`;
+      el.style.width = `${r.width}px`;
+      el.style.height = `${r.height}px`;
+    };
+    place();
+    // Both events matter: the camera moves on pan/zoom, the viewport changes on
+    // panel resize and on the auto-fit that follows a comp-size change.
+    const cam = ws.events.on('CameraChanged', place);
+    const vp = ws.events.on('ViewportChanged', place);
+    return () => { cam.dispose(); vp.dispose(); };
+  }, [compWidth, compHeight]);
+
+  return <div ref={ref} className={styles.transparencyGrid} data-transparency-grid="" />;
+}
 
 export function WorkspaceViewport({
   topLeft,
@@ -310,7 +350,7 @@ export function WorkspaceViewport({
         style={dragOver ? { outline: '2px solid var(--color-primary)', outlineOffset: '-2px' } : undefined}
       >
         <div
-          className={transparent ? styles.stageTransparent : styles.stage}
+          className={styles.stage}
           ref={stageRef}
           // Multi-view: the interactive stage yields space to the view-only
           // panes — the right half in 2-up, the top-left quadrant in 4-up. In
@@ -322,6 +362,9 @@ export function WorkspaceViewport({
             : undefined
           }
         >
+          {/* BEFORE the canvas, so the compositor blends the canvas over it —
+              that is what makes partial alpha composite correctly for free. */}
+          {transparent && <TransparencyGrid />}
           <canvas ref={canvasRef} className={styles.canvas} />
           <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
