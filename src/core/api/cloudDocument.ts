@@ -75,11 +75,26 @@ export function captureDocument(): EditorDocument {
 }
 
 /**
+ * What the document last restored said about its plugins.
+ *
+ * The dependency block is DERIVED from the node tree at capture time, which is
+ * what keeps it honest — but version and publisher cannot be derived, they can
+ * only be looked up in the installed set or remembered. Remembering is this
+ * map. Without it, opening a project on a machine that lacks the plugin and
+ * saving it back erased the version the document already carried.
+ *
+ * Module-level because capture and restore have no other channel between them,
+ * and cleared on restore so a document never inherits the previous one's.
+ */
+let restoredPluginRefs = new Map<string, { version?: string; publisher?: string }>();
+
+/**
  * Which plugins this document depends on, read off the node tree.
  *
- * Version and publisher come from the INSTALLED copy when there is one, and are
- * simply absent when there is not — which is the honest answer, and still
- * leaves the id, which is what `premation://plugin/<id>` needs.
+ * Version and publisher come from the INSTALLED copy when there is one, else
+ * from what the document itself recorded, and are absent only when neither
+ * knows — which still leaves the id, which is what `premation://plugin/<id>`
+ * needs.
  */
 function pluginReferences(): DocumentPluginReference[] {
   const nodes: SceneNode[] = [];
@@ -97,7 +112,7 @@ function pluginReferences(): DocumentPluginReference[] {
       { version: p.manifest.version, ...(p.manifest.author ? { author: p.manifest.author } : {}) },
     ]),
   );
-  return collectPluginReferences(nodes, installed);
+  return collectPluginReferences(nodes, installed, restoredPluginRefs);
 }
 
 /**
@@ -118,6 +133,19 @@ export function restoreDocument(doc: EditorDocument): void {
   // silently opening an empty project is indistinguishable from losing the work.
   const migrated = migrateDocument(doc);
   doc = migrated;
+
+  // Remember what this document said before anything derives a new answer.
+  // Assigned unconditionally, so opening a document with no plugin block clears
+  // the previous one's rather than leaking its versions into an unrelated save.
+  restoredPluginRefs = new Map(
+    (doc.plugins ?? []).map((p) => [
+      p.id,
+      {
+        ...(p.version ? { version: p.version } : {}),
+        ...(p.publisher ? { publisher: p.publisher } : {}),
+      },
+    ]),
+  );
 
   // Scene first: the timeline reconciles its clips against the node tree, and
   // comps must exist before the timeline reads their frame rate.

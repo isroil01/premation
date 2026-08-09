@@ -13,7 +13,7 @@
  * where a list derived from "what is installed" would be empty.
  */
 
-import { captureDocument } from './cloudDocument';
+import { captureDocument, restoreDocument } from './cloudDocument';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
 import { buildCustomLayerNode } from '@core/plugins/customLayers';
@@ -111,6 +111,72 @@ describe('what a captured document records', () => {
     defaultSceneGraph.addChild('g1', buildCustomLayerNode('n1', ACME, KIND('depthImage')));
 
     expect(refs()).toEqual([{ id: ACME, kinds: ['depthImage'] }]);
+  });
+
+  it('keeps a version the document already recorded, with nothing installed', () => {
+    /*
+      The re-save case, and the one that used to lose information silently.
+
+      Version and publisher cannot be derived from the node tree — only looked
+      up in the installed set or remembered. Deriving them from the installed
+      set alone meant that opening a project on a machine WITHOUT the plugin and
+      saving it back erased the version the document was carrying. Every
+      subsequent reader then knew a plugin was missing but not which build of
+      it, and the erasure was permanent.
+    */
+    restoreDocument({
+      version: '1.1.0',
+      scene: { version: '1.0.0', nodes: [buildCustomLayerNode('n1', ACME, KIND('depthImage'))] },
+      animation: { tracks: {}, expressions: {} },
+      plugins: [{ id: ACME, version: '1.4.0', publisher: 'Acme Studio', kinds: ['depthImage'] }],
+    } as never);
+
+    expect(refs()).toEqual([
+      { id: ACME, version: '1.4.0', publisher: 'Acme Studio', kinds: ['depthImage'] },
+    ]);
+  });
+
+  it('does not carry one document s versions into the next', () => {
+    // The remembered map is per-document. A version leaking across an open
+    // would be worse than losing it: the document would assert something false.
+    restoreDocument({
+      version: '1.1.0',
+      scene: { version: '1.0.0', nodes: [buildCustomLayerNode('n1', ACME, KIND('depthImage'))] },
+      animation: { tracks: {}, expressions: {} },
+      plugins: [{ id: ACME, version: '1.4.0', kinds: ['depthImage'] }],
+    } as never);
+    restoreDocument({
+      version: '1.1.0',
+      scene: { version: '1.0.0', nodes: [buildCustomLayerNode('n1', ACME, KIND('depthImage'))] },
+      animation: { tracks: {}, expressions: {} },
+    } as never);
+
+    expect(refs()).toEqual([{ id: ACME, kinds: ['depthImage'] }]);
+  });
+
+  it('prefers the installed version over the recorded one', () => {
+    // The recorded value may be years old; the installed copy is what will
+    // actually open the layer.
+    usePluginStore.getState().put({
+      manifest: {
+        id: ACME, name: 'Acme Lab', version: '2.0.0', description: 'x', author: 'Acme Studio',
+        apiVersion: 3, main: 'main.js', permissions: [],
+        contributes: { commands: [], panels: [], layerKinds: [], effects: [] },
+        activationEvents: ['onStartup'],
+      },
+      granted: [], enabled: true, files: {}, binaries: {}, installedAt: 0, source: 'file',
+    } as never);
+
+    restoreDocument({
+      version: '1.1.0',
+      scene: { version: '1.0.0', nodes: [buildCustomLayerNode('n1', ACME, KIND('depthImage'))] },
+      animation: { tracks: {}, expressions: {} },
+      plugins: [{ id: ACME, version: '1.4.0', kinds: ['depthImage'] }],
+    } as never);
+
+    expect(refs()).toEqual([
+      { id: ACME, version: '2.0.0', publisher: 'Acme Studio', kinds: ['depthImage'] },
+    ]);
   });
 
   it('is stable across repeated captures, so a re-save is not a diff', () => {
