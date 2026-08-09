@@ -46,6 +46,38 @@ export interface InstalledPlugin {
    * a local file — there was no signature to check and nothing to promise.
    */
   publisherKey?: string;
+  /**
+   * The key the registry said was authorised to take over, recorded at install
+   * and refreshed on every update — BEFORE any rotation uses it.
+   *
+   * That ordering is the whole point. Without it, the first time this machine
+   * hears of a replacement key is the response asking it to trust that key,
+   * which is no evidence at all — so every rotation looked identical, including
+   * the one an attacker with a stolen publisher account most wants shown. With
+   * it, "this key was authorised months ago" becomes something this machine
+   * checked for itself rather than something the server asserts.
+   */
+  nextPublisherKey?: string;
+  /**
+   * How that successor was authorised: `backup` at first publish, before there
+   * was an install base to endanger, or `dashboard` later, behind the account
+   * password.
+   *
+   * Not the same claim. A `backup` key was chosen when nobody could be harmed
+   * by the choice; a `dashboard` key was chosen by whoever held the account at
+   * the time, which is exactly what a thief holds.
+   */
+  nextPublisherKeyMethod?: 'backup' | 'dashboard';
+  /**
+   * Security-relevant things that happened to this plugin on this machine.
+   *
+   * Small and append-only. It exists because the safest rotation path is
+   * SILENT — a key matching one authorised at first publish is accepted with no
+   * prompt — and something has to be able to say afterwards that it happened. A
+   * change nobody was asked about and nobody can find later is indistinguishable
+   * from no change at all.
+   */
+  securityEvents?: Array<{ at: number; text: string }>;
 }
 
 /** Unchanged on purpose — an existing install must still be found on upgrade. */
@@ -162,6 +194,15 @@ interface PluginStore {
   /** Narrow (or restore) what the user allows. Always a subset of the manifest
    *  — `PluginHost.setGranted` intersects before calling this. */
   setGranted(id: string, granted: PluginPermission[]): void;
+  /**
+   * Append to a plugin's security log. See `InstalledPlugin.securityEvents`.
+   *
+   * A store action rather than a field the caller mutates, because the one
+   * write that matters is the SILENT one — a backup-key rotation the user was
+   * never asked about — and it must not be possible to accept that rotation
+   * without the record being made in the same place.
+   */
+  noteSecurityEvent(id: string, text: string): void;
   get(id: string): InstalledPlugin | undefined;
   /** Load package payloads from IndexedDB, migrating any legacy record found
    *  in `localStorage`. Must complete before `pluginHost.configure()`. */
@@ -222,6 +263,19 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     const next = get().plugins.map((p) =>
       p.manifest.id === id ? { ...p, granted: [...granted], updatedAt: Date.now() } : p,
     );
+    saveMeta(next);
+    set({ plugins: next });
+  },
+
+  noteSecurityEvent: (id, text) => {
+    const next = get().plugins.map((p) => {
+      if (p.manifest.id !== id) return p;
+      // Bounded. This is append-only and lives in the metadata index, which is
+      // shared with the account token — an unbounded log on a plugin that
+      // rotates keys in a loop is a way to fill that quota.
+      const events = [...(p.securityEvents ?? []), { at: Date.now(), text }].slice(-20);
+      return { ...p, securityEvents: events };
+    });
     saveMeta(next);
     set({ plugins: next });
   },

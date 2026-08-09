@@ -27,13 +27,15 @@ import styles from './ConsentSheet.module.css';
 export function ConsentSheet({
   pkg,
   source,
-  publisherKey,
+  origin,
   onDone,
 }: {
   pkg: PluginPackage;
   source?: 'folder' | 'file' | 'registry';
-  /** Set for a registry install: the key the package was verified against. */
-  publisherKey?: string;
+  /** Set for a registry install: the key it was verified against, plus the
+   *  successor the listing advertised. Recorded now so a later rotation can be
+   *  judged against what this machine already knew. */
+  origin?: import('./installFromRegistry').InstallOrigin;
   onDone: () => void;
 }): JSX.Element {
   const { manifest } = pkg;
@@ -70,7 +72,11 @@ export function ConsentSheet({
     setBusy(true);
     const err = pluginHost.install(pkg, chosen, {
       ...(source ? { source } : {}),
-      ...(publisherKey ? { publisherKey } : {}),
+      ...(origin?.publisherKey ? { publisherKey: origin.publisherKey } : {}),
+      ...(origin?.nextPublisherKey ? { nextPublisherKey: origin.nextPublisherKey } : {}),
+      ...(origin?.nextPublisherKeyMethod
+        ? { nextPublisherKeyMethod: origin.nextPublisherKeyMethod }
+        : {}),
     });
     setBusy(false);
     if (err) { void customAlert('Could not install plugin', err, { isDanger: true }); return; }

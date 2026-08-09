@@ -232,3 +232,23 @@
 .logTime { color: var(--color-text-muted); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .log_warn { color: var(--color-warning); }
 .log_error { color: var(--color-danger); }
+
+/*
+ * The plugin's security history on this machine.
+ *
+ * Deliberately plain and not alarming. Most entries are "a key rotated to one
+ * registered before anyone installed this" — a normal event that happened
+ * without a prompt, and the point of showing it is findability, not warning.
+ */
+.securityLog {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  margin: 0; padding: 0; list-style: none;
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-secondary);
+}
+.securityLog li { display: flex; gap: var(--space-2); align-items: baseline; }
+.securityLog time {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+}

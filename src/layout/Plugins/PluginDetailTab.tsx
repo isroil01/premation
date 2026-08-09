@@ -74,7 +74,13 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
     if (!detail) return;
     setBusy(true);
     try {
-      await installFromRegistry(detail.id, detail.latestVersion, detail.publisherKey);
+      // The successor travels WITH the install. Recording it now is what lets a
+      // rotation months later be judged against something this machine already
+      // knew, rather than against the response asking it to trust the new key.
+      await installFromRegistry(detail.id, detail.latestVersion, detail.publisherKey, detail.sha256, {
+        nextPublisherKey: detail.nextPublisherKey,
+        nextPublisherKeyMethod: detail.nextPublisherKeyMethod,
+      });
     } finally {
       setBusy(false);
     }
@@ -418,6 +424,35 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
             />
           </div>
         )
+      )}
+
+      {/*
+        The security log, above the runtime log and separate from it.
+
+        It exists because the safest rotation path is SILENT: a key registered
+        as a backup at first publish is accepted with no prompt. That is the
+        right behaviour and it is only defensible if the change is findable
+        afterwards — a key rotation nobody was asked about and nobody can look
+        up is indistinguishable from no rotation at all.
+
+        Not merged into the runtime log, which is the plugin's own `console`
+        output and scrolls: a security event would be one line among hundreds
+        from the thing being vouched for.
+      */}
+      {installed && (installed.securityEvents?.length ?? 0) > 0 && (
+        <div className={styles.section}>
+          <span className={styles.sectionTitle}>Security</span>
+          <ul className={styles.securityLog}>
+            {[...(installed.securityEvents ?? [])].reverse().map((e) => (
+              <li key={`${e.at}-${e.text.slice(0, 24)}`}>
+                <time dateTime={new Date(e.at).toISOString()}>
+                  {new Date(e.at).toLocaleDateString()}
+                </time>
+                <span>{e.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {installed && <LogSection pluginId={pluginId} />}

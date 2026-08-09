@@ -61,12 +61,40 @@ export function KeyChangeSheet({
           signed with a different one.
         </p>
 
-        <p className={styles.note}>
-          Publishers do change signing keys — usually because the old one was lost. But this is
-          also what it would look like if someone else had taken over the publisher’s account, and
-          from here the two are indistinguishable. Only accept if you were expecting it, or if the
-          publisher has announced it somewhere you trust.
-        </p>
+        {/*
+          Two stories, because these are two different situations, and telling
+          both the same thing is what made this prompt worth nothing.
+
+          `dashboard` — this machine DID record the new key as authorised, but
+          from the publisher's account, after the plugin was already published.
+          Real evidence, and weak evidence, and the copy says which: anyone
+          holding that account could have registered it too. Naming the
+          mechanism is what lets a reader weigh it instead of guessing.
+
+          `unknown` — never recorded here at all. The strongest warning, and the
+          wording does not soften it.
+
+          The third case — a key registered as a backup at FIRST publish, before
+          there was an install base to endanger — never reaches this component.
+          It is accepted with no prompt and written to the plugin's security
+          log, which is why `KeyChangeRequest.authorisation` has no value for it.
+        */}
+        {request.authorisation === 'dashboard' ? (
+          <p className={styles.note}>
+            This key was registered in advance, from the publisher’s account, some time after the
+            plugin was first published. That is a good sign and not a guarantee: anyone who had
+            taken over that account could have registered it too. Accept if you were expecting a
+            key change, or if the publisher has announced one somewhere you trust.
+          </p>
+        ) : (
+          <p className={styles.note}>
+            This copy has never seen this key authorised. Publishers do change signing keys —
+            usually because the old one was lost — but this is also exactly what it would look
+            like if someone else had taken over the publisher’s account, and from here the two are
+            indistinguishable. Only accept if the publisher has announced the change somewhere you
+            trust.
+          </p>
+        )}
 
         <p className={styles.note}>
           Keeping your current version is safe. It goes on working exactly as it does now, and you

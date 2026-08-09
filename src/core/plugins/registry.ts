@@ -95,6 +95,16 @@ export interface RegistryDetail extends RegistryPlugin {
    *  rather than being handed back the HTML we generated from it. */
   readme: string;
   changelog: string;
+  /**
+   * The key authorised to take over, and how it was authorised. Null for the
+   * overwhelming majority.
+   *
+   * Recorded by the client at install and on every update, so a later rotation
+   * can be checked against something this machine already knew — see
+   * `InstalledPlugin.nextPublisherKey`.
+   */
+  nextPublisherKey: string | null;
+  nextPublisherKeyMethod: 'backup' | 'dashboard' | null;
   screenshots: Array<{ id: string; url: string; width: number; height: number }>;
   versionHistory: Array<{ version: string; apiVersion: number; size: number; createdAt: string }>;
   contributesDetail: {

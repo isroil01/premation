@@ -327,7 +327,14 @@ class PluginHost {
   install(
     pkg: PluginPackage,
     granted: readonly PluginPermission[],
-    origin: { source?: 'folder' | 'file' | 'registry'; publisherKey?: string } = {},
+    origin: {
+      source?: 'folder' | 'file' | 'registry';
+      publisherKey?: string;
+      /** The successor the listing advertised. Recorded BEFORE any rotation
+       *  uses it — see `InstalledPlugin.nextPublisherKey`. */
+      nextPublisherKey?: string;
+      nextPublisherKeyMethod?: 'backup' | 'dashboard';
+    } = {},
   ): string | null {
     const id = pkg.manifest.id;
 
@@ -375,6 +382,27 @@ class PluginHost {
         : existing?.publisherKey
           ? { publisherKey: existing.publisherKey }
           : {}),
+      /*
+        The successor, refreshed on every install and update.
+
+        Carried forward when this install brought none, for the same reason the
+        pin is: losing it would silently downgrade the next rotation from "a key
+        this machine already knew was authorised" to "a key never seen here" —
+        which is the strongest warning, shown for the safest case.
+      */
+      ...(origin.nextPublisherKey
+        ? { nextPublisherKey: origin.nextPublisherKey }
+        : existing?.nextPublisherKey
+          ? { nextPublisherKey: existing.nextPublisherKey }
+          : {}),
+      ...(origin.nextPublisherKeyMethod
+        ? { nextPublisherKeyMethod: origin.nextPublisherKeyMethod }
+        : existing?.nextPublisherKeyMethod
+          ? { nextPublisherKeyMethod: existing.nextPublisherKeyMethod }
+          : {}),
+      // Survives an update: the log is about this plugin on this machine, not
+      // about one version of it.
+      ...(existing?.securityEvents ? { securityEvents: existing.securityEvents } : {}),
     };
     this.logs.delete(id);
     if (!usePluginStore.getState().put(entry)) {

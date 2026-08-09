@@ -21,9 +21,24 @@
 import { fetchRegistryPackage } from '@core/plugins/registry';
 import { readPluginZip, type PluginPackage } from '@core/plugins/pluginPackage';
 import { customAlert } from '@components/Modal/Dialogs';
+import { usePluginStore } from '@stores/pluginStore';
 
 /** Set by the consent host so any surface can raise it. */
-let requestConsent: ((pkg: PluginPackage, publisherKey: string) => void) | null = null;
+/**
+ * What a package arrived WITH, beyond its own bytes.
+ *
+ * The successor key travels with the install rather than being fetched later,
+ * because the whole value of recording it is that this machine knew it BEFORE
+ * any rotation used it. Learning it at rotation time would be learning it from
+ * the response being questioned.
+ */
+export interface InstallOrigin {
+  publisherKey: string;
+  nextPublisherKey?: string | null;
+  nextPublisherKeyMethod?: 'backup' | 'dashboard' | null;
+}
+
+let requestConsent: ((pkg: PluginPackage, origin: InstallOrigin) => void) | null = null;
 
 /** What a key-change prompt has to say. */
 export interface KeyChangeRequest {
@@ -34,6 +49,37 @@ export interface KeyChangeRequest {
   pinnedKey: string;
   /** The key the registry says signs this plugin now. */
   newKey: string;
+  /**
+   * What this machine knew about the new key BEFORE this rotation.
+   *
+   * `dashboard` — recorded as authorised, but from the publisher's account
+   * after the plugin was already published. A thief holding that account could
+   * have done exactly this, and the copy says so.
+   * `unknown` — never recorded here at all. Strongest warning, and the prompt
+   * defaults to refusing.
+   *
+   * There is deliberately no `backup` value. A key registered at first publish,
+   * before there was an install base to endanger, is accepted with no prompt
+   * and written to the security log instead — and having a case for it here
+   * would invite someone to render a reassuring dialog for the one path that
+   * needs no dialog at all.
+   */
+  authorisation: 'dashboard' | 'unknown';
+}
+
+/**
+ * Append to a plugin's on-machine security log.
+ *
+ * Fire-and-forget by design. This is a record, and failing to write one must
+ * not abort a rotation the user already accepted — still less abort the SILENT
+ * path and leave the plugin unupdated for a reason nobody can see.
+ */
+function recordSecurityEvent(id: string, text: string): void {
+  try {
+    usePluginStore.getState().noteSecurityEvent(id, text);
+  } catch {
+    // A full storage quota. The rotation still happened and is still correct.
+  }
 }
 
 /**
@@ -59,7 +105,7 @@ export function setKeyChangeHost(
  * which are components.
  */
 export function setConsentHost(
-  fn: ((pkg: PluginPackage, publisherKey: string) => void) | null,
+  fn: ((pkg: PluginPackage, origin: InstallOrigin) => void) | null,
 ): void {
   requestConsent = fn;
 }
@@ -85,6 +131,9 @@ export async function installFromRegistry(
    * mattering the moment bytes and metadata come from different origins.
    */
   expectedDigest?: string,
+  /** The successor the LISTING advertised, recorded so a later rotation can be
+   *  checked against something this machine already knew. */
+  successor?: { nextPublisherKey?: string | null; nextPublisherKeyMethod?: 'backup' | 'dashboard' | null },
 ): Promise<boolean> {
   try {
     // Signature checked inside `fetchRegistryPackage`, against `publisherKey`.
@@ -111,7 +160,7 @@ export async function installFromRegistry(
       return false;
     }
 
-    requestConsent(result.pkg, publisherKey);
+    requestConsent(result.pkg, { publisherKey, ...(successor ?? {}) });
     return true;
   } catch (err) {
     void customAlert('Install failed', (err as Error).message, { isDanger: true });
@@ -167,6 +216,45 @@ export async function updateFromRegistry(
   let keyToTrust = pinnedKey;
 
   if (registryKey && registryKey !== pinnedKey) {
+    /*
+      Three paths, not one — and the difference is what this machine already
+      knew BEFORE the rotation happened.
+
+      An installed copy records the successor key the registry advertised, at
+      install and on every update since. So a rotation arrives in one of three
+      genuinely different situations, and treating them alike was the defect:
+      each produced the same modal, including the one a thief with a stolen
+      publisher account most wants displayed. A prompt that looks the same for
+      the safe case and the dangerous case is a prompt people click through.
+
+        1. The new key is the recorded one, authorised as `backup` — chosen at
+           first publish, before there was an install base to endanger. There is
+           nothing to ask: the evidence was recorded before the event. Accepted
+           silently, and WRITTEN DOWN, because a change nobody was asked about
+           and nobody can find afterwards is indistinguishable from no change.
+        2. The recorded one, authorised from the `dashboard` — chosen later,
+           behind the account password, by whoever held the account then. Which
+           is exactly what a thief holds. Prompted, and the copy says so.
+        3. Not a key this machine ever recorded. Strongest warning, and the
+           prompt defaults to refusing.
+
+      Never accepted on the strength of the same response that uses it: a
+      successor that first appears alongside the package needing it is an
+      assertion by the server being questioned.
+    */
+    const known = usePluginStore.getState().get(id);
+    const preauthorised = !!known?.nextPublisherKey && known.nextPublisherKey === registryKey;
+    const method = preauthorised ? known?.nextPublisherKeyMethod : undefined;
+
+    if (preauthorised && method === 'backup') {
+      recordSecurityEvent(
+        id,
+        'Signing key rotated to a key registered as a backup when this plugin was first '
+        + 'published, before anyone had installed it. Accepted automatically.',
+      );
+      return installFromRegistry(id, version, registryKey, expectedDigest);
+    }
+
     if (!requestKeyChange) {
       // Refused rather than silently accepted. A build where the prompt is
       // unavailable must not be the build that updates the pin without asking.
@@ -185,11 +273,21 @@ export async function updateFromRegistry(
       version,
       pinnedKey,
       newKey: registryKey,
+      // Which of the two remaining stories to tell. `dashboard` is the weaker
+      // reassurance and must not be dressed as the stronger one.
+      authorisation: preauthorised && method === 'dashboard' ? 'dashboard' : 'unknown',
     });
     // Declining is a legitimate outcome, not a failure: the installed version
     // keeps working, and nothing is said twice.
     if (!accepted) return false;
 
+    recordSecurityEvent(
+      id,
+      preauthorised
+        ? 'Signing key rotated to a key authorised from the publisher\'s account after this '
+          + 'plugin was published. You accepted it.'
+        : 'Signing key rotated to a key this copy had never seen authorised. You accepted it.',
+    );
     keyToTrust = registryKey;
   }
 
