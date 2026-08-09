@@ -144,7 +144,11 @@ export interface PluginImage {
 /** `kindId` → the plugin's authored-edit callback. One per kind. */
 const layerChangeListeners = new Map<string, (e: { layerId: string; props: string[] }) => void>();
 
-function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
+function buildApi(
+  manifest: PluginManifest,
+  permissions: PluginPermission[],
+  capabilities: readonly string[],
+) {
   const panels = manifest.contributes?.panels ?? [];
   /**
    * Resolve an optional panel id worker-side too.
@@ -164,11 +168,40 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
     );
   };
 
+  /**
+   * What this host can do, frozen.
+   *
+   * A `Set` with `has()`, not an array, because the only sensible question is
+   * membership and an array invites `capabilities[0]` — an index into a list
+   * whose order is not a promise. Frozen and copied so a plugin cannot add a
+   * capability to its own view and then be surprised when the host refuses the
+   * call it thought it had checked for.
+   *
+   * This answers a DIFFERENT question from `has(permission)`. A permission is
+   * what the user allowed; a capability is what the host can do at all. A
+   * plugin granted `assets:write` on a WebGL2 machine has the permission and
+   * lacks `webgpu`, and conflating the two would make it tell the user they
+   * declined something they were never asked about.
+   */
+  const capabilitySet: ReadonlySet<string> = Object.freeze(new Set(capabilities)) as ReadonlySet<string>;
+
   return {
     manifest,
     /** Exactly what the user granted — a plugin can degrade instead of failing. */
     permissions: [...permissions],
     has: (p: PluginPermission): boolean => permissions.includes(p),
+
+    /**
+     * What this host can do. See `capabilities.ts` in the editor.
+     *
+     * Use it to branch on anything listed in the manifest's `optional`.
+     * Anything in `requires` is guaranteed present — the install would have
+     * been refused otherwise — so checking those is dead code.
+     */
+    capabilities: Object.freeze({
+      has: (name: string): boolean => capabilitySet.has(name),
+      list: (): string[] => [...capabilitySet].sort(),
+    }),
 
     ui: {
       notify: (message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') =>
@@ -355,7 +388,7 @@ async function boot(msg: Extract<HostMessage, { k: 'boot' }>): Promise<void> {
   booted = true;
   lockdown();
 
-  const api = buildApi(msg.manifest, msg.permissions);
+  const api = buildApi(msg.manifest, msg.permissions, msg.capabilities ?? []);
   const url = URL.createObjectURL(new Blob([msg.code], { type: 'text/javascript' }));
   try {
     const mod = (await import(/* @vite-ignore */ url)) as Record<string, unknown>;

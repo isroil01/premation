@@ -159,7 +159,7 @@ describe('a plugin holding only scene:read + scene:proxy', () => {
     });
     const reply = worker.callAndWait('scene.createLayer', { kind: 'shape', name: 'Rogue' });
     expect(reply.ok).toBe(false);
-    expect(reply.error).toMatch(/scene:write/);
+    expect(reply.ok ? '' : reply.error).toMatch(/scene:write/);
   });
 
   it('cannot delete a layer', () => {
@@ -208,7 +208,7 @@ describe('a plugin holding only scene:read + scene:proxy', () => {
     });
     const reply = worker.callAndWait('scene.setProxyChildren', plain, specs);
     expect(reply.ok).toBe(false);
-    expect(reply.error).toMatch(/not a plugin layer kind/i);
+    expect(reply.ok ? '' : reply.error).toMatch(/not a plugin layer kind/i);
   });
 });
 
@@ -255,6 +255,6 @@ describe('a plugin holding neither', () => {
 
     const reply = worker.callAndWait('scene.setProxyChildren', 'n_nonexistent', specs);
     expect(reply.ok).toBe(false);
-    expect(reply.error).toMatch(/scene:proxy/);
+    expect(reply.ok ? '' : reply.error).toMatch(/scene:proxy/);
   });
 });

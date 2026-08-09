@@ -51,6 +51,7 @@ const SHARED = [
   'permissions.json',
   'methodPermissions.json',
   'reportCategories.json',
+  'capabilityBackCompat.json',
 ];
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');

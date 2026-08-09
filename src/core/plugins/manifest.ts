@@ -44,8 +44,31 @@ import { parseNet, type NetContribution } from './netSchema';
  *     same reason 3 was — a document using a plugin effect references the
  *     plugin that provides it — and because `render: "shader"` on a layer kind
  *     stops being a reserved value and starts meaning something.
+ *
+ * 5 — The split. Up to here this number meant four things at once: the manifest
+ *     grammar, the shape of `contributes`, the host method surface, and effect
+ *     semantics. They stop moving together at 5, so they stop sharing a number.
+ *
+ *     `MANIFEST_VERSION` is what a manifest declares as `apiVersion` — the
+ *     GRAMMAR it is written in. `HOST_API_VERSION` is what this host provides.
+ *     Everything finer-grained than that is a capability, because a version can
+ *     only express "newer than" and the question a plugin actually has is "does
+ *     this host have the thing I call". See `capabilities.ts`.
  */
-export const HOST_API_VERSION = 4;
+export const HOST_API_VERSION = 5;
+
+/**
+ * The newest manifest GRAMMAR this host can read.
+ *
+ * Separate from `HOST_API_VERSION` from 5 onward, and the two now move
+ * independently: adding a host method bumps neither (it adds a capability),
+ * while a new manifest key bumps only this one.
+ *
+ * A manifest declaring a grammar newer than this is refused, and that has not
+ * changed — reading a document with keys whose meaning is unknown is how a
+ * validator silently accepts something it does not understand.
+ */
+export const MANIFEST_VERSION = 5;
 
 /** Everything a plugin may ask for. Nothing outside this list is grantable. */
 export const PERMISSIONS = {
@@ -295,9 +318,39 @@ export interface PluginManifest {
   description: string;
   author?: string;
   homepage?: string;
-  /** Host API generation the plugin was written against. Refused when newer
-   *  than this host — running it would fail in ways the author never saw. */
+  /**
+   * The manifest GRAMMAR this plugin is written in. Refused when newer than
+   * `MANIFEST_VERSION` — reading keys whose meaning is unknown is how a
+   * validator silently accepts something it does not understand.
+   *
+   * Called `apiVersion` on the wire because that is what every published
+   * manifest already says and the name is frozen in signed bytes. From version
+   * 5 it means the grammar and nothing else; what the plugin can CALL is
+   * `requires` / `optional`.
+   */
   apiVersion: number;
+  /**
+   * Capabilities without which this plugin cannot run.
+   *
+   * Checked at INSTALL, and refused there rather than at the first call. A
+   * plugin that installs and then fails is worse than one that never installs:
+   * the user has already agreed to its permissions, it sits in their list
+   * looking healthy, and the failure arrives later attached to whatever they
+   * happened to be doing.
+   *
+   * Absent means "whatever `apiVersion` implied" — see
+   * `CAPABILITIES_BY_API_VERSION`, which is what keeps every already-published
+   * manifest installing unchanged.
+   */
+  requires?: string[];
+  /**
+   * Capabilities this plugin uses if they are there.
+   *
+   * Never gates an install. It exists so `motion.capabilities.has(...)` means
+   * something an author declared rather than something they probed for, and so
+   * a listing can say what a plugin will do on a better machine.
+   */
+  optional?: string[];
   /** Package-relative path to the entry ES module. */
   main: string;
   permissions: PluginPermission[];
@@ -670,11 +723,18 @@ export function parseManifest(raw: unknown): ManifestResult {
   const apiVersion = typeof r.apiVersion === 'number' ? r.apiVersion : NaN;
   if (!Number.isInteger(apiVersion) || apiVersion < 1) {
     errors.push('"apiVersion" must be a whole number ≥ 1.');
-  } else if (apiVersion > HOST_API_VERSION) {
+  } else if (apiVersion > MANIFEST_VERSION) {
+    // Compared against the GRAMMAR version, not the host API version. From 5
+    // they move independently, and this field has only ever described the
+    // grammar — what a plugin can CALL is `requires`.
     errors.push(
-      `This plugin needs host API ${apiVersion}; this version of Premation provides ${HOST_API_VERSION}. Update the app.`,
+      `This plugin's manifest is written for format ${apiVersion}; this version of Premation `
+      + `reads up to ${MANIFEST_VERSION}. Update the app.`,
     );
   }
+
+  const requires = parseCapabilityList(r.requires, 'requires', errors);
+  const optional = parseCapabilityList(r.optional, 'optional', errors);
 
   if (!isSafePath(r.main)) errors.push('"main" must be a package-relative path to the entry module.');
 
@@ -742,11 +802,49 @@ export function parseManifest(raw: unknown): ManifestResult {
         ? { homepage: r.homepage.slice(0, 300) }
         : {}),
       permissions,
+      // Omitted when empty rather than stored as `[]`. Absent means "whatever
+      // this `apiVersion` implied", which is a different statement from "needs
+      // nothing" — and every manifest published before capabilities existed
+      // means the first one.
+      ...(requires.length > 0 ? { requires } : {}),
+      ...(optional.length > 0 ? { optional } : {}),
       contributes,
       activationEvents,
     },
     errors: [],
   };
+}
+
+/**
+ * Validate a `requires` / `optional` list.
+ *
+ * Shape only. Whether a capability is one THIS host has is decided at install
+ * (`checkCapabilities`), not here, and the split matters: a manifest naming
+ * `webgpu` is perfectly valid, and refusing it during parsing would make a
+ * plugin unreadable on a WebGL2 machine rather than merely uninstallable —
+ * which would also stop the registry, which has no GPU at all, from validating
+ * it on publish.
+ */
+function parseCapabilityList(raw: unknown, field: string, errors: string[]): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    errors.push(`"${field}" must be an array of capability names.`);
+    return [];
+  }
+  if (raw.length > 32) {
+    errors.push(`"${field}" lists ${raw.length} capabilities; the limit is 32.`);
+    return [];
+  }
+
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string' || !/^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$/.test(entry)) {
+      errors.push(`"${field}" contains ${JSON.stringify(entry)}, which is not a capability name.`);
+      continue;
+    }
+    if (!out.includes(entry)) out.push(entry);
+  }
+  return out;
 }
 
 /**

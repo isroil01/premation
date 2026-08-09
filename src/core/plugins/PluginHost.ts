@@ -59,6 +59,7 @@ import {
 } from './protocol';
 import type { PluginPackage } from './pluginPackage';
 import { activatesOnStartup, expandPermissions, type PluginPermission } from './manifest';
+import { checkCapabilities, hostCapabilities } from './capabilities';
 import { releaseAssetBudget } from './assets';
 
 /**
@@ -320,6 +321,24 @@ class PluginHost {
       return `"${pkg.manifest.name}" was withdrawn by the registry and cannot be installed: ${revoked.reason}`;
     }
 
+    /*
+      Capabilities, checked HERE and not at the first call.
+
+      A plugin that installs and then fails is worse than one that never
+      installs: the user has already granted its permissions, it sits in their
+      list looking healthy, and the failure arrives later attached to whatever
+      they happened to be doing — with a message about a method name rather than
+      about this machine.
+
+      A manifest with no `requires` is judged by what its `apiVersion` implied,
+      which is what makes every plugin published before capabilities existed
+      install unchanged. See `capabilities.ts`.
+    */
+    const caps = checkCapabilities(pkg.manifest.apiVersion, pkg.manifest.requires);
+    if (!caps.ok) {
+      return `"${pkg.manifest.name}" cannot run here. ${caps.message}`;
+    }
+
     const existing = usePluginStore.getState().get(id);
     if (existing) this.stop(id);
 
@@ -502,6 +521,9 @@ class PluginHost {
       manifest: entry.manifest,
       code,
       permissions: [...entry.granted],
+      // Resolved at boot, not at module load: `webgpu` depends on the renderer
+      // tier, which is decided during app startup.
+      capabilities: [...hostCapabilities()],
     };
     worker.postMessage(boot);
 

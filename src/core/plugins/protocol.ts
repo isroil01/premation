@@ -32,7 +32,21 @@ export type PluginCommandSpec = PluginCommandContribution;
 
 /** Host → worker. */
 export type HostMessage =
-  | { k: 'boot'; manifest: PluginManifest; code: string; permissions: PluginPermission[] }
+  /**
+   * `capabilities` is what this host has RIGHT NOW, including the ones that
+   * depend on the machine rather than the build (`webgpu`). Sent with the boot
+   * message rather than fetched on demand, because a plugin branching on it in
+   * `activate()` cannot await a round trip — and because a capability set that
+   * changed mid-session would mean a plugin's `optional` handling depends on
+   * when it happened to ask.
+   */
+  | {
+      k: 'boot';
+      manifest: PluginManifest;
+      code: string;
+      permissions: PluginPermission[];
+      capabilities: string[];
+    }
   | { k: 'result'; id: number; ok: true; value: unknown }
   | { k: 'result'; id: number; ok: false; error: string }
   | { k: 'invoke'; commandId: string; selection: string[] }
