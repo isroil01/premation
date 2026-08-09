@@ -36,6 +36,9 @@ const api = createHostApi(manifest, {
   openPanel: () => {},
   closePanel: () => {},
   warn: () => {},
+        // Only  reads this; every other method is gated before it
+        // reaches the table. Empty here, so a batch would be refused.
+        granted: () => new Set<never>(),
 });
 
 /** A fresh layer, returning its id. */

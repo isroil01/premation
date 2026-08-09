@@ -523,6 +523,10 @@ class PluginHost {
       openPanel: (panelId) => this.setPanelOpen(id, panelId, true),
       closePanel: (panelId) => this.setPanelOpen(id, panelId, false),
       warn: (text) => this.appendLog(id, 'warn', text),
+      // Read live from the store rather than captured:  narrows a
+      // grant and restarts the plugin, but reading through means a batch can
+      // never be judged against a set the user has already revoked.
+      granted: () => expandPermissions(usePluginStore.getState().get(id)?.granted ?? []),
       emitLayerChanged: (event) => {
         // Guarded: a worker that died between the edit and the coalesce window
         // is the normal case for a plugin that crashed mid-drag.

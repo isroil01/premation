@@ -105,6 +105,9 @@ describe('the table covers every method the host actually implements', () => {
         openPanel: () => {},
         closePanel: () => {},
         warn: () => {},
+        // Only  reads this; every other method is gated before it
+        // reaches the table. Empty here, so a batch would be refused.
+        granted: () => new Set<never>(),
       },
     )),
   );

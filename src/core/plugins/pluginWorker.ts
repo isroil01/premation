@@ -286,6 +286,36 @@ function buildApi(
     },
 
     scene: {
+      /**
+       * Many mutations in one call. Use this whenever you are about to loop.
+       *
+       * Every single call costs a `postMessage`, a host-side revalidation, an
+       * undo entry and a viewport re-render. A few thousand of those is the
+       * difference between a plugin that works and one that hangs the editor —
+       * and it also means a user who dislikes the result has to hold Ctrl+Z.
+       *
+       *   const [group] = await motion.scene.apply([
+       *     { op: 'createLayer', kind: 'group', name: 'Rig' },
+       *     { op: 'createLayer', kind: 'shape', name: 'Bone', parent: { ref: 0 } },
+       *   ]);
+       *
+       * `{ ref: n }` is the layer created by op `n`, which must come earlier.
+       * That is what lets one call build a hierarchy: without it you would
+       * create the parents, wait for their ids, and send a second batch —
+       * exactly the round trip this exists to avoid.
+       *
+       * Either the whole batch applies or none of it does. A failing op
+       * rejects with its index and leaves the document untouched, so there is
+       * no partial state to reason about. Resolves to one result per op,
+       * positionally: a created layer's id, or `null`.
+       *
+       * Needs the union of what its ops need, checked before anything runs.
+       * Capped at 10,000 ops and 8 MB per call, both refused rather than
+       * truncated — being told "8,000 of your 10,000 applied" leaves you no
+       * way to work out which.
+       */
+      apply: (ops: unknown[]) => call('scene.apply', ops) as Promise<unknown[]>,
+
       getSelection: () => call('scene.getSelection') as Promise<string[]>,
       setSelection: (ids: string[]) => call('scene.setSelection', ids),
       getLayers: () => call('scene.getLayers') as Promise<Array<{

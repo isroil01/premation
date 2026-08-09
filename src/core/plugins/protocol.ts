@@ -157,6 +157,22 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
   'timeline.setTime': 'timeline',
 
   /*
+    A BATCH needs whatever its operations need, which is not knowable here.
+
+    Null rather than 'scene:write': a batch of pure animation ops would then be
+    over-charged, and one that deletes layers under-charged. The union is
+    computed from the ops and checked in the handler, before anything runs —
+    see `sceneBatch.ts` and `OP_PERMISSIONS`.
+
+    The cost is that the registry's scanner cannot infer a permission from a
+    `scene.apply` call, because the ops are data rather than method names. A
+    package doing everything through the batch therefore looks permission-free
+    to it. That is a real loss and the honest one: the alternative is a table
+    entry that lies about what the method needs.
+  */
+  'scene.apply': null,
+
+  /*
     Storage needs NO permission, and that is a decision rather than an omission.
 
     Neither scope touches the user's layers. A ninth consent line reading
