@@ -177,6 +177,23 @@
    * as real elements. That is not a hole being opened: this document exists to
    * run the plugin's UI code, in a frame with an opaque origin and no network.
    * The alternative is what we had — a panel that renders and does nothing.
+   *
+   * ── HEAD as well as body, and why that was a real bug ─────────────────────
+   *
+   * This used to transplant `doc.body.innerHTML` alone. The HTML parser hoists
+   * `<style>`, `<link>`, `<meta>` and `<title>` into `<head>` when they appear
+   * before any body content — which is exactly where an author puts a
+   * stylesheet — so a panel whose first element was `<style>` rendered
+   * completely unstyled, with nothing anywhere saying why.
+   *
+   * `PLUGINS.md` carried the workaround as a rule: "open the panel with a real
+   * element". A rule an author must remember, whose violation is invisible, is
+   * a rule everyone breaks eventually. Deleted, along with the cause.
+   *
+   * Linked stylesheets are already inlined by the host before this runs (see
+   * `panelHtml.ts`) — a relative href here would resolve against the APP's
+   * origin, where the plugin's file does not exist, and this frame has no
+   * network to fetch it with anyway.
    */
   function render(html) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -186,6 +203,26 @@
       scripts.push(found[i].textContent || '');
       found[i].parentNode.removeChild(found[i]);
     }
+
+    /*
+      Head first, so styles are in place before the body they style.
+
+      Appended one node at a time rather than by assigning `head.innerHTML`,
+      which would discard this document's OWN head — the theme variables, the
+      base stylesheet and the bridge script all live there.
+
+      `<base>` is dropped: it rewrites every relative URL in the document,
+      including ones this shell owns, and a panel has nothing legitimate to
+      point it at.
+    */
+    var headNodes = doc.head ? doc.head.children : [];
+    for (var h = 0; h < headNodes.length; h++) {
+      var node = headNodes[h];
+      var tag = node.tagName.toLowerCase();
+      if (tag === 'base' || tag === 'script') continue;
+      document.head.appendChild(document.importNode(node, true));
+    }
+
     document.body.innerHTML = doc.body.innerHTML;
     for (var j = 0; j < scripts.length; j++) {
       var el = document.createElement('script');

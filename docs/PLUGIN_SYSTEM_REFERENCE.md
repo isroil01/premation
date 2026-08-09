@@ -370,9 +370,12 @@ and blocking stop distribution, not execution.
   has `net:fetch`).
 - A panel talks to its own plugin and nothing else: `motionPanel.send` /
   `motionPanel.onMessage`.
-- Inline `<script>` runs in a panel; a linked stylesheet does not. The host
-  transplants `body.innerHTML`, so a `<style>` before any body content parses
-  into `<head>` and is dropped — open the panel with a real element.
+- Inline `<script>` runs in a panel. `<style>` works anywhere in the document,
+  including before any body content, and a `<link rel="stylesheet">` pointing at
+  a file in the package is inlined by the host before the markup reaches the
+  frame — a relative href would otherwise resolve against the app's origin,
+  where the package's files do not exist, and the frame has no network to fetch
+  one with. An href the host cannot resolve is left as written and fails.
 
 ---
 
