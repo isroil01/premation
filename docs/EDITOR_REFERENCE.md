@@ -1,8 +1,11 @@
 # Premation — Editor Reference
 
-**Derived from source at `40ad98a` on 2026-08-09.** Every count below comes from
-`scripts/featureCounts.cjs`, which reads the registries the product dispatches
-on. No claim in this file was copied from another `.md`.
+**Counts derived from source at `7e59fd0`; prose last verified 2026-08-10.**
+Every count in §1 comes from `scripts/featureCounts.cjs`, which reads the
+registries the product dispatches on, and is held there by a test.
+
+**The prose is not under test — see §0.** A verification pass on 2026-08-10
+found four false claims in §3/§4 and they are recorded in §5.
 
 ---
 
@@ -26,8 +29,29 @@ node scripts/featureCounts.cjs --verbose
 build when it disagrees with the registries. Adding an effect reddens the suite
 until this file is updated — which is the point.
 
-**This pins counts, not prose.** Prose below still ages. When a number and a
-sentence disagree, the number is the one under test.
+### What the pinning does NOT cover — read this before trusting a sentence
+
+**Only the §1 table is under test. Every other line is prose, and prose is
+where the errors actually were.**
+
+This is not a hypothetical caveat. A verification pass run the day after this
+document was written found **four** false claims in §3/§4 — a fabricated
+template capability, a "dead" toggle that had already been deleted, an
+architectural claim about lighting that was the opposite of the truth, and a
+subsystem described as working that has no implementation. Two of them were
+inherited verbatim from the deleted predecessor and restated here without being
+checked, which is precisely the failure this document was created to end.
+
+So the rule is narrower than it looks:
+
+- A **number** in §1 is a number a test is holding down. Trust it.
+- A **sentence** anywhere is a claim someone believed on the day they wrote it.
+  Verify it against the code before acting on it, and if it disagrees with the
+  code, the code wins and §5 gets a new row.
+
+Prose cannot be pinned the way counts can. What §5 buys instead is that a claim,
+once disproved, stays disproved — it is there so a superseded statement is not
+rediscovered in git history and believed a second time.
 
 ---
 
@@ -39,7 +63,7 @@ sentence disagree, the number is the one under test.
 |---|---|---|
 | Effects | 73 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 36 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
-| Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` (9) + Glass |
+| Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 8 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
 | Light types | 4 | `src/core/scene/light.ts` → `LightType` |
@@ -51,10 +75,14 @@ sentence disagree, the number is the one under test.
 
 <!-- /FEATURE-COUNTS -->
 
-Glass is counted as a layer style but is deliberately absent from
-`LAYER_STYLE_LABEL`: it is a function of the backdrop, so it resolves onto the
-renderable rather than compiling to an effect (`glassResolve.ts`). Counting only
-the map undercounts by exactly one — which is why the script adds it explicitly.
+Layer styles come from **two** registries. Most compile to an effect and live in
+`LAYER_STYLE_LABEL`; Glass cannot, because it is a function of what is
+composited behind the layer and so resolves onto the renderable
+(`glassResolve.ts`). It lives in `BACKDROP_STYLES`, and the script sums the two.
+
+It used to append a literal `'glass'` instead — a hand-written number inside the
+script that exists to eliminate hand-written numbers. A second backdrop-resolved
+style would have left this table wrong with every test still green.
 
 ---
 
@@ -163,8 +191,14 @@ image sequences, video with audio. Nine export formats: `mp4`, `webm`, `gif`,
 desktop app (ffmpeg); the browser gets WebM or a PNG sequence.
 
 ### Templates
-Exposed fields, field kinds, data binding, media slots, responsive time,
-protected time regions. Complete and tested — do not rebuild.
+Exposed fields (`templateFields.ts`), **5** field kinds (`text`, `color`,
+`number`, `image`, `media`), media slots (`mediaSlots.ts`), responsive time and
+protected time regions (`responsiveTime.ts` → `TimelineController` →
+`ResponsiveTimeSection.tsx`). 12 test files.
+
+**There is no data binding.** `dataBinding`, `dataSource` and `csvBind` have
+zero hits repo-wide. It was listed here as shipped; it does not exist, and
+building it is greenfield work rather than a remainder.
 
 ### AI
 61 typed tools over a deterministic caster and a hand-authored technique
@@ -207,11 +241,20 @@ extruded title — gets a single uniform blur across its whole surface. There is
 DOF code in `packages/renderer` at all. This is the difference between "3D-ish"
 and cinematic.
 
-**Lighting is a flat per-quad multiplier.** `lightShading.ts` computes Lambert
-shading *per layer* and hands the renderer one RGB multiplier. A large layer
-under a nearby point light gets no gradient across it. Shadows are 2.5D
-projections (`light.ts` — "Cast 2.5D drop-shadows from this light onto content
-layers"), not geometry-aware cast shadows.
+**Lighting is per-fragment on the depth path, per-quad only as a fallback.**
+This entry previously claimed the opposite. The depth-tested 3D path runs real
+per-fragment Lambert **plus Blinn-Phong specular** in the shader
+(`builtin.ts` `fn shade3d`), using a world-position varying
+(`o.world = obj.model * vec4(pos,0,1)`); `shadeLayer`'s per-quad RGB multiplier
+is the `quadGain` **fallback** for branches that cannot shade per-fragment
+(`FrameScene.ts` — matte, adjustment, precomp, advanced blend, glass, motion
+blur, deformed mesh). Extruded geometry is shaded **per face**, each face being
+its own renderable with its own normal.
+
+What remains true: **2D layers receive no Lambert shading at all**
+(`buildSnapshot.ts` gates it on `is3D`), non-depth-eligible layers still fall
+back to per-quad, and shadows are 2.5D projections rather than geometry-aware
+cast shadows.
 
 **Particles are structurally limited by the determinism choice.** 253 lines:
 3 emitter types, 4 shapes (circle/square/line/star), gravity, spin, and
@@ -247,15 +290,24 @@ blend maths. Classic Color Burn/Dodge/Difference currently render identically to
 their modern counterparts — kept for round-tripping and picker parity, and
 documented as such rather than silently wrong.
 
-**No 3D gizmo snapping.** `guidesStore.gizmo3dSnapping` has no readers or writers
-outside the store and `toggleGizmo3dSnapping` has no caller — a switch wired to
-nothing.
+**No 3D gizmo snapping** — as a *feature*. The half-built switch this entry used
+to describe is gone: `gizmo3dSnapping` was deleted with nine sibling symbols and
+`src/stores/__tests__/deadLayoutState.test.ts` keeps it deleted.
 
 ### Tier 3 — friction on long or complex projects
 
-- Render queue **Stop** discards progress; real pause/resume is unbuilt.
+- Render queue **Stop** discards progress; real pause/resume is unbuilt. The
+  offline loop itself is resumable in principle — fixed timestep, `index / fps`,
+  an existing `startFrame`/`endFrame` range, no accumulated state — but the sink
+  is disposed on abort and takes its ffmpeg staging directory with it.
 - **No local project browser** in the OSS edition — it opens straight into the
-  editor, though the SQLite local index and version store both exist and are tested.
+  editor. Of the two foundations this entry used to call ready:
+  `RecentProjects` (persisted MRU) and `bundle/VersionStore.ts` (local,
+  bundle-backed history) are **real and tested**, but the SQLite `LocalIndex` is
+  **not an implementation** — `better-sqlite3` is absent from `package.json`, so
+  `index:available` is permanently false and `getLocalIndex()` always returns
+  `MemoryLocalIndex`, and nothing in `src/` ever calls `upsertProject` or
+  `addRecovery`, so the index would be empty even with the driver present.
 - **Pre-1.0**, with breaking `.motion` format changes still expected.
 - **No collaboration** — removed by choice, but still a loss against Rive/Jitter.
 - **No ecosystem**: no plugin market with content in it, no template marketplace,
@@ -293,11 +345,42 @@ Recorded so the same claims are not reconstructed from git history and believed.
 | "Continuous rasterization — the one remaining gap" | **Shipped**, with a renderer read path and an inspector control |
 | "62 AI tools" | **61** |
 | "47 Zustand stores" | **39** |
-| "Cameras / lights / shadows — parity" | Per-quad flat shading and 2.5D projected shadows; not AE's per-pixel model |
+| "Cameras / lights / shadows — parity" | Shading is per-fragment on the depth path (see the 2026-08-10 row below); shadows really are 2.5D projections |
 | Depth of field implied working | Per-layer uniform blur; no DOF in the renderer |
 
 The pattern across all seven: a number or a status written once by hand, then
 never re-derived. §0 exists to stop the next one.
+
+### Corrected 2026-08-10, by a verification pass over this document
+
+The five below were found by checking **this file's own prose** against the
+code. Four were wrong. Two of the four were inherited verbatim from the deleted
+predecessor and restated here without being checked — so the rewrite reduced the
+propagation problem without ending it, which is why §0 now says plainly that
+only the §1 counts are under test.
+
+| This document said | Reality at `7e59fd0` |
+|---|---|
+| §4 "Lighting is a flat per-quad multiplier… no gradient across a large layer" | **Backwards.** Per-fragment Lambert + Blinn-Phong ship on the depth-tested path (`builtin.ts` `fn shade3d`, world-position varying); per-quad `quadGain` is the documented **fallback** (`FrameScene.ts`). Extrusion is shaded per face |
+| §3 Templates include "data binding" | **Does not exist** — zero hits repo-wide for `dataBinding` / `dataSource` / `csvBind`. The other five capabilities are real and tested |
+| §4 "No 3D gizmo snapping… a switch wired to nothing" | **Already deleted**, with `deadLayoutState.test.ts` keeping it deleted |
+| §4 "the SQLite local index and version store both exist and are tested" | **Half true, and the wrong half was load-bearing.** The version store is real; `LocalIndex` is a declared interface with no implementation — `better-sqlite3` is not a dependency, so `index:available` is permanently false, and no caller ever writes a row |
+| §4 "no DOF code in `packages/renderer`" | **Still true.** `dofEffectOf` (`buildSnapshot.ts`) remains a per-layer blur. Retained, not corrected |
+
+Two defects were fixed rather than merely recorded, and both were the same
+shape — a value honoured at one end of a boundary and silently dropped at the
+other:
+
+- **Three light parameters stopped at the CPU.** `coneFeather`, the AE falloff
+  curves and a light's Point of Interest were read by `shadeLayer` and absent
+  from `ShaderLight`, so the shader hardcoded a 20 % feather, degraded every
+  falloff curve to linear, and tested the spot cone with a 2D aim no POI could
+  reach. `lightShaderParity.test.ts` now fails if a field the CPU reads does not
+  reach the GPU producer.
+- **A spot light's cone did nothing on a 2D layer.** Every type rasterized to
+  the same isotropic circle and the wash texture was cached on colour alone —
+  which was a collision, not just a narrow key. Cone angle, cone feather and
+  light angle were three shipped inspector controls with no visual effect.
 
 ---
 
