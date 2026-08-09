@@ -28,7 +28,7 @@
 }
 
 .title {
-  font-size: 20px;
+  font-size: var(--font-size-2xl, 20px);
   font-weight: 600;
   color: var(--color-text-primary, #f2f2f5);
   margin: 0;
@@ -96,7 +96,7 @@
 }
 
 .name {
-  font-size: 13px;
+  font-size: var(--font-size-md, 13px);
   color: var(--color-text-primary, #f2f2f5);
   white-space: nowrap;
   overflow: hidden;
