@@ -76,13 +76,117 @@ export function layerParamNames(params: Record<string, LayerPropSchema>): string
     .map(([name]) => name);
 }
 
+/**
+ * What a later pass is allowed to read.
+ *
+ * `previous` is the chain — pass N sees pass N−1's output, and pass 0 sees the
+ * layer render. `origin` and `both` also expose the pass-0 input, which is what
+ * every composite effect needs: a bloom adds a blurred copy back over the
+ * *original*, and without `origin` the original is gone by the time there is
+ * something to add it to.
+ */
+export const PASS_READS = ['previous', 'origin', 'both'] as const;
+export type PassReads = (typeof PASS_READS)[number];
+
+/**
+ * Downsample factors a pass may render at.
+ *
+ * A fixed set, not an arbitrary number. Half and quarter resolution are what a
+ * blur actually wants — the whole point of a separable blur is that the
+ * expensive pass runs on fewer pixels — and an open range would let an author
+ * write `scale: 0.9`, producing a target whose dimensions round inconsistently
+ * against the source and a shimmer nobody can trace.
+ */
+export const PASS_SCALES = [1, 0.5, 0.25] as const;
+export type PassScale = (typeof PASS_SCALES)[number];
+
+export interface EffectPass {
+  name: string;
+  /** Same one-`fs`-function contract, same validator, as a single-pass effect. */
+  wgsl: string;
+  /** Render-target downsample. Default 1. */
+  scale?: PassScale;
+  /** Default `'previous'`. */
+  reads?: PassReads;
+}
+
 export interface EffectContribution {
   /** Plugin-local. The host namespaces it as `<pluginId>.<id>`. */
   id: string;
   label: string;
-  /** The author's WGSL. Host bindings are prepended at compile time. */
+  /**
+   * The author's WGSL, for a single-pass effect. Host bindings are prepended at
+   * compile time.
+   *
+   * Mutually exclusive with `passes`, and the reason it was not folded into
+   * `passes: [{...}]` is that every effect published before multi-pass existed
+   * has this field and no other. Rewriting them at parse time into a
+   * one-element chain would work, and would also mean the single-pass path —
+   * the one every existing effect takes — stopped being the path with a test on
+   * it. `passes` absent is today's behaviour, byte for byte.
+   */
   shader: string;
   params: Record<string, LayerPropSchema>;
+  /** A declared, host-orchestrated chain. Absent for a single-pass effect. */
+  passes?: EffectPass[];
+}
+
+/**
+ * Caps on a pass chain.
+ *
+ * ── Why a COST budget and not just a pass count ──────────────────────────────
+ *
+ * Four passes is not one cost. Four full-scale passes is four times the layer's
+ * pixels every frame; four quarter-scale passes is a quarter of one. A count
+ * alone would refuse the cheap chain and wave through the expensive one, so the
+ * budget is denominated in the thing that actually costs: pixels.
+ *
+ * ── ★ Two deliberate divergences from the brief, both arithmetic ─────────────
+ *
+ * The brief specifies `sum(1/scale²) ≤ 6` AND, in its acceptance criteria, that
+ * the budget must refuse a four-pass full-scale chain. Those cannot both hold,
+ * and the first is inverted:
+ *
+ *   1. **The exponent.** A pass at `scale` renders `scale²` of the pixels, so
+ *      cost must RISE with scale. `1/scale²` gives full = 1, half = 4,
+ *      quarter = 16 — making the cheapest pass the platform allows (quarter
+ *      scale, 1/16 of the fill) score sixteen times a full one, and a single
+ *      one of them exceed the whole budget. Every downsampled blur, which is
+ *      the entire reason `scale` exists, would be refused. Implemented as
+ *      `scale²`.
+ *
+ *   2. **The number.** Under either exponent, four full-scale passes cost 4,
+ *      which is ≤ 6 — so a budget of 6 does not refuse the chain the brief says
+ *      it must. The acceptance criterion is the concrete, testable half of the
+ *      pair, so it wins: the budget is **3**.
+ *
+ * What 3 admits, which is the check that matters more than the number:
+ *
+ *   separable blur, two full-scale passes          1 + 1                 = 2    ✓
+ *   bloom: bright-pass, blur ×2 at ¼, composite    1 + 0.0625×2 + 1      ≈ 2.13 ✓
+ *   four quarter-scale passes                      0.0625 × 4            = 0.25 ✓
+ *   four full-scale passes                         1 × 4                 = 4    ✗
+ *
+ * A user who wanted the last one still gets three full-scale passes, and the
+ * shapes a fourth is usually reached for — the cheap tail of a bloom — are the
+ * ones that fit easily.
+ */
+export const MAX_PASSES_PER_EFFECT = 4;
+export const MAX_PASS_COST = 3;
+
+/**
+ * A pass's cost, in units of one full-scale pass: its share of the pixels.
+ *
+ * `scale` is a linear downsample, so it applies twice — half scale is half the
+ * width AND half the height, a quarter of the fill.
+ */
+export function passCost(scale: PassScale): number {
+  return scale * scale;
+}
+
+/** The chain's total cost, in full-scale passes. */
+export function chainCost(passes: readonly EffectPass[]): number {
+  return passes.reduce((sum, p) => sum + passCost(p.scale ?? 1), 0);
 }
 
 /*
@@ -151,20 +255,56 @@ export function parseEffects(raw: unknown, errors: string[]): EffectContribution
       return;
     }
 
-    const shader = typeof entry.shader === 'string' ? entry.shader : '';
-    const check = validateWgsl(shader);
-    if (!check.ok) {
-      /*
-        Every problem is reported, not just the first.
+    /*
+      One source of shader source, never two.
 
-        A compiler that stops at the first error makes fixing a shader a
-        sequence of round trips — and here a "round trip" is repackaging,
-        re-signing and reinstalling. Authors get the whole list.
-      */
-      for (const p of check.problems) {
-        errors.push(`"${at}.shader"${p.line ? ` line ${p.line}` : ''}: ${p.detail}`);
-      }
+      An effect declaring both `shader` and `passes` has said two different
+      things about what it draws, and there is no reading of it that is
+      obviously right — running the chain silently ignores source the author
+      wrote, running `shader` silently ignores the chain. Both are the kind of
+      "worked, but not the way you wrote it" that costs an afternoon.
+    */
+    const hasPasses = entry.passes !== undefined;
+    const hasShader = typeof entry.shader === 'string' && entry.shader.trim() !== '';
+    if (hasPasses && hasShader) {
+      errors.push(
+        `"${at}" declares both "shader" and "passes". Use "shader" for a single-pass effect `
+        + `or "passes" for a chain — an effect that declares both does not say which one draws.`,
+      );
       return;
+    }
+
+    const passes = hasPasses ? parsePasses(entry.passes, at, errors) : undefined;
+    if (hasPasses && !passes) return;
+
+    /*
+      A chain's `shader` is its FIRST pass.
+
+      Everything downstream of parsing — the material, the registry, the
+      renderer's single-pass path — already reads `shader`, and giving the
+      chain's head that name means a two-pass effect degrades to its first pass
+      rather than to nothing if a caller has not been taught about chains yet.
+      For a single-pass effect this is just the author's source.
+    */
+    const shader = passes ? passes[0]!.wgsl : (typeof entry.shader === 'string' ? entry.shader : '');
+
+    // A chain's passes were each validated inside `parsePasses`; re-running the
+    // validator on the head here would report every problem in pass 0 twice.
+    if (!passes) {
+      const check = validateWgsl(shader);
+      if (!check.ok) {
+        /*
+          Every problem is reported, not just the first.
+
+          A compiler that stops at the first error makes fixing a shader a
+          sequence of round trips — and here a "round trip" is repackaging,
+          re-signing and reinstalling. Authors get the whole list.
+        */
+        for (const p of check.problems) {
+          errors.push(`"${at}.shader"${p.line ? ` line ${p.line}` : ''}: ${p.detail}`);
+        }
+        return;
+      }
     }
 
     const rawParams = entry.params;
@@ -210,10 +350,132 @@ export function parseEffects(raw: unknown, errors: string[]): EffectContribution
       return;
     }
 
-    out.push({ id, label, shader, params });
+    out.push(passes ? { id, label, shader, params, passes } : { id, label, shader, params });
   });
 
   return out;
+}
+
+const PASS_NAME_RE = /^[a-z][a-zA-Z0-9]{0,31}$/;
+
+/**
+ * Validate `effects[i].passes`. Returns `undefined` if the chain is unusable.
+ *
+ * The whole chain is refused on any single bad pass, matching how a bad effect
+ * is dropped whole. A partially-accepted chain is worse than none: it compiles,
+ * it draws, and it draws something the author never wrote.
+ */
+function parsePasses(raw: unknown, at: string, errors: string[]): EffectPass[] | undefined {
+  if (!Array.isArray(raw)) {
+    errors.push(`"${at}.passes" must be an array.`);
+    return undefined;
+  }
+  if (raw.length === 0) {
+    // Not the same as absent. `passes: []` is an author who meant to write a
+    // chain, and rendering nothing while reporting success is how they would
+    // find out.
+    errors.push(`"${at}.passes" is empty. Omit it for a single-pass effect.`);
+    return undefined;
+  }
+  if (raw.length > MAX_PASSES_PER_EFFECT) {
+    errors.push(
+      `"${at}.passes" declares ${raw.length} passes; the limit is ${MAX_PASSES_PER_EFFECT}.`,
+    );
+    return undefined;
+  }
+
+  const passes: EffectPass[] = [];
+  const names = new Set<string>();
+  let bad = false;
+
+  raw.forEach((entry, i) => {
+    const where = `${at}.passes[${i}]`;
+    if (!isPlainObject(entry)) {
+      errors.push(`"${where}" must be an object.`);
+      bad = true;
+      return;
+    }
+
+    const name = typeof entry.name === 'string' ? entry.name : '';
+    if (!PASS_NAME_RE.test(name)) {
+      errors.push(
+        `"${where}.name" must be camelCase letters and digits, starting with a lowercase letter (1–32 characters).`,
+      );
+      bad = true;
+      return;
+    }
+    if (names.has(name)) {
+      // Names are not decoration: each pass compiles to its own registered
+      // shader, keyed by name. A duplicate would silently overwrite.
+      errors.push(`"${where}.name" duplicates an earlier pass "${name}".`);
+      bad = true;
+      return;
+    }
+    names.add(name);
+
+    const wgsl = typeof entry.wgsl === 'string' ? entry.wgsl : '';
+    const check = validateWgsl(wgsl);
+    if (!check.ok) {
+      for (const p of check.problems) {
+        errors.push(`"${where}.wgsl"${p.line ? ` line ${p.line}` : ''}: ${p.detail}`);
+      }
+      bad = true;
+      return;
+    }
+
+    let scale: PassScale = 1;
+    if (entry.scale !== undefined) {
+      if (!(PASS_SCALES as readonly unknown[]).includes(entry.scale)) {
+        errors.push(
+          `"${where}.scale" must be one of ${PASS_SCALES.join(', ')}. `
+          + `An arbitrary factor gives a target whose dimensions round inconsistently against its source.`,
+        );
+        bad = true;
+        return;
+      }
+      scale = entry.scale as PassScale;
+    }
+
+    let reads: PassReads = 'previous';
+    if (entry.reads !== undefined) {
+      if (!(PASS_READS as readonly unknown[]).includes(entry.reads)) {
+        errors.push(`"${where}.reads" must be one of ${PASS_READS.join(', ')}.`);
+        bad = true;
+        return;
+      }
+      reads = entry.reads as PassReads;
+    }
+
+    /*
+      Pass 0 has no `origin` distinct from its `src` — they are the same
+      texture. Accepting `reads: "origin"` there would bind the same view to
+      two slots and quietly work, which teaches an author a mental model that
+      breaks the moment they add a pass in front.
+    */
+    if (i === 0 && reads !== 'previous') {
+      errors.push(
+        `"${where}.reads" is "${reads}", but pass 0 reads the layer itself — `
+        + `its "src" and its "origin" are the same texture. Omit "reads" on the first pass.`,
+      );
+      bad = true;
+      return;
+    }
+
+    passes.push({ name, wgsl, scale, reads });
+  });
+
+  if (bad) return undefined;
+
+  const cost = chainCost(passes);
+  if (cost > MAX_PASS_COST) {
+    errors.push(
+      `"${at}.passes" costs ${cost.toFixed(2)} full-scale passes; the budget is ${MAX_PASS_COST}. `
+      + `A pass at scale s costs s² — render the expensive passes at 0.5 or 0.25 to fit.`,
+    );
+    return undefined;
+  }
+
+  return passes;
 }
 
 /**
@@ -251,8 +513,43 @@ const WGSL_SIZE: Record<EffectParamType, { size: number; align: number }> = {
  * with a garbage transform — the vertex shader reads `mvp` from exactly these
  * bytes. Nothing would have errored.
  */
-export const UNIFORM_HEADER_BYTES = 64;
+export const UNIFORM_RENDERER_HEADER_BYTES = 64;
 const MAT3_STD140_FLOATS = 12;
+
+/**
+ * The host's own block, between the renderer's header and the author's params.
+ *
+ * ── Why a pass needs this ────────────────────────────────────────────────────
+ *
+ * A separable blur samples its neighbours: `uv ± texelSize * i`. Texel size
+ * depends on the target's dimensions, and a pass at `scale: 0.25` renders into
+ * a target a quarter the size — so the value differs per pass, and an author
+ * cannot compute it. Without it the only way to write a blur is to hardcode a
+ * resolution, which is wrong on every composition but the author's.
+ *
+ *   offset 64   texelSize : vec2<f32>   1 / target dimensions
+ *   offset 72   passScale : f32         this pass's scale
+ *   offset 76   passIndex : f32         0-based; a chain can branch on it
+ *   offset 80   _reserved : vec4<f32>   zeroed
+ *
+ * `_reserved` is 16 bytes and is not slack for its own sake. It rounds the
+ * block to 32 so the parameter base lands on 96 — a multiple of 16, which is
+ * what a `vec4` parameter needs — and it means the next thing this block has to
+ * carry (frame time is the obvious candidate) does not move every parameter
+ * offset again. Moving them once, as this change does, already invalidates a
+ * live probe figure; moving them twice would invalidate a shipped plugin.
+ *
+ * Emitted for EVERY effect, single-pass included. A single-pass effect is a
+ * one-pass chain as far as the uniform block is concerned, and two layouts —
+ * one with the block, one without — would mean the offsets depend on a
+ * condition, which is the exact shape of the bug that made the 64-byte header
+ * necessary in the first place.
+ */
+export const UNIFORM_PASS_BLOCK_BYTES = 32;
+
+/** Where an effect's own parameters begin. Renderer header + host pass block. */
+export const UNIFORM_HEADER_BYTES =
+  UNIFORM_RENDERER_HEADER_BYTES + UNIFORM_PASS_BLOCK_BYTES;
 
 /**
  * The parameter block, ordered so it is valid without hand-written padding.
@@ -306,6 +603,12 @@ export function parameterBlock(params: Record<string, LayerPropSchema>): {
   const members: string[] = [
     '  mvp : mat3x3<f32>,',
     '  uvRect : vec4<f32>,',
+    // The host pass block. Declared for every effect, single-pass included —
+    // see UNIFORM_PASS_BLOCK_BYTES for why there is not a narrower variant.
+    '  texelSize : vec2<f32>,',
+    '  passScale : f32,',
+    '  passIndex : f32,',
+    '  _reserved : vec4<f32>,',
   ];
 
   for (const e of entries) {
@@ -337,9 +640,17 @@ export function parameterBlock(params: Record<string, LayerPropSchema>): {
  */
 export function composeEffectShader(
   effect: EffectContribution,
+  /**
+   * Which pass of the effect's chain to compose. Ignored — and necessarily so —
+   * for a single-pass effect, whose source is `effect.shader`.
+   */
+  passIndex = 0,
 ): { wgsl: string; layout: ReturnType<typeof parameterBlock> } {
   const layout = parameterBlock(effect.params);
   const layers = layerParamNames(effect.params);
+  const pass = effect.passes?.[passIndex];
+  const source = pass ? pass.wgsl : effect.shader;
+  const readsOrigin = pass ? pass.reads === 'origin' || pass.reads === 'both' : false;
   const wgsl = [
     layout.wgsl,
     '@group(0) @binding(0) var<uniform> params : Object;',
@@ -361,6 +672,23 @@ export function composeEffectShader(
     ...(layers.length > 0
       ? [`@group(0) @binding(3) var ${layers[0]} : texture_2d<f32>;`]
       : []),
+    /*
+      The pass-0 input, for a pass that composites against it.
+
+      Binding 4 and not 3, even when the effect declares no layer parameter, so
+      `origin` sits at one number for every effect that has one. Reusing 3 when
+      it happens to be free would make the binding table depend on an unrelated
+      part of the manifest, and the resource-binding side would have to
+      reproduce that same condition to agree — two places that must reach the
+      same conclusion, which is how a bind group ends up pointing a shader at
+      the wrong texture.
+
+      A gap at 3 is legal: WebGPU numbers bindings, it does not require them to
+      be contiguous.
+    */
+    ...(readsOrigin
+      ? ['@group(0) @binding(4) var origin : texture_2d<f32>;']
+      : []),
     '',
     /*
       The VERTEX shader is generated too, not just the bindings.
@@ -381,10 +709,15 @@ export function composeEffectShader(
     '  return o;',
     '}',
     '',
-    effect.shader,
+    source,
   ].join('\n');
 
   return { wgsl, layout };
+}
+
+/** How many shaders an effect compiles to. One per pass, or one. */
+export function effectPassCount(effect: EffectContribution): number {
+  return effect.passes?.length ?? 1;
 }
 
 /**
@@ -415,6 +748,36 @@ export function packUniformHeader(
   view.setFloat32(at + 4, uvRect.y, true);
   view.setFloat32(at + 8, uvRect.width, true);
   view.setFloat32(at + 12, uvRect.height, true);
+}
+
+/**
+ * Pack the host's pass block — the 32 bytes at offset 64.
+ *
+ * Written on every draw, for every effect, whether or not it declares a chain.
+ * Leaving it as whatever the buffer last held would give a single-pass effect a
+ * `texelSize` from some other layer's target, and an author who reached for it
+ * would get a blur that changes width depending on what was rendered before.
+ *
+ * `_reserved` is zeroed explicitly for the same reason: it is the one part of
+ * the block a future version will start using, and a plugin that read stale
+ * bytes from it today would break on the day it becomes meaningful.
+ */
+export function packPassBlock(
+  buffer: ArrayBuffer,
+  target: { width: number; height: number },
+  passScale: number,
+  passIndex: number,
+): void {
+  const view = new DataView(buffer);
+  const at = UNIFORM_RENDERER_HEADER_BYTES;
+  // Guarded, because a zero-sized target is a real state during teardown and a
+  // division by it puts Infinity in a uniform — which does not throw, and
+  // renders a layer that is entirely one colour.
+  view.setFloat32(at + 0, target.width > 0 ? 1 / target.width : 0, true);
+  view.setFloat32(at + 4, target.height > 0 ? 1 / target.height : 0, true);
+  view.setFloat32(at + 8, passScale, true);
+  view.setFloat32(at + 12, passIndex, true);
+  for (let i = 0; i < 4; i++) view.setFloat32(at + 16 + i * 4, 0, true);
 }
 
 /** `<pluginId>.<effectId>` — the same namespacing layer kinds use. */

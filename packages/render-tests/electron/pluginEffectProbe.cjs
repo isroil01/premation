@@ -64,15 +64,24 @@ async function run(amounts) {
   const W = 64, H = 64;
 
   /*
-    The SAME struct the host generates: the renderer's mvp/uvRect header first,
-    then the plugin's parameters. If this file and the host ever disagree about
-    that, the probe stops measuring the shipping layout — which is why the
-    header is spelled out here rather than assumed.
+    The SAME struct the host generates: the renderer's mvp/uvRect header, then
+    the HOST PASS BLOCK, then the plugin's parameters. If this file and the host
+    ever disagree about that, the probe stops measuring the shipping layout —
+    which is why every member is spelled out here rather than assumed.
+
+    ★ The pass block is what moved the parameter base from 64 to 96. It is the
+    reason this probe had to be re-run: the previous fit was measured against a
+    layout that no longer exists, and a fit carried across a layout change is a
+    number that looks verified and is not.
   */
   const shader = device.createShaderModule({ code: \`
 struct Object {
   mvp : mat3x3<f32>,
   uvRect : vec4<f32>,
+  texelSize : vec2<f32>,
+  passScale : f32,
+  passIndex : f32,
+  _reserved : vec4<f32>,
   amount : f32,
 };
 @group(0) @binding(0) var<uniform> params : Object;
@@ -88,11 +97,29 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 // Stands in for the author's fragment: a constant input scaled by a parameter.
 // A passthrough would return 1.0 regardless; a parameter at the wrong offset
 // would return whatever the transform happens to hold.
+//
+// The green channel carries the PASS BLOCK back, as a second question asked in
+// the same draw: green is 1.0 only if texelSize, passScale and passIndex all
+// arrived with the values written for them. If the block were misplaced — or
+// omitted, leaving amount back at 64 — red would still track the parameter
+// while green went dark. One number cannot distinguish those; two can.
+//
+// (No backticks in this comment either. It is inside the shader template, which
+// is inside the page template: an escaped backtick here produces a REAL one in
+// the page source and ends the shader string at this line.)
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  return vec4<f32>(1.0, 1.0, 1.0, 1.0) * params.amount;
-}\` });
+  let sizeOk = abs(params.texelSize.x - PROBE_TEXELX) < 0.0001
+            && abs(params.texelSize.y - PROBE_TEXELY) < 0.0001;
+  let scaleOk = abs(params.passScale - 0.5) < 0.0001;
+  let indexOk = abs(params.passIndex - 3.0) < 0.0001;
+  let blockOk = select(0.0, 1.0, sizeOk && scaleOk && indexOk);
+  return vec4<f32>(params.amount, blockOk, 0.0, 1.0);
+}\`
+    .replace('PROBE_TEXELX', (1 / W).toFixed(8))
+    .replace('PROBE_TEXELY', (1 / H).toFixed(8)) });
 
-  const HEADER_FLOATS = 12 + 4;            // padded mat3 + vec4
+  // mat3(12) + uvRect(4) + [texelSize(2) + passScale + passIndex + reserved(4)]
+  const HEADER_FLOATS = 12 + 4 + 8;        // 96 bytes: renderer header + pass block
   const SIZE = Math.ceil((HEADER_FLOATS + 1) * 4 / 16) * 16;
   const uniform = device.createBuffer({ size: SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
@@ -120,7 +147,23 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
     data[0] = 1; data[5] = 1; data[10] = 1;
     // uvRect
     data[12] = 0; data[13] = 0; data[14] = 1; data[15] = 1;
-    // The parameter, at the offset the generated struct puts it.
+    /*
+      The host pass block, at float 16 (byte 64).
+
+      The values are arbitrary but DISTINCTIVE, and that is the point: a
+      passScale of 0.5 and a passIndex of 3 are values no uninitialised buffer
+      and no adjacent member would hold by accident, so the shader's green
+      channel is a real check rather than a coincidence.
+
+      (No backticks anywhere in this comment. It lives inside the template
+      literal that IS the page source, so one would end the string here and
+      leave the rest of the file as syntax errors.)
+    */
+    data[16] = 1 / W; data[17] = 1 / H;   // texelSize
+    data[18] = 0.5;                       // passScale
+    data[19] = 3;                         // passIndex
+    data[20] = 0; data[21] = 0; data[22] = 0; data[23] = 0;   // _reserved, zeroed
+    // The parameter, at the offset the generated struct puts it — now 96.
     data[HEADER_FLOATS] = amount;
     device.queue.writeBuffer(uniform, 0, data);
 
@@ -142,9 +185,14 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
     const px = new Uint8Array(readback.getMappedRange().slice(0));
     readback.unmap();
 
-    let sum = 0;
-    for (let i = 0; i < px.length; i += 4) sum += px[i];
-    out.push(sum / (px.length / 4));
+    // Red is the parameter; green is "the pass block arrived intact". Both are
+    // averaged over the frame — a partial answer in either would show as a
+    // mean between the two extremes rather than as a clean 0 or 255.
+    let red = 0;
+    let green = 0;
+    for (let i = 0; i < px.length; i += 4) { red += px[i]; green += px[i + 1]; }
+    const n = px.length / 4;
+    out.push({ amount: red / n, passBlock: green / n });
   }
 
   await device.queue.onSubmittedWorkDone();

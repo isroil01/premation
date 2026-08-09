@@ -1643,6 +1643,308 @@
           ]
         }
       }
+    },
+    {
+      "name": "api-5 two-pass separable chain",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "blur",
+              "label": "Blur",
+              "passes": [
+                {
+                  "name": "horizontal",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "vertical",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with a downsampled pass",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "bloom",
+              "label": "Bloom",
+              "passes": [
+                {
+                  "name": "bright",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "blur",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "composite",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "reads": "both"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain declaring both shader and passes",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 empty pass chain",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain over the pass count limit",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "c",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "d",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "e",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain over the cost budget",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "c",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "d",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with a duplicate pass name",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with an unsupported scale",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.9
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain reading origin on the first pass",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "reads": "origin"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 effect with neither shader nor passes",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX"
+            }
+          ]
+        }
+      }
     }
   ]
 }
