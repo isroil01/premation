@@ -4,8 +4,11 @@ A single description of what the plugin platform **is today**, across both
 repositories: what it does, how the parts fit, every schema on both sides, and
 the exact surface a plugin can reach.
 
-Everything here is implemented and verified. Where a number or a rule appears it
-was read out of the code, not remembered.
+Everything here is implemented and verified **against the source of both
+repositories**, not against the other documents — the schemas, the method table
+and the manifest interfaces were extracted programmatically, and every constant,
+route, gate and guarantee was re-read in the file that implements it. Nothing
+here is carried over from a description of the system.
 
 **Verified live on 2026-08-09** against a running backend: a real signed package
 was published privately, probed anonymously, flipped to public, downloaded, and
@@ -287,7 +290,7 @@ detail into a signature failure a user reads as "compromised".
 |---|---|---|
 | `GET` | `/plugins` | Browse. `public` visibility only, `blocked:false`, approved versions only. `max-age=60` |
 | `GET` | `/plugins/:id` | Detail. 404 for private. `max-age=60` |
-| `GET` | `/plugins/:id/versions/:version/download` | `no-store` — this increments `installs` |
+| `GET` | `/plugins/:id/versions/:version/download` | `no-store` — increments `installs`. Refuses a version not `approved`, with the same 404 as a version that does not exist |
 | `GET` | `/plugins/categories` · `/plugins/permissions` | Static vocabulary, `max-age=3600` |
 | `GET` | `/plugins/media/:mediaId` | Icons and screenshots |
 | `GET` | `/plugins/revocations` | Signed list; uploads nothing |
@@ -300,7 +303,7 @@ detail into a signature failure a user reads as "compromised".
 | `POST` | `/plugins` | Publish (multipart: file, signature, publicKey, visibility, backupKey) |
 | `GET` | `/plugins/mine/list` | Own shelf, private and blocked included, carries `visibility` |
 | `GET` | `/plugins/mine/:id/detail` | Owner's view, `no-store` |
-| `GET` | `/plugins/mine/:id/versions/:version/download` | Owner download, `no-store` |
+| `GET` | `/plugins/mine/:id/versions/:version/download` | Owner download, `no-store`. Does **not** increment `installs` — an author fetching their own package is not an install |
 | `POST` | `/plugins/updates` | Batch update check for the caller's installed set |
 | `PATCH` | `/plugins/:id/listing` | readme, changelog, license, categories, **visibility** |
 | `POST`/`DELETE` | `/plugins/:id/media/:kind`, `/plugins/media/:id` | Listing images |
