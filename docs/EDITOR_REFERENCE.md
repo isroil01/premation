@@ -135,11 +135,35 @@ Verified present with a reader in the render path, not merely declared.
 
 ### Animation model
 Keyframes with bezier/hold/linear interpolation, a **value + speed graph
-editor**, keyframe-selection time scaling, roving, and easing presets.
+editor**, keyframe-selection time scaling, roving, and Easy Ease assistants.
 Expressions are a **hand-written language** (`packages/animation/src/expressions.ts`,
 ~970 lines) with cycle detection and a depth cap — not `new Function`, which is
 what lets them run under the app's CSP. Step and depth budgets guard against
 main-thread DoS from nested `wiggle()` octaves.
+
+**The expression API is much wider than "curated" suggests** — ~50 identifiers,
+not the "~18 functions" earlier docs claimed. It includes the whole
+time-sampling set the AE idiom library is built on: `valueAtTime`,
+**`velocityAtTime`**, `velocity`, `speed`, `key(n)`, `nearestKey()`, `numKeys`,
+`timeToFrames`, `framesToTime`, `loopIn`/`loopOut`, `sourceRectAtTime`,
+`posterizeTime`, `seedRandom`/`gaussRandom`, vector maths
+(`add`/`sub`/`mul`/`div`/`dot`/`cross`/`normalize`/`length`), layer-space
+conversion, `thisLayer`/`thisProperty`/`thisComp`, markers and `audio`.
+
+That matters more than the count: the standard AE bounce expression, inertial
+follow and delayed-child rigs are all built on `velocityAtTime` + `key()` +
+`numKeys`, and **all three primitives are present**, so that class of expression
+ports as-is. There is no architectural limit on sampling a track away from the
+current frame — `sampleRaw` reads keyframes only, deliberately bypassing the
+expression so `valueAtTime` cannot recurse through itself.
+
+**No bounce/overshoot easing preset**, though. There is no named easing-preset
+registry at all: easing is bezier handles plus the Easy Ease assistants in
+`keyframeAssistants.ts`. `BOUNCE_EASE` in `animationPresets.ts` is a single
+cubic-bezier (`0.175, 0.885, 0.32, 1.275`) used by one preset and commented
+"Elastic bounce" — a cubic-bezier has one overshoot and cannot express a decaying
+bounce. A real one belongs beside `easyEaseAll` as a **keyframe assistant** that
+generates decaying keys — preset authoring, not engine work, as suspected.
 
 ### Compositing
 36 layer blend modes on one GPU shader path (`BLEND_COMBINE`), including the
@@ -183,6 +207,29 @@ are GPU-deformed. AE has no skeleton at all — its users buy DUIK.
 `i / birthRate`, its randoms hash from `i`, position is the closed-form ballistic
 `p0 + v0·age + ½g·age²`. No frame stepping and no accumulated state, so scrubbing
 to any time gives the identical frame. See §4 for the cost of that choice.
+
+### Composition background and export alpha
+
+Composition background and pasteboard are separate at every layer: store
+(`background` + `transparent`), transport (`snapshotToFrameScene`), render
+(`BackgroundPass`, clipped to the comp rect) and UI. A transparent comp is a
+real hole in the canvas; the viewport shows a checkerboard clipped to the comp
+rect behind it (`Workspace.module.css .transparencyGrid` — a DOM element, so no
+render-path or export involvement). The background ColorPicker exposes alpha, so
+**partial** alpha is user-reachable, not only expressible in the model.
+
+What actually reaches each export format — verified against the encoder args,
+because the dialog previously claimed all of them kept alpha:
+
+| Format | Alpha | How |
+|---|---|---|
+| `mov` | ✅ | ProRes 4444, `yuva444p10le` |
+| `webm` | ✅ | VP9 `yuva420p` + `-auto-alt-ref 0`, PNG staging |
+| `png`, `png-sequence` | ✅ | staged as PNG |
+| `mp4` | ❌ | libx264 `yuv420p` — flattened over **black** |
+| `gif` | ❌ | palettegen/paletteuse requests no transparency (the format *has* 1-bit transparency; the graph does not ask) |
+| `jpg-sequence` | ❌ | JPEG has none |
+| `json`, `lottie` | n/a | carry no comp background at all |
 
 ### Import / export
 Lottie **import and export**, SVG import including SMIL and CSS animation,
@@ -381,6 +428,17 @@ other:
   the same isotropic circle and the wash texture was cached on colour alone —
   which was a collision, not just a narrow key. Cone angle, cone feather and
   light angle were three shipped inspector controls with no visual effect.
+
+### Corrected 2026-08-10 (second pass)
+
+| Claim | Reality |
+|---|---|
+| Expressions are a small "curated" API, "~18 functions" | **~50 identifiers**, including `velocityAtTime`, `key(n)`, `numKeys` — so the AE bounce/inertia idiom class ports as-is. No architectural limit on sampling away from the current frame |
+| §3 "easing presets" | There is **no easing-preset registry**. Bezier handles + Easy Ease assistants; `BOUNCE_EASE` is one cubic-bezier used by one preset and cannot express a decaying bounce |
+| The transparency checkerboard was missing | It **existed**, as a full-bleed `.stageTransparent` on the stage — which is why a transparent comp looked like the surrounding panel had changed. Now clipped to the comp rect. (The earlier "only the Checkerboard effect exists" finding was a truncated grep, not a fact) |
+| Layer label colours are unbuilt | **Already ship**: a 12-entry palette on `custom.labelColor` (`labelColor.ts`), persisted through `sceneProjectIO`, read by Scene rows, timeline track headers and clip bars |
+| `SelectionPass` draws the selection chrome | It does **not**. `snapshotToFrameScene` sets `selection: []` unconditionally, so the pass never draws in preview or export; the real outline and handles are 2D-canvas overlay chrome in `useWorkspace.ts` (~1734), on a fixed `ACCENT` |
+| The boot CSP error was cosmetic | It broke a feature: `media="print"` never flipped to `all`, so **no user-selectable document font ever loaded**. The UI looked right because its own faces come from a different `@import` |
 
 ---
 
