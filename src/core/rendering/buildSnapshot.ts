@@ -1282,6 +1282,9 @@ export function buildSnapshot(
           type: lt.type,
           angle: av?.get('lightAngle') ?? lt.angle,
           cone: av?.get('lightCone') ?? lt.cone,
+          // Without this the wash had no feather to apply and a spot's soft
+          // edge was unreachable from the inspector — see rasterizeLight.
+          coneFeather: av?.get('lightConeFeather') ?? lt.coneFeather,
         },
       }, node);
       continue;

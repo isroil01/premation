@@ -139,9 +139,11 @@ export interface RenderLayer {
    *  offscreen texture, then this layer composites that texture as one unit
    *  (its opacity / blend / filter / mask apply to the whole nested result). */
   precompLayers?: ReadonlyArray<RenderLayer>;
-  /** Point light: a radial glow (colour, intensity 0..100, radius px) drawn at
-   *  x,y with a screen blend to brighten the layers beneath. */
-  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number };
+  /** A light layer's 2D wash: a glow drawn at x,y and screen-blended to brighten
+   *  the layers beneath. A SPOT is shaped by `angle`/`cone`/`coneFeather`; every
+   *  other type is a plain radial falloff. `coneFeather` is a PERCENT of the
+   *  half-cone (AE's Cone Feather) — absent ⇒ 20 %, matching `shadeLayer`. */
+  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number; coneFeather?: number };
   /** Particle emitter config. When present, the layer draws a particle system
    *  (simulated deterministically at the current time) instead of its content. */
   particles?: import('@core/particles/particleSim').ParticleConfig;
