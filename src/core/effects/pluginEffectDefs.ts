@@ -18,6 +18,7 @@
  */
 
 import { registeredEffects, effectById } from '@core/plugins/pluginEffects';
+import { pluginsEnabled } from '@core/config/edition';
 import type { EffectDef, EffectParamDef, EffectParamValue, EffectType } from './effects';
 
 /**
@@ -73,8 +74,17 @@ function toEffectDef(registered: ReturnType<typeof registeredEffects>[number]): 
   };
 }
 
-/** Every plugin effect currently installed and enabled, as `EffectDef`s. */
+/**
+ * Every plugin effect currently installed and enabled, as `EffectDef`s.
+ *
+ * Empty in a build with no plugins, and stated rather than inferred. Nothing
+ * can register an effect there — the host never boots — so this would return
+ * `[]` anyway, and that is exactly the reason to write the gate down: an
+ * emptiness that happens to hold is not a gate, and the surface test cannot
+ * tell the two apart by looking at the result.
+ */
 export function pluginEffectDefs(): EffectDef[] {
+  if (!pluginsEnabled()) return [];
   return registeredEffects().map(toEffectDef);
 }
 

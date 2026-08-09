@@ -11,7 +11,7 @@ import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
 import { installPluginPublishIpc } from './pluginPublish';
 import { registerPluginNetIpc } from './pluginNet';
-import { aiEnabled, assertRendererEditionMatches } from './edition';
+import { aiEnabled, pluginsEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
 
@@ -1100,7 +1100,14 @@ app.whenReady().then(() => {
   // A plugin's outbound requests. Here rather than in the renderer because the
   // app shell's `connect-src` does not name a plugin's hosts, and widening it
   // to cover them would widen the whole renderer rather than the plugin.
-  registerPluginNetIpc();
+  //
+  // GATED, for exactly the reason the assistant below is. The local edition
+  // ships no plugins, and "the renderer never calls it" is not a gate on the
+  // privileged side of this boundary. It is also the second of the two channels
+  // in this process that reach a third-party host — the other is aiProxy — so
+  // leaving it registered would hold an outbound path open in a build whose
+  // whole claim is that it has none.
+  if (pluginsEnabled()) registerPluginNetIpc();
   // The account session, and every authenticated call that uses it.
   //
   // Both tokens live in this process. There is no `credentials:get` any more:
@@ -1114,7 +1121,11 @@ app.whenReady().then(() => {
   // publisher's private signing key — stay in this process; the renderer sends
   // bytes and a visibility choice and gets a result back. See pluginPublish.ts
   // for why the key is picked per publish rather than remembered.
-  installPluginPublishIpc();
+  //
+  // Gated with the rest. Publishing needs an account and a registry, neither of
+  // which the local edition has, and the channel opens a file picker — a UI
+  // affordance appearing in a build with no way to use what it produces.
+  if (pluginsEnabled()) installPluginPublishIpc();
 
   // The assistant. Provider keys live here rather than in the renderer —
   // encrypted with the OS keystore, with NO read-back verb (aiKeyVault.ts) — and

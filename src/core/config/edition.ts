@@ -128,9 +128,41 @@ export const aiEnabled = (): boolean => isServerEdition();
 export const aiRunsThroughBackend = (): boolean => isServerEdition();
 
 /**
+ * Plugins — the whole feature, not just the registry.
+ *
+ * Off in the local edition, and this is the predicate to read. It is newer than
+ * `pluginRegistryEnabled` below and strictly wider: that one asks "may this
+ * build talk to the marketplace", which was the only question while the local
+ * edition still ran plugins from disk. It no longer does. A plugin is a hosted
+ * product feature: the registry, the review queue, the signed revocation list
+ * and the takedown path are the things that make running third-party code in
+ * someone's editor defensible, and a build with none of them should not be
+ * offering the sandbox either.
+ *
+ * ── This gate is load-bearing, and a predicate alone would hide nothing ─────
+ *
+ * The same shape `aiEnabled` was in. Every plugin surface is gated
+ * individually — the panel registry, the Plugins menu group, the layer-creation
+ * entries, the effects browser folder, the command palette, and the host's own
+ * boot in `Providers` — and `editionPluginSurface.test.ts` is what keeps that
+ * list honest. If you add a plugin entry point, it fails until it is gated.
+ *
+ * What is deliberately NOT gated: everything that reads plugin content out of a
+ * DOCUMENT. A project containing a custom layer kind, a plugin effect or a
+ * proxy subtree opens, renders and re-saves byte-identically in a build with no
+ * plugin support, exactly as it does after an uninstall in a hosted build.
+ * `uninstalledDocumentRoundTrip.test.ts` is that property.
+ */
+export const pluginsEnabled = (): boolean => isServerEdition();
+
+/**
  * The hosted plugin registry (browse / download / update checks).
  *
- * Off in the local edition. Installing a plugin from a local file is unaffected
- * — that path never touched the network.
+ * Narrower than `pluginsEnabled` and kept separate on purpose: this is the
+ * question "may this code make a network request to the marketplace", and it is
+ * asked deep inside `registry.ts`, where the answer must hold whatever the UI
+ * above it did. A local build making one request to our backend on boot is a
+ * telemetry problem regardless of which surface is hidden, so the network gate
+ * lives at the network, not at the button.
  */
 export const pluginRegistryEnabled = (): boolean => isServerEdition();

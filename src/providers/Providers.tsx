@@ -46,7 +46,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
-import { cloudProjectsEnabled } from '@core/config/edition';
+import { cloudProjectsEnabled, pluginsEnabled } from '@core/config/edition';
 import { chooseBundleDir } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
@@ -1434,15 +1434,22 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // The rest stay inactive, with their commands live, until used.
           // Package bytes live in IndexedDB now, so they have to be back in
           // memory before anything tries to spawn a worker from them.
-          await usePluginStore.getState().hydrate();
-          pluginHost.configure({
-            getSelection: () => useSelectionStore.getState().ids,
-            // What makes `motion.ui.openPanel()` real. The host cannot import
-            // the dock itself (it must stay React-free and testable), so the
-            // shell hands it the two calls it needs.
-            showPanel: (id, panelId) => showPluginPanel(id, panelId),
-            hidePanel: (id, panelId) => hidePluginPanel(id, panelId),
-          });
+          //
+          // Skipped entirely in a build without plugins. Of the six gates this
+          // is the one that matters: the others hide a surface, and this one is
+          // what stops third-party code from running at all — `configure()`
+          // brings up every enabled plugin and starts the ones that asked.
+          if (pluginsEnabled()) {
+            await usePluginStore.getState().hydrate();
+            pluginHost.configure({
+              getSelection: () => useSelectionStore.getState().ids,
+              // What makes `motion.ui.openPanel()` real. The host cannot import
+              // the dock itself (it must stay React-free and testable), so the
+              // shell hands it the two calls it needs.
+              showPanel: (id, panelId) => showPluginPanel(id, panelId),
+              hidePanel: (id, panelId) => hidePluginPanel(id, panelId),
+            });
+          }
           const registry = getCommandRegistry();
           registry.register({
             id: asCommandId('file.export'), label: 'Export…', icon: 'arrow-up',
@@ -1498,7 +1505,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             menu, consistent with `activateForDocument` refusing to wake
             software the user turned off.
           */
-          for (const entry of allLayerKinds()) {
+          for (const entry of pluginsEnabled() ? allLayerKinds() : []) {
             const kind = `${entry.pluginId}.${entry.kind.id}`;
             registry.register({
               id: asCommandId(`layer.new.${kind}`),
@@ -1509,11 +1516,17 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             });
           }
 
-          registry.register({
-            id: asCommandId('view.marketplace'), label: 'Plugins', icon: 'plugin',
-            enabled: () => true,
-            execute: () => useLayoutStore.getState().openPanel('marketplace'),
-          });
+          // Opens the marketplace panel, which a build without plugins does not
+          // register — a palette entry that opens nothing is worse than no
+          // entry, because the user concludes the app is broken rather than
+          // that the feature is absent.
+          if (pluginsEnabled()) {
+            registry.register({
+              id: asCommandId('view.marketplace'), label: 'Plugins', icon: 'plugin',
+              enabled: () => true,
+              execute: () => useLayoutStore.getState().openPanel('marketplace'),
+            });
+          }
           // Pre-existing gap, found by `onDemandPanelsReachable.test.ts`: the
           // History panel is registered, has a renderer, and had nothing that
           // opened it — so undo history was a panel no user could reach.
