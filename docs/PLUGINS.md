@@ -1189,11 +1189,74 @@ Three reasons, and none of them is tidiness:
 - **Hand-written uniform layout is a padding bug** that surfaces as wrong
   colours rather than as an error.
 
-After the header, the generated struct orders your parameters by **alignment,
-descending** — every `vec4` first. A scalar before a `vec4` would leave a
-12-byte hole the struct does not describe, and every member after it would read
-shifted bytes: no compile error, no exception, just wrong colours that look like
-your maths.
+You also get a **host pass block** at offset 64, and one field in it is worth
+knowing about even for a single-pass effect:
+
+```wgsl
+params.texelSize   // vec2 — one over the target's dimensions
+params.passScale   // this pass's downsample
+params.passIndex   // 0-based
+```
+
+`texelSize` is how you sample a neighbour: `uv + vec2(params.texelSize.x, 0.0)`
+is one pixel to the right, at whatever resolution the host allocated. Hardcoding
+a resolution is correct on your composition and wrong on everyone else's, by an
+amount that reads as a bad kernel rather than a bad assumption.
+
+After that block, the generated struct orders your parameters by **alignment,
+descending** — every `vec4` first — starting at offset **96**. A scalar before a
+`vec4` would leave a 12-byte hole the struct does not describe, and every member
+after it would read shifted bytes: no compile error, no exception, just wrong
+colours that look like your maths.
+
+### More than one pass
+
+Declare `passes` instead of `shader` — up to four, each with its own WGSL:
+
+```jsonc
+{
+  "id": "gaussian",
+  "label": "Gaussian Blur",
+  "params": { "radius": { "type": "number", "default": 8, "min": 0, "max": 32 } },
+  "passes": [
+    { "name": "horizontal", "wgsl": "…" },
+    { "name": "vertical",   "wgsl": "…", "reads": "previous" }
+  ]
+}
+```
+
+The host allocates the intermediate targets, ping-pongs them and runs the passes
+in order. You never see a target.
+
+| Field | |
+|---|---|
+| `scale` | `1`, `0.5` or `0.25`. The target's downsample. Default `1` |
+| `reads` | `previous` (default), `origin`, or `both`. `origin` is the pass-0 input, bound at binding 4 |
+
+`reads` is refused on the first pass — its `src` and its `origin` are the same
+texture, and accepting it would teach a model that breaks the moment you add a
+pass in front.
+
+**The cost budget is 3**, where a pass costs `scale²`. A separable blur is 2; a
+bloom (bright pass, two ¼-scale blurs, composite) is about 2.13; four full-scale
+passes is 4 and is refused. Downsample before you reach for another pass — a
+¼-scale pass costs a sixteenth of a full one.
+
+`com.example.separable-blur` is a complete working sample. Two things in it are
+not obvious and will both bite on a first attempt:
+
+- **The loop bound must be a numeric literal** — not a `const`, which the
+  validator's regex does not resolve, and certainly not a uniform. Loop to a
+  fixed maximum and multiply the taps beyond your live radius by zero. A GPU was
+  not saving that work anyway.
+- **Handle the parameter's zero.** At radius 0 a Gaussian's sigma is 0 and every
+  weight is NaN, which draws black — at the setting nobody changes first.
+
+A chain compiles to one pipeline per pass, registered as
+`<pluginId>.<effectId>#<passName>`. A single-pass effect keeps the bare
+`<pluginId>.<effectId>` it always had. If any pass fails to compile the whole
+effect renders passthrough and is marked failed by name — never a half-applied
+chain.
 
 The entry point must be called `fs` because that is the name the render pipeline
 looks for, and every built-in shader here uses it. A differently-named one
@@ -1291,13 +1354,12 @@ expressed as native layers.
 - **The statement ceiling is a proxy for cost, not a cost model.** A real one
   would mean writing a WGSL front end, and a hand-written parser fed hostile
   input is a worse liability than the thing it would protect.
-- **Multi-pass is declared but not implemented.** `effects.multipass` is a
-  reserved capability; the generator still emits the single-pass layout
-  (parameters from offset 64) and a manifest requiring it will not find it. The
-  change moves the parameter base to 96, and the generator, the validator and
-  the uniform-offset probe have to land together with the probe re-run on real
-  hardware — a probe fit carried across a layout change is a number that looks
-  verified and is not.
+- **Four passes, and a cost budget of 3.** Enough for a separable blur (2) or a
+  full bloom (≈2.13); not enough for four full-scale passes (4). If you need
+  more, the answer is almost always to downsample rather than to ask for a
+  fifth pass — a ¼-scale pass costs 1/16 of a full one.
+- **One `layer` parameter per effect**, and it is shared by every pass rather
+  than being per-pass.
 
 ### Gaps found rebuilding the depth plugin on shaders
 

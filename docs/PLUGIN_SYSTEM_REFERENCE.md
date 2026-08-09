@@ -109,9 +109,11 @@ Zipping the folder is fine — one wrapping directory is stripped.
 | Single file | 2 MB | **uncompressed** |
 | File count | 200 | |
 | Inflation ratio | 200× | per entry |
-| Shader source | 64 KB | per effect |
+| Shader source | 64 KB | **per pass** |
+| Passes per effect | 4 | |
+| Pass cost budget | 3 | sum of `scale²` |
 | Decoded image | 64 MB / 8192 px per side | assets API |
-| Shader compile | 5 s | per effect |
+| Shader compile | 5 s per pass, 10 s per chain | |
 | Worker boot | 8 s | per plugin |
 | `storage` — `global` | 1 MB | per plugin, IndexedDB |
 | `storage` — `project` | 256 KB | per plugin, in the document |
@@ -742,7 +744,8 @@ struct. Declaring `@group`, `@binding` or `@vertex` is refused, as is any
 fragment entry not named `fs`.
 
 - The uniform block starts with the renderer's **64-byte header** (`mvp`,
-  `uvRect`); parameters begin at offset 64.
+  `uvRect`), then the host's **32-byte pass block**; parameters begin at
+  offset **96**. See below.
 - Members are ordered by **alignment descending** — every `vec4` first.
 - `boolean` → `f32`. Colour is **0..1**.
 - A `layer` parameter adds a **fourth binding**, named after the parameter, so a
@@ -759,15 +762,82 @@ fragment entry not named `fs`.
   `webgpu` in `requires` to refuse installation outright. The effect is still
   saved with the project and draws on a machine that can.
 
-> **Multi-pass is declared, not shipped.** `effects.multipass` is in the
-> capability list and reserved, but the WGSL generator still emits a
-> single-pass layout: one fragment entry, the 64-byte header, parameters from
-> offset 64. A manifest requiring it will not find it. The change moves the
-> parameter base from 64 to 96, and the brief that specifies it requires the
-> generator, the validator and the uniform-offset probe to land in **one
-> commit** with the probe re-run on real hardware — which has not happened, so
-> none of it has. The §10 probe figure below still describes the current,
-> single-pass layout.
+### Multi-pass (capability `effects.multipass`)
+
+An effect may declare up to **4** passes instead of one `shader`. The two are
+mutually exclusive — an effect declaring both does not say which one draws.
+
+```ts
+interface EffectPass {
+  name: string;                              // camelCase, unique in the chain
+  wgsl: string;                              // same one-`fs` contract, same validator
+  scale?: 1 | 0.5 | 0.25;                    // target downsample, default 1
+  reads?: 'previous' | 'origin' | 'both';    // default 'previous'
+}
+```
+
+The host allocates the targets, ping-pongs them and sequences the draws. A
+plugin never sees a target, never allocates one, and still never runs code in
+the frame loop.
+
+**Bindings per pass.** 0 uniform, 1 `src` (the previous pass's output, or the
+layer for pass 0), 2 `samp`, 3 the optional `layer` param texture, **4 optional
+`origin`** — the pass-0 input — when `reads` is `origin` or `both`. `origin`
+stays at 4 even when 3 is unused: sliding it down would make a binding number
+depend on an unrelated part of the manifest, which the generator and the
+resource-binding side would each have to derive separately.
+
+`reads` is refused on pass 0, whose `src` and `origin` are the same texture.
+
+**The cost budget.** A pass costs `scale²` — its share of the pixels — and a
+chain may total **3**. Both numbers differ from the work order that specified
+them (`1/scale²`, budget 6), which was inverted and self-contradictory:
+`1/scale²` scores quarter scale, the cheapest pass allowed, at sixteen times a
+full one and puts a single one over the budget; and under either exponent four
+full-scale passes cost 4, so a budget of 6 does not refuse the chain the same
+brief says it must.
+
+| Chain | Cost | |
+|---|---|---|
+| Separable blur, two full-scale passes | 2 | ✓ |
+| Bloom: bright pass, two ¼-scale blurs, composite | ≈2.13 | ✓ |
+| Four ¼-scale passes | 0.25 | ✓ |
+| Four full-scale passes | 4 | ✗ |
+
+**Compilation.** 5 s per pass, 10 s total. Any pass failing renders the whole
+effect passthrough and marks it failed by name — never a partially applied
+chain. Device loss disables by name, reversibly, as before.
+
+**Registry naming.** A single-pass effect keeps the bare
+`<pluginId>.<effectId>`, unchanged, so every already-published effect resolves
+exactly as it did. A chain suffixes each pass: `acme.blur#horizontal`.
+
+A working two-pass separable Gaussian blur ships as
+`src/layout/Plugins/blurSamplePlugin.ts`.
+
+### The host pass block — why parameters start at 96
+
+A pass needs its own texel size: a blur samples `uv ± texelSize`, and a pass at
+`scale: 0.25` renders into a quarter-size target, so the value differs per pass
+and an author cannot compute it. A 32-byte host block sits between the
+renderer's header and the author's parameters.
+
+```
+offset  0   renderer header      mvp (48) + uvRect (16)      64 bytes
+offset 64   host pass block      texelSize : vec2<f32>
+                                 passScale : f32
+                                 passIndex : f32
+                                 _reserved : vec4<f32>       32 bytes
+offset 96   parameters, alignment-descending as before
+```
+
+`_reserved` rounds the block to 32 so the parameter base is 16-aligned, and so
+the next field this has to carry does not move every offset again.
+
+The block is emitted for **single-pass effects too**. Two layouts would make
+every parameter offset depend on a condition that the CPU packer and the shader
+generator each evaluate separately — the exact shape of the bug that made the
+64-byte renderer header necessary in the first place.
 
 ### Network (API 4)
 `net:fetch` ⟺ `contributes.net`, both directions, max 8 exact hosts.
@@ -890,14 +960,28 @@ Against a running backend, with a real signed package (`auditco.secret-tool`):
 
 Shader compilation is verified separately on a real GPU: the composed WGSL for a
 two-texture effect compiles with zero diagnostics and builds a valid four-binding
-pipeline (`npm run verify-plugin-effect`, plus the uniform-offset probe, which
-fits `out = 254.80·amount`, R² = 1.0000).
+pipeline (`npm run verify-plugin-effect`, plus the uniform-offset probe).
 
-> That probe figure describes the **single-pass** uniform layout — parameters at
-> offset 64 — which is what ships. It is recorded here rather than recomputed,
-> and it must be re-run and re-recorded in the same commit that moves the
-> parameter base to 96 for multi-pass. A probe fit carried across a layout
-> change is a number that looks verified and is not.
+**Re-run on real hardware for the multi-pass layout, 2026-08-10:**
+
+| amount | mean output | pass block |
+|---|---|---|
+| 0.00 | 0.00 | 255 |
+| 0.25 | 64.00 | 255 |
+| 0.50 | 127.00 | 255 |
+| 0.75 | 191.00 | 255 |
+| 1.00 | 255.00 | 255 |
+
+`out = 254.80·amount + 0.00`, R² = 1.0000, parameter read from **offset 96**.
+
+> ★ **The fit is identical to the one recorded for the 64-byte layout, and that
+> is exactly why the probe gained a second channel.** Moving the parameter and
+> the packing together produces the same slope, so the slope alone cannot
+> distinguish the new layout from the old one — or from a build that dropped
+> the pass block and left `amount` back at 64. The shader now also returns
+> whether `texelSize`, `passScale` and `passIndex` arrived intact, in the green
+> channel. Confirmed non-vacuous by corrupting one packed value: green fell to
+> 0 across all five samples while the fit stayed at R² = 1.0000.
 
 Not verified live, and worth being explicit about: the counting split
 ([§5](#the-two-counters)) and the distinct-reporter ordering are covered by unit
