@@ -58,8 +58,25 @@ const TEXT_EXT = /\.(js|mjs|json|html|htm|css|svg|txt|md|wgsl|glsl)$/i;
  * base64 in a `.js` file, which is the same bytes plus 33% and no size check.
  * SVG stays in `TEXT_EXT` — it is markup, and treating it as opaque bytes
  * would lose the one thing that makes it useful in a panel.
+ *
+ * ── `.wasm` ──────────────────────────────────────────────────────────────────
+ *
+ * A plugin may ship compiled code and instantiate it in the worker. That reads
+ * like a widening and is not: the module is INSIDE the signed package, so it
+ * carries the same signature, the same 2 MB per-file cap and the same 8 MB
+ * package cap as the JavaScript beside it, and it receives no imports the
+ * plugin's own JS does not hand it. It reaches nothing that JS could not.
+ *
+ * What it buys is the difference between scripting and a platform: solvers,
+ * mesh libraries, codecs and tracers are written in another language and cannot
+ * usefully be ported. Refusing it would not make the sandbox smaller — it would
+ * push the same work into hand-written asm.js, which is the same power with
+ * worse ergonomics and no size check.
+ *
+ * `WebAssembly.instantiateStreaming` is removed at lockdown: it takes a network
+ * response, and the worker has no network. See `pluginWorker.ts`.
  */
-const BINARY_EXT = /\.(png|jpg|jpeg|webp)$/i;
+const BINARY_EXT = /\.(png|jpg|jpeg|webp|wasm)$/i;
 
 const MANIFEST_NAME = 'plugin.json';
 

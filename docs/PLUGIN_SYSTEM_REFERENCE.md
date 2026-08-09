@@ -72,7 +72,7 @@ the registry reads the zip's central directory. Sizes checked on compressed
 bytes bound nothing — 64 MB of zeros stores in 65 KB.
 
 File types: `.js .mjs .json .html .htm .css .svg .txt .md .wgsl .glsl` as text,
-`.png .jpg .jpeg .webp` as binary. Paths containing `..` are refused.
+`.png .jpg .jpeg .webp .wasm` as binary. Paths containing `..` are refused.
 
 `main` is loaded as one file — bundle dependencies in.
 
@@ -365,6 +365,12 @@ and blocking stop distribution, not execution.
 
 - Web Worker, ESM, lockdown applied before the plugin's module is imported.
 - No `new Function`, no non-literal dynamic `import`.
+- **WebAssembly is allowed**, from bytes inside the signed package. A `.wasm`
+  file carries the same signature and the same size limits as the JavaScript
+  beside it, and an instantiated module receives no imports the plugin's own JS
+  did not hand it — so it reaches exactly what that JS could. Capability `wasm`.
+  `WebAssembly.instantiateStreaming` and `compileStreaming` are **removed**:
+  both take a network response, and the worker has no network.
 - Panels run in a sandboxed iframe **without** `allow-same-origin`, with their
   own CSP (`connect-src 'none'` — a panel has no network even when the plugin
   has `net:fetch`).

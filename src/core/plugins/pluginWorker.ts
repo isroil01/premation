@@ -74,6 +74,41 @@ function lockdown(): void {
     Object.defineProperty(self.navigator, 'sendBeacon', { value: denied('navigator.sendBeacon') });
   } catch { /* not present in every engine */ }
 
+  /*
+    WebAssembly stays. The STREAMING variants do not.
+
+    Whether `WebAssembly` survived lockdown was undocumented, which was the real
+    defect: it is the difference between "scripting" and "a platform" — solvers,
+    mesh libraries, codecs and tracers are written in another language and
+    cannot usefully be ported — and an author had no way to know whether relying
+    on it was supported or an accident about to be closed.
+
+    It is allowed, and the reasoning is that it widens nothing. A `.wasm` file
+    lives inside the signed package, so it carries the same signature and the
+    same size limits as the JavaScript beside it, and the host hands an
+    instantiated module no imports at all: whatever it can call, the plugin's
+    own JS passed in, and that JS is already gated. Refusing it would not shrink
+    the sandbox — it would push the same work into hand-written asm.js.
+
+    The streaming pair is different in kind. Both take a `Response`, which means
+    a network fetch, and this realm has none: `fetch` is already denied above,
+    so `instantiateStreaming` could only ever be reached with a Response the
+    plugin obtained some other way. Removing them keeps "a plugin has no network
+    of its own" true with no exceptions to remember.
+  */
+  const wasm = (self as unknown as { WebAssembly?: Record<string, unknown> }).WebAssembly;
+  if (wasm) {
+    for (const name of ['instantiateStreaming', 'compileStreaming']) {
+      try {
+        Object.defineProperty(wasm, name, {
+          value: denied(`WebAssembly.${name}`),
+          configurable: false,
+          writable: false,
+        });
+      } catch { /* absent in this engine, which is the same outcome */ }
+    }
+  }
+
   forwardConsole();
 }
 
