@@ -13,6 +13,7 @@ import type { Effect } from '@core/effects/effects';
 import type { LayerMask } from '@core/effects/mask';
 import type { TrackMatte } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
+import type { ShaderLight } from '@core/scene/lightShading';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
 
@@ -472,22 +473,17 @@ export interface RenderSnapshot {
     /** Camera world position — the eye for Blinn-Phong specular. */
     eye?: readonly [number, number, number];
   };
-  /** Scene lights in shader terms (per-fragment Accepts-Lights shading on the
-   *  depth path). Emitted only when the frame has 3D layers AND lights. Colors
-   *  are linear 0..1 RGB; `gain` = intensity/100; `aimX/aimY` = cos/sin of the
-   *  light's 2D aim angle; `halfConeRad` is the spot half-cone in radians. */
-  lights3d?: ReadonlyArray<{
-    type: 'ambient' | 'point' | 'spot' | 'parallel';
-    color: { r: number; g: number; b: number };
-    gain: number;
-    x: number;
-    y: number;
-    z: number;
-    radius: number;
-    aimX: number;
-    aimY: number;
-    halfConeRad: number;
-  }>;
+  /**
+   * Scene lights in shader terms (per-fragment Accepts-Lights shading on the
+   * depth path). Emitted only when the frame has 3D layers AND lights.
+   *
+   * Refers to `ShaderLight` rather than restating its shape. This was a third
+   * structural copy of the same DTO, and copies are how `coneFeather`,
+   * `falloff` and `poi` came to be honoured on the CPU and silently dropped on
+   * the GPU — a field added to one declaration and not the others still
+   * typechecks everywhere.
+   */
+  lights3d?: ReadonlyArray<ShaderLight>;
 }
 
 export interface RenderBackend {

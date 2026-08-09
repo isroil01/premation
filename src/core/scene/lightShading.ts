@@ -18,7 +18,7 @@
  */
 
 import { Color } from '@motion/renderer';
-import { lightFalloffAt, type Light } from './light';
+import { lightFalloffAt, LIGHT_DEFAULTS, type Light } from './light';
 
 /**
  * A light placed in the scene. The newer AE properties are OPTIONAL here even
@@ -89,9 +89,14 @@ export function planeNormalOf(world: ArrayLike<number>): readonly [number, numbe
  */
 /** A scene light in the 3D shader's terms (matches the renderer's Shade3DLight
  *  and the RenderSnapshot `lights3d` DTO): linear RGB, gain = intensity/100,
- *  aim as cos/sin of the 2D angle, spot half-cone in radians. The conversion
+ *  a RESOLVED 3D unit aim, spot half-cone and feather in radians. The conversion
  *  lives here so the per-quad CPU model above and the per-fragment GPU model
- *  read the SAME numbers. */
+ *  read the SAME numbers.
+ *
+ *  Everything derived is resolved HERE rather than in the shader — the aim's
+ *  per-type legacy fallback, the feather percentage, the falloff-distance
+ *  default. Each is a place the two models could disagree, and a WGSL/GLSL pair
+ *  is the worst place to keep a default in step with TypeScript. */
 export interface ShaderLight {
   type: SceneLight['type'];
   color: { r: number; g: number; b: number };
@@ -100,9 +105,41 @@ export interface ShaderLight {
   y: number;
   z: number;
   radius: number;
+  /** Resolved 3D UNIT aim — the POI direction, or this type's legacy 2D-angle
+   *  fallback. Was cos/sin of `angle`, which could not express a POI at all. */
   aimX: number;
   aimY: number;
+  aimZ: number;
+  /** Spot half-cone in radians. */
   halfConeRad: number;
+  /** Spot cone feather as ABSOLUTE radians (half-cone × the percentage), not a
+   *  percentage — the shader hardcoded 20 % because it never received this. */
+  coneFeatherRad: number;
+  /** 0 = none (legacy hard radius cutoff + linear ramp), 1 = smooth,
+   *  2 = inverse-square. Mirrors `LightFalloff` for a numeric uniform. */
+  falloffMode: number;
+  /** Smooth-curve span in px, default already applied. */
+  falloffDistance: number;
+}
+
+const FALLOFF_ID: Record<string, number> = { none: 0, smooth: 1, 'inverse-square': 2 };
+
+/**
+ * The 3D unit aim a light actually shades with.
+ *
+ * A POI wins. Without one, each type keeps its OWN legacy 2D-angle behaviour —
+ * parallel tilts 45° into the scene, spot tests a flat comp-plane cone — which
+ * is why this cannot collapse to a single shared fallback without re-lighting
+ * every existing scene. Identical to the two `??` fallbacks in `shadeLayer`.
+ */
+function resolvedAim(light: SceneLight): readonly [number, number, number] {
+  const poi = lightAim3D(light);
+  if (poi) return poi;
+  const dx = Math.cos(light.angle * DEG);
+  const dy = Math.sin(light.angle * DEG);
+  return light.type === 'parallel'
+    ? [dx * Math.SQRT1_2, dy * Math.SQRT1_2, -Math.SQRT1_2]
+    : [dx, dy, 0];
 }
 
 export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[] {
@@ -111,6 +148,11 @@ export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[]
     const gain = Math.max(0, light.intensity / 100);
     if (gain <= 0) continue;
     const c = Color.fromHex(light.color);
+    const aim = resolvedAim(light);
+    const halfConeRad = Math.max(1e-3, (light.cone / 2) * DEG);
+    // Absent ⇒ 20 %, so untouched lights keep the edge they had. Same rule as
+    // `shadeLayer`; expressed once, in absolute radians, for both consumers.
+    const featherPct = light.coneFeather === undefined ? 0.2 : Math.max(0, light.coneFeather) / 100;
     out.push({
       type: light.type,
       color: { r: c.r, g: c.g, b: c.b },
@@ -119,9 +161,13 @@ export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[]
       y: light.y,
       z: light.z,
       radius: light.radius,
-      aimX: Math.cos(light.angle * DEG),
-      aimY: Math.sin(light.angle * DEG),
-      halfConeRad: Math.max(1e-3, (light.cone / 2) * DEG),
+      aimX: aim[0],
+      aimY: aim[1],
+      aimZ: aim[2],
+      halfConeRad,
+      coneFeatherRad: halfConeRad * featherPct,
+      falloffMode: FALLOFF_ID[light.falloff ?? 'none'] ?? 0,
+      falloffDistance: Math.max(1, light.falloffDistance ?? LIGHT_DEFAULTS.falloffDistance),
     });
   }
   return out;

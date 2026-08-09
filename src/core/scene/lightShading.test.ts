@@ -160,4 +160,76 @@ describe('toShaderLights (shader-term conversion for the per-fragment path)', ()
     expect(out).toHaveLength(1);
     expect(out[0]!.halfConeRad).toBeGreaterThanOrEqual(1e-3);
   });
+
+  /**
+   * The three parameters that used to stop at the CPU.
+   *
+   * `lightShaderParity.test.ts` proves each field CROSSES to the DTO; these
+   * prove it crosses carrying the right number. Both matter: a field wired
+   * through with the wrong derivation typechecks, satisfies the structural
+   * guard, and still renders wrong — roughly how the hardcoded 20 % feather
+   * survived. Everything derived is asserted against `shadeLayer`'s own rule,
+   * because the CPU path is the reference wherever the two could disagree.
+   */
+  describe('parameters that previously never reached the shader', () => {
+    const half = (cone: number) => Math.max(1e-3, (cone / 2) * (Math.PI / 180));
+
+    it('cone feather is absolute radians, not a percentage', () => {
+      const [l] = toShaderLights([{ ...base, type: 'spot', coneFeather: 50 }]);
+      expect(l!.coneFeatherRad).toBeCloseTo(half(60) * 0.5, 9);
+    });
+
+    it('an absent cone feather keeps the legacy 20 % the shader used to hardcode', () => {
+      const [l] = toShaderLights([{ ...base, type: 'spot' }]);
+      expect(l!.coneFeatherRad).toBeCloseTo(half(60) * 0.2, 9);
+    });
+
+    it('a zero feather is a hard edge and survives as one', () => {
+      // Distinguishable from "absent" only because the default is applied here
+      // rather than in the shader — the shader cannot tell 0 from undefined.
+      const [l] = toShaderLights([{ ...base, type: 'spot', coneFeather: 0 }]);
+      expect(l!.coneFeatherRad).toBe(0);
+    });
+
+    it('falloff mode maps to the shader enum and defaults the smooth span', () => {
+      expect(toShaderLights([{ ...base }])[0]!.falloffMode).toBe(0);
+      expect(toShaderLights([{ ...base, falloff: 'smooth' }])[0]!.falloffMode).toBe(1);
+      expect(toShaderLights([{ ...base, falloff: 'inverse-square' }])[0]!.falloffMode).toBe(2);
+
+      expect(toShaderLights([{ ...base, falloff: 'smooth', falloffDistance: 250 }])[0]!.falloffDistance).toBe(250);
+      // Absent ⇒ the same default lightFalloffAt applies, resolved here so the
+      // shader never has to know it.
+      expect(toShaderLights([{ ...base, falloff: 'smooth' }])[0]!.falloffDistance).toBeGreaterThan(0);
+    });
+
+    it('a Point of Interest becomes the resolved 3D aim', () => {
+      // POI directly below the light: aim is +Y — and crucially z is
+      // expressible at all, which the old cos/sin pair could not do.
+      const [l] = toShaderLights([{ ...base, type: 'spot', x: 0, y: 0, z: 0, poi: { x: 0, y: 100, z: 0 } }]);
+      expect(l!.aimX).toBeCloseTo(0, 9);
+      expect(l!.aimY).toBeCloseTo(1, 9);
+      expect(l!.aimZ).toBeCloseTo(0, 9);
+
+      const [d] = toShaderLights([{ ...base, type: 'spot', x: 0, y: 0, z: 0, poi: { x: 0, y: 0, z: 100 } }]);
+      expect(d!.aimZ).toBeCloseTo(1, 9);
+    });
+
+    it('without a POI each type keeps its OWN legacy fallback', () => {
+      // Collapsing these into one shared default would silently re-light every
+      // existing scene, which is why shadeLayer has two distinct `??` branches.
+      const [spot] = toShaderLights([{ ...base, type: 'spot', angle: 0 }]);
+      expect([spot!.aimX, spot!.aimY, spot!.aimZ]).toEqual([1, 0, 0]);
+
+      const [par] = toShaderLights([{ ...base, type: 'parallel', angle: 0 }]);
+      expect(par!.aimX).toBeCloseTo(Math.SQRT1_2, 9);
+      expect(par!.aimZ).toBeCloseTo(-Math.SQRT1_2, 9);
+    });
+
+    it('every emitted aim is unit length (the shader does not normalise)', () => {
+      for (const type of ['point', 'spot', 'parallel'] as const) {
+        const [l] = toShaderLights([{ ...base, type, angle: 37 }]);
+        expect(Math.hypot(l!.aimX, l!.aimY, l!.aimZ)).toBeCloseTo(1, 9);
+      }
+    });
+  });
 });
