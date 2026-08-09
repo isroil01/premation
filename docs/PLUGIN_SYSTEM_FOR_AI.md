@@ -63,6 +63,8 @@ If a plugin doc disagrees with this table, that doc is stale.
 1. **A plugin never runs code in the frame loop.** Effects are WGSL shipped as
    *data*; the host generates the bindings, the vertex stage and the uniform
    struct. This is why a plugin effect keeps drawing with the worker stopped.
+   Multi-pass does not change it: a plugin *declares* up to 4 passes and the
+   host allocates the targets, ping-pongs them and sequences the draws.
 2. **A panel has no network.** `connect-src 'none'`, unconditionally.
 3. **Permissions are intersected, never widened.** A grant is
    `manifest ∩ user choice`, and any increase re-enters consent.
@@ -179,16 +181,30 @@ only in `motion-back`, so it lives there alone.
 - **Rendering HTML at write time cannot be repaired.** A renderer bug poisons
   every row already written. README renders on read; `readmeHtml` is deprecated
   and always `NULL`.
+- **A GPU probe that moves the thing it measures proves nothing.** Shifting the
+  effect parameter base from 64 to 96 changed the packing and the shader
+  together, so the slope fit came back *identical* — `254.80·amount`,
+  R² = 1.0000, before and after. The probe now returns a second channel
+  verifying the pass block itself, which is what actually discriminates the two
+  layouts.
+- **Effect parameters start at 96, not 64.** Renderer header (64) + host pass
+  block (32). The pass block is emitted for single-pass effects too — two
+  layouts would make every offset depend on a condition that the CPU packer and
+  the shader generator each have to evaluate and agree on.
 
 ---
 
 ## Known gaps, stated
 
-- **Multi-pass effects are declared, not implemented.** `effects.multipass` is a
-  reserved capability; the generator still emits the single-pass uniform layout.
-  Landing it moves the parameter base from 64 to 96 and requires the generator,
-  the validator and the uniform-offset probe in one commit, with the probe
-  re-run on real hardware.
+- **An effect-only plugin cannot decline to start a worker.**
+  `activationEvents: []` normalises to `['onStartup']` — empty and absent both
+  read as "no opinion", and the safe reading of no opinion is the API-1
+  behaviour. An effect is data and draws without its plugin running, so the
+  worker is pure overhead. Costs one idle worker per such plugin.
+- **The WGSL validator refuses a `const` loop bound**, accepting only a numeric
+  literal, because it reads the loop header with a regex rather than parsing
+  WGSL. Stricter than WGSL requires, and deliberately: the alternative is a
+  hand-written front end fed hostile input.
 - **A worker cannot read its own `.wasm`.** WebAssembly is allowed and `.wasm`
   is carried in the package, but the boot message does not include `binaries`.
   Embedding the module in `main.js` works; a `package.read(path)` verb is the
