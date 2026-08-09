@@ -43,6 +43,7 @@ import { pluginRegistryEnabled } from '@core/config/edition';
 import { installFromRegistry, updateFromRegistry } from './installFromRegistry';
 import { ConsentSheet, ConsentOverlay } from './ConsentSheet';
 import { ReportPluginDialog } from './ReportPluginDialog';
+import { ReadmeFrame } from './ReadmeFrame';
 import type { PluginPackage } from '@core/plugins/pluginPackage';
 import styles from './PluginDetailTab.module.css';
 
@@ -425,13 +426,18 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
         <div className={styles.section}>
           <span className={styles.sectionTitle}>About</span>
           {/*
-            Rendered and sanitised SERVER-SIDE, at write time, by a
-            construct-only Markdown renderer — raw HTML in a README is escaped
-            to text and never interpreted. This is the one place the editor
-            injects markup it did not author, and it is safe because of what
-            produced the string, not because of anything done here.
+            Framed, not injected.
+
+            The registry renders this with a construct-only Markdown renderer —
+            raw HTML in a README is escaped to text and never interpreted —
+            which is the primary control and a strong one. It is also code. A
+            bug in it, injected here, would run in the renderer process that
+            holds the user's session, their project and the preload bridge; and
+            unlike a plugin, a README a user merely BROWSES has been granted
+            nothing. So it renders in a sandboxed frame with no same-origin
+            access and no network. See `readmeDocument.ts`.
           */}
-          <div className={styles.readme} dangerouslySetInnerHTML={{ __html: detail.readmeHtml }} />
+          <ReadmeFrame html={detail.readmeHtml} />
         </div>
       )}
 
