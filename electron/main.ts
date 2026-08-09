@@ -664,6 +664,11 @@ function registerRenderIpc(): void {
             '-c:v', 'libx264',
             '-preset', opts.quality === 'draft' ? 'veryfast' : 'medium',
             '-crf', crf,
+            // H.264 carries no alpha. A transparent comp stages as RGBA PNG and
+            // this conversion flattens it over BLACK — ffmpeg's own behaviour,
+            // relied on deliberately rather than stumbled into, and now stated
+            // in the composition settings dialog so nobody first discovers it
+            // in a delivered file. mov (ProRes 4444) and webm (VP9) keep alpha.
             '-pix_fmt', 'yuv420p',
             // Streaming-friendly: without faststart the moov atom lands at the
             // end and browsers refuse to play the file until it fully downloads.
