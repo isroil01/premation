@@ -150,6 +150,12 @@ class PluginHost {
    *  to enabled-ness, not to a running worker — an inactive plugin's commands
    *  are in the palette, which is what lets invoking one start it. */
   private readonly declaredCommandIds = new Map<string, CommandId[]>();
+  /** The registry has answered about revocations at least once this session. */
+  private revocationsConfirmed = false;
+  /** A revocation fetch is outstanding — do not start a second. */
+  private revocationCheckInFlight = false;
+  /** Plugins whose `malicious` notice the user has not yet acknowledged. */
+  private readonly unacknowledgedTakedowns = new Set<string>();
 
   constructor() {
     this.setupPostMessageBridge();
@@ -217,17 +223,62 @@ class PluginHost {
       notifyAuthoredChange(nodeId, record.kind, propName);
     });
 
+    /*
+      The CACHED list is enforced first, before anything is brought up.
+
+      Not an optimisation, and not redundant with the fetch below. The fetch
+      only enforces when it obtains a NEW list — a 304, or no network at all,
+      correctly changes nothing — so a plugin already named in the cached list
+      would otherwise be started by `bringUpEnabled` on every cold start and
+      stopped only if the registry happened to send a different list.
+
+      Enforcing first rather than after also means it never runs: the entry is
+      disabled by the time `bringUpEnabled` looks at it, so there is no window
+      in which a revoked plugin's `activate()` has executed.
+    */
+    this.enforceRevocations();
+
     this.bringUpEnabled();
 
     /*
-      The kill switch, checked once at boot.
+      And then ask whether the list has changed.
 
       Deliberately not awaited: an editor that delayed its own startup because a
       revocation check had not answered would be worse than the problem, and
-      working offline is normal. Anything it finds is enforced the moment it
+      working offline is normal. Anything NEW it finds is enforced the moment it
       arrives rather than at the next restart.
     */
-    void refreshRevocations(fetchRevocationList, () => this.enforceRevocations());
+    this.checkRevocations();
+  }
+
+  /**
+   * Ask the registry about revocations, at most once successfully per session.
+   *
+   * Called at boot and again before the first plugin actually starts. The
+   * second call is not redundancy — it covers the case the first cannot: a
+   * machine that launched the editor offline, or behind a captive portal, got
+   * nothing at boot and would otherwise run whatever it has installed until the
+   * next restart, which for an editor left open may be days.
+   *
+   * The flag is set on a SERVER ANSWER, not on the attempt. A fetch that timed
+   * out, or a list that failed verification, leaves it clear so the next
+   * activation tries again — otherwise one bad response silences the check for
+   * the session, which is what an attacker serving garbage would want.
+   *
+   * Not awaited by either caller, including the one before activation. Blocking
+   * a plugin's start on a network round trip would put the registry in the path
+   * of every command a user runs. The check is still worth having unblocking:
+   * the answer lands seconds later and `enforceRevocations` stops anything it
+   * names mid-session, exactly as it does for a takedown that arrives an hour
+   * into a session.
+   */
+  private checkRevocations(): void {
+    if (this.revocationsConfirmed || this.revocationCheckInFlight) return;
+    this.revocationCheckInFlight = true;
+    void refreshRevocations(fetchRevocationList, () => this.enforceRevocations())
+      .then((answered) => { if (answered) this.revocationsConfirmed = true; })
+      .catch(() => { /* `refreshRevocations` does not throw; belt and braces. */ })
+      .finally(() => { this.revocationCheckInFlight = false; });
   }
 
   /**
@@ -386,6 +437,11 @@ class PluginHost {
   private start(entry: InstalledPlugin): void {
     const id = entry.manifest.id;
     if (this.runtimes.has(id)) return;
+
+    // The single funnel every plugin passes through to actually run, which is
+    // why the pre-activation revocation check hangs here rather than on the
+    // handful of paths that lead to it. A no-op once the registry has answered.
+    this.checkRevocations();
 
     let worker: Worker;
     try {
@@ -897,13 +953,39 @@ class PluginHost {
       // is worse than the takedown it implements — the user assumes a bug and
       // goes looking for the plugin, or reinstalls it.
       this.appendLog(id, 'error', `Withdrawn by the registry: ${revoked.reason}`);
-      if (wasRunning) {
-        // A toast only when it was actually RUNNING. A plugin that was already
-        // inactive stopping is not news; one that vanished mid-session is.
+
+      /*
+        How loudly to say it depends on WHY.
+
+        A plugin withdrawn because it broke on a new release and one withdrawn
+        because it was uploading projects both stop running, and telling the
+        user about them in the same 12-second toast is wrong in one direction:
+        the second is a reason to go and check what that plugin had access to,
+        and a toast that expires while they are looking at the canvas is a
+        notice they never received.
+
+        So `malicious` gets a notice that does not expire on its own, and stays
+        recorded against the plugin until the user acknowledges it. Everything
+        else keeps the toast it had, because most takedowns are mild and a
+        product that shouts about all of them teaches people to dismiss the
+        shouting.
+      */
+      const severe = revoked.category === 'malicious';
+      if (severe) this.unacknowledgedTakedowns.add(id);
+
+      if (wasRunning || severe) {
+        // A toast only when it was actually RUNNING — a plugin that was already
+        // inactive stopping is not news, one that vanished mid-session is — or
+        // when the reason is severe enough that the user should be told
+        // regardless of whether they were using it at that moment.
         useUIStore.getState().notify({
           level: 'error',
-          message: `"${entry.manifest.name}" was withdrawn by the registry: ${revoked.reason}`,
-          durationMs: 12000,
+          message: severe
+            ? `"${entry.manifest.name}" was withdrawn by the registry as malicious: ${revoked.reason}`
+            : `"${entry.manifest.name}" was withdrawn by the registry: ${revoked.reason}`,
+          // `0` is "until dismissed". The user has to have seen it to close it,
+          // which is the whole difference between telling someone and logging.
+          durationMs: severe ? 0 : 12000,
         });
       }
       stopped.push({ id, reason: revoked.reason });
@@ -911,6 +993,22 @@ class PluginHost {
 
     if (stopped.length > 0) this.emit();
     return stopped;
+  }
+
+  /**
+   * Is this plugin under a takedown the user has not acknowledged?
+   *
+   * Read by the plugin's row, which shows the notice permanently until it is
+   * acknowledged. A toast is a moment; this is the record of it, and it is what
+   * a user who dismissed the toast by reflex has left to find.
+   */
+  hasUnacknowledgedTakedown(id: string): boolean {
+    return this.unacknowledgedTakedowns.has(id);
+  }
+
+  /** The user has read the takedown notice for this plugin. */
+  acknowledgeTakedown(id: string): void {
+    if (this.unacknowledgedTakedowns.delete(id)) this.emit();
   }
 
   /** Called by each panel component while its iframe is mounted. */

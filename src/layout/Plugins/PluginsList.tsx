@@ -30,6 +30,8 @@ import {
   type RegistryPlugin,
   type RegistryUpdate,
 } from '@core/plugins/registry';
+import { pluginRegistryEnabled } from '@core/config/edition';
+import { revocationListIsStale, revocationsConfirmedAt } from '@core/plugins/revocation';
 import { panelPlacements } from './pluginPanelDefs';
 import { openPluginTab } from './openPluginTab';
 import { installFromRegistry } from './installFromRegistry';
@@ -304,6 +306,7 @@ export function PluginsList({
       </div>
 
       <StorageReconciledNotice />
+      <RevocationStalenessNotice />
 
       <div className={styles.list}>
         {loading && <SkeletonRows />}
@@ -359,6 +362,39 @@ export function PluginsList({
 
       {sheet}
     </div>
+  );
+}
+
+/**
+ * A takedown the user has not yet acknowledged, stated on the row itself.
+ *
+ * Only for the `malicious` category, and only until acknowledged. The toast
+ * that fired when the plugin was stopped is a moment; this is what a user who
+ * dismissed it by reflex — or who was not looking at the screen — has left to
+ * find. For a plugin withdrawn for stealing project data, "you may want to
+ * check what this had access to" is not a thing to say once, in passing, in a
+ * corner of the screen, for twelve seconds.
+ *
+ * Every other category gets nothing here. Most takedowns are a plugin that
+ * broke on a new release, and a product that marks all of them permanently
+ * teaches people to ignore the mark.
+ */
+function TakedownNotice({ pluginId, installed }: { pluginId: string; installed: boolean }): JSX.Element | null {
+  useSyncExternalStore((cb) => pluginHost.subscribe(cb), () => pluginHost.getRevision());
+  if (!installed || !pluginHost.hasUnacknowledgedTakedown(pluginId)) return null;
+
+  return (
+    <span className={styles.rowTakedown} role="alert">
+      <Icon name="warning" size="sm" />
+      <span>Withdrawn by the registry as malicious. It has been turned off.</span>
+      <button
+        type="button"
+        className={styles.rowTakedownAck}
+        onClick={(e) => { e.stopPropagation(); pluginHost.acknowledgeTakedown(pluginId); }}
+      >
+        I&rsquo;ve read this
+      </button>
+    </span>
   );
 }
 
@@ -439,6 +475,8 @@ function PluginRow({ row }: { row: Row }): JSX.Element {
         </span>
 
         <span className={styles.rowDesc}>{row.description}</span>
+
+        <TakedownNotice pluginId={row.id} installed={row.installed} />
 
         <span className={styles.rowMeta}>
           {/* Reach, when the registry knows it. A locally-installed plugin has
@@ -615,6 +653,42 @@ function StorageReconciledNotice(): JSX.Element | null {
       <button type="button" className={styles.stateAction} onClick={() => setDismissed(true)}>
         Dismiss
       </button>
+    </div>
+  );
+}
+
+/**
+ * The kill switch has not heard from the registry in a while.
+ *
+ * Stated, never acted on. A client that stopped enforcing a stale revocation
+ * list would make "block the fetch" the entire exploit, so everything on the
+ * list keeps being enforced and this is only a line of text. What it buys is
+ * that the one person who can do something about a machine that cannot reach
+ * the registry — the person using it — finds out.
+ *
+ * Deliberately not dismissible and deliberately not alarming. It is a fact
+ * about this machine's network, not an accusation about any plugin, and it
+ * disappears by itself the moment a fetch succeeds.
+ */
+function RevocationStalenessNotice(): JSX.Element | null {
+  if (!pluginRegistryEnabled()) return null;
+  if (!revocationListIsStale()) return null;
+
+  const confirmed = revocationsConfirmedAt();
+  const days = confirmed
+    ? Math.floor((Date.now() - Date.parse(confirmed)) / 86_400_000)
+    : null;
+
+  return (
+    <div className={styles.state} role="status">
+      <span className={styles.stateTitle}>Withdrawal list is out of date.</span>
+      <span>
+        {days !== null && days > 0
+          ? `This machine last reached the plugin registry ${days} day${days === 1 ? '' : 's'} ago. `
+          : 'This machine has not been able to reach the plugin registry recently. '}
+        Plugins already withdrawn are still blocked; anything withdrawn since
+        will not be, until the next successful check.
+      </span>
     </div>
   );
 }

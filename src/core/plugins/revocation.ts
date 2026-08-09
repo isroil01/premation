@@ -39,9 +39,28 @@
 
 import { verifyPackageSignature } from './registry';
 
+/**
+ * Why a plugin was taken down, in one word.
+ *
+ * The reason string is what a user READS. This is what the editor ACTS on: a
+ * plugin withdrawn because it broke on a new release and one withdrawn because
+ * it was stealing projects both stop running, and telling the user about them
+ * in the same dismissible toast is wrong in one direction. `malicious` earns a
+ * notice that cannot be waved away unread and a permanent mark on the row.
+ *
+ * Absent for takedowns recorded before the registry carried the field, and
+ * treated exactly as a takedown of unknown kind: mild, because most are, and
+ * because inferring severity from prose would be a classifier deciding how
+ * alarmed to make someone.
+ */
+export type RevocationCategory =
+  | 'malicious' | 'impersonation' | 'broken' | 'inappropriate' | 'license';
+
 /** One revoked plugin. */
 export interface RevocationEntry {
   id: string;
+  /** See `RevocationCategory`. Absent means "not recorded". */
+  category?: RevocationCategory;
   /**
    * Versions to revoke. Absent means every version.
    *
@@ -90,25 +109,49 @@ export const OPERATOR_PUBLIC_KEY =
 
 const STORE_KEY = 'motion-editor.revocations.v1';
 
+/**
+ * How long a list may go without the server confirming it before the Plugins
+ * panel says so.
+ *
+ * Reported, never enforced by failing open — see `revocationListIsStale`. The
+ * server also declares its own window (`expiresAt`, currently 24 h), and both
+ * are checked: the server's says how often it intends to be asked, this one
+ * catches a client that has not managed to ask at all. Seven days is chosen so
+ * a fortnight offline is visible and a long weekend is not.
+ */
+export const MAX_CONFIRMATION_AGE_MS = 7 * 24 * 3600_000;
+
 interface StoredState {
   seq: number;
   list: RevocationList | null;
-  /** When this client last successfully verified a list. */
+  /**
+   * When the server last CONFIRMED this list — a verified fetch, or a 304.
+   *
+   * A 304 counts, and has to. The registry's validator covers `seq` and the
+   * entries but not `issuedAt`, so an unchanged list answers 304 forever while
+   * the stored `expiresAt` recedes into the past. Treating that as staleness
+   * would mean a client revalidating perfectly well was permanently reported as
+   * out of date, and the warning would stop meaning anything.
+   */
   fetchedAt: string | null;
+  /** The last validator seen, replayed as `If-None-Match`. */
+  etag: string | null;
 }
 
 function read(): StoredState {
+  const empty: StoredState = { seq: 0, list: null, fetchedAt: null, etag: null };
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return { seq: 0, list: null, fetchedAt: null };
-    const parsed = JSON.parse(raw) as StoredState;
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw) as Partial<StoredState>;
     return {
       seq: typeof parsed.seq === 'number' ? parsed.seq : 0,
       list: parsed.list ?? null,
       fetchedAt: parsed.fetchedAt ?? null,
+      etag: typeof parsed.etag === 'string' ? parsed.etag : null,
     };
   } catch {
-    return { seq: 0, list: null, fetchedAt: null };
+    return empty;
   }
 }
 
@@ -120,6 +163,19 @@ function write(state: StoredState): void {
     // session; it just will not survive a restart.
   }
 }
+
+/**
+ * What a fetch attempt produced.
+ *
+ * `unchanged` is a distinct outcome rather than `null`, and the distinction is
+ * load-bearing: `null` means "we learned nothing" (offline, blocked, not
+ * deployed) and must not touch the staleness clock, while `unchanged` means
+ * "the server confirmed the stored list" and must.
+ */
+export type RevocationFetchResult =
+  | { kind: 'list'; signed: SignedRevocationList; etag: string | null }
+  | { kind: 'unchanged' }
+  | null;
 
 export type AcceptResult =
   | { ok: true; list: RevocationList }
@@ -164,8 +220,59 @@ export async function acceptRevocationList(
   // rules anything out.
   if (list.seq < state.seq) return { ok: false, reason: 'replay' };
 
-  write({ seq: Math.max(state.seq, list.seq), list, fetchedAt: new Date().toISOString() });
+  write({
+    seq: Math.max(state.seq, list.seq),
+    list,
+    fetchedAt: new Date().toISOString(),
+    // Cleared, not carried. The validator belongs to the list that was just
+    // replaced; the caller records the new one with `rememberRevocationEtag`
+    // once acceptance has succeeded.
+    etag: null,
+  });
   return { ok: true, list };
+}
+
+/**
+ * Record the validator for the list now in force.
+ *
+ * A separate call rather than an argument to `acceptRevocationList`, which
+ * takes the operator key as a defaulted parameter and is swept by
+ * `revocationKeyIsPinned.test.ts` for any call site passing a second argument.
+ * That sweep is worth more than the convenience: a call passing a key the
+ * server supplied would re-invent "the server chooses the key", which is the
+ * entire thing the pin prevents.
+ *
+ * Only ever called after acceptance succeeded. Storing a validator for a list
+ * we REFUSED would make the next request offer it, the server would answer 304,
+ * and the client would be pinned to the refused state — a bad list becoming
+ * permanent by way of a cache header.
+ */
+export function rememberRevocationEtag(etag: string | null): void {
+  const state = read();
+  if (!state.list) return;
+  write({ ...state, etag });
+}
+
+/**
+ * Record that the server confirmed the stored list is still current.
+ *
+ * The 304 path. Nothing about the list changes; only the moment it was last
+ * vouched for, which is what staleness is measured from.
+ */
+export function noteRevocationsUnchanged(): void {
+  const state = read();
+  if (!state.list) return;
+  write({ ...state, fetchedAt: new Date().toISOString() });
+}
+
+/** The validator to offer on the next fetch, if any. */
+export function storedRevocationEtag(): string | null {
+  return read().etag;
+}
+
+/** When the server last confirmed the stored list, or null. */
+export function revocationsConfirmedAt(): string | null {
+  return read().fetchedAt;
 }
 
 /** The list in force right now, from the last successful verification. */
@@ -178,12 +285,50 @@ export function currentRevocationList(): RevocationList | null {
  *
  * Reported, never acted on by failing open. A client that stopped enforcing a
  * stale list would make "block the fetch" the entire exploit.
+ *
+ * ── Two windows, because a 304 does not move `expiresAt` ─────────────────────
+ *
+ * The server declares `expiresAt` and stamps it per response. Its validator,
+ * however, covers only `seq` and the entries — deliberately, so that a list
+ * unchanged since March answers 304 instead of re-sending itself on every cold
+ * start. The consequence is that a perfectly healthy client, revalidating daily
+ * and getting 304 every time, watches its stored `expiresAt` recede into the
+ * past. Reading that as staleness would light the warning permanently for the
+ * clients doing everything right, and a warning that is always on is off.
+ *
+ * So the server's window is measured from the last CONFIRMATION rather than
+ * from the moment the list happened to be issued, and a second, much longer
+ * ceiling catches the case the first cannot: a client that has not managed to
+ * reach the registry at all.
  */
 export function revocationListIsStale(now = Date.now()): boolean {
-  const list = read().list;
+  const { list, fetchedAt } = read();
   if (!list) return false;
+
+  const confirmed = fetchedAt ? Date.parse(fetchedAt) : NaN;
+  // No confirmation recorded at all: a list seeded by an older build. Fall back
+  // to the server's own stamp, which is what that build was judging by.
+  if (!Number.isFinite(confirmed)) {
+    const expires = Date.parse(list.expiresAt);
+    return Number.isFinite(expires) && now > expires;
+  }
+
+  if (now - confirmed > MAX_CONFIRMATION_AGE_MS) return true;
+
+  // The server's window, re-based on the confirmation. A list whose declared
+  // life was 24 h is stale 24 h after we were last told it is current.
+  const issued = Date.parse(list.issuedAt);
   const expires = Date.parse(list.expiresAt);
-  return Number.isFinite(expires) && now > expires;
+  if (!Number.isFinite(issued) || !Number.isFinite(expires)) return false;
+
+  const window = expires - issued;
+  // A list that declared no positive life expired the moment it was issued.
+  // There is nothing to re-base, and treating a zero-length window as "fresh
+  // until now + 0" would make the answer depend on which millisecond it is
+  // asked in.
+  if (window <= 0) return true;
+
+  return now > confirmed + window;
 }
 
 /** Why this plugin is revoked, or null. */
@@ -213,22 +358,41 @@ export function isRevoked(pluginId: string, version: string): boolean {
  * The enforcement callback is injected rather than imported so this module
  * stays free of the host — it is the piece that has to be testable without a
  * plugin runtime.
+ *
+ * Returns whether the SERVER ANSWERED — a verified list or a 304, not merely
+ * that nothing threw. The caller uses it to decide whether to try again before
+ * the first plugin activates: a boot that happened while the machine was
+ * offline should be retried, and one that succeeded should not.
  */
 export async function refreshRevocations(
-  fetchList: () => Promise<SignedRevocationList | null>,
+  fetchList: (etag: string | null) => Promise<RevocationFetchResult>,
   enforce: () => void,
-): Promise<void> {
-  let signed: SignedRevocationList | null = null;
+): Promise<boolean> {
+  let fetched: RevocationFetchResult = null;
   try {
-    signed = await fetchList();
+    fetched = await fetchList(storedRevocationEtag());
   } catch {
     // Offline, blocked, or the endpoint is not deployed. The last verified list
     // keeps applying — which is why blocking the fetch is not an exploit.
-    return;
+    return false;
   }
-  if (!signed) return;
+  if (!fetched) return false;
 
-  const result = await acceptRevocationList(signed);
+  if (fetched.kind === 'unchanged') {
+    /*
+      A 304. The list did not change, but the server just vouched for it, and
+      that is the thing staleness is measured from. Recording it is not
+      bookkeeping: without it a client that revalidates correctly every day
+      still reports itself out of date once the server's declared window
+      elapses, because a 304 carries no new `expiresAt`.
+
+      Nothing is re-enforced: the list is the same one already in force.
+    */
+    noteRevocationsUnchanged();
+    return true;
+  }
+
+  const result = await acceptRevocationList(fetched.signed);
   if (!result.ok) {
     // Named in the log, because these are the interesting failures: a bad
     // signature or a replayed sequence number is someone trying something, not
@@ -236,12 +400,20 @@ export async function refreshRevocations(
     if (result.reason !== 'no-operator-key') {
       console.warn(`[plugins] revocation list refused: ${result.reason}`);
     }
-    return;
+    // Reported as "no answer" on purpose. A refused list must not stop the
+    // caller trying again, or one bad response silences the check for the whole
+    // session — which is exactly what an attacker serving garbage would want.
+    return false;
   }
+
+  // Enforced immediately, not at the next restart. A takedown that arrives an
+  // Only now, on a list that verified. See `rememberRevocationEtag`.
+  rememberRevocationEtag(fetched.etag);
 
   // Enforced immediately, not at the next restart. A takedown that arrives an
   // hour after the user opened the editor has to land now.
   enforce();
+  return true;
 }
 
 /** Test seam. Never called by the app. */
@@ -250,6 +422,14 @@ export function resetRevocationsForTests(): void {
 }
 
 /** Test seam: seed a verified list without a signature round trip. */
-export function seedRevocationsForTests(list: RevocationList): void {
-  write({ seq: list.seq, list, fetchedAt: new Date().toISOString() });
+export function seedRevocationsForTests(
+  list: RevocationList,
+  opts: { fetchedAt?: string; etag?: string | null } = {},
+): void {
+  write({
+    seq: list.seq,
+    list,
+    fetchedAt: opts.fetchedAt ?? new Date().toISOString(),
+    etag: opts.etag ?? null,
+  });
 }
