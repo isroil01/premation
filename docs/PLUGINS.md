@@ -234,13 +234,20 @@ disable a feature instead of throwing.
 
 ## 5. Writing a plugin
 
-Plugins ▸ **Download starter template** produces a working package. Install it
-with **Choose folder…**, and from then on iterate with the row's **Reload**:
-it re-reads the folder and reinstalls without asking for consent again, unless
-the manifest has started asking for something new. (The picker still opens —
-a browser cannot re-read a directory without a gesture, and a stored handle
-needs its permission re-granted after a restart anyway. What Reload removes is
-the consent screen on every edit.)
+**Installing happens on the dashboard's Plugins page**, not in the editor's
+Plugins panel — it lives beside publishing, since both are about getting a
+plugin into the world. The editor's panel finds and runs what is already
+installed.
+
+**Download starter template** there produces a working package. Install it with
+**Choose folder…**, and from then on iterate with the row's **Reload**, which
+works from either surface: it re-reads the folder and reinstalls without asking
+for consent again, unless the manifest has started asking for something new.
+(The picker still opens — a browser cannot re-read a directory without a
+gesture, and a stored handle needs its permission re-granted after a restart
+anyway. What Reload removes is the consent screen on every edit.)
+
+So the trip to the dashboard is once per plugin, not once per edit.
 
 The entry module exports `activate`:
 

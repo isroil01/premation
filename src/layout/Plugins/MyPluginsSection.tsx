@@ -17,10 +17,6 @@
  * The command-line path still works and is what a browser tab falls back to,
  * where there is no file dialog to ask with and no main process to keep it out
  * of.
- *
- * Kept deliberately short. A publisher needs a namespace, a way to publish, and
- * somewhere to write their listing. Anything else on this screen is standing
- * between them and publishing.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -38,7 +34,7 @@ import {
   type PluginVisibility,
   type PublisherRecord,
 } from '@core/plugins/registry';
-import styles from './PluginsPanel.module.css';
+import styles from './MyPluginsSection.module.css';
 
 export function MyPluginsSection(): JSX.Element {
   const [publishers, setPublishers] = useState<PublisherRecord[] | null>(null);
@@ -63,21 +59,35 @@ export function MyPluginsSection(): JSX.Element {
 
   if (!pluginRegistryEnabled()) {
     return (
-      <div className={styles.state}>
-        <span className={styles.stateTitle}>Publishing isn&rsquo;t available in this edition.</span>
-        <span>The registry is part of the hosted build.</span>
+      <div className={styles.cardShell}>
+        <div className={styles.stateBox}>
+          <span className={styles.stateTitle}>Publishing isn&rsquo;t available in this edition.</span>
+          <span>The registry is part of the hosted build.</span>
+        </div>
       </div>
     );
   }
 
-  if (publishers === null) return <div className={styles.state}><span>Loading…</span></div>;
+  if (publishers === null) {
+    return (
+      <div className={styles.cardShell}>
+        <div className={styles.stateBox}>
+          <Icon name="refresh" className={styles.spin} size="md" />
+          <span>Loading publisher shelf…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={styles.list}>
+    <div className={styles.container}>
       {error && (
-        <div className={styles.state}>
-          <span className={styles.stateTitle}>{error}</span>
-          <span>Sign in to publish plugins.</span>
+        <div className={styles.errorBanner}>
+          <Icon name="error" size="sm" />
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontWeight: 600 }}>{error}</span>
+            <span style={{ fontSize: '0.75rem', opacity: 0.85 }}>Sign in to publish plugins.</span>
+          </div>
         </div>
       )}
 
@@ -96,24 +106,44 @@ export function MyPluginsSection(): JSX.Element {
 
       {publishers.length > 0 && (
         <>
-          <div className={styles.searchRow}>
-            <span className={styles.rowMeta}>
-              {published.length === 0
-                ? 'Nothing published yet.'
-                : `${published.length} published`}
-            </span>
+          <div className={styles.cardShell}>
+            <div className={styles.sectionSubheader}>
+              <span className={styles.sectionTitle}>Your Published Listings</span>
+              <span className={styles.countBadge}>
+                {published.length === 0 ? '0 published' : `${published.length} published`}
+              </span>
+            </div>
+
+            {published.length === 0 ? (
+              <div className={styles.stateBox} style={{ padding: '20px 0' }}>
+                <Icon name="info" size="md" />
+                <span style={{ fontSize: '0.84rem' }}>Nothing published under this namespace yet.</span>
+              </div>
+            ) : (
+              published.map((p) => (
+                <PublishedRow
+                  key={p.id}
+                  plugin={p}
+                  onError={setError}
+                  onChanged={() => void reload()}
+                />
+              ))
+            )}
           </div>
-          {published.map((p) => (
-            <PublishedRow key={p.id} plugin={p} onError={setError} onChanged={() => void reload()} />
-          ))}
-          {/* Always available, not only when the shelf is empty: a publisher's
-              second plugin needs this as much as their first, and hiding it
-              after one publish sent them back to the command line. */}
-          <PublishForm
-            namespace={publishers[0]!.namespace}
-            onDone={() => void reload()}
-            onError={setError}
-          />
+
+          <div className={styles.cardShell}>
+            <div className={styles.sectionSubheader}>
+              <span className={styles.sectionTitle}>Publish Package</span>
+              <span style={{ fontSize: '0.74rem', color: 'var(--color-text-secondary, #a6a6a6)' }}>
+                Release a new plugin or update an existing listing
+              </span>
+            </div>
+            <PublishForm
+              namespace={publishers[0]!.namespace}
+              onDone={() => void reload()}
+              onError={setError}
+            />
+          </div>
         </>
       )}
     </div>
@@ -144,88 +174,87 @@ function RegisterNamespace({
     }
   };
 
-  return (
-    <div className={styles.state}>
-      <span className={styles.stateTitle}>Choose a namespace.</span>
-      <span>
-        It becomes the first part of every plugin id you publish — <code>acme.easing-lab</code>.
-        It can&rsquo;t be changed later, because plugin ids are permanent.
-      </span>
-      <input
-        className={styles.search}
-        placeholder="acme"
-        aria-label="Namespace"
-        value={namespace}
-        onChange={(e) => setNamespace(e.target.value)}
-      />
-      <input
-        className={styles.search}
-        placeholder="Acme Studio"
-        aria-label="Display name"
-        value={displayName}
-        onChange={(e) => setDisplayName(e.target.value)}
-      />
-      <button
-        type="button"
-        className={styles.stateAction}
-        disabled={busy || !namespace.trim() || !displayName.trim()}
-        onClick={() => void submit()}
-      >
-        {busy ? 'Registering…' : 'Register namespace'}
-      </button>
-    </div>
-  );
-}
+  const previewId = namespace.trim() ? `${namespace.trim().toLowerCase()}.easing-lab` : 'acme.easing-lab';
 
-/**
- * A namespace you own.
- *
- * One line, because that is all there is to say. There was a domain
- * verification flow here — enter a domain, publish a DNS TXT record or a
- * well-known file, come back and press Check — for an optional badge. Removed.
- *
- * It was ceremony placed directly in the path of the one thing a publisher
- * actually came here to do, and it made a solo author with no company domain
- * think they could not publish. The badge is now something an operator grants,
- * which is both rarer and more honest: a self-served claim about a domain is
- * not evidence anyone was checking.
- */
-function PublisherRow({ publisher }: { publisher: PublisherRecord }): JSX.Element {
   return (
-    <div className={styles.row} style={{ alignItems: 'center' }}>
-      <span className={styles.rowIcon}><Icon name="user" size="md" /></span>
-      <span className={styles.rowBody}>
-        <span className={styles.rowTop}>
-          <span className={styles.rowName}>{publisher.namespace}</span>
-          <span className={styles.rowPublisher}>{publisher.displayName}</span>
-          {publisher.verified && (
-            <span className={styles.rowVerified} title="Verified publisher">
-              <Icon name="success" size="sm" />
-            </span>
+    <div className={styles.cardShell}>
+      <div className={styles.registerBox}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <span className={styles.sectionTitle}>Choose a Publisher Namespace</span>
+          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary, #a6a6a6)', lineHeight: 1.45 }}>
+            Your namespace forms the permanent prefix for all your published plugin IDs. For instance:{' '}
+            <code className={styles.previewBadge}>{previewId}</code>
+          </span>
+        </div>
+
+        <div className={styles.formField}>
+          <label className={styles.fieldLabel} htmlFor="reg-namespace">Namespace ID (permanent)</label>
+          <input
+            id="reg-namespace"
+            className={styles.input}
+            placeholder="acme"
+            aria-label="Namespace"
+            value={namespace}
+            onChange={(e) => setNamespace(e.target.value)}
+          />
+        </div>
+
+        <div className={styles.formField}>
+          <label className={styles.fieldLabel} htmlFor="reg-displayname">Display Name (author / studio)</label>
+          <input
+            id="reg-displayname"
+            className={styles.input}
+            placeholder="Acme Studio"
+            aria-label="Display name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+        </div>
+
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.btnPrimary}`}
+          style={{ alignSelf: 'flex-start', marginTop: '4px' }}
+          disabled={busy || !namespace.trim() || !displayName.trim()}
+          onClick={() => void submit()}
+        >
+          {busy ? (
+            <>
+              <Icon name="refresh" className={styles.spin} size="sm" />
+              <span>Registering…</span>
+            </>
+          ) : (
+            'Register namespace'
           )}
-        </span>
-      </span>
+        </button>
+      </div>
     </div>
   );
 }
 
-/**
- * One published plugin, with its listing editor.
- *
- * WHAT IS EDITABLE HERE, and what is not, is the whole point of this component:
- *
- *   • `name` and `description` come from `plugin.json` and are read out of the
- *     SIGNED package at publish time. They are NOT fields here, deliberately —
- *     if a listing could claim a name or a summary the package does not carry,
- *     the listing would be an advertisement rather than a description. Change
- *     them in the manifest and publish.
- *   • The README, changelog, categories and licence describe the LISTING. They
- *     live outside the signed bytes so that fixing a typo is a save, not a new
- *     signed version every installed copy is asked to update to.
- *
- * That split is why the fields below look incomplete at first glance. They are
- * everything a publisher can change without cutting a release.
- */
+function PublisherRow({ publisher }: { publisher: PublisherRecord }): JSX.Element {
+  const initial = publisher.displayName ? publisher.displayName.charAt(0).toUpperCase() : publisher.namespace.charAt(0).toUpperCase();
+
+  return (
+    <div className={styles.publisherBanner}>
+      <div className={styles.publisherInfo}>
+        <div className={styles.publisherAvatar}>{initial}</div>
+        <div className={styles.publisherMeta}>
+          <div className={styles.publisherNamespaceRow}>
+            <span className={styles.publisherNamespace}>{publisher.namespace}</span>
+            {publisher.verified && (
+              <span className={styles.verifiedBadge} title="Verified publisher">
+                <Icon name="success" size="sm" /> Verified
+              </span>
+            )}
+          </div>
+          <span className={styles.publisherDisplayName}>{publisher.displayName}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PublishedRow({
   plugin, onError, onChanged,
 }: {
@@ -245,9 +274,6 @@ function PublishedRow({
   const [license, setLicense] = useState('');
   const [categories, setCategories] = useState<string[]>([]);
 
-  // Fetched only when the editor is opened, and only once. The shelf is a list;
-  // pulling every plugin's README to render rows nobody expanded would make it
-  // slower for exactly the publishers who have the most plugins.
   useEffect(() => {
     if (!open || loaded) return;
     let alive = true;
@@ -279,71 +305,89 @@ function PublishedRow({
   const toggleCategory = (c: string): void => {
     setCategories((cur) =>
       cur.includes(c) ? cur.filter((x) => x !== c)
-      // Capped at three. A plugin listed in nine categories is in none of them.
       : cur.length >= 3 ? cur
       : [...cur, c],
     );
   };
 
   return (
-    <div className={styles.row} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-      <span className={styles.rowTop}>
-        <span className={styles.rowName}>{plugin.name}</span>
-        <span className={styles.rowPublisher}>{plugin.latestVersion}</span>
-      </span>
-      <span className={styles.rowMeta}>
-        <span>{plugin.installs.toLocaleString()} installs</span>
-        <span>{plugin.visibility === 'private' ? 'Private' : 'Public'}</span>
-        <button
-          type="button"
-          className={styles.mini}
-          disabled={visBusy}
-          onClick={() => {
-            const next = plugin.visibility === 'private' ? 'public' : 'private';
-            setVisBusy(true);
-            onError(null);
-            void updateListing(plugin.id, { visibility: next })
-              .then(onChanged)
-              .catch((err: Error) => onError(err.message || 'Could not change visibility.'))
-              .finally(() => setVisBusy(false));
-          }}
-        >
-          {plugin.visibility === 'private' ? 'Make public' : 'Make private'}
-        </button>
-        <button type="button" className={styles.mini} onClick={() => setOpen((v) => !v)}>
-          {open ? 'Close' : 'Edit listing'}
-        </button>
-      </span>
+    <div className={styles.pluginCard}>
+      <div className={styles.pluginCardHeader}>
+        <div className={styles.pluginMainInfo}>
+          <div className={styles.pluginNameRow}>
+            <span className={styles.pluginName}>{plugin.name}</span>
+            <span className={styles.pluginVersion}>v{plugin.latestVersion}</span>
+          </div>
 
-      {/*
-        Going private is reversible and says so; deleting is not, so it asks.
-        The two sit together because they are the same decision at different
-        strengths — "stop offering this" and "stop offering this and throw away
-        the listing" — and a publisher reaching for the second usually wants the
-        first.
-      */}
+          <div className={styles.pluginBadgesRow}>
+            <span className={`${styles.badge} ${styles.badgeInstalls}`}>
+              <Icon name="download" size="sm" />
+              {plugin.installs.toLocaleString()} installs
+            </span>
+            <span className={`${styles.badge} ${plugin.visibility === 'private' ? styles.badgePrivate : styles.badgePublic}`}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
+              {plugin.visibility === 'private' ? 'Private' : 'Public'}
+            </span>
+          </div>
+        </div>
+
+        <div className={styles.actionRow}>
+          <button
+            type="button"
+            className={`${styles.btn} ${styles.btnSecondary}`}
+            disabled={visBusy}
+            onClick={() => {
+              const next = plugin.visibility === 'private' ? 'public' : 'private';
+              setVisBusy(true);
+              onError(null);
+              void updateListing(plugin.id, { visibility: next })
+                .then(onChanged)
+                .catch((err: Error) => onError(err.message || 'Could not change visibility.'))
+                .finally(() => setVisBusy(false));
+            }}
+          >
+            {plugin.visibility === 'private' ? 'Make public' : 'Make private'}
+          </button>
+          <button
+            type="button"
+            className={`${styles.btn} ${open ? styles.btnPrimary : styles.btnSecondary}`}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? 'Close' : 'Edit listing'}
+          </button>
+        </div>
+      </div>
+
       {plugin.visibility === 'private' && (
-        <span className={styles.rowMeta}>
-          Hidden from the marketplace. Only you can install it — copies already
-          installed elsewhere keep working.
-        </span>
+        <div className={styles.infoNote}>
+          Hidden from marketplace browsing. Only you can view or install it — existing copies already installed keep working smoothly.
+        </div>
       )}
 
-      <span className={styles.rowMeta}>
-        {!confirmDelete ? (
-          <button type="button" className={styles.mini} onClick={() => setConfirmDelete(true)}>
+      {!confirmDelete ? (
+        <div>
+          <button
+            type="button"
+            className={`${styles.btn} ${styles.btnGhost}`}
+            style={{ fontSize: '0.74rem', padding: '4px 8px' }}
+            onClick={() => setConfirmDelete(true)}
+          >
             Withdraw…
           </button>
-        ) : (
-          <>
-            <span>
-              Withdraw <strong>{plugin.name}</strong> permanently? The listing and every
-              version go. Copies already installed keep working — this stops new
-              installs, it does not recall anything. Consider Make&nbsp;private instead.
-            </span>
+        </div>
+      ) : (
+        <div className={styles.withdrawCard}>
+          <div className={styles.withdrawTitle}>
+            <Icon name="warning" size="sm" />
+            <span>Withdraw {plugin.name} permanently?</span>
+          </div>
+          <div className={styles.withdrawDesc}>
+            The listing and every published version will be deleted from the registry. Installed copies will remain functional. Consider using <strong>Make private instead</strong> if you only want to stop new public downloads.
+          </div>
+          <div className={styles.withdrawActions}>
             <button
               type="button"
-              className={styles.mini}
+              className={`${styles.btn} ${styles.btnDanger}`}
               disabled={deleting}
               onClick={() => {
                 setDeleting(true);
@@ -351,8 +395,6 @@ function PublishedRow({
                 void deletePublishedPlugin(plugin.id)
                   .then(onChanged)
                   .catch((err: Error) => {
-                    // Thrown, not swallowed: a publisher told this worked when
-                    // it did not stops watching a plugin that is still on sale.
                     onError(err.message || 'Could not withdraw the plugin.');
                     setDeleting(false);
                     setConfirmDelete(false);
@@ -361,118 +403,118 @@ function PublishedRow({
             >
               {deleting ? 'Withdrawing…' : 'Withdraw permanently'}
             </button>
-            <button type="button" className={styles.mini} onClick={() => setConfirmDelete(false)}>
-              Cancel
-            </button>
-          </>
-        )}
-      </span>
-
-      {open && !loaded && <span className={styles.rowMeta}>Loading listing…</span>}
-
-      {open && loaded && (
-        <>
-          <span className={styles.rowMeta}>
-            Name and summary come from <code>plugin.json</code> — they are read from the signed
-            package, so a listing cannot claim what the package does not say.
-          </span>
-
-          <label className={styles.rowMeta} htmlFor={`readme-${plugin.id}`}>
-            Guide (Markdown). Headings, lists, code, links. Raw HTML shows as text.
-          </label>
-          <textarea
-            id={`readme-${plugin.id}`}
-            className={styles.textarea}
-            rows={8}
-            value={readme}
-            onChange={(e) => setReadme(e.target.value)}
-            placeholder={'## What it does\n\n## How to use it\n\n1. Select a layer\n2. Run “Bounce selection”'}
-          />
-
-          <label className={styles.rowMeta} htmlFor={`changelog-${plugin.id}`}>
-            What changed in this version
-          </label>
-          <textarea
-            id={`changelog-${plugin.id}`}
-            className={styles.textarea}
-            rows={4}
-            value={changelog}
-            onChange={(e) => setChangelog(e.target.value)}
-          />
-
-          <span className={styles.rowMeta}>Categories (up to 3)</span>
-          <span className={styles.filters}>
-            {REGISTRY_CATEGORIES.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={categories.includes(c) ? `${styles.chip} ${styles.chipActive}` : styles.chip}
-                aria-pressed={categories.includes(c)}
-                onClick={() => toggleCategory(c)}
-              >
-                {c.replace(/-/g, ' ')}
-              </button>
-            ))}
-          </span>
-
-          <label className={styles.rowMeta} htmlFor={`license-${plugin.id}`}>Licence</label>
-          <input
-            id={`license-${plugin.id}`}
-            className={styles.search}
-            placeholder="MIT"
-            value={license}
-            onChange={(e) => setLicense(e.target.value)}
-          />
-
-          <span className={styles.rowActions}>
             <button
               type="button"
-              className={`${styles.mini} ${styles.miniPrimary}`}
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              onClick={() => setConfirmDelete(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {open && !loaded && (
+        <div className={styles.stateBox} style={{ padding: '12px' }}>
+          <Icon name="refresh" className={styles.spin} size="sm" />
+          <span style={{ fontSize: '0.78rem' }}>Loading listing details…</span>
+        </div>
+      )}
+
+      {open && loaded && (
+        <div className={styles.editorDrawer}>
+          <div className={styles.infoNote}>
+            Name and summary are verified from <code>plugin.json</code> in your signed package. Edit README, changelog, categories, and license below to refine your listing.
+          </div>
+
+          <div className={styles.formField}>
+            <label className={styles.fieldLabel} htmlFor={`readme-${plugin.id}`}>
+              Guide (Markdown). Headings, lists, code, links. Raw HTML shows as text.
+            </label>
+            <textarea
+              id={`readme-${plugin.id}`}
+              className={styles.textarea}
+              rows={8}
+              value={readme}
+              onChange={(e) => setReadme(e.target.value)}
+              placeholder={'## What it does\n\n## How to use it\n\n1. Select a layer\n2. Run “Bounce selection”'}
+            />
+          </div>
+
+          <div className={styles.formField}>
+            <label className={styles.fieldLabel} htmlFor={`changelog-${plugin.id}`}>
+              What changed in this version
+            </label>
+            <textarea
+              id={`changelog-${plugin.id}`}
+              className={styles.textarea}
+              rows={4}
+              value={changelog}
+              onChange={(e) => setChangelog(e.target.value)}
+            />
+          </div>
+
+          <div className={styles.formField}>
+            <span className={styles.fieldLabel}>Categories (up to 3)</span>
+            <div className={styles.categoryGrid}>
+              {REGISTRY_CATEGORIES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={categories.includes(c) ? `${styles.chip} ${styles.chipActive}` : styles.chip}
+                  aria-pressed={categories.includes(c)}
+                  onClick={() => toggleCategory(c)}
+                >
+                  {c.replace(/-/g, ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.formField}>
+            <label className={styles.fieldLabel} htmlFor={`license-${plugin.id}`}>Licence</label>
+            <input
+              id={`license-${plugin.id}`}
+              className={styles.input}
+              placeholder="MIT"
+              value={license}
+              onChange={(e) => setLicense(e.target.value)}
+            />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnPrimary}`}
               disabled={saving}
               onClick={() => void save()}
             >
-              {saving ? 'Saving…' : 'Save listing'}
+              {saving ? (
+                <>
+                  <Icon name="refresh" className={styles.spin} size="sm" />
+                  <span>Saving…</span>
+                </>
+              ) : (
+                'Save listing'
+              )}
             </button>
-            {saved && <span className={styles.rowMeta}>Saved.</span>}
-          </span>
-          <span className={styles.rowMeta}>
-            Icons and screenshots are uploaded from the web dashboard, where there is room to see
-            them.
-          </span>
-        </>
+            {saved && (
+              <span style={{ fontSize: '0.78rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Icon name="success" size="sm" /> Saved
+              </span>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-/**
- * The signing commands, with the user's real namespace already in them.
- *
- * A generic snippet with `<your-namespace>` in it is a snippet everybody pastes
- * wrong exactly once.
- */
-/** The main-process publish verb, or null outside the desktop shell. */
 function publishBridge(): ((req: unknown) => Promise<unknown>) | null {
   const w = window as unknown as { motionEditor?: { pluginPublish?: (r: unknown) => Promise<unknown> } };
   return w.motionEditor?.pluginPublish ?? null;
 }
 
-/**
- * Publish a package, and choose who can see it.
- *
- * ── Why the key is not a field here ──────────────────────────────────────────
- *
- * There is no key input on this form, and that is the design. The renderer sends
- * BYTES and a visibility choice; the main process asks for the key file, signs,
- * attaches the session and uploads. So the private key is never in the renderer,
- * never stored by the app, and never held past the call — which is what keeps
- * "this update came from the same author" meaning something. A stolen signing
- * key cannot be undone by blocking a version; the publisher has to rotate it and
- * every installed copy has to agree.
- *
- * The consequence the user feels is one file picker per publish. That is the
- * price, and it is stated on the button rather than left as a surprise.
- */
 function PublishForm({
   namespace, onDone, onError,
 }: {
@@ -484,9 +526,8 @@ function PublishForm({
   const [file, setFile] = useState<File | null>(null);
   const [visibility, setVisibility] = useState<PluginVisibility>('public');
   const [busy, setBusy] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
 
-  // No bridge means this is a browser tab, where there is no file dialog to ask
-  // for a key and no main process to keep it out of. Say so and show the CLI.
   if (!bridge) return <SigningSteps namespace={namespace} />;
 
   const submit = async (): Promise<void> => {
@@ -497,8 +538,6 @@ function PublishForm({
       const bytes = new Uint8Array(await file.arrayBuffer());
       const res = (await bridge({ bytes, visibility })) as
         { ok: boolean; error?: string; cancelled?: boolean };
-      // Cancelling the key picker is not a failure. Reporting it as one teaches
-      // people to ignore the error line.
       if (!res.ok && !res.cancelled) onError(res.error || 'The publish failed.');
       if (res.ok) { setFile(null); onDone(); }
     } catch (err) {
@@ -508,74 +547,151 @@ function PublishForm({
     }
   };
 
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setFile(e.dataTransfer.files[0]);
+    }
+  };
+
   return (
-    <div className={styles.state}>
-      <span className={styles.stateTitle}>Publish a plugin.</span>
-      <span>
-        Zip the folder containing <code>plugin.json</code>. Its <code>id</code> must start with{' '}
-        <code>{namespace}.</code> — the registry refuses a package published under
-        someone else&rsquo;s namespace.
-      </span>
+    <div className={styles.publishForm}>
+      <div
+        className={`${styles.dropzone} ${isDragOver ? styles.dropzoneActive : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={handleDrop}
+      >
+        <input
+          type="file"
+          accept=".zip,.mplugin"
+          aria-label="Package"
+          className={styles.hiddenFileInput}
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+        {!file ? (
+          <>
+            <div className={styles.dropzoneIcon}>
+              <Icon name="upload" size="md" />
+            </div>
+            <div className={styles.dropzoneText}>
+              Drag &amp; drop package archive (.zip or .mplugin)
+            </div>
+            <div className={styles.dropzoneHint}>
+              Package ID must start with <code>{namespace}.</code> in <code>plugin.json</code>
+            </div>
+          </>
+        ) : (
+          <div className={styles.fileBadge}>
+            <Icon name="file" size="sm" />
+            <span>{file.name}</span>
+            <span style={{ opacity: 0.6, fontSize: '0.74rem' }}>
+              ({(file.size / 1024).toFixed(1)} KB)
+            </span>
+            <button
+              type="button"
+              className={styles.btnGhost}
+              style={{ padding: '2px 6px', marginLeft: 8 }}
+              onClick={(e) => { e.stopPropagation(); setFile(null); }}
+            >
+              <Icon name="close" size="sm" />
+            </button>
+          </div>
+        )}
+      </div>
 
-      <input
-        type="file"
-        accept=".zip,.mplugin"
-        aria-label="Package"
-        className={styles.search}
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-      />
-
-      <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-        <legend className={styles.rowMeta}>Who can see it</legend>
-        {(['public', 'private'] as const).map((v) => (
-          <label key={v} className={styles.rowMeta} style={{ display: 'block' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <span className={styles.fieldLabel}>Who can see this listing</span>
+        <div className={styles.radioGrid}>
+          <label className={`${styles.radioCard} ${visibility === 'public' ? styles.radioCardActive : ''}`}>
             <input
               type="radio"
               name="visibility"
-              value={v}
-              checked={visibility === v}
-              onChange={() => setVisibility(v)}
-            />{' '}
-            {v === 'public'
-              ? 'Public — listed in the marketplace, anyone can install it'
-              : 'Private — only you can see or install it'}
+              value="public"
+              className={styles.radioInput}
+              checked={visibility === 'public'}
+              onChange={() => setVisibility('public')}
+              aria-label="Public"
+            />
+            <div className={styles.radioContent}>
+              <span className={styles.radioTitle}>Public Marketplace</span>
+              <span className={styles.radioDesc}>Visible to everyone in the plugin store for instant installation.</span>
+            </div>
           </label>
-        ))}
-      </fieldset>
 
-      <span className={styles.rowMeta}>
-        You can change this later. Note that going private stops new installs and
-        does not remove copies people already have.
-      </span>
+          <label className={`${styles.radioCard} ${visibility === 'private' ? styles.radioCardActive : ''}`}>
+            <input
+              type="radio"
+              name="visibility"
+              value="private"
+              className={styles.radioInput}
+              checked={visibility === 'private'}
+              onChange={() => setVisibility('private')}
+              aria-label="Private"
+            />
+            <div className={styles.radioContent}>
+              <span className={styles.radioTitle}>Private Listing</span>
+              <span className={styles.radioDesc}>Only you can view and install this plugin package.</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div className={styles.securityNote}>
+        <Icon name="lock" size="sm" className={styles.securityIcon} />
+        <span>Your private signing key is requested once by desktop system prompt and is never stored or transmitted to the renderer.</span>
+      </div>
 
       <button
         type="button"
-        className={styles.stateAction}
+        className={`${styles.btn} ${styles.btnPrimary}`}
+        style={{ padding: '10px 18px', fontSize: '0.85rem', alignSelf: 'flex-start' }}
         disabled={busy || !file}
         onClick={() => void submit()}
       >
-        {busy ? 'Publishing…' : 'Choose signing key and publish'}
+        {busy ? (
+          <>
+            <Icon name="refresh" className={styles.spin} size="sm" />
+            <span>Publishing package…</span>
+          </>
+        ) : (
+          <>
+            <Icon name="lock" size="sm" />
+            <span>Choose signing key and publish</span>
+          </>
+        )}
       </button>
-      <span className={styles.rowMeta}>
-        Your signing key is read once to sign this package and is never stored.
-      </span>
     </div>
   );
 }
 
 function SigningSteps({ namespace }: { namespace: string }): JSX.Element {
-  return (
-    <div className={styles.state}>
-      <span className={styles.stateTitle}>Publish from the command line.</span>
-      <span>
-        Your signing key never leaves this machine — it is what proves an update came from you.
-      </span>
-      <code className={styles.rowDesc} style={{ userSelect: 'all', whiteSpace: 'pre-wrap', textAlign: 'left' }}>
-        {`node scripts/sign-plugin.mjs keygen
+  const code = `node scripts/sign-plugin.mjs keygen
 # set "id": "${namespace}.<name>" in plugin.json
 node scripts/sign-plugin.mjs sign    ./${namespace}-<name>.zip
-node scripts/sign-plugin.mjs publish ./${namespace}-<name>.zip`}
-      </code>
+node scripts/sign-plugin.mjs publish ./${namespace}-<name>.zip`;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <span className={styles.sectionTitle}>Publish from the command line</span>
+        <span style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary, #a6a6a6)' }}>
+          Your signing key stays local to your terminal environment.
+        </span>
+      </div>
+
+      <div className={styles.terminalBox}>
+        <div className={styles.terminalHeader}>
+          <div className={styles.terminalDots}>
+            <span className={styles.dotRed} />
+            <span className={styles.dotYellow} />
+            <span className={styles.dotGreen} />
+          </div>
+          <span className={styles.terminalTitle}>bash / zsh</span>
+        </div>
+        <pre className={styles.codeContent}>{code}</pre>
+      </div>
     </div>
   );
 }

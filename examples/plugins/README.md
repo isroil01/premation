@@ -17,9 +17,14 @@ them is the interesting part.
 
 ## Installing
 
-Plugins ▸ **Choose folder…** and pick one of the directories here. Then iterate
-with **Reload** on the row: it re-reads the folder without asking for consent
-again unless the manifest starts asking for something new.
+On the **dashboard's Plugins page** (not the editor's Plugins panel — installing
+lives with publishing now), use **Choose folder…** and pick one of the
+directories here.
+
+Then iterate with **Reload** on the row, which works from the editor panel too:
+it re-reads the folder without asking for consent again unless the manifest
+starts asking for something new. The trip to the dashboard is once per plugin,
+not once per edit.
 
 ## Where each one actually appears
 

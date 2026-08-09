@@ -53,9 +53,10 @@ export function DashboardPluginsTab(): JSX.Element {
         DIFFERENT thing from the page title. It is the one boundary on the page.
       */}
       <div className={`${styles.sectionHeaderRow} ${styles.publishingHeader}`}>
+        <span className={styles.eyebrowBadge}>Developer Platform</span>
         <h2 className={styles.sectionTitle}>Publishing</h2>
         <p className={styles.pluginsSubtitle}>
-          Claim a namespace and manage the listings for plugins you have published.
+          Claim a publisher namespace and manage the listings for plugins you have published.
         </p>
       </div>
       <div className={styles.publishingHost}>

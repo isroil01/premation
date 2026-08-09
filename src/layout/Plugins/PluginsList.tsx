@@ -80,8 +80,24 @@ export function PluginsList({
    * a user goes to when they are looking for how to add one.
    */
   compactActions = false,
+  /**
+   * Whether this copy of the list can install from disk.
+   *
+   * False in the editor's dock, where adding a plugin now belongs to the
+   * dashboard's Plugins page alongside publishing it. It gates BOTH routes —
+   * the Add control and the drop target — because a hidden button beside a live
+   * drop zone is not a decision, it is a button someone forgot.
+   *
+   * The two surfaces render the same component precisely so they cannot drift,
+   * and this is the one thing they are allowed to differ on. Note the cost,
+   * since it is real: iterating on a plugin you are writing now means leaving
+   * the editor for the dashboard to reinstall it. The row's own **Reload** is
+   * unaffected and is still the fast path once a plugin is in.
+   */
+  canInstall = true,
 }: {
   compactActions?: boolean;
+  canInstall?: boolean;
 } = {}): JSX.Element {
   /*
     Re-render when a plugin starts, stops or crashes: the row shows status.
@@ -249,13 +265,17 @@ export function PluginsList({
         // Only claim the drop when the drag actually carries files. Without
         // this, dragging a layer across the panel would light it up as if it
         // were about to install something.
-        if (!e.dataTransfer.types.includes('Files')) return;
+        if (!canInstall || !e.dataTransfer.types.includes('Files')) return;
         e.preventDefault();
         setDragging(true);
       }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
       onDrop={async (e) => {
-        if (!e.dataTransfer.types.includes('Files')) return;
+        // Gated with the button, not separately. A panel that still installed
+        // on drop while showing no way to install would be the worst of both:
+        // the affordance gone and the capability still there, discoverable only
+        // by accident.
+        if (!canInstall || !e.dataTransfer.types.includes('Files')) return;
         e.preventDefault();
         setDragging(false);
         const file = e.dataTransfer.files[0];
@@ -280,7 +300,7 @@ export function PluginsList({
           // search would show a page of a list that no longer exists.
           onChange={(e) => { setQuery(e.target.value); setOffset(0); }}
         />
-        <AddPluginButton compact={compactActions} />
+        {canInstall && <AddPluginButton compact={compactActions} />}
       </div>
 
       <StorageReconciledNotice />
@@ -289,7 +309,12 @@ export function PluginsList({
         {loading && <SkeletonRows />}
 
         {!loading && rows.length === 0 && (
-          <EmptyState query={query} registryAvailable={registryAvailable} failed={failed} />
+          <EmptyState
+            query={query}
+            registryAvailable={registryAvailable}
+            failed={failed}
+            canInstall={canInstall}
+          />
         )}
 
         {!loading && rows.map((row) => <PluginRow key={row.id} row={row} />)}
@@ -595,12 +620,26 @@ function StorageReconciledNotice(): JSX.Element | null {
 }
 
 function EmptyState({
-  query, registryAvailable, failed,
+  query, registryAvailable, failed, canInstall,
 }: {
   query: string;
   registryAvailable: boolean;
   failed: boolean;
+  /** False in the dock, where there is no way to add one from here. */
+  canInstall: boolean;
 }): JSX.Element {
+  /*
+    Where to go, whenever this copy of the list cannot install.
+
+    An empty panel whose only advice is an action it does not offer is a dead
+    end — and this one is empty exactly when a new user first looks at it. The
+    dashboard is named rather than implied, because "somewhere else" is not a
+    direction.
+  */
+  const elsewhere = canInstall ? null : (
+    <span>Add one from the dashboard&rsquo;s Plugins page.</span>
+  );
+
   if (failed) {
     return (
       <div className={styles.state}>
@@ -613,7 +652,11 @@ function EmptyState({
     return (
       <div className={styles.state}>
         <span className={styles.stateTitle}>The plugin registry isn&rsquo;t available in this edition.</span>
-        <span>You can still install plugins from a folder or a .zip package.</span>
+        <span>
+          {canInstall
+            ? 'You can still install plugins from a folder or a .zip package.'
+            : 'Plugins are installed from the dashboard’s Plugins page, from a folder or a .zip package.'}
+        </span>
       </div>
     );
   }
@@ -623,6 +666,7 @@ function EmptyState({
         {query.trim() ? `No plugins match “${query.trim()}”.` : 'No plugins yet.'}
       </span>
       <span>{query.trim() ? 'Try a broader search.' : 'Published plugins will appear here.'}</span>
+      {!query.trim() && elsewhere}
     </div>
   );
 }
