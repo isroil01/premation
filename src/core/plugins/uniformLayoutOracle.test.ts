@@ -25,7 +25,12 @@
  * which the GPU probe does not.
  */
 
-import { parameterBlock, UNIFORM_HEADER_BYTES } from './effectSchema';
+import {
+  parameterBlock,
+  UNIFORM_HEADER_BYTES,
+  UNIFORM_PASS_BLOCK_BYTES,
+  UNIFORM_RENDERER_HEADER_BYTES,
+} from './effectSchema';
 import type { LayerPropSchema } from './layerKindSchema';
 
 /**
@@ -144,10 +149,58 @@ describe('★ the generated struct, laid out independently', () => {
     expect(block.layout[0]!.offset).toBe(UNIFORM_HEADER_BYTES);
   });
 
+  it('★ puts the host pass block between the header and the parameters', () => {
+    /*
+      The multi-pass change, pinned the same way.
+
+      A pass needs its own texel size — a separable blur samples `uv ±
+      texelSize`, and a pass at `scale: 0.25` renders into a target a quarter
+      the size, so the value differs per pass and an author cannot compute it.
+      The block carrying it sits at 64, and the parameters moved to 96.
+
+      Asserted through the ORACLE, which re-derives every offset from the WGSL
+      text by the spec's alignment rules, so this fails if the emitted struct
+      and the offset table drift apart — the failure mode that shipped once
+      already when the renderer header was missing entirely.
+    */
+    const block = parameterBlock({ amount: p('number') });
+    const oracle = layOutStruct(block.wgsl);
+
+    const at = (n: string) => oracle.members.find((m) => m.name === n)?.offset;
+    expect(at('texelSize')).toBe(64);
+    expect(at('passScale')).toBe(72);
+    expect(at('passIndex')).toBe(76);
+    expect(at('_reserved')).toBe(80);
+    expect(block.layout[0]!.offset).toBe(96);
+  });
+
+  it('emits the pass block for a SINGLE-pass effect too', () => {
+    /*
+      One layout, not two.
+
+      A struct that carried the block only for chained effects would make every
+      parameter offset depend on a condition — and the CPU packer and the shader
+      generator would each have to evaluate that condition and agree. Two
+      derivations of one number is exactly the shape of the bug that made the
+      64-byte header necessary in the first place.
+    */
+    const block = parameterBlock({ amount: p('number') });
+    expect(block.wgsl).toContain('texelSize : vec2<f32>');
+    expect(block.layout[0]!.offset).toBe(96);
+  });
+
   it('confirms the header constant against the rules, not against itself', () => {
-    // 48 for the padded mat3 plus 16 for the vec4. Derived here rather than
-    // read from the module, so a changed constant fails rather than propagates.
-    expect(UNIFORM_HEADER_BYTES).toBe(RULES['mat3x3<f32>']!.size + RULES['vec4<f32>']!.size);
+    // Derived here rather than read from the module, so a changed constant
+    // fails rather than propagates: 48 for the padded mat3, 16 for the vec4,
+    // then the host block — vec2 + f32 + f32 packs into 16, and the reserved
+    // vec4 is another 16.
+    const renderer = RULES['mat3x3<f32>']!.size + RULES['vec4<f32>']!.size;
+    const passBlock = RULES['vec2<f32>']!.size + RULES['f32']!.size * 2 + RULES['vec4<f32>']!.size;
+    expect(UNIFORM_RENDERER_HEADER_BYTES).toBe(renderer);
+    expect(UNIFORM_PASS_BLOCK_BYTES).toBe(passBlock);
+    expect(UNIFORM_HEADER_BYTES).toBe(renderer + passBlock);
+    // A multiple of 16, or the first `vec4` parameter after it is misaligned.
+    expect(UNIFORM_HEADER_BYTES % 16).toBe(0);
   });
 
   it('★ leaves no member overlapping another', () => {

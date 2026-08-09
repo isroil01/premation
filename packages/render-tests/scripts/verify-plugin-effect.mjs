@@ -164,12 +164,39 @@ if (outcome.kind === 'error') {
   process.exit(1);
 }
 
-const measured = outcome.values;
+const measured = outcome.values.map((v) => v.amount);
+const passBlock = outcome.values.map((v) => v.passBlock);
 const { slope, intercept, r2 } = fitLine(AMOUNTS, measured);
 
-console.log('  amount   mean output');
-AMOUNTS.forEach((a, i) => console.log(`   ${a.toFixed(2)}      ${measured[i].toFixed(2)}`));
+console.log('  amount   mean output   pass block');
+AMOUNTS.forEach((a, i) => console.log(
+  `   ${a.toFixed(2)}     ${measured[i].toFixed(2).padStart(7)}         ${passBlock[i].toFixed(0).padStart(3)}`,
+));
 console.log(`\n  fit: out = ${slope.toFixed(2)}·amount + ${intercept.toFixed(2)}   R² = ${r2.toFixed(4)}\n`);
+
+/*
+  ★ The pass block, checked BEFORE the slope, because it catches a failure the
+  slope cannot.
+
+  Parameters moved from offset 64 to 96 to make room for the host's 32-byte pass
+  block. If that block were omitted or misplaced, `amount` would sit back at 64
+  — and the CPU side, packing to the same wrong idea, would put it there too.
+  The two would agree, the slope would be perfect, and `texelSize` would be
+  garbage in every shader that read it. A separable blur written against it
+  would be wrong on every machine, and this probe would print PASSED.
+
+  So the shader answers a second question in the same draw: green is 1.0 only if
+  `texelSize`, `passScale` and `passIndex` all arrived carrying the distinctive
+  values packed for them.
+*/
+if (!passBlock.every((v) => v > 250)) {
+  console.log(red('FAILED — the host pass block did not arrive intact.'));
+  console.log('  `texelSize`, `passScale` or `passIndex` read back as something other than');
+  console.log('  what was packed at offset 64. Every parameter offset is measured from the');
+  console.log('  end of that block, so this also says `amount` is not at 96 — however good');
+  console.log(`  the fit above looks. Green channel: ${passBlock.map((v) => v.toFixed(0)).join(', ')}`);
+  process.exit(1);
+}
 
 if (Math.abs(slope) < MIN_SLOPE) {
   console.log(red('FAILED — output does not track the parameter at all.'));
@@ -184,4 +211,5 @@ if (r2 < MIN_R2) {
   process.exit(1);
 }
 
-console.log(green('PASSED — the shader ran and read its parameter from the right offset.'));
+console.log(green('PASSED — the shader ran, the host pass block arrived, and the parameter'));
+console.log(green('         was read from offset 96.'));

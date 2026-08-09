@@ -33,6 +33,16 @@
 import type { EffectContribution } from './effectSchema';
 import { composeEffectShader, layerParamNames, namespacedEffect } from './effectSchema';
 
+/**
+ * Compilation bounds for a chain.
+ *
+ * Per pass AND in total, because they fail differently: one pathological
+ * shader is caught by the per-pass bound, while four passes each taking four
+ * seconds are individually fine and together freeze a boot for sixteen.
+ */
+export const PASS_COMPILE_TIMEOUT_MS = 5_000;
+export const CHAIN_COMPILE_TIMEOUT_MS = 10_000;
+
 /** Mirrors `packages/renderer`'s `ShaderSource`. Duplicated, not imported, so
  *  `@core/plugins` does not take a dependency on the renderer package. */
 export interface PluginShaderSource {
@@ -62,6 +72,24 @@ export const PLUGIN_EFFECT_MATERIAL_LAYOUT_WITH_MAP = [
   ...PLUGIN_EFFECT_MATERIAL_LAYOUT,
   { binding: 3, type: 'texture', stages: ['fragment'] },
 ] as const;
+
+/**
+ * The `origin` texture — the pass-0 input — at binding 4.
+ *
+ * Fixed at 4 whether or not binding 3 is in use, matching what
+ * `composeEffectShader` emits. Sliding it down to 3 when no layer parameter is
+ * declared would make the binding number depend on an unrelated part of the
+ * manifest, and this file and the shader generator would each have to reach
+ * that conclusion separately — two derivations of one number, which is how a
+ * bind group ends up pointing a shader at the wrong texture.
+ */
+export const ORIGIN_BINDING = { binding: 4, type: 'texture', stages: ['fragment'] } as const;
+
+export type PluginEffectLayout = ReadonlyArray<{
+  readonly binding: number;
+  readonly type: string;
+  readonly stages: readonly string[];
+}>;
 
 /**
  * The GLSL a plugin effect gets on the WebGL2 tier: its input, unchanged.
@@ -109,32 +137,104 @@ void main() {
 export function pluginShaderSource(
   pluginId: string,
   effect: EffectContribution,
+  passIndex = 0,
 ): PluginShaderSource {
   return {
-    name: namespacedEffect(pluginId, effect.id),
-    wgsl: composeEffectShader(effect).wgsl,
+    name: passShaderName(pluginId, effect, passIndex),
+    wgsl: composeEffectShader(effect, passIndex).wgsl,
     glsl: { vertex: PASSTHROUGH_GLSL.vertex, fragment: PASSTHROUGH_GLSL.fragment },
   };
 }
 
-/** The material descriptor for any plugin effect. One layout, for all of them. */
-export function pluginEffectMaterial(pluginId: string, effect: EffectContribution): {
+/**
+ * The registry name for one pass.
+ *
+ * A single-pass effect keeps the bare `<pluginId>.<effectId>` it has always
+ * had — unsuffixed, so nothing that already registered, looked up or reported
+ * an effect by that name has to change, and so an effect published before
+ * chains existed produces the identical registry key.
+ *
+ * A chain suffixes each pass with its declared name: `acme.blur#horizontal`.
+ * `#` because it cannot appear in a plugin id, an effect id or a pass name, so
+ * the composed key is unambiguous and a reader can see where it came from — a
+ * compile error naming `acme.blur#vertical` says which half failed without
+ * anyone having to count passes.
+ */
+export function passShaderName(
+  pluginId: string,
+  effect: EffectContribution,
+  passIndex: number,
+): string {
+  const base = namespacedEffect(pluginId, effect.id);
+  const pass = effect.passes?.[passIndex];
+  return pass ? `${base}#${pass.name}` : base;
+}
+
+/** The material descriptor for one pass of a plugin effect. */
+export function pluginEffectMaterial(
+  pluginId: string,
+  effect: EffectContribution,
+  passIndex = 0,
+): {
   shader: string;
   topology: 'triangle-list';
-  layout: typeof PLUGIN_EFFECT_MATERIAL_LAYOUT | typeof PLUGIN_EFFECT_MATERIAL_LAYOUT_WITH_MAP;
+  layout: PluginEffectLayout;
 } {
   // Same predicate the shader generator uses. Deriving both from
   // `layerParamNames` is what keeps the declared bindings and the bound
   // resources in step; two independent conditions here would be a pipeline that
   // is invalid only for the effects that use the newer feature.
   const readsSecondTexture = layerParamNames(effect.params).length > 0;
+  const pass = effect.passes?.[passIndex];
+  const readsOrigin = pass ? pass.reads === 'origin' || pass.reads === 'both' : false;
+
+  const base: PluginEffectLayout = readsSecondTexture
+    ? PLUGIN_EFFECT_MATERIAL_LAYOUT_WITH_MAP
+    : PLUGIN_EFFECT_MATERIAL_LAYOUT;
+
   return {
-    shader: namespacedEffect(pluginId, effect.id),
+    shader: passShaderName(pluginId, effect, passIndex),
     topology: 'triangle-list',
-    layout: readsSecondTexture
-      ? PLUGIN_EFFECT_MATERIAL_LAYOUT_WITH_MAP
-      : PLUGIN_EFFECT_MATERIAL_LAYOUT,
+    layout: readsOrigin ? [...base, ORIGIN_BINDING] : base,
   };
+}
+
+/**
+ * Every pass of an effect, in execution order, as the renderer needs them.
+ *
+ * The host owns the sequencing entirely — a plugin never sees a render target,
+ * never allocates one and never says what order anything runs in. This is the
+ * whole description it gets to influence, and it is data.
+ */
+export interface PluginEffectPassPlan {
+  index: number;
+  /** Registry key for this pass's shader. */
+  shader: string;
+  /** Linear downsample of this pass's target. */
+  scale: number;
+  /** Whether the pass-0 input must be bound at binding 4. */
+  readsOrigin: boolean;
+  layout: PluginEffectLayout;
+}
+
+export function pluginEffectPlan(
+  pluginId: string,
+  effect: EffectContribution,
+): PluginEffectPassPlan[] {
+  const count = effect.passes?.length ?? 1;
+  const plan: PluginEffectPassPlan[] = [];
+  for (let i = 0; i < count; i++) {
+    const pass = effect.passes?.[i];
+    const material = pluginEffectMaterial(pluginId, effect, i);
+    plan.push({
+      index: i,
+      shader: material.shader,
+      scale: pass?.scale ?? 1,
+      readsOrigin: pass ? pass.reads === 'origin' || pass.reads === 'both' : false,
+      layout: material.layout,
+    });
+  }
+  return plan;
 }
 
 /**
@@ -163,9 +263,15 @@ export function registerPluginShaders(
 ): string[] {
   const names: string[] = [];
   for (const effect of effects) {
-    const source = pluginShaderSource(pluginId, effect);
-    registry.register(source);
-    names.push(source.name);
+    // One registered shader per pass. A chain is N pipelines the host runs in
+    // order, not one shader that loops — a loop would need the target as an
+    // input to itself, which no backend allows.
+    const passes = effect.passes?.length ?? 1;
+    for (let i = 0; i < passes; i++) {
+      const source = pluginShaderSource(pluginId, effect, i);
+      registry.register(source);
+      names.push(source.name);
+    }
   }
   return names;
 }
