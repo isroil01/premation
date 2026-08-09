@@ -26,6 +26,7 @@ import { buildComplexShowcase } from '@core/scene/seedComplexShowcase';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
+import { openProjectPath } from '@core/project/openProjectPath';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
@@ -1028,9 +1029,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         if (isLocalFirst()) {
           const dir = await chooseBundleDir();
           if (dir) {
-            const opened = await getProjectManager().openPath(dir);
+            // Shared with the start screen's recent list — see openProjectPath,
+            // which also re-baselines undo so the first Ctrl+Z after an open
+            // cannot step back into the previous document.
+            const opened = await openProjectPath(dir);
             if (opened) {
-              bumpScene();
               notify(`Opened “${opened.name}”`, 'success');
             } else {
               notify('Could not open that bundle', 'error');

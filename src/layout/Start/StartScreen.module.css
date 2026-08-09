@@ -1,0 +1,151 @@
+/* Start screen — the local edition's "which project" surface.
+   Sits over the editor rather than beside it: the engine is already booted
+   behind this, so opening a recent is a load, not a navigation. */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-0, #141418);
+  overflow: auto;
+}
+
+.panel {
+  width: min(620px, calc(100% - 48px));
+  margin: 48px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text-primary, #f2f2f5);
+  margin: 0;
+}
+
+.subtitle {
+  font-size: var(--font-size-micro, 11px);
+  color: var(--color-text-tertiary, #86868f);
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sectionLabel {
+  font-size: var(--font-size-micro, 11px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary, #86868f);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--color-surface-1, #1e1e24);
+  border: 0;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.row:last-child { border-bottom: 0; }
+
+.row:hover:not(:disabled) { background: var(--color-surface-2, #26262e); }
+
+.row:focus-visible {
+  outline: 2px solid var(--color-primary, #5b8cff);
+  outline-offset: -2px;
+}
+
+.row:disabled { cursor: default; }
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.name {
+  font-size: 13px;
+  color: var(--color-text-primary, #f2f2f5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.path {
+  font-size: var(--font-size-micro, 11px);
+  color: var(--color-text-tertiary, #86868f);
+  /* A long path is more useful from its TAIL — the folder tells you which
+     project this is, the drive root never does. */
+  direction: rtl;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.missing { color: var(--color-danger, #ff6b6b); }
+
+.remove {
+  flex: none;
+  padding: 2px 8px;
+  font-size: var(--font-size-micro, 11px);
+  background: transparent;
+  color: var(--color-text-tertiary, #86868f);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.remove:hover { color: var(--color-text-primary, #f2f2f5); }
+
+.empty {
+  padding: 14px 12px;
+  font-size: var(--font-size-micro, 11px);
+  color: var(--color-text-tertiary, #86868f);
+  background: var(--color-surface-1, #1e1e24);
+}
+
+.dismiss {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: var(--font-size-micro, 11px);
+  color: var(--color-text-tertiary, #86868f);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.dismiss:hover { color: var(--color-text-secondary, #b6b6bf); }
