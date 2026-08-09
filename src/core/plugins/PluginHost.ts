@@ -58,7 +58,7 @@ import {
   type PluginLogLevel,
 } from './protocol';
 import type { PluginPackage } from './pluginPackage';
-import { activatesOnStartup, type PluginPermission } from './manifest';
+import { activatesOnStartup, expandPermissions, type PluginPermission } from './manifest';
 import { releaseAssetBudget } from './assets';
 
 /**
@@ -617,7 +617,12 @@ class PluginHost {
           reply({ k: 'result', id: msg.id, ok: false, error: `Unknown API method "${msg.method}".` });
           return;
         }
-        if (required !== null && !entry.granted.includes(required)) {
+        // `expandPermissions`, never `entry.granted` directly. A plugin holding
+        // `scene:write` also holds `scene:proxy` — the second is a proper
+        // subset of the first — and refusing it would be both nonsense and the
+        // migration failing for every proxy plugin installed before that
+        // permission existed. See `PERMISSION_IMPLIES`.
+        if (required !== null && !expandPermissions(entry.granted).has(required)) {
           // Refused, loudly. A plugin silently doing nothing because a
           // permission is missing is indistinguishable from a broken plugin.
           // Also logged: the plugin may swallow the rejection, and then the

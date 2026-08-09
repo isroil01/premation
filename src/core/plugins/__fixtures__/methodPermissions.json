@@ -38,7 +38,7 @@
     "scene.setLocked": "scene:write",
     "scene.setParent": "scene:write",
     "scene.setProperty": "scene:write",
-    "scene.setProxyChildren": "scene:write",
+    "scene.setProxyChildren": "scene:proxy",
     "scene.setSelection": "scene:read",
     "scene.setVisible": "scene:write",
     "timeline.getTime": "timeline",

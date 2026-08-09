@@ -53,6 +53,21 @@ export const PERMISSIONS = {
     label: 'Read your layers',
     detail: 'See the names, structure and properties of layers in your composition.',
   },
+  /*
+    Listed BEFORE `scene:write`, and the order is load-bearing.
+
+    The consent screen renders this object in key order, and a user reading top
+    to bottom should meet the narrow grant before the wide one. "Build the
+    layers beneath its own" is something a person can picture; "create, change
+    and delete layers" is not, and meeting the wide one first makes the narrow
+    one read as a footnote to it rather than as the alternative.
+  */
+  'scene:proxy': {
+    label: 'Build the layers beneath its own',
+    detail:
+      'Generate and update the child layers underneath layers this plugin itself created. '
+      + 'It cannot reach anything else in your composition, and it stops managing a layer the moment you edit it.',
+  },
   'scene:write': {
     label: 'Modify your layers',
     detail: 'Create, change and delete layers. Every change is undoable.',
@@ -101,6 +116,52 @@ export const PERMISSIONS = {
 export type PluginPermission = keyof typeof PERMISSIONS;
 
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as PluginPermission[];
+
+/**
+ * Permissions that CONTAIN other permissions.
+ *
+ * `scene:write` is "create, change and delete layers"; `scene:proxy` is a
+ * proper subset of that — the same verbs, restricted to a plugin's own proxy
+ * subtrees. Holding the wide one and being refused the narrow one would be
+ * nonsense, and it is also the migration: every plugin installed before
+ * `scene:proxy` existed holds `scene:write` and must keep working with no
+ * re-consent.
+ *
+ * ── Why this is a table and not an `||` in the gate ─────────────────────────
+ *
+ * The registry's publish-time scanner reads the same method→permission map to
+ * infer which permissions a package actually uses. Without the implication it
+ * would see a call to `scene.setProxyChildren`, conclude the package needs
+ * `scene:proxy`, find only `scene:write` in the manifest, and report an
+ * undeclared permission — sending every existing proxy plugin to manual review
+ * for a call it is fully entitled to make. So the relationship has to be known
+ * on BOTH sides, which makes it data rather than a branch.
+ *
+ * Deliberately not transitive and deliberately not a graph. One level is what
+ * the model needs; a hierarchy is a thing to get subtly wrong in a security
+ * check, and `expandPermissions` below would have to close over it.
+ */
+export const PERMISSION_IMPLIES: Readonly<Partial<Record<PluginPermission, readonly PluginPermission[]>>> = {
+  'scene:write': ['scene:proxy'],
+};
+
+/**
+ * A grant, plus everything it contains.
+ *
+ * The set to check a required permission against — never the raw grant. A
+ * caller that tests `granted.includes(required)` directly is the bug this
+ * exists to prevent, and it is a quiet one: it refuses a plugin holding a
+ * STRICTLY WIDER permission than the one being asked for.
+ */
+export function expandPermissions(
+  granted: readonly PluginPermission[],
+): ReadonlySet<PluginPermission> {
+  const out = new Set<PluginPermission>(granted);
+  for (const held of granted) {
+    for (const implied of PERMISSION_IMPLIES[held] ?? []) out.add(implied);
+  }
+  return out;
+}
 
 /** A command declared in the manifest — and, identically, one registered at
  *  runtime. One shape, so a declared command and a registered one cannot drift. */

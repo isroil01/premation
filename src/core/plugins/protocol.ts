@@ -76,9 +76,23 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
   'scene.getLayer': 'scene:read',
 
   'scene.createLayer': 'scene:write',
-  // Regenerating a proxy layer's children writes to the document, so it needs
-  // the same permission creating one does.
-  'scene.setProxyChildren': 'scene:write',
+  /*
+    The NARROW permission — satisfied by `scene:write` through
+    `PERMISSION_IMPLIES` rather than by naming both here.
+
+    It used to require `scene:write`, which was the widest grant in the API, for
+    no benefit. A `proxy` layer kind cannot render without this call, so the
+    most useful class of plugin could not be installed without also being able
+    to delete anything in the project, and the consent screen had no way to
+    express the difference.
+
+    The scope is enforced by the HANDLER, not by the permission: the target must
+    be a layer of a kind this plugin itself declared, that kind must be
+    `render: "proxy"`, and a child the user has edited is refused outright. See
+    `hostApi.ts` — that is why the narrower grant is safe, and it was already
+    true before the permission existed.
+  */
+  'scene.setProxyChildren': 'scene:proxy',
   // Observing an authored edit on a layer means reading its properties.
   'scene.onLayerChanged': 'scene:read',
   'scene.setProperty': 'scene:write',
