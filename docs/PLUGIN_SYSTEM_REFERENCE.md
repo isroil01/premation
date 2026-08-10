@@ -266,13 +266,31 @@ composition settings need **no** permission.
 
 Used by `layerKinds.props` and `effects.params`, one parser for both.
 
-`number` · `string` · `boolean` · `enum` · `color` · `asset` · `layer`
+`number` · `string` · `boolean` · `enum` · `color` · `asset` · `layer` · `point`
 
 - Animatable: `number`, `color`, `boolean`.
 - `asset` and `layer` are **references** and carry no default — no id a package
   names exists in someone else's project.
 - `layer` is valid **only** as an effect parameter; a layer kind has no bind
   group to resolve it against.
+- `point` is `{ x, y }` in **composition pixels**, reaching the shader as a
+  `vec2<f32>`. An object rather than `[x, y]`, because a tuple is the shape most
+  easily transposed and a swapped point draws something plausible in the wrong
+  place. Not normalised to UV and not range-checked — the shader has
+  `texelSize` if it wants UV, and a position outside the layer is ordinary for a
+  light or a vignette centre.
+  - Its alignment is the one to know: `vec2<f32>` is 8 bytes aligned to **8**,
+    the only member that is neither 4 nor 16, so it sorts between the `vec4`s
+    and the scalars and can leave padding on both sides. Covered by five cases
+    in the uniform-layout oracle.
+  - **Not animatable.** A two-channel track is real work in the timeline and the
+    graph editor, not a schema entry.
+  - **No on-canvas drag handle yet.** It renders as an X/Y row in the inspector.
+    The hit-testing and drag arithmetic exist and are tested
+    (`core/effects/pluginPointHandles.ts`); what is missing is the SVG and
+    pointer plumbing in `EffectHandleOverlay`, which today assumes a handle is
+    two scalar params offset from a rest position in layer-local space — none of
+    which is true of a point.
 
 ---
 

@@ -220,6 +220,11 @@ only in `motion-back`, so it lives there alone.
   designed (`runtimeTier.ts` — trust is per plugin, recorded with the tier and
   version it was granted for, so a sandboxed plugin cannot become native on
   update without re-asking) but the loader is not built.
+- **A `point` parameter has no drag handle yet.** It packs as a vec2 and shows
+  as an X/Y inspector row; the hit-test and drag maths are written and tested in
+  `core/effects/pluginPointHandles.ts`, but `EffectHandleOverlay` is not wired to
+  them — it assumes a handle is two scalars offset from a rest position in
+  layer-local space, and a point is one object in comp space.
 - **An effect-only plugin cannot decline to start a worker.**
   `activationEvents: []` normalises to `['onStartup']` — empty and absent both
   read as "no opinion", and the safe reading of no opinion is the API-1
