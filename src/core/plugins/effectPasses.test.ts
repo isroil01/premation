@@ -27,7 +27,6 @@ import { parseEffects, chainCost, MAX_PASS_COST, composeEffectShader } from './e
 import type { EffectContribution } from './effectSchema';
 import {
   pluginEffectMaterial,
-  pluginEffectPlan,
   registerPluginShaders,
   passShaderName,
 } from './pluginEffectMaterial';
@@ -107,6 +106,9 @@ describe('declaring a chain', () => {
       Pass 0's `src` and its `origin` are the same texture. Accepting `origin`
       there would bind one view to two slots and quietly work — teaching an
       author a model that breaks the moment they add a pass in front of it.
+
+      A DIFFERENT refusal from the not-yet-rendered one below, and it stays
+      correct after `origin` becomes renderable.
     */
     const { effect, errors } = parseOne({
       passes: [pass('a', { reads: 'origin' }), pass('b')],
@@ -169,48 +171,134 @@ describe('the cost budget', () => {
     expect(chainCost(effect!.passes!)).toBeCloseTo(2);
   });
 
-  it('admits a bloom — bright pass, two quarter-scale blurs, composite', () => {
-    // The shape the budget most needs to allow, and the one `1/scale²` would
-    // have refused outright at a cost of 34.
-    const { effect, errors } = parseOne({
-      passes: [
-        pass('bright'),
-        pass('blurH', { scale: 0.25, reads: 'previous' }),
-        pass('blurV', { scale: 0.25, reads: 'previous' }),
-        pass('composite', { reads: 'both' }),
-      ],
-    });
-    expect(errors).toEqual([]);
-    expect(chainCost(effect!.passes!)).toBeLessThanOrEqual(MAX_PASS_COST);
+  it('would admit a bloom on cost — the budget is not what stops it', () => {
+    /*
+      Cost checked directly rather than through the parser, because a
+      downsampled pass is refused earlier for a different reason (see the
+      not-yet-rendered block below). Keeping the arithmetic asserted matters:
+      it is the number that will decide whether this shape fits on the day
+      `scale` becomes renderable, and it is the case `1/scale²` would have
+      refused outright at a cost of 34.
+    */
+    const bloom = [
+      { name: 'bright', wgsl: FS, scale: 1 as const },
+      { name: 'blurH', wgsl: FS, scale: 0.25 as const },
+      { name: 'blurV', wgsl: FS, scale: 0.25 as const },
+      { name: 'composite', wgsl: FS, scale: 1 as const },
+    ];
+    expect(chainCost(bloom)).toBeLessThanOrEqual(MAX_PASS_COST);
+    expect(chainCost(bloom)).toBeCloseTo(2.125);
   });
 
-  it('admits four passes when they are cheap enough', () => {
-    // The count cap and the cost cap are different controls. Four quarter-scale
-    // passes cost a quarter of one full pass.
+  it('counts four quarter-scale passes as a quarter of one full pass', () => {
+    // The count cap and the cost cap are different controls, and this is the
+    // arithmetic that separates them.
+    const cheap = Array.from({ length: 4 }, (_, i) => ({
+      name: `p${i}`, wgsl: FS, scale: 0.25 as const,
+    }));
+    expect(chainCost(cheap)).toBeCloseTo(0.25);
+  });
+});
+
+describe('declared in the format, not rendered by this build', () => {
+  /*
+    ★ `scale` and `reads` are parsed, budgeted and documented — and refused,
+    because the renderer cannot execute them.
+
+    The renderer's offscreen targets are a fixed, statically-declared set and
+    every one is viewport-sized, so a downsampled pass has nowhere to draw. The
+    chain ping-pongs between a small pool, so the pass-0 input is overwritten
+    before a later pass could sample it as `origin`.
+
+    Accepting either and rendering at full size / binding a reused texture would
+    be wrong output with no error — a bloom four times the cost the author
+    budgeted, or a composite against whatever was last drawn there. So they are
+    refused, loudly, with the reason.
+
+    Widening later is backward-compatible in both directions: manifests that
+    publish today keep working, and ones refused today start working. The
+    reverse — shipping a field that silently does nothing, then making it real —
+    breaks every plugin that guessed around it.
+  */
+
+  it.each([0.5, 0.25])('refuses scale %p, naming the reason', (scale) => {
+    const { effect, errors } = parseOne({ passes: [pass('a', { scale })] });
+    expect(effect).toBeUndefined();
+    expect(errors.join(' ')).toMatch(/cannot render/);
+    expect(errors.join(' ')).toMatch(/smaller than the viewport/);
+  });
+
+  it.each(['origin', 'both'])('refuses reads %p on a later pass', (reads) => {
+    const { effect, errors } = parseOne({ passes: [pass('a'), pass('b', { reads })] });
+    expect(effect).toBeUndefined();
+    expect(errors.join(' ')).toMatch(/cannot render/);
+    expect(errors.join(' ')).toMatch(/reserved across the whole chain/);
+  });
+
+  it('still accepts the values it CAN render, written explicitly', () => {
+    // The refusal must be about the value, not about the key being present. An
+    // author who spells out the default should not be punished for it.
     const { errors } = parseOne({
-      passes: [
-        pass('a', { scale: 0.25 }),
-        pass('b', { scale: 0.25 }),
-        pass('c', { scale: 0.25 }),
-        pass('d', { scale: 0.25 }),
-      ],
+      passes: [pass('a', { scale: 1 }), pass('b', { scale: 1, reads: 'previous' })],
     });
     expect(errors).toEqual([]);
   });
 });
 
 describe('what the host generates per pass', () => {
-  const chain = () => parseOne({
-    passes: [
-      pass('down', { wgsl: FS }),
-      pass('up', { wgsl: FS, reads: 'both' }),
-    ],
-  }).effect!;
+  const chain = () => parseOne({ passes: [pass('down'), pass('up')] }).effect!;
 
-  it('binds `origin` at 4 only for a pass that reads it', () => {
+  it('composes each pass with the same generated bindings', () => {
     const effect = chain();
-    expect(composeEffectShader(effect, 0).wgsl).not.toContain('var origin');
-    expect(composeEffectShader(effect, 1).wgsl)
+    for (const i of [0, 1]) {
+      const { wgsl } = composeEffectShader(effect, i);
+      expect(wgsl).toContain('@group(0) @binding(0) var<uniform> params : Object;');
+      expect(wgsl).toContain('@group(0) @binding(1) var src : texture_2d<f32>;');
+      expect(wgsl).toContain('@group(0) @binding(2) var samp : sampler;');
+    }
+  });
+
+  it('gives every pass the same three bindings when no layer param is declared', () => {
+    for (const i of [0, 1]) {
+      expect(pluginEffectMaterial('acme.tool', chain(), i).layout.map((b) => b.binding))
+        .toEqual([0, 1, 2]);
+    }
+  });
+
+  it('registers one shader per pass, named for the pass', () => {
+    const registered: string[] = [];
+    const registry = { register: (s: { name: string }) => registered.push(s.name), has: () => false };
+    registerPluginShaders(registry, 'acme.tool', [chain()]);
+    expect(registered).toEqual(['acme.tool.fx#down', 'acme.tool.fx#up']);
+  });
+});
+
+describe('the origin binding, which the manifest cannot reach yet', () => {
+  /*
+    `reads: 'origin'` is refused at parse until the renderer can keep the pass-0
+    input alive — so these drive `composeEffectShader` / `pluginEffectMaterial`
+    with a contribution built by hand.
+
+    Kept, rather than deleted with the parse-time refusal, because the two sides
+    of the binding have to agree the day the refusal is lifted: the generator
+    emits `@binding(4)` and the material declares it, and a mismatch between
+    them is an invalid pipeline — a dead viewport, not a missing feature. That
+    agreement is worth holding down now, while both halves are fresh.
+  */
+  const withOrigin = (): EffectContribution => ({
+    id: 'fx',
+    label: 'FX',
+    shader: FS,
+    params: {},
+    passes: [
+      { name: 'first', wgsl: FS, scale: 1, reads: 'previous' },
+      { name: 'second', wgsl: FS, scale: 1, reads: 'both' },
+    ],
+  });
+
+  it('emits binding 4 only for the pass that reads it', () => {
+    expect(composeEffectShader(withOrigin(), 0).wgsl).not.toContain('var origin');
+    expect(composeEffectShader(withOrigin(), 1).wgsl)
       .toContain('@group(0) @binding(4) var origin : texture_2d<f32>;');
   });
 
@@ -223,23 +311,8 @@ describe('what the host generates per pass', () => {
       ends up pointing a shader at the wrong texture. WebGPU numbers bindings;
       it does not require them to be contiguous.
     */
-    const material = pluginEffectMaterial('acme.tool', chain(), 1);
+    const material = pluginEffectMaterial('acme.tool', withOrigin(), 1);
     expect(material.layout.map((b) => b.binding)).toEqual([0, 1, 2, 4]);
-  });
-
-  it('registers one shader per pass, named for the pass', () => {
-    const registered: string[] = [];
-    const registry = { register: (s: { name: string }) => registered.push(s.name), has: () => false };
-    registerPluginShaders(registry, 'acme.tool', [chain()]);
-    expect(registered).toEqual(['acme.tool.fx#down', 'acme.tool.fx#up']);
-  });
-
-  it('gives the host a plan it can execute without asking the plugin anything', () => {
-    const plan = pluginEffectPlan('acme.tool', chain());
-    expect(plan).toEqual([
-      { index: 0, shader: 'acme.tool.fx#down', scale: 1, readsOrigin: false, layout: expect.anything() },
-      { index: 1, shader: 'acme.tool.fx#up', scale: 1, readsOrigin: true, layout: expect.anything() },
-    ]);
   });
 });
 
@@ -263,10 +336,11 @@ describe('a single-pass effect is untouched', () => {
     expect(material.layout.map((b) => b.binding)).toEqual([0, 1, 2]);
   });
 
-  it('has a one-pass plan', () => {
-    expect(pluginEffectPlan('acme.tool', single())).toEqual([
-      { index: 0, shader: 'acme.tool.fx', scale: 1, readsOrigin: false, layout: expect.anything() },
-    ]);
+  it('registers under one shader, not a chain of one', () => {
+    const registered: string[] = [];
+    const registry = { register: (s: { name: string }) => registered.push(s.name), has: () => false };
+    registerPluginShaders(registry, 'acme.tool', [single()]);
+    expect(registered).toEqual(['acme.tool.fx']);
   });
 
   it('★ composes byte-identically whether or not chains exist', () => {

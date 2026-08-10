@@ -181,6 +181,12 @@ only in `motion-back`, so it lives there alone.
 - **Rendering HTML at write time cannot be repaired.** A renderer bug poisons
   every row already written. README renders on read; `readmeHtml` is deprecated
   and always `NULL`.
+- **Composed is not executed.** `passes` was parsed, validated, budgeted,
+  documented and shipped with every test green — and nothing in the renderer
+  ran it. Unit tests cannot see the difference: two composed shaders and two
+  scene entries are equally consistent with a host that draws the first one
+  twice. `verify-plugin-chain` is the probe that can, and it was written only
+  after the gap was found by tracing who imports what.
 - **A GPU probe that moves the thing it measures proves nothing.** Shifting the
   effect parameter base from 64 to 96 changed the packing and the shader
   together, so the slope fit came back *identical* — `254.80·amount`,
@@ -196,6 +202,11 @@ only in `motion-back`, so it lives there alone.
 
 ## Known gaps, stated
 
+- **Multi-pass renders, but `scale` and `reads` do not.** Up to four full-scale
+  passes each reading the one before it, executed by the renderer's existing
+  ping-pong chain. Downsampled passes and `origin` are in the format and refused
+  at install and publish — the render graph has only viewport-sized offscreen
+  targets and none to spare for a chain-long reservation.
 - **An effect-only plugin cannot decline to start a worker.**
   `activationEvents: []` normalises to `['onStartup']` — empty and absent both
   read as "no opinion", and the safe reading of no opinion is the API-1

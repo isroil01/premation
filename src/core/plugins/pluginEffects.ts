@@ -49,6 +49,14 @@ import { composeEffectShader, namespacedEffect, type EffectContribution } from '
  * never answers at all, which is a real thing and otherwise hangs the load.
  */
 export const COMPILE_TIMEOUT_MS = 5000;
+/**
+ * The bound on a whole chain, which the per-pass one cannot express.
+ *
+ * Four passes at four seconds each are individually inside the per-pass limit
+ * and together are sixteen seconds of frozen boot — and to the user that is
+ * the editor hanging on startup, not one plugin being slow.
+ */
+export const CHAIN_COMPILE_TIMEOUT_MS = 10_000;
 
 export type EffectState =
   /** Declared, not compiled yet. */
@@ -60,6 +68,20 @@ export type EffectState =
   /** Turned off after a device loss it was implicated in. Re-enableable. */
   | 'disabled';
 
+/**
+ * One pass's composed shader.
+ *
+ * A single-pass effect has exactly one, and its `shaderId` is the effect's own
+ * bare id — unchanged from before chains existed, which is what keeps every
+ * already-published effect resolving to the same registry key.
+ */
+export interface RegisteredPass {
+  index: number;
+  /** What the renderer draws with: the bare id for pass 0, `id#name` after it. */
+  shaderId: string;
+  wgsl: string;
+}
+
 export interface RegisteredEffect {
   /** `<pluginId>.<effectId>`. */
   id: string;
@@ -70,7 +92,24 @@ export interface RegisteredEffect {
   /** Why it is not running, in words a user can read. Empty when `ready`. */
   reason: string;
   layout: ReturnType<typeof composeEffectShader>['layout'];
+  /**
+   * Pass 0's composed WGSL.
+   *
+   * Kept beside `passes` because everything written before chains reads it, and
+   * because one pass is the overwhelming majority — `passes[0].wgsl` is the
+   * same string with an indirection in front of it.
+   */
   wgsl: string;
+  /**
+   * Every pass, in execution order. Length 1 for a single-pass effect.
+   *
+   * State lives on the EFFECT, not per pass, and that is deliberate: a chain is
+   * all-or-nothing. If any pass fails to compile the whole effect renders
+   * passthrough, because half a separable blur is not a softer blur — it is a
+   * smeared image the author never wrote, which reads as their kernel being
+   * wrong rather than as the platform failing.
+   */
+  passes: RegisteredPass[];
 }
 
 /** What the host needs from a backend to compile one of these. */
@@ -138,7 +177,33 @@ export function registerEffects(
 ): void {
   for (const contribution of contributions) {
     const id = namespacedEffect(pluginId, contribution.id);
-    const composed = composeEffectShader(contribution);
+    /*
+      One composed shader per declared pass.
+
+      `composeEffectShader(contribution, i)` prepends the same generated
+      bindings and vertex stage to pass i's source, so each pass is an ordinary
+      effect material as far as everything downstream is concerned. The chain
+      is then N entries in the renderer's existing spatial-effects list, which
+      already ping-pongs between offscreen targets — the host sequences it and
+      the plugin never sees a target, exactly as promised.
+
+      Pass 0 keeps the BARE id. That is the compatibility hinge: a document
+      stores an effect as `<pluginId>.<effectId>`, the layer list and
+      device-loss attribution key off it, and every effect published before
+      chains existed has exactly one pass. Suffixing it would have made every
+      stored reference fail to resolve.
+    */
+    const count = contribution.passes?.length ?? 1;
+    const passes: RegisteredPass[] = [];
+    for (let i = 0; i < count; i++) {
+      const declared = contribution.passes?.[i];
+      passes.push({
+        index: i,
+        shaderId: declared && i > 0 ? `${id}#${declared.name}` : id,
+        wgsl: composeEffectShader(contribution, i).wgsl,
+      });
+    }
+
     effects.set(id, {
       id,
       pluginId,
@@ -146,8 +211,9 @@ export function registerEffects(
       contribution,
       state: 'pending',
       reason: '',
-      layout: composed.layout,
-      wgsl: composed.wgsl,
+      layout: composeEffectShader(contribution, 0).layout,
+      wgsl: passes[0]!.wgsl,
+      passes,
     });
   }
   if (contributions.length) changed();
@@ -177,17 +243,44 @@ export async function compileEffect(id: string, compiler: EffectCompiler): Promi
   // user's protection without asking.
   if (effect.state === 'disabled') return 'disabled';
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  const startedAt = Date.now();
   try {
-    await Promise.race([
-      compiler.compile(id, effect.wgsl),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`Compiling took longer than ${COMPILE_TIMEOUT_MS} ms.`)),
-          COMPILE_TIMEOUT_MS,
+    /*
+      Sequential, and bounded twice.
+
+      Sequential because a chain is all-or-nothing: the first failure decides
+      the effect, and compiling the rest afterwards would spend a driver's time
+      producing errors nobody will read.
+
+      Two bounds because they catch different things. The per-pass one catches
+      a single pathological shader. The whole-chain one catches four passes
+      that are each individually fine and together freeze a boot for sixteen
+      seconds — which no per-pass limit can see, and which presents to the user
+      as the editor hanging on startup rather than as one plugin being slow.
+    */
+    for (const pass of effect.passes) {
+      const remaining = CHAIN_COMPILE_TIMEOUT_MS - (Date.now() - startedAt);
+      if (remaining <= 0) {
+        throw new Error(
+          `The whole chain took longer than ${CHAIN_COMPILE_TIMEOUT_MS} ms to compile.`,
         );
-      }),
-    ]);
+      }
+      const budget = Math.min(COMPILE_TIMEOUT_MS, remaining);
+      await Promise.race([
+        compiler.compile(pass.shaderId, pass.wgsl),
+        new Promise<never>((_, reject) => {
+          timers.push(setTimeout(
+            () => reject(new Error(
+              effect.passes.length > 1
+                ? `Pass "${pass.shaderId.split('#')[1] ?? String(pass.index)}" took longer than ${budget} ms to compile.`
+                : `Compiling took longer than ${budget} ms.`,
+            )),
+            budget,
+          ));
+        }),
+      ]);
+    }
     effect.state = 'ready';
     effect.reason = '';
   } catch (err) {
@@ -200,7 +293,7 @@ export async function compileEffect(id: string, compiler: EffectCompiler): Promi
     // Cleared on BOTH paths. A pending timer that outlives a successful compile
     // keeps the process awake and, under fake timers in a test, rejects into a
     // promise nobody is holding.
-    if (timer !== undefined) clearTimeout(timer);
+    for (const t of timers) clearTimeout(t);
   }
 
   changed();

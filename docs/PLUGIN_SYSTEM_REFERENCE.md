@@ -771,8 +771,8 @@ mutually exclusive — an effect declaring both does not say which one draws.
 interface EffectPass {
   name: string;                              // camelCase, unique in the chain
   wgsl: string;                              // same one-`fs` contract, same validator
-  scale?: 1 | 0.5 | 0.25;                    // target downsample, default 1
-  reads?: 'previous' | 'origin' | 'both';    // default 'previous'
+  scale?: 1 | 0.5 | 0.25;                    // ⚠ only 1 is rendered — see below
+  reads?: 'previous' | 'origin' | 'both';    // ⚠ only 'previous' is rendered
 }
 ```
 
@@ -780,14 +780,47 @@ The host allocates the targets, ping-pongs them and sequences the draws. A
 plugin never sees a target, never allocates one, and still never runs code in
 the frame loop.
 
+Execution reuses the renderer's existing spatial-effects chain: `registerEffects`
+composes one shader per pass, `snapshotToFrameScene` emits one scene entry per
+pass, and `runEffectsChain` — which already ping-pongs for a layer carrying a
+blur then a glow — runs them in order. No new render mechanism was added.
+
+> ### ⚠ `scale` and `reads` are in the format and NOT rendered
+>
+> Both are parsed, budgeted, documented — and **refused at install and at
+> publish**, in both repositories, with a message naming the reason.
+>
+> `scale`: the renderer's offscreen targets are a fixed, statically-declared set
+> and every one is viewport-sized. There is nowhere to draw a quarter-size pass.
+>
+> `reads: origin | both`: the chain ping-pongs between a small pool, so the
+> pass-0 input is overwritten before a later pass could sample it. Keeping it
+> alive needs a target reserved across the whole chain, and the pool has none to
+> spare — it contends with the one glow borrows for its wide lobe.
+>
+> They are refused rather than ignored because accepting them and rendering at
+> full size, or binding a reused texture, is wrong output with no error: a bloom
+> four times the cost the author budgeted, or a composite against whatever was
+> last drawn there. Widening later is backward-compatible in both directions —
+> manifests that publish today keep working, ones refused today start working.
+> The reverse, shipping a field that silently does nothing and then making it
+> real, breaks every plugin that guessed around it.
+>
+> **So what works today is: up to four full-scale passes, each reading the one
+> before it.** That is a separable blur, a multi-tap convolution, an iterative
+> sharpen — the bulk of what one `fs` function could not express.
+
 **Bindings per pass.** 0 uniform, 1 `src` (the previous pass's output, or the
 layer for pass 0), 2 `samp`, 3 the optional `layer` param texture, **4 optional
-`origin`** — the pass-0 input — when `reads` is `origin` or `both`. `origin`
-stays at 4 even when 3 is unused: sliding it down would make a binding number
-depend on an unrelated part of the manifest, which the generator and the
+`origin`** — the pass-0 input, reachable only once `reads` is renderable.
+`origin` stays at 4 even when 3 is unused: sliding it down would make a binding
+number depend on an unrelated part of the manifest, which the generator and the
 resource-binding side would each have to derive separately.
 
-`reads` is refused on pass 0, whose `src` and `origin` are the same texture.
+`reads` on pass 0 is refused permanently and separately — its `src` and its
+`origin` are the same texture, so naming one is a statement no renderer can
+satisfy. That refusal keeps its own message, because "wait for a later version"
+would be wrong advice.
 
 **The cost budget.** A pass costs `scale²` — its share of the pixels — and a
 chain may total **3**. Both numbers differ from the work order that specified
@@ -962,7 +995,29 @@ Shader compilation is verified separately on a real GPU: the composed WGSL for a
 two-texture effect compiles with zero diagnostics and builds a valid four-binding
 pipeline (`npm run verify-plugin-effect`, plus the uniform-offset probe).
 
-**Re-run on real hardware for the multi-pass layout, 2026-08-10:**
+**A chain actually executes** — `npm run verify-plugin-chain`, real adapter,
+2026-08-10. The sample plugin's own composed passes (bundled out of the app with
+esbuild, not retyped) run over a 4×4 bright square:
+
+| stage | spread X | spread Y |
+|---|---|---|
+| source | 4 | 4 |
+| after `horizontal` | **14** | 4 |
+| after `vertical` | 14 | **14** |
+
+Each pass widened its own axis and left the other alone. That discriminates four
+distinct failures at once: a pass that never ran, a `texelSize` of zero (no
+widening at all), pass 0 drawn twice (X widens again), and a pass blurring both
+axes. Confirmed non-vacuous by composing pass 0 twice — X went 14 → 20 with Y
+stuck at 4, and the probe failed.
+
+This probe exists because unit tests could not answer the question. Two composed
+shaders, two registry entries and two scene entries are all equally consistent
+with a renderer that draws the first one twice — and for a while, that is
+roughly what was happening: `passes` parsed, composed, budgeted and documented,
+with nothing executing it, and every test green.
+
+**Uniform-offset probe, re-run on real hardware, 2026-08-10:**
 
 | amount | mean output | pass block |
 |---|---|---|

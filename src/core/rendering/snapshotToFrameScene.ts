@@ -523,28 +523,56 @@ export function extractSpatialEffects(
         const mapRaw = layerParam ? paramsOf(e)[layerParam] : undefined;
         const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
 
-        spatial.push({
-          type: 'plugin',
-          shader: registered.id,
-          // What the SHADER asks for, not what the user chose — see the field's
-          // own note. Set from the declaration so an effect with no map picked
-          // yet still gets a material whose layout matches its bindings.
-          ...(layerParam ? { readsMap: true } : {}),
-          ...(mapLayerId ? { mapLayerId } : {}),
-          // `packParameters` hands back an ArrayBuffer; the scene carries a
-          // typed view so the renderer never has to know the element size.
-          params: new Float32Array(packParameters(
-            registered.layout.layout,
-            registered.layout.size,
-            paramsOf(e),
-          )),
-          // The bracket that makes device-loss attribution real. Injected as
-          // callbacks so `packages/renderer` never learns what a plugin is.
-          onDraw: {
-            begin: () => beginEffectDraw(registered.id),
-            end: () => endEffectDraw(),
-          },
-        });
+        // Packed ONCE and shared by every pass. They all read the same
+        // parameter block from the same offsets; only the host's own fields
+        // differ per pass, and the renderer writes those.
+        // `packParameters` hands back an ArrayBuffer; the scene carries a typed
+        // view so the renderer never has to know the element size.
+        const params = new Float32Array(packParameters(
+          registered.layout.layout,
+          registered.layout.size,
+          paramsOf(e),
+        ));
+
+        /*
+          ★ One spatial entry PER PASS. This is what executes a chain.
+
+          The renderer's spatial-effects list already ping-pongs between
+          offscreen targets — that is how a layer with a blur and then a glow
+          works — so a chain needs no new mechanism, only its passes emitted in
+          order. The host sequences and allocates; the plugin never sees a
+          target, which is the promise multi-pass had to keep.
+
+          `passIndex` travels as a field rather than being baked into `params`
+          because the value beside it in the shader, `texelSize`, depends on the
+          size of the target being drawn into. Only the renderer knows that, so
+          the whole host block is written there and this side stays out of it.
+        */
+        for (const pass of registered.passes) {
+          spatial.push({
+            type: 'plugin',
+            shader: pass.shaderId,
+            passIndex: pass.index,
+            // What the SHADER asks for, not what the user chose — see the field's
+            // own note. Set from the declaration so an effect with no map picked
+            // yet still gets a material whose layout matches its bindings.
+            ...(layerParam ? { readsMap: true } : {}),
+            ...(mapLayerId ? { mapLayerId } : {}),
+            params,
+            /*
+              Attribution names the EFFECT, not the pass.
+
+              A device loss inside the vertical half of a blur is the blur's
+              fault as far as a user is concerned, and `disableEffect` keys off
+              the effect id — reporting `acme.blur#vertical` would name
+              something they cannot find in any list.
+            */
+            onDraw: {
+              begin: () => beginEffectDraw(registered.id),
+              end: () => endEffectDraw(),
+            },
+          });
+        }
       }
     }
   }

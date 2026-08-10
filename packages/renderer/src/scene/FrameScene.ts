@@ -120,10 +120,23 @@ export type RenderableEffect =
    */
   | {
       type: 'plugin';
-      /** Registered shader name — `<pluginId>.<effectId>`. */
+      /** Registered shader name — `<pluginId>.<effectId>`, `…#<pass>` after the first. */
       shader: string;
       /** The plugin's parameters, packed at their declared offsets. */
       params: Float32Array;
+      /**
+       * Which pass of a chain this is. 0 for a single-pass effect.
+       *
+       * A multi-pass effect arrives as SEVERAL of these entries, in order, and
+       * the existing ping-pong runs them — a chain needs no new mechanism here,
+       * which is why this package still does not know what a plugin is.
+       *
+       * Carried as a number rather than folded into `params` because it sits in
+       * the shader beside `texelSize`, and the texel size depends on the target
+       * being drawn into. That is knowable here and nowhere else, so the whole
+       * host block is written on this side.
+       */
+      passIndex?: number;
       /**
        * This effect's shader declares a fourth binding, so its material must
        * too — whether or not a map layer has been chosen.

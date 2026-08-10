@@ -434,6 +434,31 @@ function parsePasses(raw: unknown, at: string, errors: string[]): EffectPass[] |
         return;
       }
       scale = entry.scale as PassScale;
+      /*
+        ★ Declared in the format, not executed by this build. Refused, loudly.
+
+        The renderer's offscreen targets are a fixed, statically-declared set
+        and every one of them is viewport-sized; there is no facility for a
+        target at a fraction of that. Accepting `scale` and rendering at full
+        size anyway would make a plugin author's bloom four times the cost they
+        budgeted for and blur by the wrong radius — wrong output, no error, and
+        no way for them to tell from inside the shader.
+
+        So it is refused rather than ignored. Widening this later, when the
+        render graph can size a target, is backward-compatible: manifests that
+        publish today keep working, and ones that were refused start working.
+        The reverse — shipping a field that silently does nothing and then
+        making it real — breaks every plugin that guessed around it.
+      */
+      if (scale !== 1) {
+        errors.push(
+          `"${where}.scale" is ${String(entry.scale)}, which this version cannot render. `
+          + `Downsampled passes need an offscreen target smaller than the viewport and the `
+          + `render graph has only viewport-sized ones. Use scale 1 for now.`,
+        );
+        bad = true;
+        return;
+      }
     }
 
     let reads: PassReads = 'previous';
@@ -444,21 +469,45 @@ function parsePasses(raw: unknown, at: string, errors: string[]): EffectPass[] |
         return;
       }
       reads = entry.reads as PassReads;
-    }
 
-    /*
-      Pass 0 has no `origin` distinct from its `src` — they are the same
-      texture. Accepting `reads: "origin"` there would bind the same view to
-      two slots and quietly work, which teaches an author a mental model that
-      breaks the moment they add a pass in front.
-    */
-    if (i === 0 && reads !== 'previous') {
-      errors.push(
-        `"${where}.reads" is "${reads}", but pass 0 reads the layer itself — `
-        + `its "src" and its "origin" are the same texture. Omit "reads" on the first pass.`,
-      );
-      bad = true;
-      return;
+      /*
+        Pass 0 first, because it is the more precise diagnosis and the one that
+        stays true forever.
+
+        Pass 0 has no `origin` distinct from its `src` — they are the same
+        texture — so naming one is a statement that cannot be satisfied by any
+        renderer, now or later. Reporting the generic "not yet supported"
+        message here instead would tell an author to wait for a version that
+        will never make their manifest valid.
+      */
+      if (i === 0 && reads !== 'previous') {
+        errors.push(
+          `"${where}.reads" is "${reads}", but pass 0 reads the layer itself — `
+          + `its "src" and its "origin" are the same texture. Omit "reads" on the first pass.`,
+        );
+        bad = true;
+        return;
+      }
+
+      /*
+        Then the temporary one. Same reasoning as `scale`, different mechanism.
+
+        The chain ping-pongs between a small pool of targets, so the pass-0
+        input is overwritten by the time a later pass could sample it — keeping
+        it alive needs a target reserved for the whole chain, which contends
+        with the one glow borrows for its wide lobe. Binding a stale or reused
+        texture as `origin` would composite against whatever was last drawn
+        there, which is not a wrong picture so much as a random one.
+      */
+      if (reads !== 'previous') {
+        errors.push(
+          `"${where}.reads" is "${reads}", which this version cannot render. `
+          + `Keeping the pass-0 input alive needs a render target reserved across the whole `
+          + `chain, and the effect pool has none to spare. Use "previous" for now.`,
+        );
+        bad = true;
+        return;
+      }
     }
 
     passes.push({ name, wgsl, scale, reads });

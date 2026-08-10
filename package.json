@@ -45,7 +45,8 @@
     "render-tests:update": "node packages/render-tests/scripts/run.mjs --update",
     "verify-plugin-effect": "node packages/render-tests/scripts/verify-plugin-effect.mjs",
     "verify:fixtures": "node scripts/fixtures-hash.mjs",
-    "feature-counts": "node scripts/featureCounts.cjs"
+    "feature-counts": "node scripts/featureCounts.cjs",
+    "verify-plugin-chain": "node packages/render-tests/scripts/verify-plugin-chain.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

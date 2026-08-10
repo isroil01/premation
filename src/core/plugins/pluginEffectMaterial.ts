@@ -33,15 +33,12 @@
 import type { EffectContribution } from './effectSchema';
 import { composeEffectShader, layerParamNames, namespacedEffect } from './effectSchema';
 
-/**
- * Compilation bounds for a chain.
- *
- * Per pass AND in total, because they fail differently: one pathological
- * shader is caught by the per-pass bound, while four passes each taking four
- * seconds are individually fine and together freeze a boot for sixteen.
+/*
+ * The compile bounds are NOT here. They live in `pluginEffects.ts`, beside
+ * `compileEffect`, which is the only thing that enforces them — a second copy
+ * next to the material builder would be two numbers that must agree and one
+ * that nothing reads.
  */
-export const PASS_COMPILE_TIMEOUT_MS = 5_000;
-export const CHAIN_COMPILE_TIMEOUT_MS = 10_000;
 
 /** Mirrors `packages/renderer`'s `ShaderSource`. Duplicated, not imported, so
  *  `@core/plugins` does not take a dependency on the renderer package. */
@@ -199,43 +196,20 @@ export function pluginEffectMaterial(
   };
 }
 
-/**
- * Every pass of an effect, in execution order, as the renderer needs them.
+/*
+ * There is deliberately no `pluginEffectPlan()` here.
  *
- * The host owns the sequencing entirely — a plugin never sees a render target,
- * never allocates one and never says what order anything runs in. This is the
- * whole description it gets to influence, and it is data.
+ * An earlier draft of multi-pass built one — a per-pass description of shader,
+ * scale and bindings for a renderer to walk. Nothing consumed it, because the
+ * renderer already had the mechanism: `runEffectsChain` ping-pongs a LIST of
+ * spatial effects, so a chain is N ordinary entries in that list and needs no
+ * plan object at all. `pluginEffects.registerEffects` composes one shader per
+ * pass and `snapshotToFrameScene` emits one entry per pass; that is the whole
+ * of it.
+ *
+ * Written down because "the renderer needs a plan" is a plausible-sounding
+ * thing to build twice.
  */
-export interface PluginEffectPassPlan {
-  index: number;
-  /** Registry key for this pass's shader. */
-  shader: string;
-  /** Linear downsample of this pass's target. */
-  scale: number;
-  /** Whether the pass-0 input must be bound at binding 4. */
-  readsOrigin: boolean;
-  layout: PluginEffectLayout;
-}
-
-export function pluginEffectPlan(
-  pluginId: string,
-  effect: EffectContribution,
-): PluginEffectPassPlan[] {
-  const count = effect.passes?.length ?? 1;
-  const plan: PluginEffectPassPlan[] = [];
-  for (let i = 0; i < count; i++) {
-    const pass = effect.passes?.[i];
-    const material = pluginEffectMaterial(pluginId, effect, i);
-    plan.push({
-      index: i,
-      shader: material.shader,
-      scale: pass?.scale ?? 1,
-      readsOrigin: pass ? pass.reads === 'origin' || pass.reads === 'both' : false,
-      layout: material.layout,
-    });
-  }
-  return plan;
-}
 
 /**
  * Minimal view of the renderer's `ShaderRegistry`.

@@ -646,7 +646,31 @@ export class CompositionPass extends RenderPass {
           batchKey: `plugin:${effect.shader}`,
           material: pluginMaterial(effect.shader, effect.readsMap === true),
           blend: 'normal',
-          uniforms: packPluginEffect(mvp, targetUv, effect.params),
+          /*
+            The host pass block, written per draw.
+
+            A multi-pass effect arrives as several of these entries in order and
+            this loop already ping-pongs them, so nothing above needs to know a
+            chain exists. What each pass DOES need is its own texel size, and
+            the target it is about to be drawn into is `f0` — one of the pool's
+            offscreen targets, every one of which is viewport-sized. So the
+            viewport is this pass's target size.
+
+            Stated at the call site rather than assumed inside the packer,
+            because this is the line that has to change on the day a pass can
+            render at a fraction of the viewport. `scale` is fixed at 1 for the
+            same reason, and manifests declaring anything else are refused at
+            install rather than quietly drawn at full size.
+          */
+          uniforms: packPluginEffect(
+            mvp,
+            targetUv,
+            effect.params,
+            viewport.pixelSize.width,
+            viewport.pixelSize.height,
+            1,
+            effect.passIndex ?? 0,
+          ),
           texture: curTex, sampler: clampSampler(),
           // Keyed off `readsMap`, the SAME predicate the layout uses — never
           // off `mapLayerId`. Binding 3 is declared as soon as the shader asks

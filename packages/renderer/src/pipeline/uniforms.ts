@@ -455,11 +455,58 @@ export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: nu
  * the header underneath it. `params` is copied rather than mutated: the app may
  * reuse that buffer across frames, and writing a per-frame transform into it
  * would make the plugin's parameters depend on where the layer happened to be.
+ *
+ * ── The host pass block, at floats 16..23 (bytes 64..95) ─────────────────────
+ *
+ * Between the renderer's header and the plugin's parameters sits a block this
+ * function owns entirely:
+ *
+ *   16,17  texelSize : vec2<f32>   one over the target's dimensions
+ *   18     passScale : f32
+ *   19     passIndex : f32
+ *   20..23 _reserved : vec4<f32>   zeroed
+ *
+ * `texelSize` is the reason a separable blur can be written at all — `uv +
+ * vec2(texelSize.x, 0)` is one pixel to the right at whatever resolution the
+ * host allocated. It is written HERE and not by the app because the app does
+ * not know the size of the target being drawn into; that is a per-pass,
+ * per-frame fact of the render graph.
+ *
+ * Written unconditionally, for single-pass effects too. The struct declares
+ * these members for every plugin effect, so leaving them as whatever `params`
+ * held would hand a shader a `texelSize` of zero and a blur that samples the
+ * same texel 65 times.
  */
-export function packPluginEffect(mvp: Mat3, uvRect: Rect, params: Float32Array): Float32Array {
-  const out = new Float32Array(Math.max(params.length, MAT3_STD140_FLOATS + 4));
+const PASS_BLOCK_FLOAT = MAT3_STD140_FLOATS + 4;
+
+export function packPluginEffect(
+  mvp: Mat3,
+  uvRect: Rect,
+  params: Float32Array,
+  /** Target width in texels. `texelSize.x` is one over this. */
+  targetWidth: number,
+  targetHeight: number,
+  passScale: number,
+  passIndex: number,
+): Float32Array {
+  const out = new Float32Array(Math.max(params.length, PASS_BLOCK_FLOAT + 8));
   out.set(params);
-  let o = packMat3(mvp, out, 0);
+  const o = packMat3(mvp, out, 0);
   packRect(uvRect, out, o);
+
+  // Guarded: a zero-sized target is a real state during teardown, and dividing
+  // by it puts Infinity in a uniform — which does not throw and renders a layer
+  // as one flat colour.
+  out[PASS_BLOCK_FLOAT + 0] = targetWidth > 0 ? 1 / targetWidth : 0;
+  out[PASS_BLOCK_FLOAT + 1] = targetHeight > 0 ? 1 / targetHeight : 0;
+  out[PASS_BLOCK_FLOAT + 2] = passScale;
+  out[PASS_BLOCK_FLOAT + 3] = passIndex;
+  // `_reserved`, zeroed explicitly. It is the part a later version will start
+  // using, and a plugin reading stale bytes from it today would break on the
+  // day it becomes meaningful.
+  out[PASS_BLOCK_FLOAT + 4] = 0;
+  out[PASS_BLOCK_FLOAT + 5] = 0;
+  out[PASS_BLOCK_FLOAT + 6] = 0;
+  out[PASS_BLOCK_FLOAT + 7] = 0;
   return out;
 }

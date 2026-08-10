@@ -1230,17 +1230,30 @@ in order. You never see a target.
 
 | Field | |
 |---|---|
-| `scale` | `1`, `0.5` or `0.25`. The target's downsample. Default `1` |
-| `reads` | `previous` (default), `origin`, or `both`. `origin` is the pass-0 input, bound at binding 4 |
+| `scale` | `1`, `0.5` or `0.25`. **Only `1` renders today** — see below |
+| `reads` | `previous` (default), `origin`, `both`. **Only `previous` renders today** |
 
-`reads` is refused on the first pass — its `src` and its `origin` are the same
-texture, and accepting it would teach a model that breaks the moment you add a
-pass in front.
+> **`scale` and `reads` are refused at install and at publish.** They are in the
+> format and the renderer cannot execute them yet: every offscreen target it has
+> is viewport-sized, so there is nowhere to draw a downsampled pass, and the
+> chain ping-pongs between so few targets that the pass-0 input is gone before a
+> later pass could sample it as `origin`.
+>
+> You get a clear error naming the reason, rather than a field that silently
+> does nothing — a bloom rendered at full size is four times the cost you
+> budgeted, and neither your shader nor your eyes would tell you.
+>
+> **What works: up to four full-scale passes, each reading the one before it.**
+> That covers separable blurs, multi-tap convolutions and iterative filters —
+> the things one `fs` function could not express.
 
-**The cost budget is 3**, where a pass costs `scale²`. A separable blur is 2; a
-bloom (bright pass, two ¼-scale blurs, composite) is about 2.13; four full-scale
-passes is 4 and is refused. Downsample before you reach for another pass — a
-¼-scale pass costs a sixteenth of a full one.
+`reads` on the *first* pass is refused permanently, for a different reason: its
+`src` and its `origin` are the same texture, so no version will make that valid.
+
+**The cost budget is 3**, where a pass costs `scale²`. A separable blur is 2 and
+four full-scale passes is 4, which is refused. The budget already understands
+downsampling — a ¼-scale pass costs a sixteenth of a full one — so a bloom will
+fit at about 2.13 the day `scale` renders.
 
 `com.example.separable-blur` is a complete working sample. Two things in it are
 not obvious and will both bite on a first attempt:
@@ -1354,10 +1367,12 @@ expressed as native layers.
 - **The statement ceiling is a proxy for cost, not a cost model.** A real one
   would mean writing a WGSL front end, and a hand-written parser fed hostile
   input is a worse liability than the thing it would protect.
-- **Four passes, and a cost budget of 3.** Enough for a separable blur (2) or a
-  full bloom (≈2.13); not enough for four full-scale passes (4). If you need
-  more, the answer is almost always to downsample rather than to ask for a
-  fifth pass — a ¼-scale pass costs 1/16 of a full one.
+- **Four passes, and a cost budget of 3.** Enough for a separable blur (2); not
+  enough for four full-scale passes (4).
+- **`scale` and `reads` are declared in the format but not rendered yet**, and
+  are refused with a reason rather than ignored. Downsampled passes need an
+  offscreen target smaller than the viewport; `origin` needs one reserved across
+  the whole chain. Neither exists in the render graph today.
 - **One `layer` parameter per effect**, and it is shared by every pass rather
   than being per-pass.
 

@@ -14,7 +14,8 @@
 
 import { parseManifest } from '@core/plugins/manifest';
 import { chainCost, MAX_PASS_COST, composeEffectShader } from '@core/plugins/effectSchema';
-import { pluginEffectPlan } from '@core/plugins/pluginEffectMaterial';
+import { pluginEffectMaterial } from '@core/plugins/pluginEffectMaterial';
+import { registerEffects, effectById } from '@core/plugins/pluginEffects';
 import { readPluginZip } from '@core/plugins/pluginPackage';
 import { buildBlurSamplePlugin, BLUR_SAMPLE_MANIFEST } from './blurSamplePlugin';
 
@@ -126,13 +127,34 @@ describe('the kernel', () => {
 describe('what the host will generate for it', () => {
   const effect = () => parseManifest(BLUR_SAMPLE_MANIFEST).manifest!.contributes.effects[0]!;
 
-  it('plans two draws, both at full scale, neither needing origin', () => {
-    // A separable blur is a pure chain: each pass reads only the one before it.
-    // Nothing here needs the pass-0 input, so no pass gets binding 4.
-    expect(pluginEffectPlan('com.example.separable-blur', effect())).toEqual([
-      { index: 0, shader: 'com.example.separable-blur.gaussian#horizontal', scale: 1, readsOrigin: false, layout: expect.anything() },
-      { index: 1, shader: 'com.example.separable-blur.gaussian#vertical', scale: 1, readsOrigin: false, layout: expect.anything() },
+  it('★ registers as two shaders the renderer will run in order', () => {
+    /*
+      The end of the wiring, asserted through the registry the renderer actually
+      reads. `registerEffects` composes one shader per pass, and
+      `snapshotToFrameScene` emits one spatial entry per pass — which the
+      existing ping-pong chain then executes.
+
+      Pass 0 keeps the BARE id: a document stores the effect as
+      `<pluginId>.<effectId>`, and suffixing it would break every stored
+      reference.
+    */
+    registerEffects('com.example.separable-blur', 'Separable Blur', [effect()]);
+    const registered = effectById('com.example.separable-blur.gaussian');
+    expect(registered?.passes.map((p) => p.shaderId)).toEqual([
+      'com.example.separable-blur.gaussian',
+      'com.example.separable-blur.gaussian#vertical',
     ]);
+  });
+
+  it('gives the two passes DIFFERENT shader source', () => {
+    // The bug this catches is composing pass 0 twice — which registers two
+    // shaders, runs two draws, and blurs horizontally in both, leaving a
+    // smear that reads as a broken kernel rather than as a broken host.
+    registerEffects('com.example.separable-blur', 'Separable Blur', [effect()]);
+    const [h, v] = effectById('com.example.separable-blur.gaussian')!.passes;
+    expect(h!.wgsl).not.toBe(v!.wgsl);
+    expect(h!.wgsl).toContain('params.texelSize.x, 0.0');
+    expect(v!.wgsl).toContain('0.0, params.texelSize.y');
   });
 
   it('puts `radius` after the host pass block, at 96', () => {
@@ -141,8 +163,9 @@ describe('what the host will generate for it', () => {
   });
 
   it('gives each pass the standard three bindings and no more', () => {
-    for (const p of pluginEffectPlan('com.example.separable-blur', effect())) {
-      expect(p.layout.map((b) => b.binding)).toEqual([0, 1, 2]);
+    for (const i of [0, 1]) {
+      expect(pluginEffectMaterial('com.example.separable-blur', effect(), i).layout.map((b) => b.binding))
+        .toEqual([0, 1, 2]);
     }
   });
 });
