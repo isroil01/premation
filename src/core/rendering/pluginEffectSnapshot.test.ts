@@ -208,11 +208,21 @@ describe('a multi-pass effect reaching the scene', () => {
     expect(spatial).toHaveLength(2);
   });
 
-  it('names each pass its own shader, pass 0 keeping the bare id', () => {
-    // The bare id on pass 0 is the compatibility hinge: a document stores the
-    // effect under it, so suffixing would break every stored reference.
+  it('names each pass its own shader, every pass of a chain suffixed', () => {
+    /*
+      Pass 0 used to be expected bare here, on the grounds that a document
+      stores the effect under that name. It does not: a document stores
+      `RegisteredEffect.id`, which is bare regardless, while this is a key into
+      the renderer's shader registry that nothing persists.
+
+      The distinction was not academic. `passShaderName` — the function that
+      registers the shader — suffixed every pass, so pass 0 was registered as
+      `…#horizontal` and requested here as `…`, and a chain would have drawn
+      nothing the moment the registration was wired up. Now one function
+      answers for both sides; see `pluginEffectBridge.test.ts`.
+    */
     expect(spatialOf(layerWith(CHAIN_ID)).map((e) => (e as { shader: string }).shader))
-      .toEqual([CHAIN_ID, `${CHAIN_ID}#vertical`]);
+      .toEqual([`${CHAIN_ID}#horizontal`, `${CHAIN_ID}#vertical`]);
   });
 
   it('emits them in declaration order, carrying the pass index', () => {

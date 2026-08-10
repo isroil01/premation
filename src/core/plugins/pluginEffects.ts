@@ -39,6 +39,9 @@
 
 import { useUIStore } from '@stores/uiStore';
 import { composeEffectShader, namespacedEffect, type EffectContribution } from './effectSchema';
+// The single owner of the pass → registry-name rule. Imported rather than
+// re-derived; see the note in `registerEffects`.
+import { passShaderName } from './pluginEffectMaterial';
 
 /**
  * How long to wait for a shader to compile.
@@ -74,10 +77,19 @@ export type EffectState =
  * A single-pass effect has exactly one, and its `shaderId` is the effect's own
  * bare id — unchanged from before chains existed, which is what keeps every
  * already-published effect resolving to the same registry key.
+ *
+ * Note that `shaderId` is a SHADER REGISTRY key, not the effect's type. What a
+ * document stores is `RegisteredEffect.id`, which is bare for every effect
+ * however many passes it has. Conflating the two is what let two different
+ * naming rules exist here and in `passShaderName` for as long as nothing
+ * connected them.
  */
 export interface RegisteredPass {
   index: number;
-  /** What the renderer draws with: the bare id for pass 0, `id#name` after it. */
+  /**
+   * What the renderer draws with. Always `passShaderName`, never a second copy
+   * of its rule — see the note at the assignment.
+   */
   shaderId: string;
   wgsl: string;
   /** Linear downsample of this pass's target. 1 unless declared otherwise. */
@@ -191,11 +203,21 @@ export function registerEffects(
       already ping-pongs between offscreen targets — the host sequences it and
       the plugin never sees a target, exactly as promised.
 
-      Pass 0 keeps the BARE id. That is the compatibility hinge: a document
-      stores an effect as `<pluginId>.<effectId>`, the layer list and
-      device-loss attribution key off it, and every effect published before
-      chains existed has exactly one pass. Suffixing it would have made every
-      stored reference fail to resolve.
+      ★ The registry name comes from `passShaderName` and NOWHERE else.
+
+      It used to be computed here as well, with a different rule — bare for
+      pass 0, suffixed after it — while `passShaderName` suffixed every pass of
+      a chain. Both were tested, and both tests passed, because nothing
+      compared them: the shaders were never actually put into the renderer's
+      registry. The day that wiring landed, pass 0 of every multi-pass effect
+      would have been registered under one name and requested under another,
+      and the chain would have drawn nothing.
+
+      The rule itself is unchanged for the case it was written to protect: a
+      SINGLE-pass effect keeps its bare `<pluginId>.<effectId>`, so every effect
+      published before chains existed resolves to the same key it always did.
+      What a document stores is `RegisteredEffect.id` — bare regardless — so
+      the name a pass registers under was never the compatibility hinge.
     */
     const count = contribution.passes?.length ?? 1;
     const passes: RegisteredPass[] = [];
@@ -203,7 +225,7 @@ export function registerEffects(
       const declared = contribution.passes?.[i];
       passes.push({
         index: i,
-        shaderId: declared && i > 0 ? `${id}#${declared.name}` : id,
+        shaderId: passShaderName(pluginId, contribution, i),
         wgsl: composeEffectShader(contribution, i).wgsl,
         scale: declared?.scale ?? 1,
         readsOrigin: declared?.reads === 'origin' || declared?.reads === 'both',

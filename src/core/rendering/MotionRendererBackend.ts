@@ -32,6 +32,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { noteDeviceLoss } from '@core/plugins/pluginEffects';
 import { setWebgpuAvailable } from '@core/plugins/capabilities';
 import { markGpuOwned } from './canvasOwnership';
+import { attachPluginEffects } from './pluginEffectBridge';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
@@ -107,6 +108,8 @@ export class MotionRendererBackend implements RenderBackend {
 
   private canvas: HTMLCanvasElement | null = null;
   private renderer: Renderer | null = null;
+  /** Stops the plugin-effect subscription. Null until a renderer comes up. */
+  private detachPluginEffects: (() => void) | null = null;
   private viewport: Viewport | null = null;
   private textures: AppTextureProvider | null = null;
   private ready = false;
@@ -384,8 +387,11 @@ export class MotionRendererBackend implements RenderBackend {
       // The app-side texture provider decodes image assets to real GPU textures.
       // A finished decode fires onChange → we re-render so the pixels appear. The
       // `textures` factory runs synchronously inside the Renderer constructor.
+      // Held, not inlined: plugin effects need the backend itself to ask
+      // whether their WGSL compiles, and `Renderer` does not expose it.
+      const gpuBackend = this.createGpuBackendFor(attempt.kind);
       const renderer = new Renderer({
-        backend: this.createGpuBackendFor(attempt.kind),
+        backend: gpuBackend,
         textures: (resources) => (this.textures = new AppTextureProvider(resources)),
       });
       if (this.textures) {
@@ -447,6 +453,24 @@ export class MotionRendererBackend implements RenderBackend {
         break;
       }
       this.renderer = renderer;
+
+      /*
+        Plugin effects, now that there is a device to compile them against.
+
+        Here rather than at plugin-enable time because the two events have no
+        fixed order: a plugin enabled during startup has no renderer yet, and a
+        renderer that comes up on a project with plugins already enabled has a
+        backlog. Attaching syncs the backlog and then follows every later
+        change, so neither order is the special case.
+
+        Not gated on the tier. On WebGL2 a plugin effect compiles to a
+        passthrough and draws its input unchanged — inert, but the effect still
+        has to reach `ready` for the layer to render at all, and refusing to
+        attach here would turn "does nothing" into "the layer disappears".
+      */
+      this.detachPluginEffects?.();
+      this.detachPluginEffects = attachPluginEffects(renderer, gpuBackend);
+
       this.viewport = renderer.createViewport({
         width: this.cssW,
         height: this.cssH,
@@ -833,6 +857,12 @@ export class MotionRendererBackend implements RenderBackend {
     // hidden <video> and frame canvases alive for the whole page lifetime.
     this.textures?.dispose();
     viewportVideoFrames.clear();
+    // Before the renderer goes. The subscription outlives this object
+    // otherwise — the effect registry is module state, so a stale listener
+    // would keep compiling shaders into a registry attached to a disposed
+    // device every time a plugin is enabled, for the rest of the session.
+    this.detachPluginEffects?.();
+    this.detachPluginEffects = null;
     this.renderer?.dispose();
     this.renderer = null;
     this.viewport = null;

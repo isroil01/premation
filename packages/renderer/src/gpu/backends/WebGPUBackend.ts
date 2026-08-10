@@ -244,6 +244,24 @@ export class WebGPUBackend implements RenderBackend {
   }
   destroyShaderModule(_shader: ShaderModuleHandle): void {}
 
+  /**
+   * Compile a source now and hand back what the driver complained about.
+   *
+   * Errors only. A warning is the driver's opinion about a shader it accepted,
+   * and refusing a plugin's effect over one would make the set of effects that
+   * work depend on which GPU vendor the user happens to have.
+   */
+  async shaderDiagnostics(label: string, wgsl: string): Promise<string[]> {
+    const module = this.device.createShaderModule({ label, code: wgsl });
+    // Absent on an implementation predating the method. "Nothing to report" is
+    // the only honest answer there, and matches the optional-method contract.
+    if (!module.getCompilationInfo) return [];
+    const info = await module.getCompilationInfo();
+    return info.messages
+      .filter((m) => m.type === 'error')
+      .map((m) => `line ${m.lineNum}: ${m.message.trim()}`);
+  }
+
   createPipeline(desc: PipelineDescriptor): PipelineHandle {
     const bgl = this.device.createBindGroupLayout({
       entries: desc.layout.map((e) => {

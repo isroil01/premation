@@ -134,14 +134,28 @@ describe('what the host will generate for it', () => {
       `snapshotToFrameScene` emits one spatial entry per pass — which the
       existing ping-pong chain then executes.
 
-      Pass 0 keeps the BARE id: a document stores the effect as
-      `<pluginId>.<effectId>`, and suffixing it would break every stored
-      reference.
+      Every pass of a CHAIN is suffixed, pass 0 included.
+
+      This used to expect a bare name for pass 0, reasoning that a document
+      stores the effect as `<pluginId>.<effectId>` and suffixing would break
+      stored references. That reasoning was about the wrong identifier: what a
+      document stores is `RegisteredEffect.id`, bare for every effect however
+      many passes it has. `shaderId` is a key into the renderer's shader
+      registry, and nothing persists it.
+
+      The mistake had a cost. `passShaderName` suffixed every pass while this
+      side suffixed all but the first, so the day the shaders were actually put
+      into the registry, pass 0 of every chain would have been stored under one
+      name and requested under another — a chain that draws nothing. Both rules
+      had a passing test and nothing compared them. They are now one function.
+
+      The real compatibility case is a SINGLE-pass effect, which still keeps its
+      bare name — pinned in `pluginEffectBridge.test.ts`.
     */
     registerEffects('com.example.separable-blur', 'Separable Blur', [effect()]);
     const registered = effectById('com.example.separable-blur.gaussian');
     expect(registered?.passes.map((p) => p.shaderId)).toEqual([
-      'com.example.separable-blur.gaussian',
+      'com.example.separable-blur.gaussian#horizontal',
       'com.example.separable-blur.gaussian#vertical',
     ]);
   });

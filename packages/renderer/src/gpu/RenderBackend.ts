@@ -117,6 +117,19 @@ export interface RenderBackend {
   createShaderModule(desc: ShaderModuleDescriptor): ShaderModuleHandle;
   destroyShaderModule(shader: ShaderModuleHandle): void;
 
+  /**
+   * Compile a source now and return the driver's error messages, if the backend
+   * can ask. An empty array means it compiled cleanly.
+   *
+   * Optional, and the absence is meaningful: a backend that cannot report
+   * diagnostics returns nothing here, and a caller must read that as "not
+   * checked" rather than "fine". It exists for host-supplied shaders — a
+   * plugin effect's WGSL is untrusted text, and without this the first news of
+   * a bad one is a pipeline failing inside a frame, where the error is
+   * unattributable and the frame is already lost.
+   */
+  shaderDiagnostics?(label: string, wgsl: string): Promise<string[]>;
+
   createPipeline(desc: PipelineDescriptor): PipelineHandle;
   destroyPipeline(pipeline: PipelineHandle): void;
 
