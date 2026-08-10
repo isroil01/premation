@@ -78,3 +78,43 @@ change, no migration, no renderer involvement.
 **B:** medium-large, and it takes a schema slot.
 
 Not started. Awaiting a decision on A vs B.
+
+---
+
+## Update 2026-08-10 — what shipped, and the blocker on the last piece
+
+**Shipped:** `dataTable.ts` (CSV/JSON parsing, pure), `dataFill.ts`
+(`coerceCell` + `applyDataRow`, one row = one undo entry), and
+`DataFillSection` in the template panel — load a table, step through rows,
+apply one. 24 tests. Restricted to `text`/`color`/`number` as recommended;
+media fields are reported as skipped rather than silently ignored.
+
+**Not shipped, and NOT a small remainder: one render per row.**
+
+The obvious implementation — apply row *i*, `addJob(...)`, repeat — produces
+silently wrong files. `renderJob` calls `renderVideo`, which calls
+`buildSnapshot` against the **live scene graph**; a queued job carries settings,
+not a document. Queue forty jobs and every one renders whatever the scene looks
+like when it runs, which is the last row applied. Forty identical files, each
+correctly named after a different row. Nothing errors.
+
+This is the same class of defect the queue already fixed once: `RenderJob` grew
+a `compositionId` because `compositionName` was only a label, so every job
+rendered whatever comp was active. That fix made jobs name their comp; it did
+not make them capture its *state*.
+
+Two ways out, and they are different sizes:
+
+- **A sequential driver.** Batch fill owns the loop: apply row, await a full
+  render, apply the next. Does not use `addJob` at all. Correct, and small —
+  but it is a second render driver beside the queue, it cannot interleave with
+  user-queued jobs, and it wants pause/resume (Step 3) to be useful, since a
+  forty-row batch is exactly when someone reaches for pause.
+- **Per-job document snapshots.** `RenderJob` carries a captured document that
+  `buildSnapshot` renders instead of the live graph. The general fix, and the
+  one that would let batch rows, queued comps and a busy editor coexist. Much
+  larger, and it touches the render path's most safety-critical invariant.
+
+**Recommendation:** the sequential driver, sequenced AFTER Step 3, because
+pause/resume is the thing that makes a long batch usable and building the driver
+first would mean building it twice.
