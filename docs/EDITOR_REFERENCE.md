@@ -157,13 +157,15 @@ ports as-is. There is no architectural limit on sampling a track away from the
 current frame — `sampleRaw` reads keyframes only, deliberately bypassing the
 expression so `valueAtTime` cannot recurse through itself.
 
-**No bounce/overshoot easing preset**, though. There is no named easing-preset
-registry at all: easing is bezier handles plus the Easy Ease assistants in
-`keyframeAssistants.ts`. `BOUNCE_EASE` in `animationPresets.ts` is a single
-cubic-bezier (`0.175, 0.885, 0.32, 1.275`) used by one preset and commented
-"Elastic bounce" — a cubic-bezier has one overshoot and cannot express a decaying
-bounce. A real one belongs beside `easyEaseAll` as a **keyframe assistant** that
-generates decaying keys — preset authoring, not engine work, as suspected.
+There is still **no named easing-preset registry**: easing is bezier handles plus
+the assistants in `keyframeAssistants.ts`. `BOUNCE_EASE` in
+`animationPresets.ts` is a single cubic-bezier (`0.175, 0.885, 0.32, 1.275`)
+commented "Elastic bounce" — a bezier has one overshoot and cannot express a
+decaying bounce, so the name overstates it.
+
+**Bounce is a keyframe assistant** (`bounceTracks` / `bounceKeyframes`, menu:
+Bounce Keyframes), not an ease — it generates decaying keys with amplitude *and*
+duration both scaled by decay, which is what separates gravity from a flutter.
 
 ### Compositing
 36 layer blend modes on one GPU shader path (`BLEND_COMBINE`), including the
@@ -437,7 +439,7 @@ other:
 | §3 "easing presets" | There is **no easing-preset registry**. Bezier handles + Easy Ease assistants; `BOUNCE_EASE` is one cubic-bezier used by one preset and cannot express a decaying bounce |
 | The transparency checkerboard was missing | It **existed**, as a full-bleed `.stageTransparent` on the stage — which is why a transparent comp looked like the surrounding panel had changed. Now clipped to the comp rect. (The earlier "only the Checkerboard effect exists" finding was a truncated grep, not a fact) |
 | Layer label colours are unbuilt | **Already ship**: a 12-entry palette on `custom.labelColor` (`labelColor.ts`), persisted through `sceneProjectIO`, read by Scene rows, timeline track headers and clip bars |
-| `SelectionPass` draws the selection chrome | It does **not**. `snapshotToFrameScene` sets `selection: []` unconditionally, so the pass never draws in preview or export; the real outline and handles are 2D-canvas overlay chrome in `useWorkspace.ts` (~1734), on a fixed `ACCENT` |
+| `SelectionPass` draws the selection chrome | It does **not**. `snapshotToFrameScene` sets `selection: []` unconditionally, so the pass never draws in preview or export; the real outline and handles are 2D-canvas overlay chrome in `useWorkspace.ts`. That overlay now tints each outline with its layer's **label colour** (dark halo underneath for contrast); handles follow only when exactly one layer is selected |
 | The boot CSP error was cosmetic | It broke a feature: `media="print"` never flipped to `all`, so **no user-selectable document font ever loaded**. The UI looked right because its own faces come from a different `@import` |
 
 ---
