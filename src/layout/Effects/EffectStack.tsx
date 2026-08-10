@@ -53,7 +53,7 @@ import { defaultAnimation } from '@motion/animation';
 import { Color } from '@motion/renderer';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import {
-  EFFECT_DEFS,
+  effectDefFor,
   getNodeEffects,
   updateEffectParam,
   removeEffect,
@@ -383,7 +383,6 @@ function EffectParamRow({
 export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   useSceneRevision((s) => s.rev);
   const effects = getNodeEffects(nodeId);
-  const defByType = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
   // "Gaussian Blur 2" for the second of a kind — see effectDisplayNames.
   const names = effectDisplayNames(effects);
   // Which effect owns the canvas handles. Subscribed, not read via getState():
@@ -416,7 +415,21 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   return (
     <div className={panel.stackList}>
       {effects.map((e, i) => {
-        const def = defByType.get(e.type);
+        /*
+          `effectDefFor`, NOT a map built from `EFFECT_DEFS`.
+
+          That array holds the built-ins only, and is captured at module load;
+          a plugin's effects arrive later and change while the app runs. A map
+          built from it returns undefined for every plugin effect, and the skip
+          below then drew nothing for one — so adding a plugin effect from the
+          browser wrote it to the layer and produced no visible change, which
+          reads as the add having failed.
+
+          The skip itself is right, for what is left once this resolves
+          properly: an effect whose plugin has been disabled or uninstalled has
+          no definition to draw a card from.
+        */
+        const def = effectDefFor(e.type);
         if (!def) return null;
         const name = names.get(e.id) ?? def.label;
         const off = e.enabled === false;

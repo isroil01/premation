@@ -28,7 +28,10 @@
  *                returns something, so there is no reason to.
  */
 
-import { EFFECT_DEFS, getNodeEffects, type EffectParamDef } from '@core/effects/effects';
+import {
+  EFFECT_DEFS, effectDefFor, getNodeEffects, type EffectParamDef,
+} from '@core/effects/effects';
+import { pluginEffectDefs } from '@core/effects/pluginEffectDefs';
 import {
   LAYER_STYLE_EFFECT_TYPE,
   LAYER_STYLE_LABEL,
@@ -411,11 +414,16 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
     const styleKey = styleKeyFromEffectId(effectId);
     if (styleKey) {
       const type = LAYER_STYLE_EFFECT_TYPE[styleKey];
-      return type ? EFFECT_DEFS.find((d) => d.type === type) : undefined;
+      return type ? effectDefFor(type) : undefined;
     }
     if (!nodeId) return undefined;
     const fx = getNodeEffects(nodeId).find((e) => e.id === effectId);
-    return fx ? EFFECT_DEFS.find((d) => d.type === fx.type) : undefined;
+    // `effectDefFor`, not a scan of `EFFECT_DEFS` — that array is the built-ins
+    // and a plugin's effect is not in it. Left as a scan, every parameter of a
+    // plugin effect fell through to the key-matching fallback below and was
+    // described by whichever BUILT-IN effect happened to declare the same key
+    // first: a plugin's `radius` labelled and ranged as some other effect's.
+    return fx ? effectDefFor(fx.type) : undefined;
   })();
 
   // `effect.<id>` with no key is the legacy "primary scalar" track.
@@ -448,7 +456,11 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
   }
 
   // No node context (or a stale effect id): match the key across all effects.
-  for (const d of EFFECT_DEFS) {
+  // Built-ins first, so a plugin cannot change how an existing property is
+  // labelled by declaring a param that collides with one — but plugin defs are
+  // searched, because without them a plugin effect's keyframe track in the
+  // timeline is labelled by `titleCase(key)` with no unit, range or precision.
+  for (const d of [...EFFECT_DEFS, ...pluginEffectDefs()]) {
     const p = d.params.find((q) => q.key === key);
     if (p) return fromEffectParam(path, d.label, p);
   }

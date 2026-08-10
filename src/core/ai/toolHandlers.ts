@@ -27,7 +27,7 @@
 
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { ALL_TOOL_DEFS, bindAlias } from '@motion/ai-tools';
-import { EFFECT_DEFS } from '@core/effects/effects';
+import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
 import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/textAnimators';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -629,7 +629,11 @@ const addEffectHandler: AiTool['handler'] = (input, ctx) => {
   const id = ctx.scene.addEffect(nodeId, type, wantedId);
   if (!id) return fail(`Could not add '${type}' to ${nodeId}.`);
   if (amount !== undefined) ctx.scene.updateEffect(nodeId, id, amount);
-  const d = EFFECT_DEFS.find((e) => e.type === type);
+  // `effectDefFor`, not a scan of the built-in array: `ctx.scene.addEffect`
+  // resolves plugin effects too, so a scan here would report an effect it had
+  // just successfully added as having no parameters — and the model would then
+  // have no key to keyframe.
+  const d = effectDefFor(type);
   const primary = d?.params.find((p) => p.type === 'number');
   const params = d?.params.map((p) => p.key).join(', ') ?? '';
   return ok(
