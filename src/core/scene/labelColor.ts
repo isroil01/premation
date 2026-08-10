@@ -54,6 +54,31 @@ export function getNodeLabelColor(nodeId: string): string | undefined {
  * bump the scene revision so every projection (Scene tree, timeline tracks,
  * clip bars) re-derives.
  */
+export function matchLabelColor(
+  nodes: ReadonlyArray<SceneNode>,
+  color: string | undefined,
+): string[] {
+  return nodes.filter((n) => readNodeLabelColor(n) === color).map((n) => n.id);
+}
+
+/**
+ * Ids of every node carrying the same label colour as `nodeId`, in scene order.
+ *
+ * Backs "Select All with This Label". `undefined` is a real match, not a gap in
+ * the query — sweeping up the UNLABELLED layers is exactly as useful as
+ * sweeping up the red ones, and is how you find what you forgot to tag.
+ *
+ * Returns [] when the node is gone rather than throwing: a context menu is
+ * built from a snapshot and the scene can move underneath it.
+ */
+export function nodesWithLabelColor(nodeId: string): string[] {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return [];
+  const all: SceneNode[] = [];
+  defaultSceneGraph.traverse((n) => all.push(n));
+  return matchLabelColor(all, readNodeLabelColor(node));
+}
+
 export function setNodeLabelColor(nodeIds: string | ReadonlyArray<string>, color: string | undefined): void {
   const ids = typeof nodeIds === 'string' ? [nodeIds] : nodeIds;
   let changed = false;

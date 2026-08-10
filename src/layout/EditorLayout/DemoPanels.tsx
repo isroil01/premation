@@ -92,7 +92,7 @@ import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lott
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
+import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor, nodesWithLabelColor } from '@core/scene/labelColor';
 import { useComponentStore } from '@stores/componentStore';
 import { MotionPresetsPanel } from '@layout/Motion/MotionPresetsPanel';
 import { useUIStore } from '@stores/uiStore';
@@ -252,6 +252,19 @@ function labelColorMenuItems(targetId: string): ContextMenuItem[] {
       icon: current === c.color ? 'check' : undefined,
       onSelect: () => setNodeLabelColor(ids, c.color),
     })),
+    { id: 'label-select-sep', separator: true },
+    {
+      id: 'label-select-same',
+      // The other half of what a label is FOR. Assigning colours only pays off
+      // if you can then act on the group; without this the palette is
+      // decoration. Matches the UNLABELLED set too, which is how you find the
+      // layers you forgot to tag.
+      label: 'Select All with This Label',
+      onSelect: () => {
+        const matches = nodesWithLabelColor(targetId);
+        if (matches.length) useSelectionStore.getState().set(matches);
+      },
+    },
   ];
 }
 
