@@ -944,10 +944,29 @@ Note the asymmetry in `KeyChangeRequest.authorisation`: it can be `dashboard` or
 does not reach the prompt at all, so there is no path that would produce it —
 and a value that can never occur is a branch nobody tests.
 
-**Publish-time scanning** produces a risk score; past a threshold the version is
-held `pending` and download refuses it — without naming the review, since that
-would tell a guesser a version exists. Publishers see the decision and the
-reviewer's words, never the score or the findings.
+**Publish-time scanning** produces a risk score and findings, both stored on the
+version — and **gates nothing**. A publish goes live.
+
+The gate was removed deliberately. The scanner is a pattern match over source a
+hostile author fully controls, so anyone reading the public rule list can score
+zero; it stopped the careless and not the deliberate. What it reliably stopped
+was honest authors — the first plugin ever published against this registry was
+held for a permission mismatch, silently, and disappeared from the marketplace
+its author had just published to.
+
+The findings now go **to the author**, as `warnings` on the publish response.
+They were withheld while they gated publication (naming the rules you tripped is
+naming what to avoid tripping); with no gate there is nothing left to protect,
+and `permission-undeclared` in particular tells an author their plugin will have
+calls refused at runtime — which a successful publish otherwise hides completely.
+
+`reviewStatus` still exists and download still refuses anything that is not
+`approved`. Nothing writes `pending` any more; what remains are the operator
+decisions `blocked` and `changes_requested`, which still bite. The protections
+that were always doing the work are unchanged: the sandbox, the permission
+screen, signature pinning, the report path into a human, and an operator's block
+— which reaches machines that already installed it, as no pre-publication gate
+ever could.
 
 **Reports** need no account, aggregate into a `PluginCase` per plugin+version,
 and are metered four ways — see [§5](#reports-and-the-review-queue). No count

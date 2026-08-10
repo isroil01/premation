@@ -1059,24 +1059,39 @@ what the code does, and a consent screen that overstates is one users learn to
 click through. A package calling a method it never asked for will be refused at
 runtime, so it is untested code or a build against a different manifest.
 
-Results attach to the version as a risk score plus findings. Above the
-threshold the version is stored but **not live**: it is not downloadable, it
-does not become `latestVersion`, and the plugin does not appear in browse if it
-has no approved version. Below it, the version publishes immediately — which is
-almost everything.
+Results attach to the version as a risk score plus findings, and **gate
+nothing**. Your publish is live the moment it succeeds: downloadable,
+searchable, and `latestVersion`.
+
+**The findings come back to you as `warnings` on the publish response.** Read
+them — the highest-signal one is `permission-undeclared`, which means your code
+calls a method your manifest never asked permission for. Those calls are
+**refused at runtime**, so the plugin installs, looks healthy, and silently
+fails at the one thing it was written to do. A successful publish cannot tell
+you that; the warning can.
 
 > **The scanner is not the security boundary. The sandbox is.** Every check is a
 > pattern match over source a hostile author controls completely, and every one
 > can be evaded by someone who reads the source — which is public. If the
 > platform's safety ever depends on a finding here, the platform is not safe.
 > Findings are prompts for a person, never verdicts.
+>
+> That is also why it no longer gates. A check that stops only the people who
+> were not trying to get past it, while silently burying honest authors who
+> mistyped a permission, was costing more than it bought. The score is still
+> computed and stored, because "what did the scanner see when this shipped?" is
+> the first useful question when an abuse report arrives.
 
 ### The reviewer queue
 
-Admin-only, at `/admin/plugins/review`. Held versions and open cases on one
-page, ordered by signal strength rather than age — a queue sorted oldest-first
-puts a low-risk package from Tuesday above eleven reports of data theft that
-arrived this morning, which is the ordering that gets a queue abandoned.
+Admin-only, at `/admin/plugins/review`. Open cases, ordered by distinct
+reporters rather than age — a queue sorted oldest-first puts a low-risk package
+from Tuesday above eleven reports of data theft that arrived this morning, which
+is the ordering that gets a queue abandoned.
+
+Its held-versions half is now permanently empty: nothing writes `pending`. The
+code is kept because `blocked` and `changes_requested` are still real operator
+decisions, and because a deployment that wants the gate back needs one line.
 
 Per-case actions: approve, request changes (with a note the publisher reads),
 block the version, block the plugin, suspend the publisher. Every one requires

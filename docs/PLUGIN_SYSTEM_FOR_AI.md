@@ -81,9 +81,15 @@ If a plugin doc disagrees with this table, that doc is stale.
 9. **Blocking and withdrawal stop distribution, not execution.** Nothing on the
    server removes a plugin from a machine that has it. Revocation *tells* a
    running copy; it does not delete it.
-10. **The scanner is advisory.** It gates review, never publication, and it is
-    a pattern match over source a hostile author fully controls. The sandbox is
-    the boundary.
+10. **The scanner gates nothing. A publish is live.** It scores and stores
+    findings, and hands them to the author as `warnings`; it does not hold a
+    version. It is a pattern match over source a hostile author fully controls,
+    so it stopped the careless and not the deliberate — while silently burying
+    honest authors who mistyped a permission. `reviewStatus` still exists and
+    download still refuses anything not `approved`, but only the operator
+    states (`blocked`, `changes_requested`) are ever written now. The sandbox,
+    the consent screen, key pinning and the report-to-human path are where the
+    protection always was.
 
 ---
 
