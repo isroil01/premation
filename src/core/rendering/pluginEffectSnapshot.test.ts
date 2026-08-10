@@ -161,3 +161,92 @@ describe('telling a plugin effect from a built-in', () => {
     expect(effect).toMatchObject({ type: 'sharpen' });
   });
 });
+
+/**
+ * A CHAIN reaching the scene, which is the seam the GPU probe cannot see.
+ *
+ * `verify-plugin-chain` proves the composed shaders blur correctly when a host
+ * ping-pongs them — it builds that ping-pong itself, in a standalone harness.
+ * What it cannot prove is that THIS function hands the renderer more than one
+ * draw. Between the two lies the exact bug 3.3 shipped with: passes composed,
+ * registered, and then a single scene entry emitted, so the renderer faithfully
+ * drew half a blur.
+ *
+ * So this asserts the count and the ordering at the seam, and the probe asserts
+ * the pixels. Neither is sufficient alone.
+ */
+describe('a multi-pass effect reaching the scene', () => {
+  const CHAIN_PLUGIN = 'studio.acme.blur';
+  const CHAIN_ID = `${CHAIN_PLUGIN}.gaussian`;
+  const fs = (axis: string) =>
+    '@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {'
+    + `  return textureSample(src, samp, uv + vec2<f32>(${axis}));`
+    + '}';
+
+  const chain: EffectContribution = {
+    id: 'gaussian',
+    label: 'Gaussian',
+    shader: fs('params.texelSize.x, 0.0'),
+    params: { radius: { type: 'number', default: 4 } },
+    passes: [
+      { name: 'horizontal', wgsl: fs('params.texelSize.x, 0.0'), scale: 1, reads: 'previous' },
+      { name: 'vertical', wgsl: fs('0.0, params.texelSize.y'), scale: 1, reads: 'previous' },
+    ],
+  };
+
+  beforeEach(async () => {
+    registerEffects(CHAIN_PLUGIN, 'Acme Blur', [chain]);
+    await compileEffect(CHAIN_ID, ok);
+    // The outer setup REGISTERS the single-pass effect but never compiles it,
+    // and a `pending` effect correctly emits nothing. The single-pass check at
+    // the end of this block needs it ready, or it passes for the wrong reason.
+    await compileEffect(ID, ok);
+  });
+
+  it('★ emits ONE draw per pass, not one per effect', () => {
+    const spatial = spatialOf(layerWith(CHAIN_ID));
+    expect(spatial).toHaveLength(2);
+  });
+
+  it('names each pass its own shader, pass 0 keeping the bare id', () => {
+    // The bare id on pass 0 is the compatibility hinge: a document stores the
+    // effect under it, so suffixing would break every stored reference.
+    expect(spatialOf(layerWith(CHAIN_ID)).map((e) => (e as { shader: string }).shader))
+      .toEqual([CHAIN_ID, `${CHAIN_ID}#vertical`]);
+  });
+
+  it('emits them in declaration order, carrying the pass index', () => {
+    // Order IS the semantics — the renderer ping-pongs in the order it is
+    // given, so a reversed list is a blur that runs vertical-then-horizontal.
+    expect(spatialOf(layerWith(CHAIN_ID)).map((e) => (e as { passIndex?: number }).passIndex))
+      .toEqual([0, 1]);
+  });
+
+  it('gives every pass the same parameter block', () => {
+    // One pack, shared. The passes differ only in their shader and the host
+    // fields the renderer writes; a per-pass copy would be the same bytes
+    // allocated twice per frame.
+    const [a, b] = spatialOf(layerWith(CHAIN_ID)) as Array<{ params: Float32Array }>;
+    expect(a!.params).toBe(b!.params);
+    expect(a!.params[UNIFORM_HEADER_BYTES / 4]).toBe(4);
+  });
+
+  it('emits NOTHING for a chain that failed to compile', async () => {
+    /*
+      All-or-nothing, and the reason is what a half-drawn chain looks like: not
+      a weaker blur but a smear in one axis, which reads as the author's kernel
+      being wrong rather than as the platform failing. `compileEffect` fails the
+      whole effect on any pass, and this is the half that must then draw none.
+    */
+    resetEffectsForTests();
+    registerEffects(CHAIN_PLUGIN, 'Acme Blur', [chain]);
+    await compileEffect(CHAIN_ID, broken);
+    expect(spatialOf(layerWith(CHAIN_ID))).toEqual([]);
+  });
+
+  it('still emits exactly one draw for a single-pass effect', () => {
+    // The regression that would matter most, since every published effect is
+    // one pass: the chain loop must not turn them into two draws.
+    expect(spatialOf(layerWith(ID))).toHaveLength(1);
+  });
+});
