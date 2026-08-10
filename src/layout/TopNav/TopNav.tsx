@@ -22,7 +22,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
-import { timeReverseKeyframes, easyEaseAll, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
+import { timeReverseKeyframes, easyEaseAll, bounceKeyframes, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
 import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
 
 /** The control kinds offered in the rig menu, in the order AE lists them. */
@@ -137,6 +137,7 @@ function buildAnimateItems(
     { type: 'item', id: 'anim-tracking-reveal', label: 'Tracking Reveal (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created'); } },
     { type: 'separator' },
     { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { if (easyEaseAll(id)) notify('Eased all keyframes'); else notify('Layer has no keyframes yet', 'warning'); } },
+    { type: 'item', id: 'anim-bounce', label: 'Bounce Keyframes', icon: 'track', onSelect: () => { if (bounceKeyframes(id)) notify('Added a bounce'); else notify('Layer needs two keyframes that move', 'warning'); } },
     { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { if (timeReverseKeyframes(id)) notify('Keyframes reversed'); else notify('Layer has no keyframes yet', 'warning'); } },
     // Overlap is ASKED FOR rather than hardcoded. `sequenceLayerBars` has taken
     // an `overlapSeconds` since it was written, with a passing test for it, but

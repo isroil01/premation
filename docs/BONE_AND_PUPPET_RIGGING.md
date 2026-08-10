@@ -38,8 +38,8 @@ and a per-vertex numeric weight editor all ship. Remaining defects and open item
 The one thing deliberately NOT inherited from DUIK is **controllers driving puppet pins**. DUIK does
 that because AE has no skeleton, so a pin *is* the joint and a null-plus-expression is the only
 handle available — a workaround for a missing rig model. This project has the rig model, so a
-controller links to a `bone` or an `ikTarget` and the solver reads it directly. See
-`PREMATION_COMPLETE_REFERENCE.md` §7.8 for the full reasoning.
+controller links to a `bone` or an `ikTarget` and the solver reads it directly. The rest of this
+document is that reasoning; `EDITOR_REFERENCE.md` §3 places rigging in the wider feature map.
 
 ---
 

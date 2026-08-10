@@ -141,6 +141,18 @@ export interface RendererPort {
   setOverlay?(overlay: WorkspaceOverlay): void;
 }
 
+/**
+ * A selected layer's outline in screen space, with the layer it came from.
+ *
+ * The id travels with the geometry rather than in a parallel array: two lists
+ * that must stay index-aligned is precisely how a box ends up painted in
+ * another layer's colour.
+ */
+export interface ScreenSelectionBox {
+  id: NodeId;
+  corners: Corners;
+}
+
 /** Everything the workspace wants painted above the scene, in screen pixels. */
 export interface WorkspaceOverlay {
   /**
@@ -154,8 +166,12 @@ export interface WorkspaceOverlay {
    * One oriented box per selected layer, screen space. This is the selection
    * outline: rotated with its layer, and one per layer rather than a single
    * merged rectangle.
+   *
+   * Each box names its layer so the painter can tint it with that layer's
+   * label colour — the linkage that lets you tell, with several layers
+   * selected, which outline belongs to which timeline row.
    */
-  selectionBoxes: readonly Corners[];
+  selectionBoxes: readonly ScreenSelectionBox[];
   handles: readonly OverlayHandle[];
   marquee: Rect | null;
   snapLines: readonly SnapLine[];

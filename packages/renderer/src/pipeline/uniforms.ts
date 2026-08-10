@@ -86,11 +86,14 @@ export function packSolid(mvp: Mat3, color: Color, opacity: number, shape: Solid
 /** Hard cap on lights uploaded per draw; extra scene lights are truncated. */
 export const MAX_LIGHTS3D = 8;
 
-/** vec4 slots per packed light (posType, colorGain, radius/cone/aim). */
-export const LIGHT3D_VEC4S = 3;
+/** vec4 slots per packed light: posType, colorGain, radius/cone/aimXY, and
+ *  aimZ/feather/falloff. The shader's `array<vec4<f32>, N>` and `vec4 lights[N]`
+ *  declarations are MAX_LIGHTS3D × this — change one and the others must follow
+ *  or the tail silently misaligns. */
+export const LIGHT3D_VEC4S = 4;
 
 /** Floats occupied by the shade tail appended to every 3d material uniform:
- *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×3 vec4). */
+ *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×4 vec4). */
 export const SHADE3D_FLOATS = MAT4_STD140_FLOATS + 4 + 4 + MAX_LIGHTS3D * LIGHT3D_VEC4S * 4;
 
 /** One scene light in the shader's terms. Structurally compatible with the
@@ -105,11 +108,20 @@ export interface Shade3DLight {
   y: number;
   z: number;
   radius: number;
-  /** cos/sin of the light's 2D aim angle (spot cone aim / parallel direction). */
+  /** Resolved 3D UNIT aim (spot cone aim / parallel direction) — the light's
+   *  Point of Interest when it has one, else its type's legacy 2D-angle
+   *  fallback. Was cos/sin of the angle, which no POI could ever reach. */
   aimX: number;
   aimY: number;
+  aimZ: number;
   /** Spot half-cone in radians. */
   halfConeRad: number;
+  /** Spot cone feather in ABSOLUTE radians (0 = hard edge). */
+  coneFeatherRad: number;
+  /** 0 none (legacy hard cutoff + linear ramp), 1 smooth, 2 inverse-square. */
+  falloffMode: number;
+  /** Smooth-curve span in px, default already applied by the producer. */
+  falloffDistance: number;
 }
 
 const LIGHT3D_TYPE_ID: Record<Shade3DLight['type'], number> = { ambient: 0, point: 1, spot: 2, parallel: 3 };
@@ -169,7 +181,15 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
     out[o + 9] = l.halfConeRad;
     out[o + 10] = l.aimX;
     out[o + 11] = l.aimY;
-    o += 12;
+    // Fourth vec4 — the parameters that used to stop at the CPU. Feather was
+    // hardcoded to 20 % in the shader, the falloff curves degraded to linear,
+    // and the aim's z was unrepresentable, so a Point of Interest did nothing
+    // on the depth path.
+    out[o + 12] = l.aimZ;
+    out[o + 13] = l.coneFeatherRad;
+    out[o + 14] = l.falloffMode;
+    out[o + 15] = l.falloffDistance;
+    o += 16;
   }
   return end;
 }

@@ -315,10 +315,33 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
               </div>
             )}
 
+            {/*
+              Per-format, because the previous copy said "exported frames and
+              video keep alpha channel" unconditionally — true for MOV/WebM/PNG
+              and false for MP4/GIF/JPG. Somebody following it shipped a
+              deliverable with a black background and no warning.
+
+              "not currently preserved" rather than "not possible" for GIF on
+              purpose: GIF does carry 1-bit transparency, the encoder's
+              palettegen/paletteuse graph simply does not request it. The wording
+              should not close off a feature the format allows.
+            */}
             {s.transparent && (
-              <p className={styles.hint} style={{ marginTop: 6, color: '#38bdf8' }}>
-                ✓ Comp background is transparent — exported frames and video keep alpha channel.
-              </p>
+              <div className={styles.hint} style={{ marginTop: 6 }}>
+                <div style={{ color: '#38bdf8' }}>
+                  ✓ Keeps alpha: <strong>MOV</strong> (ProRes 4444),{' '}
+                  <strong>WebM</strong> (VP9), <strong>PNG</strong> and PNG sequence.
+                </div>
+                <div style={{ marginTop: 2 }}>
+                  Composited over <strong>black</strong>: MP4, GIF and JPG sequence —
+                  these formats carry no alpha channel (GIF&nbsp;transparency is
+                  not currently preserved).
+                </div>
+                <div style={{ marginTop: 2 }}>
+                  Lottie&nbsp;/&nbsp;JSON carry no composition background at all;
+                  they take whatever is behind them where they are played.
+                </div>
+              </div>
             )}
           </div>
         )}

@@ -30,6 +30,9 @@ import type {
 } from '@motion/renderer';
 import type { RenderLayer } from './RenderBackend';
 import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
+
+/** A light layer's wash parameters — the shape `RenderLayer.light` carries. */
+type LightWash = NonNullable<RenderLayer['light']>;
 import { rasterPadding } from './raster/vectorDraw';
 import { layerSubpaths } from './raster/subpaths';
 import { resolutionTier, paddingClass, continuousResolutionTier, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
@@ -686,19 +689,30 @@ export class AppTextureProvider implements TextureProvider {
   }
 
   /**
-   * Register/refresh a 2D light's radial-gradient texture behind a renderable
-   * key. The gradient (colour at centre → transparent at the edge) is
-   * scale-invariant, so it depends only on the colour; the renderable stretches
-   * it to the light's 2·radius box and screen-blends it (see snapshotToFrameScene).
+   * Register/refresh a 2D light's wash texture behind a renderable key. The
+   * gradient is scale-invariant; the renderable stretches it to the light's
+   * 2·radius box and screen-blends it (see snapshotToFrameScene).
+   *
+   * The signature was `color` alone. That was not merely narrow, it COLLIDED:
+   * two spots differing only in cone hashed to one cache entry, so the second
+   * silently rendered with the first's gradient — a correct rasterizer would
+   * still have drawn the wrong cone.
+   *
+   * Non-spot types keep the bare-colour key deliberately: their wash genuinely
+   * depends on nothing else, so ambient/point/parallel of the same colour SHARE
+   * one texture, as they always have. That is not a collision — it is the same
+   * image.
    */
-  setLight(key: string, color: string): void {
-    const signature = color;
+  setLight(key: string, light: LightWash): void {
+    const signature = light.type === 'spot'
+      ? `${light.color}|spot|${light.angle ?? 0}|${light.cone ?? 0}|${light.coneFeather ?? 'd'}`
+      : light.color;
     const existing = this.lightEntries.get(key);
     if (existing && existing.signature === signature) return;
     if (existing) {
       this.resources.freeTexture(`light:${key}:${existing.signature}`);
     }
-    const canvas = rasterizeLight(color);
+    const canvas = rasterizeLight(light);
     const tex = this.resources.texture(
       `light:${key}:${signature}`,
       { label: `light:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
@@ -1442,11 +1456,22 @@ export class AppTextureProvider implements TextureProvider {
  *  with the same anchors Canvas2D uses (which draws centred at the box origin). */
 
 
-/** Rasterize a 2D light to a square radial-gradient texture: `color` at the
- *  centre fading to transparent at the edge — the same gradient Canvas2DBackend
- *  paints in `drawLight`, baked once at a fixed size and stretched to the light's
- *  box by the renderable (intensity drives the renderable opacity, not the texel). */
-function rasterizeLight(color: string): HTMLCanvasElement {
+/**
+ * Rasterize a 2D light's wash: `color` at the centre fading to transparent at
+ * the edge, baked once at a fixed size and stretched to the light's box by the
+ * renderable (intensity drives the renderable opacity, not the texel).
+ *
+ * A SPOT is then masked down to its cone. Before this, every type rasterized to
+ * the same isotropic circle and the texture was cached on colour alone, so a
+ * spot light was pixel-identical to a point light: cone angle, cone feather and
+ * light angle were three shipped inspector controls with no visual effect
+ * whatsoever on a 2D layer.
+ *
+ * The cone MASKS the radial gradient rather than replacing it, so a pixel
+ * inside the cone is bit-identical to what a point light would have drawn, and
+ * only the shaping is new. Non-spot types take the original path untouched.
+ */
+function rasterizeLight(light: LightWash): HTMLCanvasElement {
   const s = LIGHT_TEX_SIZE;
   const canvas = document.createElement('canvas');
   canvas.width = s;
@@ -1455,11 +1480,61 @@ function rasterizeLight(color: string): HTMLCanvasElement {
   if (!ctx) return canvas;
   const c = s / 2;
   const g = ctx.createRadialGradient(c, c, 0, c, c, c);
-  g.addColorStop(0, color);
+  g.addColorStop(0, light.color);
   g.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, s, s);
+  if (light.type !== 'spot') return canvas;
+
+  // Same cone rule as `shadeLayer` and the per-fragment shader: hard cut at the
+  // half-cone, linear ramp across a feather expressed as a PERCENT of it.
+  // `angle` is 0 = →, 90 = ↓, which is exactly atan2's convention with y down.
+  const aim = ((light.angle ?? 0) * Math.PI) / 180;
+  const half = Math.max(1e-3, (((light.cone ?? 0) / 2) * Math.PI) / 180);
+  const feather = half * (light.coneFeather === undefined ? 0.2 : Math.max(0, light.coneFeather) / 100);
+
+  const img = ctx.getImageData(0, 0, s, s);
+  const d = img.data;
+  for (let y = 0; y < s; y++) {
+    for (let x = 0; x < s; x++) {
+      // getImageData is straight (un-premultiplied) alpha per spec, so scaling
+      // coverage means scaling A alone — touching RGB here would darken the
+      // cone edge toward black instead of fading it out.
+      const a = (y * s + x) * 4 + 3;
+      d[a] = d[a]! * spotConeFactor(x + 0.5 - c, y + 0.5 - c, aim, half, feather);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
   return canvas;
+}
+
+/**
+ * A spot cone's coverage at an offset from the light centre, 0..1.
+ *
+ * Exported and pure because the rasterizer above needs a real 2D canvas, which
+ * jsdom does not provide — the cone maths would otherwise be verifiable only
+ * through the GPU harness. Mirrors the cone rule in `shadeLayer` and in the
+ * per-fragment shader: hard cut at the half-cone, linear ramp across a feather
+ * given in absolute radians.
+ */
+export function spotConeFactor(
+  dx: number,
+  dy: number,
+  aimRad: number,
+  halfConeRad: number,
+  featherRad: number,
+): number {
+  // Dead centre has no direction; the light is on top of the pixel.
+  if (dx === 0 && dy === 0) return 1;
+  let delta = Math.abs(Math.atan2(dy, dx) - aimRad);
+  // Angles wrap. Without this a cone aimed near ±180° reads as ~2π away from
+  // half its own pixels and is cut in two.
+  if (delta > Math.PI) delta = 2 * Math.PI - delta;
+  if (delta > halfConeRad) return 0;
+  if (featherRad > 1e-6 && delta > halfConeRad - featherRad) {
+    return (halfConeRad - delta) / featherRad;
+  }
+  return 1;
 }
 
 /** Bake a linear/radial background gradient into a canvas the GPU can upload.

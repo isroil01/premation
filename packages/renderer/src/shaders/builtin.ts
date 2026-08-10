@@ -1442,8 +1442,9 @@ void main() {
 // Every 3d Object block ends with the SHADE TAIL (must match packShade3D in
 // pipeline/uniforms.ts exactly): model (mat4, unit quad → 3D comp space),
 // eyeLit (xyz camera eye, w = lit flag), shadeParams (light count, specular
-// 0..1, shininess, 0) and lights (MAX_LIGHTS3D × 3 vec4s: pos+type,
-// color+gain, radius/halfCone/aimX/aimY). When the lit flag is 0 the tail is
+// 0..1, shininess, metal) and lights (MAX_LIGHTS3D × 4 vec4s: pos+type,
+// color+gain, radius/halfCone/aimX/aimY, aimZ/coneFeather/falloffMode/
+// falloffDistance). When the lit flag is 0 the tail is
 // all zeros and shading is a byte-exact identity — unlit layers render exactly
 // as before. When lit, the fragment stage runs the SAME light model as
 // lightShading.ts (two-sided Lambert, linear radius falloff, feathered 2D spot
@@ -1460,7 +1461,7 @@ struct Object {
   model : mat4x4<f32>,
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
-  lights : array<vec4<f32>, 24>,
+  lights : array<vec4<f32>, 32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 
@@ -1490,9 +1491,10 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
     if (i >= count) { break; }
-    let posType = obj.lights[i * 3];
-    let colGain = obj.lights[i * 3 + 1];
-    let misc = obj.lights[i * 3 + 2];
+    let posType = obj.lights[i * 4];
+    let colGain = obj.lights[i * 4 + 1];
+    let misc = obj.lights[i * 4 + 2];
+    let misc2 = obj.lights[i * 4 + 3];
     let lType = i32(posType.w + 0.5);
     let gain = colGain.w;
     if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
@@ -1500,28 +1502,46 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     var atten = 1.0;
     var lambert = 1.0;
     var skip = false;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length, so there is no per-type fallback to
+    // keep in step with the CPU here — see toShaderLights.
+    let aim = vec3<f32>(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      let L = vec3<f32>(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = abs(dot(N, aim));
+      toLight = -aim;
     } else {
       let Lvec = posType.xyz - world;
       let d = length(Lvec);
       let radius = misc.x;
-      if (radius > 0.0 && d >= radius) { skip = true; }
-      if (!skip) {
-        atten = select(1.0, 1.0 - d / radius, radius > 0.0);
-        if (d > 1e-6) {
-          toLight = Lvec / d;
-          lambert = abs(dot(N, toLight));
-          if (lType == 2) {
-            let cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
-            let halfCone = max(misc.y, 1e-3);
-            let ang = acos(clamp(cosA, -1.0, 1.0));
-            if (ang > halfCone) { skip = true; }
-            let feather = halfCone * 0.2;
-            if (!skip && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
-          }
+      let fMode = i32(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) { skip = true; }
+        if (!skip) { atten = select(1.0, 1.0 - d / radius, radius > 0.0); }
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        let r = max(1.0, radius);
+        var curve = 1.0;
+        if (d > r) {
+          if (fMode == 1) { curve = max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)); }
+          else { curve = (r * r) / (d * d); }
+        }
+        if (curve <= 0.001) { skip = true; }
+        if (!skip) { atten = curve; }
+      }
+      if (!skip && d > 1e-6) {
+        toLight = Lvec / d;
+        lambert = abs(dot(N, toLight));
+        if (lType == 2) {
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          let cosA = dot(aim, -Lvec / d);
+          let halfCone = max(misc.y, 1e-3);
+          let ang = acos(clamp(cosA, -1.0, 1.0));
+          if (ang > halfCone) { skip = true; }
+          let feather = misc2.y;
+          if (!skip && feather > 1e-6 && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
         }
       }
     }
@@ -1571,7 +1591,7 @@ fn fs(@location(0) local : vec2<f32>, @location(1) world : vec3<f32>) -> @locati
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
 out vec2 vLocal;
 out vec3 vWorld;
 void main() {
@@ -1582,7 +1602,7 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
 in vec2 vLocal;
 in vec3 vWorld;
 out vec4 frag;
@@ -1597,35 +1617,54 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   vec3 spec = vec3(0.0);
   for (int i = 0; i < 8; i++) {
     if (i >= count) break;
-    vec4 posType = lights[i * 3];
-    vec4 colGain = lights[i * 3 + 1];
-    vec4 misc = lights[i * 3 + 2];
+    vec4 posType = lights[i * 4];
+    vec4 colGain = lights[i * 4 + 1];
+    vec4 misc = lights[i * 4 + 2];
+    vec4 misc2 = lights[i * 4 + 3];
     int lType = int(posType.w + 0.5);
     float gain = colGain.w;
     if (lType == 0) { diff += colGain.rgb * gain; continue; }
     vec3 toLight = vec3(0.0, 0.0, -1.0);
     float atten = 1.0;
     float lambert = 1.0;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length — see toShaderLights.
+    vec3 aim = vec3(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      vec3 L = vec3(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = abs(dot(N, aim));
+      toLight = -aim;
     } else {
       vec3 Lvec = posType.xyz - world;
       float d = length(Lvec);
       float radius = misc.x;
-      if (radius > 0.0 && d >= radius) continue;
-      atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      int fMode = int(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) continue;
+        atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        float r = max(1.0, radius);
+        float curve = 1.0;
+        if (d > r) {
+          curve = fMode == 1 ? max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)) : (r * r) / (d * d);
+        }
+        if (curve <= 0.001) continue;
+        atten = curve;
+      }
       if (d > 1e-6) {
         toLight = Lvec / d;
         lambert = abs(dot(N, toLight));
         if (lType == 2) {
-          float cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          float cosA = dot(aim, -Lvec / d);
           float halfCone = max(misc.y, 1e-3);
           float ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) continue;
-          float feather = halfCone * 0.2;
-          if (ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+          float feather = misc2.y;
+          if (feather > 1e-6 && ang > halfCone - feather) atten *= (halfCone - ang) / feather;
         }
       }
     }
@@ -1684,7 +1723,7 @@ struct Object {
   model : mat4x4<f32>,
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
-  lights : array<vec4<f32>, 24>,
+  lights : array<vec4<f32>, 32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 `;
@@ -1701,9 +1740,10 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
     if (i >= count) { break; }
-    let posType = obj.lights[i * 3];
-    let colGain = obj.lights[i * 3 + 1];
-    let misc = obj.lights[i * 3 + 2];
+    let posType = obj.lights[i * 4];
+    let colGain = obj.lights[i * 4 + 1];
+    let misc = obj.lights[i * 4 + 2];
+    let misc2 = obj.lights[i * 4 + 3];
     let lType = i32(posType.w + 0.5);
     let gain = colGain.w;
     if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
@@ -1711,28 +1751,46 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     var atten = 1.0;
     var lambert = 1.0;
     var skip = false;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length, so there is no per-type fallback to
+    // keep in step with the CPU here — see toShaderLights.
+    let aim = vec3<f32>(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      let L = vec3<f32>(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = abs(dot(N, aim));
+      toLight = -aim;
     } else {
       let Lvec = posType.xyz - world;
       let d = length(Lvec);
       let radius = misc.x;
-      if (radius > 0.0 && d >= radius) { skip = true; }
-      if (!skip) {
-        atten = select(1.0, 1.0 - d / radius, radius > 0.0);
-        if (d > 1e-6) {
-          toLight = Lvec / d;
-          lambert = abs(dot(N, toLight));
-          if (lType == 2) {
-            let cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
-            let halfCone = max(misc.y, 1e-3);
-            let ang = acos(clamp(cosA, -1.0, 1.0));
-            if (ang > halfCone) { skip = true; }
-            let feather = halfCone * 0.2;
-            if (!skip && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
-          }
+      let fMode = i32(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) { skip = true; }
+        if (!skip) { atten = select(1.0, 1.0 - d / radius, radius > 0.0); }
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        let r = max(1.0, radius);
+        var curve = 1.0;
+        if (d > r) {
+          if (fMode == 1) { curve = max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)); }
+          else { curve = (r * r) / (d * d); }
+        }
+        if (curve <= 0.001) { skip = true; }
+        if (!skip) { atten = curve; }
+      }
+      if (!skip && d > 1e-6) {
+        toLight = Lvec / d;
+        lambert = abs(dot(N, toLight));
+        if (lType == 2) {
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          let cosA = dot(aim, -Lvec / d);
+          let halfCone = max(misc.y, 1e-3);
+          let ang = acos(clamp(cosA, -1.0, 1.0));
+          if (ang > halfCone) { skip = true; }
+          let feather = misc2.y;
+          if (!skip && feather > 1e-6 && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
         }
       }
     }
@@ -1753,7 +1811,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
 `;
 
 // GLSL twins of the above (UBO tail + light model), same layout contract.
-const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };`;
+const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };`;
 
 const GLSL_SHADE3D_FN = /* glsl */ `
 vec3 shade3d(vec3 world, vec3 baseRgb) {
@@ -1767,35 +1825,54 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   vec3 spec = vec3(0.0);
   for (int i = 0; i < 8; i++) {
     if (i >= count) break;
-    vec4 posType = lights[i * 3];
-    vec4 colGain = lights[i * 3 + 1];
-    vec4 misc = lights[i * 3 + 2];
+    vec4 posType = lights[i * 4];
+    vec4 colGain = lights[i * 4 + 1];
+    vec4 misc = lights[i * 4 + 2];
+    vec4 misc2 = lights[i * 4 + 3];
     int lType = int(posType.w + 0.5);
     float gain = colGain.w;
     if (lType == 0) { diff += colGain.rgb * gain; continue; }
     vec3 toLight = vec3(0.0, 0.0, -1.0);
     float atten = 1.0;
     float lambert = 1.0;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length — see toShaderLights.
+    vec3 aim = vec3(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      vec3 L = vec3(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = abs(dot(N, aim));
+      toLight = -aim;
     } else {
       vec3 Lvec = posType.xyz - world;
       float d = length(Lvec);
       float radius = misc.x;
-      if (radius > 0.0 && d >= radius) continue;
-      atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      int fMode = int(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) continue;
+        atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        float r = max(1.0, radius);
+        float curve = 1.0;
+        if (d > r) {
+          curve = fMode == 1 ? max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)) : (r * r) / (d * d);
+        }
+        if (curve <= 0.001) continue;
+        atten = curve;
+      }
       if (d > 1e-6) {
         toLight = Lvec / d;
         lambert = abs(dot(N, toLight));
         if (lType == 2) {
-          float cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          float cosA = dot(aim, -Lvec / d);
           float halfCone = max(misc.y, 1e-3);
           float ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) continue;
-          float feather = halfCone * 0.2;
-          if (ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+          float feather = misc2.y;
+          if (feather > 1e-6 && ang > halfCone - feather) atten *= (halfCone - ang) / feather;
         }
       }
     }

@@ -591,7 +591,7 @@ export class Workspace implements InputSink {
     // same lie in a different place.
     const selectionBoxes = this.selectionController
       .selectionBoxes()
-      .map((c) => this.cornersToScreen(c));
+      .map((b) => ({ id: b.id, corners: this.cornersToScreen(b.corners) }));
 
     const activeTool = this.tools.activeTool;
     const ctx = this.makeToolContext();

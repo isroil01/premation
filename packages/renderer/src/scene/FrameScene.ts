@@ -363,11 +363,19 @@ export interface SceneLight3D {
   y: number;
   z: number;
   radius: number;
-  /** cos/sin of the light's 2D aim angle. */
+  /** Resolved 3D UNIT aim — the Point of Interest direction, or this light
+   *  type's legacy 2D-angle fallback. */
   aimX: number;
   aimY: number;
+  aimZ: number;
   /** Spot half-cone in radians. */
   halfConeRad: number;
+  /** Spot cone feather in ABSOLUTE radians (0 = hard edge). */
+  coneFeatherRad: number;
+  /** 0 none (legacy hard cutoff + linear ramp), 1 smooth, 2 inverse-square. */
+  falloffMode: number;
+  /** Smooth-curve span in px, default already applied. */
+  falloffDistance: number;
 }
 
 export interface CompositionInfo {

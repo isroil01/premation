@@ -283,6 +283,12 @@ Security issues should **not** be filed as public issues — see
 
 ## Documentation
 
+**Start here:** [`docs/EDITOR_REFERENCE.md`](docs/EDITOR_REFERENCE.md) — what the
+editor does, what it does not, and an honest gap analysis against After Effects.
+Its feature counts are derived from the registries by `scripts/featureCounts.cjs`
+and pinned by `src/__tests__/docFeatureCounts.test.ts`, so they cannot silently
+go stale.
+
 Deep dives on individual subsystems:
 
 - [`docs/3d-layer-model.md`](docs/3d-layer-model.md) — the 3D model, and where it
@@ -292,6 +298,9 @@ Deep dives on individual subsystems:
 - [`docs/ANIMATED_SVG_PIPELINE.md`](docs/ANIMATED_SVG_PIPELINE.md) — SVG import,
   end to end
 - [`docs/PLUGINS.md`](docs/PLUGINS.md) — plugin architecture and authoring
+- [`docs/MOTION_FORMAT_FREEZE.md`](docs/MOTION_FORMAT_FREEZE.md) — what the
+  `.motion` bundle is, the six migrations behind it, and what a 1.0
+  compatibility promise would actually require
 
 Prose drifts faster than code. Where a document and the source disagree, the
 source is right — and a PR fixing the document is very welcome.

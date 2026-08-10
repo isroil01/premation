@@ -97,10 +97,33 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
  */
 // CloudThumbnail removed; using worker component instead
 
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { LoadingScreen } from '@components/LoadingScreen';
+import { StartScreen } from '@layout/Start/StartScreen';
+import { cloudProjectsEnabled } from '@core/config/edition';
 
 const LazyEditorShell = lazy(() => import('../App').then(m => ({ default: m.EditorShell })));
+
+/**
+ * The local edition's start screen, over the booted editor.
+ *
+ * Shown when there is no current project — which at boot is always, since
+ * nothing creates one until the user does. The cloud edition has the dashboard
+ * for this and never mounts it.
+ *
+ * Dismissal is session state, not a preference: closing it means "not now",
+ * and a user who returns to an empty editor next launch should be offered
+ * their recents again rather than having silently opted out forever.
+ */
+function LocalStart(): JSX.Element | null {
+  const [dismissed, setDismissed] = useState(false);
+  // Read once at mount. This is the pre-project state by definition, and
+  // subscribing would re-show the screen the moment a project is CLOSED —
+  // mid-session, over a canvas the user is still looking at.
+  const [hadProject] = useState(() => getProjectManager().getState().current !== null);
+  if (cloudProjectsEnabled() || dismissed || hadProject) return null;
+  return <StartScreen onDismiss={() => setDismissed(true)} />;
+}
 
 export function EditorPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
@@ -121,6 +144,7 @@ export function EditorPage(): JSX.Element {
           <ReadOnlyBanner />
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             <LazyEditorShell />
+            <LocalStart />
           </div>
         </div>
       </Suspense>

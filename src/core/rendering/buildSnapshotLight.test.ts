@@ -91,6 +91,9 @@ describe('lights', () => {
       type: 'point',
       angle: 0,
       cone: 45,
+      // The wash shapes a spot's cone, so it needs the feather too. 50 is
+      // LIGHT_DEFAULTS.coneFeather — a point light carries it and ignores it.
+      coneFeather: 50,
     });
     expect(layers[0]!.x).toBeCloseTo(400);
     expect(layers[0]!.y).toBeCloseTo(300);

@@ -13,6 +13,7 @@ import type { Effect } from '@core/effects/effects';
 import type { LayerMask } from '@core/effects/mask';
 import type { TrackMatte } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
+import type { ShaderLight } from '@core/scene/lightShading';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
 
@@ -138,9 +139,11 @@ export interface RenderLayer {
    *  offscreen texture, then this layer composites that texture as one unit
    *  (its opacity / blend / filter / mask apply to the whole nested result). */
   precompLayers?: ReadonlyArray<RenderLayer>;
-  /** Point light: a radial glow (colour, intensity 0..100, radius px) drawn at
-   *  x,y with a screen blend to brighten the layers beneath. */
-  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number };
+  /** A light layer's 2D wash: a glow drawn at x,y and screen-blended to brighten
+   *  the layers beneath. A SPOT is shaped by `angle`/`cone`/`coneFeather`; every
+   *  other type is a plain radial falloff. `coneFeather` is a PERCENT of the
+   *  half-cone (AE's Cone Feather) — absent ⇒ 20 %, matching `shadeLayer`. */
+  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number; coneFeather?: number };
   /** Particle emitter config. When present, the layer draws a particle system
    *  (simulated deterministically at the current time) instead of its content. */
   particles?: import('@core/particles/particleSim').ParticleConfig;
@@ -472,22 +475,17 @@ export interface RenderSnapshot {
     /** Camera world position — the eye for Blinn-Phong specular. */
     eye?: readonly [number, number, number];
   };
-  /** Scene lights in shader terms (per-fragment Accepts-Lights shading on the
-   *  depth path). Emitted only when the frame has 3D layers AND lights. Colors
-   *  are linear 0..1 RGB; `gain` = intensity/100; `aimX/aimY` = cos/sin of the
-   *  light's 2D aim angle; `halfConeRad` is the spot half-cone in radians. */
-  lights3d?: ReadonlyArray<{
-    type: 'ambient' | 'point' | 'spot' | 'parallel';
-    color: { r: number; g: number; b: number };
-    gain: number;
-    x: number;
-    y: number;
-    z: number;
-    radius: number;
-    aimX: number;
-    aimY: number;
-    halfConeRad: number;
-  }>;
+  /**
+   * Scene lights in shader terms (per-fragment Accepts-Lights shading on the
+   * depth path). Emitted only when the frame has 3D layers AND lights.
+   *
+   * Refers to `ShaderLight` rather than restating its shape. This was a third
+   * structural copy of the same DTO, and copies are how `coneFeather`,
+   * `falloff` and `poi` came to be honoured on the CPU and silently dropped on
+   * the GPU — a field added to one declaration and not the others still
+   * typechecks everywhere.
+   */
+  lights3d?: ReadonlyArray<ShaderLight>;
 }
 
 export interface RenderBackend {

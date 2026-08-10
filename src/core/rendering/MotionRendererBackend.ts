@@ -665,11 +665,13 @@ export class MotionRendererBackend implements RenderBackend {
               this.textures!.setPath(key, layer);
             }
 
-            // A light layer feeds its radial-gradient texture regardless of kind.
+            // A light layer feeds its wash texture regardless of kind. The whole
+            // light goes through, not just its colour: a spot's cone is baked
+            // into the texture, so the cache key has to be able to see the cone.
             if (layer.light) {
               const key = `light:${layer.id}`;
               activeKeys.add(key);
-              this.textures!.setLight(key, layer.light.color);
+              this.textures!.setLight(key, layer.light);
             }
 
             // 2. Auxiliary alpha textures (masks/mattes)
