@@ -620,15 +620,42 @@ nothing installs.
 
 ### Publishing
 
+**From the app.** Hit publish and you are asked how to sign:
+
+| | |
+|---|---|
+| **Use an existing key…** | opens a file picker for your `*.json` key file |
+| **Create a new key…** | asks where to save one, makes it, and signs with it right away |
+
+Pick *Create a new key…* the first time. There is nothing to find beforehand —
+a signing key is a file you make, not something the registry issues you.
+
+**From the command line**, for scripted releases:
+
 ```bash
 node scripts/sign-plugin.mjs keygen --out ./my-plugin.key.json
 node scripts/sign-plugin.mjs publish my-plugin.zip --key ./my-plugin.key.json --token <access token>
 ```
 
-The private key never leaves the machine — publish sends the package, the
-signature and the public key. **Keep the key file.** It is the only thing that
-can ship an update; losing it means republishing under a new id, which is the
-cost of the guarantee rather than an oversight.
+Both produce and accept the same file — P-256, `{ privateKey, publicKey }` as
+base64 PKCS8 and SPKI — so you can start in the app and script it later, or the
+other way round.
+
+The private key never leaves the machine, and Premation never stores it: publish
+sends the package, the signature and the public key, and you are asked for the
+key file each time. Remembering it in the OS keychain would make anything
+running as you able to publish as you, which is the compromise the signing model
+exists to survive.
+
+> **Keep the key file, and back it up.** It is your publisher identity. The
+> registry pins it on your first publish and every later version of that plugin
+> must verify against it — so losing it means republishing under a new id, and
+> anyone who has it can publish as you. That is the cost of the guarantee rather
+> than an oversight.
+>
+> Register a **backup key on your first publish**, while you have no install
+> base and it costs nothing. Authorising one later needs your account password
+> and prompts every user who already has the plugin.
 
 Published versions are immutable: re-publishing an existing version is refused,
 because two different sets of bytes claiming to be `1.2.0` would make the

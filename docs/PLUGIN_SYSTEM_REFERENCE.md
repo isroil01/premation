@@ -899,6 +899,17 @@ installed copy — not the key the download claims.
 | Registry compromised, serves a new key | Refused on update — the client pins the stored key |
 | Publisher ships something malicious under their own key | **Not covered.** That is what the permission screen is for |
 
+**Getting a key at all.** The publish flow asks *Use an existing key… / Create a
+new key… / Cancel*, and the second generates one in the main process, writes it
+`0600` where the user chooses, and signs with it immediately. Byte-compatible
+with `scripts/sign-plugin.mjs keygen` — same curve, same field names, same
+encodings — so the two are interchangeable.
+
+Added because the flow previously opened a file picker demanding a key that only
+the CLI script could make, which anyone who installed the app rather than
+cloning the repo had no way to produce. A dialog that cannot be satisfied is
+worse than a missing feature: it reads as "you should already have this".
+
 **Publishing from the editor.** The renderer sends package bytes and a
 visibility choice to the main process, which opens a file picker for the key,
 signs, attaches the session and uploads. The private key never enters the
