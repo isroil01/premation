@@ -27,6 +27,7 @@ import {
 } from '@core/template/templateAuthoring';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { useTemplateStore } from '@stores/templateStore';
+import { DataFillSection } from './DataFillSection';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import styles from './TemplateFieldsPanel.module.css';
@@ -249,6 +250,10 @@ export function ActiveTemplateFields(): JSX.Element {
           ))}
         </div>
       ))}
+
+      {/* Batch fill sits under the field list because it fills THESE fields —
+          its column report only means anything beside the ids it matches. */}
+      <DataFillSection fields={active.fields} />
     </div>
   );
 }
