@@ -305,10 +305,25 @@ export function ownerOf(node: SceneNode): string | null {
  * say "this layer needs a plugin" and not which one — the kind string carries
  * the id, but not the version or the publisher, and an id alone is not enough
  * to explain or to fetch.
+ *
+ * ── Why `recorded` exists ────────────────────────────────────────────────────
+ *
+ * Version and publisher used to come from the INSTALLED copy and nowhere else,
+ * so they were simply absent when the plugin was not installed. That is the
+ * honest answer the first time a document is written on such a machine — but
+ * not the second. A project whose document already said `version: 1.4.0`,
+ * opened and re-saved without the plugin, lost that field permanently, and the
+ * user who most needs to know which version is missing is exactly the one whose
+ * machine does not have it.
+ *
+ * So what the document already recorded is kept when nothing better is known.
+ * An installed copy still wins: it is current, and a recorded value may be
+ * years old.
  */
 export function collectPluginReferences(
   nodes: readonly SceneNode[],
   installed: ReadonlyMap<string, { version: string; author?: string }> = new Map(),
+  recorded: ReadonlyMap<string, { version?: string; publisher?: string }> = new Map(),
 ): DocumentPluginReference[] {
   const byPlugin = new Map<string, DocumentPluginReference>();
   for (const node of nodes) {
@@ -317,10 +332,13 @@ export function collectPluginReferences(
     let ref = byPlugin.get(record.pluginId);
     if (!ref) {
       const meta = installed.get(record.pluginId);
+      const prior = recorded.get(record.pluginId);
+      const version = meta?.version ?? prior?.version;
+      const publisher = meta?.author ?? prior?.publisher;
       ref = {
         id: record.pluginId,
-        ...(meta?.version ? { version: meta.version } : {}),
-        ...(meta?.author ? { publisher: meta.author } : {}),
+        ...(version ? { version } : {}),
+        ...(publisher ? { publisher } : {}),
         kinds: [],
       };
       byPlugin.set(record.pluginId, ref);

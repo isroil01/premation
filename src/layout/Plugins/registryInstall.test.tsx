@@ -65,7 +65,7 @@ describe('installing from the registry', () => {
     });
 
     let shown: { pkg: PluginPackage; publisherKey: string } | null = null;
-    setConsentHost((pkg, publisherKey) => { shown = { pkg, publisherKey }; });
+    setConsentHost((pkg, origin) => { shown = { pkg, publisherKey: origin.publisherKey }; });
 
     const ok = await installFromRegistry('studio.acme.thing', '1.0.0', 'KEY');
 

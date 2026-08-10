@@ -286,8 +286,39 @@ export function reenableEffect(id: string): void {
   changed();
 }
 
+/**
+ * Told the user, once, that plugin effects cannot draw on this machine.
+ *
+ * Per SESSION, not per effect and not per plugin. A generative plugin adding
+ * forty effects would otherwise produce forty identical toasts, and a user
+ * buried in them learns to dismiss the notice without reading — which is the
+ * same outcome as never showing it, at more cost.
+ */
+let toldAboutWebgl2 = false;
+
+/**
+ * A plugin effect was added on a tier that cannot render it.
+ *
+ * The effect is in the document and will draw when the file is opened on a
+ * WebGPU machine. What must not happen is the silent version: an effect that
+ * appears in the stack, shows its parameters, and does nothing, which reads as
+ * a broken plugin and sends the user to uninstall something that is fine.
+ */
+export function noteInertPluginEffect(pluginName: string): void {
+  if (toldAboutWebgl2) return;
+  toldAboutWebgl2 = true;
+  useUIStore.getState().notify({
+    level: 'warning',
+    message:
+      `Effects from ${pluginName} need WebGPU, and this machine is running on the WebGL2 `
+      + 'fallback. They are saved with your project and will render on a machine that has it.',
+    durationMs: 12000,
+  });
+}
+
 /** Test seam. Never called by the app. */
 export function resetEffectsForTests(): void {
+  toldAboutWebgl2 = false;
   effects.clear();
   revision = 0;
   inFlight = null;

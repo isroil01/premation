@@ -18,6 +18,10 @@
       "label": "Read your layers",
       "detail": "See the names, structure and properties of layers in your composition."
     },
+    "scene:proxy": {
+      "label": "Build the layers beneath its own",
+      "detail": "Generate and update the child layers underneath layers this plugin itself created. It cannot reach anything else in your composition, and it stops managing a layer the moment you edit it."
+    },
     "scene:write": {
       "label": "Modify your layers",
       "detail": "Create, change and delete layers. Every change is undoable."

@@ -46,6 +46,38 @@ export interface InstalledPlugin {
    * a local file — there was no signature to check and nothing to promise.
    */
   publisherKey?: string;
+  /**
+   * The key the registry said was authorised to take over, recorded at install
+   * and refreshed on every update — BEFORE any rotation uses it.
+   *
+   * That ordering is the whole point. Without it, the first time this machine
+   * hears of a replacement key is the response asking it to trust that key,
+   * which is no evidence at all — so every rotation looked identical, including
+   * the one an attacker with a stolen publisher account most wants shown. With
+   * it, "this key was authorised months ago" becomes something this machine
+   * checked for itself rather than something the server asserts.
+   */
+  nextPublisherKey?: string;
+  /**
+   * How that successor was authorised: `backup` at first publish, before there
+   * was an install base to endanger, or `dashboard` later, behind the account
+   * password.
+   *
+   * Not the same claim. A `backup` key was chosen when nobody could be harmed
+   * by the choice; a `dashboard` key was chosen by whoever held the account at
+   * the time, which is exactly what a thief holds.
+   */
+  nextPublisherKeyMethod?: 'backup' | 'dashboard';
+  /**
+   * Security-relevant things that happened to this plugin on this machine.
+   *
+   * Small and append-only. It exists because the safest rotation path is
+   * SILENT — a key matching one authorised at first publish is accepted with no
+   * prompt — and something has to be able to say afterwards that it happened. A
+   * change nobody was asked about and nobody can find later is indistinguishable
+   * from no change at all.
+   */
+  securityEvents?: Array<{ at: number; text: string }>;
 }
 
 /** Unchanged on purpose — an existing install must still be found on upgrade. */
@@ -79,21 +111,33 @@ function loadMeta(): StoredMeta[] {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: StoredMeta[] = [];
-    for (const p of parsed) {
-      if (!p || typeof p !== 'object') continue;
-      const record = p as StoredMeta;
-      if (typeof record.manifest?.id !== 'string' || !Array.isArray(record.granted)) continue;
-      const manifest = normaliseManifest(record.manifest);
-      if (!manifest) continue;
-      out.push({ ...record, manifest });
-    }
-    return out;
+    return validateMeta(JSON.parse(raw) as unknown) ?? [];
   } catch {
     return [];
   }
+}
+
+/**
+ * Validate a stored index, whatever it was read from.
+ *
+ * Returns `null` for "there is nothing here", which is a different answer from
+ * `[]` — "there IS an index and it lists no plugins". `hydrate()` needs the
+ * distinction to decide whether to migrate from `localStorage`: migrating over
+ * a legitimately empty IndexedDB record would resurrect plugins the user
+ * uninstalled after the move.
+ */
+function validateMeta(parsed: unknown): StoredMeta[] | null {
+  if (!Array.isArray(parsed)) return null;
+  const out: StoredMeta[] = [];
+  for (const p of parsed) {
+    if (!p || typeof p !== 'object') continue;
+    const record = p as StoredMeta;
+    if (typeof record.manifest?.id !== 'string' || !Array.isArray(record.granted)) continue;
+    const manifest = normaliseManifest(record.manifest);
+    if (!manifest) continue;
+    out.push({ ...record, manifest });
+  }
+  return out;
 }
 
 /**
@@ -118,18 +162,43 @@ function normaliseManifest(stored: PluginManifest): PluginManifest | null {
   return parseManifest(stored).manifest;
 }
 
+/** The index as it is stored: everything except the package bytes. */
+function toMeta(list: readonly InstalledPlugin[]): StoredMeta[] {
+  // `files` and `binaries` are stripped here. This is the whole point: a
+  // package with a 2 MB texture in it must not be able to make the write that
+  // persists the user's session fail.
+  return list.map(({ files: _files, binaries: _binaries, ...rest }) => rest);
+}
+
+/**
+ * Persist the index.
+ *
+ * ── Why this is no longer `localStorage`, and why it still returns sync ─────
+ *
+ * The index moved into IndexedDB so it can be written in the SAME transaction
+ * as the payload (see `PluginDatabase.putPackageAndIndex`). While the two lived
+ * in different storage systems there was no way to commit them together, and a
+ * crash between the writes left an index entry with no package or a package no
+ * index pointed at — the entire reason `hydrate()` reconciles both directions.
+ *
+ * This function keeps its synchronous signature and its boolean, because every
+ * caller is a store action that must decide immediately whether the change
+ * happened. The IndexedDB write is issued and not awaited; what it returns is
+ * whether the index is within its size bound, which is the only failure a
+ * caller can act on. A rejected write surfaces at the next boot through
+ * `hydrate()`, exactly as it always did.
+ *
+ * The one caller that must NOT use this is `put`, which has a payload to write
+ * atomically alongside the index.
+ */
 function saveMeta(list: readonly InstalledPlugin[]): boolean {
   try {
-    // `files` and `binaries` are stripped here. This is the whole point: a
-    // package with a 2 MB texture in it must not be able to make the write
-    // that persists the user's session fail.
-    const meta = list.map(({ files: _files, binaries: _binaries, ...rest }) => rest);
-    const json = JSON.stringify(meta);
-    if (json.length > MAX_TOTAL_BYTES) return false;
-    localStorage.setItem(STORE_KEY, json);
+    const meta = toMeta(list);
+    if (JSON.stringify(meta).length > MAX_TOTAL_BYTES) return false;
+    void PluginDatabase.putIndex(meta);
     return true;
   } catch {
-    return false; // quota or private mode — the caller reports it
+    return false;
   }
 }
 
@@ -162,6 +231,15 @@ interface PluginStore {
   /** Narrow (or restore) what the user allows. Always a subset of the manifest
    *  — `PluginHost.setGranted` intersects before calling this. */
   setGranted(id: string, granted: PluginPermission[]): void;
+  /**
+   * Append to a plugin's security log. See `InstalledPlugin.securityEvents`.
+   *
+   * A store action rather than a field the caller mutates, because the one
+   * write that matters is the SILENT one — a backup-key rotation the user was
+   * never asked about — and it must not be possible to accept that rotation
+   * without the record being made in the same place.
+   */
+  noteSecurityEvent(id: string, text: string): void;
   get(id: string): InstalledPlugin | undefined;
   /** Load package payloads from IndexedDB, migrating any legacy record found
    *  in `localStorage`. Must complete before `pluginHost.configure()`. */
@@ -172,43 +250,63 @@ interface PluginStore {
 }
 
 /**
- * The index, read synchronously at module load.
+ * The index at module load, from `localStorage` only.
  *
- * Payloads are absent until `hydrate()` resolves, so `files` starts empty. That
- * is deliberate rather than unfortunate: the manifest is what the palette, the
- * menu and the manager need, and all three can be right on the first frame
- * while the bytes are still coming off disk. Only STARTING a plugin needs the
- * bytes, and starting is already asynchronous.
+ * ── Why this still reads localStorage after the move ────────────────────────
+ *
+ * The index now LIVES in IndexedDB, which cannot be read synchronously — so
+ * the first frame can no longer be given the real list. That was a genuine
+ * property and it is bought back by `hydrate()`, which every surface already
+ * waits on (`configure()` refuses to run before it) and which now loads the
+ * index as well as the payloads.
+ *
+ * What remains here is the MIGRATION source: a machine upgrading from a build
+ * that wrote `localStorage` still has its list there, and reading it at module
+ * load means the palette is correct on the first frame of the upgrade run too.
+ * `hydrate()` moves it and clears it, after which this returns nothing forever.
  */
-function initialPlugins(): InstalledPlugin[] {
+function legacyPlugins(): InstalledPlugin[] {
   return loadMeta().map((m) => ({ ...m, files: m.files ?? {}, binaries: {} }));
 }
 
 export const usePluginStore = create<PluginStore>((set, get) => ({
-  plugins: initialPlugins(),
+  plugins: legacyPlugins(),
   hydrated: false,
   lastHydration: null,
 
   put: (entry) => {
     const next = [...get().plugins.filter((p) => p.manifest.id !== entry.manifest.id), entry];
-    const ok = saveMeta(next);
-    if (!ok) return false;
+    const meta = toMeta(next);
+    if (JSON.stringify(meta).length > MAX_TOTAL_BYTES) return false;
     set({ plugins: next });
-    // The payload goes to IndexedDB in the background. The metadata write above
-    // is what `install` reports on, because it is the one that decides whether
-    // the plugin exists at all; a payload that fails to persist surfaces on the
-    // next launch as a plugin that cannot start, with its own error.
-    void PluginDatabase.put(entry.manifest.id, {
-      files: entry.files,
-      binaries: entry.binaries ?? {},
-    });
+    /*
+      Payload and index in ONE transaction.
+
+      This is what 4.2 bought. Before, they were two writes to two storage
+      systems, and a crash or a quota failure between them left the pair
+      disagreeing in one of two directions — an index entry whose package is
+      missing (a plugin that lists but cannot start, forever) or a package no
+      index points at (megabytes of software the user believes they removed).
+      IndexedDB commits across both stores or neither.
+
+      Still not awaited, and the returned boolean is still about the SIZE bound
+      rather than the write: `install` has to answer now. What changed is that a
+      failure can no longer be partial.
+    */
+    void PluginDatabase.putPackageAndIndex(
+      entry.manifest.id,
+      { files: entry.files, binaries: entry.binaries ?? {} },
+      meta,
+    );
     return true;
   },
 
   remove: (id) => {
     const next = get().plugins.filter((p) => p.manifest.id !== id);
-    saveMeta(next);
-    void PluginDatabase.remove(id);
+    // One transaction, for the same reason `put` uses one: a delete that took
+    // the package but not the index entry leaves a plugin listed forever with
+    // nothing behind it, which reads as "broken" rather than "removed".
+    void PluginDatabase.removePackageAndIndex(id, toMeta(next));
     set({ plugins: next });
   },
 
@@ -226,14 +324,62 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     set({ plugins: next });
   },
 
+  noteSecurityEvent: (id, text) => {
+    const next = get().plugins.map((p) => {
+      if (p.manifest.id !== id) return p;
+      // Bounded. This is append-only and lives in the metadata index, which is
+      // shared with the account token — an unbounded log on a plugin that
+      // rotates keys in a loop is a way to fill that quota.
+      const events = [...(p.securityEvents ?? []), { at: Date.now(), text }].slice(-20);
+      return { ...p, securityEvents: events };
+    });
+    saveMeta(next);
+    set({ plugins: next });
+  },
+
   get: (id) => get().plugins.find((p) => p.manifest.id === id),
 
   rehydrateFromStorage: async () => {
-    set({ plugins: initialPlugins(), hydrated: false, lastHydration: null });
+    // Re-reads the LEGACY location, which is what this seam is for: tests set
+    // up a `localStorage` record and then load it. `hydrate()` is what reads
+    // the real store, and it runs next.
+    set({ plugins: legacyPlugins(), hydrated: false, lastHydration: null });
   },
 
   hydrate: async () => {
-    const current = get().plugins;
+    /*
+      The index comes from IndexedDB now, and from `localStorage` exactly once.
+
+      A machine upgrading from a build that wrote the index to `localStorage`
+      has its list there and nowhere else. It is read at module load (see
+      `legacyPlugins`), moved here, and the old key is cleared only AFTER the
+      new record is verified back — a clear-then-write would lose every
+      installed plugin if the write failed, which is the one outcome worse than
+      not migrating.
+
+      The stored records go through `loadMeta`'s validation either way. A record
+      that survived a reload, an app upgrade and possibly a hand-edited store is
+      not more trustworthy for having moved.
+    */
+    const stored = await PluginDatabase.getIndex();
+    const fromDb = validateMeta(stored);
+    const legacy = get().plugins;
+
+    let current: InstalledPlugin[];
+    if (fromDb !== null) {
+      current = fromDb.map((m) => ({ ...m, files: m.files ?? {}, binaries: {} }));
+    } else {
+      current = legacy;
+      if (legacy.length > 0) {
+        const moved = await PluginDatabase.putIndex(toMeta(legacy));
+        // Verified back, not assumed. `putIndex` reports its own failure, and
+        // reading it again is what makes "the new home has it" a fact rather
+        // than an inference from a promise that resolved.
+        if (moved && validateMeta(await PluginDatabase.getIndex()) !== null) {
+          try { localStorage.removeItem(STORE_KEY); } catch { /* private mode */ }
+        }
+      }
+    }
 
     /**
      * Reconciling two stores that can disagree.

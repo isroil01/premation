@@ -27,20 +27,26 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { runDocumentEdit } from '@core/commands/documentEdit';
 import { insertPrimitive } from '@core/scene/sceneInsert';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { bumpScene } from '@stores/sceneStore';
+import { bumpScene, batchScene } from '@stores/sceneStore';
 import { insertImageNode } from '@core/scene/sceneInsert';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { checkOwnership } from './layerKindRegistry';
 import { buildCustomLayerNode, isReservedPropPath, readCustomLayer } from './customLayers';
 import { regenerateProxyChildren } from './proxySubtree';
 import { onLayerChanged } from './layerChangeNotifier';
-import type { PluginManifest } from './manifest';
+import type { PluginManifest, PluginPermission } from './manifest';
 import type { PluginCommandSpec } from './protocol';
 import { createImageAsset, readAssetPixels, requireAsset } from './assets';
 import { reparentNode } from '@core/scene/parenting';
 import {
   addEffect, removeEffect, updateEffectParam, getNodeEffects, effectDefFor,
 } from '@core/effects/effects';
+import { pluginEffectsCanRender } from '@core/effects/pluginEffectDefs';
+import { noteInertPluginEffect } from './pluginEffects';
+import {
+  assertScope, storageDelete, storageGet, storageList, storageSet,
+} from './pluginStorage';
+import { BatchError, validateBatch, type BatchOp, type OpRef } from './sceneBatch';
 import { pluginNetFetch } from './pluginNetFetch';
 import { mainProcessFetch } from './pluginNetBridge';
 
@@ -52,6 +58,24 @@ const CREATABLE: SceneKind[] = ['shape', 'text', 'group', 'null', 'image'];
 
 const MAX_STRING = 500;
 const MAX_KEYFRAMES_PER_CALL = 5000;
+
+/**
+ * Tell the app the scene changed.
+ *
+ * A thin alias for `bumpScene`, and the reason it exists is `scene.apply`:
+ * every mutating handler goes through this name so a reader looking for "what
+ * announces a change" finds one place. The coalescing itself is NOT here — see
+ * `batchScene` in `sceneStore`, which the batch wraps around the whole run.
+ *
+ * A counter of my own was the first attempt and was wrong. `bumpScene` is not
+ * the only thing that announces: `insertPrimitive` and the scene graph bump
+ * independently, so suppressing calls made from this file alone left 82
+ * notifications for a 40-op batch. `batchScene` holds the notification at the
+ * store, which is the only place that sees all of them.
+ */
+function notifyScene(): void {
+  bumpScene();
+}
 
 class PluginApiError extends Error {}
 
@@ -114,6 +138,16 @@ export function createHostApi(
     warn: (text: string) => void;
     /** Deliver an authored-edit event to the plugin's worker. */
     emitLayerChanged?: (event: unknown) => void;
+    /**
+     * What the user granted, expanded through `PERMISSION_IMPLIES`.
+     *
+     * Needed only by `scene.apply`, which is the one method whose required
+     * permission depends on its arguments. Every other method is gated by
+     * `PluginHost` before it reaches this file, which is why this is a hook
+     * rather than a captured value: the gate stays in one place and this is an
+     * addition to it, not a second copy.
+     */
+    granted: () => ReadonlySet<PluginPermission>;
   },
 ): Record<string, (...args: unknown[]) => unknown> {
   const edit = <T>(what: string, fn: () => T): T => runDocumentEdit(`${manifest.name}: ${what}`, fn);
@@ -144,7 +178,7 @@ export function createHostApi(
     return id;
   };
 
-  return {
+  const table: Record<string, (...args: unknown[]) => unknown> = {
     // ── UI / core ────────────────────────────────────────────────────────
     'ui.notify': (message, level) => {
       const lv = level === 'success' || level === 'warning' || level === 'error' ? level : 'info';
@@ -250,7 +284,7 @@ export function createHostApi(
             ...(o.y !== undefined ? { y: finite(o.y, 'y') } : {}),
             props: rawProps,
           }));
-          bumpScene();
+          notifyScene();
           return id;
         });
       }
@@ -284,7 +318,7 @@ export function createHostApi(
           const n = defaultSceneGraph.getNode(id);
           const t = n?.components.find((c) => c.type === 'Transform');
           if (t) defaultSceneGraph.writeProp(id, t.id, 'assetId', asset.id);
-          bumpScene();
+          notifyScene();
           return id;
         });
       }
@@ -301,7 +335,7 @@ export function createHostApi(
             if (o.y !== undefined) defaultSceneGraph.writeProp(id, t.id, 'y', finite(o.y, 'y'));
           }
         }
-        bumpScene();
+        notifyScene();
         return id;
       });
     },
@@ -383,7 +417,7 @@ export function createHostApi(
       if (!target) return fail(`Layer "${n.name}" has no component that can hold "${p}".`);
       return edit(`set ${p}`, () => {
         const ok = defaultSceneGraph.writeProp(n.id, target.id, p, value);
-        bumpScene();
+        notifyScene();
         return ok;
       });
     },
@@ -391,7 +425,7 @@ export function createHostApi(
     'scene.renameLayer': (id, name) => {
       const n = node(id);
       const nm = str(name, 'layer name').slice(0, 80);
-      return edit('rename layer', () => { n.name = nm; bumpScene(); return true; });
+      return edit('rename layer', () => { n.name = nm; notifyScene(); return true; });
     },
 
     'scene.deleteLayer': (id) => {
@@ -399,7 +433,7 @@ export function createHostApi(
       // A comp root is not a layer; deleting one would take the composition
       // with it, and no plugin asked for that.
       if (n.parent === null) return fail('That is a composition root, not a layer.');
-      return edit(`delete ${n.name}`, () => { defaultSceneGraph.removeNode(n.id); bumpScene(); return true; });
+      return edit(`delete ${n.name}`, () => { defaultSceneGraph.removeNode(n.id); notifyScene(); return true; });
     },
 
     /**
@@ -427,7 +461,7 @@ export function createHostApi(
             + 'and parenting only works within one composition.',
           );
         }
-        bumpScene();
+        notifyScene();
         return true;
       });
     },
@@ -445,7 +479,7 @@ export function createHostApi(
       if (typeof visible !== 'boolean') return fail('visible must be true or false.');
       return edit(`${visible ? 'show' : 'hide'} ${n.name}`, () => {
         n.visible = visible;
-        bumpScene();
+        notifyScene();
         return true;
       });
     },
@@ -456,7 +490,7 @@ export function createHostApi(
       if (typeof locked !== 'boolean') return fail('locked must be true or false.');
       return edit(`${locked ? 'lock' : 'unlock'} ${n.name}`, () => {
         n.locked = locked;
-        bumpScene();
+        notifyScene();
         return true;
       });
     },
@@ -503,8 +537,27 @@ export function createHostApi(
         // to a generated one when the id it was given is taken, silently.
         const added = getNodeEffects(n.id).find((e) => !before.has(e.id));
         if (!added) return fail(`"${t}" could not be added to "${n.name}".`);
-        bumpScene();
-        return added.id;
+        notifyScene();
+
+        /*
+          Succeeds on the WebGL2 tier, and says it will not draw.
+
+          Not a failure, deliberately. The effect IS in the document, it is
+          saved with it, and it renders the moment that file is opened on a
+          WebGPU machine — refusing here would make a plugin that works
+          everywhere look broken on this laptop and, worse, would tempt an
+          author to strip the effect out of the document to "fix" it.
+
+          A bare id, though, leaves the plugin unable to tell its own user
+          anything, which is the defect: the effect appears in the stack, shows
+          its parameters, and does nothing. The flag is how a plugin says so in
+          its own words. The host says it too, once per session.
+        */
+        const inactive = t.includes('.') && !pluginEffectsCanRender();
+        if (inactive) noteInertPluginEffect(manifest.name);
+        return inactive
+          ? { id: added.id, active: false, reason: 'webgpu-unavailable' }
+          : added.id;
       });
     },
 
@@ -518,7 +571,7 @@ export function createHostApi(
       }
       return edit('remove effect', () => {
         removeEffect(n.id, fx);
-        bumpScene();
+        notifyScene();
         return true;
       });
     },
@@ -535,7 +588,7 @@ export function createHostApi(
       }
       return edit(`set ${k}`, () => {
         updateEffectParam(n.id, fx, k, value as never);
-        bumpScene();
+        notifyScene();
         return true;
       });
     },
@@ -684,5 +737,246 @@ export function createHostApi(
       getTimelineController().seekSeconds(Math.max(0, finite(seconds, 'time')));
       return true;
     },
+
+    // ── Storage ──────────────────────────────────────────────────────────
+    //
+    // Namespaced by `manifest.id` HERE, not by the caller. The scope and key
+    // cross a `postMessage` from third-party code; the identity does not, and
+    // the isolation between plugins rests entirely on that asymmetry — a plugin
+    // that could name the bag could read the one beside it.
+    //
+    // Synchronous. `storage.get` returning a promise would make every plugin
+    // that reads a preference during `activate()` pay a round trip against the
+    // 8 s boot deadline, for a value already in memory. See `pluginStorage.ts`.
+    'storage.get': (scope, key) => storageGet(assertScope(scope), manifest.id, key),
+
+    'storage.set': (scope, key, value) => {
+      const s = assertScope(scope);
+      storageSet(s, manifest.id, key, value);
+      /*
+        A project write marks the document dirty, and is NOT undoable.
+
+        Deliberately outside `edit()`, which every other mutating verb here goes
+        through. Undo is a promise about the user's work, and a plugin
+        remembering a panel's scroll position must not make Ctrl+Z do nothing
+        visible. A plugin that wants undoable state has layer props, which are
+        exactly that.
+      */
+      if (s === 'project') notifyScene();
+      return true;
+    },
+
+    'storage.delete': (scope, key) => {
+      const s = assertScope(scope);
+      storageDelete(s, manifest.id, key);
+      if (s === 'project') notifyScene();
+      return true;
+    },
+
+    'storage.list': (scope, prefix) => storageList(assertScope(scope), manifest.id, prefix),
+
+    // ── Batch ────────────────────────────────────────────────────────────
+    /**
+     * Many mutations, one round trip, one undo entry, one notification.
+     *
+     * Every op is dispatched through the SAME handler above that a single call
+     * would reach. Re-implementing them here would be a second definition of
+     * what `createLayer` means, free to drift from the first and certain to
+     * eventually — and the drift would be invisible, because a plugin using the
+     * batch and a plugin using the single call would each behave correctly
+     * against their own path.
+     *
+     * What differs is only bookkeeping: `notifyScene` is suppressed for the
+     * duration and fired once at the end, and `runDocumentEdit` nests, which it
+     * already handles by suspending inner history pushes.
+     */
+    'scene.apply': (rawOps) => {
+      const { ops, permissions } = validateBatch(rawOps);
+
+      /*
+        Permissions checked per op, against the UNION, before anything runs.
+
+        `scene.apply` needs none of its own in `METHOD_PERMISSIONS`, and
+        claiming one would either over-charge a batch of pure animation ops or
+        under-charge one that deletes layers. The gate belongs here, where the
+        ops are known.
+      */
+      const held = hooks.granted();
+      for (const p of permissions) {
+        if (!held.has(p)) {
+          return fail(
+            `This batch needs "${p}", which was not granted to this plugin. `
+            + `It requires: ${[...permissions].join(', ')}.`,
+          );
+        }
+      }
+
+      /*
+        `batchScene` holds every scene notification until the whole run is
+        done, then fires one.
+
+        At the STORE, not here. Suppressing only the `notifyScene` calls this
+        file makes was the first attempt and left 82 notifications for a 40-op
+        batch: `insertPrimitive` and the scene graph announce independently, and
+        the store is the only place that sees all of them. The graph is still
+        mutated immediately, so an op reading the scene mid-batch sees the
+        truth — only the announcement waits.
+      */
+      const value = batchScene(() => edit(`apply ${ops.length} operation${ops.length === 1 ? '' : 's'}`, () => {
+        {
+          /** Op index → the layer id it created. Only creating ops appear. */
+          const created = new Map<number, string>();
+          const resolve = (target: string | OpRef): string =>
+            typeof target === 'string'
+              ? target
+              // Validation already proved this ref points at an earlier
+              // `createLayer`. A miss means that op produced no id, which
+              // cannot happen without it having thrown — and a throw aborts.
+              : created.get(target.ref) ?? fail(`op ${target.ref} produced no layer.`);
+
+          /*
+            Where an unparented `createLayer` goes.
+
+            Wherever the FIRST created layer landed — learned, not chosen.
+
+            `insertPrimitive` puts a layer under whatever is selected and then
+            selects it, so inside a batch every create nests inside its
+            predecessor: "create a thousand layers" built a thousand-deep chain.
+            Nothing errored; the result was simply not what anyone would read
+            the batch as meaning.
+
+            Two anchors were tried and are worse. The selection's parent still
+            moves underneath the loop. The first scene ROOT is wrong in a
+            multi-composition project — it can name a composition the batch has
+            nothing to do with, and reparenting across compositions is refused,
+            so the batch fails with a message about ancestry that has no
+            relation to what the plugin asked for.
+
+            Letting op 0 land naturally and following it means a one-op batch is
+            identical to the single call it replaces, and every later op joins
+            it as a sibling rather than a descendant.
+          */
+          let defaultParent: string | null = null;
+
+          const results: unknown[] = [];
+          for (let i = 0; i < ops.length; i++) {
+            const op = ops[i]!;
+            try {
+              const result = runOp(table, op, resolve, defaultParent);
+              if (op.op === 'createLayer' && typeof result === 'string') {
+                created.set(i, result);
+                // The anchor, learned from op 0 and then fixed. `?? null` keeps
+                // a root-level layer's `undefined` parent from re-arming this.
+                defaultParent ??= defaultSceneGraph.getNode(result)?.parent ?? null;
+              }
+              results.push(result ?? null);
+            } catch (err) {
+              /*
+                Re-thrown with the index attached, and deliberately not caught.
+
+                `runDocumentEdit` snapshots before and after; an exception
+                escaping it restores the document, so nothing is applied. That
+                is the guarantee — a batch failing at op 4,999 leaves the
+                document byte-identical — and it is why the failure has to keep
+                travelling upward rather than becoming a partial result the
+                plugin has no way to interpret.
+              */
+              throw new BatchError(i, err instanceof Error ? err.message : String(err));
+            }
+          }
+          return results;
+        }
+      }));
+
+      return value;
+    },
   };
+
+  return table;
+}
+
+/**
+ * Dispatch one batch op to the single-call handler that already implements it.
+ *
+ * A `switch` rather than a map from op name to method name, because the
+ * ARGUMENT ORDER differs per op — a table would need a shaping function beside
+ * every entry, at which point it is a switch with extra indirection.
+ */
+function runOp(
+  table: Record<string, (...args: unknown[]) => unknown>,
+  op: BatchOp,
+  resolve: (t: string | OpRef) => string,
+  /** Where a `createLayer` with no `parent` belongs. See below. */
+  defaultParent: string | null,
+): unknown {
+  switch (op.op) {
+    case 'createLayer': {
+      const id = table['scene.createLayer']!({
+        ...(op.kind !== undefined ? { kind: op.kind } : {}),
+        ...(op.name !== undefined ? { name: op.name } : {}),
+        ...(op.props !== undefined ? { props: op.props } : {}),
+      });
+
+      /*
+        Parented EXPLICITLY, every time, and this is not a convenience.
+
+        `insertPrimitive` puts a new layer under whatever is SELECTED, and it
+        then selects what it made. In a batch that compounds: op 1 creates a
+        layer and selects it, op 2 creates a layer INSIDE op 1's, op 3 inside
+        op 2's — so "create a thousand layers" built a thousand-deep chain
+        rather than a thousand siblings. Nothing errored; the result was simply
+        not what anyone would read the batch as meaning.
+
+        A programmatic bulk API must not depend on what the user happened to
+        have selected when they invoked the plugin, so the batch decides: the
+        `parent` the op named, or — for an op that named none — wherever the
+        FIRST layer of this batch landed, captured before any of them ran.
+      */
+      if (typeof id === 'string') {
+        const target = op.parent !== undefined && op.parent !== null
+          ? resolve(op.parent)
+          : defaultParent;
+        /*
+          `reparentNode` directly, not through `scene.setParent`.
+
+          That handler re-validates the parent id with `node()`, and the
+          composition root is not a layer it can find — a batch anchored there
+          failed with "No layer with id comp_root", which is true and useless.
+          `reparentNode` already understands the root.
+
+          Skipped when the layer is already in the right place, so op 0 (which
+          sets the anchor) and any op that landed correctly cost nothing.
+        */
+        const current = defaultSceneGraph.getNode(id)?.parent ?? null;
+        if (target !== null && target !== current) reparentNode(id, target);
+      }
+      return id;
+    }
+    case 'setProperty':
+      return table['scene.setProperty']!(resolve(op.layer), op.path, op.value);
+    case 'setParent':
+      return table['scene.setParent']!(resolve(op.layer), op.parent === null ? null : resolve(op.parent));
+    case 'rename':
+      return table['scene.renameLayer']!(resolve(op.layer), op.name);
+    case 'delete':
+      return table['scene.deleteLayer']!(resolve(op.layer));
+    case 'setVisible':
+      return table['scene.setVisible']!(resolve(op.layer), op.visible);
+    case 'setLocked':
+      return table['scene.setLocked']!(resolve(op.layer), op.locked);
+    case 'effects.add':
+      return table['effects.add']!(resolve(op.layer), op.type);
+    case 'effects.remove':
+      return table['effects.remove']!(resolve(op.layer), op.effect);
+    case 'effects.setParam':
+      return table['effects.setParam']!(resolve(op.layer), op.effect, op.key, op.value);
+    case 'animation.setKeyframes':
+      return table['animation.setKeyframes']!(resolve(op.layer), op.path, op.keyframes);
+    case 'animation.setExpression':
+      return table['animation.setExpression']!(resolve(op.layer), op.path, op.expression);
+    default: {
+      const exhaustive: never = op;
+      throw new Error(`unhandled batch operation ${JSON.stringify(exhaustive)}`);
+    }
+  }
 }

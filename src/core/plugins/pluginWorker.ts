@@ -74,6 +74,41 @@ function lockdown(): void {
     Object.defineProperty(self.navigator, 'sendBeacon', { value: denied('navigator.sendBeacon') });
   } catch { /* not present in every engine */ }
 
+  /*
+    WebAssembly stays. The STREAMING variants do not.
+
+    Whether `WebAssembly` survived lockdown was undocumented, which was the real
+    defect: it is the difference between "scripting" and "a platform" — solvers,
+    mesh libraries, codecs and tracers are written in another language and
+    cannot usefully be ported — and an author had no way to know whether relying
+    on it was supported or an accident about to be closed.
+
+    It is allowed, and the reasoning is that it widens nothing. A `.wasm` file
+    lives inside the signed package, so it carries the same signature and the
+    same size limits as the JavaScript beside it, and the host hands an
+    instantiated module no imports at all: whatever it can call, the plugin's
+    own JS passed in, and that JS is already gated. Refusing it would not shrink
+    the sandbox — it would push the same work into hand-written asm.js.
+
+    The streaming pair is different in kind. Both take a `Response`, which means
+    a network fetch, and this realm has none: `fetch` is already denied above,
+    so `instantiateStreaming` could only ever be reached with a Response the
+    plugin obtained some other way. Removing them keeps "a plugin has no network
+    of its own" true with no exceptions to remember.
+  */
+  const wasm = (self as unknown as { WebAssembly?: Record<string, unknown> }).WebAssembly;
+  if (wasm) {
+    for (const name of ['instantiateStreaming', 'compileStreaming']) {
+      try {
+        Object.defineProperty(wasm, name, {
+          value: denied(`WebAssembly.${name}`),
+          configurable: false,
+          writable: false,
+        });
+      } catch { /* absent in this engine, which is the same outcome */ }
+    }
+  }
+
   forwardConsole();
 }
 
@@ -144,7 +179,11 @@ export interface PluginImage {
 /** `kindId` → the plugin's authored-edit callback. One per kind. */
 const layerChangeListeners = new Map<string, (e: { layerId: string; props: string[] }) => void>();
 
-function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
+function buildApi(
+  manifest: PluginManifest,
+  permissions: PluginPermission[],
+  capabilities: readonly string[],
+) {
   const panels = manifest.contributes?.panels ?? [];
   /**
    * Resolve an optional panel id worker-side too.
@@ -164,11 +203,40 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
     );
   };
 
+  /**
+   * What this host can do, frozen.
+   *
+   * A `Set` with `has()`, not an array, because the only sensible question is
+   * membership and an array invites `capabilities[0]` — an index into a list
+   * whose order is not a promise. Frozen and copied so a plugin cannot add a
+   * capability to its own view and then be surprised when the host refuses the
+   * call it thought it had checked for.
+   *
+   * This answers a DIFFERENT question from `has(permission)`. A permission is
+   * what the user allowed; a capability is what the host can do at all. A
+   * plugin granted `assets:write` on a WebGL2 machine has the permission and
+   * lacks `webgpu`, and conflating the two would make it tell the user they
+   * declined something they were never asked about.
+   */
+  const capabilitySet: ReadonlySet<string> = Object.freeze(new Set(capabilities)) as ReadonlySet<string>;
+
   return {
     manifest,
     /** Exactly what the user granted — a plugin can degrade instead of failing. */
     permissions: [...permissions],
     has: (p: PluginPermission): boolean => permissions.includes(p),
+
+    /**
+     * What this host can do. See `capabilities.ts` in the editor.
+     *
+     * Use it to branch on anything listed in the manifest's `optional`.
+     * Anything in `requires` is guaranteed present — the install would have
+     * been refused otherwise — so checking those is dead code.
+     */
+    capabilities: Object.freeze({
+      has: (name: string): boolean => capabilitySet.has(name),
+      list: (): string[] => [...capabilitySet].sort(),
+    }),
 
     ui: {
       notify: (message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info') =>
@@ -218,6 +286,36 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
     },
 
     scene: {
+      /**
+       * Many mutations in one call. Use this whenever you are about to loop.
+       *
+       * Every single call costs a `postMessage`, a host-side revalidation, an
+       * undo entry and a viewport re-render. A few thousand of those is the
+       * difference between a plugin that works and one that hangs the editor —
+       * and it also means a user who dislikes the result has to hold Ctrl+Z.
+       *
+       *   const [group] = await motion.scene.apply([
+       *     { op: 'createLayer', kind: 'group', name: 'Rig' },
+       *     { op: 'createLayer', kind: 'shape', name: 'Bone', parent: { ref: 0 } },
+       *   ]);
+       *
+       * `{ ref: n }` is the layer created by op `n`, which must come earlier.
+       * That is what lets one call build a hierarchy: without it you would
+       * create the parents, wait for their ids, and send a second batch —
+       * exactly the round trip this exists to avoid.
+       *
+       * Either the whole batch applies or none of it does. A failing op
+       * rejects with its index and leaves the document untouched, so there is
+       * no partial state to reason about. Resolves to one result per op,
+       * positionally: a created layer's id, or `null`.
+       *
+       * Needs the union of what its ops need, checked before anything runs.
+       * Capped at 10,000 ops and 8 MB per call, both refused rather than
+       * truncated — being told "8,000 of your 10,000 applied" leaves you no
+       * way to work out which.
+       */
+      apply: (ops: unknown[]) => call('scene.apply', ops) as Promise<unknown[]>,
+
       getSelection: () => call('scene.getSelection') as Promise<string[]>,
       setSelection: (ids: string[]) => call('scene.setSelection', ids),
       getLayers: () => call('scene.getLayers') as Promise<Array<{
@@ -342,6 +440,43 @@ function buildApi(manifest: PluginManifest, permissions: PluginPermission[]) {
       getTime: () => call('timeline.getTime') as Promise<number>,
       setTime: (seconds: number) => call('timeline.setTime', seconds),
     },
+
+    /**
+     * Somewhere to keep things between sessions.
+     *
+     * Two scopes, and choosing between them is the only decision here:
+     *
+     *   • `'global'` — this machine. Survives restarts, does NOT travel with
+     *     the project. For preferences: the last folder you imported from, a
+     *     panel's collapsed sections, an API endpoint the user typed once.
+     *     1 MB.
+     *   • `'project'` — inside the document. Travels with the file to another
+     *     machine, and is retained even on a machine where this plugin is not
+     *     installed. For anything that names something IN the project: which
+     *     layer is the spine, which asset a generator came from. 256 KB.
+     *
+     * Getting it wrong is not fatal but is felt: machine settings in `project`
+     * arrive as a colleague's preferences, and document state in `global` is
+     * gone the moment the file moves.
+     *
+     * Needs no permission. Values are JSON, 64 KB each; keys are up to 200
+     * characters with no whitespace and none of `/ \ ' "`. A write past the
+     * quota throws with `code === 'storage-quota-exceeded'` — catch that rather
+     * than matching the message, which is written for a human.
+     *
+     * A `project` write marks the document dirty and is NOT undoable. A plugin
+     * that wants undoable state should put it in layer props.
+     */
+    storage: {
+      get: (scope: 'global' | 'project', key: string) =>
+        call('storage.get', scope, key) as Promise<unknown>,
+      set: (scope: 'global' | 'project', key: string, value: unknown) =>
+        call('storage.set', scope, key, value) as Promise<true>,
+      delete: (scope: 'global' | 'project', key: string) =>
+        call('storage.delete', scope, key) as Promise<true>,
+      list: (scope: 'global' | 'project', prefix?: string) =>
+        call('storage.list', scope, prefix) as Promise<string[]>,
+    },
   };
 }
 
@@ -355,7 +490,7 @@ async function boot(msg: Extract<HostMessage, { k: 'boot' }>): Promise<void> {
   booted = true;
   lockdown();
 
-  const api = buildApi(msg.manifest, msg.permissions);
+  const api = buildApi(msg.manifest, msg.permissions, msg.capabilities ?? []);
   const url = URL.createObjectURL(new Blob([msg.code], { type: 'text/javascript' }));
   try {
     const mod = (await import(/* @vite-ignore */ url)) as Record<string, unknown>;

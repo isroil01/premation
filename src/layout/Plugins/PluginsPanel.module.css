@@ -146,6 +146,43 @@
 }
 .rowMeta { display: flex; gap: var(--space-2); font-size: var(--font-size-micro, 10px); color: var(--color-text-tertiary); }
 
+/* A malicious takedown the user has not acknowledged.
+   Deliberately the only thing on this row allowed to wrap: it is a sentence to
+   be read, not a label to be glanced at, and truncating it with an ellipsis
+   would defeat the point of showing it permanently. */
+.rowTakedown {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: var(--font-size-micro, 10px);
+  line-height: 1.4;
+  color: var(--color-danger);
+  white-space: normal;
+}
+.rowTakedownAck {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.rowTakedownAck:hover { color: var(--color-text-primary); }
+
+/* A plugin whose effects cannot draw on this renderer tier. Muted, not red:
+   the plugin is fine and the effects are saved with the project — this is a
+   fact about the machine, not a fault in the plugin. */
+.rowInert {
+  margin-top: 2px;
+  font-size: var(--font-size-micro, 10px);
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  white-space: normal;
+}
+
 .rowActions { display: flex; gap: 4px; flex: 0 0 auto; align-items: center; }
 .mini {
   padding: 2px 8px;

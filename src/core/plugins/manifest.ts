@@ -44,14 +44,52 @@ import { parseNet, type NetContribution } from './netSchema';
  *     same reason 3 was — a document using a plugin effect references the
  *     plugin that provides it — and because `render: "shader"` on a layer kind
  *     stops being a reserved value and starts meaning something.
+ *
+ * 5 — The split. Up to here this number meant four things at once: the manifest
+ *     grammar, the shape of `contributes`, the host method surface, and effect
+ *     semantics. They stop moving together at 5, so they stop sharing a number.
+ *
+ *     `MANIFEST_VERSION` is what a manifest declares as `apiVersion` — the
+ *     GRAMMAR it is written in. `HOST_API_VERSION` is what this host provides.
+ *     Everything finer-grained than that is a capability, because a version can
+ *     only express "newer than" and the question a plugin actually has is "does
+ *     this host have the thing I call". See `capabilities.ts`.
  */
-export const HOST_API_VERSION = 4;
+export const HOST_API_VERSION = 5;
+
+/**
+ * The newest manifest GRAMMAR this host can read.
+ *
+ * Separate from `HOST_API_VERSION` from 5 onward, and the two now move
+ * independently: adding a host method bumps neither (it adds a capability),
+ * while a new manifest key bumps only this one.
+ *
+ * A manifest declaring a grammar newer than this is refused, and that has not
+ * changed — reading a document with keys whose meaning is unknown is how a
+ * validator silently accepts something it does not understand.
+ */
+export const MANIFEST_VERSION = 5;
 
 /** Everything a plugin may ask for. Nothing outside this list is grantable. */
 export const PERMISSIONS = {
   'scene:read': {
     label: 'Read your layers',
     detail: 'See the names, structure and properties of layers in your composition.',
+  },
+  /*
+    Listed BEFORE `scene:write`, and the order is load-bearing.
+
+    The consent screen renders this object in key order, and a user reading top
+    to bottom should meet the narrow grant before the wide one. "Build the
+    layers beneath its own" is something a person can picture; "create, change
+    and delete layers" is not, and meeting the wide one first makes the narrow
+    one read as a footnote to it rather than as the alternative.
+  */
+  'scene:proxy': {
+    label: 'Build the layers beneath its own',
+    detail:
+      'Generate and update the child layers underneath layers this plugin itself created. '
+      + 'It cannot reach anything else in your composition, and it stops managing a layer the moment you edit it.',
   },
   'scene:write': {
     label: 'Modify your layers',
@@ -101,6 +139,52 @@ export const PERMISSIONS = {
 export type PluginPermission = keyof typeof PERMISSIONS;
 
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as PluginPermission[];
+
+/**
+ * Permissions that CONTAIN other permissions.
+ *
+ * `scene:write` is "create, change and delete layers"; `scene:proxy` is a
+ * proper subset of that — the same verbs, restricted to a plugin's own proxy
+ * subtrees. Holding the wide one and being refused the narrow one would be
+ * nonsense, and it is also the migration: every plugin installed before
+ * `scene:proxy` existed holds `scene:write` and must keep working with no
+ * re-consent.
+ *
+ * ── Why this is a table and not an `||` in the gate ─────────────────────────
+ *
+ * The registry's publish-time scanner reads the same method→permission map to
+ * infer which permissions a package actually uses. Without the implication it
+ * would see a call to `scene.setProxyChildren`, conclude the package needs
+ * `scene:proxy`, find only `scene:write` in the manifest, and report an
+ * undeclared permission — sending every existing proxy plugin to manual review
+ * for a call it is fully entitled to make. So the relationship has to be known
+ * on BOTH sides, which makes it data rather than a branch.
+ *
+ * Deliberately not transitive and deliberately not a graph. One level is what
+ * the model needs; a hierarchy is a thing to get subtly wrong in a security
+ * check, and `expandPermissions` below would have to close over it.
+ */
+export const PERMISSION_IMPLIES: Readonly<Partial<Record<PluginPermission, readonly PluginPermission[]>>> = {
+  'scene:write': ['scene:proxy'],
+};
+
+/**
+ * A grant, plus everything it contains.
+ *
+ * The set to check a required permission against — never the raw grant. A
+ * caller that tests `granted.includes(required)` directly is the bug this
+ * exists to prevent, and it is a quiet one: it refuses a plugin holding a
+ * STRICTLY WIDER permission than the one being asked for.
+ */
+export function expandPermissions(
+  granted: readonly PluginPermission[],
+): ReadonlySet<PluginPermission> {
+  const out = new Set<PluginPermission>(granted);
+  for (const held of granted) {
+    for (const implied of PERMISSION_IMPLIES[held] ?? []) out.add(implied);
+  }
+  return out;
+}
 
 /** A command declared in the manifest — and, identically, one registered at
  *  runtime. One shape, so a declared command and a registered one cannot drift. */
@@ -234,9 +318,39 @@ export interface PluginManifest {
   description: string;
   author?: string;
   homepage?: string;
-  /** Host API generation the plugin was written against. Refused when newer
-   *  than this host — running it would fail in ways the author never saw. */
+  /**
+   * The manifest GRAMMAR this plugin is written in. Refused when newer than
+   * `MANIFEST_VERSION` — reading keys whose meaning is unknown is how a
+   * validator silently accepts something it does not understand.
+   *
+   * Called `apiVersion` on the wire because that is what every published
+   * manifest already says and the name is frozen in signed bytes. From version
+   * 5 it means the grammar and nothing else; what the plugin can CALL is
+   * `requires` / `optional`.
+   */
   apiVersion: number;
+  /**
+   * Capabilities without which this plugin cannot run.
+   *
+   * Checked at INSTALL, and refused there rather than at the first call. A
+   * plugin that installs and then fails is worse than one that never installs:
+   * the user has already agreed to its permissions, it sits in their list
+   * looking healthy, and the failure arrives later attached to whatever they
+   * happened to be doing.
+   *
+   * Absent means "whatever `apiVersion` implied" — see
+   * `CAPABILITIES_BY_API_VERSION`, which is what keeps every already-published
+   * manifest installing unchanged.
+   */
+  requires?: string[];
+  /**
+   * Capabilities this plugin uses if they are there.
+   *
+   * Never gates an install. It exists so `motion.capabilities.has(...)` means
+   * something an author declared rather than something they probed for, and so
+   * a listing can say what a plugin will do on a better machine.
+   */
+  optional?: string[];
   /** Package-relative path to the entry ES module. */
   main: string;
   permissions: PluginPermission[];
@@ -609,11 +723,18 @@ export function parseManifest(raw: unknown): ManifestResult {
   const apiVersion = typeof r.apiVersion === 'number' ? r.apiVersion : NaN;
   if (!Number.isInteger(apiVersion) || apiVersion < 1) {
     errors.push('"apiVersion" must be a whole number ≥ 1.');
-  } else if (apiVersion > HOST_API_VERSION) {
+  } else if (apiVersion > MANIFEST_VERSION) {
+    // Compared against the GRAMMAR version, not the host API version. From 5
+    // they move independently, and this field has only ever described the
+    // grammar — what a plugin can CALL is `requires`.
     errors.push(
-      `This plugin needs host API ${apiVersion}; this version of Premation provides ${HOST_API_VERSION}. Update the app.`,
+      `This plugin's manifest is written for format ${apiVersion}; this version of Premation `
+      + `reads up to ${MANIFEST_VERSION}. Update the app.`,
     );
   }
+
+  const requires = parseCapabilityList(r.requires, 'requires', errors);
+  const optional = parseCapabilityList(r.optional, 'optional', errors);
 
   if (!isSafePath(r.main)) errors.push('"main" must be a package-relative path to the entry module.');
 
@@ -681,11 +802,49 @@ export function parseManifest(raw: unknown): ManifestResult {
         ? { homepage: r.homepage.slice(0, 300) }
         : {}),
       permissions,
+      // Omitted when empty rather than stored as `[]`. Absent means "whatever
+      // this `apiVersion` implied", which is a different statement from "needs
+      // nothing" — and every manifest published before capabilities existed
+      // means the first one.
+      ...(requires.length > 0 ? { requires } : {}),
+      ...(optional.length > 0 ? { optional } : {}),
       contributes,
       activationEvents,
     },
     errors: [],
   };
+}
+
+/**
+ * Validate a `requires` / `optional` list.
+ *
+ * Shape only. Whether a capability is one THIS host has is decided at install
+ * (`checkCapabilities`), not here, and the split matters: a manifest naming
+ * `webgpu` is perfectly valid, and refusing it during parsing would make a
+ * plugin unreadable on a WebGL2 machine rather than merely uninstallable —
+ * which would also stop the registry, which has no GPU at all, from validating
+ * it on publish.
+ */
+function parseCapabilityList(raw: unknown, field: string, errors: string[]): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    errors.push(`"${field}" must be an array of capability names.`);
+    return [];
+  }
+  if (raw.length > 32) {
+    errors.push(`"${field}" lists ${raw.length} capabilities; the limit is 32.`);
+    return [];
+  }
+
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string' || !/^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$/.test(entry)) {
+      errors.push(`"${field}" contains ${JSON.stringify(entry)}, which is not a capability name.`);
+      continue;
+    }
+    if (!out.includes(entry)) out.push(entry);
+  }
+  return out;
 }
 
 /**

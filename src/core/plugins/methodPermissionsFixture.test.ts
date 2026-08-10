@@ -23,7 +23,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { METHOD_PERMISSIONS } from './protocol';
-import { ALL_PERMISSIONS } from './manifest';
+import { createHostApi } from './hostApi';
+import { ALL_PERMISSIONS, HOST_API_VERSION } from './manifest';
 
 const fixture = JSON.parse(
   readFileSync(join(__dirname, '__fixtures__', 'methodPermissions.json'), 'utf8'),
@@ -76,5 +77,74 @@ describe('the shared method→permission mapping', () => {
     for (const method of nullMethods) {
       expect(fixture.methodPermissions).not.toHaveProperty(method);
     }
+  });
+});
+
+describe('the table covers every method the host actually implements', () => {
+  /**
+   * A host API built with stub hooks. Nothing is invoked; only the KEYS matter.
+   *
+   * Constructed rather than read from a list, because a list would be a second
+   * inventory of the implementation — the same drift, one layer along.
+   */
+  const implemented = new Set(
+    Object.keys(createHostApi(
+      {
+        id: 'test.enumerate.methods',
+        name: 'Enumerate',
+        version: '1.0.0',
+        description: 'Built for its key set.',
+        apiVersion: HOST_API_VERSION,
+        main: 'main.js',
+        permissions: [],
+        contributes: { commands: [], panels: [], layerKinds: [], effects: [], net: null },
+        activationEvents: ['onStartup'],
+      } as never,
+      {
+        registerCommand: () => {},
+        openPanel: () => {},
+        closePanel: () => {},
+        warn: () => {},
+        // Only  reads this; every other method is gated before it
+        // reaches the table. Empty here, so a batch would be refused.
+        granted: () => new Set<never>(),
+      },
+    )),
+  );
+
+  const declared = new Set(Object.keys(METHOD_PERMISSIONS));
+
+  it('finds a host API worth checking', () => {
+    // Guards the guard: a `createHostApi` that returned `{}` would make both
+    // assertions below pass while proving nothing.
+    expect(implemented.size).toBeGreaterThanOrEqual(30);
+  });
+
+  it('declares a permission for every implemented method', () => {
+    /*
+      The completeness half, and what makes the cross-repo checksum mean
+      something.
+
+      A handler added to `hostApi.ts` with no `METHOD_PERMISSIONS` entry is
+      refused at runtime as an unknown method — safe, but silently broken and
+      invisible in review: the author's plugin calls it and is told the method
+      does not exist, while the fixture never changes, so the sibling
+      repository's CI never learns the surface grew. Making the fixture
+      unavoidable is the entire point of hashing it.
+    */
+    const undeclared = [...implemented].filter((m) => !declared.has(m));
+    expect({ undeclared }).toEqual({ undeclared: [] });
+  });
+
+  it('implements every method it declares', () => {
+    /*
+      The other direction. A `METHOD_PERMISSIONS` entry with no handler is a
+      method the gate waves through to nothing — and the registry's scanner
+      treats the same table as evidence that a package uses a permission, so a
+      publisher can be sent to manual review over a call that could never have
+      done anything.
+    */
+    const unimplemented = [...declared].filter((m) => !implemented.has(m));
+    expect({ unimplemented }).toEqual({ unimplemented: [] });
   });
 });

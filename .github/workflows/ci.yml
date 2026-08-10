@@ -59,9 +59,18 @@ jobs:
       # flakiest step in the job — so skip the scripts rather than the cache.
       - run: npm ci --ignore-scripts
 
-      # Each runs even if an earlier one fails: three separate reports beat
-      # finding out about the type error only after fixing the lint error.
-      - run: npm run typecheck
+      # The cross-repo plugin fixtures, first because it is instant and because
+      # its failure means something nothing else in this job can see: a fixture
+      # that no longer matches motion-back's copy. Neither repo imports the
+      # other, so a divergence leaves every test in BOTH repositories green
+      # while the registry validates a manifest the editor gates differently.
+      - name: shared plugin fixtures match motion-back
+        run: npm run verify:fixtures
+
+      # Each runs even if an earlier one fails: separate reports beat finding
+      # out about the type error only after fixing the lint error.
+      - if: '!cancelled()'
+        run: npm run typecheck
       - if: '!cancelled()'
         run: npx tsc -p electron/tsconfig.json --noEmit
       - if: '!cancelled()'

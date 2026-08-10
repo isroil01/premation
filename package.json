@@ -43,7 +43,8 @@
     "release:major": "npm version major -m \"release: v%s\"",
     "render-tests": "node packages/render-tests/scripts/run.mjs",
     "render-tests:update": "node packages/render-tests/scripts/run.mjs --update",
-    "verify-plugin-effect": "node packages/render-tests/scripts/verify-plugin-effect.mjs"
+    "verify-plugin-effect": "node packages/render-tests/scripts/verify-plugin-effect.mjs",
+    "verify:fixtures": "node scripts/fixtures-hash.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

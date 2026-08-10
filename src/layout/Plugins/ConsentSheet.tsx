@@ -27,13 +27,15 @@ import styles from './ConsentSheet.module.css';
 export function ConsentSheet({
   pkg,
   source,
-  publisherKey,
+  origin,
   onDone,
 }: {
   pkg: PluginPackage;
   source?: 'folder' | 'file' | 'registry';
-  /** Set for a registry install: the key the package was verified against. */
-  publisherKey?: string;
+  /** Set for a registry install: the key it was verified against, plus the
+   *  successor the listing advertised. Recorded now so a later rotation can be
+   *  judged against what this machine already knew. */
+  origin?: import('./installFromRegistry').InstallOrigin;
   onDone: () => void;
 }): JSX.Element {
   const { manifest } = pkg;
@@ -50,6 +52,18 @@ export function ConsentSheet({
    */
   const [chosen, setChosen] = useState<PluginPermission[]>(() => [...manifest.permissions]);
 
+  /*
+    Whether this plugin declares storage, from `requires` OR `optional`.
+
+    Both, because the disclosure is about what the plugin MAY do, and a
+    capability listed as optional is still one it uses when it is there. A line
+    that only appeared for `requires` would be absent for exactly the plugins
+    that degrade politely.
+  */
+  const declared = new Set([...(manifest.requires ?? []), ...(manifest.optional ?? [])]);
+  const declaresProjectStorage = declared.has('storage.project');
+  const declaresStorage = declaresProjectStorage || declared.has('storage.global');
+
   const toggle = (p: PluginPermission): void => {
     setChosen((cur) => (cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]));
   };
@@ -58,7 +72,11 @@ export function ConsentSheet({
     setBusy(true);
     const err = pluginHost.install(pkg, chosen, {
       ...(source ? { source } : {}),
-      ...(publisherKey ? { publisherKey } : {}),
+      ...(origin?.publisherKey ? { publisherKey: origin.publisherKey } : {}),
+      ...(origin?.nextPublisherKey ? { nextPublisherKey: origin.nextPublisherKey } : {}),
+      ...(origin?.nextPublisherKeyMethod
+        ? { nextPublisherKeyMethod: origin.nextPublisherKeyMethod }
+        : {}),
     });
     setBusy(false);
     if (err) { void customAlert('Could not install plugin', err, { isDanger: true }); return; }
@@ -137,6 +155,32 @@ export function ConsentSheet({
             <span>
               Withholding access is supported, but the plugin may not work. A refused call
               tells it which permission is missing, so a well-written plugin degrades instead of failing.
+            </span>
+          </p>
+        )}
+
+        {/*
+          Storage is DISCLOSED, not consented to.
+
+          It needs no permission — neither scope touches the user's layers, and
+          a ninth tick-box reading "remembers its own settings" costs attention
+          on the one screen where attention is the entire point. A reader who
+          works carefully through eight real decisions and then skims a ninth
+          non-decision has been made worse off by the ninth being there.
+
+          Stated as a fact instead, and only when the manifest declares it. The
+          `project` wording carries the weight: that state rides in the user's
+          file and goes wherever they send it, which is the part they might not
+          otherwise expect.
+        */}
+        {declaresStorage && (
+          <p className={styles.disclosure}>
+            <Icon name="info" size="sm" />
+            <span>
+              {declaresProjectStorage
+                ? 'It saves its own settings, and keeps notes inside your project file — '
+                  + 'those travel with the file if you share it.'
+                : 'It saves its own settings on this computer.'}
             </span>
           </p>
         )}

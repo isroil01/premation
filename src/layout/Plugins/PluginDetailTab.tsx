@@ -43,6 +43,7 @@ import { pluginRegistryEnabled } from '@core/config/edition';
 import { installFromRegistry, updateFromRegistry } from './installFromRegistry';
 import { ConsentSheet, ConsentOverlay } from './ConsentSheet';
 import { ReportPluginDialog } from './ReportPluginDialog';
+import { ReadmeFrame } from './ReadmeFrame';
 import type { PluginPackage } from '@core/plugins/pluginPackage';
 import styles from './PluginDetailTab.module.css';
 
@@ -73,7 +74,13 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
     if (!detail) return;
     setBusy(true);
     try {
-      await installFromRegistry(detail.id, detail.latestVersion, detail.publisherKey);
+      // The successor travels WITH the install. Recording it now is what lets a
+      // rotation months later be judged against something this machine already
+      // knew, rather than against the response asking it to trust the new key.
+      await installFromRegistry(detail.id, detail.latestVersion, detail.publisherKey, detail.sha256, {
+        nextPublisherKey: detail.nextPublisherKey,
+        nextPublisherKeyMethod: detail.nextPublisherKeyMethod,
+      });
     } finally {
       setBusy(false);
     }
@@ -419,19 +426,53 @@ export function PluginDetailTab({ pluginId }: { pluginId: string }): JSX.Element
         )
       )}
 
+      {/*
+        The security log, above the runtime log and separate from it.
+
+        It exists because the safest rotation path is SILENT: a key registered
+        as a backup at first publish is accepted with no prompt. That is the
+        right behaviour and it is only defensible if the change is findable
+        afterwards — a key rotation nobody was asked about and nobody can look
+        up is indistinguishable from no rotation at all.
+
+        Not merged into the runtime log, which is the plugin's own `console`
+        output and scrolls: a security event would be one line among hundreds
+        from the thing being vouched for.
+      */}
+      {installed && (installed.securityEvents?.length ?? 0) > 0 && (
+        <div className={styles.section}>
+          <span className={styles.sectionTitle}>Security</span>
+          <ul className={styles.securityLog}>
+            {[...(installed.securityEvents ?? [])].reverse().map((e) => (
+              <li key={`${e.at}-${e.text.slice(0, 24)}`}>
+                <time dateTime={new Date(e.at).toISOString()}>
+                  {new Date(e.at).toLocaleDateString()}
+                </time>
+                <span>{e.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {installed && <LogSection pluginId={pluginId} />}
 
       {detail?.readmeHtml && (
         <div className={styles.section}>
           <span className={styles.sectionTitle}>About</span>
           {/*
-            Rendered and sanitised SERVER-SIDE, at write time, by a
-            construct-only Markdown renderer — raw HTML in a README is escaped
-            to text and never interpreted. This is the one place the editor
-            injects markup it did not author, and it is safe because of what
-            produced the string, not because of anything done here.
+            Framed, not injected.
+
+            The registry renders this with a construct-only Markdown renderer —
+            raw HTML in a README is escaped to text and never interpreted —
+            which is the primary control and a strong one. It is also code. A
+            bug in it, injected here, would run in the renderer process that
+            holds the user's session, their project and the preload bridge; and
+            unlike a plugin, a README a user merely BROWSES has been granted
+            nothing. So it renders in a sandboxed frame with no same-origin
+            access and no network. See `readmeDocument.ts`.
           */}
-          <div className={styles.readme} dangerouslySetInnerHTML={{ __html: detail.readmeHtml }} />
+          <ReadmeFrame html={detail.readmeHtml} />
         </div>
       )}
 

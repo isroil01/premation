@@ -22,6 +22,7 @@ import {
   type KeyChangeRequest,
 } from './installFromRegistry';
 import { installFromRegistry } from './installFromRegistry';
+import { usePluginStore } from '@stores/pluginStore';
 
 jest.mock('@core/plugins/registry', () => ({ fetchRegistryPackage: jest.fn() }));
 jest.mock('@core/plugins/pluginPackage', () => ({ readPluginZip: jest.fn() }));
@@ -100,6 +101,7 @@ describe('★ when the key HAS changed', () => {
       version: '2.0.0',
       pinnedKey: OLD_KEY,
       newKey: NEW_KEY,
+      authorisation: 'unknown',
     });
   });
 
@@ -185,5 +187,140 @@ describe('the install path is shared', () => {
   it('is the same function the direct install uses', () => {
     // Guards against `updateFromRegistry` quietly growing its own copy.
     expect(typeof installFromRegistry).toBe('function');
+  });
+});
+
+/**
+ * ── Three rotation paths, because they are three different claims ────────────
+ *
+ * Every rotation used to produce the same modal. That is the defect: a prompt
+ * shown for the safe case and the dangerous case alike is one people learn to
+ * click through, and the dangerous case is precisely the one an attacker with a
+ * stolen publisher account wants displayed.
+ *
+ * What separates them is what THIS MACHINE recorded before the rotation
+ * happened — the successor key the registry advertised at install time. A key
+ * first mentioned in the response that asks you to trust it is no evidence at
+ * all; a key recorded months earlier is.
+ */
+describe('★ the three rotation paths', () => {
+  /** Install a record with a known successor, the way a real install does. */
+  function installed(next?: { key: string; method: 'backup' | 'dashboard' }): void {
+    usePluginStore.setState({
+      plugins: [{
+        manifest: {
+          id: 'studio.acme.thing', name: 'Thing', version: '1.0.0', description: 'x',
+          apiVersion: 5, main: 'main.js', permissions: [],
+          contributes: { commands: [], panels: [], layerKinds: [], effects: [], net: null },
+          activationEvents: ['onStartup'],
+        },
+        granted: [], enabled: true, files: {}, binaries: {}, installedAt: 0,
+        publisherKey: OLD_KEY,
+        ...(next ? { nextPublisherKey: next.key, nextPublisherKeyMethod: next.method } : {}),
+      }] as never,
+    });
+  }
+
+  afterEach(() => usePluginStore.setState({ plugins: [] }));
+
+  it('accepts a BACKUP key silently, and writes it down', async () => {
+    /*
+      A backup key was registered at first publish — before anyone had installed
+      the plugin, so before there was an install base the choice could endanger.
+      There is nothing to ask a user: they already have the evidence, recorded
+      before the event, and a prompt here would be theatre that costs attention
+      the `unknown` case needs.
+
+      Silent is only acceptable BECAUSE it is recorded. A change nobody was
+      asked about and nobody can find afterwards is indistinguishable from no
+      change at all.
+    */
+    installed({ key: NEW_KEY, method: 'backup' });
+    const prompt = jest.fn();
+    setKeyChangeHost(prompt as unknown as (r: KeyChangeRequest) => Promise<boolean>);
+
+    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing');
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(verifiedWith).toBe(NEW_KEY);
+
+    const events = usePluginStore.getState().get('studio.acme.thing')?.securityEvents ?? [];
+    expect(events).toHaveLength(1);
+    expect(events[0]!.text).toMatch(/backup.*first published/i);
+  });
+
+  it('PROMPTS for a dashboard key, and says the account could have been taken', async () => {
+    // Recorded as authorised, but from the account, after publication — which
+    // is exactly what a thief holds. Real evidence, weak evidence, and the
+    // prompt has to say which.
+    installed({ key: NEW_KEY, method: 'dashboard' });
+    const prompt = jest.fn().mockResolvedValue(true);
+    setKeyChangeHost(prompt as unknown as (r: KeyChangeRequest) => Promise<boolean>);
+
+    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing');
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt.mock.calls[0]![0]).toMatchObject({ authorisation: 'dashboard' });
+    expect(verifiedWith).toBe(NEW_KEY);
+  });
+
+  it('PROMPTS hardest for a key it never recorded', async () => {
+    installed({ key: 'SOME_OTHER_KEY', method: 'backup' });
+    const prompt = jest.fn().mockResolvedValue(true);
+    setKeyChangeHost(prompt as unknown as (r: KeyChangeRequest) => Promise<boolean>);
+
+    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing');
+
+    /*
+      A recorded successor that does not MATCH is worth nothing — it must not
+      soften the warning. This is the case where a compromised registry rotates
+      to a key of its own choosing, and the copy for `dashboard` would read as
+      reassurance it has not earned.
+    */
+    expect(prompt.mock.calls[0]![0]).toMatchObject({ authorisation: 'unknown' });
+  });
+
+  it('prompts when nothing was ever recorded', async () => {
+    // Every plugin installed before this shipped. The absence of a successor is
+    // not evidence of one, so it lands in the strongest case.
+    installed();
+    const prompt = jest.fn().mockResolvedValue(true);
+    setKeyChangeHost(prompt as unknown as (r: KeyChangeRequest) => Promise<boolean>);
+
+    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing');
+
+    expect(prompt.mock.calls[0]![0]).toMatchObject({ authorisation: 'unknown' });
+  });
+
+  it('never rotates on a successor supplied by the same response', async () => {
+    /*
+      The property the whole design rests on, stated as a test.
+
+      `updateFromRegistry` is given the registry's CURRENT key and nothing else.
+      There is no argument through which a response could also supply the
+      successor that justifies it — the successor comes from the store, written
+      at a previous install. A compromised registry can therefore claim a new
+      key, but cannot claim it was pre-authorised.
+    */
+    installed();
+    const prompt = jest.fn().mockResolvedValue(false);
+    setKeyChangeHost(prompt as unknown as (r: KeyChangeRequest) => Promise<boolean>);
+
+    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing');
+
+    // Declined, so nothing was fetched against the new key at all.
+    expect(verifiedWith).toBeNull();
+    expect(usePluginStore.getState().get('studio.acme.thing')?.publisherKey).toBe(OLD_KEY);
+  });
+
+  it('records an accepted prompt too, not only the silent path', async () => {
+    // The log is the plugin's security history, not a log of surprises.
+    installed({ key: NEW_KEY, method: 'dashboard' });
+    setKeyChangeHost((() => Promise.resolve(true)) as unknown as (r: KeyChangeRequest) => Promise<boolean>);
+
+    await updateFromRegistry('studio.acme.thing', '2.0.0', OLD_KEY, NEW_KEY, 'Thing');
+
+    const events = usePluginStore.getState().get('studio.acme.thing')?.securityEvents ?? [];
+    expect(events[0]!.text).toMatch(/You accepted it/);
   });
 });

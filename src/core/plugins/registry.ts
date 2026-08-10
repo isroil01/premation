@@ -32,6 +32,7 @@ import { request, apiBaseUrl } from '@core/api/client';
 import { pluginRegistryEnabled } from '@core/config/edition';
 import { HOST_API_VERSION, type PluginPermission } from './manifest';
 import type { ReportCategory } from './reportCategories';
+import type { RevocationFetchResult } from './revocation';
 
 /**
  * Who may see a published plugin, as chosen by its owner.
@@ -94,6 +95,16 @@ export interface RegistryDetail extends RegistryPlugin {
    *  rather than being handed back the HTML we generated from it. */
   readme: string;
   changelog: string;
+  /**
+   * The key authorised to take over, and how it was authorised. Null for the
+   * overwhelming majority.
+   *
+   * Recorded by the client at install and on every update, so a later rotation
+   * can be checked against something this machine already knew — see
+   * `InstalledPlugin.nextPublisherKey`.
+   */
+  nextPublisherKey: string | null;
+  nextPublisherKeyMethod: 'backup' | 'dashboard' | null;
   screenshots: Array<{ id: string; url: string; width: number; height: number }>;
   versionHistory: Array<{ version: string; apiVersion: number; size: number; createdAt: string }>;
   contributesDetail: {
@@ -477,23 +488,65 @@ export async function reportPlugin(
 }
 
 /**
+ * How long to wait for the revocation list before writing the attempt off.
+ *
+ * This runs at every cold start and again before the first plugin activates, so
+ * the failure that matters is not "slow" but "never answers" — a captive
+ * portal, a proxy holding the connection open, a half-open socket after a
+ * network change. Unbounded, one of those leaves a request pending for the life
+ * of the session, and the retry before first activation never gets a turn.
+ *
+ * Nothing awaits this, so the number is not a latency budget. It is how long
+ * before this attempt is abandoned and the cached list simply carries on.
+ */
+export const REVOCATION_FETCH_TIMEOUT_MS = 5000;
+
+/**
  * The signed revocation list.
  *
  * A plain GET with no body and no auth — see `revocation.ts` for why that is a
- * requirement rather than a convenience. Returns null in the local edition and
- * on any failure, because a client that cannot reach the list keeps enforcing
- * the last one it verified.
+ * requirement rather than a convenience. It carries no query string and no
+ * installed-plugin information of any kind: the entire reason the list is
+ * matched locally is that asking for it must say nothing about who is asking.
+ *
+ * Returns null in the local edition and on any failure, because a client that
+ * cannot reach the list keeps enforcing the last one it verified.
  */
-export async function fetchRevocationList(): Promise<{ payload: string; signature: string } | null> {
+export async function fetchRevocationList(
+  etag: string | null = null,
+): Promise<RevocationFetchResult> {
+  // The local edition never contacts the registry. Checked here because this is
+  // the only place the request is made, and a self-hosted install phoning our
+  // backend on boot is a telemetry problem whatever the request contains.
   if (!pluginRegistryEnabled()) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REVOCATION_FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(`${apiBaseUrl()}/plugins/revocations`);
+    const res = await fetch(`${apiBaseUrl()}/plugins/revocations`, {
+      signal: controller.signal,
+      // Conditional, so the common case — a list unchanged since the last cold
+      // start — costs a 304 rather than the whole document.
+      ...(etag ? { headers: { 'If-None-Match': etag } } : {}),
+    });
+
+    // Not `!res.ok`: 304 is not a failure, it is the answer we hoped for.
+    if (res.status === 304) return { kind: 'unchanged' };
     if (!res.ok) return null;
+
     const body = (await res.json()) as { payload?: string; signature?: string };
-    return body?.payload && body?.signature
-      ? { payload: body.payload, signature: body.signature }
-      : null;
+    if (!body?.payload || !body?.signature) return null;
+    return {
+      kind: 'list',
+      signed: { payload: body.payload, signature: body.signature },
+      etag: res.headers.get('ETag'),
+    };
   } catch {
+    // Includes the abort, and deliberately does not distinguish it from being
+    // offline: both mean "we learned nothing", and both leave the cached list
+    // in force.
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }

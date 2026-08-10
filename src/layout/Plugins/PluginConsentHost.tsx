@@ -14,18 +14,18 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { PluginPackage } from '@core/plugins/pluginPackage';
-import { setConsentHost, setKeyChangeHost, type KeyChangeRequest } from './installFromRegistry';
+import { setConsentHost, setKeyChangeHost, type InstallOrigin, type KeyChangeRequest } from './installFromRegistry';
 import { ConsentSheet, ConsentOverlay } from './ConsentSheet';
 import { KeyChangeSheet } from './KeyChangeSheet';
 
 export function PluginConsentHost(): JSX.Element | null {
-  const [pending, setPending] = useState<{ pkg: PluginPackage; publisherKey: string } | null>(null);
+  const [pending, setPending] = useState<{ pkg: PluginPackage; origin: InstallOrigin } | null>(null);
   const [keyChange, setKeyChange] = useState<KeyChangeRequest | null>(null);
   /** Resolves the promise `updateFromRegistry` is blocked on. */
   const decide = useRef<((accepted: boolean) => void) | null>(null);
 
   useEffect(() => {
-    setConsentHost((pkg, publisherKey) => setPending({ pkg, publisherKey }));
+    setConsentHost((pkg, origin) => setPending({ pkg, origin }));
 
     /*
       The key-change prompt resolves a PROMISE the update flow is waiting on,
@@ -75,7 +75,7 @@ export function PluginConsentHost(): JSX.Element | null {
       <ConsentSheet
         pkg={pending.pkg}
         source="registry"
-        publisherKey={pending.publisherKey}
+        origin={pending.origin}
         onDone={() => setPending(null)}
       />
     </ConsentOverlay>

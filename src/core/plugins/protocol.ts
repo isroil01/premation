@@ -32,7 +32,21 @@ export type PluginCommandSpec = PluginCommandContribution;
 
 /** Host → worker. */
 export type HostMessage =
-  | { k: 'boot'; manifest: PluginManifest; code: string; permissions: PluginPermission[] }
+  /**
+   * `capabilities` is what this host has RIGHT NOW, including the ones that
+   * depend on the machine rather than the build (`webgpu`). Sent with the boot
+   * message rather than fetched on demand, because a plugin branching on it in
+   * `activate()` cannot await a round trip — and because a capability set that
+   * changed mid-session would mean a plugin's `optional` handling depends on
+   * when it happened to ask.
+   */
+  | {
+      k: 'boot';
+      manifest: PluginManifest;
+      code: string;
+      permissions: PluginPermission[];
+      capabilities: string[];
+    }
   | { k: 'result'; id: number; ok: true; value: unknown }
   | { k: 'result'; id: number; ok: false; error: string }
   | { k: 'invoke'; commandId: string; selection: string[] }
@@ -76,9 +90,23 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
   'scene.getLayer': 'scene:read',
 
   'scene.createLayer': 'scene:write',
-  // Regenerating a proxy layer's children writes to the document, so it needs
-  // the same permission creating one does.
-  'scene.setProxyChildren': 'scene:write',
+  /*
+    The NARROW permission — satisfied by `scene:write` through
+    `PERMISSION_IMPLIES` rather than by naming both here.
+
+    It used to require `scene:write`, which was the widest grant in the API, for
+    no benefit. A `proxy` layer kind cannot render without this call, so the
+    most useful class of plugin could not be installed without also being able
+    to delete anything in the project, and the consent screen had no way to
+    express the difference.
+
+    The scope is enforced by the HANDLER, not by the permission: the target must
+    be a layer of a kind this plugin itself declared, that kind must be
+    `render: "proxy"`, and a child the user has edited is refused outright. See
+    `hostApi.ts` — that is why the narrower grant is safe, and it was already
+    true before the permission existed.
+  */
+  'scene.setProxyChildren': 'scene:proxy',
   // Observing an authored edit on a layer means reading its properties.
   'scene.onLayerChanged': 'scene:read',
   'scene.setProperty': 'scene:write',
@@ -127,6 +155,43 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
 
   'timeline.getTime': 'timeline',
   'timeline.setTime': 'timeline',
+
+  /*
+    A BATCH needs whatever its operations need, which is not knowable here.
+
+    Null rather than 'scene:write': a batch of pure animation ops would then be
+    over-charged, and one that deletes layers under-charged. The union is
+    computed from the ops and checked in the handler, before anything runs —
+    see `sceneBatch.ts` and `OP_PERMISSIONS`.
+
+    The cost is that the registry's scanner cannot infer a permission from a
+    `scene.apply` call, because the ops are data rather than method names. A
+    package doing everything through the batch therefore looks permission-free
+    to it. That is a real loss and the honest one: the alternative is a table
+    entry that lies about what the method needs.
+  */
+  'scene.apply': null,
+
+  /*
+    Storage needs NO permission, and that is a decision rather than an omission.
+
+    Neither scope touches the user's layers. A ninth consent line reading
+    "remembers its own settings" buys nothing and costs attention on the one
+    screen where attention is the entire point — a user who reads eight lines
+    carefully and skims the ninth has been made worse off by the ninth.
+
+    It is disclosed instead, as an informational line on the consent screen when
+    the manifest declares `storage.global` or `storage.project`. That is the
+    honest weight: a fact, not a decision.
+
+    The `project` scope does ride in the user's file, which is the one thing
+    here that could be called their data. It is bounded at 256 KB and disclosed
+    the same way. See `pluginStorage.ts`.
+  */
+  'storage.get': null,
+  'storage.set': null,
+  'storage.delete': null,
+  'storage.list': null,
 };
 
 /**

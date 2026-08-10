@@ -33,15 +33,32 @@ import { PluginDatabase } from '@core/services/PluginDatabase';
  * testing nothing. The subject here is the STORE's migration logic, not
  * IndexedDB's own correctness, so a double is the honest instrument rather than
  * a shortcut.
+ *
+ * It models the INDEX store as well as the packages, because the index lives in
+ * the database now too. The pair-writes are modelled as genuinely
+ * all-or-nothing, which is what the real transaction gives: a double that wrote
+ * one and then the other would let a torn write pass here and fail in a browser.
  */
 jest.mock('@core/services/PluginDatabase', () => {
   const rows = new Map<string, unknown>();
+  /** `undefined` means "no index record", which is NOT the same as `[]`. */
+  let index: unknown;
   return {
     PluginDatabase: {
       get: jest.fn(async (id: string) => rows.get(id) ?? null),
       put: jest.fn(async (id: string, payload: unknown) => { rows.set(id, payload); return true; }),
       remove: jest.fn(async (id: string) => { rows.delete(id); }),
       keys: jest.fn(async () => [...rows.keys()]),
+      getIndex: jest.fn(async () => index ?? null),
+      putIndex: jest.fn(async (next: unknown) => { index = next; return true; }),
+      putPackageAndIndex: jest.fn(async (id: string, payload: unknown, next: unknown) => {
+        rows.set(id, payload); index = next; return true;
+      }),
+      removePackageAndIndex: jest.fn(async (id: string, next: unknown) => {
+        rows.delete(id); index = next; return true;
+      }),
+      /** Test-only. Not on the real object; see the cast at the call site. */
+      _reset: () => { rows.clear(); index = undefined; },
     },
   };
 });
@@ -75,14 +92,16 @@ async function reload(): Promise<void> {
   await usePluginStore.getState().rehydrateFromStorage();
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   localStorage.clear();
   // `hydrated` is reset too. Leaving it set would let a later test inherit a
   // previous one's hydration and assert against a state it never established —
   // the classic way a suite passes in order and fails alone.
   usePluginStore.setState({ plugins: [], hydrated: false, lastHydration: null });
-  await PluginDatabase.remove('com.legacy.a');
-  await PluginDatabase.remove('com.orphan.a');
+  // The whole database, not two known ids. The index is a single record that
+  // every test writes, so leaving it behind makes the second test in the file
+  // read the first one's install list and skip the migration entirely.
+  (PluginDatabase as unknown as { _reset(): void })._reset();
 });
 
 describe('manifest normalisation on load', () => {
@@ -201,13 +220,24 @@ describe('payload relocation to IndexedDB', () => {
     await reload();
     await usePluginStore.getState().hydrate();
 
-    const stored = JSON.parse(localStorage.getItem(STORE_KEY)!) as Array<Record<string, unknown>>;
+    const stored = (await PluginDatabase.getIndex()) as Array<Record<string, unknown>>;
     // The whole point of the move: package bytes must stop sharing an origin
     // quota with the account JWT and the user's plaintext AI provider keys.
     expect(stored[0]!.files).toBeUndefined();
     expect(stored[0]!.binaries).toBeUndefined();
     // …and the manifest is still there, because that is what boot reads.
     expect((stored[0]!.manifest as { id: string }).id).toBe('com.legacy.a');
+  });
+
+  it('clears the legacy localStorage key once the index is verified in the database', async () => {
+    // The index followed the payloads out of `localStorage`, so that key is now
+    // a migration source and nothing else. Leaving it behind would mean a
+    // machine that later downgrades resurrects a stale install list.
+    localStorage.setItem(STORE_KEY, JSON.stringify([legacyRecord()]));
+    await reload();
+    await usePluginStore.getState().hydrate();
+
+    expect(localStorage.getItem(STORE_KEY)).toBeNull();
   });
 
   it('keeps the files in memory after the move, so the plugin can still start', async () => {

@@ -29,7 +29,8 @@
  * machinery as everything else, and its position survives a reload.
  */
 
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { inlinePanelStyles } from './panelHtml';
 import { create } from 'zustand';
 import { Panel } from '@components/Panel';
 import { Icon } from '@components/Icon';
@@ -208,7 +209,25 @@ function PanelFrame({ pluginId, panelId }: { pluginId: string; panelId: string }
   const ref = useRef<HTMLIFrameElement>(null);
   const entry = usePluginStore((s) => s.get(pluginId));
   const panel = entry?.manifest.contributes.panels.find((p) => p.id === panelId);
-  const html = panel ? entry?.files[panel.entry.replace(/^\.\//, '')] : undefined;
+  const entryPath = panel?.entry.replace(/^\.\//, '');
+  const rawHtml = entryPath ? entry?.files[entryPath] : undefined;
+  /*
+    Linked stylesheets resolved against the PACKAGE, before the markup leaves
+    this origin.
+
+    A relative `href` in the frame would resolve against the app's own origin —
+    the shell is loaded from `plugin-panel.html`, not from anywhere the
+    package's files exist — and the frame has `connect-src 'none'`, so it could
+    not fetch one even if the URL were right. Doing it here is also what keeps
+    that promise: a link that stayed a link would be the one thing in a panel
+    able to reach outward.
+  */
+  const html = useMemo(
+    () => (rawHtml !== undefined && entryPath
+      ? inlinePanelStyles(rawHtml, entry?.files ?? {}, entryPath)
+      : rawHtml),
+    [rawHtml, entryPath, entry?.files],
+  );
   useSyncExternalStore((cb) => pluginHost.subscribe(cb), () => pluginHost.getRevision());
   const status = pluginHost.info(pluginId).status;
 

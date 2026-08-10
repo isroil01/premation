@@ -58,7 +58,9 @@ import {
   type PluginLogLevel,
 } from './protocol';
 import type { PluginPackage } from './pluginPackage';
-import { activatesOnStartup, type PluginPermission } from './manifest';
+import { activatesOnStartup, expandPermissions, type PluginPermission } from './manifest';
+import { checkCapabilities, hostCapabilities } from './capabilities';
+import { forgetGlobalStorage, loadGlobalStorage } from './pluginStorage';
 import { releaseAssetBudget } from './assets';
 
 /**
@@ -150,6 +152,12 @@ class PluginHost {
    *  to enabled-ness, not to a running worker — an inactive plugin's commands
    *  are in the palette, which is what lets invoking one start it. */
   private readonly declaredCommandIds = new Map<string, CommandId[]>();
+  /** The registry has answered about revocations at least once this session. */
+  private revocationsConfirmed = false;
+  /** A revocation fetch is outstanding — do not start a second. */
+  private revocationCheckInFlight = false;
+  /** Plugins whose `malicious` notice the user has not yet acknowledged. */
+  private readonly unacknowledgedTakedowns = new Set<string>();
 
   constructor() {
     this.setupPostMessageBridge();
@@ -217,17 +225,78 @@ class PluginHost {
       notifyAuthoredChange(nodeId, record.kind, propName);
     });
 
+    /*
+      The CACHED list is enforced first, before anything is brought up.
+
+      Not an optimisation, and not redundant with the fetch below. The fetch
+      only enforces when it obtains a NEW list — a 304, or no network at all,
+      correctly changes nothing — so a plugin already named in the cached list
+      would otherwise be started by `bringUpEnabled` on every cold start and
+      stopped only if the registry happened to send a different list.
+
+      Enforcing first rather than after also means it never runs: the entry is
+      disabled by the time `bringUpEnabled` looks at it, so there is no window
+      in which a revoked plugin's `activate()` has executed.
+    */
+    this.enforceRevocations();
+
+    /*
+      Global plugin storage, loaded once.
+
+      Not awaited, and that is a real trade rather than an oversight. Awaiting
+      would delay every plugin's `activate()` behind an IndexedDB open, against
+      an 8-second boot deadline, for data most plugins never read. Not awaiting
+      means a plugin that reads a preference in the first turn of `activate()`
+      can see `null` where a value exists.
+
+      The load is one small record and resolves in a microtask or two, so the
+      race needs a plugin that reads storage synchronously at the very top of
+      activation. It is documented rather than engineered around: a plugin that
+      cares reads its settings on first use, which is also when it needs them.
+    */
+    void loadGlobalStorage();
+
     this.bringUpEnabled();
 
     /*
-      The kill switch, checked once at boot.
+      And then ask whether the list has changed.
 
       Deliberately not awaited: an editor that delayed its own startup because a
       revocation check had not answered would be worse than the problem, and
-      working offline is normal. Anything it finds is enforced the moment it
+      working offline is normal. Anything NEW it finds is enforced the moment it
       arrives rather than at the next restart.
     */
-    void refreshRevocations(fetchRevocationList, () => this.enforceRevocations());
+    this.checkRevocations();
+  }
+
+  /**
+   * Ask the registry about revocations, at most once successfully per session.
+   *
+   * Called at boot and again before the first plugin actually starts. The
+   * second call is not redundancy — it covers the case the first cannot: a
+   * machine that launched the editor offline, or behind a captive portal, got
+   * nothing at boot and would otherwise run whatever it has installed until the
+   * next restart, which for an editor left open may be days.
+   *
+   * The flag is set on a SERVER ANSWER, not on the attempt. A fetch that timed
+   * out, or a list that failed verification, leaves it clear so the next
+   * activation tries again — otherwise one bad response silences the check for
+   * the session, which is what an attacker serving garbage would want.
+   *
+   * Not awaited by either caller, including the one before activation. Blocking
+   * a plugin's start on a network round trip would put the registry in the path
+   * of every command a user runs. The check is still worth having unblocking:
+   * the answer lands seconds later and `enforceRevocations` stops anything it
+   * names mid-session, exactly as it does for a takedown that arrives an hour
+   * into a session.
+   */
+  private checkRevocations(): void {
+    if (this.revocationsConfirmed || this.revocationCheckInFlight) return;
+    this.revocationCheckInFlight = true;
+    void refreshRevocations(fetchRevocationList, () => this.enforceRevocations())
+      .then((answered) => { if (answered) this.revocationsConfirmed = true; })
+      .catch(() => { /* `refreshRevocations` does not throw; belt and braces. */ })
+      .finally(() => { this.revocationCheckInFlight = false; });
   }
 
   /**
@@ -258,7 +327,14 @@ class PluginHost {
   install(
     pkg: PluginPackage,
     granted: readonly PluginPermission[],
-    origin: { source?: 'folder' | 'file' | 'registry'; publisherKey?: string } = {},
+    origin: {
+      source?: 'folder' | 'file' | 'registry';
+      publisherKey?: string;
+      /** The successor the listing advertised. Recorded BEFORE any rotation
+       *  uses it — see `InstalledPlugin.nextPublisherKey`. */
+      nextPublisherKey?: string;
+      nextPublisherKeyMethod?: 'backup' | 'dashboard';
+    } = {},
   ): string | null {
     const id = pkg.manifest.id;
 
@@ -267,6 +343,24 @@ class PluginHost {
     const revoked = revocationFor(id, pkg.manifest.version);
     if (revoked) {
       return `"${pkg.manifest.name}" was withdrawn by the registry and cannot be installed: ${revoked.reason}`;
+    }
+
+    /*
+      Capabilities, checked HERE and not at the first call.
+
+      A plugin that installs and then fails is worse than one that never
+      installs: the user has already granted its permissions, it sits in their
+      list looking healthy, and the failure arrives later attached to whatever
+      they happened to be doing — with a message about a method name rather than
+      about this machine.
+
+      A manifest with no `requires` is judged by what its `apiVersion` implied,
+      which is what makes every plugin published before capabilities existed
+      install unchanged. See `capabilities.ts`.
+    */
+    const caps = checkCapabilities(pkg.manifest.apiVersion, pkg.manifest.requires);
+    if (!caps.ok) {
+      return `"${pkg.manifest.name}" cannot run here. ${caps.message}`;
     }
 
     const existing = usePluginStore.getState().get(id);
@@ -288,6 +382,27 @@ class PluginHost {
         : existing?.publisherKey
           ? { publisherKey: existing.publisherKey }
           : {}),
+      /*
+        The successor, refreshed on every install and update.
+
+        Carried forward when this install brought none, for the same reason the
+        pin is: losing it would silently downgrade the next rotation from "a key
+        this machine already knew was authorised" to "a key never seen here" —
+        which is the strongest warning, shown for the safest case.
+      */
+      ...(origin.nextPublisherKey
+        ? { nextPublisherKey: origin.nextPublisherKey }
+        : existing?.nextPublisherKey
+          ? { nextPublisherKey: existing.nextPublisherKey }
+          : {}),
+      ...(origin.nextPublisherKeyMethod
+        ? { nextPublisherKeyMethod: origin.nextPublisherKeyMethod }
+        : existing?.nextPublisherKeyMethod
+          ? { nextPublisherKeyMethod: existing.nextPublisherKeyMethod }
+          : {}),
+      // Survives an update: the log is about this plugin on this machine, not
+      // about one version of it.
+      ...(existing?.securityEvents ? { securityEvents: existing.securityEvents } : {}),
     };
     this.logs.delete(id);
     if (!usePluginStore.getState().put(entry)) {
@@ -298,12 +413,29 @@ class PluginHost {
     return null;
   }
 
-  uninstall(id: string): void {
+  /**
+   * Remove a plugin from this machine.
+   *
+   * `keepData` decides what happens to its GLOBAL storage — its settings on
+   * this machine. Default is to delete: uninstall should mean uninstall, and
+   * leaving state behind by default is how an origin accumulates data from
+   * software the user removed years ago. Keeping it is offered because
+   * reinstalling a plugin you removed by mistake, or to try a different
+   * version, should not cost you your configuration.
+   *
+   * PROJECT storage is never touched here, whatever this says. It lives in
+   * documents, not on this machine, and those documents may be open on someone
+   * else's laptop — deleting it would reach into files this uninstall has no
+   * business editing. It is garbage-collected only by an explicit action on the
+   * document itself. See `pluginStorage.ts`.
+   */
+  uninstall(id: string, opts: { keepData?: boolean } = {}): void {
     this.stop(id);
     this.unregisterContributions(id);
     usePluginStore.getState().remove(id);
     this.logs.delete(id);
     this.errors.delete(id);
+    if (!opts.keepData) void forgetGlobalStorage(id);
     this.emit();
   }
 
@@ -387,6 +519,11 @@ class PluginHost {
     const id = entry.manifest.id;
     if (this.runtimes.has(id)) return;
 
+    // The single funnel every plugin passes through to actually run, which is
+    // why the pre-activation revocation check hangs here rather than on the
+    // handful of paths that lead to it. A no-op once the registry has answered.
+    this.checkRevocations();
+
     let worker: Worker;
     try {
       worker = this.createWorker();
@@ -414,6 +551,10 @@ class PluginHost {
       openPanel: (panelId) => this.setPanelOpen(id, panelId, true),
       closePanel: (panelId) => this.setPanelOpen(id, panelId, false),
       warn: (text) => this.appendLog(id, 'warn', text),
+      // Read live from the store rather than captured:  narrows a
+      // grant and restarts the plugin, but reading through means a batch can
+      // never be judged against a set the user has already revoked.
+      granted: () => expandPermissions(usePluginStore.getState().get(id)?.granted ?? []),
       emitLayerChanged: (event) => {
         // Guarded: a worker that died between the edit and the coalesce window
         // is the normal case for a plugin that crashed mid-drag.
@@ -446,6 +587,9 @@ class PluginHost {
       manifest: entry.manifest,
       code,
       permissions: [...entry.granted],
+      // Resolved at boot, not at module load: `webgpu` depends on the renderer
+      // tier, which is decided during app startup.
+      capabilities: [...hostCapabilities()],
     };
     worker.postMessage(boot);
 
@@ -561,7 +705,12 @@ class PluginHost {
           reply({ k: 'result', id: msg.id, ok: false, error: `Unknown API method "${msg.method}".` });
           return;
         }
-        if (required !== null && !entry.granted.includes(required)) {
+        // `expandPermissions`, never `entry.granted` directly. A plugin holding
+        // `scene:write` also holds `scene:proxy` — the second is a proper
+        // subset of the first — and refusing it would be both nonsense and the
+        // migration failing for every proxy plugin installed before that
+        // permission existed. See `PERMISSION_IMPLIES`.
+        if (required !== null && !expandPermissions(entry.granted).has(required)) {
           // Refused, loudly. A plugin silently doing nothing because a
           // permission is missing is indistinguishable from a broken plugin.
           // Also logged: the plugin may swallow the rejection, and then the
@@ -897,13 +1046,39 @@ class PluginHost {
       // is worse than the takedown it implements — the user assumes a bug and
       // goes looking for the plugin, or reinstalls it.
       this.appendLog(id, 'error', `Withdrawn by the registry: ${revoked.reason}`);
-      if (wasRunning) {
-        // A toast only when it was actually RUNNING. A plugin that was already
-        // inactive stopping is not news; one that vanished mid-session is.
+
+      /*
+        How loudly to say it depends on WHY.
+
+        A plugin withdrawn because it broke on a new release and one withdrawn
+        because it was uploading projects both stop running, and telling the
+        user about them in the same 12-second toast is wrong in one direction:
+        the second is a reason to go and check what that plugin had access to,
+        and a toast that expires while they are looking at the canvas is a
+        notice they never received.
+
+        So `malicious` gets a notice that does not expire on its own, and stays
+        recorded against the plugin until the user acknowledges it. Everything
+        else keeps the toast it had, because most takedowns are mild and a
+        product that shouts about all of them teaches people to dismiss the
+        shouting.
+      */
+      const severe = revoked.category === 'malicious';
+      if (severe) this.unacknowledgedTakedowns.add(id);
+
+      if (wasRunning || severe) {
+        // A toast only when it was actually RUNNING — a plugin that was already
+        // inactive stopping is not news, one that vanished mid-session is — or
+        // when the reason is severe enough that the user should be told
+        // regardless of whether they were using it at that moment.
         useUIStore.getState().notify({
           level: 'error',
-          message: `"${entry.manifest.name}" was withdrawn by the registry: ${revoked.reason}`,
-          durationMs: 12000,
+          message: severe
+            ? `"${entry.manifest.name}" was withdrawn by the registry as malicious: ${revoked.reason}`
+            : `"${entry.manifest.name}" was withdrawn by the registry: ${revoked.reason}`,
+          // `0` is "until dismissed". The user has to have seen it to close it,
+          // which is the whole difference between telling someone and logging.
+          durationMs: severe ? 0 : 12000,
         });
       }
       stopped.push({ id, reason: revoked.reason });
@@ -911,6 +1086,22 @@ class PluginHost {
 
     if (stopped.length > 0) this.emit();
     return stopped;
+  }
+
+  /**
+   * Is this plugin under a takedown the user has not acknowledged?
+   *
+   * Read by the plugin's row, which shows the notice permanently until it is
+   * acknowledged. A toast is a moment; this is the record of it, and it is what
+   * a user who dismissed the toast by reflex has left to find.
+   */
+  hasUnacknowledgedTakedown(id: string): boolean {
+    return this.unacknowledgedTakedowns.has(id);
+  }
+
+  /** The user has read the takedown notice for this plugin. */
+  acknowledgeTakedown(id: string): void {
+    if (this.unacknowledgedTakedowns.delete(id)) this.emit();
   }
 
   /** Called by each panel component while its iframe is mounted. */

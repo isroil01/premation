@@ -2,6 +2,19 @@
 
 **Status:** shipped.
 
+> **Plugins are a hosted-build feature.** The UI is hidden in a local
+> (`VITE_EDITION=local`) build and a local build never contacts the registry —
+> `pluginsEnabled()` gates the feature, `pluginRegistryEnabled()` gates the
+> marketplace, and a self-hosted editor fails both. A project containing plugin
+> content still opens, edits and saves losslessly there: custom layers, plugin
+> effects and proxy subtrees round-trip byte-for-byte with the plugin absent,
+> including the `plugins[]` block naming id and version. It simply has nothing
+> to run them with.
+>
+> The cross-repo system reference is
+> [`PLUGIN_SYSTEM_REFERENCE.md`](PLUGIN_SYSTEM_REFERENCE.md). When it and this
+> file disagree, **the code decides, then that file, then this one.**
+
 ---
 
 ## 0. The one-paragraph version
@@ -27,7 +40,8 @@ never notices. Installs persist across reloads.
    consent screen  ("this plugin will be able to: …")
         │  user accepts
         ▼
-   pluginStore (localStorage)  ────────────────► survives reload
+   pluginStore ──► PluginDatabase                ← index AND payload, ONE
+        │          (IndexedDB, one transaction)    transaction; survives reload
         │
         ▼
    PluginHost.start ──► new Worker(pluginWorker.ts)
@@ -175,12 +189,56 @@ Zipping the folder is fine — one wrapping directory is stripped automatically.
   "description": "…",               // shown to the user before install
   "author": "Acme Studio",
   "homepage": "https://…",          // http(s) only
-  "apiVersion": 1,                  // refused if newer than the host
+  "apiVersion": 5,                  // the manifest GRAMMAR version
   "main": "main.js",
   "panel": "panel.html",            // optional
-  "permissions": ["scene:read", "animation:write"]
+  "permissions": ["scene:read", "animation:write"],
+  "requires": ["scene.read", "animation.write"],   // optional; see below
+  "optional": ["webgpu"]
 }
 ```
+
+### `apiVersion` is about the grammar, not about what you may call
+
+Two numbers, separate from 5 onward:
+
+| Constant | Now | Answers |
+|---|---|---|
+| `MANIFEST_VERSION` | 5 | what grammar the host can read — `apiVersion` is checked against this |
+| `HOST_API_VERSION` | 5 | what the host can do; reported to you at runtime |
+
+They were one number and it made every host-method addition look like a manifest
+change, telling authors their manifests were out of date when nothing about them
+was. Bump `apiVersion` when you use a newer manifest **field**; use `requires`
+to say what the host must be able to **do**.
+
+### `requires` and `optional`
+
+Capability strings are additive and permanent — never renamed, never removed,
+never repurposed, because your manifest is signed and a string that changed
+meaning would silently change what you asked for.
+
+`scene.read` · `scene.write` · `scene.proxy` · `scene.batch` ·
+`animation.read` · `animation.write` · `assets.read` · `assets.write` ·
+`timeline` · `net.fetch` · `storage.global` · `storage.project` ·
+`effects.single` · `effects.multipass` · `layerkinds` · `panels` · `wasm` ·
+`webgpu` *(runtime — depends on the machine)*
+
+`requires` is checked at **install**, and a refusal names the reason: a
+capability the host knows but this machine lacks ("needs WebGPU") reads
+differently from one no version has ever had, which is a typo.
+
+**Put `webgpu` in `requires` if your plugin is only effects.** On the WebGL2
+tier a plugin effect renders its input unchanged, so the plugin is not degraded,
+it is inert. Refusing to install is a better answer than looking healthy and
+doing nothing. Put it in `optional` instead if effects are a bonus, and
+feature-detect: `effects.add` answers
+`{ active: false, reason: 'webgpu-unavailable' }` there.
+
+**Omitting `requires` is not "I need nothing".** A manifest without one is
+treated as needing whatever its `apiVersion` implied before capabilities
+existed, so every already-published plugin keeps working. Write one when you
+want a specific answer.
 
 Limits: 2 MB per file, 8 MB per package, 200 files, text extensions only. Paths
 containing `..` are refused at the format level.
@@ -197,6 +255,39 @@ the promise is one-directional (refuse anything the editor would refuse).
 
 `main` is loaded as **one file** — bundle your plugin if it has dependencies.
 
+### WebAssembly is allowed
+
+`WebAssembly` is **not** removed at lockdown, and `.wasm` is a recognised binary
+extension in the package format. Capability: `wasm`.
+
+It is allowed because it does not widen the sandbox, and that is the whole
+argument. A `.wasm` inside the package carries the **same signature** and the
+same 2 MB per-file cap as the JavaScript beside it, so it is exactly as reviewed
+and exactly as attributable. An instantiated module gets **no imports the
+plugin's own JS did not hand it** — no DOM, no host methods, no syscalls — so it
+reaches precisely what that JS could reach, which is the method table and
+nothing else. A wasm module cannot ask the host for anything; your JS asks, as
+before. Refusing it would not have shrunk the sandbox, only pushed authors
+toward shipping the same algorithm as minified JavaScript, which is harder to
+review, not easier.
+
+`WebAssembly.instantiateStreaming` and `compileStreaming` are **removed**, not
+merely unused. Both take a `Response`, and a worker with no network has nothing
+to give them; leaving them present would be an API that looks available and
+fails in a way that reads as a host bug.
+
+> **Gap, stated plainly: the worker cannot read its own `.wasm` file yet.** The
+> boot message carries the manifest, the entry module's source, the grants and
+> the capabilities — not `binaries`. So today the only way to get a module into
+> the worker is to embed it in `main.js` (base64 or a byte array) and
+> `WebAssembly.instantiate` that, which works and wastes about a third of the
+> per-file budget to encoding. A `package.read(path)` verb is the obvious fix
+> and is not built. Until it is, `wasm` in `requires` promises that the *engine*
+> is present, not that your file is reachable.
+
+The honest reason to reach for it is a real one — a solver, a codec, a
+tracker — not speed on the message boundary, which dominates anything small.
+
 ---
 
 ## 4. Permissions
@@ -204,7 +295,8 @@ the promise is one-directional (refuse anything the editor would refuse).
 | Permission | The plugin can |
 |---|---|
 | `scene:read` | See layer names, structure and scalar properties |
-| `scene:write` | Create, change and delete layers |
+| `scene:proxy` | Write **only inside its own layer kind's proxy subtree** |
+| `scene:write` | Create, change and delete layers anywhere |
 | `animation:read` | Read keyframes and sample animated values |
 | `animation:write` | Create and change keyframes and expressions |
 | `assets:read` | Read the pixels of images already in the composition |
@@ -212,9 +304,21 @@ the promise is one-directional (refuse anything the editor would refuse).
 | `net:fetch` | Contact the hosts listed in `contributes.net` — **and only those** |
 | `timeline` | Read the current time and move the playhead |
 
-Registering commands, showing notifications, opening the plugin's own panel and
-reading composition settings need **no permission** — they neither read project
-data nor change it.
+Registering commands, showing notifications, opening the plugin's own panel,
+reading composition settings and using **your own storage** need **no
+permission** — they neither read project data nor change it.
+
+**If you are writing a generator, ask for `scene:read + scene:proxy`, not
+`scene:write`.** A plugin that builds a subtree under its own layer only ever
+touches its own children, and the wider permission made its consent screen say
+"create, change, delete, reparent layers" — indistinguishable from a plugin that
+could rearrange the user's whole project. The narrow scope was always enforced
+by `setProxyChildren`; what was missing was a way to *ask* for it. `scene:write`
+implies `scene:proxy`, so an existing manifest needs no edit.
+
+The one thing `scene:read + scene:proxy` cannot do is create the parent layer
+itself — and it should not. The user adds it from **Layer ▸ New**, which is the
+moment they chose to have your content in their project.
 
 Ask for the fewest you need: the list is the install screen. A refused call
 returns an error naming the missing permission rather than silently doing
@@ -307,11 +411,70 @@ motion.animation.removeKeyframe(id, prop, time)
 motion.animation.setExpression(id, prop, source)
 
 motion.timeline.getTime() / setTime(seconds)
+
+motion.scene.apply(ops)                          // many mutations, ONE undo entry
+motion.storage.get(key, scope) / set(key, value, scope)
+motion.storage.delete(key, scope) / list(scope)  // scope: 'global' | 'project'
 ```
 
 Prefer `setKeyframes` over a loop of `setKeyframe`: the bulk API sorts once and
 notifies once. Writing a generated track a keyframe at a time is quadratic and
 is what used to freeze the app on imports.
+
+### `scene.apply` — many mutations, one undo entry
+
+**One host call is one undo entry.** Twelve calls are twelve entries, and a user
+undoing your plugin's work presses Ctrl-Z twelve times without knowing how many
+to expect. That is the real reason to batch, more than the round trips.
+
+```js
+const [rowId] = await motion.scene.apply([
+  { op: 'createLayer', kind: 'group', name: 'Row' },
+  { op: 'createLayer', kind: 'shape', name: 'A', parent: { ref: 0 } },
+  { op: 'createLayer', kind: 'shape', name: 'B', parent: { ref: 0 } },
+  { op: 'setProperty', layer: { ref: 1 }, prop: 'x', value: 0 },
+  { op: 'setProperty', layer: { ref: 2 }, prop: 'x', value: 120 },
+]);
+```
+
+- `{ ref: n }` is the result of op *n* — how a batch creates something and then
+  refers to it.
+- Everything applies or nothing does, and it is **one** undo entry.
+- Store notifications are coalesced at the store, so 1,000 creates cost one
+  re-render rather than 2,000.
+- The permission needed is the **union of the ops present**: a read-only batch
+  needs no write grant.
+- Limits: 10,000 ops, 8 MB. An error names the failing op's **index**.
+- Creates anchor to where op 0 landed, not to the user's selection — otherwise a
+  thousand creates would build a thousand-deep chain, because the underlying
+  insert parents to whatever is selected.
+
+### `storage` — remembering things
+
+```js
+await motion.storage.set('lastPreset', 'wobble');            // scope defaults to 'global'
+await motion.storage.set('seed', 42, 'project');
+const seed = await motion.storage.get('seed', 'project');
+```
+
+Two scopes, and picking the wrong one is the mistake worth avoiding:
+
+| Scope | Lives in | Survives | Use it for |
+|---|---|---|---|
+| `global` | IndexedDB, 1 MB per plugin | update **and** uninstall | preferences, an API base URL, "don't show this again" |
+| `project` | the project document, 256 KB per plugin | travels with the file | anything that describes *this* project |
+
+`global` surviving uninstall is deliberate: a reinstall that forgot everything
+would make every update feel like a reset. `project` travelling with the file is
+what lets a colleague open the project and see what your plugin computed.
+
+Values are capped at 64 KB. A write past a quota throws with
+`code === 'storage-quota-exceeded'` rather than silently truncating — catch it
+and tell the user, because a plugin that quietly stops remembering is a bug
+report nobody can reproduce.
+
+Keys are namespaced to your plugin id. No other plugin can read them, and no
+permission is required: your own settings are not the user's data.
 
 `setParent` does not move the layer on screen — it adopts the local transform
 that reproduces where it already is, so grouping is not a nudge. It is refused
@@ -490,7 +653,20 @@ bigger harm than the one a takedown addresses.
 These are settled decisions, written down so they stop being re-proposed.
 
 - **Rating, comments, curation.** The registry lists what was published; it does
-  not editorialise, and there is no ranking signal beyond install count.
+  not editorialise, and there is no ranking signal beyond the deduplicated
+  install count. The raw download count exists but is internal and never ranked
+  on — two numbers on a listing invite a comparison the inflatable one always
+  wins.
+- **Fetching a URL the user supplies at runtime.** Considered and rejected. It
+  sounds like a small addition to `net:fetch` and is not: the whole guarantee is
+  that a plugin's reachable hosts are *declared, signed, and shown on the
+  consent screen*, so a plugin that can be handed an arbitrary URL has consent
+  for "contact the internet" no matter what the screen said. There is no runtime
+  host allowlist, no host-mediated URL dialog, and no `net.requestHost`. If your
+  plugin needs a user-chosen endpoint, declare the host it belongs to.
+- **Automatic blocking on a report threshold.** Reports are cheap by design —
+  no account needed — so a count that blocks is a takedown button handed to
+  anyone who can make the count go up. A case escalates to a human; nothing else.
 - **Plugin-to-plugin communication.** One worker and one frame each, and no
   shared channel between them. Two plugins that can talk are two plugins whose
   combined permissions are the union of what the user granted separately, which
@@ -1099,11 +1275,29 @@ expressed as native layers.
 - **WGSL only, so WebGPU only.** The renderer falls back to WebGL2, which needs
   GLSL. A plugin effect does not render on that tier. Requiring both languages
   from every author to serve a fallback was judged the worse trade — but this is
-  a real gap, not a detail, and it is why the effect list marks these the way it
-  marks built-in GPU-only effects.
+  a real gap, not a detail, and it is now *said out loud* rather than left to be
+  discovered:
+
+  | Where | What the user or author sees |
+  |---|---|
+  | `effects.add` | `{ id, active: false, reason: 'webgpu-unavailable' }` |
+  | The plugin's row in the manager | a muted line saying its effects cannot draw on this renderer |
+  | `requires: ["webgpu"]` | the install is refused, with the reason |
+  | The project file | the effect is **saved** and draws on a WebGPU machine |
+
+  Muted rather than red, deliberately: the plugin is fine and the work is not
+  lost. This is a fact about the machine, not a fault in the plugin.
+
 - **The statement ceiling is a proxy for cost, not a cost model.** A real one
   would mean writing a WGSL front end, and a hand-written parser fed hostile
   input is a worse liability than the thing it would protect.
+- **Multi-pass is declared but not implemented.** `effects.multipass` is a
+  reserved capability; the generator still emits the single-pass layout
+  (parameters from offset 64) and a manifest requiring it will not find it. The
+  change moves the parameter base to 96, and the generator, the validator and
+  the uniform-offset probe have to land together with the probe re-run on real
+  hardware — a probe fit carried across a layout change is a number that looks
+  verified and is not.
 
 ### Gaps found rebuilding the depth plugin on shaders
 
