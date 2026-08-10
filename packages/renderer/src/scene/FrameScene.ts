@@ -153,6 +153,22 @@ export type RenderableEffect =
        */
       passScale?: number;
       /**
+       * Snapshot this pass's INPUT before drawing, for later passes to read.
+       *
+       * Set on pass 0 of a chain whose later passes declare `reads: origin`.
+       * Decided app-side because only that side knows how this flat list of
+       * entries groups into chains — and set per-chain rather than always,
+       * because it is a full-screen blit that most chains never look at.
+       */
+      capturesOrigin?: boolean;
+      /**
+       * Bind the chain's pass-0 input at binding 4.
+       *
+       * What a composite step needs: a bloom adds its blurred copy back over
+       * the ORIGINAL, which by then is several ping-pongs ago and overwritten.
+       */
+      readsOrigin?: boolean;
+      /**
        * This effect's shader declares a fourth binding, so its material must
        * too — whether or not a map layer has been chosen.
        *

@@ -152,15 +152,17 @@ async function run(spec) {
   });
   device.queue.writeBuffer(quadBuf, 0, quad);
 
-  function pipelineFor(code) {
+  function pipelineFor(code, withOrigin) {
     const module = device.createShaderModule({ code });
-    const bgl = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: {} },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-      ],
-    });
+    const entries = [
+      { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: {} },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+    ];
+    // Binding 4, never 3 — the generator emits that number whether or not a
+    // layer parameter took 3, and this side must agree rather than re-derive.
+    if (withOrigin) entries.push({ binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} });
+    const bgl = device.createBindGroupLayout({ entries });
     return {
       bgl,
       pipeline: device.createRenderPipeline({
@@ -208,20 +210,19 @@ async function run(spec) {
     return data;
   }
 
-  function draw(pipe, srcTex, destTex, uniformData) {
+  function draw(pipe, srcTex, destTex, uniformData, originTex) {
     const ubo = device.createBuffer({
       size: uniformData.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     device.queue.writeBuffer(ubo, 0, uniformData);
-    const bind = device.createBindGroup({
-      layout: pipe.bgl,
-      entries: [
-        { binding: 0, resource: { buffer: ubo } },
-        { binding: 1, resource: srcTex.createView() },
-        { binding: 2, resource: sampler },
-      ],
-    });
+    const entries = [
+      { binding: 0, resource: { buffer: ubo } },
+      { binding: 1, resource: srcTex.createView() },
+      { binding: 2, resource: sampler },
+    ];
+    if (originTex) entries.push({ binding: 4, resource: originTex.createView() });
+    const bind = device.createBindGroup({ layout: pipe.bgl, entries });
     const enc = device.createCommandEncoder();
     const pass = enc.beginRenderPass({
       colorAttachments: [{
@@ -336,10 +337,42 @@ async function run(spec) {
   for (let y = 0; y < qh; y++) packed.set(qpx.subarray(y * 256, y * 256 + qw * 4), y * qw * 4);
   const qprof = profileSized(packed, qw, qh);
 
+  /*
+    ── The origin binding ─────────────────────────────────────────────────────
+
+    Two passes: blur, then a pass that returns origin unchanged. Because the
+    second discards src entirely and outputs only what binding 4 gave it, a
+    correct chain reproduces the SOURCE — the sharp 4x4 square, spread 4.
+
+    If binding 4 were wired to the previous pass's output — the plausible wrong
+    answer, since that is exactly what src already is — the result would be
+    the blurred image at spread ~14 instead. The two are not close.
+
+    oa is a separate target from the ping-pong pair so the snapshot cannot be
+    the thing being overwritten, which is the whole reason the renderer gives
+    origin a target of its own rather than borrowing from the effect pool.
+  */
+  let origin = null;
+  if (spec.originPasses && spec.originPasses.length === 2) {
+    const oa = makeTarget(), ob = makeTarget();
+    const p0 = pipelineFor(spec.originPasses[0].wgsl, false);
+    const p1 = pipelineFor(spec.originPasses[1].wgsl, true);
+
+    // Pass 0 blurs a into oa. a is also the snapshot the second pass reads —
+    // captured before the chain ran, exactly as capturesOrigin does.
+    draw(p0, a, oa, uniformsFor(0, spec.uniformBytes, spec.params));
+    const blurred = profile(await readTexture(oa));
+    draw(p1, oa, ob, uniformsFor(1, spec.uniformBytes, spec.params), a);
+    const restored = profile(await readTexture(ob));
+
+    origin = { blurredSpreadX: blurred.spreadX, restoredSpreadX: restored.spreadX };
+  }
+
   await device.queue.onSubmittedWorkDone();
   if (gpuErrors.length) throw new Error('WebGPU validation: ' + gpuErrors.join(' | '));
   return {
     stages,
+    origin,
     scaled: {
       targetWidth: qw,
       spreadXTexels: qprof.spreadX,

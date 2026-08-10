@@ -256,6 +256,45 @@ describe('a multi-pass effect reaching the scene', () => {
     }
   });
 
+  it('★ marks pass 0 as the capture when a later pass reads origin', async () => {
+    /*
+      The grouping decision, and the only place it can be made.
+
+      The renderer sees a flat list of scene entries and cannot tell which
+      belong to one chain — so it cannot work out that a snapshot taken at
+      entry 0 is the one entry 2 wants. This side knows, and says so.
+
+      Per chain rather than always: capturing is a full-screen blit every
+      frame, and every separable blur in existence never looks at it.
+    */
+    const composite: EffectContribution = {
+      ...chain,
+      passes: [
+        { name: 'bright', wgsl: fs('0.0, 0.0'), scale: 1, reads: 'previous' },
+        { name: 'blur', wgsl: fs('0.0, 0.0'), scale: 0.25, reads: 'previous' },
+        { name: 'over', wgsl: fs('0.0, 0.0'), scale: 1, reads: 'both' },
+      ],
+    };
+    resetEffectsForTests();
+    registerEffects(CHAIN_PLUGIN, 'Acme Bloom', [composite]);
+    await compileEffect(CHAIN_ID, ok);
+
+    const spatial = spatialOf(layerWith(CHAIN_ID)) as Array<{
+      capturesOrigin?: boolean; readsOrigin?: boolean;
+    }>;
+    expect(spatial.map((e) => e.capturesOrigin)).toEqual([true, undefined, undefined]);
+    expect(spatial.map((e) => e.readsOrigin)).toEqual([undefined, undefined, true]);
+  });
+
+  it('captures nothing when no pass asks for the original', () => {
+    // A separable blur is a pure chain. Marking pass 0 anyway would cost a
+    // full-screen blit per frame for a texture nothing reads.
+    for (const e of spatialOf(layerWith(CHAIN_ID))) {
+      expect(e).not.toHaveProperty('capturesOrigin');
+      expect(e).not.toHaveProperty('readsOrigin');
+    }
+  });
+
   it('gives every pass the same parameter block', () => {
     // One pack, shared. The passes differ only in their shader and the host
     // fields the renderer writes; a per-pass copy would be the same bytes

@@ -91,6 +91,25 @@ export const PLUGIN_SCALED_TARGETS = [
 ] as const;
 
 /**
+ * A copy of a plugin chain's pass-0 input, held for the whole chain.
+ *
+ * `reads: "origin"` is what every composite effect needs — a bloom's last pass
+ * adds the blurred copy back over the ORIGINAL, and by then the original is
+ * three ping-pongs ago and overwritten.
+ *
+ * Its own target rather than a reservation out of the effect pool, which is
+ * what made this look expensive before. Borrowing from the pool would contend
+ * with the slot glow takes for its wide lobe, and would mean a chain's legal
+ * length depended on which other effects were on the layer — a plugin that
+ * worked alone and broke when a user added a glow beneath it.
+ *
+ * Written only when a chain actually asks. Declared always, because the graph
+ * resolves targets once per frame and a target that appeared on demand would
+ * allocate mid-frame.
+ */
+export const PLUGIN_ORIGIN = 'plugin-origin';
+
+/**
  * The ping-pong pair for a pass scale, or null at full scale.
  *
  * Null rather than "the full-size pair", so the caller has to notice which
@@ -174,7 +193,7 @@ function effectSpreadPx(effects: readonly RenderableEffect[]): number {
  * effect is not a new kind of pass.
  */
 const pluginMaterials = new Map<string, MaterialDescriptor>();
-function pluginMaterial(shader: string, readsMap: boolean): MaterialDescriptor {
+function pluginMaterial(shader: string, readsMap: boolean, readsOrigin: boolean): MaterialDescriptor {
   let m = pluginMaterials.get(shader);
   if (!m) {
     m = {
@@ -200,6 +219,20 @@ function pluginMaterial(shader: string, readsMap: boolean): MaterialDescriptor {
         */
         ...(readsMap
           ? [{ binding: 3, type: 'texture' as const, stages: ['fragment' as const] }]
+          : []),
+        /*
+          Binding 4: the pass-0 input, for a pass declaring `reads: origin`.
+
+          Fixed at 4 whether or not 3 is in use, matching what
+          `composeEffectShader` emits. Sliding it down when no layer parameter
+          is declared would make the binding number depend on an unrelated part
+          of the manifest, and this side and the shader generator would each
+          have to reach that conclusion separately — two derivations of one
+          number is how a bind group points a shader at the wrong texture.
+          WebGPU numbers bindings; it does not require them contiguous.
+        */
+        ...(readsOrigin
+          ? [{ binding: 4, type: 'texture' as const, stages: ['fragment' as const] }]
           : []),
       ],
     };
@@ -464,6 +497,30 @@ export class CompositionPass extends RenderPass {
         full-size target rather than an error.
       */
       const pluginPassScale = effect.type === 'plugin' ? (effect.passScale ?? 1) : 1;
+
+      /*
+        Snapshot the chain's input, for a chain that will want it back.
+
+        `capturesOrigin` is set by the app on pass 0 of any chain whose later
+        passes declare `reads: origin` — decided there because only that side
+        knows how the flat list of scene entries groups into chains. Copying
+        unconditionally would cost a full-screen blit per plugin effect on
+        every frame, for the majority of chains that never look at it.
+
+        A blit rather than remembering the target name: `curTex` at this moment
+        belongs to the ping-pong pool and will be drawn over within two passes.
+        A reference to it would be a reference to whatever the chain last
+        wrote — the "random picture" this feature was refused for.
+      */
+      if (effect.type === 'plugin' && effect.capturesOrigin) {
+        const originCmds = new CommandBuffer();
+        emitTextured(originCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+        const encO = beginViewportPass(
+          ctx, 'fx-origin', writeAttachment(ctx, PLUGIN_ORIGIN, Color.transparent()),
+        );
+        services.quad.execute(encO, originCmds);
+        encO.end();
+      }
       // Optional third slot (BLUR_TARGET3) for optical bloom's wide lobe.
 
       if (effect.type === 'blur' || effect.type === 'glow' || effect.type === 'drop-shadow') {
@@ -693,9 +750,19 @@ export class CompositionPass extends RenderPass {
         const pluginMapTex =
           (canUseMap ? this.displacementMapTexture(ctx, byId, effect.mapLayerId, selfId) : null)
           ?? curTex;
+        /*
+          The pass-0 input, for a pass that composites against it.
+
+          Falls back to `curTex` if the snapshot is somehow unavailable, for
+          exactly the reason the map binding does: the layout declares binding
+          4 as soon as the shader asks for it, and a declared binding with
+          nothing bound is an invalid pipeline — a dead viewport rather than a
+          wrong picture. Self-sampling is the honest degradation.
+        */
+        const originTex = effect.readsOrigin ? (texOf(PLUGIN_ORIGIN) ?? curTex) : null;
         cmds.add({
           batchKey: `plugin:${effect.shader}`,
-          material: pluginMaterial(effect.shader, effect.readsMap === true),
+          material: pluginMaterial(effect.shader, effect.readsMap === true, effect.readsOrigin === true),
           blend: 'normal',
           /*
             The host pass block, written per draw.
@@ -726,6 +793,9 @@ export class CompositionPass extends RenderPass {
           // for it, so it must be filled then too, even with no layer chosen
           // (self-sampling via the `?? curTex` above).
           ...(effect.readsMap ? { maskTexture: pluginMapTex } : {}),
+          // Same rule as `maskTexture`: keyed off what the SHADER declared, so
+          // a declared binding is never left unfilled.
+          ...(originTex ? { originTexture: originTex } : {}),
         });
       }
       if (cmds.length === 0) continue;

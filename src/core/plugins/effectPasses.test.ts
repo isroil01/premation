@@ -200,26 +200,24 @@ describe('the cost budget', () => {
   });
 });
 
-describe('scale renders; reads does not yet', () => {
+describe('both pass fields render now', () => {
   /*
-    The two pass fields shipped at different times, and this describe is where
-    that shows.
+    `scale` and `reads` shipped one after the other, and this describe is what
+    is left of the period when each was refused.
 
-    `scale` LANDED: the render graph declares half- and quarter-size ping-pong
-    pools for plugin passes, the chain draws into them with the viewport sized
-    to match, and the texel size handed to the shader is the scaled target's —
-    which is the part that decides whether a quarter-scale blur has the radius
-    its author asked for or a quarter of it.
+    `scale`: the graph declares half- and quarter-size ping-pong pools, the
+    chain draws into them with a matching viewport, and the texel size handed
+    to the shader is the SCALED target's — which decides whether a
+    quarter-scale blur has the radius its author asked for or a quarter of it.
 
-    `reads: origin | both` has NOT: keeping the pass-0 input alive needs a
-    target reserved across the whole chain, and the pool has none to spare.
-    Still refused, loudly, with the reason — because accepting it and binding a
-    reused texture would composite against whatever was last drawn there, which
-    is not a wrong picture so much as a random one.
+    `reads: origin | both`: the chain's pass-0 input is blitted into a target
+    of its own before pass 0 and bound at binding 4 for the passes that asked.
+    Its own target rather than a loan from the effect pool, so a chain's legal
+    length does not depend on what else is stacked on the layer.
 
-    Widening is backward-compatible in both directions, which is why they could
-    ship apart: manifests refused yesterday start working, and ones accepted
-    yesterday keep working.
+    Both widenings were backward-compatible in both directions, which is why
+    they could ship apart: manifests refused yesterday start installing, and
+    ones accepted yesterday keep working.
   */
 
   it.each([0.5, 0.25])('ACCEPTS scale %p — the renderer downsamples now', (scale) => {
@@ -234,11 +232,12 @@ describe('scale renders; reads does not yet', () => {
     expect(effect?.passes?.[0]?.scale).toBe(scale);
   });
 
-  it.each(['origin', 'both'])('refuses reads %p on a later pass', (reads) => {
+  it.each(['origin', 'both'])('ACCEPTS reads %p on a later pass', (reads) => {
+    // The chain's pass-0 input now has a target of its own, held for the whole
+    // chain, so a composite step can sample it at binding 4.
     const { effect, errors } = parseOne({ passes: [pass('a'), pass('b', { reads })] });
-    expect(effect).toBeUndefined();
-    expect(errors.join(' ')).toMatch(/cannot render/);
-    expect(errors.join(' ')).toMatch(/reserved across the whole chain/);
+    expect(errors).toEqual([]);
+    expect(effect?.passes?.[1]?.reads).toBe(reads);
   });
 
   it('still accepts the values it CAN render, written explicitly', () => {

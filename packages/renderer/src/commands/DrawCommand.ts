@@ -20,6 +20,17 @@ export interface DrawItem {
   texture?: TextureHandle;
   sampler?: SamplerHandle;
   maskTexture?: TextureHandle;
+  /**
+   * A second auxiliary texture, at binding 4.
+   *
+   * Used by a plugin effect pass that composites against its chain's pass-0
+   * input — a bloom adding its blurred copy back over the original. Distinct
+   * from `maskTexture` rather than a list, because the two bindings mean
+   * different things to the shader and the material declares them
+   * independently; a positional array would make "which one is missing" a
+   * question the renderer has to answer by counting.
+   */
+  originTexture?: TextureHandle;
   /** Optional custom geometry for mesh rendering. */
   vertexBuffer?: BufferHandle;
   indexBuffer?: BufferHandle;

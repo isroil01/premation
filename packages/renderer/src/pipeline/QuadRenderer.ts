@@ -64,9 +64,19 @@ export class QuadRenderer {
         if (item.texture) entries.push({ binding: 1, texture: item.texture });
         if (item.sampler) entries.push({ binding: 2, sampler: item.sampler });
         if (item.maskTexture) entries.push({ binding: 3, texture: item.maskTexture });
+        // Binding 4, for a plugin effect pass compositing against its chain's
+        // pass-0 input. Fixed at 4 even when 3 is unused, because the shader
+        // generator emits that number unconditionally — sliding it down would
+        // need this side to reproduce the same condition and agree.
+        if (item.originTexture) entries.push({ binding: 4, texture: item.originTexture });
 
         const bg = this.resources.bindGroup(
-          `bindgroup:${batch.material.shader}:${item.texture?.id ?? 0}:${item.maskTexture?.id ?? 0}:${idx}`,
+          // `originTexture` belongs in the KEY, not only in the entries. Two
+          // draws of one shader differing only in what sits at binding 4 would
+          // otherwise share a cached bind group, and the second would quietly
+          // composite against the first's original.
+          `bindgroup:${batch.material.shader}:${item.texture?.id ?? 0}:${item.maskTexture?.id ?? 0}`
+          + `:${item.originTexture?.id ?? 0}:${idx}`,
           { pipeline, entries },
         );
         encoder.setBindGroup(0, bg);

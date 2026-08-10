@@ -216,6 +216,35 @@ if (s) {
   }
 }
 
+/*
+  6. `reads: origin` binds the chain's pass-0 input, not the previous pass.
+
+  The second pass here returns `origin` unchanged, so a correct chain
+  reproduces the SOURCE. Binding 4 wired to the previous pass's output — the
+  plausible wrong answer, since that is what `src` already is — would give back
+  the blurred image instead.
+*/
+const o = m.origin;
+if (o) {
+  console.log(`  origin binding: blurred to ${o.blurredSpreadX}, restored to ${o.restoredSpreadX}`
+    + ` (source was ${src.spreadX})\n`);
+
+  if (o.restoredSpreadX > src.spreadX + 2) {
+    console.log(red('FAILED — the pass that reads `origin` did not get the original.'));
+    console.log(`  It returned origin unchanged and the result is ${o.restoredSpreadX} wide, not`);
+    console.log(`  ${src.spreadX}. Binding 4 is carrying the previous pass's output — which is`);
+    console.log('  what `src` already is, so the composite step of every bloom would add the');
+    console.log('  blur to itself instead of to the image underneath it.');
+    process.exit(1);
+  }
+  if (o.blurredSpreadX <= src.spreadX) {
+    console.log(red('FAILED — the first pass of the origin chain did not blur.'));
+    console.log('  Without that the restore check is vacuous: origin and src would be equally');
+    console.log('  sharp, and binding either would look correct.');
+    process.exit(1);
+  }
+}
+
 console.log(green('PASSED — two distinct passes ran, in order, each on its own axis,'));
 console.log(green('         and a downsampled pass reached proportionally further.'));
 console.log(green(`         H: spread X ${src.spreadX} → ${afterH.spreadX}, Y untouched at ${afterH.spreadY}`));

@@ -464,25 +464,6 @@ function parsePasses(raw: unknown, at: string, errors: string[]): EffectPass[] |
         return;
       }
 
-      /*
-        Then the temporary one. Same reasoning as `scale`, different mechanism.
-
-        The chain ping-pongs between a small pool of targets, so the pass-0
-        input is overwritten by the time a later pass could sample it — keeping
-        it alive needs a target reserved for the whole chain, which contends
-        with the one glow borrows for its wide lobe. Binding a stale or reused
-        texture as `origin` would composite against whatever was last drawn
-        there, which is not a wrong picture so much as a random one.
-      */
-      if (reads !== 'previous') {
-        errors.push(
-          `"${where}.reads" is "${reads}", which this version cannot render. `
-          + `Keeping the pass-0 input alive needs a render target reserved across the whole `
-          + `chain, and the effect pool has none to spare. Use "previous" for now.`,
-        );
-        bad = true;
-        return;
-      }
     }
 
     passes.push({ name, wgsl, scale, reads });

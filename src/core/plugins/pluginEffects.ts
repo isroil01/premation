@@ -82,6 +82,8 @@ export interface RegisteredPass {
   wgsl: string;
   /** Linear downsample of this pass's target. 1 unless declared otherwise. */
   scale: number;
+  /** Whether this pass samples the chain's pass-0 input at binding 4. */
+  readsOrigin: boolean;
 }
 
 export interface RegisteredEffect {
@@ -204,6 +206,7 @@ export function registerEffects(
         shaderId: declared && i > 0 ? `${id}#${declared.name}` : id,
         wgsl: composeEffectShader(contribution, i).wgsl,
         scale: declared?.scale ?? 1,
+        readsOrigin: declared?.reads === 'origin' || declared?.reads === 'both',
       });
     }
 

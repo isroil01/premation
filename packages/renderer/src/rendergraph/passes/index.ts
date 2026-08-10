@@ -3,7 +3,7 @@
 import { RenderGraph } from '../RenderGraph';
 import { ClearPass } from './ClearPass';
 import { BackgroundPass } from './BackgroundPass';
-import { CompositionPass, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS } from './CompositionPass';
+import { CompositionPass, PLUGIN_ORIGIN, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS } from './CompositionPass';
 import { SelectionPass } from './SelectionPass';
 import { OverlayPass } from './OverlayPass';
 import { MaskPass, MASK_TARGET } from './MaskPass';
@@ -11,7 +11,7 @@ import { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
 
 export { ClearPass } from './ClearPass';
 export { BackgroundPass } from './BackgroundPass';
-export { CompositionPass, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, PLUGIN_SCALED_TARGETS, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
+export { CompositionPass, PLUGIN_ORIGIN, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, PLUGIN_SCALED_TARGETS, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
 export { SelectionPass } from './SelectionPass';
 export { OverlayPass } from './OverlayPass';
 export { MaskPass, MASK_TARGET } from './MaskPass';
@@ -138,6 +138,18 @@ export function buildDefaultGraph(): RenderGraph {
       format: 'rgba16float',
     }));
   }
+
+  // Holds a plugin chain's pass-0 input for the whole chain, so a later pass
+  // can composite against the original — which by then is several ping-pongs
+  // ago and overwritten. Its own target rather than a loan from the effect
+  // pool: borrowing would contend with glow's wide lobe and make a chain's
+  // legal length depend on what else is stacked on the layer.
+  graph.declareTarget(PLUGIN_ORIGIN, (vp) => ({
+    label: PLUGIN_ORIGIN,
+    width: vp.pixelSize.width,
+    height: vp.pixelSize.height,
+    format: 'rgba16float',
+  }));
 
   // One isolated-precomp target per nesting depth (see CompositionPass).
   // Depth-capable so a 3D group INSIDE an isolated precomp depth-tests too.

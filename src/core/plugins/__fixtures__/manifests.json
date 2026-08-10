@@ -1701,7 +1701,8 @@
                 },
                 {
                   "name": "composite",
-                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "reads": "both"
                 }
               ]
             }
@@ -1947,7 +1948,7 @@
     },
     {
       "name": "api-5 chain reading origin on a later pass",
-      "valid": false,
+      "valid": true,
       "manifest": {
         "id": "com.example.fx",
         "name": "FX",

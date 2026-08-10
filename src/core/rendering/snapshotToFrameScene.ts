@@ -548,6 +548,19 @@ export function extractSpatialEffects(
           size of the target being drawn into. Only the renderer knows that, so
           the whole host block is written there and this side stays out of it.
         */
+        /*
+          Does anything in this chain want the original back?
+
+          Decided HERE, once per chain, because this is the only side that
+          knows how the flat list of scene entries below groups into chains.
+          The renderer sees N independent entries and could not work it out.
+
+          Per chain rather than always, because capturing costs a full-screen
+          blit every frame and the overwhelming majority of chains — every
+          separable blur — never look at it.
+        */
+        const chainReadsOrigin = registered.passes.some((p) => p.readsOrigin);
+
         for (const pass of registered.passes) {
           spatial.push({
             type: 'plugin',
@@ -556,6 +569,9 @@ export function extractSpatialEffects(
             // Only when it is not 1, so a single-pass effect's scene entry is
             // byte-identical to what it was before chains existed.
             ...(pass.scale !== 1 ? { passScale: pass.scale } : {}),
+            // Pass 0 takes the snapshot; the passes that asked read it.
+            ...(chainReadsOrigin && pass.index === 0 ? { capturesOrigin: true } : {}),
+            ...(pass.readsOrigin ? { readsOrigin: true } : {}),
             // What the SHADER asks for, not what the user chose — see the field's
             // own note. Set from the declaration so an effect with no map picked
             // yet still gets a material whose layout matches its bindings.
