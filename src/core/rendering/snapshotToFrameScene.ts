@@ -553,6 +553,9 @@ export function extractSpatialEffects(
             type: 'plugin',
             shader: pass.shaderId,
             passIndex: pass.index,
+            // Only when it is not 1, so a single-pass effect's scene entry is
+            // byte-identical to what it was before chains existed.
+            ...(pass.scale !== 1 ? { passScale: pass.scale } : {}),
             // What the SHADER asks for, not what the user chose — see the field's
             // own note. Set from the declaration so an effect with no map picked
             // yet still gets a material whose layout matches its bindings.

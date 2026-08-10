@@ -200,32 +200,38 @@ describe('the cost budget', () => {
   });
 });
 
-describe('declared in the format, not rendered by this build', () => {
+describe('scale renders; reads does not yet', () => {
   /*
-    ★ `scale` and `reads` are parsed, budgeted and documented — and refused,
-    because the renderer cannot execute them.
+    The two pass fields shipped at different times, and this describe is where
+    that shows.
 
-    The renderer's offscreen targets are a fixed, statically-declared set and
-    every one is viewport-sized, so a downsampled pass has nowhere to draw. The
-    chain ping-pongs between a small pool, so the pass-0 input is overwritten
-    before a later pass could sample it as `origin`.
+    `scale` LANDED: the render graph declares half- and quarter-size ping-pong
+    pools for plugin passes, the chain draws into them with the viewport sized
+    to match, and the texel size handed to the shader is the scaled target's —
+    which is the part that decides whether a quarter-scale blur has the radius
+    its author asked for or a quarter of it.
 
-    Accepting either and rendering at full size / binding a reused texture would
-    be wrong output with no error — a bloom four times the cost the author
-    budgeted, or a composite against whatever was last drawn there. So they are
-    refused, loudly, with the reason.
+    `reads: origin | both` has NOT: keeping the pass-0 input alive needs a
+    target reserved across the whole chain, and the pool has none to spare.
+    Still refused, loudly, with the reason — because accepting it and binding a
+    reused texture would composite against whatever was last drawn there, which
+    is not a wrong picture so much as a random one.
 
-    Widening later is backward-compatible in both directions: manifests that
-    publish today keep working, and ones refused today start working. The
-    reverse — shipping a field that silently does nothing, then making it real —
-    breaks every plugin that guessed around it.
+    Widening is backward-compatible in both directions, which is why they could
+    ship apart: manifests refused yesterday start working, and ones accepted
+    yesterday keep working.
   */
 
-  it.each([0.5, 0.25])('refuses scale %p, naming the reason', (scale) => {
+  it.each([0.5, 0.25])('ACCEPTS scale %p — the renderer downsamples now', (scale) => {
+    /*
+      Was refused; the render graph now declares half- and quarter-size
+      ping-pong pools for plugin passes, so a downsampled pass has somewhere to
+      draw. Kept in this describe rather than moved, so the pair of scale and
+      reads stays visible: one of them landed and the other has not.
+    */
     const { effect, errors } = parseOne({ passes: [pass('a', { scale })] });
-    expect(effect).toBeUndefined();
-    expect(errors.join(' ')).toMatch(/cannot render/);
-    expect(errors.join(' ')).toMatch(/smaller than the viewport/);
+    expect(errors).toEqual([]);
+    expect(effect?.passes?.[0]?.scale).toBe(scale);
   });
 
   it.each(['origin', 'both'])('refuses reads %p on a later pass', (reads) => {

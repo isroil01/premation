@@ -114,13 +114,13 @@ async function run(spec) {
    * the page string here. The warning above this constant did not stop me
    * doing it once already.)
    */
-  function profile(px) {
-    const colSum = new Array(W).fill(0);
-    const rowSum = new Array(H).fill(0);
+  function profileSized(px, w, h) {
+    const colSum = new Array(w).fill(0);
+    const rowSum = new Array(h).fill(0);
     let total = 0;
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const v = px[(y * W + x) * 4];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = px[(y * w + x) * 4];
         colSum[x] += v; rowSum[y] += v; total += v;
       }
     }
@@ -131,9 +131,11 @@ async function run(spec) {
     return {
       spreadX: countAbove(colSum),
       spreadY: countAbove(rowSum),
-      mean: total / (W * H),
+      mean: total / (w * h),
     };
   }
+
+  const profile = (px) => profileSized(px, W, H);
 
   /*
     The unit quad the generated vertex stage expects.
@@ -272,9 +274,79 @@ async function run(spec) {
     ));
   }
 
+  /*
+    ── The downsampled run ────────────────────────────────────────────────────
+
+    The same two shaders again, into QUARTER-size targets, with texelSize taken
+    from those targets rather than from the viewport. That one substitution is
+    the whole of AE-1, and it is the one that fails silently.
+
+    Why comparing composition-space width discriminates it: a pass at scale s
+    steps i/(W*s) in UV, which is i/s pixels of the ORIGINAL image. Same tap
+    count, wider reach — that is precisely why downsampling makes a big blur
+    affordable. So a correct quarter-scale blur is several times wider in
+    composition space than the same shader at full scale.
+
+    If texelSize were wrongly the viewport's (1/W) while rendering into a W/4
+    target, each tap would step a quarter of a target texel, and the result in
+    composition space would come out the SAME width as the full-scale run —
+    the downsample buying nothing but blockiness. Equal widths is the failure;
+    a large ratio is the pass.
+  */
+  const QS = 4;
+  const qw = Math.max(1, Math.floor(W / QS));
+  const qh = Math.max(1, Math.floor(H / QS));
+  const makeSmall = () => device.createTexture({
+    size: [qw, qh], format: 'rgba8unorm',
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING,
+  });
+  const qa = makeSmall(), qb = makeSmall();
+  const smallReadback = device.createBuffer({
+    // 256-byte row alignment: a 16px row is 64 bytes, so pad the copy stride.
+    size: 256 * qh, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+
+  function uniformsScaled(passIndex) {
+    const data = uniformsFor(passIndex, spec.uniformBytes, spec.params);
+    // The substitution under test: texel size from the SCALED target.
+    data[16] = 1 / qw; data[17] = 1 / qh;
+    data[18] = 1 / QS;
+    return data;
+  }
+
+  let qcur = cur;
+  for (let i = 0; i < spec.passes.length; i++) {
+    const dest = i % 2 === 0 ? qa : qb;
+    // Pass 0 reads the FULL-size source, exactly as the chain does when the
+    // first scaled pass follows a full-scale one — the downsample happens by
+    // drawing a full-screen quad into a smaller target.
+    draw(pipes[i], i === 0 ? a : qcur, dest, uniformsScaled(i));
+    qcur = dest;
+  }
+
+  const encQ = device.createCommandEncoder();
+  encQ.copyTextureToBuffer({ texture: qcur }, { buffer: smallReadback, bytesPerRow: 256 }, [qw, qh]);
+  device.queue.submit([encQ.finish()]);
+  await smallReadback.mapAsync(GPUMapMode.READ);
+  const qpx = new Uint8Array(smallReadback.getMappedRange().slice(0));
+  smallReadback.unmap();
+
+  // Row stride is the padded 256, not qw*4.
+  const packed = new Uint8Array(qw * qh * 4);
+  for (let y = 0; y < qh; y++) packed.set(qpx.subarray(y * 256, y * 256 + qw * 4), y * qw * 4);
+  const qprof = profileSized(packed, qw, qh);
+
   await device.queue.onSubmittedWorkDone();
   if (gpuErrors.length) throw new Error('WebGPU validation: ' + gpuErrors.join(' | '));
-  return { stages };
+  return {
+    stages,
+    scaled: {
+      targetWidth: qw,
+      spreadXTexels: qprof.spreadX,
+      // Back into composition pixels, which is where the two runs compare.
+      spreadXComp: qprof.spreadX * QS,
+    },
+  };
 }
 `;
 

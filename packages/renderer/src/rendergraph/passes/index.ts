@@ -3,7 +3,7 @@
 import { RenderGraph } from '../RenderGraph';
 import { ClearPass } from './ClearPass';
 import { BackgroundPass } from './BackgroundPass';
-import { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS } from './CompositionPass';
+import { CompositionPass, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS } from './CompositionPass';
 import { SelectionPass } from './SelectionPass';
 import { OverlayPass } from './OverlayPass';
 import { MaskPass, MASK_TARGET } from './MaskPass';
@@ -11,7 +11,7 @@ import { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
 
 export { ClearPass } from './ClearPass';
 export { BackgroundPass } from './BackgroundPass';
-export { CompositionPass, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
+export { CompositionPass, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, PLUGIN_SCALED_TARGETS, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
 export { SelectionPass } from './SelectionPass';
 export { OverlayPass } from './OverlayPass';
 export { MaskPass, MASK_TARGET } from './MaskPass';
@@ -106,6 +106,35 @@ export function buildDefaultGraph(): RenderGraph {
       label: name,
       width: Math.max(1, Math.floor(vp.pixelSize.width / BACKDROP_DOWNSCALE)),
       height: Math.max(1, Math.floor(vp.pixelSize.height / BACKDROP_DOWNSCALE)),
+      format: 'rgba16float',
+    }));
+  }
+
+  /*
+    Downsampled ping-pong pools for plugin effect passes declaring `scale`.
+    The same trick as the backdrop chain above, generalised: a bloom's blur
+    runs on a sixteenth of the pixels and the upsample is free, because
+    whatever reads the result samples the smaller texture linearly.
+
+    `rgba16float` like the rest of the effect chain, and it matters more here
+    than anywhere else: a downsampled pass is usually the BRIGHT extract of a
+    bloom, and clamping it to 8-bit would throw away exactly the highlights the
+    effect exists to spread.
+
+    Always declared, never allocated on demand. The graph resolves targets once
+    per frame and dedupes by name and size; a pool that appeared only when some
+    plugin happened to want one would allocate mid-frame. The standing cost is
+    a quarter plus a sixteenth of a viewport, and nothing renders into them
+    until a scaled pass is actually drawn.
+  */
+  for (const [name, divisor] of [
+    [PLUGIN_HALF1, 2], [PLUGIN_HALF2, 2],
+    [PLUGIN_QUARTER1, 4], [PLUGIN_QUARTER2, 4],
+  ] as const) {
+    graph.declareTarget(name, (vp) => ({
+      label: name,
+      width: Math.max(1, Math.floor(vp.pixelSize.width / divisor)),
+      height: Math.max(1, Math.floor(vp.pixelSize.height / divisor)),
       format: 'rgba16float',
     }));
   }

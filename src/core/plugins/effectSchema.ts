@@ -434,31 +434,6 @@ function parsePasses(raw: unknown, at: string, errors: string[]): EffectPass[] |
         return;
       }
       scale = entry.scale as PassScale;
-      /*
-        ★ Declared in the format, not executed by this build. Refused, loudly.
-
-        The renderer's offscreen targets are a fixed, statically-declared set
-        and every one of them is viewport-sized; there is no facility for a
-        target at a fraction of that. Accepting `scale` and rendering at full
-        size anyway would make a plugin author's bloom four times the cost they
-        budgeted for and blur by the wrong radius — wrong output, no error, and
-        no way for them to tell from inside the shader.
-
-        So it is refused rather than ignored. Widening this later, when the
-        render graph can size a target, is backward-compatible: manifests that
-        publish today keep working, and ones that were refused start working.
-        The reverse — shipping a field that silently does nothing and then
-        making it real — breaks every plugin that guessed around it.
-      */
-      if (scale !== 1) {
-        errors.push(
-          `"${where}.scale" is ${String(entry.scale)}, which this version cannot render. `
-          + `Downsampled passes need an offscreen target smaller than the viewport and the `
-          + `render graph has only viewport-sized ones. Use scale 1 for now.`,
-        );
-        bad = true;
-        return;
-      }
     }
 
     let reads: PassReads = 'previous';

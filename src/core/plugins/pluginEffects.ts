@@ -80,6 +80,8 @@ export interface RegisteredPass {
   /** What the renderer draws with: the bare id for pass 0, `id#name` after it. */
   shaderId: string;
   wgsl: string;
+  /** Linear downsample of this pass's target. 1 unless declared otherwise. */
+  scale: number;
 }
 
 export interface RegisteredEffect {
@@ -201,6 +203,7 @@ export function registerEffects(
         index: i,
         shaderId: declared && i > 0 ? `${id}#${declared.name}` : id,
         wgsl: composeEffectShader(contribution, i).wgsl,
+        scale: declared?.scale ?? 1,
       });
     }
 

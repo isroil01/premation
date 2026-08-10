@@ -138,6 +138,21 @@ export type RenderableEffect =
        */
       passIndex?: number;
       /**
+       * Linear downsample of the target this pass renders into. 1 by default.
+       *
+       * `0.5` renders into a half-size target — a quarter of the pixels — and
+       * `0.25` a sixteenth. What makes a bloom affordable, and the upsample is
+       * free because whatever samples the result next reads the smaller
+       * texture through a linear sampler.
+       *
+       * Carried here rather than folded into the shader's uniforms because the
+       * renderer needs it three ways: to pick the target, to size the
+       * viewport, and to compute the texel size the shader reads. Only the
+       * first two are this package's business, and the third has to agree with
+       * them or a downsampled blur silently comes out too small.
+       */
+      passScale?: number;
+      /**
        * This effect's shader declares a fourth binding, so its material must
        * too — whether or not a map layer has been chosen.
        *

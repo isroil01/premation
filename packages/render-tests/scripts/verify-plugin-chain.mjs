@@ -188,6 +188,36 @@ if (afterV.spreadX > afterH.spreadX) {
   process.exit(1);
 }
 
-console.log(green('PASSED — two distinct passes ran, in order, each on its own axis.'));
+/*
+  5. A DOWNSAMPLED pass takes its texel size from the scaled target.
+
+  The same two shaders run again into quarter-size targets. A pass at scale s
+  steps i/(W*s) in UV — i/s pixels of the original — so the same tap count
+  reaches several times further in composition space. That is the entire reason
+  downsampling makes a large blur affordable.
+
+  If the texel size were wrongly the viewport's while rendering into a quarter
+  target, each tap would step a quarter of a target texel and the result would
+  come out the SAME composition-space width as the full-scale run. Equal is the
+  failure; wider is the pass.
+*/
+const s = m.scaled;
+if (s) {
+  const ratio = s.spreadXComp / Math.max(1, afterV.spreadX);
+  console.log(`  quarter-scale: ${s.targetWidth}px target, spread ${s.spreadXTexels} texels`);
+  console.log(`                 = ${s.spreadXComp} composition px, ${ratio.toFixed(2)}× the full-scale blur\n`);
+
+  if (ratio < 1.5) {
+    console.log(red('FAILED — the downsampled pass blurred no wider than the full-scale one.'));
+    console.log('  Its texel size came from the viewport, not from the quarter-size target it');
+    console.log('  drew into. The pass ran and the downsample bought nothing: same reach, less');
+    console.log(`  resolution. Expected roughly 4×, measured ${ratio.toFixed(2)}×.`);
+    process.exit(1);
+  }
+}
+
+console.log(green('PASSED — two distinct passes ran, in order, each on its own axis,'));
+console.log(green('         and a downsampled pass reached proportionally further.'));
 console.log(green(`         H: spread X ${src.spreadX} → ${afterH.spreadX}, Y untouched at ${afterH.spreadY}`));
 console.log(green(`         V: spread Y ${afterH.spreadY} → ${afterV.spreadY}, X untouched at ${afterV.spreadX}`));
+if (s) console.log(green(`         ¼ scale: ${s.spreadXComp} comp px vs ${afterV.spreadX} at full`));

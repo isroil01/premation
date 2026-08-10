@@ -66,6 +66,45 @@ export const BACKDROP_HALF2 = 'backdrop-half2';
 /** Downsample factor for the backdrop blur chain. */
 export const BACKDROP_DOWNSCALE = 2;
 
+/**
+ * Ping-pong targets for DOWNSAMPLED plugin effect passes.
+ *
+ * A plugin pass may declare `scale: 0.5` or `0.25`, which is what makes a bloom
+ * affordable: the expensive blur runs on a quarter or a sixteenth of the
+ * pixels, and the upsample costs nothing because whatever samples the result
+ * next reads the smaller texture through a linear sampler. Exactly the trick
+ * the backdrop blur above already uses, generalised so a plugin can ask for it.
+ *
+ * Two per scale, because consecutive passes at the SAME scale must ping-pong —
+ * a separable blur at quarter scale is two draws and they cannot share one
+ * target. Full scale keeps using the existing `BLUR_TARGET*` pool, so only the
+ * fractional sizes are new here.
+ */
+export const PLUGIN_HALF1 = 'plugin-half1';
+export const PLUGIN_HALF2 = 'plugin-half2';
+export const PLUGIN_QUARTER1 = 'plugin-quarter1';
+export const PLUGIN_QUARTER2 = 'plugin-quarter2';
+
+/** Every scaled plugin target, for the graph's declaration list. */
+export const PLUGIN_SCALED_TARGETS = [
+  PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2,
+] as const;
+
+/**
+ * The ping-pong pair for a pass scale, or null at full scale.
+ *
+ * Null rather than "the full-size pair", so the caller has to notice which
+ * case it is in. A full-scale pass picks from the CHAIN's own pool — which
+ * differs between the ordinary route, the matte-borrowing one and the
+ * adjustment-layer one — and handing back a fixed pair here would quietly take
+ * that choice away from it.
+ */
+export function scaledPluginTargets(scale: number): readonly [string, string] | null {
+  if (scale === 0.5) return [PLUGIN_HALF1, PLUGIN_HALF2];
+  if (scale === 0.25) return [PLUGIN_QUARTER1, PLUGIN_QUARTER2];
+  return null;
+}
+
 /** Offscreen targets for isolated precomps, one per nesting depth. A precomp's
  *  subtree renders into its depth's target and is composited (as one unit)
  *  before any sibling can reuse the slot, so one target per depth suffices.
@@ -413,6 +452,18 @@ export class CompositionPass extends RenderPass {
       const f1 = free[1];
       // Need two scratch targets to blur; without them skip the spatial pass.
       if (!f0 || !f1) continue;
+
+      /*
+        The scale this draw runs at. 1 for everything except a plugin pass that
+        declared otherwise.
+
+        Read once, here, because three places downstream need to agree about
+        it: the uniform's `texelSize`, which target the draw lands in, and the
+        viewport that draw is given. Recomputing it at each would be three
+        chances to disagree, and disagreeing produces a quarter-size image in a
+        full-size target rather than an error.
+      */
+      const pluginPassScale = effect.type === 'plugin' ? (effect.passScale ?? 1) : 1;
       // Optional third slot (BLUR_TARGET3) for optical bloom's wide lobe.
 
       if (effect.type === 'blur' || effect.type === 'glow' || effect.type === 'drop-shadow') {
@@ -651,24 +702,22 @@ export class CompositionPass extends RenderPass {
 
             A multi-pass effect arrives as several of these entries in order and
             this loop already ping-pongs them, so nothing above needs to know a
-            chain exists. What each pass DOES need is its own texel size, and
-            the target it is about to be drawn into is `f0` — one of the pool's
-            offscreen targets, every one of which is viewport-sized. So the
-            viewport is this pass's target size.
+            chain exists. What each pass DOES need is its own texel size — and
+            for a downsampled pass that is the size of the SCALED target it is
+            about to be drawn into, not the viewport.
 
-            Stated at the call site rather than assumed inside the packer,
-            because this is the line that has to change on the day a pass can
-            render at a fraction of the viewport. `scale` is fixed at 1 for the
-            same reason, and manifests declaring anything else are refused at
-            install rather than quietly drawn at full size.
+            Getting this wrong is the quiet failure the whole feature turns on:
+            a quarter-scale blur handed full-size texels steps a quarter as far
+            as it should in target space, so it renders a blur a quarter the
+            requested radius and looks merely "a bit soft" rather than broken.
           */
           uniforms: packPluginEffect(
             mvp,
             targetUv,
             effect.params,
-            viewport.pixelSize.width,
-            viewport.pixelSize.height,
-            1,
+            Math.max(1, Math.floor(viewport.pixelSize.width * pluginPassScale)),
+            Math.max(1, Math.floor(viewport.pixelSize.height * pluginPassScale)),
+            pluginPassScale,
             effect.passIndex ?? 0,
           ),
           texture: curTex, sampler: clampSampler(),
@@ -694,15 +743,46 @@ export class CompositionPass extends RenderPass {
       */
       const marker = effect.type === 'plugin' ? effect.onDraw : undefined;
       marker?.begin();
-      const enc = beginViewportPass(ctx, 'fx', writeAttachment(ctx, f0, Color.transparent()));
+
+      /*
+        Where this draw lands, and how big it is.
+
+        A plugin pass declaring `scale` renders into its own smaller pool
+        instead of the chain's full-size one. `beginSizedPass` sets the
+        viewport to the target's real dimensions — without it the draw would
+        cover a quarter of a quarter-size target and the rest would stay
+        transparent, which reads as the effect having eaten the layer.
+
+        `dest` avoids the texture being READ this draw. Within a scaled pair
+        that is the only constraint; the pair is two targets precisely so
+        consecutive passes at one scale can alternate.
+      */
+      const pair = scaledPluginTargets(pluginPassScale);
+      const dest = pair ? (pair[0] === curName ? pair[1] : pair[0]) : f0;
+      const enc = pair
+        ? beginSizedPass(
+          ctx, 'fx', writeAttachment(ctx, dest, Color.transparent()),
+          Math.max(1, Math.floor(viewport.pixelSize.width * pluginPassScale)),
+          Math.max(1, Math.floor(viewport.pixelSize.height * pluginPassScale)),
+        )
+        : beginViewportPass(ctx, 'fx', writeAttachment(ctx, dest, Color.transparent()));
       try {
         services.quad.execute(enc, cmds);
       } finally {
         enc.end();
         marker?.end();
       }
-      const outTex = texOf(f0);
-      if (outTex) { curTex = outTex; curName = f0; }
+      /*
+        The upsample is free and this is where it happens — by not happening.
+
+        `curTex` becomes the smaller texture, and the next draw samples it
+        through `clampSampler`, which is linear. A full-scale pass reading a
+        quarter-scale one therefore magnifies it on the way in, at no extra
+        pass and no extra bandwidth. The same reason the backdrop blur can
+        composite its half-size result straight over the scene.
+      */
+      const outTex = texOf(dest);
+      if (outTex) { curTex = outTex; curName = dest; }
     }
 
     return { tex: curTex, name: curName };

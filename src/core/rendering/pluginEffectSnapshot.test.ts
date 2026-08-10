@@ -222,6 +222,40 @@ describe('a multi-pass effect reaching the scene', () => {
       .toEqual([0, 1]);
   });
 
+  it('★ carries a downsampled pass its scale', async () => {
+    /*
+      The seam AE-1 turns on. The renderer reads `passScale` three ways — which
+      target pool to draw into, what viewport to give the draw, and what texel
+      size to hand the shader — and all three come from this one field.
+
+      The failure if it goes missing is not an error: the pass draws at full
+      size into a full-size target and looks merely "not as soft as I asked
+      for", which an author debugs as their own kernel being wrong.
+    */
+    const scaled: EffectContribution = {
+      ...chain,
+      passes: [
+        { name: 'down', wgsl: fs('0.0, 0.0'), scale: 0.25, reads: 'previous' },
+        { name: 'up', wgsl: fs('0.0, 0.0'), scale: 1, reads: 'previous' },
+      ],
+    };
+    resetEffectsForTests();
+    registerEffects(CHAIN_PLUGIN, 'Acme Blur', [scaled]);
+    await compileEffect(CHAIN_ID, ok);
+
+    expect(spatialOf(layerWith(CHAIN_ID)).map((e) => (e as { passScale?: number }).passScale))
+      .toEqual([0.25, undefined]);
+  });
+
+  it('omits passScale entirely at full scale', () => {
+    // So a single-pass effect's scene entry is byte-identical to what it was
+    // before any of this existed, and the renderer's `?? 1` is never exercised
+    // by a value that means the same thing spelled differently.
+    for (const e of spatialOf(layerWith(CHAIN_ID))) {
+      expect(e).not.toHaveProperty('passScale');
+    }
+  });
+
   it('gives every pass the same parameter block', () => {
     // One pack, shared. The passes differ only in their shader and the host
     // fields the renderer writes; a per-pass copy would be the same bytes
