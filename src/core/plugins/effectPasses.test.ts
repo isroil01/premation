@@ -23,7 +23,7 @@
  *    something" test while banning exactly the chains it exists to enable.
  */
 
-import { parseEffects, chainCost, MAX_PASS_COST, composeEffectShader } from './effectSchema';
+import { parseEffects, chainCost, MAX_PASS_COST, composeEffectShader, effectSpreadFor } from './effectSchema';
 import type { EffectContribution } from './effectSchema';
 import {
   pluginEffectMaterial,
@@ -378,5 +378,127 @@ describe('a chain exposes its head as `shader`', () => {
       passes: [pass('first', { wgsl: `${FS}\n// FIRST` }), pass('second')],
     });
     expect(effect!.shader).toContain('// FIRST');
+  });
+});
+
+/**
+ * How far an effect says it reaches, and why the host has to ask.
+ *
+ * ── The bug this closes ──────────────────────────────────────────────────────
+ *
+ * A 3D layer's effect chain renders into a layer-space buffer with a margin
+ * around it, sized per frame from the effects on the layer. `effectSpreadPx`
+ * switched on effect type — blur, glow, drop-shadow, stroke, displacement-map —
+ * and a plugin matched none of them, so it was budgeted ZERO.
+ *
+ * The result: a plugin glow on a 3D layer was clipped flat at the layer's edge
+ * while the built-in glow beside it bled correctly. Only on 3D layers, because
+ * the 2D route runs its chain over a viewport-sized buffer and has room to
+ * spare — which is exactly the kind of "works in my project" difference that
+ * gets reported as the renderer being broken.
+ *
+ * ── Why a formula rather than a number ───────────────────────────────────────
+ *
+ * Reach depends on parameters and parameters animate. A fixed `spreadPx: 40`
+ * would have to be the worst case for every frame, so a blur going 0 → 40 would
+ * reserve 40px on the frame where its radius is 0, on every layer carrying it.
+ * Naming the parameter lets the host evaluate it per frame, which is what After
+ * Effects' pre-render phase does.
+ */
+describe('declaring a spread', () => {
+  const withSpread = (spread: unknown, params?: Record<string, unknown>) => parseOne({
+    shader: FS,
+    params: params ?? { radius: { type: 'number', default: 8 } },
+    spread,
+  });
+
+  it('accepts a parameter with a factor', () => {
+    const { effect, errors } = withSpread({ param: 'radius', factor: 2.5 });
+    expect(errors).toEqual([]);
+    expect(effect?.spread).toEqual({ param: 'radius', factor: 2.5 });
+  });
+
+  it('defaults to no spread at all', () => {
+    /*
+      The right default, not merely the safe one. Most effects — colour grades,
+      distortions, anything mapping a pixel to a pixel — genuinely stay inside
+      the rectangle, and reserving margin for them would enlarge every 3D
+      layer's effect buffer for nothing.
+    */
+    const { effect } = parseOne({ shader: FS, params: {} });
+    expect(effect?.spread).toBeUndefined();
+  });
+
+  it('refuses a parameter the effect does not have', () => {
+    // Silently contributing zero is the failure mode this catches, and its
+    // symptom — a clipped glow on 3D layers only — is about as far from the
+    // typo as a symptom gets.
+    const { effect, errors } = withSpread({ param: 'radiuss', factor: 2 });
+    expect(effect).toBeUndefined();
+    expect(errors.join(' ')).toMatch(/not a number parameter of this effect/);
+  });
+
+  it('refuses a parameter that is not a number', () => {
+    const { effect, errors } = withSpread(
+      { param: 'tint' },
+      { tint: { type: 'color', default: '#fff' } },
+    );
+    expect(effect).toBeUndefined();
+    expect(errors.join(' ')).toMatch(/not a number parameter/);
+  });
+
+  it('refuses a negative factor', () => {
+    // A negative reach would shrink the margin below what other effects on the
+    // layer asked for, clipping THEM.
+    const { effect, errors } = withSpread({ param: 'radius', factor: -1 });
+    expect(effect).toBeUndefined();
+    expect(errors.join(' ')).toMatch(/non-negative/);
+  });
+});
+
+describe('evaluating it at the current parameters', () => {
+  const effect = (spread: unknown) => withSpreadEffect(spread);
+  function withSpreadEffect(spread: unknown) {
+    const { effect: e } = parseOne({
+      shader: FS,
+      params: { radius: { type: 'number', default: 8 } },
+      spread,
+    });
+    return e!;
+  }
+
+  it('scales with the live value, not the default', () => {
+    // The whole reason it is a formula. An animated radius must reserve what
+    // it needs on the frame it needs it.
+    const e = effect({ param: 'radius', factor: 2.5 });
+    expect(effectSpreadFor(e, { radius: 40 })).toBeCloseTo(100);
+    expect(effectSpreadFor(e, { radius: 0 })).toBeCloseTo(0);
+  });
+
+  it('adds the fixed component', () => {
+    const e = effect({ param: 'radius', factor: 2, plus: 5 });
+    expect(effectSpreadFor(e, { radius: 10 })).toBeCloseTo(25);
+  });
+
+  it('falls back to the DECLARED DEFAULT when the parameter is unset', () => {
+    /*
+      Not to zero. An effect whose radius has never been touched still has one
+      — the default the manifest gave it — and budgeting zero would clip the
+      very first frame the user sees, before they have adjusted anything.
+    */
+    const e = effect({ param: 'radius', factor: 2.5 });
+    expect(effectSpreadFor(e, {})).toBeCloseTo(20);
+  });
+
+  it('is 0 for an effect that declared nothing', () => {
+    const { effect: plain } = parseOne({ shader: FS, params: {} });
+    expect(effectSpreadFor(plain!, {})).toBe(0);
+  });
+
+  it('never returns a negative number', () => {
+    // A parameter can be driven negative by a keyframe or an expression even
+    // when its declared minimum says otherwise.
+    const e = effect({ param: 'radius', factor: 2.5 });
+    expect(effectSpreadFor(e, { radius: -30 })).toBe(0);
   });
 });

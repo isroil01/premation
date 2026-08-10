@@ -174,6 +174,21 @@ function effectSpreadPx(effects: readonly RenderableEffect[]): number {
     else if (e.type === 'drop-shadow') s = Math.hypot(e.offsetX, e.offsetY) + e.radiusPx * BLUR_TAIL;
     else if (e.type === 'stroke') s = e.widthPx;
     else if (e.type === 'displacement-map') s = e.amount;
+    /*
+      A plugin effect answers for itself, or asks for nothing.
+
+      Without this branch every plugin fell through to 0, so a plugin glow on a
+      3D layer was clipped flat at the layer's edge while the built-in one
+      beside it bled correctly — and only on 3D layers, because the 2D route
+      runs its chain over a viewport-sized buffer and has room to spare.
+
+      The number is computed app-side from the effect's live parameters (see
+      `effectSpreadFor`), which is what makes an animated radius reserve the
+      margin it needs on the frame it needs it. This package still learns
+      nothing about plugins: it receives pixels of reach, like every branch
+      above.
+    */
+    else if (e.type === 'plugin') s = e.spreadPx ?? 0;
     if (s > max) max = s;
   }
   return max;

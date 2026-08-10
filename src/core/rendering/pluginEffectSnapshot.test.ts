@@ -295,6 +295,67 @@ describe('a multi-pass effect reaching the scene', () => {
     }
   });
 
+  it('★ carries the declared spread, evaluated at the LIVE parameters', async () => {
+    /*
+      The margin reserved around a 3D layer's effect buffer comes from this
+      number. Without it a plugin fell through `effectSpreadPx` to 0 and its
+      glow was clipped flat at the layer's edge, while the built-in glow beside
+      it bled correctly — and only on 3D layers, since the 2D route runs over a
+      viewport-sized buffer with room to spare.
+
+      Evaluated per frame rather than baked: a radius animating 0 → 40 must
+      reserve 40px on the frame it needs it and nothing on the frame it does not.
+    */
+    const glow: EffectContribution = {
+      id: 'gaussian',
+      label: 'Glow',
+      shader: fs('0.0, 0.0'),
+      params: { radius: { type: 'number', default: 8 } },
+      spread: { param: 'radius', factor: 2.5 },
+    };
+    resetEffectsForTests();
+    registerEffects(CHAIN_PLUGIN, 'Acme Glow', [glow]);
+    await compileEffect(CHAIN_ID, ok);
+
+    const at = (radius: number) =>
+      (spatialOf(layerWith(CHAIN_ID, { radius }))[0] as { spreadPx?: number }).spreadPx;
+
+    expect(at(40)).toBeCloseTo(100);
+    expect(at(4)).toBeCloseTo(10);
+    // Zero reach is omitted, not sent as 0 — the renderer's `?? 0` should never
+    // be exercised by a value meaning the same thing spelled differently.
+    expect(at(0)).toBeUndefined();
+  });
+
+  it('omits spread entirely for an effect that declared none', () => {
+    // Most effects map a pixel to a pixel. Reserving margin for them would
+    // enlarge every 3D layer's effect buffer for nothing.
+    for (const e of spatialOf(layerWith(CHAIN_ID))) {
+      expect(e).not.toHaveProperty('spreadPx');
+    }
+  });
+
+  it('puts the spread on pass 0 only', () => {
+    /*
+      The margin is a property of the EFFECT, and `effectSpreadPx` takes the max
+      over the list — so repeating it per pass is the same number counted
+      several times. Harmless under a max and exactly the thing that stops being
+      harmless the day someone sums instead.
+    */
+    const spread: EffectContribution = {
+      ...chain,
+      params: { radius: { type: 'number', default: 8 } },
+      spread: { param: 'radius', factor: 2 },
+    };
+    resetEffectsForTests();
+    registerEffects(CHAIN_PLUGIN, 'Acme', [spread]);
+    return compileEffect(CHAIN_ID, ok).then(() => {
+      const got = (spatialOf(layerWith(CHAIN_ID, { radius: 10 })) as Array<{ spreadPx?: number }>)
+        .map((e) => e.spreadPx);
+      expect(got).toEqual([20, undefined]);
+    });
+  });
+
   it('gives every pass the same parameter block', () => {
     // One pack, shared. The passes differ only in their shader and the host
     // fields the renderer writes; a per-pass copy would be the same bytes

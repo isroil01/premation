@@ -73,6 +73,14 @@ export const CAMERA_PROPS = [
   'focalLength', // zoom
   'orbitYaw',
   'orbitPitch',
+  // IN-PLACE rotation — a tripod pan / tilt / roll. Distinct from the orbit
+  // pair above, which swings the EYE along an arc: without these the AI layer
+  // can dolly-arc but cannot pan, and a pan is one of the most common camera
+  // moves in motion design. `orientationZ` shipped keyframeable and inspectable
+  // while being absent from this list, so a dutch angle was equally undrivable.
+  'orientationX', // tilt
+  'orientationY', // pan
+  'orientationZ', // roll
   'poiX', // look-at target
   'poiY',
   'poiZ',

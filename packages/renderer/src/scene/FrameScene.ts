@@ -169,6 +169,19 @@ export type RenderableEffect =
        */
       readsOrigin?: boolean;
       /**
+       * How far this effect draws outside the layer, in composition pixels.
+       *
+       * Feeds the margin reserved around a 3D layer's effect buffer. Absent or
+       * 0 for the majority of effects, which map a pixel to a pixel and stay
+       * inside the rectangle.
+       *
+       * Computed app-side from the effect's LIVE parameters, once per frame —
+       * the same job After Effects does in its pre-render phase. A number
+       * baked at install would have to be the animated worst case, and would
+       * enlarge every 3D layer's buffer on frames where the radius is zero.
+       */
+      spreadPx?: number;
+      /**
        * This effect's shader declares a fourth binding, so its material must
        * too — whether or not a map layer has been chosen.
        *

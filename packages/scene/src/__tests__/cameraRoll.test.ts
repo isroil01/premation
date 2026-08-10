@@ -31,6 +31,26 @@ describe('camera roll', () => {
     }
   });
 
+  it('an all-zero orientation is byte-identical to no orientation at all', () => {
+    // The §4.3 guarantee, now that THREE sources feed this one object: camera
+    // in-place rotation (`orientationX`/`orientationY`) composes into the same
+    // yaw/pitch fields as orbit and look-at, so an unrotated camera must still
+    // fall through to `projectPoint`'s simple path. `cameraFromNode` enforces
+    // that by omitting the key entirely (its `nonZero` gate, pinned in
+    // src/core/scene/cameraOrientation.test.ts); this pins the other half —
+    // that a zero orientation, should one reach here, projects identically.
+    const points: Vec3[] = [
+      { x: 700, y: 400, z: 300 },
+      { x: 0, y: 0, z: -50 },
+      { x: 1920, y: 1080, z: 4000 },
+    ];
+    for (const p of points) {
+      expect(Project3D.projectPoint(p, cam({ yaw: 0, pitch: 0, roll: 0 }))).toEqual(
+        Project3D.projectPoint(p, base()),
+      );
+    }
+  });
+
   it('does NOT change what the camera is aimed at', () => {
     // A point on the optical axis stays on the principal point however the
     // frame is rolled — that is the difference between roll and re-aiming.

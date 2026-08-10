@@ -26,7 +26,7 @@ import { isLutEffect } from '@core/effects/colorLut';
 import { readMatte } from '@core/effects/matte';
 import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
 import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
-import { layerParamNames, packParameters } from '@core/plugins/effectSchema';
+import { layerParamNames, packParameters, effectSpreadFor } from '@core/plugins/effectSchema';
 import { layerIsBaked } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
@@ -561,6 +561,23 @@ export function extractSpatialEffects(
         */
         const chainReadsOrigin = registered.passes.some((p) => p.readsOrigin);
 
+        /*
+          How far this effect reaches outside the layer, at THIS frame's
+          parameter values.
+
+          Evaluated here because this is the side that holds them. A number
+          fixed at install would have to be the animated worst case — a blur
+          going 0 → 40 would reserve 40px of margin on the frame where its
+          radius is 0, on every 3D layer carrying it.
+
+          Emitted on pass 0 only. The margin is a property of the EFFECT, and
+          `effectSpreadPx` takes the max over the list, so repeating it on
+          every pass would be the same number counted several times — harmless
+          today and exactly the sort of thing that stops being harmless when
+          someone later sums instead of maxing.
+        */
+        const spreadPx = effectSpreadFor(registered.contribution, paramsOf(e));
+
         for (const pass of registered.passes) {
           spatial.push({
             type: 'plugin',
@@ -572,6 +589,7 @@ export function extractSpatialEffects(
             // Pass 0 takes the snapshot; the passes that asked read it.
             ...(chainReadsOrigin && pass.index === 0 ? { capturesOrigin: true } : {}),
             ...(pass.readsOrigin ? { readsOrigin: true } : {}),
+            ...(spreadPx > 0 && pass.index === 0 ? { spreadPx } : {}),
             // What the SHADER asks for, not what the user chose — see the field's
             // own note. Set from the declaration so an effect with no map picked
             // yet still gets a material whose layout matches its bindings.

@@ -60,9 +60,12 @@ export function cameraFromNode(
   let yaw: number | undefined, pitch: number | undefined;
   let poiX: number | undefined, poiY: number | undefined, poiZ: number | undefined;
   let rollProp: number | undefined;
+  let oriXProp: number | undefined, oriYProp: number | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
     rollProp = num(p.orientationZ) ?? rollProp;
+    oriXProp = num(p.orientationX) ?? oriXProp;
+    oriYProp = num(p.orientationY) ?? oriYProp;
     x = num(p.x) ?? x;
     y = num(p.y) ?? y;
     z = num(p.z) ?? z;
@@ -108,8 +111,34 @@ export function cameraFromNode(
   // re-aiming. Stored as `orientationZ` to match the layer transform naming, so
   // the inspector row and the keyframe track look like every other rotation.
   const roll = sample?.(node.id, 'orientationZ') ?? rollProp ?? 0;
-  const withRoll = (o: { yaw: number; pitch: number }) =>
-    roll !== 0 ? { ...o, roll } : o;
+
+  /**
+   * IN-PLACE rotation — the tripod pan and tilt (AE's camera X/Y Rotation).
+   *
+   * `orbitYaw`/`orbitPitch` swing the EYE about a target, which reads as a
+   * dolly-arc; these rotate the camera where it stands, which no combination of
+   * orbit props can express. Axis naming follows the layer transform exactly:
+   * `orientationX` is about X (pitch, tilt up/down), `orientationY` is about Y
+   * (yaw, pan left/right) — matching `nodeMatrix.ts`'s
+   * `x: rotationX + orientationX`.
+   *
+   * They are OFFSETS, added to whatever the base orientation resolved to. That
+   * is the whole design, and it is what makes them work on a two-node camera:
+   * the look-at establishes the aim, these nudge it, and tracking survives. Set
+   * rather than added, a targeted camera would ignore them entirely — the
+   * inspector rows would move and the projection would not.
+   *
+   * The eye is deliberately untouched. `orbitCamera` above is the only thing
+   * that moves it, so these rotate about the eye rather than about the POI or
+   * the comp centre.
+   */
+  const oriX = sample?.(node.id, 'orientationX') ?? oriXProp ?? 0;
+  const oriY = sample?.(node.id, 'orientationY') ?? oriYProp ?? 0;
+
+  const withOrientation = (o: { yaw: number; pitch: number }) => {
+    const composed = { yaw: o.yaw + oriY, pitch: o.pitch + oriX };
+    return roll !== 0 ? { ...composed, roll } : composed;
+  };
   const nonZero = (o: { yaw: number; pitch: number; roll?: number }) =>
     o.yaw !== 0 || o.pitch !== 0 || (o.roll ?? 0) !== 0;
 
@@ -121,7 +150,7 @@ export function cameraFromNode(
       z: poiZ ?? 0,
     });
     const orbited = Project3D.orbitCamera(basePosition, poi, yaw ?? 0, pitch ?? 0);
-    const orientation = withRoll(Project3D.lookAtOrientation(orbited.position, poi));
+    const orientation = withOrientation(Project3D.lookAtOrientation(orbited.position, poi));
     return {
       focalLength,
       position: orbited.position,
@@ -139,7 +168,7 @@ export function cameraFromNode(
     pitch ?? 0,
   );
 
-  const orientation = withRoll(orbited.orientation);
+  const orientation = withOrientation(orbited.orientation);
   return {
     focalLength,
     position: orbited.position,

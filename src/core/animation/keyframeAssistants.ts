@@ -10,6 +10,10 @@
  *   • Typewriter (text) — builds a text animator + keyframes so characters
  *                            appear one-by-one (a whole rig from one click)
  *
+ * Bounce is NOT here: it grew parameters, presets, a from-zero mode and
+ * squash & stretch, which is a panel's worth of surface rather than one action.
+ * It lives in `bounce.ts` and its home in the UI is the Graph panel.
+ *
  * The track transforms are pure functions (tested); the exported actions wrap
  * them in runAnimEdit so undo restores the exact previous keyframes.
  */
@@ -102,101 +106,6 @@ export function timeReverseKeyframes(nodeId: string, engine: AnimationEngine = d
   if (!tracks.length) return false;
   const reversed = reverseTracks(tracks);
   runAnimEdit('Time-reverse keyframes', () => writeTracks(nodeId, reversed, engine));
-  return true;
-}
-
-/**
- * Bounce settings. AE's own bounce is an expression, not a preset, so these are
- * the three knobs every version of that expression exposes.
- */
-export interface BounceOptions {
-  /** How many rebounds to add after the original landing. */
-  bounces: number;
-  /** Fraction of the previous overshoot each rebound keeps, 0..1. */
-  decay: number;
-  /** Overshoot of the FIRST rebound as a fraction of the last segment's
-   *  travel. ~0.3 lands firmly, ~0.6 reads rubbery. */
-  elasticity: number;
-}
-
-export const DEFAULT_BOUNCE: BounceOptions = { bounces: 3, decay: 0.5, elasticity: 0.35 };
-
-/**
- * Append a decaying bounce after each track's LAST keyframe.
- *
- * ── Why this is an assistant and not an easing preset ────────────────
- * A cubic-bezier is one curve with at most a single overshoot; a bounce is N
- * overshoots of shrinking amplitude, which no bezier can express. That is why
- * `BOUNCE_EASE` in animationPresets.ts — commented "Elastic bounce" — is really
- * an ease-out-back. Generating keyframes is the only honest way to do this
- * without reaching for an expression.
- *
- * Each rebound overshoots PAST the landing value and returns to it, with the
- * amplitude and the duration BOTH scaled by `decay`, so the bounces get smaller
- * and faster together. Scaling only the amplitude is the classic mistake: it
- * reads as a wobble rather than as gravity.
- *
- * Pure, so the geometry is testable without a scene. A track with fewer than
- * two keyframes comes back untouched — there is no travel to rebound from.
- */
-export function bounceTracks(
-  tracks: ReadonlyArray<PresetTrack>,
-  opts: BounceOptions = DEFAULT_BOUNCE,
-): PresetTrack[] {
-  const bounces = Math.max(0, Math.floor(opts.bounces));
-  const decay = Math.min(0.95, Math.max(0.05, opts.decay));
-  const elasticity = Math.max(0, opts.elasticity);
-  if (bounces === 0 || elasticity === 0) return tracks.map((t) => ({ ...t }));
-
-  return tracks.map((track) => {
-    const keys = track.keyframes;
-    if (keys.length < 2) return { ...track };
-
-    const last = keys[keys.length - 1]!;
-    const prev = keys[keys.length - 2]!;
-    const travel = last.value - prev.value;
-    const segment = last.t - prev.t;
-    // A hold at the end has nothing to rebound from, and a zero-length final
-    // segment would scale the timing by nothing.
-    if (travel === 0 || segment <= 0) return { ...track };
-
-    // The rebound goes back the way it came: land after a fall and you
-    // overshoot upward, so the sign is opposite to the travel.
-    const dir = -Math.sign(travel);
-    const out = [...keys];
-    let amp = Math.abs(travel) * elasticity;
-    let dur = segment * decay;
-    let t = last.t;
-
-    for (let i = 0; i < bounces; i++) {
-      t += dur / 2; // up to the peak…
-      out.push({ t, value: last.value + dir * amp, easing: 'bezier', bezier: EASY_EASE_OUT_BEZIER });
-      t += dur / 2; // …and back down to the landing value.
-      out.push({ t, value: last.value, easing: 'bezier', bezier: EASY_EASE_IN_BEZIER });
-      amp *= decay;
-      dur *= decay;
-    }
-    return { ...track, keyframes: out };
-  });
-}
-
-/**
- * Add a bounce to the end of the layer's animation. False when nothing is
- * animated, or when no track had anything to bounce off.
- */
-export function bounceKeyframes(
-  nodeId: string,
-  opts: BounceOptions = DEFAULT_BOUNCE,
-  engine: AnimationEngine = defaultAnimation,
-): boolean {
-  const tracks = currentTracks(nodeId, engine);
-  if (!tracks.length) return false;
-  const bounced = bounceTracks(tracks, opts);
-  // Every track unchanged means every one was a hold or a single key. Reporting
-  // success there would push an empty entry onto the undo stack.
-  const changed = bounced.some((t, i) => t.keyframes.length !== tracks[i]!.keyframes.length);
-  if (!changed) return false;
-  runAnimEdit('Bounce keyframes', () => writeTracks(nodeId, bounced, engine));
   return true;
 }
 

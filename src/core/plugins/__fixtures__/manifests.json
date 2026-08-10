@@ -2039,6 +2039,129 @@
           ]
         }
       }
+    },
+    {
+      "name": "api-5 effect declaring a spread",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "radius": {
+                  "type": "number",
+                  "default": 8
+                }
+              },
+              "spread": {
+                "param": "radius",
+                "factor": 2.5
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 spread naming a parameter that does not exist",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "radius": {
+                  "type": "number",
+                  "default": 8
+                }
+              },
+              "spread": {
+                "param": "nope",
+                "factor": 2
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 spread naming a non-number parameter",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "tint": {
+                  "type": "color",
+                  "default": "#ffffff"
+                }
+              },
+              "spread": {
+                "param": "tint"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 spread with a negative factor",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "radius": {
+                  "type": "number",
+                  "default": 8
+                }
+              },
+              "spread": {
+                "param": "radius",
+                "factor": -1
+              }
+            }
+          ]
+        }
+      }
     }
   ]
 }

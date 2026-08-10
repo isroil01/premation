@@ -110,10 +110,53 @@ export interface EffectPass {
   reads?: PassReads;
 }
 
+/**
+ * How far outside its layer an effect reaches, as a function of a parameter.
+ *
+ * ── What this is for ────────────────────────────────────────────────────────
+ *
+ * A 3D layer's effect chain renders into a layer-space buffer with a margin
+ * reserved around it, and the margin is computed per frame from the effects on
+ * the layer: a blur asks for `radius × tail`, a drop shadow for its offset plus
+ * the tail, and so on. A plugin effect had no way to answer that question, so
+ * it was budgeted zero — and a plugin glow on a 3D layer was clipped flat at
+ * the layer's edge while a built-in one bled correctly.
+ *
+ * ── Why it is a formula and not a number ─────────────────────────────────────
+ *
+ * The reach of a real effect depends on its parameters, and parameters are
+ * animatable. A fixed `spreadPx: 40` would have to be the worst case for every
+ * frame — so a blur animating 0 → 40 would reserve a 40px margin on the frame
+ * where the radius is 0, on every layer, forever. Naming the parameter lets the
+ * host compute the real number each frame, which is what After Effects' own
+ * pre-render phase does.
+ *
+ * `factor` exists because reach is rarely the parameter itself: a Gaussian's
+ * visible tail runs to about 2.5σ, so a blur declaring `radius` needs a factor
+ * near that or the margin clips the very tail it was reserved for.
+ */
+export interface EffectSpread {
+  /** A `number` parameter of this effect. */
+  param: string;
+  /** Multiplier on the parameter's value. Default 1. */
+  factor?: number;
+  /** Added after the multiply — a fixed component, e.g. a stroke width. */
+  plus?: number;
+}
+
 export interface EffectContribution {
   /** Plugin-local. The host namespaces it as `<pluginId>.<id>`. */
   id: string;
   label: string;
+  /**
+   * How far this effect draws outside the layer. Absent means "not at all".
+   *
+   * Absent is the right default and not merely the safe one: the overwhelming
+   * majority of effects — colour grades, distortions, anything that maps a
+   * pixel to a pixel — genuinely do not leave the rectangle, and reserving
+   * margin for them would enlarge every 3D layer's effect buffer for nothing.
+   */
+  spread?: EffectSpread;
   /**
    * The author's WGSL, for a single-pass effect. Host bindings are prepended at
    * compile time.
@@ -350,10 +393,86 @@ export function parseEffects(raw: unknown, errors: string[]): EffectContribution
       return;
     }
 
-    out.push(passes ? { id, label, shader, params, passes } : { id, label, shader, params });
+    /*
+      `spread` is parsed AFTER params, because it names one.
+
+      A spread pointing at a parameter that does not exist, or at one that is
+      not a number, would silently contribute nothing to the margin — and the
+      symptom is a clipped glow on 3D layers only, which is about as hard to
+      trace back to a manifest typo as anything gets.
+    */
+    let spread: EffectSpread | undefined;
+    if (entry.spread !== undefined) {
+      const s = entry.spread;
+      if (!isPlainObject(s)) {
+        errors.push(`"${at}.spread" must be an object.`);
+        return;
+      }
+      const param = typeof s.param === 'string' ? s.param : '';
+      if (!param) {
+        errors.push(`"${at}.spread.param" is required — name the parameter this effect's reach scales with.`);
+        return;
+      }
+      if (params[param]?.type !== 'number') {
+        errors.push(
+          `"${at}.spread.param" is "${param}", which is not a number parameter of this effect. `
+          + `Reach has to scale with something the host can read as a distance.`,
+        );
+        return;
+      }
+      const num = (v: unknown, name: string): number | null => {
+        if (v === undefined) return null;
+        if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+          errors.push(`"${at}.spread.${name}" must be a non-negative number.`);
+          return NaN;
+        }
+        return v;
+      };
+      const factor = num(s.factor, 'factor');
+      const plus = num(s.plus, 'plus');
+      if (Number.isNaN(factor) || Number.isNaN(plus)) return;
+      spread = {
+        param,
+        ...(factor !== null ? { factor } : {}),
+        ...(plus !== null ? { plus } : {}),
+      };
+    }
+
+    out.push({
+      id, label, shader, params,
+      ...(passes ? { passes } : {}),
+      ...(spread ? { spread } : {}),
+    });
   });
 
   return out;
+}
+
+/**
+ * How far this effect reaches outside its layer, for the CURRENT parameters.
+ *
+ * Evaluated per frame by the side that holds the parameter values, which is
+ * the whole point: an animated radius reserves the margin it needs on the
+ * frame it needs it, rather than the worst case on every frame.
+ *
+ * Returns 0 for an effect that declared nothing, which is most of them.
+ */
+export function effectSpreadFor(
+  effect: EffectContribution,
+  params: Record<string, unknown>,
+): number {
+  const s = effect.spread;
+  if (!s) return 0;
+  const raw = params[s.param];
+  const value = typeof raw === 'number' && Number.isFinite(raw)
+    ? raw
+    // Falls back to the DECLARED DEFAULT, not to zero. An effect whose radius
+    // has never been touched still has one, and budgeting zero for it would
+    // clip the very first frame the user sees.
+    : (typeof effect.params[s.param]?.default === 'number'
+      ? (effect.params[s.param]!.default as number)
+      : 0);
+  return Math.max(0, value * (s.factor ?? 1) + (s.plus ?? 0));
 }
 
 const PASS_NAME_RE = /^[a-z][a-zA-Z0-9]{0,31}$/;
