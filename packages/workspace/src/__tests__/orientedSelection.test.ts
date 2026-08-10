@@ -153,11 +153,16 @@ describe('C2 acceptance — one box per selected layer', () => {
     const sel = selectionPortOf();
     const ctrl = new SelectionController(scene, sel, new HitTester(scene));
     sel.set(['a', 'b'] as NodeId[]);
-    for (const box of ctrl.selectionBoxes()) {
-      const b = OBox.cornersBounds(box);
+    const boxes = ctrl.selectionBoxes();
+    for (const box of boxes) {
+      const b = OBox.cornersBounds(box.corners);
       expect(b.width).toBeCloseTo(100, 6);
       expect(b.height).toBeCloseTo(100, 6);
     }
+    // Each box names the layer it came from, which is what lets the painter
+    // tint it with that layer's label colour. Without the id the drawn boxes
+    // are anonymous and the timeline-row linkage is unbuildable.
+    expect(boxes.map((b) => b.id)).toEqual(['a', 'b']);
     // The union AABB is still available for the tools that need one, and it is
     // much bigger than any individual box — which is exactly why it must not be
     // what gets drawn.

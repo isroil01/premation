@@ -1,4 +1,5 @@
 import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
+import { getNodeLabelColor } from '@core/scene/labelColor';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
@@ -1731,18 +1732,43 @@ function paintOverlay(
   // rotation that was not a multiple of 90° it was visibly larger than the
   // artwork with dead padding at every corner.
   if (!isActivelyDrawing && overlay.selectionBoxes.length > 0) {
-    ctx.strokeStyle = ACCENT;
-    // Hairline. A 2px selection stroke is the single loudest tell of an
-    // unpolished editor — it reads as chrome competing with the artwork
-    // rather than a thin annotation over it.
-    ctx.lineWidth = 1;
     if (sel3D) ctx.setLineDash([4, 3]);
-    for (const box of overlay.selectionBoxes) strokeCorners(ctx, box);
+    for (const box of overlay.selectionBoxes) {
+      // Each outline takes its OWN layer's label colour, so with several layers
+      // selected you can tell which box belongs to which timeline row. That
+      // linkage is the point of label colours. No label set ⇒ the accent,
+      // exactly as before.
+      const label = getNodeLabelColor(box.id);
+
+      // A pale label over a pale composition is nearly invisible, and AE has
+      // this weakness. A dark halo UNDER the hairline is the fix, rather than
+      // handles with a contrasting core: the halo costs the outline no colour,
+      // so the label stays the thing you read, and it only guarantees the line
+      // separates from whatever is behind it. A contrasting core would split
+      // every outline into two colours and make the palette harder to
+      // recognise at a glance — which defeats the feature.
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.lineWidth = 3;
+      strokeCorners(ctx, box.corners);
+
+      // Hairline. A 2px selection stroke is the single loudest tell of an
+      // unpolished editor — it reads as chrome competing with the artwork
+      // rather than a thin annotation over it.
+      ctx.strokeStyle = label ?? ACCENT;
+      ctx.lineWidth = 1;
+      strokeCorners(ctx, box.corners);
+    }
     if (sel3D) ctx.setLineDash([]);
   }
 
   // Handles (hidden while actively drawing or painting a stroke, and in 3D).
   if (!isActivelyDrawing && !sel3D) {
+    // Handles belong to the selection as a whole, not to one layer, so they
+    // only take a label colour when exactly ONE layer is selected. With two
+    // selected there is no non-arbitrary answer, and picking the first would
+    // assert a linkage that is not there.
+    const only = overlay.selectionBoxes.length === 1 ? overlay.selectionBoxes[0] : null;
+    const handleAccent = (only ? getNodeLabelColor(only.id) : undefined) ?? ACCENT;
     for (const h of overlay.handles) {
       if (h.kind === 'anchor') {
         // The pivot, as a crosshair/target — deliberately unlike every square
@@ -1750,7 +1776,7 @@ function paintOverlay(
         // sit outside the box entirely. Previously it fell through to the
         // default branch and drew as a plain square, indistinguishable from a
         // handle that scales the layer.
-        drawAnchorWidget(ctx, h.position.x, h.position.y, ACCENT);
+        drawAnchorWidget(ctx, h.position.x, h.position.y, handleAccent);
       } else if (h.kind === 'rotate') {
         // No rotate handle is produced any more (rotation is a tool mode), but
         // a stale overlay from another tool could still carry one.
@@ -1758,12 +1784,12 @@ function paintOverlay(
         ctx.arc(h.position.x, h.position.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = '#fff';
         ctx.fill();
-        ctx.strokeStyle = ACCENT;
+        ctx.strokeStyle = handleAccent;
         ctx.lineWidth = 1;
         ctx.stroke();
       } else if (h.kind === 'point') {
         // Vertex anchor: filled square
-        ctx.fillStyle = ACCENT;
+        ctx.fillStyle = handleAccent;
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 1.5;
         ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
@@ -1774,7 +1800,7 @@ function paintOverlay(
         ctx.arc(h.position.x, h.position.y, 4, 0, Math.PI * 2);
         ctx.fillStyle = '#fff';
         ctx.fill();
-        ctx.strokeStyle = ACCENT;
+        ctx.strokeStyle = handleAccent;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       } else {
@@ -1782,7 +1808,7 @@ function paintOverlay(
         // precise where circles read as a design tool, and the fill/outline
         // contrast is what keeps them visible over both light and dark artwork.
         ctx.fillStyle = '#fff';
-        ctx.strokeStyle = ACCENT;
+        ctx.strokeStyle = handleAccent;
         ctx.lineWidth = 1;
         ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
         ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
