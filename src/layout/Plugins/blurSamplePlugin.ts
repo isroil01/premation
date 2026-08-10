@@ -219,5 +219,26 @@ export function buildBlurSamplePlugin(): Uint8Array {
   });
 }
 
+/**
+ * Hand it to the browser as a download.
+ *
+ * Without this the sample existed only for tests and the GPU probe, which is
+ * the wrong kind of sample: the whole effect surface — chains, `scale`,
+ * `origin`, the 96-byte uniform layout — had no package a user could actually
+ * install to see it work. The starter template covers commands and panels and
+ * touches none of it.
+ */
+export function downloadBlurSamplePlugin(): void {
+  const zipped = buildBlurSamplePlugin();
+  // `zipSync` returns a view over a larger buffer; Blob needs the exact bytes.
+  const blob = new Blob([zipped.slice()], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'separable-blur.zip';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** Exported for the test, which parses this manifest through the real parser. */
 export const BLUR_SAMPLE_MANIFEST = MANIFEST;

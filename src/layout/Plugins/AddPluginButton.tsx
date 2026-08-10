@@ -19,6 +19,7 @@ import { Icon } from '@components/Icon';
 import { Dropdown } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { downloadStarterPlugin } from './starterPlugin';
+import { downloadBlurSamplePlugin } from './blurSamplePlugin';
 import { useDiskInstall } from './useDiskInstall';
 import styles from './PluginsPanel.module.css';
 
@@ -70,6 +71,21 @@ export function AddPluginButton({
             label: 'Download starter template',
             icon: 'download',
             onSelect: () => downloadStarterPlugin(),
+          },
+          {
+            /*
+              A second sample, because the starter covers a disjoint half of
+              the API: a command, a panel, a keyframe write, and nothing at all
+              of the effect surface. Multi-pass chains, `scale`, `reads:
+              origin` and the generated uniform layout had no package anyone
+              could install to watch them work — which is a poor position for
+              the half of the platform that draws pixels.
+            */
+            type: 'item',
+            id: 'blur-sample',
+            label: 'Download effect sample (blur)',
+            icon: 'download',
+            onSelect: () => downloadBlurSamplePlugin(),
           },
         ]}
       />
