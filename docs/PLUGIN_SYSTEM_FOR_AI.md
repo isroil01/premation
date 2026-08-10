@@ -208,11 +208,17 @@ only in `motion-back`, so it lives there alone.
 
 ## Known gaps, stated
 
-- **Multi-pass renders, but `scale` and `reads` do not.** Up to four full-scale
-  passes each reading the one before it, executed by the renderer's existing
-  ping-pong chain. Downsampled passes and `origin` are in the format and refused
-  at install and publish — the render graph has only viewport-sized offscreen
-  targets and none to spare for a chain-long reservation.
+- **Multi-pass and `scale` render; `reads: origin` does not.** Up to four passes
+  at full, half or quarter scale, each reading the one before it, run by the
+  renderer's existing ping-pong chain. A scaled pass takes its texel size from
+  its OWN target, so the same tap count reaches `1/s` times further — that ratio
+  is what the GPU probe measures, because getting it wrong produces a blur of
+  the wrong width and no error. `origin` needs a target reserved across the
+  whole chain and is still refused at install and publish.
+- **`runtime: "native"` parses and is refused.** An unsandboxed in-realm tier is
+  designed (`runtimeTier.ts` — trust is per plugin, recorded with the tier and
+  version it was granted for, so a sandboxed plugin cannot become native on
+  update without re-asking) but the loader is not built.
 - **An effect-only plugin cannot decline to start a worker.**
   `activationEvents: []` normalises to `['onStartup']` — empty and absent both
   read as "no opinion", and the safe reading of no opinion is the API-1

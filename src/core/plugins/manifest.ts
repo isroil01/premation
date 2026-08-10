@@ -29,6 +29,7 @@ import { ICON_NAMES } from '@components/Icon/iconNames';
 import { parseLayerKinds, type LayerKindContribution } from './layerKindSchema';
 import { parseEffects, type EffectContribution } from './effectSchema';
 import { parseNet, type NetContribution } from './netSchema';
+import { RUNTIME_TIERS, DEFAULT_RUNTIME_TIER, type RuntimeTier } from './runtimeTier';
 
 /**
  * Host API generation. Bump on a BREAKING change to the plugin-facing API.
@@ -351,8 +352,32 @@ export interface PluginManifest {
    * a listing can say what a plugin will do on a better machine.
    */
   optional?: string[];
+  /**
+   * Which runtime this plugin asks for. Absent in the source means `sandboxed`;
+   * always present after parsing.
+   *
+   * `native` imports the entry module into the RENDERER REALM — synchronous
+   * handles to the scene graph, code that can run per frame, a real render
+   * pass, and no permission gate, because there is no boundary left to gate.
+   * It is what makes an After-Effects-class plugin possible here, and it is
+   * refused until the user has agreed for this specific plugin.
+   *
+   * Defaulted rather than required, so every manifest already published keeps
+   * its meaning. A field nobody wrote must never be able to mean
+   * "unrestricted". See `runtimeTier.ts`, especially the rule that a sandboxed
+   * plugin turning native on update has to ask again.
+   */
+  runtime: RuntimeTier;
   /** Package-relative path to the entry ES module. */
   main: string;
+  /**
+   * What the SANDBOXED tier may reach.
+   *
+   * Parsed and stored for a native plugin too, and enforced for neither more
+   * nor less than it always was: for `native` there is no gate to apply it at,
+   * so it becomes disclosure — what the author says they touch, which a
+   * listing shows and a reviewer can hold against what the code does.
+   */
   permissions: PluginPermission[];
   /** Always present after parsing — see `PluginContributes`. A legacy
    *  `panel: "panel.html"` string is normalised into `panels` here, so nothing
@@ -736,6 +761,31 @@ export function parseManifest(raw: unknown): ManifestResult {
   const requires = parseCapabilityList(r.requires, 'requires', errors);
   const optional = parseCapabilityList(r.optional, 'optional', errors);
 
+  /*
+    The runtime tier.
+
+    Absent means `sandboxed`, and that default is load-bearing rather than
+    convenient: every manifest published before this field existed must keep
+    meaning exactly what it meant, and the failure direction if this were
+    wrong is that a field nobody wrote silently grants unrestricted access.
+
+    An unknown value is refused rather than defaulted. "runtime": "sandbox" —
+    a plausible typo — must not quietly become the strict tier if the author
+    meant the loose one, nor the loose tier if they meant the strict one; and
+    a future tier name read by an older build is precisely the case where
+    guessing is worst.
+  */
+  let runtime: RuntimeTier = DEFAULT_RUNTIME_TIER;
+  if (r.runtime !== undefined) {
+    if (typeof r.runtime !== 'string' || !(RUNTIME_TIERS as readonly string[]).includes(r.runtime)) {
+      errors.push(
+        `"runtime" must be one of ${RUNTIME_TIERS.join(', ')} — omit it for the sandboxed default.`,
+      );
+    } else {
+      runtime = r.runtime as RuntimeTier;
+    }
+  }
+
   if (!isSafePath(r.main)) errors.push('"main" must be a package-relative path to the entry module.');
 
   const contributes = parseContributes(r.contributes, r.panel, name, apiVersion, errors);
@@ -796,6 +846,10 @@ export function parseManifest(raw: unknown): ManifestResult {
       version,
       description,
       apiVersion,
+      // Always written, never omitted-when-default. Every consumer asks which
+      // tier this is, and an optional field would make each of them re-derive
+      // the default — which is the single value that must not be got wrong.
+      runtime,
       main: r.main as string,
       ...(typeof r.author === 'string' && r.author.trim() ? { author: r.author.trim().slice(0, 80) } : {}),
       ...(typeof r.homepage === 'string' && /^https?:\/\//i.test(r.homepage)

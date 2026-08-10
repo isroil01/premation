@@ -1272,22 +1272,29 @@ in order. You never see a target.
 
 | Field | |
 |---|---|
-| `scale` | `1`, `0.5` or `0.25`. **Only `1` renders today** — see below |
+| `scale` | `1`, `0.5` or `0.25`. The target's downsample |
 | `reads` | `previous` (default), `origin`, `both`. **Only `previous` renders today** |
 
-> **`scale` and `reads` are refused at install and at publish.** They are in the
-> format and the renderer cannot execute them yet: every offscreen target it has
-> is viewport-sized, so there is nowhere to draw a downsampled pass, and the
-> chain ping-pongs between so few targets that the pass-0 input is gone before a
-> later pass could sample it as `origin`.
+**Use `scale` for anything with a large radius.** A pass at scale *s* renders
+into a target that fraction of the viewport, and — this is the part worth
+internalising — the same tap count then reaches `1/s` times further, because
+one texel of a quarter-size target is four pixels of the image. So a
+quarter-scale blur is both sixteen times cheaper *and* four times wider than the
+identical shader at full scale. Measured on hardware: 14 composition pixels of
+spread at full, 48 at quarter.
+
+`params.texelSize` is always your own target's, so you write the kernel once and
+it behaves correctly at every scale.
+
+> **`reads: origin` and `both` are refused at install and at publish.** Keeping
+> the pass-0 input alive needs a render target reserved across your whole chain,
+> and the effect pool has none spare. You get a clear error rather than a field
+> that silently binds whatever was last drawn there.
 >
-> You get a clear error naming the reason, rather than a field that silently
-> does nothing — a bloom rendered at full size is four times the cost you
-> budgeted, and neither your shader nor your eyes would tell you.
->
-> **What works: up to four full-scale passes, each reading the one before it.**
-> That covers separable blurs, multi-tap convolutions and iterative filters —
-> the things one `fs` function could not express.
+> **What works: up to four passes at full, half or quarter scale, each reading
+> the one before it.** Separable blurs, convolutions, iterative filters,
+> downsampled large-radius work. What still needs `origin` is the last step of a
+> bloom — adding the blurred copy back over the original.
 
 `reads` on the *first* pass is refused permanently, for a different reason: its
 `src` and its `origin` are the same texture, so no version will make that valid.
@@ -1411,10 +1418,9 @@ expressed as native layers.
   input is a worse liability than the thing it would protect.
 - **Four passes, and a cost budget of 3.** Enough for a separable blur (2); not
   enough for four full-scale passes (4).
-- **`scale` and `reads` are declared in the format but not rendered yet**, and
-  are refused with a reason rather than ignored. Downsampled passes need an
-  offscreen target smaller than the viewport; `origin` needs one reserved across
-  the whole chain. Neither exists in the render graph today.
+- **`reads: origin` is declared but not rendered yet**, and is refused with a
+  reason rather than ignored: it needs a render target reserved across the whole
+  chain and the effect pool has none spare. `scale` renders.
 - **One `layer` parameter per effect**, and it is shared by every pass rather
   than being per-pass.
 

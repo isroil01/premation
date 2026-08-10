@@ -771,7 +771,7 @@ mutually exclusive — an effect declaring both does not say which one draws.
 interface EffectPass {
   name: string;                              // camelCase, unique in the chain
   wgsl: string;                              // same one-`fs` contract, same validator
-  scale?: 1 | 0.5 | 0.25;                    // ⚠ only 1 is rendered — see below
+  scale?: 1 | 0.5 | 0.25;                    // target downsample, default 1
   reads?: 'previous' | 'origin' | 'both';    // ⚠ only 'previous' is rendered
 }
 ```
@@ -785,30 +785,45 @@ composes one shader per pass, `snapshotToFrameScene` emits one scene entry per
 pass, and `runEffectsChain` — which already ping-pongs for a layer carrying a
 blur then a glow — runs them in order. No new render mechanism was added.
 
-> ### ⚠ `scale` and `reads` are in the format and NOT rendered
+### `scale` — downsampled passes
+
+A pass declaring `scale: 0.5` or `0.25` renders into a target that fraction of
+the viewport, from a pool declared beside the backdrop-blur chain and in the
+same `rgba16float`. The upsample is free: whatever reads the result samples the
+smaller texture through a linear sampler.
+
+This is what makes a large blur affordable, and the reason is worth stating
+because it is not just "fewer pixels". A pass at scale *s* steps `1/(W·s)` in
+UV — `1/s` pixels of the original — so the **same tap count reaches further**.
+Verified on hardware: the sample blur spreads 14 composition pixels at full
+scale and 48 at quarter, from an identical shader.
+
+The texel size a pass receives comes from its own target, never the viewport.
+That is the one thing here that fails silently — a quarter-scale blur handed
+viewport texels steps a quarter as far as asked and looks merely soft, which an
+author debugs as their own kernel. The probe measures it as a ratio for exactly
+that reason.
+
+> ### ⚠ `reads: origin | both` is in the format and NOT rendered
 >
-> Both are parsed, budgeted, documented — and **refused at install and at
-> publish**, in both repositories, with a message naming the reason.
+> Parsed, budgeted and documented — and **refused at install and at publish**,
+> in both repositories, with the reason named.
 >
-> `scale`: the renderer's offscreen targets are a fixed, statically-declared set
-> and every one is viewport-sized. There is nowhere to draw a quarter-size pass.
+> The chain ping-pongs between a small pool, so the pass-0 input is overwritten
+> before a later pass could sample it. Keeping it alive needs a target reserved
+> across the whole chain, and the pool has none spare — it contends with the one
+> glow borrows for its wide lobe.
 >
-> `reads: origin | both`: the chain ping-pongs between a small pool, so the
-> pass-0 input is overwritten before a later pass could sample it. Keeping it
-> alive needs a target reserved across the whole chain, and the pool has none to
-> spare — it contends with the one glow borrows for its wide lobe.
+> Refused rather than ignored, because binding a reused texture would composite
+> against whatever was last drawn there: not a wrong picture so much as a random
+> one. Widening is backward-compatible in both directions — manifests refused
+> today start working, ones accepted today keep working — which is why `scale`
+> could ship without it.
 >
-> They are refused rather than ignored because accepting them and rendering at
-> full size, or binding a reused texture, is wrong output with no error: a bloom
-> four times the cost the author budgeted, or a composite against whatever was
-> last drawn there. Widening later is backward-compatible in both directions —
-> manifests that publish today keep working, ones refused today start working.
-> The reverse, shipping a field that silently does nothing and then making it
-> real, breaks every plugin that guessed around it.
->
-> **So what works today is: up to four full-scale passes, each reading the one
-> before it.** That is a separable blur, a multi-tap convolution, an iterative
-> sharpen — the bulk of what one `fs` function could not express.
+> **So today: up to four passes, at full, half or quarter scale, each reading
+> the one before it.** Separable blurs, multi-tap convolutions, iterative
+> filters, and downsampled large-radius work. What still needs `origin` is the
+> composite step of a bloom — adding the blurred copy back over the original.
 
 **Bindings per pass.** 0 uniform, 1 `src` (the previous pass's output, or the
 layer for pass 0), 2 `samp`, 3 the optional `layer` param texture, **4 optional

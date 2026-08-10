@@ -524,6 +524,29 @@ class PluginHost {
     // handful of paths that lead to it. A no-op once the registry has answered.
     this.checkRevocations();
 
+    /*
+      ★ The native tier is DECLARED but has no runtime yet.
+
+      `runtime: "native"` asks to be imported into this realm — synchronous
+      handles, per-frame code, no permission gate. The grammar understands it
+      (see `runtimeTier.ts`, which also carries the trust model and the rule
+      that a sandboxed plugin turning native on update must re-ask), but the
+      loader that would run it is not built.
+
+      Refused here rather than quietly started in the Worker. A native module
+      expects handles the sandbox cannot give it, so running it the safe way
+      would start something certain to fail in a way its author never saw — and
+      that reads as the platform being broken rather than as a missing feature.
+      Same reasoning as the refusal of `scale` and `reads` on effect passes.
+    */
+    if (entry.manifest.runtime === 'native') {
+      this.setError(
+        id,
+        'This plugin asks to run without the sandbox, which this build cannot do yet.',
+      );
+      return;
+    }
+
     let worker: Worker;
     try {
       worker = this.createWorker();

@@ -14,6 +14,7 @@
 import { create } from 'zustand';
 import { PluginDatabase } from '@core/services/PluginDatabase';
 import { parseManifest, type PluginManifest, type PluginPermission } from '@core/plugins/manifest';
+import type { NativeTrust } from '@core/plugins/runtimeTier';
 
 export interface InstalledPlugin {
   manifest: PluginManifest;
@@ -25,6 +26,22 @@ export interface InstalledPlugin {
   /** Exactly what the user approved. Re-approval is required when a new
    *  version asks for more — see `PluginHost.install`. */
   granted: PluginPermission[];
+  /**
+   * The user's decision to let this plugin run UNSANDBOXED.
+   *
+   * Absent for every sandboxed plugin, and absent for a native one that has
+   * not been agreed to yet — which is the state that keeps it from running.
+   * `granted` is the wrong home for this: that list is a set of bounded
+   * capabilities the host enforces one call at a time, and this is a single
+   * unbounded yes that removes the thing doing the enforcing. Storing it as
+   * another permission string would let any code path that widens a grant
+   * widen this too.
+   *
+   * Carries the tier and version it was given for. See `runtimeTier.ts` —
+   * a plugin that was sandboxed and turns native on update has to ask again,
+   * and that check reads these fields rather than the record's existence.
+   */
+  nativeTrust?: NativeTrust;
   enabled: boolean;
   installedAt: number;
   updatedAt: number;
@@ -232,6 +249,19 @@ interface PluginStore {
    *  — `PluginHost.setGranted` intersects before calling this. */
   setGranted(id: string, granted: PluginPermission[]): void;
   /**
+   * Record — or withdraw — the decision to let a plugin run unsandboxed.
+   *
+   * Deliberately its own action rather than a field on `setGranted`. That one
+   * narrows a bounded list and is called from several places; this grants the
+   * unbounded thing and should be greppable to exactly the surfaces that ask
+   * the question.
+   *
+   * `null` withdraws, which is what "Sandbox this plugin again" does. The
+   * plugin keeps working — as a sandboxed plugin, refused at whatever it was
+   * doing that needed more.
+   */
+  setNativeTrust(id: string, trust: NativeTrust | null): void;
+  /**
    * Append to a plugin's security log. See `InstalledPlugin.securityEvents`.
    *
    * A store action rather than a field the caller mutates, because the one
@@ -320,6 +350,21 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     const next = get().plugins.map((p) =>
       p.manifest.id === id ? { ...p, granted: [...granted], updatedAt: Date.now() } : p,
     );
+    saveMeta(next);
+    set({ plugins: next });
+  },
+
+  setNativeTrust: (id, trust) => {
+    const next = get().plugins.map((p) => {
+      if (p.manifest.id !== id) return p;
+      // Removed, not set to undefined-in-place: a key present with an
+      // undefined value survives `JSON.stringify` as an absent key anyway, but
+      // the in-memory record would still carry it and `'nativeTrust' in p`
+      // would answer wrong for anything that checks that way.
+      const { nativeTrust: _drop, ...rest } = p;
+      return trust ? { ...rest, nativeTrust: trust, updatedAt: Date.now() }
+        : { ...rest, updatedAt: Date.now() };
+    });
     saveMeta(next);
     set({ plugins: next });
   },
