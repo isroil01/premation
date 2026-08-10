@@ -42,7 +42,7 @@ import { parseProp, type LayerPropSchema } from './layerKindSchema';
 import { validateWgsl } from './wgslValidation';
 
 /** Types that can be a shader uniform — a VALUE in the parameter block. */
-export const EFFECT_UNIFORM_TYPES = ['number', 'color', 'boolean'] as const;
+export const EFFECT_UNIFORM_TYPES = ['number', 'color', 'boolean', 'point'] as const;
 export type EffectParamType = (typeof EFFECT_UNIFORM_TYPES)[number];
 
 /**
@@ -613,6 +613,7 @@ const WGSL_TYPE: Record<EffectParamType, string> = {
   number: 'f32',
   color: 'vec4<f32>',
   boolean: 'f32',
+  point: 'vec2<f32>',
 };
 
 /** Bytes each occupies, and the alignment it demands, under WGSL's rules. */
@@ -620,6 +621,18 @@ const WGSL_SIZE: Record<EffectParamType, { size: number; align: number }> = {
   number: { size: 4, align: 4 },
   color: { size: 16, align: 16 },
   boolean: { size: 4, align: 4 },
+  /*
+    A `vec2<f32>` is 8 bytes and aligns to 8, NOT to 4.
+
+    Worth stating because it is the one entry here where size and alignment
+    differ from each other in a way that matters: the block is sorted by
+    alignment descending, so a point lands between the vec4s and the scalars,
+    and a scalar declared before it leaves 4 bytes of padding the struct does
+    describe. Getting the alignment wrong instead — writing 4 — would put a
+    point on a 4-byte boundary, which WGSL does not permit and the driver
+    reports as a struct mismatch naming nothing the author wrote.
+  */
+  point: { size: 8, align: 8 },
 };
 
 /**
@@ -931,6 +944,21 @@ export function packParameters(
       for (let i = 0; i < 4; i++) view.setFloat32(offset + i * 4, rgba[i]!, true);
     } else if (type === 'boolean') {
       view.setFloat32(offset, value === true ? 1 : 0, true);
+    } else if (type === 'point') {
+      /*
+        Composition pixels, straight through — not normalised to UV.
+
+        The shader already has `params.texelSize`, so an author who wants UV
+        writes `p * params.texelSize` and one who wants pixels has them. The
+        reverse — normalising here — would be lossy in the case that matters:
+        a point outside the layer, which is ordinary for a light or a
+        displacement centre, and which no UV range describes without the
+        author knowing what the target size was.
+      */
+      const p = value as { x?: unknown; y?: unknown } | null | undefined;
+      const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      view.setFloat32(offset, n(p?.x), true);
+      view.setFloat32(offset + 4, n(p?.y), true);
     } else {
       view.setFloat32(offset, typeof value === 'number' && Number.isFinite(value) ? value : 0, true);
     }

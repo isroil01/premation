@@ -23,7 +23,7 @@
  *    something" test while banning exactly the chains it exists to enable.
  */
 
-import { parseEffects, chainCost, MAX_PASS_COST, composeEffectShader, effectSpreadFor } from './effectSchema';
+import { parseEffects, chainCost, MAX_PASS_COST, composeEffectShader, effectSpreadFor, packParameters } from './effectSchema';
 import type { EffectContribution } from './effectSchema';
 import {
   pluginEffectMaterial,
@@ -500,5 +500,99 @@ describe('evaluating it at the current parameters', () => {
     // when its declared minimum says otherwise.
     const e = effect({ param: 'radius', factor: 2.5 });
     expect(effectSpreadFor(e, { radius: -30 })).toBe(0);
+  });
+});
+
+/**
+ * `point` — one parameter an author drags, not two they type.
+ *
+ * A centre, an origin, a light position, a displacement direction: all one
+ * thing to the person using the effect. Spelling them as "Center X" and
+ * "Center Y" makes someone type coordinates for something they can see, and
+ * loses the pair the moment the alignment sort separates the two scalars.
+ * After Effects has had PF_ADD_POINT since the beginning for this reason.
+ */
+describe('the point parameter', () => {
+  const withPoint = (def: unknown) => parseOne({
+    shader: FS,
+    params: { centre: { type: 'point', default: def } },
+  });
+
+  it('accepts { x, y }', () => {
+    const { effect, errors } = withPoint({ x: 100, y: -40 });
+    expect(errors).toEqual([]);
+    expect(effect?.params.centre?.type).toBe('point');
+  });
+
+  it('refuses an [x, y] array', () => {
+    /*
+      An object, not a tuple, and refusing the tuple is the point. A
+      two-element array is the shape most easily got backwards, and a point
+      whose axes are swapped renders something plausible in the WRONG PLACE —
+      which reads as the effect being broken rather than the default being
+      transposed.
+    */
+    const { effect, errors } = withPoint([100, -40]);
+    expect(effect).toBeUndefined();
+    expect(errors.join(' ')).toMatch(/must be an object like/);
+  });
+
+  it('refuses a missing or non-finite axis', () => {
+    expect(withPoint({ x: 1 }).errors.join(' ')).toMatch(/needs a finite "y"/);
+    expect(withPoint({ x: Number.NaN, y: 0 }).errors.join(' ')).toMatch(/needs a finite "x"/);
+  });
+
+  it('allows a position outside the layer', () => {
+    // Not range-checked, deliberately: a light usually sits off the layer and
+    // a displacement centre often does. A position is not a magnitude.
+    expect(withPoint({ x: -5000, y: 99999 }).errors).toEqual([]);
+  });
+
+  it('becomes a vec2 in the generated struct', () => {
+    const { wgsl } = composeEffectShader(withPoint({ x: 0, y: 0 }).effect!, 0);
+    expect(wgsl).toContain('centre : vec2<f32>,');
+  });
+
+  it('★ packs as two floats in composition pixels, not normalised UV', () => {
+    /*
+      Straight through. The shader already has `params.texelSize`, so an author
+      wanting UV writes `p * params.texelSize` — while normalising HERE would be
+      lossy in the case that matters: a point outside the layer, which no UV
+      range describes without the author knowing the target size.
+    */
+    const effect = withPoint({ x: 0, y: 0 }).effect!;
+    const { layout } = composeEffectShader(effect, 0);
+    const buf = packParameters(layout.layout, layout.size, { centre: { x: 120.5, y: -8 } });
+    const at = layout.layout.find((m) => m.name === 'centre')!.offset;
+    const view = new DataView(buf);
+    expect(view.getFloat32(at, true)).toBeCloseTo(120.5);
+    expect(view.getFloat32(at + 4, true)).toBeCloseTo(-8);
+  });
+
+  it('packs a missing or malformed value as (0,0) rather than NaN', () => {
+    // A NaN in a uniform does not throw; it propagates through the shader and
+    // produces a layer that is entirely one colour, with nothing naming why.
+    const effect = withPoint({ x: 0, y: 0 }).effect!;
+    const { layout } = composeEffectShader(effect, 0);
+    const at = layout.layout.find((m) => m.name === 'centre')!.offset;
+    for (const bad of [undefined, null, 'nope', { x: 'a', y: 2 }]) {
+      const view = new DataView(packParameters(layout.layout, layout.size, { centre: bad }));
+      expect(Number.isFinite(view.getFloat32(at, true))).toBe(true);
+      expect(Number.isFinite(view.getFloat32(at + 4, true))).toBe(true);
+    }
+  });
+
+  it('is NOT animatable, like every non-scalar but colour', () => {
+    /*
+      Asserted so the limitation is visible rather than discovered. The
+      animation engine interpolates number, colour and boolean; a point would
+      need a two-channel track, which is real work in the timeline and the
+      graph editor rather than a schema entry.
+    */
+    const { errors } = parseOne({
+      shader: FS,
+      params: { centre: { type: 'point', default: { x: 0, y: 0 }, animatable: true } },
+    });
+    expect(errors.join(' ')).toMatch(/animatable/);
   });
 });

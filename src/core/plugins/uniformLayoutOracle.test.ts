@@ -104,6 +104,35 @@ const CASES: Array<{ name: string; params: Record<string, LayerPropSchema> }> = 
     name: 'an odd number of scalars, so the tail needs padding',
     params: { a: p('number'), b: p('number'), c: p('number') },
   },
+  /*
+    `point` is a `vec2<f32>`: 8 bytes, aligned to 8 — the only member whose
+    alignment is neither 4 nor 16, and therefore the only one that can land
+    mid-way through the descending sort and leave padding on BOTH sides.
+
+    A scalar before it forces 4 bytes of pad; a colour after it forces 8. Both
+    are cases the sort is supposed to prevent from mattering, and both are
+    checked here against an oracle that re-derives every offset from the WGSL
+    text rather than from the same code that produced it.
+  */
+  { name: 'one point', params: { centre: p('point') } },
+  {
+    name: 'a point between a colour and a scalar',
+    params: { tint: p('color'), centre: p('point'), amount: p('number') },
+  },
+  {
+    name: 'a scalar declared BEFORE a point',
+    params: { amount: p('number'), centre: p('point') },
+  },
+  {
+    name: 'two points, which pack without a gap between them',
+    params: { from: p('point'), to: p('point') },
+  },
+  {
+    name: 'a point among colours and scalars, declared worst-first',
+    params: {
+      a: p('number'), centre: p('point'), tint: p('color'), on: p('boolean'), b: p('number'),
+    },
+  },
 ];
 
 describe('★ the generated struct, laid out independently', () => {

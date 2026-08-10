@@ -2162,6 +2162,133 @@
           ]
         }
       }
+    },
+    {
+      "name": "api-5 effect with a point parameter",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "centre": {
+                  "type": "point",
+                  "default": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 point default given as an array",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "centre": {
+                  "type": "point",
+                  "default": [
+                    0,
+                    0
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 point default missing an axis",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "centre": {
+                  "type": "point",
+                  "default": {
+                    "x": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 point alongside a colour and a scalar",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "tint": {
+                  "type": "color",
+                  "default": "#ffffff"
+                },
+                "centre": {
+                  "type": "point",
+                  "default": {
+                    "x": 2,
+                    "y": 3
+                  }
+                },
+                "amount": {
+                  "type": "number",
+                  "default": 1
+                }
+              }
+            }
+          ]
+        }
+      }
     }
   ]
 }

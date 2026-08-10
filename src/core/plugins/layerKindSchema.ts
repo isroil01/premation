@@ -76,10 +76,24 @@ export const RENDER_STRATEGIES = ['none', 'proxy', 'shader'] as const;
  * reference when it builds an effect's bind group, and a kind has no bind
  * group, so a `layer` prop there would be a control that changes nothing.
  */
-export type LayerPropType = 'number' | 'string' | 'boolean' | 'enum' | 'color' | 'asset' | 'layer';
+/*
+ * `point` is a position in the composition, as `{ x, y }` in comp pixels.
+ *
+ * Its own type rather than two `number` properties, and the reason is what the
+ * user sees: a centre, an origin, a light position or a displacement direction
+ * is ONE thing they want to drag, and spelling it as "Center X" and "Center Y"
+ * makes them type coordinates for something they can see on screen. After
+ * Effects has had `PF_ADD_POINT` since the beginning for exactly this.
+ *
+ * It is also one `vec2` in the uniform block rather than two `f32`s that the
+ * author has to remember to declare adjacently and hope the alignment sort
+ * keeps together.
+ */
+export type LayerPropType =
+  'number' | 'string' | 'boolean' | 'enum' | 'color' | 'asset' | 'layer' | 'point';
 
 export const LAYER_PROP_TYPES = [
-  'number', 'string', 'boolean', 'enum', 'color', 'asset', 'layer',
+  'number', 'string', 'boolean', 'enum', 'color', 'asset', 'layer', 'point',
 ] as const;
 
 /**
@@ -297,6 +311,27 @@ function defaultProblem(t: LayerPropType, value: unknown, schema: LayerPropSchem
       // reaches it having never been checked is the case worth preventing.
       if (typeof value !== 'string') return 'must be a colour string.';
       return /^#[0-9a-fA-F]{3,8}$|^rgba?\(/.test(value) ? null : 'must be a colour like "#ff8800" or "rgba(…)".';
+    case 'point': {
+      /*
+        `{ x, y }`, both finite, in composition pixels.
+
+        An object rather than `[x, y]` because a two-element array is the shape
+        most easily got backwards — and a point whose axes are swapped renders
+        something plausible in the wrong place, which reads as the effect being
+        wrong rather than the default being wrong.
+
+        Not range-checked against `min`/`max`. A point is a position, and a
+        position outside the layer is ordinary: the centre of a displacement
+        can sit off-frame, and a light usually does.
+      */
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return 'must be an object like { "x": 0, "y": 0 }.';
+      }
+      const p = value as { x?: unknown; y?: unknown };
+      if (typeof p.x !== 'number' || !Number.isFinite(p.x)) return 'needs a finite "x".';
+      if (typeof p.y !== 'number' || !Number.isFinite(p.y)) return 'needs a finite "y".';
+      return null;
+    }
     default:
       return null;
   }
