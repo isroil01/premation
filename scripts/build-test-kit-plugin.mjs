@@ -84,10 +84,14 @@ const COMPOSITE = `
 /**
  * Brighten around a point.
  *
- * `uv / texelSize` is `uv * targetSize` — pixel coordinates — so the point is
- * compared in the same composition pixels it is authored in. Moving the X/Y
- * fields must move the bright spot; if the vec2 were packed at the wrong
- * offset the spot would sit somewhere unrelated or not appear at all.
+ * `uv / texelSize` is `uv * targetSize` — pixel coordinates in THIS PASS'S
+ * TARGET, which on the 2D path is the composition, and on the 3D path is the
+ * layer's padded quad. So "composition pixels" is true of a 2D layer and only
+ * approximately true of a 3D one; the default below is centred for a 960×540
+ * comp and will sit off-centre on a 1080p one. That is fine for what this
+ * proves — moving the X/Y fields must move the bright spot. If the vec2 were
+ * packed at the wrong offset it would not move at all, or would jump with the
+ * Radius slider instead.
  */
 const SPOTLIGHT = `
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
@@ -200,10 +204,15 @@ column on the right.
 | 0 · Edges | The ordinary single-pass path still works | nothing happens at all — then the problem is not the new work |
 | 1 · Blur | A multi-pass chain runs BOTH passes, and \`texelSize\` arrived | it blurs in one axis only, or not at all |
 | 2 · Bloom | Quarter-scale passes, and \`reads: "both"\` | the layer turns into a soft smear with no sharp content — that is the composite adding the blur to itself instead of to the original |
-| 3 · Spotlight | A \`point\` parameter packs as a vec2 in composition pixels | the bright spot ignores the Centre X/Y fields, or sits somewhere unrelated |
+| 3 · Spotlight | A \`point\` parameter packs as a vec2, 8-byte aligned, at offset 96 | the bright spot does not move when you change Centre X/Y, or it jumps when you drag Radius instead |
 
-Turn the Blur radius up to 20+ on a 3D layer to check the margin: the blur
-should fade out smoothly rather than stopping at a hard rectangular edge.
+The Centre default (480, 270) is centred for a 960×540 composition — on a
+1080p one the spot starts in the upper left. That is expected: the coordinate
+is in the effect target's pixels, which is the composition on a 2D layer.
+
+Turn the Blur radius up to 20+ on a 3D layer to check the declared spread: the
+blur should fade out smoothly rather than stopping at a hard rectangular edge.
+Blur declares \`spread: radius × 2.5\` (50px at radius 20) and Bloom \`× 4\`.
 `;
 
 /* ── validate with the real parser, then write ─────────────────────────────── */
