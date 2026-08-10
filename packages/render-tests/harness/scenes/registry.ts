@@ -25,6 +25,7 @@ import { glassScenes } from './glass';
 import { rigScenes } from './rig';
 import { alphaInterpScenes } from './alphaInterp';
 import { keyframeFamilyScenes } from './keyframeFamilies';
+import { pluginEffectScenes } from './pluginEffects';
 
 export const SCENES: Scene[] = [
   // Anchors + fill probes.
@@ -54,4 +55,7 @@ export const SCENES: Scene[] = [
   ...glassScenes,
   ...alphaInterpScenes,
   ...keyframeFamilyScenes,
+  // Plugin effects. The only scenes that render a shader the host did not
+  // write, and the only place the plugin path is exercised end to end.
+  ...pluginEffectScenes,
 ];

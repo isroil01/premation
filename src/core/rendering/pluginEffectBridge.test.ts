@@ -60,7 +60,7 @@ const single = (): EffectContribution => ({
   label: 'Tint',
   params: { amount: { type: 'number', label: 'Amount', default: 1, min: 0, max: 2 } },
   shader: FRAGMENT,
-} as EffectContribution);
+} as unknown as EffectContribution);
 
 const chain = (): EffectContribution => ({
   id: 'blur',
@@ -70,7 +70,7 @@ const chain = (): EffectContribution => ({
     { name: 'horizontal', wgsl: FRAGMENT },
     { name: 'vertical', wgsl: FRAGMENT, reads: 'previous' },
   ],
-} as EffectContribution);
+} as unknown as EffectContribution);
 
 afterEach(() => unregisterEffects(PLUGIN));
 
