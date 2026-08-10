@@ -208,13 +208,14 @@ only in `motion-back`, so it lives there alone.
 
 ## Known gaps, stated
 
-- **Multi-pass and `scale` render; `reads: origin` does not.** Up to four passes
-  at full, half or quarter scale, each reading the one before it, run by the
-  renderer's existing ping-pong chain. A scaled pass takes its texel size from
-  its OWN target, so the same tap count reaches `1/s` times further — that ratio
-  is what the GPU probe measures, because getting it wrong produces a blur of
-  the wrong width and no error. `origin` needs a target reserved across the
-  whole chain and is still refused at install and publish.
+- **Multi-pass, `scale` and `reads: origin` all render.** Four passes, each at
+  full/half/quarter scale, each reading the previous pass or the chain's input,
+  run by the renderer's existing ping-pong chain. A scaled pass takes its texel
+  size from its OWN target, so the same tap count reaches `1/s` further — that
+  ratio is what the GPU probe measures, because getting it wrong gives a blur of
+  the wrong width and no error. `origin` is blitted to a DEDICATED target before
+  pass 0 and bound at 4; dedicated so a chain's legal length does not depend on
+  what else is stacked on the layer.
 - **`runtime: "native"` parses and is refused.** An unsandboxed in-realm tier is
   designed (`runtimeTier.ts` — trust is per plugin, recorded with the tier and
   version it was granted for, so a sandboxed plugin cannot become native on

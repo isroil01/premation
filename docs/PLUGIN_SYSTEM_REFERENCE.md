@@ -772,7 +772,7 @@ interface EffectPass {
   name: string;                              // camelCase, unique in the chain
   wgsl: string;                              // same one-`fs` contract, same validator
   scale?: 1 | 0.5 | 0.25;                    // target downsample, default 1
-  reads?: 'previous' | 'origin' | 'both';    // ⚠ only 'previous' is rendered
+  reads?: 'previous' | 'origin' | 'both';    // default 'previous'
 }
 ```
 
@@ -804,26 +804,31 @@ viewport texels steps a quarter as far as asked and looks merely soft, which an
 author debugs as their own kernel. The probe measures it as a ratio for exactly
 that reason.
 
-> ### ⚠ `reads: origin | both` is in the format and NOT rendered
->
-> Parsed, budgeted and documented — and **refused at install and at publish**,
-> in both repositories, with the reason named.
->
-> The chain ping-pongs between a small pool, so the pass-0 input is overwritten
-> before a later pass could sample it. Keeping it alive needs a target reserved
-> across the whole chain, and the pool has none spare — it contends with the one
-> glow borrows for its wide lobe.
->
-> Refused rather than ignored, because binding a reused texture would composite
-> against whatever was last drawn there: not a wrong picture so much as a random
-> one. Widening is backward-compatible in both directions — manifests refused
-> today start working, ones accepted today keep working — which is why `scale`
-> could ship without it.
->
-> **So today: up to four passes, at full, half or quarter scale, each reading
-> the one before it.** Separable blurs, multi-tap convolutions, iterative
-> filters, and downsampled large-radius work. What still needs `origin` is the
-> composite step of a bloom — adding the blurred copy back over the original.
+### `reads: origin` — compositing against the original
+
+The chain's pass-0 input is blitted into `PLUGIN_ORIGIN` before pass 0 and
+bound at binding 4 for the passes that ask. That is what a composite step
+needs: a bloom adds its blurred copy back over the *original*, which by then is
+several ping-pongs ago and overwritten.
+
+Its own target, not a reservation out of the effect pool. Borrowing would
+contend with the slot glow takes for its wide lobe, and would make a chain's
+legal length depend on what else is stacked on the layer — a plugin that worked
+alone and broke when a user added a glow beneath it.
+
+Captured by blit rather than by remembering a name, because `curTex` at that
+moment belongs to the ping-pong pool and is drawn over within two passes. Taken
+only when some pass in the chain declares it: capturing always would cost a
+full-screen blit per plugin effect per frame, for every separable blur that
+never looks at it.
+
+`reads` on pass 0 is refused permanently and separately — its `src` and its
+`origin` are the same texture, so naming one is a statement no renderer can
+satisfy.
+
+**A full chain is now expressible:** four passes, each at full, half or quarter
+scale, each reading the previous pass or the original. Separable blurs,
+convolutions, iterative filters, downsampled large-radius work, and bloom.
 
 **Bindings per pass.** 0 uniform, 1 `src` (the previous pass's output, or the
 layer for pass 0), 2 `samp`, 3 the optional `layer` param texture, **4 optional

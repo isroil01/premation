@@ -1273,7 +1273,7 @@ in order. You never see a target.
 | Field | |
 |---|---|
 | `scale` | `1`, `0.5` or `0.25`. The target's downsample |
-| `reads` | `previous` (default), `origin`, `both`. **Only `previous` renders today** |
+| `reads` | `previous` (default), `origin`, `both`. `origin` is the chain's input, at binding 4 |
 
 **Use `scale` for anything with a large radius.** A pass at scale *s* renders
 into a target that fraction of the viewport, and — this is the part worth
@@ -1286,15 +1286,25 @@ spread at full, 48 at quarter.
 `params.texelSize` is always your own target's, so you write the kernel once and
 it behaves correctly at every scale.
 
-> **`reads: origin` and `both` are refused at install and at publish.** Keeping
-> the pass-0 input alive needs a render target reserved across your whole chain,
-> and the effect pool has none spare. You get a clear error rather than a field
-> that silently binds whatever was last drawn there.
->
-> **What works: up to four passes at full, half or quarter scale, each reading
-> the one before it.** Separable blurs, convolutions, iterative filters,
-> downsampled large-radius work. What still needs `origin` is the last step of a
-> bloom — adding the blurred copy back over the original.
+**`reads: "origin"` gives you `origin` at binding 4** — the image as it entered
+your chain, before any of your passes touched it. That is what a composite step
+needs: a bloom adds its blurred copy back *over the original*, and by the time
+you get there the original is several ping-pongs ago.
+
+```wgsl
+// The last pass of a bloom.
+let base  = textureSample(origin, samp, uv);
+let light = textureSample(src,    samp, uv);
+return base + light * params.intensity;
+```
+
+`both` is the same binding; use it when you read `src` as well, which a
+composite almost always does. `reads` on the *first* pass is refused
+permanently — its `src` and its `origin` are the same texture.
+
+**A full chain: four passes, each at full, half or quarter scale, each reading
+the previous pass or the original.** Separable blurs, convolutions, iterative
+filters, downsampled large-radius work, and bloom.
 
 `reads` on the *first* pass is refused permanently, for a different reason: its
 `src` and its `origin` are the same texture, so no version will make that valid.
@@ -1418,9 +1428,8 @@ expressed as native layers.
   input is a worse liability than the thing it would protect.
 - **Four passes, and a cost budget of 3.** Enough for a separable blur (2); not
   enough for four full-scale passes (4).
-- **`reads: origin` is declared but not rendered yet**, and is refused with a
-  reason rather than ignored: it needs a render target reserved across the whole
-  chain and the effect pool has none spare. `scale` renders.
+- **A chain gets one `origin`, not one per pass.** It is the image entering the
+  whole chain, captured before pass 0 — not "the pass before the previous one".
 - **One `layer` parameter per effect**, and it is shared by every pass rather
   than being per-pass.
 
