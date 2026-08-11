@@ -106,4 +106,39 @@ describe('animated SVG import cost', () => {
     const shapes = parseSvgToShapes(cssSpinner(3), { maxDurationSeconds: 10 });
     for (const s of shapes) expect(s.animation!.loop).toBe('cycle');
   });
+
+  it('resolves a big presentation stylesheet in linear time', () => {
+    // Reading `<style>` for fills as well as for animation means one
+    // `querySelectorAll` per rule that declares one. That is the cheap shape —
+    // the expensive shape is asking every element whether it matches every
+    // rule, which is quadratic and is what a 200-rule icon used to cost the
+    // ANIMATION reader before it was restructured. This guards the new pass
+    // against sliding back into it, on exactly the markup that provokes it: a
+    // per-path class rule set, which is what Illustrator and Figma emit.
+    const sheet = (n: number): string => {
+      let css = '<style>@keyframes spin{to{transform:rotate(360deg)}}\n.spin{animation:spin 2s linear infinite}\n';
+      for (let i = 0; i < n; i++) css += `.st${i}{fill:#0000${(i % 100).toString().padStart(2, '0')};stroke:#111;stroke-width:1}\n`;
+      css += '</style>';
+      let body = '<g class="spin">';
+      for (let i = 0; i < n; i++) body += `<rect class="st${i}" x="${i % 40}" y="${Math.floor(i / 40)}" width="3" height="3"/>`;
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">${css}${body}</g></svg>`;
+    };
+    const time = (n: number): number => {
+      const svg = sheet(n);
+      const started = Date.now();
+      const shapes = parseSvgToShapes(svg, { maxDurationSeconds: 10 });
+      const elapsed = Date.now() - started;
+      // The rules must actually have been applied — a pass that matched nothing
+      // would be fast and useless.
+      expect(shapes[1]!.strokeColor).toBe('#111');
+      return elapsed;
+    };
+    time(75); // warm the JIT, so the ratio measures the algorithm not startup
+    const small = Math.max(1, time(75));
+    const large = time(300);
+    // 4× the rules AND 4× the elements. Linear is ~4×, quadratic ~16×. Loose,
+    // because this is wall-clock on a shared machine: it is here to catch an
+    // order-of-growth change, not to pin a duration.
+    expect(large / small).toBeLessThan(10);
+  });
 });

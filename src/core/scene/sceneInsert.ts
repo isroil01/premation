@@ -18,7 +18,12 @@ import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
-import { parseSvgToShapes, isSimpleSvg, MAX_VECTOR_SHAPES, type ParsedShape } from '../../utils/svgParser';
+import {
+  parseSvgToShapes, isSimpleSvg, MAX_VECTOR_SHAPES,
+  type ParsedShape, type SvgTextMeasurer, type SvgPathIntersector, type SubPath as SvgSubPath,
+} from '../../utils/svgParser';
+import { flattenOutline, booleanPolygons } from '@core/scene/mergePaths';
+import { measureTextSize, measureTextBoxes, DEFAULT_LINE_HEIGHT, type MeasuredTextStyle } from '@core/text/measureText';
 import { scanSvgAnimations, type SvgShapeAnimation } from '../../utils/svgAnimation';
 import { defaultAnimation } from '@motion/animation';
 import { bezierCorner as corner } from '@motion/workspace';
@@ -37,6 +42,7 @@ import { sanitizeSvg } from '@core/svg/svgSanitize';
 import { scanSvgCapabilities, isAnimatedSvg, svgCapabilityWarnings, type SvgCapabilities } from '@core/svg/svgCapabilities';
 import { makeSvgComponent } from '@core/svg/svgLayer';
 import { setContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
+import { applyAlpha } from '@core/paint/fill';
 
 
 let seq = 0;
@@ -338,7 +344,11 @@ export function insertSvgShapeGroup(
   // Callers that already parsed (to decide the route) pass the result back in;
   // parsing is the expensive half of an import and it is deterministic.
   const shapes = opts?.shapes
-    ?? parseSvgToShapes(svgText, { maxDurationSeconds: comp.durationSeconds });
+    ?? parseSvgToShapes(svgText, {
+      maxDurationSeconds: comp.durationSeconds,
+      measureText: measureSvgText,
+      intersectPaths: intersectSvgPaths,
+    });
   if (shapes.length === 0) return null;
 
   const rootId = activeCompRootId();
@@ -395,26 +405,95 @@ export function insertSvgShapeGroup(
     const relY = (s.centerY - svgCy) * k;
     const transform = { position: { x: relX, y: relY }, rotation: 0, scale: { x: 1, y: 1 } };
 
-    if (s.textContent) {
+    const layerOpacity = Math.round(clamp01(s.opacity) * 100);
+
+    if (s.imageHref) {
+      // An embedded bitmap becomes a real image layer. It was dropped before,
+      // so any animated SVG built around a photo imported with a hole in it.
+      const components: SceneNode['components'] = [
+        {
+          id: `${pathId}_t`,
+          type: 'Transform',
+          props: {
+            [SCENE_KIND_PROP]: 'image',
+            x: relX,
+            y: relY,
+            rotation: 0,
+            width: s.width * k,
+            height: s.height * k,
+            src: s.imageHref,
+          },
+        },
+        { id: `${pathId}_s`, type: 'Style', props: { opacity: layerOpacity } },
+      ];
+      defaultSceneGraph.addChild(group.id, { id: pathId, name: s.name, parent: group.id, children: [], transform, visible: true, locked: false, components });
+    } else if (s.textContent) {
       const components: SceneNode['components'] = [
         { id: `${pathId}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'text', x: relX, y: relY, rotation: 0, width: s.width * k, height: s.height * k } },
-        { id: `${pathId}_txt`, type: 'Text', props: { content: s.textContent, fontSize: (s.fontSize ?? 14) * k, fill: s.fill && s.fill !== 'none' ? s.fill : '#ffffff', opacity: 100 } },
+        {
+          id: `${pathId}_txt`,
+          type: 'Text',
+          props: {
+            content: s.textContent,
+            fontSize: (s.fontSize ?? 16) * k,
+            fill: s.fill && s.fill !== 'none' ? s.fill : '#ffffff',
+            opacity: layerOpacity,
+            // The face the file asked for. Dropping these rendered every
+            // imported label in the app's default font at the default weight —
+            // the most visible way a text layer can be wrong while every
+            // number around it is right.
+            ...(s.fontFamily ? { fontFamily: s.fontFamily } : {}),
+            ...(s.fontWeight ? { fontWeight: s.fontWeight } : {}),
+            ...(s.fontStyle ? { fontStyle: s.fontStyle } : {}),
+          },
+        },
       ];
       defaultSceneGraph.addChild(group.id, { id: pathId, name: s.name, parent: group.id, children: [], transform, visible: true, locked: false, components });
     } else {
+      const scale = (list: ReadonlyArray<{ x: number; y: number; inX: number; inY: number; outX: number; outY: number }>): typeof scaledPoints =>
+        list.map((p) => ({ x: p.x * k, y: p.y * k, inX: p.inX * k, inY: p.inY * k, outX: p.outX * k, outY: p.outY * k }));
       const scaledPoints = s.points.map((p) => ({ x: p.x * k, y: p.y * k, inX: p.inX * k, inY: p.inY * k, outX: p.outX * k, outY: p.outY * k }));
+      // A multi-run path is stored as RUNS, never as the flat shorthand: the
+      // two are mutually exclusive (raster/subpaths.ts) and the flat form is
+      // what filled every donut's hole.
+      const scaledRuns = s.subpaths?.map((run) => ({ points: scale(run.points), open: !run.closed }));
       const components: SceneNode['components'] = [
         { id: `${pathId}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: relX, y: relY, rotation: 0, width: s.width * k, height: s.height * k } },
         {
           id: `${pathId}_s`,
           type: 'Style',
           props: {
-            opacity: 100,
-            fill: s.fill,
-            ...(s.strokeColor ? { stroke: { color: s.strokeColor, width: (s.strokeWidth ?? 2) * k, opacity: 1, cap: 'butt', join: 'miter', align: 'center', dash: [] } } : {}),
+            opacity: layerOpacity,
+            fill: svgFillToCss(s.fill, s.fillOpacity),
           },
         },
-        { id: `${pathId}_g`, type: 'Geometry', props: { points: scaledPoints, ...(s.closed ? {} : { open: true }) } },
+        // THE STROKE LIVES ON `fx`, NOT ON `Style`. `readNodeStroke` — the only
+        // reader buildSnapshot has — looks at `fx.props.stroke`, so the stroke
+        // written onto the Style component was picked up by nothing at all:
+        // every imported outline icon rendered with no stroke, which on a
+        // `fill="none"` file means it rendered as nothing.
+        ...(s.strokeColor
+          ? [{
+            id: `${pathId}_fx`,
+            type: 'fx' as const,
+            props: {
+              stroke: {
+                enabled: true,
+                color: s.strokeColor,
+                width: (s.strokeWidth ?? 1) * k,
+                opacity: clamp01(s.strokeOpacity),
+                cap: 'butt', join: 'miter', align: 'center', dash: [],
+              },
+            },
+          }]
+          : []),
+        {
+          id: `${pathId}_g`,
+          type: 'Geometry',
+          props: scaledRuns
+            ? { subpaths: scaledRuns }
+            : { points: scaledPoints, ...(s.closed ? {} : { open: true }) },
+        },
       ];
       defaultSceneGraph.addChild(group.id, { id: pathId, name: s.name, parent: group.id, children: [], transform, visible: true, locked: false, components });
     }
@@ -429,6 +508,106 @@ export function insertSvgShapeGroup(
   useSelectionStore.getState().set([group.id]);
   bumpScene();
   return group.id;
+}
+
+function clamp01(n: number | undefined): number {
+  return n === undefined || !Number.isFinite(n) ? 1 : n < 0 ? 0 : n > 1 ? 1 : n;
+}
+
+/**
+ * The app's own text measurer, handed to the SVG parser.
+ *
+ * The parser cannot reach `@core` (nothing in `src/utils` does) and measuring
+ * needs a canvas, so it asks for this instead. Returning null — no DOM, or a
+ * runtime with no text metrics — simply leaves text at its unmeasured
+ * placeholder box rather than shifting it by a guess.
+ */
+export const measureSvgText: SvgTextMeasurer = (t) => {
+  const style: MeasuredTextStyle = {
+    content: t.content,
+    fontSize: t.fontSize,
+    fontFamily: t.fontFamily ?? 'Inter',
+    fontWeight: t.fontWeight ?? '400',
+    fontStyle: t.fontStyle ?? 'normal',
+    letterSpacing: 0,
+    // The same default `readMeasuredTextStyle` will apply at render time, since
+    // the Text component this creates does not set one — measure and draw have
+    // to agree or the box is the wrong height.
+    lineHeight: DEFAULT_LINE_HEIGHT,
+    paragraphSpacing: 0,
+  };
+  const size = measureTextSize(style);
+  const boxes = measureTextBoxes(style);
+  if (!size || !boxes) return null;
+  return { advance: boxes.advance, width: size.w, height: size.h, baselineOffset: boxes.baselineOffset };
+};
+
+/**
+ * Cuts a shape's runs at a clip region, for the SVG parser.
+ *
+ * Injected for the same reason the measurer is: `polygon-clipping` lives behind
+ * `@core/scene/mergePaths` and nothing in `src/utils` reaches into `@core`.
+ *
+ * Flattening is the honest cost — `polygon-clipping` works on polygons, so a
+ * clipped circle comes back as a fine-grained polygon. Merge Paths already
+ * makes exactly that trade, and the alternative on offer was dropping the clip
+ * entirely and letting the shape spill past its boundary.
+ */
+export const intersectSvgPaths: SvgPathIntersector = (subject, clip) => {
+  const toPolygon = (runs: readonly SvgSubPath[]): number[][][] => runs
+    .map((r) => {
+      const ring = flattenOutline(r.points, 8).map((p) => [p.x, p.y]);
+      if (ring.length < 3) return null;
+      // polygon-clipping wants each ring closed.
+      ring.push([ring[0]![0]!, ring[0]![1]!]);
+      return ring;
+    })
+    .filter((r): r is number[][] => r !== null);
+
+  const a = toPolygon(subject);
+  const b = toPolygon(clip);
+  if (a.length === 0 || b.length === 0) return null;
+  let result;
+  try {
+    result = booleanPolygons([a as never, b as never], 'intersect');
+  } catch {
+    // Self-intersecting input can make the clipper throw. Keeping the shape
+    // uncut is a smaller error than losing it.
+    return null;
+  }
+  const out: SvgSubPath[] = [];
+  for (const poly of result) {
+    for (const ring of poly) {
+      // Drop the repeated closing vertex — a SubPath is implicitly closed.
+      const pts = ring.slice(0, ring.length > 1
+        && ring[0]![0] === ring[ring.length - 1]![0]
+        && ring[0]![1] === ring[ring.length - 1]![1] ? -1 : undefined);
+      if (pts.length < 3) continue;
+      out.push({ points: pts.map((p) => corner(p[0]!, p[1]!)), closed: true });
+    }
+  }
+  return out;
+};
+
+/**
+ * An SVG paint as something Canvas2D will actually accept.
+ *
+ * `fill="none"` used to be stored verbatim, and `ctx.fillStyle = 'none'` is not
+ * a parse error — the spec says an invalid assignment is IGNORED, so the
+ * context kept whatever colour it had last (black, on a fresh one) and every
+ * stroke-only outline icon was painted as a solid black blob. `transparent` is
+ * a real colour that paints nothing, which is what the file asked for.
+ *
+ * `fill-opacity` folds into the colour's own alpha. Named colours are left
+ * alone: `applyAlpha` reads them as opaque black, and a slightly-too-opaque
+ * fill is a far smaller error than a black one.
+ */
+function svgFillToCss(fill: string | undefined, fillOpacity: number | undefined): string {
+  if (!fill || fill === 'none') return 'transparent';
+  const a = clamp01(fillOpacity);
+  if (a >= 1) return fill;
+  if (a <= 0) return 'transparent';
+  return /^#|^rgba?\(/i.test(fill.trim()) ? applyAlpha(fill, a) : fill;
 }
 
 /**
@@ -1147,15 +1326,17 @@ function isSvgAsset(asset: ImportedAsset): boolean {
  * The features the translator does not cover (motion paths, colour animation,
  * geometry morphs, event-driven `begin`) are silently absent otherwise — the
  * user would just see part of their file not moving and have no idea why.
+ *
+ * `unsupported` comes from the PARSE the caller already did, not a fresh scan:
+ * some of what fails to convert is only discovered while converting (a
+ * `translateX(100%)` that resolves to no motion, a keyframe budget that ran
+ * out), and a re-scan cannot see any of it.
  */
-function reportSvgAnimation(svgText: string, name: string): void {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgText, 'image/svg+xml');
-  if (doc.getElementsByTagName('parsererror').length > 0) return;
-  const { anims, unsupported } = scanSvgAnimations(doc);
-  if (anims.length === 0 && unsupported.size === 0) return;
+function reportSvgAnimation(name: string, converted: boolean, unsupported: ReadonlySet<string>): void {
+  const anims = converted ? 1 : 0;
+  if (anims === 0 && unsupported.size === 0) return;
 
-  if (anims.length > 0 && unsupported.size === 0) {
+  if (anims > 0 && unsupported.size === 0) {
     useUIStore.getState().notify({
       level: 'success',
       message: `“${name}” imported with its animation as editable keyframes.`,
@@ -1166,7 +1347,7 @@ function reportSvgAnimation(svgText: string, name: string): void {
   const skipped = [...unsupported].slice(0, 3).join(', ');
   useUIStore.getState().notify({
     level: 'warning',
-    message: anims.length > 0
+    message: anims > 0
       ? `“${name}” imported with keyframes, but some animation could not be converted (${skipped}).`
       : `“${name}” imported as shapes; its animation could not be converted (${skipped}).`,
     durationMs: 6000,
@@ -1265,8 +1446,12 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
         // Animated: translate to keyframes, exactly as before.
         // Unrolled only as far as the composition can play — keyframes past the
         // end of the comp are cost with no possible benefit.
+        const unsupported = new Set<string>();
         const shapes = parseSvgToShapes(svgText, {
           maxDurationSeconds: useCompositionStore.getState().durationSeconds,
+          unsupportedOut: unsupported,
+          measureText: measureSvgText,
+          intersectPaths: intersectSvgPaths,
         });
         const convertible = shapes.some((s) => s.animation);
         // ANIMATION OUTRANKS STATIC FIDELITY. A gradient flattened to its first
@@ -1280,13 +1465,17 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
           const id = insertSvgShapeGroup(svgText, asset.name, { targetSize: size, shapes });
           if (id) {
             if (degraded) {
+              const also = unsupported.size > 0 ? ` Not converted: ${[...unsupported].slice(0, 3).join(', ')}.` : '';
+              // Names only what is STILL lost. Clip paths are cut into the
+              // geometry now and `<image>` becomes a real image layer, so
+              // listing either here would describe a behaviour that is gone.
               useUIStore.getState().notify({
                 level: 'warning',
-                message: `“${asset.name}” imported with its animation as keyframes. Gradients, masks and filters are flattened to solid fills — adjust them in the inspector.`,
+                message: `“${asset.name}” imported with its animation as keyframes. Gradients, masks and filters are flattened to solid fills — adjust them in the inspector.${also}`,
                 durationMs: 7000,
               });
             } else {
-              reportSvgAnimation(svgText, asset.name);
+              reportSvgAnimation(asset.name, convertible, unsupported);
             }
             return; // editable vector shapes — fills/strokes/paths/keyframes live
           }
@@ -1295,10 +1484,11 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
         // still the better outcome than a flat bitmap — it keeps full static
         // fidelity and leaves Convert to Editable Shapes available — but the
         // animation genuinely will not play, so say so.
+        const blockers = unsupported.size > 0 ? [...unsupported] : svgAnimationBlockers(svgText);
         const id = insertSvgLayer(svgText, asset.name, {
           capabilities: caps,
           extraWarning:
-            `its animation could not be converted (${svgAnimationBlockers(svgText).slice(0, 3).join(', ') || 'unsupported features'}), so it imports static. ` +
+            `its animation could not be converted (${blockers.slice(0, 3).join(', ') || 'unsupported features'}), so it imports static. ` +
             'A Lottie/JSON export keeps the animation.',
         });
         if (id) return;

@@ -94,7 +94,12 @@ function geomPath(parent: string, id: string, pts: Pt[], stroke: string, width: 
     id, name: id, parent, children: [], visible: true, locked: false, transform: tf(CX, CY),
     components: [
       { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: CX, y: CY, rotation: 0 } },
-      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: 'rgba(0,0,0,0)', stroke: { color: stroke, width, opacity: 1, cap: 'round', join: 'round', align: 'center', dash: [] } } },
+      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: 'rgba(0,0,0,0)' } },
+      // The stroke belongs on `fx`: `readNodeStroke` (buildSnapshot's only
+      // reader) looks at `fx.props.stroke`, so a stroke on the Style component
+      // is read by nothing. These paths have a transparent fill, so that made
+      // them draw NOTHING at all.
+      { id: `${id}_fx`, type: 'fx', props: { stroke: { enabled: true, color: stroke, width, opacity: 1, cap: 'round', join: 'round', align: 'center', dash: [] } } },
       { id: `${id}_g`, type: 'Geometry', props: { points: pts.map((p) => corner(p.x - CX, p.y - CY)) } },
     ],
   } as unknown as SceneNode;

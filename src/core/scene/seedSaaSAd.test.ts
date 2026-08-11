@@ -9,6 +9,8 @@ import { buildSaaSAd } from './seedSaaSAd';
 import defaultSceneGraph from './DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { buildSnapshot } from '@core/rendering/buildSnapshot';
+import { readNodeStroke } from '@core/paint/stroke';
+import { flattenScene } from './sceneDerive';
 
 const render = (t: number) => buildSnapshot(defaultSceneGraph, defaultAnimation, t);
 const S = (id: string, prop: string, t: number) => defaultAnimation.sample(id, prop, t) ?? 0;
@@ -45,6 +47,29 @@ describe('SaaS ad — motion capability benchmark', () => {
     expect(S('ad_s2', 'opacity', 6)).toBeGreaterThan(80);
     expect(S('ad_s6', 'opacity', 22)).toBeGreaterThan(80);
     expect(S('ad_s6', 'opacity', 6)).toBeLessThan(20);
+  });
+
+  it('gives its stroke-only paths a stroke the renderer can find', () => {
+    // `geomPath` draws with a TRANSPARENT fill, so the stroke is the entire
+    // picture — and it was written onto the `Style` component while
+    // `readNodeStroke` (buildSnapshot's only reader) looks at `fx.props.stroke`.
+    // Nothing read it, so those paths drew NOTHING, and no test noticed because
+    // none of them asked what a layer was actually painted with.
+    //
+    // Asserted through `readNodeStroke` rather than a rendered layer because
+    // the scenes are precomps: their contents never appear in the root
+    // snapshot's `layers`, which is exactly why this hid for so long.
+    const transparentFilled = flattenScene(defaultSceneGraph).filter((n) => {
+      const style = n.components.find((c) => c.type === 'Style');
+      return style?.props.fill === 'rgba(0,0,0,0)'
+        && n.components.some((c) => c.type === 'Geometry');
+    });
+    expect(transparentFilled.length).toBeGreaterThan(0);
+    for (const n of transparentFilled) {
+      const stroke = readNodeStroke(n);
+      expect(stroke?.color).toMatch(/^(#|rgb)/i);
+      expect(stroke!.width).toBeGreaterThan(0);
+    }
   });
 
   it('animates within scenes (background parallax + trim draw-ons)', () => {

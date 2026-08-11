@@ -1376,13 +1376,31 @@ export function buildSnapshot(
     // overrides below. DataPoint handles are optional; a corner collapses them
     // onto the vertex, matching BezierPoint's absolute-handle contract.
     const livePathPts = anim.sampleData(node.id, 'path.points', remapOf(node.id)(t));
-    let pathPoints =
+    const liveOutline =
       Array.isArray(livePathPts) && livePathPts.length > 1 &&
       typeof livePathPts[0] === 'object' && livePathPts[0] !== null && 'x' in (livePathPts[0] as object)
         ? (livePathPts as Array<{ x: number; y: number; inX?: number; inY?: number; outX?: number; outY?: number }>).map(
             (p) => ({ x: p.x, y: p.y, inX: p.inX ?? p.x, inY: p.inY ?? p.y, outX: p.outX ?? p.x, outY: p.outY ?? p.y }),
           )
-        : staticPathPoints;
+        : undefined;
+    /**
+     * Stored RUNS — a path that is several outlines rather than one.
+     *
+     * The SVG importer writes these for any `d` with more than one `M`: the
+     * hole in a donut, the counter in an "o", any icon with a gap. `points` is
+     * the single-run shorthand, and the two are mutually exclusive (see
+     * raster/subpaths.ts), so a node carrying runs must not carry the flat list.
+     * A live `path.points` track still wins — it is one animated outline.
+     */
+    const staticSubpaths = liveOutline
+      ? undefined
+      : (geomComponent?.props.subpaths as Array<{ points: typeof staticPathPoints; open?: boolean }> | undefined);
+    let pathPoints = liveOutline
+      ?? staticPathPoints
+      // The first run stands in wherever a single outline is wanted (the
+      // `primitive` choice, the rig silhouette). The full set is installed on
+      // the layer below, and is what actually gets drawn.
+      ?? staticSubpaths?.[0]?.points;
     // Open strokes (line / freehand pencil) must not be closed into a loop.
     const pathOpen = geomComponent?.props.open === true;
     // Explicit shape type set at insert time; falls back to the legacy
@@ -2080,6 +2098,24 @@ export function buildSnapshot(
     // annotation the rasterizer read inside its stroke loop and nowhere else,
     // leaving the fill to trace the whole shape above it.
     if (layerKind === 'shape') {
+      // Multi-run stored geometry becomes the layer's real path BEFORE the
+      // operator chain, so trim/offset/repeat all see every run and the
+      // rasterizer traces them as one region (which is what cuts the hole).
+      if (staticSubpaths && staticSubpaths.length > 1) {
+        layer.subpaths = staticSubpaths.map((r) => ({
+          // Stored runs are already BezierPoints; normalise a missing handle
+          // onto its vertex rather than trusting hand-edited project data.
+          points: (r.points ?? []).map((p) => ({
+            x: p.x, y: p.y,
+            inX: p.inX ?? p.x, inY: p.inY ?? p.y,
+            outX: p.outX ?? p.x, outY: p.outY ?? p.y,
+          })),
+          open: r.open === true,
+        }));
+        layer.pathPoints = undefined;
+        layer.pathOpen = undefined;
+        layer.primitive = 'path';
+      }
       const ops = resolvePathOps(node, a);
       if (ops.length > 0) {
         // Density is decided by whether ANY operator in the chain wants it. A
@@ -2094,8 +2130,13 @@ export function buildSnapshot(
         // sampled on (valuesOf → remapOf). Handing it comp `t` would leave the
         // noise running at wall-clock speed while the keyframes it animates
         // alongside obey time remapping and stretch.
+        // Every stored run enters the chain, not just the first: trimming a
+        // donut has to trim both of its rings.
+        const seed = layer.subpaths && layer.subpaths.length > 0
+          ? layer.subpaths.map((sp) => ({ pts: sp.points.map((p) => ({ x: p.x, y: p.y })), closed: sp.open !== true }))
+          : [{ pts: base, closed: pathOpen !== true }];
         const runs = applyPathOpChain(
-          [{ pts: base, closed: pathOpen !== true }],
+          seed,
           ops,
           remapOf(node.id)(t),
         ).filter((r) => r.pts.length > 1);
@@ -2116,6 +2157,9 @@ export function buildSnapshot(
           // not see before this change. A run carrying paint cannot: the
           // shorthand has nowhere to put it.
           layer.pathPoints = runs[0]!.pts.map((p) => corner(p.x, p.y));
+          // The two geometry fields are mutually exclusive — a chain that
+          // collapses stored runs down to one must drop the list with them.
+          layer.subpaths = undefined;
           layer.primitive = 'path';
         } else {
           layer.subpaths = runs.map((r, i) => ({
