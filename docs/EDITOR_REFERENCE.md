@@ -901,6 +901,49 @@ hits in `.ts`/`.tsx` at all; and `aces` at 255 hits was pure substring noise —
 
 ---
 
+### Fixed 2026-08-12 — Compound Blur drew nothing on the primary backend
+
+250 scenes rendered on WebGPU and **not one pixel of it was gated**. The parity
+dashboard printed a number, labelled "measured, NOT gated", and never failed.
+
+What the number was hiding: `effect-compound-blur` sat at **87.8%** divergence
+against a reference blessed from the GPU, because its WGSL failed to compile.
+`textureSample` computes implicit derivatives, which WGSL permits only in
+uniform control flow, and the shader's `radius < 0.34` early return makes the
+sampling loop non-uniform. So the pipeline was invalid and the effect drew
+**nothing** on the product's primary backend, while rendering correctly on
+WebGL2, whose GLSL twin has no such rule. The harness printed
+`ERROR: 'textureSample' must only be called from uniform control flow` on every
+run, next to a divergence figure that nothing acted on.
+
+`textureSampleLevel(..., 0.0)` fixes it. Not a compromise: every source here is
+a non-mipmapped render target, so LOD 0 is the level implicit sampling would
+have chosen, and the WebGL2 path is untouched. Divergence 87.8% → **53.3%** —
+it now draws, and what remains is a real WebGPU-vs-WebGL2 disagreement in the
+same scene that has **not** been diagnosed. Recorded as a debt, not explained.
+
+The gate is a **ratchet**, deliberately, rather than a threshold. Byte equality
+between two hardware rasterizers is not a reasonable demand — the extrusion
+scenes measure 0.16–0.27% between backends, all of it edge antialiasing — so
+`webgpu-baseline.json` records a ceiling per divergent frame and the gate fails
+when a frame exceeds its ceiling, or when an unlisted frame exceeds 1%. 26
+entries today.
+
+That baseline is **a list of debts, not of blessings**: every entry is a
+disagreement nobody has diagnosed. It is deliberately not the `divergence`
+mechanism used for known Canvas2D gaps, which requires a stated mechanism per
+scene — demanding 42 diagnoses before any gate could exist is how the suite
+ended up with no gate at all. The run names frames that have improved enough to
+tighten, and `--update-backend-baseline` is a separate flag from `--update` so
+that re-blessing a reference cannot silently forgive a backend regression.
+
+Also: a missing WebGPU adapter is now a **hard failure in CI**. It was a skip,
+with the reasoning that hosted runners have no adapter. True, and beside the
+point — a runner that renders no WebGPU turns every WebGPU gate (alpha
+semantics, 3D styles, plugin effects, extrusion reach, and now this ratchet)
+into a no-op that reports success. `HARNESS_REQUIRE_WEBGPU=0` waives it
+explicitly for anyone who accepts the hole.
+
 ### Corrected 2026-08-12 — the same count drifted into the same files, twice
 
 `EffectType` reached **145** while four places went on asserting **73**: §4's

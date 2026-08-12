@@ -1052,6 +1052,260 @@ void main() {
 };
 
 /**
+ * Apply Color LUT — a 3D `.cube` lookup, on the GPU.
+ *
+ * The fourth member of the read-a-second-texture family. The second texture is
+ * not another layer this time; it is the LUT itself, packed as a STRIP.
+ *
+ * ── Why a strip, and what it costs ──────────────────────────────────────────
+ *
+ * WebGPU has 3D textures and WebGL2 has them too, but nothing else in this
+ * renderer allocates one and the backend abstraction has no 3D texture path. A
+ * cube of edge N is therefore laid out as N slices of N×N side by side: width
+ * N², height N. Slice z occupies x ∈ [z·N, (z+1)·N).
+ *
+ * The cost is that a LINEAR sampler does not know where a slice ends. Sampling
+ * near x = z·N blends into slice z−1, which is a completely different blue
+ * value — visible as banded fringing on smooth gradients. So the horizontal
+ * coordinate is clamped to half a texel inside its own slice and the blue axis
+ * is interpolated MANUALLY between two slice samples. Red and green still ride
+ * the hardware's bilinear filter, which is the whole point of doing this on the
+ * GPU rather than per pixel on the CPU.
+ *
+ * params.x — cube edge length N
+ * params.y — 1 when the LUT is 1D (a strip of N×1, no blue axis to walk)
+ * params.zw — domain min and max, applied to all three channels
+ *
+ * ── Premultiplied in, premultiplied out ─────────────────────────────────────
+ *
+ * A LUT is defined on straight colour, and this pipeline carries premultiplied.
+ * The shader un-premultiplies before the lookup and re-premultiplies after —
+ * skipping that grades the colour a transparent pixel does not have, and turns
+ * a soft edge into a fringe of whatever the LUT maps black to.
+ */
+export const APPLY_COLOR_LUT: ShaderSource = {
+  name: 'apply-color-lut',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var lutTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn sliceSample(rg : vec2<f32>, slice : f32, n : f32) -> vec3<f32> {
+  // Half a texel in from each end of THIS slice, so the linear filter cannot
+  // reach the neighbouring slice's very different blue.
+  let xIn = clamp(rg.x * (n - 1.0) + 0.5, 0.5, n - 0.5);
+  let u = (slice * n + xIn) / (n * n);
+  let v = clamp(rg.y * (n - 1.0) + 0.5, 0.5, n - 0.5) / n;
+  return textureSampleLevel(lutTex, smp, vec2<f32>(u, v), 0.0).rgb;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  if (src.a <= 0.0001) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  // Straight colour for the lookup; premultiplied again at the end.
+  let straight = clamp(src.rgb / src.a, vec3<f32>(0.0), vec3<f32>(1.0));
+  let lo = obj.params.z;
+  let hi = obj.params.w;
+  let span = max(hi - lo, 0.0001);
+  let c = clamp((straight - vec3<f32>(lo)) / span, vec3<f32>(0.0), vec3<f32>(1.0));
+  let n = obj.params.x;
+  var graded : vec3<f32>;
+  if (obj.params.y > 0.5) {
+    // 1D: one texel row, each channel looked up independently.
+    let w = n;
+    let rr = textureSampleLevel(lutTex, smp, vec2<f32>((c.r * (w - 1.0) + 0.5) / w, 0.5), 0.0).r;
+    let gg = textureSampleLevel(lutTex, smp, vec2<f32>((c.g * (w - 1.0) + 0.5) / w, 0.5), 0.0).g;
+    let bb = textureSampleLevel(lutTex, smp, vec2<f32>((c.b * (w - 1.0) + 0.5) / w, 0.5), 0.0).b;
+    graded = vec3<f32>(rr, gg, bb);
+  } else {
+    let bz = c.b * (n - 1.0);
+    let z0 = floor(bz);
+    let z1 = min(z0 + 1.0, n - 1.0);
+    let f = bz - z0;
+    graded = mix(sliceSample(c.rg, z0, n), sliceSample(c.rg, z1, n), f);
+  }
+  return vec4<f32>(graded * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+uniform sampler2D uMapTex;
+in vec2 vUv;
+out vec4 frag;
+vec3 sliceSample(vec2 rg, float slice, float n) {
+  float xIn = clamp(rg.x * (n - 1.0) + 0.5, 0.5, n - 0.5);
+  float u = (slice * n + xIn) / (n * n);
+  float v = clamp(rg.y * (n - 1.0) + 0.5, 0.5, n - 0.5) / n;
+  return textureLod(uMapTex, vec2(u, v), 0.0).rgb;
+}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  if (src.a <= 0.0001) { frag = vec4(0.0); return; }
+  vec3 straight = clamp(src.rgb / src.a, 0.0, 1.0);
+  float lo = params.z;
+  float hi = params.w;
+  float span = max(hi - lo, 0.0001);
+  vec3 c = clamp((straight - vec3(lo)) / span, 0.0, 1.0);
+  float n = params.x;
+  vec3 graded;
+  if (params.y > 0.5) {
+    float w = n;
+    float rr = textureLod(uMapTex, vec2((c.r * (w - 1.0) + 0.5) / w, 0.5), 0.0).r;
+    float gg = textureLod(uMapTex, vec2((c.g * (w - 1.0) + 0.5) / w, 0.5), 0.0).g;
+    float bb = textureLod(uMapTex, vec2((c.b * (w - 1.0) + 0.5) / w, 0.5), 0.0).b;
+    graded = vec3(rr, gg, bb);
+  } else {
+    float bz = c.b * (n - 1.0);
+    float z0 = floor(bz);
+    float z1 = min(z0 + 1.0, n - 1.0);
+    float f = bz - z0;
+    graded = mix(sliceSample(c.rg, z0, n), sliceSample(c.rg, z1, n), f);
+  }
+  frag = vec4(graded * src.a, src.a);
+}
+`
+  }
+};
+
+/**
+ * Compound Blur — blur this layer by ANOTHER layer's luminance.
+ *
+ * The third member of the read-a-second-layer family, after `displacement-map`
+ * and `set-matte`: same shape (a second texture at binding 3, sampled with the
+ * SAME target UV so orientation matches on both backends), different
+ * arithmetic. Following that shape is deliberate — it is the established route
+ * for an effect that reads another layer, and it inherits UV handling that took
+ * real work to get right.
+ *
+ * params.x — max blur radius, in TEXELS of this target
+ * params.y — 1 inverts the map (bright areas sharp instead of blurred)
+ * params.zw — one texel, so the taps can step in uv space
+ *
+ * ── Why one pass with a scaled kernel, not a separable blur ─────────────────
+ *
+ * A separable Gaussian is two passes with a SHARED radius, and the whole point
+ * of this effect is that the radius differs per pixel. There is no pair of 1D
+ * passes that produces a spatially varying kernel — the horizontal pass would
+ * have to know the vertical pass's radius at a neighbour it has not blurred yet.
+ *
+ * So this samples a fixed 13-tap rosette whose SPACING scales with the local
+ * radius. Cost is constant; quality degrades at large radii into a slightly
+ * ringed blur rather than a smooth one, which is the standard trade and is what
+ * "Max Blur" being a ceiling rather than a promise means.
+ *
+ * The taps are a golden-angle spiral, not a grid. A grid at low tap counts
+ * produces visible axis-aligned banding on soft gradients; a spiral spreads the
+ * same 13 samples so the error looks like grain instead of structure.
+ */
+export const COMPOUND_BLUR: ShaderSource = {
+  name: 'compound-blur',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var mapTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let mapC = textureSample(mapTex, smp, uv);
+  // Rec.709 luma. The map's own ALPHA is ignored on purpose: AE reads a
+  // luminance map, and an unpremultiplied read would make a transparent map
+  // blur by whatever colour happened to sit behind it.
+  var lum = dot(mapC.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+  if (obj.params.y > 0.5) { lum = 1.0 - lum; }
+  let radius = obj.params.x * clamp(lum, 0.0, 1.0);
+  let c0 = textureSample(tex, smp, uv);
+  // Below a third of a texel the rosette collapses onto the centre and the
+  // taps are 13 copies of one sample — cheaper and exact to return it.
+  if (radius < 0.34) { return c0; }
+  var acc = c0;
+  var wsum = 1.0;
+  for (var i = 0; i < 12; i = i + 1) {
+    let fi = f32(i);
+    // Golden angle, and sqrt so the samples spread by AREA rather than
+    // clustering at the centre.
+    let a = fi * 2.39996323;
+    let r = radius * sqrt((fi + 0.5) / 12.0);
+    let off = vec2<f32>(cos(a), sin(a)) * r * obj.params.zw;
+    // textureSampleLEVEL, not textureSample. The plain form computes implicit
+    // derivatives, which WGSL permits only in uniform control flow — and the
+    // radius < 0.34 early return above makes this loop non-uniform. So the
+    // shader failed to compile on WebGPU ("must only be called from uniform
+    // control flow"), its pipeline was invalid, and Compound Blur drew NOTHING
+    // on the primary backend while rendering correctly on WebGL2, whose GLSL
+    // twin has no such rule.
+    //
+    // Explicit LOD 0 is not a compromise: every source here is a non-mipmapped
+    // render target, so it is the level implicit sampling would have chosen.
+    // The WebGL2 path is untouched.
+    acc = acc + textureSampleLevel(tex, smp, uv + off, 0.0);
+    wsum = wsum + 1.0;
+  }
+  return acc / wsum;
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+uniform sampler2D uMapTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 mapC = texture(uMapTex, vUv);
+  float lum = dot(mapC.rgb, vec3(0.2126, 0.7152, 0.0722));
+  if (params.y > 0.5) lum = 1.0 - lum;
+  float radius = params.x * clamp(lum, 0.0, 1.0);
+  vec4 c0 = texture(uTex, vUv);
+  if (radius < 0.34) { frag = c0; return; }
+  vec4 acc = c0;
+  float wsum = 1.0;
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i);
+    float a = fi * 2.39996323;
+    float r = radius * sqrt((fi + 0.5) / 12.0);
+    vec2 off = vec2(cos(a), sin(a)) * r * params.zw;
+    acc += texture(uTex, vUv + off);
+    wsum += 1.0;
+  }
+  frag = acc / wsum;
+}
+`
+  }
+};
+
+/**
  * Set Matte — take this layer's coverage from ANOTHER layer's pixels.
  *
  * The structural sibling of `displacement-map`: same shape (a second texture at
@@ -2293,7 +2547,7 @@ function unpremultiplyingSample(base: ShaderSource): ShaderSource {
 const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
-  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
+  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
   FILL, STROKE, SHARPEN, NOISE, SET_MATTE,
   SOLID3D,
   // The six families that sample a layer texture. Every one un-premultiplies.

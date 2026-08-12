@@ -1,0 +1,32 @@
+{
+  "_comment": "Ceilings for how far this backend may differ from the committed (WebGL2-blessed) references. A LIST OF DEBTS, not of blessings: every entry is an undiagnosed WebGPU-vs-WebGL2 disagreement. The gate fails when a frame exceeds its ceiling, or when an unlisted frame exceeds the tolerance. Entries are meant to be removed; run.mjs names the ones that have improved enough to tighten.",
+  "tolerance": 0.01,
+  "frames": {
+    "blend-screen#0": 0.01053,
+    "blend-difference#0": 0.01085,
+    "blend-exclusion#0": 0.01065,
+    "blend-hue#0": 0.0126,
+    "blend-stencil-luma#0": 0.31085,
+    "blend-silhouette-luma#0": 0.32893,
+    "blend-alpha-add-seam#0": 0.42743,
+    "effect-fractal-noise#0": 0.30918,
+    "effect-displacement-map#0": 0.15771,
+    "effect-noise#0": 0.35631,
+    "effect-displacement-map-layer#0": 0.1977,
+    "effect-compound-blur#0": 0.5332,
+    "mask-feather#0": 0.32578,
+    "layer-styles#0": 0.36273,
+    "fill-opacity-zero-inner-shadow#0": 0.06634,
+    "three-d-dof-visible#0": 0.15894,
+    "light-spot#0": 0.0272,
+    "light-ambient#0": 0.63873,
+    "light-cast-shadow#0": 0.05499,
+    "motion-blur#30": 0.07045,
+    "svg-embedded-raster#0": 0.19156,
+    "glass-frosted#0": 0.02294,
+    "glass-clear#0": 0.04645,
+    "glass-heavy-frost#0": 0.02259,
+    "glass-grain#0": 0.32183,
+    "plugin-visible#0": 0.24177
+  }
+}
