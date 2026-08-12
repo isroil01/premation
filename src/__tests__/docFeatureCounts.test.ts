@@ -13,16 +13,22 @@
  * numbers come from `scripts/featureCounts.cjs`, the same module the doc's
  * report is generated from, so there is exactly one extractor and not two.
  *
- * This asserts counts, not prose. Prose still rots; a wrong NUMBER is the part
- * that made the doc actively misleading rather than merely dated.
+ * This asserts the TABLE. Prose is `docPropagatedCounts.test.ts`, added
+ * 2026-08-12 — and it exists because the sentence that used to stand here
+ * ("This asserts counts, not prose. Prose still rots") was describing a hole
+ * and calling it a boundary. While it stood, `EffectType` grew to 145 and §4,
+ * `README.md` and `ROADMAP.md` all went on asserting **73**, while the §2
+ * architecture diagram said 39 stores against 40. This table was green
+ * throughout, and every brief written against the document inherited the 73.
  */
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const { featureSizes, objectKeysIn } = require('../../scripts/featureCounts.cjs') as {
+const { featureSizes, objectKeysIn, unionMembersIn } = require('../../scripts/featureCounts.cjs') as {
   featureSizes: () => Record<string, number>;
   objectKeysIn: (src: string, constName: string, where?: string) => string[];
+  unionMembersIn: (src: string, typeName: string, where?: string) => string[];
 };
 
 const DOC = 'docs/EDITOR_REFERENCE.md';
@@ -94,6 +100,53 @@ describe('docs/EDITOR_REFERENCE.md feature counts', () => {
    * `+ 1` too. So this also splices a registry and checks the derived count
    * MOVES.
    */
+  /**
+   * An apostrophe in a comment used to invent a member and eat a real one.
+   *
+   * The union body was regex-matched for `'…'` runs WITHOUT stripping comments,
+   * so writing `// AE's Apply Color LUT` above a member opened a quote that
+   * closed on the next real member. Adding one effect moved the count by two,
+   * which is the only reason it was noticed — a comment worded slightly
+   * differently would have moved it by zero and quietly under-reported forever.
+   *
+   * This is the worst version of the bug this whole script exists to prevent:
+   * the count that is supposed to be beyond hand-miscounting, miscounted.
+   */
+  describe('the union extractor is not fooled by prose', () => {
+    const UNION = [
+      "export type Demo =",
+      "  | 'alpha'",
+      "  // AE's own name for it, with an apostrophe.",
+      "  | 'beta'",
+      "  /* a block comment that isn't shy about apostrophes either */",
+      "  | 'gamma';",
+    ].join('\n');
+
+    it('counts only real members', () => {
+      expect(unionMembersIn(UNION, 'Demo')).toEqual(['alpha', 'beta', 'gamma']);
+    });
+
+    it('a comment cannot change the count', () => {
+      const withoutProse = UNION.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('/*')).join('\n');
+      expect(unionMembersIn(withoutProse, 'Demo')).toEqual(unionMembersIn(UNION, 'Demo'));
+    });
+
+    it('a new member DOES change the count', () => {
+      const spliced = UNION.replace("  | 'gamma';", "  | 'delta'\n  | 'gamma';");
+      expect(spliced).not.toBe(UNION);
+      expect(unionMembersIn(spliced, 'Demo')).toHaveLength(4);
+    });
+
+    it('the real EffectType union has no apostrophe casualties', () => {
+      const src = readFileSync(join(__dirname, '../core/effects/effects.ts'), 'utf8');
+      const members = unionMembersIn(src, 'EffectType');
+      // Every member is a kebab-case effect id. A swallowed comment shows up
+      // here as an entry with spaces or capitals in it.
+      for (const m of members) expect(m).toMatch(/^[a-z0-9-]+$/);
+      expect(members).toContain('apply-color-lut');
+    });
+  });
+
   describe('layer styles are summed from two registries, not one plus a literal', () => {
     const src = readFileSync(join(__dirname, '../core/effects/layerStyles.ts'), 'utf8');
 

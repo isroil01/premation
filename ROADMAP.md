@@ -10,7 +10,7 @@ If you want to help, the **Now** section is where help changes the most.
 ## Where it stands today
 
 Working and used daily: compositions and nesting, 2D/3D layers with cameras and
-lights, keyframes and the graph editor, 58 effects, masks and mattes, shape
+lights, keyframes and the graph editor, 145 effects, masks and mattes, shape
 layers, per-glyph text animators, expressions, bone and puppet rigging,
 particles, SVG and Lottie import, and export to mp4/mov/webm/GIF/PNG/Lottie
 through a local ffmpeg.

@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        39 Zustand stores
+                          ├── src/stores/*        40 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          12 workspace packages
                                 ├── scene       scene graph + components
@@ -406,13 +406,24 @@ deliberate render-test golden rebaseline, not a flag.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 73 vs AE's 400+.** The raw count misleads in both directions —
-nobody uses 400, and the 73 present are properly parameterised (Levels, Curves,
-Channel Mixer, Keylight with despill/choke/softness). What matters is the missing
-*classes*, not the delta: no volumetric light rays (Shine), no optical-flare
-system worth the name (`lens-flare` is basic), no 3D Stroke, no Form/Plexus, no
-Element 3D. The dense, expensive-looking AE frame is usually five to eight
-stacked third-party effects, and that stack has no equivalent here.
+**Effect breadth: 145 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 145 effects present are properly
+parameterised (Levels, Curves, Channel Mixer, Keylight with
+despill/choke/softness). What matters is the missing *classes*, not the delta:
+no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
+frame is usually five to eight stacked third-party effects, and that stack has
+no equivalent here.
+
+Corrected 2026-08-12, twice over. The number said **73** — the count when the
+sentence was written, left behind by registry growth, and the value every brief
+written against this document inherited. And the missing *classes* named "no
+volumetric light rays (Shine)" and "no optical-flare system worth the name":
+`light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
+registry def, a Canvas2D implementation and a Generate entry in the effects
+browser. They are CPU passes rather than shaders, which is a performance fact
+(see the GPU-porting work) and not an absence. The count is now phrased as "145
+effects" rather than as a bare figure specifically so that
+`docPropagatedCounts.test.ts` can check it.
 
 **Uniform mask feather only.** `MaskPoint` carries x/y plus handles and one
 scalar feather per path. AE's variable-width feather — the tool for organic
@@ -887,6 +898,53 @@ What survived the recheck, verified rather than assumed: decode really is
 (`depthPluginRebuild.test.ts`), not a renderer feature; `outputModule` has no
 hits in `.ts`/`.tsx` at all; and `aces` at 255 hits was pure substring noise —
 "surfaces", "traces", "interfaces" — with no ACES anywhere.
+
+---
+
+### Corrected 2026-08-12 — the same count drifted into the same files, twice
+
+`EffectType` reached **145** while four places went on asserting **73**: §4's
+"Effect breadth", `README.md`, `ROADMAP.md`, and — a fifth nobody had named —
+the §2 architecture diagram, which put the Zustand store count at 39 against a
+real 40.
+
+(That sentence is phrased around the number rather than before it because the
+new guard flagged the first draft of this very paragraph. Which is the intended
+behaviour: a superseded count written as "N *registry*" in live prose is caught
+wherever it appears, including inside the entry announcing the guard.)
+
+A row below records this happening ALREADY, at 58 → 73, together with the
+diagnosis: "the count guard existed but was scoped to this file's marked table,
+so the number was corrected here and left wrong in the two most-read files in
+the repo". The scope was never widened. One registry growth later the identical
+drift reappeared in the identical two files, and from there into every brief
+written against this document.
+
+So the guard is now repo-wide: `docPropagatedCounts.test.ts` checks
+`EDITOR_REFERENCE.md`, `README.md` and `ROADMAP.md` for any claim of the form
+"N *registry*" and fails when N is not that registry's size.
+
+The rule is deliberately narrow — a digit immediately followed by a registry's
+name. The obvious alternative, flagging any number in a paragraph that mentions
+a registry, was measured against these three documents and produced 39 hits,
+almost all noise: dates, millisecond measurements, effect indices, `3D`. A guard
+needing a 39-entry allow-list is one that gets silenced the first time it fires.
+The cost of the narrowness is that an oblique phrasing still escapes, and §4's
+did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
+rewritten into the checkable form rather than the regex being widened to chase
+it. Prose stating a count should say "145 effects".
+
+Ledger table ROWS in this section are exempt, structurally rather than by a list
+of phrases: quoting a superseded number is what a corrections ledger is for, and
+a per-phrase list would mean every new entry here also had to edit a test. Prose
+in §5 — including every "Fixed …" narrative — is still checked.
+
+Corrected in the same pass, because the paragraph was being rewritten anyway:
+§4 listed "no volumetric light rays (Shine)" and "no optical-flare system worth
+the name" among the missing *classes*. `light-rays`, `lens-flare`, `light-sweep`
+and `beam` all ship, each with a registry def, a Canvas2D implementation and a
+Generate entry in the effects browser. They are CPU passes rather than shaders —
+a performance fact, not an absence.
 
 ---
 
