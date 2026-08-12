@@ -1009,6 +1009,47 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
+### Scoped 2026-08-12 — simulation, and why particles are not a head start
+
+"0 of 145" survives scrutiny — it is a registry-derived count, not a symbol
+search, which is exactly the class of claim that held up. Simulation really is
+the empty AE class.
+
+What needs correcting is the assumption that the existing particle system is a
+foundation for it. It is not, and the reason is a deliberate design choice
+worth understanding before anyone plans on top of it.
+
+`particleSim.ts` is a **closed-form emitter**, stated in its own first line and
+visible in its core: `hash01(index, salt, seed)` derives every particle's
+lifetime, direction and phase as a pure function of its index and the seed. A
+particle's state at time *t* is COMPUTED, never integrated. Nothing accumulates.
+
+That is what makes scrubbing free. Jump to any frame and the emitter answers
+immediately, because there is no history to reconstruct — and it is why
+particles need none of the snapshot/pre-roll machinery a simulation would.
+
+Which is precisely the tension. A real simulation — collision, flocking, fluid,
+AE's Foam / Wave World / Caustics — is defined by state that DEPENDS on the
+previous frame. Adding one means introducing accumulation for the first time,
+and accumulation is what breaks random-access scrubbing. The prescription of
+"seeded sim + periodic snapshots + pre-roll on seek" is the standard answer to
+exactly that, and it is a new subsystem rather than an extension of particles:
+
+* what to store — ping-pong render targets holding state in textures work on
+  both backends, so no compute shaders are needed;
+* when to snapshot, and how far a seek may pre-roll before it is cheaper to
+  restart;
+* how the frame cache and the export path interact with a layer whose output
+  is history-dependent, which every other layer in this renderer is not.
+
+None of that is hard in isolation. All of it is new, and none of it is
+reachable by generalising the emitter — the emitter's whole architecture is the
+absence of the thing a simulation is.
+
+So the honest estimate is a subsystem, not a feature, and the first design
+question is not "which sim effects" but "how does a history-dependent layer
+coexist with a renderer built on random access".
+
 ### Verified 2026-08-12 — ping-pong time mode ships, in both directions
 
 Listed as a gap: "`loopOut('cycle')` exists; no `pingpong` token." There is a
