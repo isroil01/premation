@@ -128,6 +128,22 @@ export type RenderableEffect =
   | { type: 'fill'; color: Color }
   | { type: 'stroke'; widthPx: number; color: Color }
   | { type: 'sharpen'; amount: number }
+  /**
+   * Beam. Endpoints are fractions of the LAYER's box (0..1), matching the
+   * percentage controls, because the chain's buffer is not the layer's box on
+   * the 2D route; the pass resolves them against `fxBox`.
+   */
+  | {
+      type: 'beam';
+      startX: number; startY: number; endX: number; endY: number;
+      /** 0..1 — how far along the path the head has travelled. */
+      length: number;
+      /** Comp px. */
+      thickness: number;
+      /** 0..1. Widens the soft outer pass to thickness*(1+softness*3). */
+      softness: number;
+      color: Color;
+    }
   | { type: 'noise'; amount: number; evolution: number; monochrome: boolean }
   /**
    * An effect a PLUGIN declared, from WGSL the host validated and compiled.

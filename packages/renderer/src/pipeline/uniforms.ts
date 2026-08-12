@@ -389,6 +389,60 @@ export function packDisplacementMap(mvp: Mat3, uvRect: Rect, amountX: number, am
   return out;
 }
 
+/**
+ * Apply Color LUT: x = cube edge N, y = 1 for a 1D LUT, zw = the input domain.
+ *
+ * The domain travels as a single min/max pair rather than per channel. `.cube`
+ * allows a per-channel domain and files that use one are vanishingly rare;
+ * carrying three pairs would cost a second uniform vec4 for a case no LUT in
+ * the wild exercises. `toStoredLut` keeps the full domain, so widening this
+ * later needs no format change.
+ */
+export function packApplyColorLut(
+  mvp: Mat3,
+  uvRect: Rect,
+  size: number,
+  is1d: boolean,
+  intensity: number,
+  domainMin: number,
+  domainMax: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  // Size is SIGN-ENCODED (negative = 1D) so intensity gets the second slot.
+  // The block is one vec4 and a size is never legitimately negative, so the
+  // encoding cannot collide with a real value.
+  out[o + 0] = is1d ? -size : size;
+  out[o + 1] = intensity;
+  out[o + 2] = domainMin; out[o + 3] = domainMax;
+  return out;
+}
+
+/**
+ * Compound Blur: x = max radius in TEXELS, y = 1 inverts the map, zw = one texel.
+ *
+ * The radius is in texels rather than uv because the shader scales a rosette by
+ * it and then multiplies by `texel` to step — passing a uv-space radius would
+ * make the blur anisotropic on any non-square target, which is every comp that
+ * is not 1:1.
+ */
+export function packCompoundBlur(
+  mvp: Mat3,
+  uvRect: Rect,
+  radiusTexels: number,
+  invert: boolean,
+  texelW: number,
+  texelH: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = radiusTexels; out[o + 1] = invert ? 1 : 0;
+  out[o + 2] = texelW; out[o + 3] = texelH;
+  return out;
+}
+
 /** Set Matte: x = 1 reads the matte's luminance (0 = its alpha), y = 1 inverts. */
 export function packSetMatte(mvp: Mat3, uvRect: Rect, useLuminance: boolean, invert: boolean): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
@@ -428,6 +482,29 @@ export function packSharpen(mvp: Mat3, uvRect: Rect, texelWidth: number, texelHe
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
   out[o + 0] = texelWidth; out[o + 1] = texelHeight; out[o + 2] = amount; out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * Beam's block: endpoints and radii already in TARGET UV, and the colour.
+ *
+ * The conversion happens in the pass rather than here because only the pass
+ * knows the layer's box within the chain's buffer and the comp-px-to-texel
+ * scale — the two facts that differ between the 2D and 3D routes. This packs
+ * what it is given.
+ */
+export function packBeam(
+  mvp: Mat3, uvRect: Rect,
+  ax: number, ay: number, bx: number, by: number,
+  coreRadius: number, softRadius: number, aa: number,
+  color: Color,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = ax; out[o + 1] = ay; out[o + 2] = bx; out[o + 3] = by; o += 4;
+  out[o + 0] = coreRadius; out[o + 1] = softRadius; out[o + 2] = aa; out[o + 3] = 0; o += 4;
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
   return out;
 }
 

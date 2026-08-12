@@ -146,6 +146,32 @@ export const FRACTAL_NOISE_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Built-in material: a 3D .cube LUT lookup. Same four bindings as compound
+ *  blur — the second texture is the LUT strip rather than another layer. */
+export const APPLY_COLOR_LUT_MATERIAL: MaterialDescriptor = {
+  shader: 'apply-color-lut',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: compound blur. Same four bindings as displacement-map —
+ *  it is the same read-a-second-layer shape, with different arithmetic. */
+export const COMPOUND_BLUR_MATERIAL: MaterialDescriptor = {
+  shader: 'compound-blur',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
 export const DISPLACEMENT_MAP_MATERIAL: MaterialDescriptor = {
   shader: 'displacement-map',
   topology: 'triangle-list',
@@ -202,6 +228,18 @@ export const STROKE_MATERIAL: MaterialDescriptor = {
 
 export const SHARPEN_MATERIAL: MaterialDescriptor = {
   shader: 'sharpen',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: Beam. Same three bindings as every other single-input
+ *  effect — it reads the layer and adds light to it. */
+export const BEAM_MATERIAL: MaterialDescriptor = {
+  shader: 'beam',
   topology: 'triangle-list',
   layout: [
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },

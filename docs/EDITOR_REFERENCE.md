@@ -901,6 +901,54 @@ hits in `.ts`/`.tsx` at all; and `aces` at 255 hits was pure substring noise —
 
 ---
 
+### Built 2026-08-12 — the first CPU effect ported, and the contract for the rest
+
+**Beam** is the first of the 112 to move onto the GPU. Chosen because it is in
+the priority family (light/glow/flare), it is a procedural generator — the
+easiest class to write as a shader — and, decisively, it already had a committed
+reference blessed from **Canvas2D**. That last point is what made the port
+verifiable on the first render with no new harness: the golden *is* the CPU
+implementation, so "render both, diff, promote within tolerance" is the existing
+scene gate. It passed at the default 0.5% tolerance, on both backends, with no
+new entry in the WebGPU ratchet.
+
+The CPU version strokes the segment twice with `globalCompositeOperation =
+'lighter'` — a wide soft pass at alpha 0.35, then a narrow bright core, both
+round-capped and both faded by a gradient running tail → head. The shader is a
+capsule SDF (round caps *are* the capsule) with a 1-texel `smoothstep` for the
+antialiasing Canvas2D does on a stroke edge.
+
+**The part worth copying is the coordinate space, because it is where this kind
+of port goes wrong silently.** The CPU implementation works in the LAYER's own
+pixels — `startX` is a percentage of the layer's width — while the 2D effect
+chain runs in a SCREEN-space buffer where the layer is a sub-rect. Endpoints
+therefore resolve against `fxBox`, the same quantity the gradient ramp uses for
+the same reason, and thickness converts through the chain's `kx`/`ky`. Reading
+those as fractions of the *buffer* would have put the beam somewhere else
+entirely, at the wrong size, on every layer that is not full-frame.
+
+**No new per-effect flag was needed.** Membership of `CANVAS2D_ONLY` already IS
+the selector: leaving that set means the effect no longer forces a bake, while
+staying in `CANVAS2D_IMPLEMENTED` keeps the Canvas2D pass for layers baked for
+other reasons. That is exactly the position `apply-color-lut` and
+Fill/Stroke/Sharpen/Noise occupy, and re-using it beats inventing a parallel
+mechanism.
+
+`portedEffectContract.test.ts` states the contract once and applies it to every
+ported effect, because a port is four coordinated edits and **three of the four
+failure modes are silent**:
+
+| Break this | What you see |
+|---|---|
+| still forces a bake | the port buys nothing; the layer still rasterizes |
+| Canvas2D pass dropped | the effect vanishes **only** on layers baked for some other reason |
+| not emitted to the GPU | the port is inert and the effect does nothing |
+| emitted on a baked layer too | it applies **twice** — reads as "too strong", not as a bug |
+
+The fourth rests on the effect not being marked `gpuOnly`, which is asserted
+separately rather than left to follow: a `gpuOnly` port would satisfy every
+other assertion in the file and still double-apply.
+
 ### Measured 2026-08-12 — sizing the GPU port of the CPU effect population
 
 The standing plan calls for moving the Canvas2D effects onto the GPU, and the

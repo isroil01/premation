@@ -1588,6 +1588,102 @@ void main() {
   }
 };
 
+/**
+ * Beam — a travelling pulse along a segment, drawn additively.
+ *
+ * The GPU twin of `applyBeam` (canvas2dEffects.ts), which strokes the segment
+ * TWICE with `globalCompositeOperation = 'lighter'`: a wide soft pass at alpha
+ * 0.35, then a narrow bright core at alpha 1, both round-capped and both faded
+ * by a linear gradient running tail → head. This reproduces that exactly:
+ *
+ *   coverage  = capsule SDF against the segment (round caps ARE the capsule)
+ *   ramp      = position along the segment, 0 at the tail and 1 at the head
+ *   out       = src + colour · ramp · (0.35 · soft + 1.0 · core)
+ *
+ * ── The coordinate space, which is where a port like this goes wrong ────────
+ *
+ * The CPU version works in the LAYER's own pixels: `startX` is a percentage of
+ * the layer's width. The 2D effect chain runs in a SCREEN-space buffer, so the
+ * layer occupies a sub-rect of it — `box`, the same `fxBox` the gradient ramp
+ * uses for exactly this reason. Endpoints are therefore box-relative, and
+ * `thickness` (comp px) is converted to texels by the caller's kx/ky, so a
+ * beam is the same width whichever route the chain took.
+ *
+ * Antialiasing is a 1-texel smoothstep. Canvas2D antialiases a stroke edge and
+ * a hard `step` here would read as a jagged beam against a smooth reference —
+ * the visible difference in a diff, and not a tolerance question.
+ */
+export const BEAM: ShaderSource = {
+  name: 'beam',
+  wgsl: `
+struct Object {
+  mvp: mat3x3<f32>,
+  uvRect: vec4<f32>,
+  ends: vec4<f32>,
+  params: vec4<f32>,
+  color: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = obj.ends.xy;
+  let b = obj.ends.zw;
+  let core = obj.params.x;
+  let soft = obj.params.y;
+  let aa = obj.params.z;
+  let ab = b - a;
+  let len2 = max(dot(ab, ab), 1e-12);
+  let t = clamp(dot(uv - a, ab) / len2, 0.0, 1.0);
+  let d = length(uv - (a + ab * t));
+  let cov = 1.0 - smoothstep(core - aa, core + aa, d);
+  let covSoft = 1.0 - smoothstep(soft - aa, soft + aa, d);
+  let add = obj.color.rgb * t * (0.35 * covSoft + cov);
+  return vec4<f32>(src.rgb + add, min(1.0, src.a + t * (0.35 * covSoft + cov)));
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 src = texture(uTex, vUv);
+  vec2 a = ends.xy;
+  vec2 b = ends.zw;
+  float core = params.x;
+  float soft = params.y;
+  float aa = params.z;
+  vec2 ab = b - a;
+  float len2 = max(dot(ab, ab), 1e-12);
+  float t = clamp(dot(vUv - a, ab) / len2, 0.0, 1.0);
+  float d = length(vUv - (a + ab * t));
+  float cov = 1.0 - smoothstep(core - aa, core + aa, d);
+  float covSoft = 1.0 - smoothstep(soft - aa, soft + aa, d);
+  vec3 add = color.rgb * t * (0.35 * covSoft + cov);
+  frag = vec4(src.rgb + add, min(1.0, src.a + t * (0.35 * covSoft + cov)));
+}
+`
+  }
+};
+
 export const NOISE: ShaderSource = {
   name: 'noise',
   wgsl: `
@@ -2548,7 +2644,7 @@ const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
-  FILL, STROKE, SHARPEN, NOISE, SET_MATTE,
+  FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM,
   SOLID3D,
   // The six families that sample a layer texture. Every one un-premultiplies.
   unpremultiplyingSample(TEXTURED),

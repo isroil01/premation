@@ -445,6 +445,29 @@ export function extractSpatialEffects(
       // Gradient Overlay layer style's, which compiles to it — moved nothing.
       spatial.push({ type: 'gradient-ramp', blend: n('blend') / 100, colorA: c('colorA'), colorB: c('colorB'), angle: n('angle') });
     }
+    if (e.type === 'beam') {
+      /*
+        Percentages become FRACTIONS here, and the endpoints stay relative to
+        the layer's box — the renderer resolves them against the chain's
+        buffer, which is not the layer's box on the 2D route.
+
+        `length` is AE's Time control: how far along the path the head has
+        travelled. It is clamped here rather than in the shader because
+        `applyBeam` clamps it too, and a value the two paths disagree about is
+        the kind of difference that shows up as a beam of the wrong length on
+        one backend only.
+      */
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'beam',
+        startX: n('startX') / 100, startY: n('startY') / 100,
+        endX: n('endX') / 100, endY: n('endY') / 100,
+        length: clamp01n(n('length') / 100),
+        thickness: Math.max(0.5, n('thickness')),
+        softness: clamp01n(n('softness') / 100),
+        color: c('color'),
+      });
+    }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {
       // Map source layer (node id === renderable id). '' / non-string = unset →

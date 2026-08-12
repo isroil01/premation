@@ -5,8 +5,7 @@
  * hex parser and the capability classification.
  */
 
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readSource } from '@/__testHelpers__/readSource';
 import { parseHex, sharpenData, addNoiseData, isCanvas2dOnlyEffect } from './canvas2dEffects';
 import { EFFECT_DEFS } from './effects';
 
@@ -112,13 +111,13 @@ describe('addNoiseData', () => {
 
 describe('classification', () => {
   test('pixel-pass generators without GPU shaders are Canvas2D-only', () => {
-    for (const t of ['four-color-gradient', 'beam', 'keylight', 'bevel', 'inner-shadow']) {
+    for (const t of ['four-color-gradient', 'keylight', 'bevel', 'inner-shadow']) {
       expect(isCanvas2dOnlyEffect(t)).toBe(true);
     }
   });
 
   test('effects with CompositionPass GPU materials are not Canvas2D-only', () => {
-    for (const t of ['blur', 'glow', 'levels', 'tint', 'gradient-ramp', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise']) {
+    for (const t of ['blur', 'glow', 'levels', 'tint', 'gradient-ramp', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise', 'beam']) {
       expect(isCanvas2dOnlyEffect(t)).toBe(false);
     }
   });
@@ -149,7 +148,7 @@ describe('classification', () => {
    * IF THIS FAILS, either add the `case` or take the type off `CANVAS2D_ONLY`.
    */
   test('every Canvas2D-only effect has a dispatch case in applyCanvas2dEffect', () => {
-    const src = readFileSync(resolve(__dirname, 'canvas2dEffects.ts'), 'utf8');
+    const src = readSource('core/effects/canvas2dEffects.ts');
     const body = src.slice(src.indexOf('export function applyCanvas2dEffect'));
     const dispatched = new Set(
       [...body.matchAll(/case\s+'([a-z0-9-]+)'\s*:/g)].map((m) => m[1]!),
