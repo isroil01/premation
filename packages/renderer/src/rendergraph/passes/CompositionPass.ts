@@ -1281,6 +1281,15 @@ export class CompositionPass extends RenderPass {
         specular: camera3d.eye ? s.specular : 0,
         shininess: s.shininess,
         ...(s.metal ? { metal: s.metal } : {}),
+        // Carried explicitly, like `metal` above. This object is built
+        // field-by-field from `r.threeD.shade`, so a field added to that type
+        // and not named here is silently dropped — and for a depth-eligible
+        // face the SHADER does the lighting, so dropping it means the layer
+        // renders exactly as it did before, with the CPU-side gain that is
+        // only a fallback still showing the new value. That is precisely how
+        // `oneSided` came to be plumbed end-to-end, asserted at the snapshot,
+        // and visible in no pixel.
+        ...(s.oneSided ? { oneSided: true } : {}),
         lights,
       };
     };

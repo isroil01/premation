@@ -1262,12 +1262,29 @@ lights, because the lit-3D scenes are flat panels, whose front faces stay
 two-sided by design. So there is no regeneration commit, and the gate's silence
 here is a coverage gap rather than evidence of correctness.
 
-**A render scene for it was written and then removed.** It measured the same
-wall lit from either side and returned an identical 2.43x ratio for one-sided
-and two-sided builds: the sampling was dominated by the light's comp-wide wash
-rather than by the wall. Rather than tune a scene until it agreed, the claim is
-asserted where the quantity exists (`buildSnapshotExtrusion.test.ts`), and the
-pixel-level scene is left as unfinished work rather than shipped green.
+**Three render scenes for it were written, and all three were removed.** Each
+was defeated by the same thing — a light emits a comp-wide wash, and the wash is
+larger than anything the shading model does:
+
+| design | why it failed |
+|---|---|
+| one box, move the LIGHT between frames | moving the light changes the wash across the whole frame. Reported an identical **2.43×** ratio for one-sided and two-sided builds |
+| two mirrored boxes in ONE frame | the wash is a gradient *across* the frame, so two boxes at different x sit under different amounts of it; at full intensity it saturated everything to white |
+| one box, mirror its YAW, light fixed | the closest design — wash identical by construction — but the two frames differ by **5.0 levels** in a one-sided build and by **5.0 levels** in a two-sided one. That difference is the mirrored silhouette, not the shading |
+
+So the pixel-level behaviour of one-sided shading is **NOT VERIFIED**. What is
+verified is the per-quad gain (above), which is a different claim: for a
+depth-eligible face the SHADER does the lighting and `lighting` is only the
+fallback, so a correct gain does not by itself prove a correct frame.
+
+That hunt did pay for itself once. `CompositionPass.shadeFor` builds its
+`Shade3D` field-by-field from `r.threeD.shade`, and it was **not copying
+`oneSided`** — the flag was plumbed end-to-end, asserted at the snapshot, and
+dropped one function short of the uniform. Exactly the shape of 1.5's back-cap
+asymmetry, in a different file. Fixed, and it is the reason the pixel result is
+reported as unverified rather than as absent: with the field restored the frames
+still do not separate, which is a scene problem or a deeper one, and saying
+which would be a guess.
 
 The defect that hunt turned up is why those assertions are shaped the way they
 are: the flag was first applied to the **wrong branch** — the text depth slices
