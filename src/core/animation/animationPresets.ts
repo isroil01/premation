@@ -45,6 +45,7 @@ import { presetContextFor } from './presetContext';
 import { TEXT_PRESETS } from './textPresets';
 import { BEHAVIOR_PRESETS } from './behaviorPresets';
 import { SCENERY_PRESETS } from './sceneryPresets';
+import { FILM_LOOK_PRESETS } from './filmLookPresets';
 
 export interface PresetTrack {
   prop: PropPath;
@@ -461,6 +462,125 @@ function readUserPresets(): AnimationPreset[] {
   }
 }
 
+/**
+ * Bundle format written by {@link exportPresets} and accepted by
+ * {@link importPresets}.
+ *
+ * Versioned from the first release, because the alternative — a bare array —
+ * cannot tell "an older bundle" from "not a bundle" from "a newer bundle this
+ * build should refuse". Presets are the one thing users hand to each other, so
+ * the file has to survive being opened by a build that predates it.
+ */
+export const PRESET_BUNDLE_FORMAT = 'premation-preset-bundle';
+export const PRESET_BUNDLE_VERSION = 1;
+
+export interface PresetBundle {
+  format: typeof PRESET_BUNDLE_FORMAT;
+  version: number;
+  presets: AnimationPreset[];
+}
+
+/** Outcome of an import, per preset, so a partial success can be reported as one. */
+export interface PresetImportResult {
+  added: string[];
+  /** Replaced an existing user preset of the same name. */
+  replaced: string[];
+  /** Entries the file contained that were not usable presets. */
+  rejected: number;
+  error?: string;
+}
+
+/**
+ * Serialize user presets to a shareable bundle.
+ *
+ * `names` selects a subset; omitted exports every user preset. Built-ins are
+ * never exported — they ship with the app, so a bundle carrying them would
+ * duplicate them on import into a build that already has them (and pin a stale
+ * copy of one that has since been improved).
+ */
+export function exportPresets(names?: readonly string[]): string {
+  const wanted = names && names.length > 0 ? new Set(names) : null;
+  const presets = readUserPresets()
+    .filter((p) => !p.builtin)
+    .filter((p) => !wanted || wanted.has(p.name));
+  const bundle: PresetBundle = {
+    format: PRESET_BUNDLE_FORMAT,
+    version: PRESET_BUNDLE_VERSION,
+    presets,
+  };
+  return `${JSON.stringify(bundle, null, 2)}
+`;
+}
+
+/**
+ * STRUCTURAL validity of one entry from an untrusted file.
+ *
+ * Deliberately shallow, and worth being explicit about: it checks that an entry
+ * is shaped like a preset, NOT that its tracks describe a sane animation. Deep
+ * validation would mean a second copy of `PresetTrack`'s rules here, drifting
+ * from the real one — the defect shape this repo keeps finding. A structurally
+ * valid preset with nonsense inside applies as a no-op, which is a bad preset
+ * rather than a broken editor; a structurally INVALID one is what would throw
+ * somewhere far from the import.
+ */
+function isPresetLike(v: unknown): v is AnimationPreset {
+  if (!v || typeof v !== 'object') return false;
+  const p = v as Partial<AnimationPreset>;
+  if (typeof p.name !== 'string' || p.name.trim() === '') return false;
+  if (!Array.isArray(p.tracks)) return false;
+  if (p.animators !== undefined && !Array.isArray(p.animators)) return false;
+  return true;
+}
+
+/**
+ * Merge a bundle into the user's presets.
+ *
+ * Collisions overwrite BY NAME, which is not a new rule — `saveCurrentAsPreset`
+ * already replaces a same-named preset rather than accumulating duplicates, and
+ * an import that behaved differently from a save would make the library's
+ * identity depend on how an entry got there.
+ *
+ * `builtin` is stripped from every imported preset. A file can claim anything,
+ * and a preset that arrives marked built-in would be undeletable through the
+ * panel and would shadow a real one.
+ */
+export function importPresets(json: string): PresetImportResult {
+  const empty: PresetImportResult = { added: [], replaced: [], rejected: 0 };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return { ...empty, error: 'Not a valid JSON file.' };
+  }
+  const b = parsed as Partial<PresetBundle>;
+  if (!b || typeof b !== 'object' || b.format !== PRESET_BUNDLE_FORMAT) {
+    return { ...empty, error: 'Not a Premation preset bundle.' };
+  }
+  if (typeof b.version !== 'number' || b.version > PRESET_BUNDLE_VERSION) {
+    // Refuse loudly rather than import a subset it half-understands: a newer
+    // bundle may carry fields whose ABSENCE changes behaviour, and silently
+    // dropping them produces a preset that is wrong rather than missing.
+    return { ...empty, error: `Preset bundle version ${String(b.version)} is newer than this build understands.` };
+  }
+  const incoming = Array.isArray(b.presets) ? b.presets : [];
+  const usable = incoming.filter(isPresetLike);
+  if (usable.length === 0) {
+    return { ...empty, rejected: incoming.length, error: 'No usable presets in that file.' };
+  }
+
+  const existing = readUserPresets();
+  const byName = new Map(existing.map((p) => [p.name, p]));
+  const added: string[] = [];
+  const replaced: string[] = [];
+  for (const p of usable) {
+    const { builtin: _builtin, ...rest } = p;
+    (byName.has(p.name) ? replaced : added).push(p.name);
+    byName.set(p.name, { ...rest, folder: p.folder ?? USER_PRESET_FOLDER });
+  }
+  writeUserPresets([...byName.values()]);
+  return { added, replaced, rejected: incoming.length - usable.length };
+}
+
 function writeUserPresets(presets: AnimationPreset[]): void {
   try {
     getSettingsManager().set<AnimationPreset[]>(SETTINGS_KEY, presets);
@@ -474,7 +594,10 @@ export const USER_PRESET_FOLDER = 'User Presets';
 
 /** All presets — built-ins first, then the user's saved ones. */
 export function listPresets(): AnimationPreset[] {
-  return [...BUILTIN_PRESETS, ...TEXT_PRESETS, ...BEHAVIOR_PRESETS, ...SCENERY_PRESETS, ...readUserPresets()];
+  return [
+    ...BUILTIN_PRESETS, ...TEXT_PRESETS, ...BEHAVIOR_PRESETS, ...SCENERY_PRESETS,
+    ...FILM_LOOK_PRESETS, ...readUserPresets(),
+  ];
 }
 
 /** A preset's location in the tree, falling back through the older fields so
