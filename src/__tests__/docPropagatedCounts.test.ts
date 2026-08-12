@@ -37,7 +37,7 @@
  * The cost of the narrowness is that prose can still state a count obliquely
  * ("Effect breadth: 73 vs AE's 400+") and escape. That sentence existed and did
  * escape; it was rewritten into the checkable form rather than the rule being
- * widened to catch it. Prose that states a count should say "145 effects",
+ * widened to catch it. Prose that states a count should say "<N> effects",
  * which is both clearer and guarded — widening the regex until it caught the
  * oblique phrasing would have meant admitting the 39 hits above.
  */
@@ -175,6 +175,17 @@ describe('feature counts stated in prose', () => {
     expect(drift.map((c) => `${c.doc}: "${c.text}" — ${c.key} is ${c.actual}\n    …${c.context}…`)).toEqual([]);
   });
 
+  /*
+    This is the ONLY end-to-end falsification of the regex, deliberately.
+
+    A second one injected a stale count into a real document and broke twice:
+    once when the registry grew past the number it hardcoded, and again when
+    that document was rewritten without stating a count at all. Both times it
+    failed for a reason unrelated to the rule — and the second time no document
+    stated the effect count anywhere, so the test could not be repaired, only
+    re-pointed at a moving target. A synthetic string proves the same thing and
+    cannot rot.
+  */
   it('catches a fresh drift, so the exemptions cannot hollow it out', () => {
     // The allow-list matches a phrase AND its surrounding text. A superseded
     // count reappearing somewhere new is therefore still caught, which is what
@@ -206,23 +217,6 @@ describe('feature counts stated in prose', () => {
     expect(isLedgerRow(md, proseAt + 3)).toBe(false);
     // And nothing before §5 is exempt, whatever it looks like.
     expect(isLedgerRow(md, Math.floor(ledgerAt / 2))).toBe(false);
-  });
-
-  it('a stale count injected into live prose is caught', () => {
-    // End-to-end falsification of the whole rule, on the real document rather
-    // than on a string: take the actual README, put the old number back the way
-    // it was written, and require the scan to find it. Without this the suite
-    // could go green because the regex matched nothing at all.
-    const readme = plain(readFileSync(join(__dirname, '../..', 'README.md'), 'utf8'));
-    const broken = readme.replace(/\b145 effects\b/, '73 effects');
-    expect(broken).not.toBe(readme); // the injection applied
-    const re = new RegExp(String.raw`\b(\d{1,4})\s+(${NOUNS.map(([n]) => n).join('|')})\b`, 'gi');
-    const stale = [...broken.matchAll(re)].filter((m) => {
-      const noun = m[2]!;
-      const key = NOUNS.find(([n]) => new RegExp(`^${n}$`, 'i').test(noun))![1];
-      return Number(m[1]) !== counts[key];
-    });
-    expect(stale.map((m) => m[0])).toEqual(['73 effects']);
   });
 
   it('every HISTORICAL exemption still matches something, and says why', () => {
