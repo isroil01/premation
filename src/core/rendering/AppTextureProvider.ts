@@ -43,6 +43,7 @@ import { scaleEffectLengths, type Effect } from '@core/effects/effects';
 import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
+import type { CubeLut } from '@core/effects/cubeLut';
 import { isLocalBlobRef, loadLocalBlobObjectUrl } from './localBlobSource';
 
 interface PathEntry {
@@ -744,6 +745,79 @@ export class AppTextureProvider implements TextureProvider {
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
     this.gradientEntries.set(key, { kind: 'gradient', signature, texture: tex });
+  }
+
+  /**
+   * Register/refresh an Apply Color LUT `.cube` table as the STRIP texture the
+   * `apply-color-lut` shader samples.
+   *
+   * ── Layout, which the shader depends on exactly ─────────────────────────
+   *
+   * A 3D cube of edge `n` is laid out as `n` slices side by side: the texture
+   * is `n*n` wide and `n` tall, and slice `z` occupies columns `[z*n, (z+1)*n)`.
+   * Within a slice, X is red and Y (the row) is green. So the texel at
+   * `(z*n + r, g)` holds the entry for (r, g, z), which is what `sliceSample`
+   * reads back as `u = (slice*n + xIn) / (n*n)`.
+   *
+   * A 1D LUT is one row, `size1d` wide, each channel looked up independently.
+   *
+   * The source ordering is the other half of this: `.cube` files vary RED
+   * fastest, so the flat index is `r + g*size + b*size²` (cubeLut.ts says so at
+   * the top, and getting it backwards transposes the grade silently rather than
+   * failing).
+   *
+   * Signature-keyed like every other entry here, so an unchanged LUT does not
+   * re-upload a 64³ table every frame.
+   */
+  setCubeLut(key: string, cube: CubeLut, signature: string): void {
+    const existing = this.lutEntries.get(key);
+    if (existing && existing.signature === signature) return;
+    if (existing) {
+      this.resources.freeTexture(`${key}:${existing.signature}`);
+    }
+    const is1d = cube.size1d > 0;
+    const n = is1d ? cube.size1d : cube.size;
+    if (n <= 0) return;
+    const width = is1d ? n : n * n;
+    const height = is1d ? 1 : n;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const img = ctx.createImageData(width, height);
+    // 0..1 floats to bytes. Clamped rather than wrapped: a LUT may legitimately
+    // carry values outside the unit range, and an 8-bit strip cannot hold them.
+    const b8 = (v: number): number => {
+      const x = Math.round((Number.isFinite(v) ? v : 0) * 255);
+      return x < 0 ? 0 : x > 255 ? 255 : x;
+    };
+    const put = (x: number, y: number, s: number): void => {
+      const o = (y * width + x) * 4;
+      img.data[o] = b8(cube.data[s] ?? 0);
+      img.data[o + 1] = b8(cube.data[s + 1] ?? 0);
+      img.data[o + 2] = b8(cube.data[s + 2] ?? 0);
+      img.data[o + 3] = 255;
+    };
+    if (is1d) {
+      for (let i = 0; i < n; i++) put(i, 0, i * 3);
+    } else {
+      for (let z = 0; z < n; z++) {
+        for (let g = 0; g < n; g++) {
+          for (let r = 0; r < n; r++) put(z * n + r, g, (r + g * n + z * n * n) * 3);
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+
+    const tex = this.resources.texture(
+      `${key}:${signature}`,
+      { label: key, width, height, format: 'rgba8unorm', externalCopy: true },
+      /* pinned */ true,
+    );
+    this.resources.writeTexture(tex, { type: 'canvas', canvas });
+    this.lutEntries.set(key, { kind: 'lut', signature, texture: tex });
   }
 
   /**
