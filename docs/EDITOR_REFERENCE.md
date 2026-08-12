@@ -1009,6 +1009,37 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
+### Verified 2026-08-12 — ping-pong time mode ships, in both directions
+
+Listed as a gap: "`loopOut('cycle')` exists; no `pingpong` token." There is a
+`pingpong` token, and it is implemented rather than merely declared —
+`expressions.ts` types the mode, evaluates it on both the out and the in side,
+and offers it in the editor's own autocomplete:
+
+```
+export type LoopMode = 'cycle' | 'pingpong' | 'offset';
+```
+
+Two evaluation sites, not one, which is the part worth checking: `loopOut` and
+`loopIn` each handle the mode, so a loop reflects before the first keyframe as
+well as after the last. A declared-only token would have shown up as the type
+plus zero consumers — the exact shape `Command.isChecked`, `isPassthroughOnly`
+and `SelectionPass` all had in this same branch, so it is worth distinguishing
+by hand every time.
+
+Unknown modes fall back to `'cycle'` deliberately, so a typo degrades instead
+of erroring — which also means "I typed pingpong and got a cycle" is a
+diagnosable symptom rather than the feature being absent.
+
+**Fifth wrong premise in that backlog**, and the count is now the finding. The
+verify-first instruction attached to one item (variable font axes) should have
+been attached to all of them: of the six 2.3 entries, four were assessed by
+grepping for a symbol, and every one of those four was wrong. The two that
+survive — simulation and time effects — were the two supported by a COUNT
+derived from the registry ("0 of 145", "2 of 145") rather than by a search for
+a name. That is the difference between a measurement and a guess, and it holds
+across every item in this document.
+
 ### Verified 2026-08-12 — shy and guide layers already ship
 
 Listed as a gap on the grounds that both have "zero hits". They have plenty;
