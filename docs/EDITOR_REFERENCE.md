@@ -1262,29 +1262,30 @@ lights, because the lit-3D scenes are flat panels, whose front faces stay
 two-sided by design. So there is no regeneration commit, and the gate's silence
 here is a coverage gap rather than evidence of correctness.
 
-**Three render scenes for it were written, and all three were removed.** Each
-was defeated by the same thing — a light emits a comp-wide wash, and the wash is
-larger than anything the shading model does:
+**VERIFIED IN PIXELS 2026-08-12, at the fifth attempt.** `ext-lit-toward` /
+`ext-lit-away` mirror the light's **Point of Interest** and nothing else, so the
+geometry, the light's position, its radius and its wash are byte-identical
+between the two frames and a plain per-pixel diff IS the shading difference:
 
-| design | why it failed |
-|---|---|
-| one box, move the LIGHT between frames | moving the light changes the wash across the whole frame. Reported an identical **2.43×** ratio for one-sided and two-sided builds |
-| two mirrored boxes in ONE frame | the wash is a gradient *across* the frame, so two boxes at different x sit under different amounts of it; at full intensity it saturated everything to white |
-| one box, mirror its YAW, light fixed | the closest design — wash identical by construction — but the two frames differ by **5.0 levels** in a one-sided build and by **5.0 levels** in a two-sided one. That difference is the mirrored silhouette, not the shading |
+| | changed pixels | max delta |
+|---|---|---|
+| one-sided | **45.4%** of the object | **135.7** levels |
+| two-sided (control) | **0** | **0.0** |
 
-So the pixel-level behaviour of one-sided shading is **NOT VERIFIED**. What is
-verified is the per-quad gain (above), which is a different claim: for a
-depth-eligible face the SHADER does the lighting and `lighting` is only the
-fallback, so a correct gain does not by itself prove a correct frame.
+Two-sided makes the frames **byte-identical**, because `abs()` cannot tell
++0.77 from −0.77 — the defect expressed as an exact equality rather than a
+threshold. The front face is the control and it lives inside the scene: it stays
+two-sided by design, gain 0.401 in both frames, so a light that moved or
+weakened would show there.
 
-That hunt did pay for itself once. `CompositionPass.shadeFor` builds its
-`Shade3D` field-by-field from `r.threeD.shade`, and it was **not copying
-`oneSided`** — the flag was plumbed end-to-end, asserted at the snapshot, and
-dropped one function short of the uniform. Exactly the shape of 1.5's back-cap
-asymmetry, in a different file. Fixed, and it is the reason the pixel result is
-reported as unverified rather than as absent: with the field restored the frames
-still do not separate, which is a scene problem or a deeper one, and saying
-which would be a guess.
+Four earlier designs failed, all beaten by the light's comp-wide wash: moving
+the light changed it everywhere (identical 2.43× ratio for both builds); two
+boxes in one frame sat under different parts of its gradient; mirroring the
+box's yaw compared mirrored silhouettes (5.0 levels in both builds). What made
+the fifth work is a property of the model, not a tuning — a parallel light's
+shading ignores `radius` while its wash is stretched to `2 × radius`, so a small
+off-frame light shades at full strength with its wash outside the viewport, and
+the wash does not read the POI at all.
 
 The defect that hunt turned up is why those assertions are shaped the way they
 are: the flag was first applied to the **wrong branch** — the text depth slices

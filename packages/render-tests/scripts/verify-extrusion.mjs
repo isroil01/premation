@@ -362,6 +362,52 @@ try {
   check('deep extruded text', false, `not rendered — ${e.message}`);
 }
 
+/**
+ * One-sided shading on the faces that bound a volume.
+ *
+ * These two frames differ in ONE property: the light's Point of Interest is
+ * mirrored, so the parallel light faces the other way. Geometry, light
+ * position, radius, intensity and the comp-wide wash are all byte-identical, so
+ * a plain per-pixel diff IS the shading difference — no masking, no silhouette
+ * matching, nothing to get wrong.
+ *
+ * That makes the two-sided case an EQUALITY rather than a threshold: `abs(dot(N,
+ * L))` cannot tell +0.77 from −0.77, so with two-sided shading these frames come
+ * out byte-identical. Measured, not assumed — the control build produces 0
+ * changed pixels and a max delta of 0.0, against 45.4% and 135.7 levels here.
+ *
+ * Four earlier designs failed before this one, all defeated by the light's wash:
+ * moving the light changed it everywhere, two boxes sat under different parts of
+ * it, and mirroring the box's yaw compared mirrored silhouettes. What made this
+ * work is a property of the model rather than a tuning: a parallel light's
+ * shading ignores `radius` while its wash is stretched to `2 x radius`, so a
+ * small off-frame light shades fully with its wash outside the viewport — and
+ * the wash does not read the POI at all.
+ */
+try {
+  const toward = await readPng(path.join(ACTUAL, BACKEND, 'ext-lit-toward', '0.png'));
+  const away = await readPng(path.join(ACTUAL, BACKEND, 'ext-lit-away', '0.png'));
+  let changed = 0, drawn = 0, maxDelta = 0;
+  for (let i = 0; i < toward.data.length; i += 4) {
+    const a = lum(toward.data, i);
+    const b = lum(away.data, i);
+    if (a > 28 || b > 28) drawn++;
+    const d = Math.abs(a - b);
+    if (d > maxDelta) maxDelta = d;
+    if (d > 8) changed++;
+  }
+  const frac = drawn ? changed / drawn : 0;
+  check('one-sided: the subject actually drew', drawn > 8000, `${drawn} px`);
+  // Gated well below the measured 45.4% and far above the two-sided 0.0%: what
+  // has to be distinguished is "a wall that turns off" from "nothing happened".
+  check('turning the light around changes the WALL',
+    frac > 0.2, `${(frac * 100).toFixed(1)}% of the object changed (two-sided gives 0.0%)`);
+  check('and changes it by a lot, not by a rounding',
+    maxDelta > 60, `max delta ${maxDelta.toFixed(1)} levels`);
+} catch (e) {
+  check('one-sided shading on extrusion faces', false, `not rendered — ${e.message}`);
+}
+
 // ── report ───────────────────────────────────────────────────────────
 console.log(dim(`\n  extrusion effect-reach checks (${BACKEND}) — measured against each scene's own control:\n`));
 let failed = 0;

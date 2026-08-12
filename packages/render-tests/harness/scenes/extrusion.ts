@@ -219,9 +219,78 @@ function sliceDensityScenes(): Scene[] {
   ];
 }
 
+/**
+ * One-sided shading, isolated by mirroring the light's AIM and nothing else.
+ *
+ * ── Four designs that did not work, and the property that does ──────────────
+ *
+ * A light emits a comp-sized wash, and it is larger than anything the shading
+ * model does. Moving the light between frames changes the wash everywhere
+ * (that design reported an identical 2.43x ratio for one-sided and two-sided
+ * builds); two boxes in one frame sit under different parts of the gradient;
+ * mirroring the box's YAW leaves a mirrored silhouette, so the frames differ by
+ * the geometry rather than by the shading.
+ *
+ * Two properties of the light model make it isolable:
+ *
+ *   1. The wash renderable is stretched to the light's `2 x radius` box
+ *      (`AppTextureProvider`, LIGHT_TEX_SIZE), while a PARALLEL light's shading
+ *      ignores radius entirely — the `d >= radius` cutoff is in the point/spot
+ *      branch of `shadeLayer`, not the parallel one. A small-radius parallel
+ *      light placed off-frame therefore shades at full strength with its wash
+ *      outside the viewport.
+ *   2. A light's AIM comes from its Point of Interest, and the wash does not
+ *      read the POI at all. So mirroring the POI turns the light around while
+ *      leaving its position, radius, intensity and wash untouched.
+ *
+ * So between these two frames the geometry is byte-identical, the light is in
+ * the same place, and the wash is the same wash. The ONLY difference is which
+ * way the light faces, which flips the visible wall's `dot(N, L)` from +0.77 to
+ * −0.77 — exact negatives, which `abs()` cannot tell apart.
+ *
+ *   TWO-SIDED  the wall is lit the same either way, so the two frames are
+ *              IDENTICAL. That is the defect, expressed as an equality.
+ *   ONE-SIDED  the wall keeps its gain in one frame and goes to zero in the
+ *              other.
+ *
+ * The FRONT face is the control, and it is inside the scene rather than beside
+ * it: it stays two-sided by design, so its gain is 0.401 in both frames. A
+ * change that dimmed the whole object — a light that moved, or got weaker —
+ * would move the front face too, and this pair would show it.
+ */
+function oneSidedLightPair(): Scene[] {
+  const build = (poiX: number): Scene['build'] => (graph) => {
+    graph.addNode(node('box', {
+      kind: 'shape',
+      position: CENTER,
+      transform: {
+        width: 120, height: 170, shapeType: 'rect',
+        extrusionDepth: 130, rotationY: 40, rotationX: 0, z: 0,
+        // Per-fragment shading only runs for a layer that accepts lights.
+        acceptsLights: true,
+      },
+      style: { fill: '#9fb4c8' },
+    }));
+    graph.addNode(node('L', {
+      kind: 'light',
+      // Off-frame and small, so the wash cannot reach the subject. Identical in
+      // both frames — only the POI below differs.
+      position: { x: -400, y: 180 },
+      transform: { lightType: 'parallel', intensity: 100, radius: 60, z: 0, poiX, poiY: 180, poiZ: 0 },
+      style: { fill: '#ffffff' },
+    }));
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: CAM }));
+  };
+  return [
+    scene('ext-lit-toward', 'Extruded box under a parallel light aimed +x — the visible wall faces the light.', build(480)),
+    scene('ext-lit-away', 'The same frame with the light AIMED THE OTHER WAY — the wall must go dark, the front face must not.', build(-1280)),
+  ];
+}
+
 export const extrusionScenes: Scene[] = [
   ...invertPair(),
   ...dofWallPair(),
   roundedBevelScene(),
   ...sliceDensityScenes(),
+  ...oneSidedLightPair(),
 ];
