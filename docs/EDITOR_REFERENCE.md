@@ -1009,6 +1009,48 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
+### Measured 2026-08-12 (evening) — both WebGPU debts have collapsed, and not by me
+
+The two open items from this branch's WebGPU work were re-measured against the
+current tree. Both are effectively gone, and concurrent shader work in another
+session is what closed them — recorded here because the ledger is worthless if
+it only credits the person writing it.
+
+| Scene | Was | Now | Class |
+|---|---|---|---|
+| `effect-compound-blur` | the "weaker blur at the bright end" | **0.000%** | pixel-exact |
+| `effect-turbulent-displace` | divergent | **0.000%** | pixel-exact |
+| `effect-displacement-map` | divergent | 0.790% | 548 px, **100% contour** |
+| `effect-displacement-map-layer` | divergent | 0.515% | 357 px, **100% contour** |
+| `glass-grain` | ceiling raised by hand to **32.712%** | **0.192%** | 133 px, 4 flat, max Δ 5/255 |
+
+The two displacement remainders classify `coverage-only` with `flat` and
+`alphaOnly` both zero: the rasterizers drew the SAME contour and disagree only
+about sub-pixel coverage. That is the benign antialiasing class, not the
+colour-and-radius defect the map-reading investigation was chasing.
+
+**Both of my leads on that investigation were wrong.** Orientation was
+eliminated first (a horizontal greyscale ramp is invariant under V-flip and
+channel swap). Alpha — recorded as "the live lead", with a readback proposed as
+the next step — is eliminated too, and by inspection rather than measurement:
+the map is an opaque gradient (`#000000` → `#ffffff`, no layer opacity) and the
+subject sits inside it, so alpha is 1 everywhere the divergence was reported.
+Premultiplied rgb IS straight rgb at alpha 1, so the premultiplication the
+hypothesis rested on is a no-op exactly where the symptom lived. The readback
+would have cost a harness change and returned 1.0.
+
+Two leads, both confidently recorded, both wrong on inspection. The correlation
+that generated them — "the only three scenes reading another layer as a map are
+the only three diverging this way" — was real and still produced nothing, which
+is the honest summary of that line of work.
+
+**Not done:** the ceilings are stale — `glass-grain` at 32.712% would now hide a
+170× regression. They are deliberately NOT tightened here. Every number above
+was measured against a working tree holding ~235 uncommitted edits from another
+session, so a ceiling set against it would be pinned to a state nobody has
+committed, and would fail for whoever is mid-refactor without telling them why.
+Tighten once the tree is stable.
+
 ### Swept 2026-08-12 — the Renderable boundary is clean, and now stays that way
 
 `Renderable` is the entire contract between the snapshot builder and the
