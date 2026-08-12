@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 148 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 153 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 36 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 8 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -406,8 +406,8 @@ deliberate render-test golden rebaseline, not a flag.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 148 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 148 effects present are properly
+**Effect breadth: 153 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 153 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -421,7 +421,7 @@ volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D implementation and a Generate entry in the effects
 browser. They are CPU passes rather than shaders, which is a performance fact
-(see the GPU-porting work) and not an absence. The count is now phrased as "148
+(see the GPU-porting work) and not an absence. The count is now phrased as "153
 effects" rather than as a bare figure specifically so that
 `docPropagatedCounts.test.ts` can check it.
 
@@ -957,14 +957,14 @@ answers what can be answered exactly and refuses the rest.
 
 | | |
 |---|---|
-| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 148 |
+| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 153 |
 | already a pure `(data, w, h, …)` kernel | **92** (82%) |
 | need a whole-image reduction | **4** — `equalize`, `auto-levels`, `auto-contrast`, `auto-color` |
 | drawn with canvas ops, no pure kernel | **20** |
 
 The **112** confirms the figure every brief has been quoting; unlike the effect
 count, this one was right. Derived from the predicate rather than a copy of the
-list, and `unaccounted: 0` — every one of the 148 lands in exactly one bucket,
+list, and `unaccounted: 0` — every one of the 153 lands in exactly one bucket,
 so there is no silent third category rendering as a no-op.
 
 **The 82% is the finding that decides the answer.** The pixel work is already
@@ -1008,6 +1008,41 @@ kernel: a body slice that ran past its own closing brace, and — the one worth
 remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
+
+### Verified 2026-08-12 — shy and guide layers already ship
+
+Listed as a gap on the grounds that both have "zero hits". They have plenty;
+the search was for the wrong names.
+
+**Guide layers** are complete, with AE's actual semantics — visible while you
+work, absent from the render. `guideLayer.ts` exports `readIsGuideLayer`,
+`isGuideLayer` and `toggleGuideLayer`; `App.tsx` surfaces the toggle per layer;
+and `buildSnapshot` enforces the behaviour in one clause:
+
+```
+visible: node.visible !== false
+  && (!anySolo || node.solo === true)
+  && !(comp.forExport === true && readIsGuideLayer(node)),
+```
+
+Note what that says: the exclusion is gated on `forExport`, so a guide layer
+draws in the viewport and drops out of the exported frame. That is the whole
+point of the feature, and it would have been easy to build the useless version
+that simply hides the layer.
+
+**Shy** ships too, and correctly as timeline-only state: `uiStore.globalShy`,
+a "Hide Shy Layers" toggle in `BottomTimeline` carrying `aria-pressed`, a `shy`
+flag per layer, and its own icon. A comment in `App.tsx` states the rule
+explicitly — "`shy` is timeline-only state with no render meaning" — which is
+right: shy hides ROWS, never pixels.
+
+This is the fourth premise in that backlog to be wrong on inspection, after
+"scale `stepPx` with depth" (already the behaviour), "no volumetric light rays"
+(four such effects ship), and "presets are per-machine so export is the gap"
+(true, but the save path exists and is named `saveCurrentAsPreset`, not
+`savePreset`). The pattern in every case: a grep for a plausible identifier,
+read as proof of absence. §0's rule covers this and is worth restating —
+absence of a symbol is evidence about the symbol, never about the capability.
 
 ### Verified 2026-08-12 — variable font axes: one works by accident, the rest cannot
 
@@ -1213,7 +1248,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "148 effects".
+it. Prose stating a count should say "153 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and
