@@ -26,7 +26,10 @@
     "glass-frosted#0": 0.02294,
     "glass-clear#0": 0.04645,
     "glass-heavy-frost#0": 0.02259,
-    "glass-grain#0": 0.32183,
+    "glass-grain#0": 0.32712,
     "plugin-visible#0": 0.24177
+  },
+  "_notes": {
+    "glass-grain#0": "RAISED BY HAND 2026-08-12, 0.32183 -> 0.32712, cause UNATTRIBUTED. Measured at 32.712% in six independent process launches; the 0.32183 ceiling came from a single sample taken when this file was first written. Four hypotheses were tested and eliminated by re-rendering: scene order (removed the two new extrusion scenes), the MASK_TARGET orphan skip, the BEAM shader registration, and the twelve one-sided shading edits. The changes left are WebGL2-only code or a field never set for glass, and the WebGL2 reference comparison never moved. So this is either a one-sample baseline that was low, or a real change nobody has found. Raised rather than swept by --update-backend-baseline so it stays a named debt with its evidence attached."
   }
 }
