@@ -399,6 +399,71 @@ export async function myPublishedPlugins(): Promise<MyRegistryPlugin[]> {
   return request<MyRegistryPlugin[]>('/plugins/mine/list');
 }
 
+/**
+ * One row of the account's installed set, as the server holds it.
+ *
+ * Note what is NOT here: the package bytes, and `nativeTrust`. The bytes stay
+ * local because the server records WHAT is installed, not a second download
+ * host — a restore re-fetches from the registry and verifies the signature on
+ * this machine, exactly as a first install does. `nativeTrust` is a decision
+ * about ONE machine and has to be made again on the next: syncing it would let
+ * a yes given on a laptop grant unsandboxed execution on a desktop the user
+ * never answered for.
+ */
+export interface ServerInstall {
+  pluginId: string;
+  name: string;
+  /** What the account last recorded. */
+  version: string;
+  /** What the registry now offers, so "behind" needs no extra call. */
+  latestVersion: string;
+  enabled: boolean;
+  granted: PluginPermission[];
+  installedAt: string;
+  updatedAt: string;
+}
+
+/**
+ * The account's installed set.
+ *
+ * `[]` when there is no registry, rather than throwing: the caller's next move
+ * is always "reconcile against this", and reconciling against an empty list is
+ * the right no-op for a local-edition user. Note this is NOT the same as a
+ * failed request — see `reconcileInstalledSet`, which must tell those two
+ * apart before it deletes anything.
+ */
+export async function fetchInstalledSet(): Promise<ServerInstall[]> {
+  if (!pluginRegistryEnabled()) return [];
+  return request<ServerInstall[]>('/plugins/installed');
+}
+
+/**
+ * Record one install against the account. Returns the account's new full set.
+ *
+ * A PUT, so calling it on install, on update and on every enable/disable is
+ * the same request stated at different times — the server upserts on
+ * `(user, plugin)`, so re-sending cannot accumulate rows.
+ */
+export async function recordInstalled(
+  pluginId: string,
+  body: { version: string; enabled: boolean; granted: PluginPermission[] },
+): Promise<ServerInstall[]> {
+  if (!pluginRegistryEnabled()) return [];
+  return request<ServerInstall[]>(`/plugins/installed/${encodeURIComponent(pluginId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Forget an install. Removing one already gone is a success, not an error. */
+export async function forgetInstalled(pluginId: string): Promise<ServerInstall[]> {
+  if (!pluginRegistryEnabled()) return [];
+  return request<ServerInstall[]>(`/plugins/installed/${encodeURIComponent(pluginId)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function myPublishers(): Promise<PublisherRecord[]> {
   if (!pluginRegistryEnabled()) return [];
   return request<PublisherRecord[]>('/publishers/mine');

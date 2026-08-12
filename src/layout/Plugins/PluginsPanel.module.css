@@ -1,7 +1,5 @@
 .root { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
 
-/* Dropping a package anywhere on the list installs it — the retired manager
-   modal's drop zone, moved to the surface the user is already looking at. */
 .rootDropping { outline: 2px dashed var(--color-primary); outline-offset: -3px; }
 
 .dropHint {
@@ -13,8 +11,6 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  /* `none`, so the drag events keep reaching the container underneath. An
-     overlay that swallows them cancels the drop it exists to advertise. */
   pointer-events: none;
   background: var(--color-surface-0);
   color: var(--color-text-secondary);
@@ -25,88 +21,69 @@
 
 .searchRow {
   display: flex;
-  /* `stretch`, not `center`: the button takes the field's height instead of
-     sitting 5px shorter than it, which reads as two controls that happen to be
-     near each other rather than one strip. */
-  align-items: stretch;
-  gap: var(--space-2);
-  padding: var(--space-2);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
   flex: 0 0 auto;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
 }
+
 .search {
-  /* `min-width: 0` so the field yields to the button instead of overflowing the
-     row: a flex item's default `min-width: auto` refuses to shrink below its
-     intrinsic size, and at 280px that pushes the button out of view. */
   flex: 1 1 auto;
   min-width: 0;
-  padding: 5px 8px;
-  border-radius: var(--radius-md, 4px);
-  border: 1px solid var(--color-field-border);
-  background: var(--color-surface-0);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-label);
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
+  background: var(--color-surface-0, #121217);
+  color: var(--color-text-primary, #ffffff);
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 140ms ease;
 }
-.search:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -1px; }
 
-/*
- * Add plugin.
- *
- * Sits beside the search field at the same height, so the row reads as one
- * control strip rather than a field with something bolted next to it. Secondary
- * chrome on purpose: installing from disk is the rarer path — most plugins
- * arrive from the registry, through a row's own Install button — and a filled
- * accent button here would outrank every one of them.
- */
-.addBtn {
+.search:focus {
+  border-color: var(--color-primary, #2988ff);
+}
+
+.publishBtn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex: 0 0 auto;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-md, 4px);
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-label);
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: none;
+  background: linear-gradient(135deg, var(--color-primary, #2988ff) 0%, #1d75e0 100%);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: var(--motion-hover-transition);
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), filter 120ms ease;
+  user-select: none;
 }
-.addBtn:hover { background: var(--color-hover); color: var(--color-text-primary); }
-.addBtn:active { transform: translateY(1px); }
-.addBtn:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
 
-/* Icon-only, for the dock column. The caret stays: it is the only thing that
-   says this opens a choice rather than doing something immediately. */
-.addBtnCompact { padding: 0 4px; gap: 1px; }
+.publishBtn:hover {
+  filter: brightness(1.08);
+}
+
+.publishBtn:active {
+  transform: scale(0.97);
+}
+
+.publishBtnCompact {
+  padding: 7px 10px;
+}
 
 .hiddenInput { display: none; }
 
 .list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 
-/*
- * The pager, pinned below the scrolling list.
- *
- * Inside `.list` it would scroll away, and a control the reader never reaches
- * is indistinguishable from a list that ended. The shared `Pagination` already
- * wraps its own count line above the buttons when the column is narrow.
- */
-.pagerRow {
-  flex: 0 0 auto;
-  padding: 0 var(--space-2) var(--space-1);
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-/*
- * A plugin row is SCANNED, not read. Icon, name, publisher, installs, one line
- * of description — anything taller buys nothing and costs the number of
- * plugins visible at once, which is the only thing that matters in a list.
- */
 .row {
   display: flex;
   gap: var(--space-2);
   align-items: flex-start;
   width: 100%;
-  padding: var(--space-2);
+  padding: var(--space-2) 12px;
   border: none;
   border-bottom: 1px solid var(--color-border-subtle);
   background: transparent;
@@ -146,10 +123,6 @@
 }
 .rowMeta { display: flex; gap: var(--space-2); font-size: var(--font-size-micro, 10px); color: var(--color-text-tertiary); }
 
-/* A malicious takedown the user has not acknowledged.
-   Deliberately the only thing on this row allowed to wrap: it is a sentence to
-   be read, not a label to be glanced at, and truncating it with an ellipsis
-   would defeat the point of showing it permanently. */
 .rowTakedown {
   display: flex;
   align-items: flex-start;
@@ -227,7 +200,7 @@
   cursor: pointer;
 }
 
-.skelRow { display: flex; gap: var(--space-2); padding: var(--space-2); align-items: center; }
+.skelRow { display: flex; gap: var(--space-2); padding: var(--space-2) 12px; align-items: center; }
 .skelIcon, .skelText {
   border-radius: 4px;
   background: linear-gradient(90deg, var(--color-surface-1), var(--color-surface-2), var(--color-surface-1));

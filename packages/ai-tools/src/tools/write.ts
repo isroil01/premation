@@ -394,6 +394,34 @@ export const setExpressionDef: AiToolDef = {
 
 // ── Effects + text ────────────────────────────────────────────────
 
+/**
+ * Effects that exist in `EFFECT_DEFS` and are deliberately NOT offered to the AI,
+ * each with the reason. An entry here is a claim that the effect cannot WORK from
+ * a tool call, not that nobody got round to listing it.
+ *
+ * This exists because the enum below was a silent subset for three rounds — the
+ * absent effects looked exactly like a curated allowlist and were nothing of the
+ * kind. So the two cases are now spelled apart: everything in `EFFECT_DEFS` is
+ * either in the enum or in here with a reason, and
+ * `src/core/effects/aiAddEffectEnum.test.ts` fails if anything is in neither.
+ *
+ * Keep this list SHORT and justify each entry against what the AI can actually
+ * reach. "Takes a layer reference" is NOT a reason: `update_effect_param` types
+ * its `value` as unconstrained JSON and `toolContext` passes it through
+ * uncoerced, so a `type: 'layer'` param takes a nodeId from `describe_scene`
+ * perfectly well — which is why set-matte, compound-blur, displacement-map and
+ * audio-spectrum are all in the enum rather than here.
+ */
+export const AI_EXCLUDED_EFFECTS: Readonly<Record<string, string>> = {
+  'apply-color-lut':
+    'Its `lut` param is a parsed .cube FILE (type "resolved"), and no AI tool loads ' +
+    'one — there is no file-picker equivalent on the tool surface. `applyColorLut` ' +
+    'returns early when the LUT is absent ("no file loaded — render unchanged"), so ' +
+    'an AI-added instance is a guaranteed silent no-op: it would occupy a slot in the ' +
+    'effect stack and change no pixels. Offering it would be worse than omitting it. ' +
+    'Delete this entry the moment a tool can supply a LUT.',
+};
+
 export const addEffectDef: AiToolDef = {
   name: 'add_effect',
   kind: 'write',
@@ -411,16 +439,76 @@ export const addEffectDef: AiToolDef = {
       nodeId: { type: 'string' },
       type: {
         type: 'string',
-        // Kept in lockstep with EFFECT_DEFS (src/core/effects/effects.ts). The
-        // enum can't import from the app, so list_capabilities (which reads the
-        // live registry) is the source of truth for params; this is the gate.
+        // EVERY effect in EFFECT_DEFS (src/core/effects/effects.ts) except those
+        // in AI_EXCLUDED_EFFECTS above. This package cannot import from the app,
+        // so the list is hand-written and a comment claiming lockstep is worth
+        // nothing — the previous one said exactly that while listing 45 of 92.
+        // The guard is `src/core/effects/aiAddEffectEnum.test.ts`, which imports
+        // both sides and fails NAMING whatever drifted. Grouped by the panel's
+        // category purely for review; order is not semantic.
+        //
+        // list_capabilities reads the live registry and remains the source of
+        // truth for each type's PARAMS; this enum is only the gate on the type.
         enum: [
-          'blur', 'glow', 'drop-shadow', 'brightness', 'contrast', 'saturate',
-          'grayscale', 'sepia', 'hue-rotate', 'hue-saturation', 'invert',
-          'levels', 'curves', 'posterize', 'tint', 'channel-mixer',
-          'gradient-ramp', 'fractal-noise', 'displacement-map', 'motion-tile',
-          'fill', 'four-color-gradient', 'stroke', 'beam', 'sharpen', 'noise',
-          'keylight', 'echo',
+          // Blur & Sharpen
+          'blur', 'compound-blur', 'sharpen', 'directional-blur', 'gaussian-blur',
+          'fast-box-blur', 'radial-blur', 'channel-blur', 'unsharp-mask',
+          // Stylize
+          'glow', 'drop-shadow', 'noise', 'inner-shadow', 'inner-glow', 'satin', 'bevel',
+          'mosaic', 'find-edges', 'roughen-edges', 'turbulent-noise', 'add-grain', 'median',
+          'threshold', 'emboss', 'scatter',
+          // Color Correction
+          'brightness', 'contrast', 'saturate', 'grayscale', 'sepia', 'hue-rotate',
+          'hue-saturation', 'invert', 'levels', 'curves', 'posterize', 'tint', 'channel-mixer',
+          'exposure', 'vibrance', 'colorama', 'lumetri', 'selective-color', 'shadow-highlight',
+          'color-balance', 'gamma-pedestal-gain', 'photo-filter', 'black-and-white', 'tritone',
+          // Generate
+          'gradient-ramp', 'fractal-noise', 'fill', 'four-color-gradient', 'stroke', 'beam',
+          'checkerboard', 'grid', 'cell-pattern', 'vegas', 'lens-flare', 'numbers', 'timecode',
+          'audio-spectrum',
+          // Distort
+          'displacement-map', 'motion-tile', 'bend', 'wide-time', 'force-motion-blur',
+          'bevel-alpha', 'bevel-edges', 'spotlight', 'sphere', 'cylinder', 'arithmetic',
+          'wave-warp', 'turbulent-displace', 'transform',
+          'bulge', 'twirl', 'spherize', 'corner-pin', 'bezier-warp', 'polar-coordinates', 'optics-compensation', 'mesh-warp', 'liquify',
+          'mirror', 'offset',
+          // Keying
+          'keylight', 'set-matte', 'simple-choker', 'linear-color-key', 'shift-channels',
+          'luma-key', 'minimax',
+          // Time
+          'echo', 'posterize-time',
+          // Transition
+          'linear-wipe', 'venetian-blinds', 'gradient-wipe', 'card-wipe', 'radial-wipe',
+          'block-dissolve',
+
+          // ── Round four ──
+          //
+          // `optics-compensation` is here rather than with the round-three
+          // distorts because it landed separately and the guard test caught its
+          // absence — which is the drift this whole arrangement exists to stop.
+          'optics-compensation',
+          // Blur & Sharpen
+          'bilateral-blur', 'smart-blur', 'camera-lens-blur',
+          // Distort
+          'ripple', 'magnify', 'warp', 'page-turn', 'split', 'slant', 'smear', 'rolling-shutter',
+          // Perspective
+          'radial-shadow',
+          // Generate
+          'circle', 'ellipse', 'radio-waves', 'lightning', 'light-rays', 'light-sweep',
+          'audio-waveform',
+          // Stylize
+          'cartoon', 'brush-strokes', 'strobe-light', 'color-emboss', 'halftone',
+          'kaleidoscope', 'vignette', 'burn-film',
+          // Color Correction
+          'equalize', 'auto-levels', 'auto-contrast', 'auto-color', 'change-color',
+          'change-to-color', 'leave-color', 'toner',
+          // Keying & Channel
+          'color-key', 'color-range', 'extract', 'spill-suppressor', 'matte-choker',
+          'alpha-levels', 'solid-composite', 'channel-combiner', 'remove-color-matting',
+          // Transition
+          'iris-wipe', 'light-wipe', 'line-sweep', 'grid-wipe',
+          // Noise & Grain
+          'dust-scratches', 'noise-alpha',
         ],
       },
       amount: { type: 'number', description: 'Initial value for the primary param. Omit for the effect default.' },

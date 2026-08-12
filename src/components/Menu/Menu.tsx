@@ -67,8 +67,25 @@ export function Menu({ children, className, onItemActivate, ariaLabel, noScroll 
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (!rootRef.current) return;
+    /*
+      Skip items that cannot take focus.
+
+      This filtered on `aria-disabled` only — and nothing in this file ever SETS
+      aria-disabled. `MenuItem` renders the native `disabled` attribute, so
+      disabled entries stayed in this list, and `.focus()` on a natively
+      disabled button is a silent no-op: arrow-key navigation STOPPED dead on
+      the first greyed-out entry. In File that is "Sync Project…", which is
+      disabled whenever no bundle project is open — so Export… and Close
+      Project below it could not be reached by keyboard at all.
+
+      Both selectors, so this stays correct if an item ever opts for the
+      aria-disabled form (which stays focusable) instead.
+    */
     const items = Array.from(
-      rootRef.current.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])'),
+      rootRef.current.querySelectorAll<HTMLElement>(
+        '[role="menuitem"]:not([aria-disabled="true"]):not([disabled]),' +
+        '[role="menuitemcheckbox"]:not([aria-disabled="true"]):not([disabled])',
+      ),
     );
     if (items.length === 0) return;
     const active = document.activeElement as HTMLElement | null;

@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 153 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 154 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 36 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 8 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -406,8 +406,8 @@ deliberate render-test golden rebaseline, not a flag.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 153 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 153 effects present are properly
+**Effect breadth: 154 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 154 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -421,7 +421,7 @@ volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D implementation and a Generate entry in the effects
 browser. They are CPU passes rather than shaders, which is a performance fact
-(see the GPU-porting work) and not an absence. The count is now phrased as "153
+(see the GPU-porting work) and not an absence. The count is now phrased as "154
 effects" rather than as a bare figure specifically so that
 `docPropagatedCounts.test.ts` can check it.
 
@@ -957,14 +957,14 @@ answers what can be answered exactly and refuses the rest.
 
 | | |
 |---|---|
-| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 153 |
+| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 154 |
 | already a pure `(data, w, h, …)` kernel | **92** (82%) |
 | need a whole-image reduction | **4** — `equalize`, `auto-levels`, `auto-contrast`, `auto-color` |
 | drawn with canvas ops, no pure kernel | **20** |
 
 The **112** confirms the figure every brief has been quoting; unlike the effect
 count, this one was right. Derived from the predicate rather than a copy of the
-list, and `unaccounted: 0` — every one of the 153 lands in exactly one bucket,
+list, and `unaccounted: 0` — every one of the 154 lands in exactly one bucket,
 so there is no silent third category rendering as a no-op.
 
 **The 82% is the finding that decides the answer.** The pixel work is already
@@ -1541,7 +1541,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "153 effects".
+it. Prose stating a count should say "154 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and

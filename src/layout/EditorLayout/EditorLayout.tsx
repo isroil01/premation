@@ -148,6 +148,7 @@ export function EditorLayout({
       size={right.collapsed ? 44 : right.size}
       collapsed={right.collapsed}
       storageKey="rightInspector"
+      onResize={(s) => setRightSize('rightInspector', s)}
       onResizeEnd={(s) => setRightSize('rightInspector', s)}
     >
       {inspectorRow}
@@ -187,6 +188,7 @@ export function EditorLayout({
       size={bottom.collapsed ? 44 : bottom.size}
       collapsed={bottom.collapsed}
       storageKey="bottomTimeline"
+      onResize={(s) => setBottomSize('bottomTimeline', s)}
       onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
     >
       {timelineColumn}
@@ -214,6 +216,7 @@ export function EditorLayout({
           size={left.collapsed ? 44 : left.size}
           collapsed={left.collapsed}
           storageKey="leftSidebar"
+          onResize={(s) => setLeftSize('leftSidebar', s)}
           onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
         >
           {bodyRow}

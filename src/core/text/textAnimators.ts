@@ -38,6 +38,7 @@ import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 import { parseExpression, evaluateExpression } from '@motion/animation';
+import { clamp01 } from '@utils/lang';
 import {
   defaultRangeSelector,
   defaultSelector,
@@ -404,7 +405,6 @@ function normalizeSelector(s: SelectorData): SelectorData {
 
 // ── Evaluation ──────────────────────────────────────────────────────
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** Ranges Character Offset walks through. A digit rolls within digits, a letter
  *  within its own case — offsetting 'Z' by 1 must not produce '['. */

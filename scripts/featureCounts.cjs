@@ -29,13 +29,33 @@ const ROOT = join(__dirname, '..');
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
 
 /** Members of a `export type X = 'a' | 'b' | …;` union. Throws if absent. */
-function unionMembers(rel, typeName) {
-  const src = read(rel);
+/**
+ * Union members from source TEXT.
+ *
+ * Split from the file-reading wrapper for the same reason `objectKeysIn` is: a
+ * test can splice a union and prove the derived count moves — and, since the
+ * apostrophe bug below, that a comment does NOT move it.
+ */
+function unionMembersIn(src, typeName, where = 'source') {
   const m = src.match(new RegExp(`export type ${typeName}\\s*=([\\s\\S]*?);`, 'm'));
-  if (!m) throw new Error(`featureCounts: no union \`${typeName}\` in ${rel}`);
-  const members = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
-  if (members.length === 0) throw new Error(`featureCounts: union \`${typeName}\` in ${rel} is empty`);
+  if (!m) throw new Error(`featureCounts: no union \`${typeName}\` in ${where}`);
+  // Strip comments BEFORE matching quoted members. An apostrophe in prose —
+  // "AE's Apply Color LUT" — is an opening quote to this regex, so it pairs
+  // with the next real member's quote, inventing one member and eating another.
+  // Adding a single effect moved the count by TWO, which is how this was
+  // found; a comment worded slightly differently would have moved it by zero
+  // and gone unnoticed. A miscount inside the script whose whole job is to stop
+  // hand-miscounted registries is the worst version of this bug.
+  const body = m[1]
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+  const members = [...body.matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  if (members.length === 0) throw new Error(`featureCounts: union \`${typeName}\` in ${where} is empty`);
   return members;
+}
+
+function unionMembers(rel, typeName) {
+  return unionMembersIn(read(rel), typeName, rel);
 }
 
 /**
@@ -123,7 +143,7 @@ function featureSizes() {
   return Object.fromEntries(Object.entries(featureCounts()).map(([k, v]) => [k, v.length]));
 }
 
-module.exports = { featureCounts, featureSizes, objectKeysIn };
+module.exports = { featureCounts, featureSizes, objectKeysIn, unionMembersIn };
 
 if (require.main === module) {
   const all = featureCounts();

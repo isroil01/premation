@@ -22,7 +22,9 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
-import { timeReverseKeyframes, easyEaseAll, bounceKeyframes, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
+import { timeReverseKeyframes, easyEaseAll, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
+import { applyBounce, describeBounce, revealBounce } from '@core/animation/bounce';
+import { useBounceStore, currentSquash } from '@stores/bounceStore';
 import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
 
 /** The control kinds offered in the rig menu, in the order AE lists them. */
@@ -42,6 +44,7 @@ import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { customPrompt } from '@components/Modal/Dialogs';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
+import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
 
 import { useSelectionStore } from '@stores/selectionStore';
@@ -100,7 +103,7 @@ const MASK_TOOLS: ToolDef[] = [
   { id: 'mask-ellipse', icon: 'mask-circle', label: 'Ellipse Mask Tool' },
   // Where the Pen's old implicit masking went, so nothing was lost by making
   // the plain Pen always draw a path layer.
-  { id: 'mask-pen',     icon: 'pen',         label: 'Pen Mask Tool' },
+  { id: 'mask-pen',     icon: 'mask-pen',    label: 'Pen Mask Tool' },
 ];
 
 const PUPPET_TOOL: ToolDef = { id: 'puppet-pin', icon: 'puppet-pin', label: 'Puppet Position Pin Tool', shortcut: 'Ctrl+P' };
@@ -137,7 +140,11 @@ function buildAnimateItems(
     { type: 'item', id: 'anim-tracking-reveal', label: 'Tracking Reveal (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created'); } },
     { type: 'separator' },
     { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { if (easyEaseAll(id)) notify('Eased all keyframes'); else notify('Layer has no keyframes yet', 'warning'); } },
-    { type: 'item', id: 'anim-bounce', label: 'Bounce Keyframes', icon: 'track', onSelect: () => { if (bounceKeyframes(id)) notify('Added a bounce'); else notify('Layer needs two keyframes that move', 'warning'); } },
+    // Applies the settings the Bounce section in the Graph panel is showing —
+    // the menu is a shortcut to that panel's current shape, not a second,
+    // hardcoded bounce. `applyBounce` (not `bounceKeyframes`) so the item is
+    // never a no-op: with nothing to rebound from it generates the fall too.
+    { type: 'item', id: 'anim-bounce', label: 'Bounce', icon: 'track', onSelect: () => { const s = useBounceStore.getState(); const r = applyBounce(id, { atTime: playhead, mode: 'auto', drop: s.drop, bounce: s.bounce, squash: currentSquash() }); if (r) { revealBounce(id); notify(describeBounce(r)); } else notify('Nothing to bounce — check the layer is unlocked', 'warning'); } },
     { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { if (timeReverseKeyframes(id)) notify('Keyframes reversed'); else notify('Layer has no keyframes yet', 'warning'); } },
     // Overlap is ASKED FOR rather than hardcoded. `sequenceLayerBars` has taken
     // an `overlapSeconds` since it was written, with a passing test for it, but
@@ -551,7 +558,10 @@ export function TopNav(): JSX.Element {
             </IconButton>
           )}
 
+          {/* The File menu and the project it acts on, together. Electron shows
+              both in the title bar instead, so this would be a second copy. */}
           {!isElectron && <AppMenuButton />}
+          {!isElectron && <ProjectStatus />}
           <span className={styles.toolDivider} aria-hidden />
 
           {/* Cluster 1: Edit & Drawing Tools */}
@@ -685,6 +695,7 @@ export function TopNav(): JSX.Element {
             {/* New layer dropdown */}
             <Dropdown
               placement="bottom-start"
+              noScroll
               trigger={
                 <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New layer…">
                   <Icon name="plus" size="md" />
@@ -740,6 +751,7 @@ export function TopNav(): JSX.Element {
             {!hideAnimate && (
               <Dropdown
                 placement="bottom-start"
+                noScroll
                 trigger={
                   <button
                     type="button"

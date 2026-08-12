@@ -10,7 +10,7 @@
  * This is the layer that knows about Application. Commands themselves never do.
  */
 
-import { getCommandRegistry, chordKey } from './Command';
+import { getCommandRegistry } from './Command';
 import type {
   Command,
   CommandContext,
@@ -99,11 +99,6 @@ export class CommandSystem {
     };
     services.__undo = (cmd) => this.history.push(cmd);
   }
-}
-
-/** Stringify a chord for debug logging. */
-export function describeChord(chord: import('@app-types/common').KeyChord): string {
-  return chordKey(chord);
 }
 
 /** Default Application-wide instance. */

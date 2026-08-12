@@ -3,15 +3,20 @@
  *
  *   node packages/render-tests/scripts/verify-plugin-render.mjs [backend]
  *
- * Reads the two plugin scenes out of `.artifacts/actual/<backend>/` and
- * compares the RIGHT square (effect applied) against the LEFT one (control) in
- * the same frame. Comparing halves of one frame rather than against a golden is
+ * Reads the three plugin scenes out of `.artifacts/actual/<backend>/` and
+ * compares each effect scene's subject against `plugin-control`'s. Comparing
+ * against a control rendered in the SAME RUN rather than against a golden is
  * deliberate: a golden blessed while the feature was inert would have recorded
  * "the effect changes nothing" as the correct answer, which is the exact bug
- * this is here to catch. The control cannot be stale, because it is rendered by
- * the same pass, in the same frame, one square to the left.
+ * this is here to catch. The control cannot go stale, because it is rendered on
+ * the same backend, from the same subject, minutes apart at most.
  *
- * Two scenes, and the pair is the point:
+ * (An earlier draft drew two squares side by side in ONE frame and compared its
+ * halves. It measured nothing — the second root never rendered, with a BUILT-IN
+ * effect too — so its "the effect erased my layer" reading was the scene's own
+ * defect. Single-node scenes are what every other effect scene here uses.)
+ *
+ * Two effect scenes, and the pair is the point:
  *
  *   plugin-identity  an exact identity shader — the squares must MATCH. Catches
  *                    a plugin effect that damages the layer.
@@ -164,10 +169,26 @@ check(
 
   A skipped effect passes the identity test perfectly. This one fails unless the
   shader ran: red must drop toward zero while green and blue stay put.
+
+  ── Why this expects the OPPOSITE answer on WebGL2 ──────────────────────────
+
+  A plugin ships WGSL only. `pluginEffectMaterial.ts` generates a GLSL
+  PASSTHROUGH for the WebGL2 tier rather than making every author hand-write a
+  second shader for a fallback nobody tests — so on WebGL2 `killred` draws its
+  input unchanged, ON PURPOSE, and a surviving red channel is the feature
+  working as designed.
+
+  Asserting the WebGPU expectation on both tiers reports that design as a defect
+  on every machine without an adapter. Asserting nothing would be worse:
+  passthrough and "the layer was erased" are different pictures, and the
+  identity check above already pins the erasure case on this tier too.
 */
+const passthroughTier = backend !== 'webgpu';
 check(
-  'a plugin effect that removes red DOES remove red',
-  viL.r - viR.r > 40,
+  passthroughTier
+    ? 'a plugin effect draws its input unchanged on the passthrough tier'
+    : 'a plugin effect that removes red DOES remove red',
+  passthroughTier ? Math.abs(viL.r - viR.r) <= 2 : viL.r - viR.r > 40,
   `red ${viL.r.toFixed(1)} → ${viR.r.toFixed(1)} (Δ ${(viL.r - viR.r).toFixed(1)})`,
 );
 check(

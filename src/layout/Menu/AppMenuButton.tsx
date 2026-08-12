@@ -13,6 +13,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import { useAppMenuGroups } from './useAppMenuGroups';
+import { anchorMenuTo } from './menuAnchor';
 import { formatChord } from './formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import styles from './AppMenuBar.module.css';
@@ -48,7 +49,10 @@ export function AppMenuButton(): JSX.Element {
   const toggle = (e: React.MouseEvent<HTMLElement>): void => {
     if (open) { setOpen(false); return; }
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setAnchor({ left: r.right - 220, top: r.bottom + 4 });
+    // Was `left: r.right - 220` — right-aligned to the trigger, which put the
+    // whole menu at left: -186px given where TopNav mounts this button. See
+    // anchorMenuTo.
+    setAnchor(anchorMenuTo(r));
     setOpen(true);
   };
 

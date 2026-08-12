@@ -2,10 +2,10 @@
    with a subtle translucent surface blur and sleek divider seam. */
 .titleBar {
   height: 32px;
-  background: var(--color-titlebar);
+  background: var(--color-surface-1, #1e1e24);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.1));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -59,41 +59,9 @@
   white-space: nowrap;
 }
 
-.center {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  z-index: 1;
-  padding: 3px 10px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.center:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.09);
-}
-
-.projectName {
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: var(--color-text-primary);
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dirtyDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-modified);
-  box-shadow: 0 0 6px rgba(224, 168, 60, 0.45);
-  flex-shrink: 0;
-}
+/* `.center`, `.projectName` and `.dirtyDot` moved to ProjectStatus.module.css.
+   They were fully styled here and rendered by nothing; they now live with the
+   component that draws them, which both this bar and the web TopNav mount. */
 
 .right {
   display: flex;

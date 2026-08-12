@@ -14,6 +14,9 @@
 import { projectDocumentIO } from './projectDocumentIO';
 import { projectService } from '@core/persistence/ProjectService';
 import { useProjectStore } from '@stores/projectStore';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
+import { useGuidesStore } from '@stores/guidesStore';
+import { resetProjectWorkspace } from './projectSession';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
@@ -105,6 +108,73 @@ describe('createEmpty', () => {
     const empty = projectDocumentIO.createEmpty('Untitled');
     projectDocumentIO.restore(empty);
     expect(defaultSceneGraph.getRoots().length).toBeGreaterThan(0);
+  });
+
+  /**
+   * A NEW project must not inherit the OLD project's settings.
+   *
+   * `restoreDocument` is tolerant of partial documents by design — an absent
+   * key means "keep what you have", so a file written before a field existed
+   * does not wipe it. That is right for opening a file and wrong for starting
+   * a new project: `createEmpty` carried only scene + animation, so File ▸ New
+   * Project kept the previous project's resolution, frame rate, duration and
+   * shutter settings. A "new" project that silently exports at someone else's
+   * settings.
+   *
+   * IF THIS FAILS you have added authored state to `captureDocument` without
+   * giving `createEmpty` a default for it — which means New Project now
+   * inherits that too.
+   */
+  it('resets the composition instead of inheriting the previous project', () => {
+    // seedProject left 1280x720 @48fps / 7s behind.
+    projectDocumentIO.restore(projectDocumentIO.createEmpty('Untitled'));
+
+    const comps = Object.values(useProjectStore.getState().comps);
+    expect(comps).toHaveLength(1);
+    expect(comps[0]).toMatchObject({ width: 1920, height: 1080, fps: 30, durationSeconds: 10 });
+  });
+
+  it('resets render-affecting settings the previous project changed', () => {
+    useMotionBlurStore.getState().setShutterAngle(45);
+    useGuidesStore.getState().setGridSpacing(37);
+
+    projectDocumentIO.restore(projectDocumentIO.createEmpty('Untitled'));
+
+    expect(useMotionBlurStore.getState().shutterAngle).toBe(180);
+    expect(useGuidesStore.getState().gridSpacing).toBe(100);
+  });
+
+  it('carries a default for every key captureDocument writes', () => {
+    // The general form of the two cases above: anything `capture` persists but
+    // `createEmpty` omits is a field a new project silently inherits.
+    const captured = Object.keys(projectDocumentIO.capture());
+    const empty = Object.keys(projectDocumentIO.createEmpty('Untitled'));
+    // `plugins`/`pluginStorage` are absent-when-empty by design, and absent IS
+    // their default — a blank document depends on nothing and stores nothing.
+    const mustReset = captured.filter((k) => k !== 'plugins' && k !== 'pluginStorage');
+    // `timelines` cannot be expressed as an empty document (an absent key means
+    // "keep"); `resetProjectWorkspace` drops those, guarded separately.
+    expect(empty).toEqual(expect.arrayContaining(mustReset.filter((k) => k !== 'timelines')));
+  });
+});
+
+describe('resetProjectWorkspace', () => {
+  it('drops the previous project timelines and its extra tabs', () => {
+    // The half a document cannot say. Timelines restore by MERGE — the comps a
+    // document names are replaced and the rest are left — so a new project kept
+    // the old one's clips, markers and work area, pointing at scene nodes that
+    // no longer existed. Same for precomp tabs, which then referenced comps
+    // that had just been replaced.
+    getTimelineController().setWorkArea(1, 3);
+    useProjectStore.getState().actions.openTab('comp_precomp', ['comp_root', 'comp_precomp'], 'Precomp');
+    expect(Object.keys(useProjectStore.getState().tabs).length).toBeGreaterThan(1);
+
+    projectDocumentIO.restore(projectDocumentIO.createEmpty('Untitled'));
+    resetProjectWorkspace();
+
+    expect(Object.keys(useProjectStore.getState().tabs)).toHaveLength(1);
+    // A fresh timeline spans the whole (default) comp, not the old 1–3 window.
+    expect(getTimelineController().getWorkArea()).not.toEqual({ start: 1, duration: 3 });
   });
 });
 

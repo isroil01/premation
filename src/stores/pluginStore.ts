@@ -15,6 +15,8 @@ import { create } from 'zustand';
 import { PluginDatabase } from '@core/services/PluginDatabase';
 import { parseManifest, type PluginManifest, type PluginPermission } from '@core/plugins/manifest';
 import type { NativeTrust } from '@core/plugins/runtimeTier';
+import { installedSyncSink } from '@core/plugins/installedSyncSink';
+import type { SyncReport } from '@core/plugins/installedSync';
 
 export interface InstalledPlugin {
   manifest: PluginManifest;
@@ -241,6 +243,26 @@ interface PluginStore {
   hydrated: boolean;
   /** The last reconciliation, for a UI that wants to explain itself. */
   lastHydration: HydrationReport | null;
+  /**
+   * Set when a package could not be written to this machine.
+   *
+   * The whole reason this field exists: that failure used to be discarded, and
+   * a discarded storage failure looks exactly like a plugin that uninstalls
+   * itself overnight. Cleared by the next successful write.
+   */
+  persistError: string | null;
+  /**
+   * The last reconcile against the account, or null before one has run.
+   *
+   * Held so the plugin manager can offer to restore what this machine is
+   * missing. Kept OUT of `plugins`: a restorable entry is a name and a
+   * version, not an installed package, and putting it in the same list would
+   * make something the user has not agreed to install indistinguishable from
+   * something they have.
+   */
+  lastSync: SyncReport | null;
+  /** Record a reconcile result. */
+  noteSync: (report: SyncReport) => void;
   /** Insert or replace by manifest id. Returns false when it could not persist. */
   put(entry: InstalledPlugin): boolean;
   remove(id: string): void;
@@ -303,6 +325,8 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
   plugins: legacyPlugins(),
   hydrated: false,
   lastHydration: null,
+  persistError: null,
+  lastSync: null,
 
   put: (entry) => {
     const next = [...get().plugins.filter((p) => p.manifest.id !== entry.manifest.id), entry];
@@ -322,12 +346,43 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
       Still not awaited, and the returned boolean is still about the SIZE bound
       rather than the write: `install` has to answer now. What changed is that a
       failure can no longer be partial.
+
+      What is no longer DISCARDED is whether it worked. `putPackageAndIndex`
+      has always returned false on failure and this call threw it away, so a
+      write that failed for any reason produced a plugin that worked all
+      session and was gone at the next boot — `hydrate()` finds an index entry
+      with no payload and drops it, reporting only to a console nobody has open
+      in a packaged build. That is exactly the "I have to reinstall my plugins
+      every time" report. It now lands in `persistError`, which the plugin
+      manager shows.
     */
     void PluginDatabase.putPackageAndIndex(
       entry.manifest.id,
       { files: entry.files, binaries: entry.binaries ?? {} },
       meta,
+    ).then(
+      (ok) => {
+        set({
+          persistError: ok
+            ? null
+            : `“${entry.manifest.name}” could not be saved to this machine — it will be gone when you restart.`,
+        });
+      },
+      () => {
+        set({
+          persistError: `“${entry.manifest.name}” could not be saved to this machine — it will be gone when you restart.`,
+        });
+      },
     );
+    // The account's durable copy. Failing here is NOT an install failure — the
+    // plugin is on the machine and works — so it is deliberately silent: the
+    // next `reconcileInstalledSet` pushes it up, and a signed-out or
+    // local-edition user has nothing to push to.
+    installedSyncSink().record(entry.manifest.id, {
+      version: entry.manifest.version,
+      enabled: entry.enabled,
+      granted: entry.granted,
+    });
     return true;
   },
 
@@ -337,6 +392,9 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     // the package but not the index entry leaves a plugin listed forever with
     // nothing behind it, which reads as "broken" rather than "removed".
     void PluginDatabase.removePackageAndIndex(id, toMeta(next));
+    // Uninstalling is the one direction that must reach the account, or the
+    // next reconcile offers to restore what the user just removed.
+    installedSyncSink().forget(id);
     set({ plugins: next });
   },
 
@@ -381,6 +439,8 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     saveMeta(next);
     set({ plugins: next });
   },
+
+  noteSync: (report) => set({ lastSync: report }),
 
   get: (id) => get().plugins.find((p) => p.manifest.id === id),
 

@@ -161,9 +161,11 @@ export class WorkspaceController {
     if (refit) this.fitComposition();
   }
 
-  // ── Tool bar ─────────────────────────────────────────────────────
   applyUITool(tool: UITool): void {
-    this.ws.setTool(TOOL_MAP[tool] ?? 'select');
+    const engineTool = TOOL_MAP[tool] ?? 'select';
+    this.ws.setTool(engineTool);
+    if (tool === 'paint' || tool === 'brush') this.ws.cursor.setBase('brush');
+    else if (tool === 'eraser') this.ws.cursor.setBase('eraser');
   }
 
   // ── Zoom controls ────────────────────────────────────────────────

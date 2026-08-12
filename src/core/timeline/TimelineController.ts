@@ -945,6 +945,24 @@ export class TimelineController {
   }
 
   /**
+   * Drop every composition timeline.
+   *
+   * For File ▸ New Project, which cannot express this as a document: `restore`
+   * merges the compositions a document names and leaves the rest, and an empty
+   * document names none — so a new project kept the previous one's clips,
+   * markers and work areas, now pointing at scene nodes that no longer exist.
+   *
+   * Safe to call at any time: `get timeline()` re-creates the active
+   * composition's timeline on next access, seeded from the comp settings that
+   * are live by then (so this must run AFTER the new comps are in place).
+   */
+  reset(): void {
+    this.registries.clear();
+    this.compositionTrackIds.clear();
+    this.loopingByComp.clear();
+  }
+
+  /**
    * Rebuild the composition timelines from a captured document.
    *
    * Restores into instances created by `initTimeline` so the history hook and

@@ -11,7 +11,6 @@ import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
 import { useUIStore } from '@stores/uiStore';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';
-import { BillingSection } from '@layout/Settings/BillingSection';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import {
   SIZE_PRESETS, SIZE_GROUPS, FPS_PRESETS, DURATION_PRESETS,
@@ -126,7 +125,6 @@ function openUpgradeProModal(): void {
             close();
             useUIStore.getState().notify({ level: 'success', message: 'Opening subscription portal...', durationMs: 2600 });
           }}
-          style={{ background: 'linear-gradient(135deg, var(--color-blue-600) 0%, var(--color-violet-500) 100%)', border: 'none' }}
         >
           Upgrade Now
         </Button>
@@ -288,7 +286,7 @@ export function DashboardPage(): JSX.Element {
       fps: 60,
       duration: 15,
       badge: '9:16 Portrait',
-      color: '#8b5cf6',
+      color: 'var(--color-primary)',
     },
     {
       id: 'youtube',
@@ -300,7 +298,7 @@ export function DashboardPage(): JSX.Element {
       fps: 30,
       duration: 30,
       badge: '16:9 4K',
-      color: '#3170e6',
+      color: 'var(--color-primary)',
     },
     {
       id: 'lottie',
@@ -312,7 +310,7 @@ export function DashboardPage(): JSX.Element {
       fps: 60,
       duration: 5,
       badge: '1:1 Square',
-      color: '#10b981',
+      color: 'var(--color-success)',
     },
     {
       id: 'mograph',
@@ -324,7 +322,7 @@ export function DashboardPage(): JSX.Element {
       fps: 60,
       duration: 10,
       badge: '16:9 HD',
-      color: '#f5b84b',
+      color: 'var(--color-warning)',
     },
   ];
 
@@ -1288,12 +1286,6 @@ export function DashboardPage(): JSX.Element {
               <AiSettingsSection />
             </div>
 
-            {/* Plan & trial — no credits any more; the assistant is BYOK. */}
-            <div className={styles.settingsCard} id="billing">
-              <h3 className={styles.settingsLabel}>Plan</h3>
-              <BillingSection />
-            </div>
-
             {/*
               Editor preferences live in ONE place: the Customize dialog.
 
@@ -1606,7 +1598,7 @@ export function DashboardPage(): JSX.Element {
 
         {/* Main Content Workspace */}
         <main className={styles.mainContent}>
-          <div className={styles.pageTitleRow}>
+          <div className={`${styles.pageTitleRow} ${activeTab === 'settings' ? styles.settingsTitleRow : ''}`}>
             <div>
               <h1 className={styles.pageTitle}>{headerDetails.title}</h1>
               <p className={styles.pageSubtitle}>{headerDetails.desc}</p>

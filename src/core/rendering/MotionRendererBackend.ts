@@ -26,6 +26,7 @@ import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
+import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
 import { layerIsBaked } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
@@ -718,6 +719,33 @@ export class MotionRendererBackend implements RenderBackend {
                 activeKeys.add(key);
                 const sig = lutEffects.map((e) => `${e.id}:${JSON.stringify(e.params ?? {})}`).join('|');
                 this.textures!.setLut(key, lut, sig);
+              }
+            }
+
+            /*
+              4. Apply Color LUT — a 3D `.cube` table, uploaded as a STRIP.
+
+              A SEPARATE key from the per-channel LUT above (`cubelut:` rather
+              than `lut:`), because the two are different textures with different
+              shapes and a layer can legitimately carry both — Levels and a
+              creative LUT are not alternatives. Sharing the key would have the
+              second registration silently replace the first, and the symptom
+              would be one of the two grades disappearing depending on effect
+              order.
+
+              Only the FIRST is uploaded. The shader binds one strip, so a second
+              Apply Color LUT on one layer would need a second pass; stacking two
+              is rare enough that the honest thing is to render the first and
+              leave the mechanism obvious rather than silently blend them.
+            */
+            const cubeFx = (layer.effects ?? [])
+              .find((e) => e.enabled !== false && e.type === 'apply-color-lut');
+            if (cubeFx) {
+              const cube = readCubeLutParam(cubeFx);
+              if (cube) {
+                const key = `cubelut:${layer.id}`;
+                activeKeys.add(key);
+                this.textures!.setCubeLut(key, cube, cubeLutSignature(cubeFx));
               }
             }
           } catch (err) {

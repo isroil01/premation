@@ -51,8 +51,22 @@ describe('the TIME_DEPENDENT set', () => {
     // Not a style preference. A type in this set re-bakes every frame by
     // construction, so this test is a deliberate speed bump: if you are adding
     // one, you are accepting that cost for every layer that uses it.
+    //
+    // `strobe-light` (round four) cleared that bump. It passes the same test
+    // Timecode does — its output genuinely differs frame to frame, because
+    // differing frame to frame IS the effect, and a strobe that cached would
+    // simply not strobe.
+    //
+    // What did NOT clear it is the more useful half of this note. Round four
+    // added several other time-varying effects — Ripple's phase, Radio Waves'
+    // phase, Noise Alpha's phase, and every new wipe's completion — and all of
+    // them are driven by ordinary KEYFRAMED parameters instead. That keeps them
+    // cacheable (the hash moves only when the keyframed value does) and leaves
+    // the timing under the animator's control rather than bound to the clock.
+    // Reach for a keyframed parameter first; land here only when the effect
+    // cannot be expressed that way.
     const members = EFFECT_DEFS.filter((d) => isTimeDependentEffect(d.type)).map((d) => d.type);
-    expect(members).toEqual(['timecode']);
+    expect(members).toEqual(['timecode', 'strobe-light']);
   });
 
   it('names a real param on a real effect for every member', () => {

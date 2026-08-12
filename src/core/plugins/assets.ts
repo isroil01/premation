@@ -299,9 +299,16 @@ export async function readAssetPixels(
  * Create an image asset from a plugin's bytes.
  *
  * Goes through `useAssetStore.addAsset` — the same path as a user dropping a
- * file in — so a plugin-made image is an ordinary library asset: it thumbnails,
- * it persists, it can be reused on other layers, and it is not a special case
- * anywhere downstream.
+ * file in — so a plugin-made image thumbnails, persists, can be reused on other
+ * layers, and is not a special case anywhere downstream.
+ *
+ * Filed as `'derived'` rather than `'user'`, which is the one way it differs.
+ * The claim above was overstated in exactly one respect: these ARE ordinary
+ * assets, but they are not ordinary LIBRARY entries. A plugin that generates a
+ * copy per layer — a duplicator, a repeater — put one row on the user's Assets
+ * shelf per copy, mixed in with the footage they actually imported, and there
+ * was no way to tell which was which. The library means "media I brought in";
+ * everything else about the asset is unchanged.
  */
 export async function createImageAsset(
   pluginId: string,
@@ -360,7 +367,7 @@ export async function createImageAsset(
       ? opts.name.trim().slice(0, 80).replace(/[/\\]/g, '-')
       : `${pluginId}-image`;
     const file = new File([blob], /\.png$/i.test(name) ? name : `${name}.png`, { type: 'image/png' });
-    const asset = await useAssetStore.getState().addAsset(file, null);
+    const asset = await useAssetStore.getState().addAsset(file, null, { source: 'derived' });
     return { assetId: asset.id, width, height };
   } finally {
     release();

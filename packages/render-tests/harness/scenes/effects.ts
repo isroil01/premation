@@ -59,10 +59,88 @@ const EFFECTS: EffectSpec[] = [
   { type: 'fractal-noise', params: { scale: 12 }, gpuOracle: true },
   { type: 'displacement-map', params: { amount: 20 }, gpuOnly: true },
   { type: 'motion-tile', params: { scale: 2 }, gpuOnly: true },
+  /*
+    Bend. `gpuOnly` like its Distort neighbours above — it has no Canvas2D
+    twin, so the reference captures a no-op and this scene gates the SHADER.
+
+    Deliberately NOT the registry default, on two axes.
+
+    140° rather than 60°, so all three regions of the map are in frame at once
+    — the ramp-in, the arc, and the rigid rotation past Base. A sign flip in
+    the inverse map then shows as a gross difference rather than a few percent
+    at the border.
+
+    And Top/Base dragged OFF the layer's centre line, which is the whole reason
+    they are points: at rest they sit top-centre and bottom-centre, the bend
+    line is exactly vertical, and both the off-centre placement and the aspect
+    correction are unexercised. A diagonal, off-centre line gates them.
+
+    Style 0 (Marilyn) is the one worth gating: its inverse is the cubic root,
+    the only profile where an algebra error is not shared with the other two.
+  */
+  { type: 'bend', params: { amount: 140, style: 0, topX: -60, topY: 20, baseX: 40, baseY: -20 }, gpuOnly: true },
+  /*
+    Perspective family — all `gpuOnly`, so the reference captures a no-op and
+    these scenes gate the shaders.
+
+    Bevel Alpha is aimed at the subject's ELLIPSE edge (the alpha boundary) and
+    Bevel Edges at the comp's rectangular frame, which is the entire difference
+    between them — two scenes that looked alike would gate one behaviour twice.
+    Thickness is exaggerated over the 4px default so the chamfer is more than
+    an antialiasing ring.
+
+    Spotlight's From is dragged OFF-FRAME entirely, aiming diagonally across
+    the subject with a tight cone. At rest the lamp sits on the top edge aiming
+    straight down, which exercises neither the off-frame placement nor the
+    aspect correction — and with a wide centred cone most of the frame is lit,
+    so a sign error in the angular term barely moves a pixel.
+  */
+  { type: 'bevel-alpha', params: { thickness: 12, lightAngle: -135, lightColor: '#ffffff', intensity: 120 }, gpuOnly: true },
+  { type: 'bevel-edges', params: { thickness: 16, lightAngle: -135, lightColor: '#ffe0b0', intensity: 120 }, gpuOnly: true },
+  { type: 'spotlight', params: { fromX: -90, fromY: -40, toX: 40, toY: 30, coneAngle: 50, edgeSoftness: 35, lightColor: '#ffffff', intensity: 220, ambient: 10 }, gpuOnly: true },
+  /*
+    Sphere and Cylinder are rotated OFF their identity pose on purpose. At
+    rotation 0 the equirectangular lookup is symmetric about the centre, so a
+    sign error in the inverse rotation — the one thing most likely to be wrong,
+    since the shader rotates the normal backwards — produces a picture
+    identical to the correct one. Rotating all three axes makes it asymmetric,
+    and the non-square comp (320×220) means the silhouette is only circular if
+    the aspect correction is applied.
+  */
+  { type: 'sphere', params: { radius: 95, rotateX: 25, rotateY: 35, rotateZ: 20, shading: 80, lightColor: '#ffffff' }, gpuOnly: true },
+  { type: 'cylinder', params: { radius: 95, rotation: 40, shading: 80, lightColor: '#ffffff' }, gpuOnly: true },
+  /*
+    Arithmetic. Difference against a mid grey rather than Add against black:
+    Add with the default 0,0,0 is the IDENTITY, so the scene would gate
+    nothing. Difference also exercises the unpremultiply/repremultiply round
+    trip at the ellipse's soft edge, where a premultiplied operand would show
+    as a dark rim.
+  */
+  { type: 'arithmetic', params: { operator: 3, red: 128, green: 64, blue: 200, clip: true }, gpuOnly: true },
   { type: 'fill', params: { color: '#ff2d55', opacity: 100 } },
   { type: 'four-color-gradient', params: { colorTL: '#ff0055', colorTR: '#ffcc00', colorBL: '#00d0ff', colorBR: '#7b61ff', blend: 100 } },
   { type: 'stroke', params: { width: 4, color: '#ffffff', opacity: 100 } },
   { type: 'beam', params: { length: 100, startX: 10, startY: 50, endX: 90, endY: 50, thickness: 8, softness: 30, color: '#8fd0ff' } },
+  /*
+    Re-blessed when the 2D route stopped carrying its own copy of the effect
+    switch — see "One effects chain, not two" in CompositionPass.
+
+    Sharpen is `c * 5 - neighbourSum`, so just inside the ellipse's edge, where
+    the neighbours one texel out are nearly transparent, it overshoots far past
+    the layer's own alpha. That is a premultiplied colour with `rgb > a`, which
+    is not a valid one.
+
+    The old direct-to-scene-target draw let the overshoot through: it landed in
+    the scene buffer where the opaque background had already brought alpha to 1,
+    and the surface blit clamped it against 1 rather than against the layer's
+    coverage — so a 12%-transparent pixel came out brighter than a fully opaque
+    one could be. Compositing through the chain clamps it against the LAYER's
+    alpha (`unpremultiplyingSample`: `min(rgb/a, 1) · a`), which is the
+    invariant, and is what a matted or 3D copy of this same layer already did.
+
+    ~1.5% of pixels, all in that one-texel ring, all in whichever channel was
+    over range — the other two are bit-identical in every sample checked.
+  */
   { type: 'sharpen', params: { amount: 60 } },
   { type: 'noise', params: { amount: 30, evolution: 0, monochrome: true } },
   { type: 'keylight', params: { screenColor: '#00ff00', balance: 50, gain: 100, clipBlack: 8, clipWhite: 65, despill: 100, choke: 0, matteSoftness: 0 } },
@@ -236,6 +314,155 @@ const displacementMapLayerScene: Scene = defineScene({
 });
 
 /**
+ * Apply Color LUT, through the GPU strip lookup.
+ *
+ * ── Why this had to exist before the effect could be trusted ────────────────
+ *
+ * The effect moved from a Canvas2D per-pixel pass to a shader reading a LUT
+ * packed as a strip texture, and the suite went green with no scene rendering
+ * one — so nothing in the gate could tell a working lookup from a skipped one.
+ * That is the hole the plugin effects sat in three times.
+ *
+ * ── The table is built to catch a TRANSPOSED strip ──────────────────────────
+ *
+ * A cube of edge N is uploaded as N slices of N×N side by side, and `.cube`
+ * varies RED fastest. Pack it with red and blue swapped and the result is still
+ * a plausible-looking grade — which is why this table is asymmetric in every
+ * axis: red is squared, green mixes in blue, blue is inverted. Under a
+ * transposition every one of those lands somewhere different.
+ *
+ * The subject is the family's blue→orange gradient ellipse, which sweeps two
+ * channels at once, so a whole plane of the cube is exercised rather than a
+ * line through it.
+ */
+const applyColorLutScene: Scene = defineScene({
+  id: 'effect-apply-color-lut-gpu',
+  description: 'Apply Color LUT via the GPU strip lookup — an asymmetric 5³ cube on a gradient ellipse.',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'expect-pass',
+  // GPU is the oracle: the Canvas2D pass still exists for baked layers, but it
+  // is a different implementation and this scene gates the shader.
+  // `cubeLutGpuParity.test.ts` is what holds the two to the same answer.
+  oracle: 'gpu',
+  build(graph) {
+    const n = 5;
+    const data: number[] = [];
+    for (let b = 0; b < n; b++) {
+      for (let g = 0; g < n; g++) {
+        for (let r = 0; r < n; r++) {
+          const rf = r / (n - 1);
+          const gf = g / (n - 1);
+          const bf = b / (n - 1);
+          data.push(rf * rf, gf * 0.5 + bf * 0.25, 1 - bf);
+        }
+      }
+    }
+    graph.addNode(node('subj', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 220, height: 170, shapeType: 'ellipse' },
+      style: { fill: '#000' },
+    }));
+    graph.setFill('subj', {
+      type: 'linear',
+      angle: 30,
+      stops: [
+        { id: 'a', offset: 0, color: '#2b3cff' },
+        { id: 'b', offset: 1, color: '#ff7a1a' },
+      ],
+    } as never);
+    graph.setEffects('subj', [{
+      id: 'fx',
+      type: 'apply-color-lut',
+      params: {
+        intensity: 100,
+        lut: {
+          size: n,
+          size1d: 0,
+          data,
+          domainMin: [0, 0, 0],
+          domainMax: [1, 1, 1],
+          title: 'render-test asymmetric',
+        },
+      },
+    }]);
+  },
+});
+
+/**
+ * Compound Blur, on a subject that can actually SHOW a blur.
+ *
+ * ── The dead-scene trap this is built around ────────────────────────────────
+ *
+ * The family's standard subject is a smooth gradient ellipse, and blurring a
+ * smooth gradient returns very nearly the same gradient. A golden of that would
+ * pass whether the effect ran, no-oped, or was deleted — the same worthless
+ * scene Median produced for the same reason, one effect further down this file.
+ *
+ * So the subject is a CHECKERBOARD: the highest spatial frequency available
+ * here, where any blur is unmissable. Checkerboard is a CPU-baked generator and
+ * Compound Blur is `gpuOnly`, so the stack also exercises the documented
+ * pass-through — `extractSpatialEffects(layer, true)` carries GPU-only effects
+ * past a bake that would otherwise drop them.
+ *
+ * ── Why the map is a gradient, and why that is the assertion ────────────────
+ *
+ * The map is a full-comp black→white horizontal ramp, so the SAME frame holds
+ * every radius from zero to maximum. That is what makes the golden meaningful:
+ * a compound blur that ignored its map and applied one uniform radius would
+ * differ from this picture across most of the frame, and so would one that
+ * inverted the ramp. A single-radius scene could not distinguish either.
+ *
+ * `oracle: 'gpu'` because there is no Canvas2D form — the effect reads a second
+ * layer's pixels, which the bake chain has no way to resolve.
+ */
+const compoundBlurScene: Scene = defineScene({
+  id: 'effect-compound-blur',
+  description: 'Compound Blur: a checkerboard blurred by a gradient map — sharp at one edge, soft at the other.',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'expect-pass',
+  oracle: 'gpu',
+  build(graph) {
+    // The map, drawn FIRST so it sits behind and cannot occlude the subject.
+    // It stays visible: an invisible layer never reaches the renderable list,
+    // and the effect would silently fall back to self-blurring.
+    graph.addNode(node('map', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 320, height: 220 },
+      style: { fill: '#000' },
+    }));
+    graph.setFill('map', {
+      type: 'linear',
+      angle: 0,
+      stops: [
+        { id: 'a', offset: 0, color: '#000000' },
+        { id: 'b', offset: 1, color: '#ffffff' },
+      ],
+    } as never);
+
+    graph.addNode(node('subj', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 260, height: 170, shapeType: 'rect' },
+      style: { fill: '#101828' },
+    }));
+    graph.setEffects('subj', [
+      // Fine checks: small enough that a 24px blur flattens them completely at
+      // the bright end, large enough to survive intact at the dark end.
+      { id: 'cb', type: 'checkerboard', params: { width: 10, height: 10, anchorX: 0, anchorY: 0, colorA: '#101828', colorB: '#f5c451', opacity: 100 } },
+      { id: 'fx', type: 'compound-blur', params: { maxBlur: 30, blurLayerId: 'map', invert: 0 } },
+    ]);
+  },
+});
+
+/**
  * Median, on a subject that actually has something to denoise.
  *
  * ── Why this scene exists separately ────────────────────────────────────────
@@ -372,6 +599,132 @@ const vegasContourScene: Scene = defineScene({
  * bows by 3k/4 = 33.75px at its midpoint and by nothing at its corners. The
  * accompanying deadness check counts exactly that (see the commit).
  */
+/**
+ * Optics Compensation, on a checkerboard for the reason Bezier Warp uses one.
+ *
+ * A lens warp is a change to STRAIGHT LINES, and the family's gradient ellipse
+ * has none — it would bow imperceptibly and the golden would pass whether the
+ * warp ran or not. That is the dead-scene shape this suite keeps producing, so
+ * the pattern is stacked under the effect and the bend is what gets recorded.
+ *
+ * Field of view 90° so the corners move by tens of pixels, and `reverse` left
+ * OFF so the outward branch is the one under test — the solved quadratic, which
+ * is the half that is easy to get wrong. The first implementation used
+ * `r·(1 + k·r²)` there, which reads like the opposite of the division model and
+ * is not its inverse; `opticsCompensation.test.ts` pins that arithmetic, and
+ * this pins that the arithmetic reaches pixels.
+ */
+/**
+ * Mesh Warp, moving ONE interior vertex.
+ *
+ * The whole claim of an interior lattice is that it can dent the middle while
+ * the frame edges stay pinned — the thing Bezier Warp, which only bends the
+ * boundary, cannot do. So the scene moves exactly one interior vertex and
+ * records both halves of that: a visible pull where the vertex is, and edges
+ * that have not moved.
+ *
+ * A checkerboard again, for the reason Bezier Warp and Optics Compensation use
+ * one: a warp is a change to straight lines, and the family's gradient ellipse
+ * has none. The failure this guards is the transposed lattice — sixteen
+ * vertices read from a flat parameter list is an index calculation, and getting
+ * row and column the wrong way round yields a perfectly plausible warp with the
+ * wrong vertex moved.
+ */
+/**
+ * Liquify — one brush pushing, twirling and pinching at once.
+ *
+ * All three controls together on purpose. Each is applied to the same sample
+ * point in sequence, so a scene exercising one at a time would not record that
+ * they COMPOSE — and the order they compose in (push first, then rotate and
+ * scale about the centre) is the part that could quietly change.
+ *
+ * The brush is deliberately smaller than the layer and offset from its middle,
+ * so the frame carries both halves of the claim: a deformed neighbourhood, and
+ * a checkerboard that is still perfectly regular everywhere else. A centred
+ * brush filling the layer would record the warp and lose the containment.
+ */
+const liquifyScene: Scene = defineScene({
+  id: 'effect-liquify',
+  description: 'Liquify: one offset brush pushing, twirling and pinching a checkerboard — the rest untouched.',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'expect-pass',
+  build(graph) {
+    graph.addNode(node('liq', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 240, height: 160, shapeType: 'rect' },
+      style: { fill: '#1b2436' },
+    }));
+    graph.setEffects('liq', [
+      { id: 'chk', type: 'checkerboard', params: {
+        width: 20, height: 20, anchorX: 0, anchorY: 0,
+        colorA: '#12304f', colorB: '#ffd166', opacity: 100,
+      } },
+      { id: 'lq', type: 'liquify', params: {
+        centerX: -40, centerY: -20, brushSize: 55,
+        pushX: 18, pushY: 10, twirl: 70, pinch: 25,
+      } },
+    ]);
+  },
+});
+
+const meshWarpScene: Scene = defineScene({
+  id: 'effect-mesh-warp',
+  description: 'Mesh Warp pulling one interior vertex of a checkerboard — edges pinned.',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'expect-pass',
+  build(graph) {
+    graph.addNode(node('mesh', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 240, height: 160, shapeType: 'rect' },
+      style: { fill: '#1b2436' },
+    }));
+    graph.setEffects('mesh', [
+      { id: 'chk', type: 'checkerboard', params: {
+        width: 20, height: 20, anchorX: 0, anchorY: 0,
+        colorA: '#12304f', colorB: '#ffd166', opacity: 100,
+      } },
+      // Vertex (1,1) of the 4×4 lattice — interior, and ASYMMETRIC in both
+      // axes so a row/column swap moves the picture somewhere else entirely.
+      { id: 'mw', type: 'mesh-warp', params: { v5X: 34, v5Y: -20 } },
+    ]);
+  },
+});
+
+const opticsCompensationScene: Scene = defineScene({
+  id: 'effect-optics-compensation',
+  description: 'Optics Compensation at 90° FOV bending a checkerboard — corners pulled, centre fixed.',
+  size: SIZE,
+  comp: COMP,
+  fps: 30,
+  frames: [0],
+  gpuParity: 'expect-pass',
+  build(graph) {
+    graph.addNode(node('lens', {
+      kind: 'shape',
+      position: { x: 160, y: 110 },
+      transform: { width: 240, height: 160, shapeType: 'rect' },
+      style: { fill: '#1b2436' },
+    }));
+    graph.setEffects('lens', [
+      { id: 'chk', type: 'checkerboard', params: {
+        width: 20, height: 20, anchorX: 0, anchorY: 0,
+        colorA: '#12304f', colorB: '#ffd166', opacity: 100,
+      } },
+      { id: 'oc', type: 'optics-compensation', params: {
+        fieldOfView: 90, reverse: 0, centerX: 0, centerY: 0,
+      } },
+    ]);
+  },
+});
+
 const bezierWarpGridScene: Scene = defineScene({
   id: 'effect-bezier-warp-grid',
   description: 'Bezier Warp bending a checkerboard: top edge bowed down 3k/4, corners pinned.',
@@ -404,7 +757,12 @@ const bezierWarpGridScene: Scene = defineScene({
 export const effectScenes: Scene[] = [
   ...EFFECTS.map(effectScene),
   displacementMapLayerScene,
+  applyColorLutScene,
+  compoundBlurScene,
   medianDenoiseScene,
   vegasContourScene,
+  liquifyScene,
+  meshWarpScene,
+  opticsCompensationScene,
   bezierWarpGridScene,
 ];

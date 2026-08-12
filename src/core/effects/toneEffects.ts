@@ -19,8 +19,8 @@
 
 import { blurRgba } from './blurs';
 import { luma } from './colorEffects';
+import { clamp01 } from '@utils/lang';
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 // ── Selective Colour ──────────────────────────────────────────────
 

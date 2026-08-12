@@ -107,8 +107,21 @@ function fail(msg) {
   exitCode = 1;
 }
 
+/**
+ * Optional comma list of scene ids to RENDER. Empty means all.
+ *
+ * `run.mjs --scene` filters the COMPARISON only; the renderer still draws every
+ * scene, which is minutes of wall clock to look at one of them. This is the
+ * debugging path, off by default — the gate never sets it, so a partial run can
+ * never be mistaken for a full one.
+ */
+const ONLY = (process.env.HARNESS_SCENES || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 ipcMain.on('harness:config', (e) => {
-  e.returnValue = { backends: BACKENDS };
+  e.returnValue = { backends: BACKENDS, only: ONLY };
 });
 
 ipcMain.handle('harness:manifest', (_e, scenes) => {

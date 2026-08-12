@@ -14,35 +14,38 @@
 
 .row {
   display: grid;
-  /* The value column is FIXED, not `auto`. With `auto` it sized to content, so
-     a 32px opacity field and a 46px width field produced different column
-     widths and their numbers still did not share a right edge — the original
-     complaint in a new place. */
   grid-template-columns:
-    var(--prop-stopwatch-col, 18px)
-    var(--prop-nav-col, 54px)
+    var(--prop-stopwatch-col, 20px)
+    var(--prop-nav-col, 56px)
     minmax(0, 1fr)
-    var(--prop-value-col, 96px)
-    var(--prop-reset-col, 18px);
+    var(--prop-value-col, 100px)
+    var(--prop-reset-col, 20px);
   align-items: center;
-  column-gap: 6px;
+  column-gap: 8px;
   min-height: var(--control-height-row);
   width: 100%;
   box-sizing: border-box;
-  /* The name column is the one that yields; without this the grid grows past
-     its panel instead of ellipsising the label. */
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-sm, 4px);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   min-width: 0;
+}
+
+.row:hover {
+  background: var(--color-hover);
 }
 
 /* Compact variant for dense panels (effect params). */
 .compact {
   min-height: var(--control-height-sm);
-  column-gap: 4px;
+  column-gap: 6px;
+  padding: 1px var(--space-2);
 }
 
 .name {
   font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

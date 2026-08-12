@@ -56,12 +56,36 @@ const CHROME_ICON_MAX = 32;
 /** The file that DEFINES the type scale is allowed to state it in pixels. */
 const TOKEN_SOURCE = 'tokens/typography.css';
 
+/**
+ * Rules that state a size in SVG **user units**, which are not CSS pixels.
+ *
+ * Inside a `viewBox`, `font-size: 9px` means nine USER UNITS, scaled by
+ * whatever transform the viewBox implies — so applying a CSS-px token would be
+ * a category error, not a fix: `--font-size-xs` means "11 CSS px" and would
+ * render at an arbitrary size depending on the element's scale factor.
+ *
+ * Each entry names the selector and why, so this stays a short list of reasoned
+ * exceptions rather than a place to park anything the guard complains about.
+ * If you are adding a row here, check the element really is inside a scaled
+ * `viewBox` — for ordinary chrome the token is the right answer.
+ */
+const SVG_USER_UNIT_RULES: ReadonlyArray<{ file: string; px: number; why: string }> = [
+  {
+    file: 'layout/Motion/MotionEditorPanel.module.css',
+    px: 9,
+    why: '.axisLabel is <text> inside viewBox="0 0 320 200" — user units, not CSS px',
+  },
+];
+
 describe('the icon scale is three sizes', () => {
   it('exposes exactly sm / md / lg', () => {
     // A scale that quietly grows a fourth entry is a scale on its way back to
     // twenty, so the count is asserted rather than assumed.
     expect(Object.keys(ICON_SIZE).sort()).toEqual(['lg', 'md', 'sm']);
-    expect(ICON_SIZE).toEqual({ sm: 13, md: 16, lg: 22 });
+    // Moved up from 13/16/22 with the switch to Material Symbols Sharp, whose
+    // glyphs sit inside ~95 units of margin on a 960 grid and so read smaller
+    // than the edge-to-edge stroke set before them. See ICON_SIZE in Icon.tsx.
+    expect(ICON_SIZE).toEqual({ sm: 15, md: 18, lg: 25 });
   });
 
   it('no chrome icon is sized with a raw number', () => {
@@ -83,6 +107,25 @@ describe('the icon scale is three sizes', () => {
   });
 });
 
+describe('the CSS icon tokens mirror the TS scale', () => {
+  /**
+   * Stylesheets cannot read `ICON_SIZE`, but rows that reserve a slot for an
+   * icon have to know how wide one is — so the scale exists twice. This is the
+   * only thing standing between that and drift, and drift is not hypothetical:
+   * the menu row carried a bare `width: 16px` from when `md` WAS 16, and when
+   * the scale moved to 18 the rows with no icon quietly stopped lining up with
+   * the rows that had one. Nothing failed, because nothing was checking.
+   */
+  it('--icon-size-sm/md/lg equal ICON_SIZE', () => {
+    const css = readFileSync(join(SRC, 'tokens', 'spacing.css'), 'utf8');
+    const tokens: Record<string, number> = {};
+    for (const m of css.matchAll(/--icon-size-(sm|md|lg):\s*(\d+)px/g)) {
+      tokens[m[1]!] = Number(m[2]);
+    }
+    expect(tokens).toEqual({ sm: ICON_SIZE.sm, md: ICON_SIZE.md, lg: ICON_SIZE.lg });
+  });
+});
+
 describe('type sizes come from the token scale', () => {
   it('no stylesheet hardcodes a font-size in pixels', () => {
     const offenders: string[] = [];
@@ -91,7 +134,9 @@ describe('type sizes come from the token scale', () => {
       if (rel(file) === TOKEN_SOURCE) continue;
       const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
       for (const m of src.matchAll(/font-size:\s*(\d+)px/g)) {
-        offenders.push(`${rel(file)}: font-size: ${m[1]}px`);
+        const px = Number(m[1]);
+        if (SVG_USER_UNIT_RULES.some((r) => r.file === rel(file) && r.px === px)) continue;
+        offenders.push(`${rel(file)}: font-size: ${px}px`);
       }
     }
     expect(offenders).toEqual([]);

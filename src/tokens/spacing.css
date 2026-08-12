@@ -40,6 +40,19 @@
   --control-height-row: 26px;
   --control-height-lg: 28px;
 
+  /* The ICON scale, mirrored from `ICON_SIZE` in components/Icon/Icon.tsx.
+     Stylesheets need these because a row that reserves a slot for an icon has
+     to reserve the icon's width, and CSS cannot read the TS constant.
+
+     Mirrored values drift — so `sizeScaleGuard.test.ts` reads both and fails if
+     they disagree. That guard exists because they DID drift: these were written
+     as a bare `width: 16px` in the menu row, the TS scale later moved to 18,
+     and menu items with no icon stayed 2px narrower than the ones with icons.
+     Nothing failed; the labels just stopped lining up. */
+  --icon-size-sm: 15px;
+  --icon-size-md: 18px;
+  --icon-size-lg: 25px;
+
   /* TWO tiers added because the app already had them and this scale did not
      name them, which is worse than having them:
 

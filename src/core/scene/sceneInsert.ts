@@ -167,6 +167,7 @@ function getParentIdForInsert(id: string) {
 }
 
 import { useInfoStore } from '@stores/infoStore';
+import { clamp01 } from '@utils/lang';
 
 /**
  * Places an inserted node under the active pointer cursor (or comp center if off-canvas),
@@ -405,7 +406,7 @@ export function insertSvgShapeGroup(
     const relY = (s.centerY - svgCy) * k;
     const transform = { position: { x: relX, y: relY }, rotation: 0, scale: { x: 1, y: 1 } };
 
-    const layerOpacity = Math.round(clamp01(s.opacity) * 100);
+    const layerOpacity = Math.round(clamp01(s.opacity ?? 1) * 100);
 
     if (s.imageHref) {
       // An embedded bitmap becomes a real image layer. It was dropped before,
@@ -481,7 +482,7 @@ export function insertSvgShapeGroup(
                 enabled: true,
                 color: s.strokeColor,
                 width: (s.strokeWidth ?? 1) * k,
-                opacity: clamp01(s.strokeOpacity),
+                opacity: clamp01(s.strokeOpacity ?? 1),
                 cap: 'butt', join: 'miter', align: 'center', dash: [],
               },
             },
@@ -510,9 +511,18 @@ export function insertSvgShapeGroup(
   return group.id;
 }
 
-function clamp01(n: number | undefined): number {
-  return n === undefined || !Number.isFinite(n) ? 1 : n < 0 ? 0 : n > 1 ? 1 : n;
-}
+/*
+ * There is deliberately no local `clamp01` here any more.
+ *
+ * This file carried its own, differing from `@utils/lang`'s in the one way that
+ * mattered: an ABSENT value clamped to 1 rather than 0. That is right for what
+ * it clamps — SVG opacity attributes, where "not specified" means fully opaque
+ * — and wrong as a general rule, which is why the two could not simply merge.
+ *
+ * The resolution `lang.ts` documents is for the CALL SITE to state its own
+ * default (`?? 1`) and leave the shared clamp to do only the clamping. Folding
+ * a default into a clamp is what made two functions out of one.
+ */
 
 /**
  * The app's own text measurer, handed to the SVG parser.
@@ -604,7 +614,7 @@ export const intersectSvgPaths: SvgPathIntersector = (subject, clip) => {
  */
 function svgFillToCss(fill: string | undefined, fillOpacity: number | undefined): string {
   if (!fill || fill === 'none') return 'transparent';
-  const a = clamp01(fillOpacity);
+  const a = clamp01(fillOpacity ?? 1);
   if (a >= 1) return fill;
   if (a <= 0) return 'transparent';
   return /^#|^rgba?\(/i.test(fill.trim()) ? applyAlpha(fill, a) : fill;

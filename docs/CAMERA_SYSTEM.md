@@ -14,7 +14,7 @@ can be re-verified rather than trusted.
 
 A camera is an ordinary layer. It is a `SceneNode` of kind `camera` whose
 Transform component carries a handful of extra numeric props (`focalLength`,
-`orbitYaw`, `orbitPitch`, `orientationZ`, `poiX/Y/Z`, `dofStrength`,
+`orbitYaw`, `orbitPitch`, `orientationX/Y/Z`, `poiX/Y/Z`, `dofStrength`,
 `focusDistance`, `dofAperture`, `filmSize`). Nothing about it is a special
 object: it is keyframed by the same animation engine, parented by the same
 parent chain, trimmed by the same clip bar, and inspected by the same property
@@ -42,7 +42,9 @@ design, and it is why every generic mechanism works on them for free:
 | `filmSize` | mm | Virtual sensor width. **Label only** — see §4.2. | Film Size |
 | `orbitYaw` | deg | Swing about the point of interest, horizontally. | (orbit tool) |
 | `orbitPitch` | deg | Swing about the point of interest, vertically. Clamped ±89. | (orbit tool) |
-| `orientationZ` | deg | Roll — a dutch angle about the view axis. | Orientation Z |
+| `orientationX` | deg | In-place tilt (pitch offset). Rotates about the eye. | X Rotation |
+| `orientationY` | deg | In-place pan (yaw offset). Rotates about the eye. | Y Rotation |
+| `orientationZ` | deg | Roll — a dutch angle about the view axis. | Z Rotation |
 | `poiX/Y/Z` | comp px | Point of Interest. Presence of ANY of the three makes it a two-node camera. | Point of Interest |
 | `dofStrength` | px | Maximum defocus blur. 0 or absent = DOF off. | Blur Level |
 | `focusDistance` | px | Distance that is sharp. | Focus Distance |
@@ -163,7 +165,25 @@ because the millimetre number is derived: 15mm/100°, 24mm/73°, 35mm/54°,
 applied **last**, which is what makes it spin the frame rather than re-aim the
 camera. A camera with zero orientation takes a separate, simpler code path and
 renders byte-identically to the pre-orientation implementation — that is a
-deliberate guarantee, not an accident.
+deliberate guarantee, not an accident, pinned by `cameraRoll.test.ts`.
+
+**Where yaw and pitch come from is the part the matrix cannot tell you.** Three
+sources compose into those two fields, in `cameraFromNode`:
+
+1. the **base aim** — `orbitCamera`'s angles on a one-node camera, or
+   `lookAtOrientation(eye, poi)` on a two-node one;
+2. plus **`orientationY`** (yaw) and **`orientationX`** (pitch), the in-place
+   rotation, added as offsets;
+3. and `orientationZ` as roll, kept separate because it is applied last.
+
+The offset composition is the whole design of in-place rotation: on a targeted
+camera the look-at establishes the aim and these nudge it, so a camera can be
+turned off its subject while still tracking. Set rather than added, the look-at
+would overwrite them every frame and the controls would do nothing — the failure
+mode `cameraOrientation.test.ts` was written to catch, red first.
+
+Because only `orbitCamera` moves the eye, in-place rotation rotates about the
+eye by construction, never about the POI or the comp centre.
 
 ### 4.4 Orbit
 
@@ -289,7 +309,9 @@ not looking through the shot camera), and under Draft 3D.
 | Camera follows its parent chain | Yes | Yes |
 | Zoom ↔ Angle of View as one value | Yes | Yes |
 | Film size is a label, not a lens change | Yes | Yes |
-| Orbit / Track XY / Track Z tools | Yes, C cycles them | Yes, C cycles them |
+| Orbit / Track XY / Track Z tools | Yes, C cycles them, and they are visible toolbar buttons in `SceneControls.tsx` | Yes, C cycles them |
+| In-place X / Y / Z rotation (tripod pan, tilt, dutch) | Yes, `orientationX/Y/Z`, offsets onto the base aim | Yes |
+| In-place rotation on a TARGETED camera without losing tracking | Yes, by offset composition (§4.3) | Yes |
 | 1 / 2 / 4 view layouts | Yes | Yes |
 | Six orthographic axis views | Yes | Yes |
 | Custom views that never move the shot camera | Yes, three of them | Yes |
@@ -305,13 +327,21 @@ not looking through the shot camera), and under Draft 3D.
   4D / Advanced 3D renderers this app has no equivalent of.
 - **Depth of field is a per-layer uniform blur** (§7). AE's is a real
   circle-of-confusion applied per pixel.
-- **Lighting is a per-quad flat multiplier** and shadows are 2.5D projections;
-  a large layer gets no gradient across it.
+- **Shadows are 2.5D projections**, not cast geometry. Shading itself is
+  per-fragment: Lambert plus Blinn-Phong on the depth-tested path (`builtin.ts`,
+  `fn shade3d`, driven by a world-position varying), with `quadGain` in
+  `FrameScene.ts` as the documented fallback, and extrusion shaded per face. An
+  earlier version of this section claimed the opposite; see `EDITOR_REFERENCE.md`
+  §5 (2026-08-10) for the correction and `retiredDocClaims.test.ts` for the guard
+  that now keeps it corrected.
 - **No camera tracking or 3D camera solve.** There is zero tracker code in the
   repo. This is a direction decision, not an omission to be fixed casually.
-- **Roll is `orientationZ` only.** There is no separate X/Y Orientation +
-  Rotation pair the way AE splits them for cameras; yaw and pitch are expressed
-  as orbit about the POI.
+- **Rotation is three scalars, not two groups.** AE splits a camera's rotation
+  into Orientation and X/Y/Z Rotation; here `orientationX/Y/Z` are the single
+  set, composing as offsets onto the base aim (§4.3). The expressible moves are
+  the same — tripod pan, tilt, dutch angle, and all three on a tracking camera —
+  but a project that distinguishes the two AE groups does not round-trip that
+  distinction.
 
 Canonical gap list: `docs/EDITOR_REFERENCE.md` §4.
 
@@ -325,8 +355,10 @@ renders 1:1 for any chosen lens. `twoNode: true` seeds the POI at the comp
 centre. The AE-style dialog is `openCameraDialog()`.
 
 **AI tool layer.** `CAMERA_PROPS` in `src/core/ai/toolContext.ts` is the
-whitelist: `focalLength`, `orbitYaw`, `orbitPitch`, `poiX/Y/Z`, `dofStrength`,
-`focusDistance`, `dofAperture`. Writing one of these to a non-camera node fails
+whitelist: `focalLength`, `orbitYaw`, `orbitPitch`, `orientationX/Y/Z`,
+`poiX/Y/Z`, `dofStrength`, `focusDistance`, `dofAperture`. Use `orientationY`
+for a pan and `orbitYaw` for a dolly-arc — they look alike in a prompt and are
+different shots. Writing one of these to a non-camera node fails
 loudly with a message naming the fix, because a library-emitted camera move that
 lands on a shape layer is otherwise a silent no-op. `add_camera_move` is the
 high-level recipe (`push_in` / `pull_out`).

@@ -125,6 +125,62 @@ export type RenderableEffect =
       invert: boolean;
     }
   | { type: 'motion-tile'; scale: number }
+  /**
+   * Bend (AE's CC Bender). `angleRad` is the TOTAL bend and `style` indexes the
+   * profile (0 Marilyn, 1 Sharp, 2 Circular). Everything else about the bend —
+   * where the line sits, which way it runs, how far the bend takes to complete
+   * — comes from the two POINTS, exactly as AE's Top and Base do.
+   *
+   * The points are in ASPECT-CORRECTED layer units: x is scaled by `aspect`
+   * (w/h) so one unit means the same distance on both axes. Raw UV would shear
+   * any bend line that is not axis-aligned on a non-square layer.
+   */
+  | {
+      type: 'bend';
+      angleRad: number; style: number; aspect: number;
+      /** True confines the deformation to the Top→Base band; false hinges the
+       *  remainder along with it, which is AE's CC Bender behaviour. */
+      holdOutside: boolean;
+      topX: number; topY: number; baseX: number; baseY: number;
+    }
+  /**
+   * Perspective family. `thickness` is in UV units for the bevels; `lightRad`
+   * is the direction light arrives from; `intensity` is a multiplier, not a
+   * percentage. Spotlight's cone is a HALF-angle in radians, and `ambient` is
+   * what the layer keeps outside it — 0 means fully dark.
+   */
+  | { type: 'bevel-alpha'; thickness: number; lightRad: number; intensity: number; color: Color }
+  | { type: 'bevel-edges'; thickness: number; lightRad: number; intensity: number; color: Color }
+  /**
+   * Spotlight (CC Spotlight). `from`/`to` are point controls in
+   * ASPECT-CORRECTED layer units — between them they carry the light's
+   * position, its aim and its reach, so there is no separate direction or
+   * radius to contradict them. `coneHalfRad` is measured from the axis;
+   * `softness` 0..1 widens the falloff inward from the cone edge.
+   */
+  | {
+      type: 'spotlight';
+      fromX: number; fromY: number; toX: number; toY: number;
+      coneHalfRad: number; softness: number; intensity: number; ambient: number;
+      aspect: number; lightOnly: boolean; color: Color;
+    }
+  /**
+   * Sphere / Cylinder. `radius` is a fraction of the layer's short side (1 =
+   * the sphere touches the edges); `shading` is 0..1, where 0 is a flat unlit
+   * map and 1 lets the limb fall fully dark. Rotations are radians.
+   */
+  | {
+      type: 'sphere';
+      radius: number; rotXRad: number; rotYRad: number; rotZRad: number;
+      shading: number; aspect: number; color: Color;
+    }
+  | { type: 'cylinder'; radius: number; rotRad: number; shading: number; color: Color }
+  /**
+   * Arithmetic (Channel). `operator` indexes AE's menu; `r`/`g`/`b` are the
+   * per-channel constants normalised to 0..1 (authored 0..255, as AE does,
+   * because the bitwise operators are only meaningful on 8-bit integers).
+   */
+  | { type: 'arithmetic'; operator: number; r: number; g: number; b: number; clip: boolean }
   | { type: 'fill'; color: Color }
   | { type: 'stroke'; widthPx: number; color: Color }
   | { type: 'sharpen'; amount: number }

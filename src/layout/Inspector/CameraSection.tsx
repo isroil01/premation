@@ -43,9 +43,12 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const [yawRaw, setYaw] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orbitYaw');
   const [pitchRaw, setPitch] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orbitPitch');
   const [rollRaw, setRoll] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationZ');
+  const [oriXRaw, setOriX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationX');
+  const [oriYRaw, setOriY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'orientationY');
   const [dofRaw, setDofStrength] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'dofStrength');
   const [focusRaw, setFocusDistance] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'focusDistance');
   const [apertureRaw, setAperture] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'dofAperture');
+  const [fStopRaw, setFStop] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fStop');
   const [poiXRaw, setPoiX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiX');
   const [poiYRaw, setPoiY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiY');
   const [poiZRaw, setPoiZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiZ');
@@ -148,14 +151,27 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
         <div className={styles.subhead} style={{ marginTop: 8 }}>Orbit</div>
         <KeyframeRow nodeId={nodeId} prop="orbitYaw" label="Yaw" value={typeof yawRaw === 'number' ? yawRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setYaw(v)} />
         <KeyframeRow nodeId={nodeId} prop="orbitPitch" label="Pitch" value={typeof pitchRaw === 'number' ? pitchRaw : 0} unit="°" min={-89} max={89} onStatic={(v) => setPitch(v)} />
-        {/* Roll spins the frame about the view axis (a dutch angle) without
-            re-aiming the camera — the third orientation axis, which the yaw +
-            pitch pair alone could not express. */}
-        <KeyframeRow nodeId={nodeId} prop="orientationZ" label="Roll" value={typeof rollRaw === 'number' ? rollRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setRoll(v)} />
         <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Swings the camera around its point of interest, keeping it framed.
           On canvas: Alt+drag orbits, Shift+Alt+drag (or Alt+middle-drag)
           tracks XY, Alt+wheel dollies. Tick a stopwatch to keyframe any of these.
+        </p>
+
+        {/* IN-PLACE rotation, kept in its own group and NOT mixed in with Orbit
+            above: the two look alike and do opposite things. Orbit moves the eye
+            along an arc around the target; these turn the camera where it
+            stands. Conflating them is what made a tripod pan unexpressible. */}
+        <div className={styles.subhead} style={{ marginTop: 8 }}>Rotation (in place)</div>
+        <KeyframeRow nodeId={nodeId} prop="orientationX" label="X Rotation" value={typeof oriXRaw === 'number' ? oriXRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setOriX(v)} />
+        <KeyframeRow nodeId={nodeId} prop="orientationY" label="Y Rotation" value={typeof oriYRaw === 'number' ? oriYRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setOriY(v)} />
+        {/* Roll spins the frame about the view axis (a dutch angle) without
+            re-aiming the camera — the third orientation axis, which the yaw +
+            pitch pair alone could not express. */}
+        <KeyframeRow nodeId={nodeId} prop="orientationZ" label="Z Rotation (roll)" value={typeof rollRaw === 'number' ? rollRaw : 0} unit="°" min={-180} max={180} onStatic={(v) => setRoll(v)} />
+        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+          Turns the camera on the spot without moving it — a tripod pan or tilt.
+          On a targeted camera these offset the tracked aim, so it keeps
+          following its Point of Interest while looking off to the side.
         </p>
 
         <div className={styles.subhead} style={{ marginTop: 8 }}>Point of Interest</div>
@@ -216,6 +232,21 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           <>
             <KeyframeRow nodeId={nodeId} prop="focusDistance" label="Focus distance" value={typeof focusRaw === 'number' ? focusRaw : focal} unit="px" min={1} onStatic={(v) => setFocusDistance(v)} />
             <KeyframeRow nodeId={nodeId} prop="dofAperture" label="Aperture" value={typeof apertureRaw === 'number' ? apertureRaw : (typeof dofRaw === 'number' ? dofRaw : 0)} unit="px" min={0} onStatic={(v) => setAperture(v)} />
+            {/*
+              F-Stop selects the lens model. Absent or 0 keeps the legacy
+              symmetric ramp above — what every existing project uses, and what
+              it must keep looking like. Set it and `dofBlurPx` switches to a
+              real thin-lens circle of confusion: asymmetric, saturating behind
+              the focal plane, and sensitive to focal length. Deliberately NOT
+              given a numeric default, because a default would re-grade every
+              shot anyone has already approved.
+            */}
+            <KeyframeRow nodeId={nodeId} prop="fStop" label="F-Stop (physical lens)" value={typeof fStopRaw === 'number' ? fStopRaw : 0} min={0} max={32} onStatic={(v) => setFStop(v)} />
+            <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+              {typeof fStopRaw === 'number' && fStopRaw > 0
+                ? 'Thin-lens defocus: the foreground blurs harder than the background, distant layers stop getting blurrier, and focal length now affects depth of field.'
+                : 'Leave at 0 for the classic ramp — symmetric, and it ignores focal length. Set an f-number for physical lens defocus.'}
+            </p>
           </>
         )}
 

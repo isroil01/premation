@@ -858,7 +858,7 @@ export class PencilTool implements Tool {
   readonly id = 'pencil';
   readonly label = 'Pencil';
   readonly shortcut = 'n';
-  readonly cursor = 'pen' as const;
+  readonly cursor = 'pencil' as const;
 
   private pts: Vec2[] = [];
   private drawing = false;
@@ -1044,7 +1044,7 @@ export class BrushTool implements Tool {
   readonly id = 'brush';
   readonly label = 'Brush';
   readonly shortcut = '';
-  readonly cursor = 'pen' as const;
+  readonly cursor = 'brush' as const;
 
   private pts: BrushSample[] = [];
   private drawing = false;

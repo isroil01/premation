@@ -1,15 +1,14 @@
 .root {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-4);
   min-width: 420px;
 }
 
-/* One line of the facts that decide whether an export is worth starting. */
 .summary {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
@@ -24,21 +23,10 @@
   font-family: var(--font-family-sans);
 }
 
-.checkRow {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.checkHint { color: var(--color-text-tertiary); }
-
 .section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .label {
@@ -49,56 +37,31 @@
   color: var(--color-text-tertiary);
 }
 
-.presets {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-}
-
-.warning {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
-  border: 1px solid var(--color-warning);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-}
-
-.preset {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-4);
-  border-radius: var(--radius-control);
+.selectInput {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.preset:hover:not(:disabled) { border-color: var(--color-border-strong); }
-.preset:disabled { opacity: 0.5; cursor: default; }
-
-.presetOn {
-  border-color: var(--color-primary);
-  background: var(--color-primary-subtle);
-}
-
-.presetLabel {
-  font-size: var(--font-size-md);
+  border-radius: var(--radius-control);
   color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  outline: none;
 }
 
-.presetHint {
+.selectInput:hover {
+  border-color: var(--color-border-strong);
+}
+
+.selectInput:focus {
+  border-color: var(--color-primary);
+}
+
+.formatHint {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-  line-height: 1.35;
+  margin-top: 1px;
 }
 
 .resRow {
@@ -109,8 +72,8 @@
 }
 
 .resChip {
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
@@ -118,10 +81,16 @@
   cursor: pointer;
 }
 
-.resChipOn {
-  border-color: var(--color-primary);
+.resChip:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
   color: var(--color-text-primary);
-  background: var(--color-primary-subtle);
+}
+
+.resChipOn {
+  border-color: var(--color-primary) !important;
+  color: var(--color-text-primary) !important;
+  background: var(--color-primary-subtle) !important;
+  font-weight: var(--font-weight-medium);
 }
 
 .dims {
@@ -129,6 +98,20 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkHint {
+  color: var(--color-text-tertiary);
 }
 
 .progressRow {
@@ -141,7 +124,7 @@
   position: relative;
   flex: 1;
   height: 24px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-control);
   background: var(--color-surface-1);
   overflow: hidden;
   border: 1px solid var(--color-border);
@@ -167,4 +150,7 @@
 .footer {
   display: flex;
   justify-content: flex-end;
+  gap: var(--space-3);
 }
+
+

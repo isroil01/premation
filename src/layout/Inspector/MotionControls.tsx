@@ -12,7 +12,7 @@ import { Switch } from '@components/Switch';
 import { getEventBus } from '@core/events/EventBus';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readAutoOrientMode, setAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
+import { canAutoOrient, readAutoOrientMode, setAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
 import { canBe3D, is3DEnabled } from '@core/scene/threeD';
 import {
   hasPositionAnimation,
@@ -40,32 +40,40 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   const animated = hasPositionAnimation(nodeId);
   // "Towards Camera" only means anything for a layer that lives in 3D space.
   const canFaceCamera = canBe3D(node) && is3DEnabled(node);
+  // ...and Auto-Orient as a whole only means anything for a kind the drawn-layer
+  // loop actually reaches. On a camera, light, null, group or audio layer both
+  // readers are skipped before they run, so the dropdown wrote a value nothing
+  // consumed. Motion Path below is NOT gated on this: smoothing a camera's
+  // position keys is real, it is only the derived ROTATION that is dead.
+  const showAutoOrient = canAutoOrient(node);
   const transformComp = node.components.find((c) => c.type === 'Transform');
   const separated = transformComp?.props.separateDimensions === true;
 
   return (
     <>
-      <div className={styles.row}>
-        <span className={styles.label}>
-          Auto-Orient
-          {autoOrient === 'path' && !animated && (
-            <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>
-          )}
-        </span>
-        <select
-          className={styles.select}
-          style={{ width: 128, fontSize: 'var(--font-size-xs)' }}
-          value={autoOrient}
-          onChange={(e) => setAutoOrientMode(nodeId, e.currentTarget.value as AutoOrientMode)}
-          aria-label="Auto-orient"
-        >
-          <option value="off">Off</option>
-          <option value="path">Along Path</option>
-          {/* AE's per-layer, opt-in billboard. Hidden for 2D layers because
-              facing a camera is meaningless outside 3D space. */}
-          {canFaceCamera && <option value="camera">Towards Camera</option>}
-        </select>
-      </div>
+      {showAutoOrient && (
+        <div className={styles.row}>
+          <span className={styles.label}>
+            Auto-Orient
+            {autoOrient === 'path' && !animated && (
+              <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>
+            )}
+          </span>
+          <select
+            className={styles.select}
+            style={{ width: 128, fontSize: 'var(--font-size-xs)' }}
+            value={autoOrient}
+            onChange={(e) => setAutoOrientMode(nodeId, e.currentTarget.value as AutoOrientMode)}
+            aria-label="Auto-orient"
+          >
+            <option value="off">Off</option>
+            <option value="path">Along Path</option>
+            {/* AE's per-layer, opt-in billboard. Hidden for 2D layers because
+                facing a camera is meaningless outside 3D space. */}
+            {canFaceCamera && <option value="camera">Towards Camera</option>}
+          </select>
+        </div>
+      )}
       <div className={styles.row}>
         <span className={styles.label}>
           Motion Path

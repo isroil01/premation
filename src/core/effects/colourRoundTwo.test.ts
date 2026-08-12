@@ -43,6 +43,12 @@ const LUT_FIXTURES: ReadonlyArray<readonly [EffectType, Record<string, unknown>]
   ['posterize', { levels: 4 }],
   ['exposure', { exposure: 1.5, offset: 0, gammaCorrection: 1 }],
   ['lumetri', { exposure: 1, contrast: 40 }],
+  // Round three. Both fixtures push the RED channel specifically, because the
+  // assertion below reads `lut.r` — a fixture that moved only green would pass
+  // the coverage check above and then fail the one that matters, for a reason
+  // that has nothing to do with the effect being broken.
+  ['color-balance', { shadowRed: 60, midtoneRed: -40, highlightRed: 30 }],
+  ['gamma-pedestal-gain', { redGamma: 2.2, redGain: 1.2 }],
 ];
 
 describe('every LUT effect actually produces a table', () => {

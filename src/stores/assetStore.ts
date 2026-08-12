@@ -19,6 +19,14 @@ export interface ImportedAsset {
   /** Folder this asset lives in (null = library root). Organisation only. */
   folderId?: string | null;
   /**
+   * How this asset came to exist. Absent means `'user'`.
+   *
+   * Read by the Assets panel to decide whether to SHELF it — see
+   * `isLibraryAsset`. Persisted separately (see `SOURCE_KEY`), because the
+   * stored asset record predates this field.
+   */
+  source?: AssetSource;
+  /**
    * Small preview object URL for the Assets panel grid. Falls back to `src`
    * when absent (SVG, video, audio, or thumbnailing failed). Using this instead
    * of the full-res `src` is what keeps the panel fast with many images.
@@ -153,7 +161,8 @@ interface AssetStoreState {
 }
 
 /**
- * Where an imported file came from, which decides where its bytes live.
+ * Where an asset came from. Decides where its bytes live, and whether the
+ * LIBRARY lists it.
  *
  *  - `'user'` (default) — a library import (drag-drop, file picker). These can be
  *    large (multi-GB video) and are stored ON THE USER'S DISK (IndexedDB), never
@@ -163,8 +172,35 @@ interface AssetStoreState {
  *    rasterized frames, not source assets.
  *  - `'ai'` — a small, generated artifact (an AI image). Small enough to be worth
  *    keeping in the cloud so it persists and syncs; uploaded when signed in.
+ *  - `'derived'` — produced BY the app from something already in the scene: a
+ *    rasterized copy of a selection, an image a plugin generated. Stored like
+ *    `'user'` (local, never uploaded) but NOT shelved by default — see below.
+ *
+ * ── Why `'derived'` exists ──────────────────────────────────────────────────
+ *
+ * Operations that duplicate or rasterize scene content were filing their output
+ * as `'user'`, so the Assets panel filled up with copies the user never
+ * imported, sitting alongside the footage they did. The library is meant to be
+ * "the media I brought in"; a rasterized duplicate is scene content that
+ * happens to need bytes behind it.
+ *
+ * It stays a real asset, deliberately. Layers reference it by id and it has to
+ * persist and serialise like any other — "not in the library" is a statement
+ * about the SHELF, not about the record. The Assets panel filters these out by
+ * default and can show them on request, so nothing becomes unreachable or
+ * undeletable, which is what hiding them outright would have cost.
  */
-export type AssetSource = 'user' | 'ai';
+export type AssetSource = 'user' | 'ai' | 'derived';
+
+/**
+ * Sources the Assets panel shelves by default.
+ *
+ * Exported so the panel and the store agree by construction rather than by two
+ * lists that have to be kept in step.
+ */
+export function isLibraryAsset(asset: { source?: AssetSource }): boolean {
+  return (asset.source ?? 'user') !== 'derived';
+}
 
 interface AddAssetOptions {
   source?: AssetSource;
@@ -176,6 +212,15 @@ interface AssetStoreActions {
   /** High-performance batch import for multiple files/folders. */
   addAssetsBatch: (items: Array<{ file: File; folderId?: string | null }>) => Promise<ImportedAsset[]>;
   removeAsset: (id: string) => void;
+  /**
+   * Delete many assets at once.
+   *
+   * Not a loop over `removeAsset` at the call site: that would publish a store
+   * update and rewrite the folder assignments once PER asset, so deleting a
+   * fifty-file selection would re-render every subscriber fifty times and
+   * persist the same list fifty times. One state write, one save.
+   */
+  removeAssets: (ids: readonly string[]) => void;
   /** Create a folder and return it. */
   createFolder: (name: string, parentId?: string | null) => AssetFolder;
   renameFolder: (id: string, name: string) => void;
@@ -211,6 +256,13 @@ const ASSIGN_KEY = 'motion-editor.assetFolderAssignments.v1';
 // neither the cloud schema nor the IndexedDB record carries it. Losing it on
 // reload would silently un-conform footage that had already been cut with.
 const INTERPRET_KEY = 'motion-editor.assetInterpretations.v1';
+/**
+ * Per-asset provenance, kept beside the folder map for the same reason it is:
+ * it is a small fact ABOUT an asset that the asset's own stored record does
+ * not carry, and it has to survive a reload or every derived copy comes back
+ * looking like an import the next time the app opens.
+ */
+const SOURCE_KEY = 'motion-editor.assetSources.v1';
 // Proxies persist alongside interpretations, for the same reason: the record is
 // a statement the editor makes about a file, and neither the cloud schema nor
 // the IndexedDB record carries it.
@@ -247,6 +299,46 @@ function saveAssignments(assets: ImportedAsset[]): void {
     const map: Record<string, string> = {};
     for (const a of assets) if (a.folderId) map[a.id] = a.folderId;
     localStorage.setItem(ASSIGN_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Everything that has to happen when an asset stops existing, in one place.
+ *
+ * There are three ways to delete — one asset, a selection, or a folder and its
+ * contents — and each has to revoke the same two blob URLs and issue the same
+ * two deletes. Written out at each site they drift: whichever path is added
+ * next copies whichever path the author happened to read, and a missed
+ * `revokeObjectURL` leaks the decoded bytes for the life of the session
+ * without anything visible going wrong.
+ *
+ * Deliberately does NOT touch store state. The caller removes the records, and
+ * does it in a single write — see `removeAssets`.
+ */
+function releaseAsset(asset: ImportedAsset): void {
+  if (asset.src.startsWith('blob:')) URL.revokeObjectURL(asset.src);
+  if (asset.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(asset.thumbSrc);
+  void AssetDatabase.deleteAsset(asset.id).catch(() => undefined);
+  if (isAuthenticated()) void api.deleteAsset(asset.id).catch(() => undefined);
+}
+
+function loadSources(): Record<string, AssetSource> {
+  try {
+    const raw = localStorage.getItem(SOURCE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, AssetSource>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Only non-default sources are written — `'user'` is the absent case. */
+function saveSources(assets: ImportedAsset[]): void {
+  try {
+    const map: Record<string, AssetSource> = {};
+    for (const a of assets) if (a.source && a.source !== 'user') map[a.id] = a.source;
+    localStorage.setItem(SOURCE_KEY, JSON.stringify(map));
   } catch {
     /* ignore */
   }
@@ -360,16 +452,19 @@ function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): Impo
   const map = loadAssignments();
   const interp = loadInterpretations();
   const proxies = loadProxies();
+  const sources = loadSources();
   const validFolder = new Set(folders.map((f) => f.id));
   return assets.map((a) => {
     const fid = map[a.id];
     const i = interp[a.id];
     const p = proxies[a.id];
+    const src = sources[a.id];
     return {
       ...a,
       folderId: fid && validFolder.has(fid) ? fid : a.folderId ?? null,
       ...(i ? { interpret: i } : {}),
       ...(p ? { proxy: p } : {}),
+      ...(src ? { source: src } : {}),
     };
   });
 }
@@ -411,6 +506,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             src: imported.src,
             size: file.size,
             folderId,
+            source,
             ...(imported.metadata ? { metadata: imported.metadata } : {}),
           };
           await applyProbe(file, asset);
@@ -418,6 +514,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
             s.assets.push(asset);
           });
           saveAssignments(get().assets);
+          saveSources(get().assets);
           triggerAutoProxy(asset);
           return asset;
         }
@@ -431,11 +528,12 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       if (source === 'ai' && isAuthenticated() && !isLocalFirst()) {
         try {
           const uploaded = await api.uploadAsset(file);
-          const withFolder = { ...uploaded, folderId };
+          const withFolder = { ...uploaded, folderId, source };
           set((s) => {
             s.assets.push(withFolder);
           });
           saveAssignments(get().assets);
+          saveSources(get().assets);
           triggerAutoProxy(withFolder);
           return withFolder;
         } catch {
@@ -457,6 +555,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         src,
         size: file.size,
         folderId,
+        source,
       };
 
       // Read dimensions or duration if possible
@@ -530,6 +629,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         s.assets.push(asset);
       });
       saveAssignments(get().assets);
+      saveSources(get().assets);
       triggerAutoProxy(asset);
 
       return asset;
@@ -612,16 +712,23 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
 
     removeAsset: (id) => {
       const asset = get().assets.find((a) => a.id === id);
-      if (asset) {
-        if (asset.src.startsWith('blob:')) URL.revokeObjectURL(asset.src);
-        if (asset.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(asset.thumbSrc);
-        void AssetDatabase.deleteAsset(id).catch(() => undefined);
-        if (isAuthenticated()) void api.deleteAsset(id).catch(() => undefined);
-      }
+      if (asset) releaseAsset(asset);
       set((s) => {
         s.assets = s.assets.filter((a) => a.id !== id);
       });
       saveAssignments(get().assets);
+      saveSources(get().assets);
+    },
+
+    removeAssets: (ids) => {
+      const doomed = new Set(ids);
+      if (doomed.size === 0) return;
+      for (const a of get().assets) if (doomed.has(a.id)) releaseAsset(a);
+      set((s) => {
+        s.assets = s.assets.filter((a) => !doomed.has(a.id));
+      });
+      saveAssignments(get().assets);
+      saveSources(get().assets);
     },
 
     createFolder: (name, parentId = null) => {
@@ -658,12 +765,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       // Delete every asset inside any doomed folder (with the same cleanup as
       // removeAsset — revoke blob URLs and delete from the backend/local DB).
       const doomedAssets = state.assets.filter((a) => a.folderId != null && doomedFolders.has(a.folderId));
-      for (const a of doomedAssets) {
-        if (a.src.startsWith('blob:')) URL.revokeObjectURL(a.src);
-        if (a.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(a.thumbSrc);
-        void AssetDatabase.deleteAsset(a.id).catch(() => undefined);
-        if (isAuthenticated()) void api.deleteAsset(a.id).catch(() => undefined);
-      }
+      for (const a of doomedAssets) releaseAsset(a);
       set((s) => {
         s.folders = s.folders.filter((f) => !doomedFolders.has(f.id));
         s.assets = s.assets.filter((a) => !(a.folderId != null && doomedFolders.has(a.folderId)));

@@ -485,6 +485,47 @@
   --prop-field-width: 60px;
 }
 
+/*
+ * A collapsible parameter section — AE's "▸ Output Cycle".
+ *
+ * The head is deliberately quieter than the effect header above it (no rule, no
+ * background, secondary text): it divides one effect's controls, and drawing it
+ * with the same weight as the effect title makes a grouped effect read as
+ * several effects.
+ */
+.paramGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.paramGroupHead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  text-align: left;
+}
+
+.paramGroupHead:hover {
+  color: var(--color-text-primary);
+}
+
+/* Indented to the same left edge the group's own params would have had, so
+   opening a section shifts nothing horizontally. */
+.paramGroupBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+}
+
 /* The browser's own chrome — rows, folders, the `fx` mark — lives in
    BrowserTree.module.css, shared with the Presets tab. The card treatment that
    used to live here (bordered rows, 24px icon tiles, hover lift, drop shadow,

@@ -34,6 +34,22 @@
  * a dead pipeline produce. The pair pins the effect to running AND to running
  * correctly.
  *
+ * ── What the committed GOLDEN can and cannot prove ──────────────────────────
+ *
+ * The golden pixels are blessed from WebGL2, because that is the only backend
+ * here with a software rasterizer and therefore the only portable one. On
+ * WebGL2 a plugin effect is a deliberate PASSTHROUGH (a plugin ships WGSL; the
+ * host generates GLSL that draws its input unchanged), so `plugin-visible`'s
+ * reference is a picture in which the shader changed nothing.
+ *
+ * That golden gates exactly one thing, and it is the thing this family was
+ * written for: the layer must still BE there. It cannot gate "the shader ran",
+ * because an effect that silently does not run produces the same picture.
+ *
+ * `scripts/verify-plugin-render.mjs` gates that half, on WebGPU, against a
+ * control rendered in the same run — wired into `run.mjs` as a semantics gate
+ * beside verify-alpha. Neither is redundant; do not delete one for the other.
+ *
  * One node per scene rather than two side by side in one frame. That was the
  * first design and it measured nothing: the second root never rendered, with a
  * BUILT-IN effect too, so the "the effect erased my layer" reading it produced

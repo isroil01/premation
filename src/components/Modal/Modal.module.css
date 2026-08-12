@@ -50,7 +50,7 @@
   to   { opacity: 0; transform: translateY(6px) scale(0.98); }
 }
 
-.dialog.sm         { width: 400px; }
+.dialog.sm         { width: 420px; }
 .dialog.md         { width: 520px; }
 .dialog.lg         { width: 760px; }
 .dialog.xl         { width: 1040px; }
@@ -60,7 +60,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-5);
-  padding: var(--space-6) var(--space-7);
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--color-divider);
   flex: none;
 }
@@ -70,18 +70,18 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .title {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
   margin: 0;
 }
 
 .description {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   margin: 0;
   line-height: var(--line-height-normal);
@@ -91,7 +91,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-7);
+  padding: var(--space-6);
   /* Modals never scroll sideways — content wraps/fits, only vertical scroll. */
   overflow-x: hidden;
   overflow-y: auto;
@@ -101,9 +101,10 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--space-4);
-  padding: var(--space-5) var(--space-7);
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--color-divider);
   flex: none;
   background: var(--color-surface-0);
   border-radius: 0;
 }
+

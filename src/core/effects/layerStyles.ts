@@ -43,6 +43,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { parseHex } from '@core/paint/fill';
 import type { Effect, EffectType } from '@core/effects/effects';
 import type { SceneNode } from '@core/types';
+import { clamp01 } from '@utils/lang';
 
 export interface DropShadowStyle {
   enabled: boolean;
@@ -649,9 +650,6 @@ function mixHex(a: string, b: string, t: number): string {
 }
 
 /** Styles store opacity 0..1; the effect params want 0..100. */
-function clamp01(v: number): number {
-  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
-}
 
 export const DEFAULT_DROP_SHADOW: DropShadowStyle = {
   enabled: true, color: '#000000', opacity: 0.5, distance: 8, angle: 90, blur: 8,

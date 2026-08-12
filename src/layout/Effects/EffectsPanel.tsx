@@ -72,7 +72,7 @@ const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
  * accordion, which is the folder users open most. Typing it this way means a
  * new effect type is a compile error until it is filed somewhere.
  */
-const EFFECT_CATEGORY: Record<EffectType, string> = {
+export const EFFECT_CATEGORY: Record<EffectType, string> = {
   // Blur & Sharpen
   blur: 'Blur & Sharpen',
   sharpen: 'Blur & Sharpen',
@@ -80,6 +80,7 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   'gaussian-blur': 'Blur & Sharpen',
   'fast-box-blur': 'Blur & Sharpen',
   'radial-blur': 'Blur & Sharpen',
+  'compound-blur': 'Blur & Sharpen',
   mosaic: 'Stylize',
   'find-edges': 'Stylize',
   'roughen-edges': 'Stylize',
@@ -89,6 +90,13 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   lumetri: 'Color Correction',
   'selective-color': 'Color Correction',
   'shadow-highlight': 'Color Correction',
+  /*
+    AE files Apply Color LUT under Utility. There is no Utility folder here, and
+    a one-item folder is worse than a slightly wrong one: this IS a colour tool
+    and Color Correction is where someone looks for it. Revisit if the rest of
+    AE's Utility family (Cineon Converter, Grow Bounds, HDR Compander) lands.
+  */
+  'apply-color-lut': 'Color Correction',
   'set-matte': 'Keying',
   'simple-choker': 'Keying',
   'linear-color-key': 'Keying',
@@ -149,11 +157,113 @@ const EFFECT_CATEGORY: Record<EffectType, string> = {
   'turbulent-displace': 'Distort',
   'displacement-map': 'Distort',
   'motion-tile': 'Distort',
+  bend: 'Distort',
   // Keying / Time / Transition
   keylight: 'Keying',
   echo: 'Time',
   'posterize-time': 'Time',
+  'wide-time': 'Time',
+  'force-motion-blur': 'Time',
+  // Perspective — a new folder. AE files bevels and the 3D-surface effects
+  // here rather than under Stylize, which is where a user looks for them.
+  'bevel-alpha': 'Perspective',
+  'bevel-edges': 'Perspective',
+  spotlight: 'Perspective',
+  sphere: 'Perspective',
+  cylinder: 'Perspective',
+  // Channel — a new folder. AE files the per-channel maths here rather than
+  // under Color Correction, which is about grading rather than arithmetic.
+  arithmetic: 'Channel',
   'linear-wipe': 'Transition',
+  // ── Round three ──
+  // AE's own folder for each, with one deliberate exception: Minimax is a
+  // Channel effect in AE, and there is no Channel folder here. It is filed under
+  // Keying because that is where its work is — growing and shrinking a matte —
+  // and a one-item folder is worse than a well-reasoned neighbour, the same call
+  // already made above for Apply Color LUT.
+  'color-balance': 'Color Correction',
+  'gamma-pedestal-gain': 'Color Correction',
+  'photo-filter': 'Color Correction',
+  'black-and-white': 'Color Correction',
+  tritone: 'Color Correction',
+  threshold: 'Stylize',
+  'polar-coordinates': 'Distort',
+  'optics-compensation': 'Distort',
+  'mesh-warp': 'Distort',
+  liquify: 'Distort',
+  mirror: 'Distort',
+  offset: 'Distort',
+  emboss: 'Stylize',
+  scatter: 'Stylize',
+  'radial-wipe': 'Transition',
+  'block-dissolve': 'Transition',
+  'luma-key': 'Keying',
+  minimax: 'Keying',
+  'channel-blur': 'Blur & Sharpen',
+  'unsharp-mask': 'Blur & Sharpen',
+
+  // ── Round four ──
+  //
+  // This map is `Record<EffectType, string>`, so every entry below was forced
+  // by the compiler the moment its type joined the union — which is exactly the
+  // property `effectRegistryComplete.test.ts` leans on to enumerate the union
+  // without anyone maintaining a second list.
+  //
+  // The four Channel effects follow the Minimax precedent noted above: AE files
+  // them under Channel, there is still no Channel folder, and their work is
+  // matte work, so they sit with Keying rather than earning a folder of four.
+  'bilateral-blur': 'Blur & Sharpen',
+  'smart-blur': 'Blur & Sharpen',
+  'camera-lens-blur': 'Blur & Sharpen',
+  ripple: 'Distort',
+  magnify: 'Distort',
+  warp: 'Distort',
+  'page-turn': 'Distort',
+  split: 'Distort',
+  slant: 'Distort',
+  smear: 'Distort',
+  'rolling-shutter': 'Distort',
+  // AE files this under Perspective. One effect does not earn a folder, and its
+  // neighbours here are the other shadow/relief effects.
+  'radial-shadow': 'Stylize',
+  circle: 'Generate',
+  ellipse: 'Generate',
+  'radio-waves': 'Generate',
+  lightning: 'Generate',
+  'light-rays': 'Generate',
+  'light-sweep': 'Generate',
+  'audio-waveform': 'Generate',
+  cartoon: 'Stylize',
+  'brush-strokes': 'Stylize',
+  'strobe-light': 'Stylize',
+  'color-emboss': 'Stylize',
+  halftone: 'Stylize',
+  kaleidoscope: 'Stylize',
+  vignette: 'Stylize',
+  'burn-film': 'Stylize',
+  equalize: 'Color Correction',
+  'auto-levels': 'Color Correction',
+  'auto-contrast': 'Color Correction',
+  'auto-color': 'Color Correction',
+  'change-color': 'Color Correction',
+  'change-to-color': 'Color Correction',
+  'leave-color': 'Color Correction',
+  toner: 'Color Correction',
+  'color-key': 'Keying',
+  'color-range': 'Keying',
+  extract: 'Keying',
+  'spill-suppressor': 'Keying',
+  'matte-choker': 'Keying',
+  'alpha-levels': 'Keying',
+  'solid-composite': 'Keying',
+  'channel-combiner': 'Keying',
+  'remove-color-matting': 'Keying',
+  'iris-wipe': 'Transition',
+  'light-wipe': 'Transition',
+  'line-sweep': 'Transition',
+  'grid-wipe': 'Transition',
+  'dust-scratches': 'Stylize',
+  'noise-alpha': 'Stylize',
 };
 
 /** Folder order in the browser — most-reached-for first. */

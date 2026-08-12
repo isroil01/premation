@@ -320,22 +320,22 @@ function Timeline({
       }
       const trackName = (track.name ?? '').toLowerCase();
       const hasProps = (track.properties?.length ?? 0) > 0 || track.isGroup === true;
-      
+
       const layerMatches = !query || trackName.includes(query);
       const matchingProps = query && track.properties
         ? track.properties.filter(
-            (p) =>
-              p.prop.toLowerCase().includes(query) ||
-              (p.label ?? '').toLowerCase().includes(query)
-          )
+          (p) =>
+            p.prop.toLowerCase().includes(query) ||
+            (p.label ?? '').toLowerCase().includes(query)
+        )
         : [];
-      
+
       const hasMatchingProps = matchingProps.length > 0;
-      
+
       if (!query || layerMatches || hasMatchingProps) {
         const isExpanded = hasProps && (expanded.has(track.id) || hasMatchingProps);
         out.push({ type: 'track', track, expanded: isExpanded, hasProps });
-        
+
         if (track.properties) {
           let shownProps = track.properties;
           if (query) {
@@ -357,7 +357,7 @@ function Timeline({
               shownProps = [];
             }
           }
-          
+
           if (shownProps.length > 0) {
             // Group shownProps by category
             const catMap = new Map<string, { key: string; label: string; icon: IconName; order: number; props: TimelinePropertyTrack[] }>();
@@ -554,12 +554,12 @@ function Timeline({
       const deltaX = moveEvent.clientX - startX;
       const deltaSec = deltaX / pps;
       const newDuration = Math.max(0.1, startDuration + deltaSec);
-      
+
       // Snap to frames
       const fps = model.frameRate || 30;
       const frameIndex = Math.round(newDuration * fps);
       const snappedDuration = Math.max(1 / fps, frameIndex / fps);
-      
+
       onDurationChange?.(snappedDuration);
     };
 
@@ -765,7 +765,7 @@ function Timeline({
 
   const onKeyframeDown = useCallback((kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
-    
+
     // Compute next selection synchronously to avoid stale closure in drag start
     const nextSel = new Set(selectedKfIds);
     if (e.shiftKey) {
@@ -892,9 +892,9 @@ function Timeline({
         row.type === 'prop'
           ? { keyframes: row.prop.keyframes }
           : // Collapsed summary rows stand in for their property keyframes
-            // (track.keyframes is the flat union, same ids); expanded rows
-            // defer to the property sub-rows that follow them.
-            { keyframes: row.expanded ? [] : (row.track.keyframes ?? []) },
+          // (track.keyframes is the flat union, same ids); expanded rows
+          // defer to the property sub-rows that follow them.
+          { keyframes: row.expanded ? [] : (row.track.keyframes ?? []) },
       ),
     [rows],
   );
@@ -1315,8 +1315,8 @@ function Timeline({
               const key = row.type === 'track'
                 ? `bg_${row.track.id}`
                 : row.type === 'category'
-                ? `bg_${row.track.id}_cat_${row.categoryKey}`
-                : `bg_${row.track.id}_${row.prop.prop}`;
+                  ? `bg_${row.track.id}_cat_${row.categoryKey}`
+                  : `bg_${row.track.id}_${row.prop.prop}`;
               return (
                 <div
                   key={key}
@@ -1870,7 +1870,7 @@ const TrackHeader = memo(function TrackHeader({
             : 'Preserve Underlying Transparency'}
           onClick={(e) => { e.stopPropagation(); onToggleFlag?.('preserveTransparency'); }}
         >
-          <span className={styles.fxText} style={{ fontSize: 10 }}>T</span>
+          <span className={styles.fxText}>T</span>
         </button>
         <button
           type="button"
@@ -2109,9 +2109,9 @@ const TrackContent = memo(function TrackContent({
             onContextMenu={
               onClipContextMenu
                 ? (e) => {
-                    e.preventDefault();
-                    onClipContextMenu(clip.id, e.clientX, e.clientY);
-                  }
+                  e.preventDefault();
+                  onClipContextMenu(clip.id, e.clientX, e.clientY);
+                }
                 : undefined
             }
             onDoubleClick={onActivate ? () => onActivate(track.id) : undefined}
@@ -2248,9 +2248,8 @@ const Keyframes = memo(function Keyframes({
               e.preventDefault();
               onKeyframeContextMenu?.(kf.id, e.clientX, e.clientY);
             }}
-            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options${
-              scaleGripIds.has(kf.id) ? ', Alt+drag to scale the selection in time' : ''
-            }`}
+            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options${scaleGripIds.has(kf.id) ? ', Alt+drag to scale the selection in time' : ''
+              }`}
           >
             {!kf.roving && (
               <svg className={styles.keyframeGlyph} viewBox="0 0 12 12" aria-hidden focusable="false">

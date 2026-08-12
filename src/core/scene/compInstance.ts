@@ -17,6 +17,10 @@
 import type { SceneNode } from '@core/types';
 import type SceneGraphT from './DefaultSceneGraph';
 import { renderComponentsOf } from './SceneGraph';
+import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides } from './compInstanceOverrides';
+
+/** Shared empty map — an expansion with no Essential Properties allocates none. */
+const EMPTY_OVERRIDES: ReadonlyMap<string, number> = new Map();
 
 type SceneGraph = typeof SceneGraphT;
 
@@ -122,10 +126,18 @@ export function expandCompInstances(
     depth: number,
     /** True for the top level of an expansion — see {@link isCompInstanceRoot}. */
     atInstanceRoot = false,
+    /**
+     * Essential Properties for the instance whose expansion this is. Scoped to
+     * that instance rather than accumulated down the tree: a nested instance
+     * starts a fresh set (its own), so an override always belongs to exactly
+     * one placement and two instances of one comp cannot read each other's.
+     */
+    overrides: ReadonlyMap<string, number> = EMPTY_OVERRIDES,
   ): void => {
     if (depth > MAX_INSTANCE_DEPTH) return;
     for (const orig of origs) {
       const cid = `${prefix}${orig.id}`;
+      const ovProps = overriddenPropsFor(overrides, orig.id);
       // Explicit field reads, NOT an object spread: graph node views expose
       // `components` etc. through prototype getters, which a spread drops —
       // the clone would arrive at the renderer with no components at all.
@@ -140,8 +152,17 @@ export function expandCompInstances(
         // Solo must not leak across comps: a soloed node in the source comp
         // would otherwise blank every OTHER layer of the host comp.
         solo: false,
-        components: orig.components,
+        // Essential Properties: the STATIC half. The animated half is
+        // `buildSnapshot` dropping these props from the clone's evaluated
+        // values — without it a keyframed layer ignores its override every
+        // frame. See compInstanceOverrides.ts.
+        components: applyOverridesToComponents(orig.components, overrides, orig.id),
         __instanceSource: orig.id,
+        // Carried on the CLONE rather than looked up by id in buildSnapshot:
+        // the clone's id encodes its instance chain, so re-deriving the owning
+        // instance there would mean re-parsing `::` prefixes — a second place
+        // that has to agree with this one about what an id means.
+        ...(ovProps ? { __overriddenProps: ovProps } : {}),
         ...(atInstanceRoot ? { __compInstanceRoot: true } : {}),
       } as unknown as SceneNode;
       out.push(clone);
@@ -155,12 +176,16 @@ export function expandCompInstances(
         if (expandIf(orig) && !stack.includes(ref) && graph.getNode(ref)) {
           // Collapsed ⇒ NOT a transform barrier: the whole point is that the
           // inner layers' transforms compose through into the host.
-          cloneSubtree(graph.getChildren(ref), cid, `${cid}::`, [...stack, ref], depth + 1, !readCompCollapse(orig));
+          // A nested instance carries its OWN overrides, not the outer one's.
+          cloneSubtree(
+            graph.getChildren(ref), cid, `${cid}::`, [...stack, ref], depth + 1,
+            !readCompCollapse(orig), readCompOverrides(orig),
+          );
         }
       } else {
         // Descendants keep composing normally — only the TOP of an expansion is
         // a transform barrier.
-        cloneSubtree(graph.getChildren(orig.id), cid, prefix, stack, depth);
+        cloneSubtree(graph.getChildren(orig.id), cid, prefix, stack, depth, false, overrides);
       }
     }
   };
@@ -172,7 +197,10 @@ export function expandCompInstances(
     if (!expandIf(node)) continue; // rendered by its own pass, not expanded here
     if (ref === activeRootId || !graph.getNode(ref)) continue; // self/dangling
     const stack = activeRootId ? [activeRootId, ref] : [ref];
-    cloneSubtree(graph.getChildren(ref), node.id, `${node.id}::`, stack, 1, !readCompCollapse(node));
+    cloneSubtree(
+      graph.getChildren(ref), node.id, `${node.id}::`, stack, 1,
+      !readCompCollapse(node), readCompOverrides(node),
+    );
   }
   return out;
 }

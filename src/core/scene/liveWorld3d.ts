@@ -125,36 +125,6 @@ export function deviceWorldPosition(node: SceneNode, time: number): Vec3 {
 }
 
 /**
- * A camera/light node's Point of Interest in WORLD space, or null when it has
- * none.
- *
- * ## Convention: the POI INHERITS the parent transform
- *
- * Position and Point of Interest are both parent-space properties, exactly as
- * After Effects treats them, so a camera parented to a null travels with its
- * target: the whole rig moves together and the shot holds its subject. The
- * alternative — a world-space POI — makes moving the null swing the camera to
- * keep staring at a fixed point in the composition. That is occasionally what
- * you want and never what you want by default, and the escape hatch for it is
- * an expression on the POI, not a different default.
- *
- * The same rule applies to spot lights, so a light rig behaves like a camera
- * rig rather than needing a second mental model.
- */
-export function deviceWorldPoi(
-  node: SceneNode,
-  time: number,
-  fallback: { x: number; y: number; z: number } | null,
-): Vec3 | null {
-  const av = defaultAnimation.evaluateNode(node.id, getRemappedTime(node.id, time));
-  const px = av.get('poiX') ?? fallback?.x;
-  const py = av.get('poiY') ?? fallback?.y;
-  const pz = av.get('poiZ') ?? fallback?.z;
-  if (px === undefined && py === undefined && pz === undefined) return null;
-  return toWorldPointAt(node.id, time, { x: px ?? 0, y: py ?? 0, z: pz ?? 0 });
-}
-
-/**
  * A layer's full model matrix at `time`, parent chain INCLUDED.
  *
  * `nodeMatrix.nodeWorld3d` composes a node's own local transform only, so the

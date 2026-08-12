@@ -23,6 +23,7 @@ export type StrokeCap = 'butt' | 'round' | 'square';
 export type StrokeJoin = 'miter' | 'round' | 'bevel';
 
 import type { StrokeTaper, StrokeWave } from '@core/scene/strokeProfile';
+import { clamp01 } from '@utils/lang';
 
 export interface Stroke {
   enabled: boolean;
@@ -168,9 +169,6 @@ function normWave(v: unknown): StrokeWave | undefined {
   return out.amount === 0 || out.wavelength <= 0 ? undefined : out;
 }
 
-function clamp01(n: number): number {
-  return n < 0 ? 0 : n > 1 ? 1 : n;
-}
 
 /** Read a node's stroke from its `fx` component (undefined when none/off). */
 export function readNodeStroke(node: SceneNode): Stroke | undefined {

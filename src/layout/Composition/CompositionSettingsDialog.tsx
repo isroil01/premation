@@ -179,7 +179,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                       key={f.value}
                       type="button"
                       title={f.label}
-                      className={f.value === s.fps ? styles.chipOn : styles.chip}
+                      className={`${styles.chip} ${f.value === s.fps ? styles.chipOn : ''}`}
                       onClick={() => setFps(f.value)}
                     >
                       {f.value} fps
@@ -207,7 +207,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                     key={t}
                     type="button"
                     title={`${t[0]!.toUpperCase()}${t.slice(1)} background`}
-                    className={!s.transparent && bgPaint.type === t ? styles.segmentBtnActive : styles.segmentBtn}
+                    className={`${styles.segmentBtn} ${!s.transparent && bgPaint.type === t ? styles.segmentBtnActive : ''}`}
                     disabled={s.transparent}
                     onClick={() => setBgType(t)}
                   >
@@ -449,10 +449,10 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
       </div>
 
       <div className={styles.footer}>
-        <Button variant="secondary" size="sm" onClick={close}>
+        <Button variant="secondary" size="md" onClick={close} style={{ minWidth: 90 }}>
           Cancel
         </Button>
-        <Button variant="primary" size="sm" leftIcon={<Icon name="check" size="md" />} onClick={close}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={close} style={{ minWidth: 90 }}>
           Done
         </Button>
       </div>

@@ -29,7 +29,6 @@
 import type { AiImage, AiRequest, ToolContext, ToolRegistry } from '@motion/ai-tools';
 import { LOOK_PACKS } from '@motion/design-system';
 import {
-  briefPrompt,
   fitCriticPrompt,
   runCaster,
   type CasterHooks,
@@ -585,11 +584,6 @@ async function runFitCritic(
 /** The pack list, for a settings UI that wants to show what the caster can pick. */
 export function casterPacks(): readonly { id: string; displayName: string; intent: string }[] {
   return LOOK_PACKS.map((p) => ({ id: p.id, displayName: p.displayName, intent: p.intent }));
-}
-
-/** Exposed so a caller can show the brief prompt without running anything. */
-export function casterBriefPrompt(): string {
-  return briefPrompt(LOOK_PACKS);
 }
 
 /**

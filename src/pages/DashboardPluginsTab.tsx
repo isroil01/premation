@@ -17,51 +17,46 @@
  * has no room in a dock column.
  */
 
+import { useState } from 'react';
 import { PluginsList } from '@layout/Plugins/PluginsList';
 import { MyPluginsSection } from '@layout/Plugins/MyPluginsSection';
+import { Modal } from '@components/Modal';
 import styles from './DashboardPage.module.css';
 
+const SR_HEADING_STYLE: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
+
 export function DashboardPluginsTab(): JSX.Element {
+  const [publishModalOpen, setPublishModalOpen] = useState(false);
+
   return (
     <>
-      {/*
-        No heading here.
-        The page already has one: `DashboardPage` renders "Plugins" and a
-        description of it above every tab's content. A second "Plugins" heading
-        with a second description of the same thing, three lines apart, was two
-        answers to a question nobody asked twice — and it pushed the list, the
-        only thing on this page anyone came for, below the fold.
-      */}
+      <h2 style={SR_HEADING_STYLE}>Publishing</h2>
 
-      {/*
-        Height-bounded rather than free-flowing. `PluginsList` is a dock panel
-        body: its list scrolls INSIDE itself, between a fixed search row and a
-        fixed pager. Dropped into a page that also scrolls, that gives two
-        nested scrollbars and a pager that drifts off the bottom of the screen.
-      */}
       <div className={styles.pluginsPanelHost}>
-        <PluginsList />
+        <PluginsList onPublishPlugin={() => setPublishModalOpen(true)} />
       </div>
 
-      {/*
-        Publishing lives HERE and not in the sidebar. Claiming a namespace and
-        editing a listing is a flow with forms and prose in it, and a 280px dock
-        column is the wrong place for that — while this page has room. The
-        sidebar stays what it should be: find, install, run.
-
-        This heading survives the de-duplication above because it names a
-        DIFFERENT thing from the page title. It is the one boundary on the page.
-      */}
-      <div className={`${styles.sectionHeaderRow} ${styles.publishingHeader}`}>
-        <span className={styles.eyebrowBadge}>Developer Platform</span>
-        <h2 className={styles.sectionTitle}>Publishing</h2>
-        <p className={styles.pluginsSubtitle}>
-          Claim a publisher namespace and manage the listings for plugins you have published.
-        </p>
-      </div>
-      <div className={styles.publishingHost}>
-        <MyPluginsSection />
-      </div>
+      <Modal
+        open={publishModalOpen}
+        onClose={() => setPublishModalOpen(false)}
+        title="Publisher Portal & Package Signing"
+        description="Claim publisher namespace, manage signing keys, and publish custom plugin packages."
+        size="lg"
+      >
+        <div className={styles.modalPublishContainer}>
+          <MyPluginsSection />
+        </div>
+      </Modal>
     </>
   );
 }

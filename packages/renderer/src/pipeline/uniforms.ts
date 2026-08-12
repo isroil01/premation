@@ -471,6 +471,101 @@ export function packSetMatte(mvp: Mat3, uvRect: Rect, useLuminance: boolean, inv
   return out;
 }
 
+/**
+ * The Perspective family's shared block: two generic vec4s then the light
+ * colour. One packer for all of them because the LAYOUT is what has to agree
+ * with the shaders, and three packers that must stay identical is three places
+ * for them to stop being identical.
+ *
+ * What p0/p1 mean is each shader's business and documented there.
+ */
+export function packPerspective(
+  mvp: Mat3, uvRect: Rect,
+  p0: readonly [number, number, number, number],
+  p1: readonly [number, number, number, number],
+  /** The LAYER's box within the chain buffer — NOT `uvRect`. See the shaders. */
+  fxBox: Rect,
+  color: Color,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = p0[0]; out[o + 1] = p0[1]; out[o + 2] = p0[2]; out[o + 3] = p0[3]; o += 4;
+  out[o + 0] = p1[0]; out[o + 1] = p1[1]; out[o + 2] = p1[2]; out[o + 3] = p1[3]; o += 4;
+  o = packRect(fxBox, out, o);
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
+/** Arithmetic: the operator and its per-channel constants, then the clip flag. */
+export function packArithmetic(
+  mvp: Mat3, uvRect: Rect,
+  operator: number, r: number, g: number, b: number, clip: boolean,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = operator; out[o + 1] = r; out[o + 2] = g; out[o + 3] = b; o += 4;
+  out[o + 0] = clip ? 1 : 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * Spotlight's block. One vec4 wider than the rest of the Perspective family
+ * because From/To take four floats between them and the cone still needs its
+ * angle, softness, intensity, ambient, aspect and render mode.
+ *
+ * A wider UNIFORM does not change the binding layout, so this still uses the
+ * shared `SPOTLIGHT_MATERIAL` — only the packer and the shader's struct differ.
+ */
+export function packSpotlight(
+  mvp: Mat3, uvRect: Rect,
+  fromX: number, fromY: number, toX: number, toY: number,
+  coneHalfRad: number, softness: number, intensity: number, ambient: number,
+  aspect: number, lightOnly: boolean,
+  /** The LAYER's box within the chain buffer — NOT `uvRect`. See the shader. */
+  fxBox: Rect,
+  color: Color,
+): Float32Array {
+  // uvRect + p0 + p1 + p2 + lightColor — FIVE vec4s after the matrix, not four.
+  // Allocating one short does not throw: JS drops the out-of-range writes, so
+  // the colour silently never arrives AND the buffer is 16 bytes smaller than
+  // the struct the shader declares. WebGPU rejects the bind group, the draw
+  // never happens, and the layer disappears. Guarded by uniformPackerSize.test.
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = fromX; out[o + 1] = fromY; out[o + 2] = toX; out[o + 3] = toY; o += 4;
+  out[o + 0] = coneHalfRad; out[o + 1] = softness; out[o + 2] = intensity; out[o + 3] = ambient; o += 4;
+  out[o + 0] = aspect; out[o + 1] = lightOnly ? 1 : 0; out[o + 2] = 0; out[o + 3] = 0; o += 4;
+  o = packRect(fxBox, out, o);
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
+/**
+ * Bend's two blocks: the arc itself, then the span it acts over.
+ *
+ * `angleRad` is pre-converted and the axis arrives as its cos/sin rather than
+ * as an angle — the shader needs the direction VECTOR, and computing it once
+ * per draw beats recomputing it per fragment.
+ */
+export function packBend(
+  mvp: Mat3, uvRect: Rect,
+  angleRad: number, style: number, aspect: number, outside: number,
+  topX: number, topY: number, baseX: number, baseY: number,
+  /** The LAYER's box within the chain buffer — not `uvRect`. See the shader. */
+  fxBox: Rect,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = angleRad; out[o + 1] = style; out[o + 2] = aspect; out[o + 3] = outside; o += 4;
+  out[o + 0] = topX; out[o + 1] = topY; out[o + 2] = baseX; out[o + 3] = baseY; o += 4;
+  packRect(fxBox, out, o);
+  return out;
+}
+
 export function packMotionTile(mvp: Mat3, uvRect: Rect, scaleX: number, scaleY: number, offsetX: number, offsetY: number): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);

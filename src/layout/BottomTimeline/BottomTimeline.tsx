@@ -163,7 +163,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 title={ws?.playing ? 'Pause Playback (Space)' : 'Start Playback (Space)'}
                 onClick={() => getTimelineController().togglePlay()}
               >
-                <Icon name={ws?.playing ? 'pause' : 'play'} size="md" weight={ws?.playing ? 'regular' : 'fill'} />
+                <Icon name={ws?.playing ? 'pause' : 'play'} size="md" />
               </button>
               <button
                 type="button"

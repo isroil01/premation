@@ -68,6 +68,16 @@ export interface Preferences {
    * `@core/assets/proxy` for why that is enforced by polarity.
    */
   useProxies: boolean;
+  /**
+   * Asset-library item ids the user starred, across every section (Motion GFX,
+   * Transitions, Sound FX, Lottie — ids are unique across all four, which
+   * `libraryCatalogs.test.ts` pins).
+   *
+   * A PREFERENCE rather than project content: which presets you reach for is a
+   * fact about you, not about the composition, and saving it into the document
+   * would ship one person's shortlist to everyone who opens the file.
+   */
+  libraryFavorites: string[];
 }
 
 interface PreferenceActions {
@@ -91,6 +101,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   retainOriginalSvg: true,
   showLayerBounds: true,
   useProxies: false,
+  libraryFavorites: [],
 };
 
 /** Pluggable persistence backend. */

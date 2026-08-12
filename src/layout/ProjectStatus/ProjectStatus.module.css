@@ -1,0 +1,50 @@
+/*
+ * Moved here from TitleBar.module.css, where `.center`, `.projectName` and
+ * `.dirtyDot` were all fully styled and rendered by nothing. Two surfaces need
+ * the indicator now (the Electron title bar and the web top nav), so it lives
+ * with the component rather than with one of its hosts.
+ */
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 1;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s ease, border-color 0.15s ease;
+  min-width: 0;
+}
+
+.status:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.name {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* No project open yet: Ctrl+S will ask where to put it, so say so quietly
+   rather than showing a name that does not exist. */
+.unnamed {
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-style: italic;
+}
+
+.dirtyDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-modified);
+  box-shadow: 0 0 6px rgba(224, 168, 60, 0.45);
+  flex-shrink: 0;
+}

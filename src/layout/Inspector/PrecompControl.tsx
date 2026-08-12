@@ -20,6 +20,7 @@ import { readNodeKind } from '@core/scene/sceneDerive';
 import { isPrecomp, setPrecomp, setCompCollapse } from '@core/scene/precomp';
 import { readContinuousRaster, setContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readCompCollapse } from '@core/scene/compInstance';
+import { CompOverridesSection } from './CompOverridesSection';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
 import { Checkbox } from '@components/Checkbox';
@@ -97,6 +98,7 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
             : 'This composition renders to its own frame first, then composites as one flat layer — so its 3D layers cannot meet the host’s camera.'}
         </p>
         <TimeRemapRow nodeId={nodeId} />
+        <CompOverridesSection nodeId={nodeId} />
       </>
     );
   }

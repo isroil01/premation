@@ -43,8 +43,17 @@ export interface ExportResult {
  */
 export async function exportCurrentProjectAsBundle(suggestedName?: string): Promise<ExportResult> {
   try {
-    const saved = await getProjectManager().saveAs(safeName(suggestedName));
-    return { saved };
+    const outcome = await getProjectManager().saveAs(safeName(suggestedName));
+    if (outcome.status === 'saved') return { saved: true };
+    if (outcome.status === 'cancelled') return { saved: false };
+    // `saveAs` catches its own write errors and reports them rather than
+    // throwing, so a failure used to arrive here as a plain `false` and read as
+    // a cancel — the one outcome this function must never mistake for the
+    // other, since the whole feature is "you can always get your work out".
+    return {
+      saved: false,
+      error: outcome.error instanceof Error ? outcome.error.message : 'Could not export the project.',
+    };
   } catch (err) {
     return { saved: false, error: err instanceof Error ? err.message : 'Could not export the project.' };
   }

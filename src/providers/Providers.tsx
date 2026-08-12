@@ -49,12 +49,19 @@ import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManag
 import { LoadingScreen } from '@components/LoadingScreen';
 import { isLocalFirst } from '@core/config/flags';
 import { cloudProjectsEnabled, pluginsEnabled } from '@core/config/edition';
-import { chooseBundleDir } from '@core/project/bundle/bundleProjectIO';
+import { chooseBundleDir, bundleDirPickerAvailable } from '@core/project/bundle/bundleProjectIO';
 import { OnboardingOverlay } from '@layout/Onboarding/OnboardingOverlay';
 import { useOnboardingStore } from '@stores/onboardingStore';
 import { projectDocumentIO } from '@core/project/projectDocumentIO';
 import { incrementName } from '@core/project/incrementName';
 import { confirmDiscardChanges } from '@core/project/confirmDiscard';
+import {
+  afterProjectSaved,
+  afterProjectLoaded,
+  baselineProjectHistory,
+  resetProjectWorkspace,
+} from '@core/project/projectSession';
+import type { SaveOutcome } from '@core/project/ProjectManager';
 import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurrentProject';
 import { renderStillFrame } from '@core/export/offlineRenderer';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
@@ -110,6 +117,54 @@ interface ProvidersProps {
 
 function notify(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 2600 });
+}
+
+/**
+ * The one place a save outcome is turned into UI, shared by Save, Save As and
+ * Increment and Save.
+ *
+ * Three commands used to each do their own thing with a bare boolean, and only
+ * one of them cleared the unsaved indicator. Worse, `false` collapsed "no
+ * project open", "you cancelled" and "the write threw" into a SUCCESS toast
+ * reading "Saved" — and then cleared the dirty flag and deleted the crash
+ * recovery snapshot, so the user was told their work was safe at the exact
+ * moment it stopped being anywhere.
+ *
+ * `afterProjectSaved` runs on the SAVED branch only, which is the whole point.
+ *
+ * Cloud note: `chooseSavePath` there is not a dialog — it CREATES a new backend
+ * project and hands back its id. So a Save As forks the document, and unless
+ * the route follows, the editor keeps autosaving to the project the URL still
+ * names while Save writes to the new one. `navigateTo` is how the caller
+ * follows.
+ */
+function reportSave(outcome: SaveOutcome, opts?: { forkedFrom?: string | null }): boolean {
+  if (outcome.status === 'saved') {
+    afterProjectSaved();
+    notify(`Saved “${outcome.ref.name}”`, 'success');
+    // A cloud Save As created a SEPARATE project; the route must follow it or
+    // Save and autosave end up writing to two different documents.
+    const forked =
+      getFileManager().environment === 'api' &&
+      opts?.forkedFrom !== undefined &&
+      outcome.ref.path != null &&
+      outcome.ref.path !== opts.forkedFrom;
+    if (forked) window.location.hash = `#/editor/${outcome.ref.path}`;
+    return true;
+  }
+  if (outcome.status === 'cancelled') {
+    notify('Save cancelled', 'info');
+    return false;
+  }
+  // A failed write leaves the document unsaved and the recovery snapshot in
+  // place, deliberately: it is the copy that still exists.
+  notify(
+    outcome.error instanceof Error
+      ? `Could not save: ${outcome.error.message}`
+      : 'Could not save the project',
+    'error',
+  );
+  return false;
 }
 
 /** Tool-switching commands — single-key AE shortcuts (V/A/H/Z/W/R/S/P/T/U/E).
@@ -1066,7 +1121,21 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         // replaces the document with no way back.
         if (!await confirmDiscardChanges('Create a new project')) return;
         getProjectManager().newProject('Untitled');
+        // The two things a blank DOCUMENT cannot express: the previous
+        // project's precomp tabs and its timelines. After the restore, so the
+        // timeline re-initialises against the new comp's frame rate.
+        resetProjectWorkspace();
+        // Creating a project is a document transition, exactly like opening
+        // one, and needs the same undo re-baseline: history is a flat stack
+        // with no project identity in it, so without this one Ctrl+Z pulled
+        // the PREVIOUS document back into the new project.
+        baselineProjectHistory('New Project');
         bumpScene();
+        // After the bump — which emits SceneGraphChanged, which the boot wiring
+        // turns back into markDirty(true). A brand-new empty project used to
+        // arrive already flagged as unsaved, so the very next New/Open prompted
+        // to discard changes that did not exist.
+        afterProjectLoaded();
         notify('New project created', 'success');
       },
     },
@@ -1080,22 +1149,27 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         // to lose their work should not first have to choose a file.
         if (!await confirmDiscardChanges('Open another project')) return;
         // Local-first: `.motion` is a directory bundle → use the native folder
-        // picker. In the browser build `chooseBundleDir` returns null, so this
-        // falls through to the normal file open.
-        if (isLocalFirst()) {
+        // picker. Only when there IS one: `chooseBundleDir` returns null both
+        // for "cancelled" and for "no picker in this build", and treating them
+        // alike meant cancelling the folder dialog on the desktop immediately
+        // opened a second one. Cancel means cancel; the browser build (no
+        // picker) still falls through to the normal file open.
+        if (isLocalFirst() && bundleDirPickerAvailable()) {
           const dir = await chooseBundleDir();
-          if (dir) {
-            // Shared with the start screen's recent list — see openProjectPath,
-            // which also re-baselines undo so the first Ctrl+Z after an open
-            // cannot step back into the previous document.
-            const opened = await openProjectPath(dir);
-            if (opened) {
-              notify(`Opened “${opened.name}”`, 'success');
-            } else {
-              notify('Could not open that bundle', 'error');
-            }
+          if (!dir) {
+            notify('Open cancelled', 'info');
             return;
           }
+          // Shared with the start screen's recent list — see openProjectPath,
+          // which also re-baselines undo so the first Ctrl+Z after an open
+          // cannot step back into the previous document.
+          const opened = await openProjectPath(dir);
+          if (opened) {
+            notify(`Opened “${opened.name}”`, 'success');
+          } else {
+            notify('Could not open that bundle', 'error');
+          }
+          return;
         }
         // Cloud projects have no file picker — send the user to the dashboard,
         // which is the real "choose a project" surface.
@@ -1119,12 +1193,11 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 's', meta: true },
       enabled: () => true,
       execute: async () => {
-        const ok = await getProjectManager().save();
-        // An explicit save clears the unsaved indicator + recovery snapshot.
-        const ws = useProjectStore.getState();
-        if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
-        clearRecovery();
-        notify(ok ? 'Project saved' : 'Saved', 'success');
+        // A document with no destination yet routes to Save As inside the
+        // manager, so this covers the "no project open" case too — which used
+        // to bail out and report success without writing anything.
+        const before = getProjectManager().getState().current?.path ?? null;
+        reportSave(await getProjectManager().save(), { forkedFrom: before });
       },
     },
     {
@@ -1133,8 +1206,28 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 's', meta: true, shift: true },
       enabled: () => true,
       execute: async () => {
-        const ok = await getProjectManager().saveAs('Untitled');
-        notify(ok ? 'Project saved' : 'Save cancelled', ok ? 'success' : 'info');
+        const pm = getProjectManager();
+        const before = pm.getState().current?.path ?? null;
+        // The CURRENT name, not a hardcoded "Untitled" — Increment and Save
+        // right below has always read it, and a Save As that proposes the
+        // wrong filename is a Save As that quietly makes a second "Untitled".
+        const suggested = pm.getState().current?.name ?? 'Untitled';
+        let name = suggested;
+        // Cloud has no native save dialog at all — `chooseSavePath` silently
+        // creates a project named after whatever it is handed. Without asking,
+        // every cloud Save As produced another "Untitled" in the dashboard and
+        // the user never got a chance to name the copy.
+        if (getFileManager().environment === 'api') {
+          const entered = await customPrompt(
+            'Save As',
+            'This creates a copy of the project. What should it be called?',
+            suggested,
+            { placeholder: 'Project name', confirmLabel: 'Save copy' },
+          );
+          if (!entered?.trim()) { notify('Save cancelled', 'info'); return; }
+          name = entered.trim();
+        }
+        reportSave(await pm.saveAs(name), { forkedFrom: before });
       },
     },
     {
@@ -1144,10 +1237,13 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       shortcut: { key: 's', meta: true, alt: true, shift: true },
       enabled: () => true,
       execute: async () => {
-        const current = getProjectManager().getState().current?.name ?? 'Untitled';
-        const next = incrementName(current);
-        const ok = await getProjectManager().saveAs(next);
-        notify(ok ? `Saved “${next}”` : 'Save cancelled', ok ? 'success' : 'info');
+        const pm = getProjectManager();
+        const before = pm.getState().current?.path ?? null;
+        const current = pm.getState().current?.name ?? 'Untitled';
+        // Shares reportSave with the other two, so the copy also clears the
+        // unsaved indicator — this used to leave the amber dot up after a
+        // successful save, and the next New/Open still asked to discard.
+        reportSave(await pm.saveAs(incrementName(current)), { forkedFrom: before });
       },
     },
     {
@@ -1532,7 +1628,15 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           const registry = getCommandRegistry();
           registry.register({
             id: asCommandId('file.export'), label: 'Export…', icon: 'arrow-up',
-            enabled: () => true, execute: () => openExportDialog(10, 30),
+            // The COMPOSITION's duration and frame rate, like the Export button
+            // in the title bar passes. These were hardcoded 10s/30fps, so the
+            // menu route opened the dialog describing a composition the user
+            // did not have.
+            enabled: () => true,
+            execute: () => {
+              const comp = useCompositionStore.getState();
+              openExportDialog(comp.durationSeconds, comp.fps);
+            },
           });
           registry.register({
             id: asCommandId('comp.saveFrame'), label: 'Save Frame As PNG', icon: 'image',

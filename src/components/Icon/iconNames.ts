@@ -23,7 +23,7 @@ export const ICON_NAMES = [
   'panel-left', 'panel-right', 'panel-bottom', 'layout',
   'crosshair', 'theme', 'undo', 'redo',
   'select-all', 'deselect', 'mouse-pointer', 'pen', 'type', 'square', 'circle',
-  'mask-square', 'mask-circle',
+  'mask-square', 'mask-circle', 'mask-pen',
   'pencil', 'line', 'star', 'polygon', 'curvature',
   'copy', 'group', 'ungroup', 'trash',
   'folder', 'folder-open', 'folder-plus', 'upload', 'file', 'image', 'video', 'audio', 'audio-off', 'media', 'shape', 'layers',

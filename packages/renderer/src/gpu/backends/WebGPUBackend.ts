@@ -143,6 +143,26 @@ export class WebGPUBackend implements RenderBackend {
       this.deviceLostHandler?.(reason);
     });
 
+    /*
+      Surface validation errors instead of letting them be swallowed.
+
+      WebGPU reports a bad pipeline, bind group or draw ASYNCHRONOUSLY: the call
+      returns an object, the draw becomes a no-op, and nothing throws. The
+      visible result is a target that stayed cleared — which reads as "the
+      effect erased my layer" rather than as an error, and is indistinguishable
+      from the layer legitimately rendering nothing.
+
+      `addEventListener` rather than `onuncapturederror`, so this cannot silently
+      replace a handler set elsewhere. Optional-chained because the property is
+      absent on implementations predating the event, where the browser's own
+      console reporting is the only channel.
+    */
+    (this.device as unknown as {
+      addEventListener?: (t: string, f: (e: { error?: { message?: string } }) => void) => void;
+    }).addEventListener?.('uncapturederror', (e) => {
+      console.error(`[webgpu] validation error: ${e.error?.message ?? 'unknown'}`);
+    });
+
     this.surfaceFormat = gpu.getPreferredCanvasFormat();
     if (surface) {
       const ctx = surface.canvas.getContext('webgpu') as unknown as GPUCanvasContext | null;

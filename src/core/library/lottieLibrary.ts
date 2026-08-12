@@ -22,6 +22,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene, batchScene } from '@stores/sceneStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
+import { previewChoreography } from './insertPreview';
 
 export type LottieCategory = 'micro-ui' | 'widgets' | 'controls';
 
@@ -529,6 +530,10 @@ export function insertLottieItem(lottieId: string, x?: number, y?: number): stri
     throw err;
   }
   tx.commit();
+  // Micro-UI items land visible at rest, so unlike the mograph/transition cards
+  // this is not rescuing an invisible insert — it is showing the interaction the
+  // card previewed on hover, which is the whole reason to pick one.
+  if (nodeIds.length > 0) previewChoreography({ from: 0, to: item.frames / FPS, restAt: 0 });
   return nodeIds;
 }
 

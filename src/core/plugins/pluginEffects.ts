@@ -356,9 +356,44 @@ export function currentlyDrawing(): string | null {
  * "we do not know" and "your plugin did it" are very different things to tell
  * someone.
  */
+/**
+ * Return every compiled effect to `pending`, so it recompiles on the new device.
+ *
+ * `ready` means "a pipeline for this shader exists on the GPU". After a device
+ * loss that is false for ALL of them, and this state is the only thing that
+ * says otherwise: `snapshotToFrameScene` emits a pass for any `ready` effect,
+ * and `pluginMaterial` then asks the NEW device for a shader it never compiled.
+ * Pipeline creation fails, nothing is drawn into the ping-pong target, and the
+ * target stays cleared — which reads as **the plugin effect erased the layer**.
+ *
+ * That is precisely what `plugin-identity` reproduces: blank, and byte-identical
+ * to `plugin-visible`, because the shader's contents never get as far as
+ * mattering. The control renders fine because it emits no plugin pass at all.
+ *
+ * `pending` rather than `failed`, for the reason `reenableEffect` gives:
+ * recompiling is a retry, not an exemption — it goes through every gate again.
+ *
+ * Returns how many were invalidated, so the caller only notifies on a change.
+ */
+function invalidateCompiledEffects(): number {
+  let n = 0;
+  for (const effect of effects.values()) {
+    if (effect.state !== 'ready') continue;
+    effect.state = 'pending';
+    effect.reason = '';
+    n++;
+  }
+  return n;
+}
+
 export function noteDeviceLoss(reason: string): RegisteredEffect | null {
   const suspectId = inFlight;
   inFlight = null;
+
+  // Every pipeline died with the device, whoever was to blame. Done BEFORE the
+  // attribution branch so an unattributable loss — the common case, and the one
+  // the render-test harness hits between scenes — still invalidates.
+  const invalidated = invalidateCompiledEffects();
 
   if (!suspectId) {
     /*
@@ -368,6 +403,7 @@ export function noteDeviceLoss(reason: string): RegisteredEffect | null {
       innocent and still has the problem.
     */
     console.warn(`[plugins] GPU device lost, not attributable to a plugin effect: ${reason}`);
+    if (invalidated > 0) changed();
     return null;
   }
 

@@ -852,11 +852,6 @@ export function composeEffectShader(
   return { wgsl, layout };
 }
 
-/** How many shaders an effect compiles to. One per pass, or one. */
-export function effectPassCount(effect: EffectContribution): number {
-  return effect.passes?.length ?? 1;
-}
-
 /**
  * Pack the renderer's vertex header into a block from `parameterBlock`.
  *

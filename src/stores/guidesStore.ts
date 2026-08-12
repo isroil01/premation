@@ -223,7 +223,15 @@ interface GuidesStore extends GuidesSettings {
   key: () => string;
 }
 
-export const useGuidesStore = create<GuidesStore>((set, get) => ({
+/**
+ * The persisted half of this store, at its defaults.
+ *
+ * Named because a NEW project has to be able to get back to it: `restore` only
+ * applies the keys a document carries, so a blank document left the previous
+ * project's guides in place. The store seeds itself from the same constant, so
+ * "default" cannot drift between boot and File ▸ New Project.
+ */
+export const DEFAULT_GUIDES_SETTINGS: GuidesSettings = {
   rulers: false,
   grid: false,
   // 100px cells with quarter subdivisions. 100 is what the renderer has always
@@ -240,6 +248,12 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
   proportionalColumns: 8,
   proportionalRows: 6,
   safeArea: false,
+  motionPathVisible: true,
+  motionPathDots: 'small',
+};
+
+export const useGuidesStore = create<GuidesStore>((set, get) => ({
+  ...DEFAULT_GUIDES_SETTINGS,
   camera3dMode: 'active',
   customViews: defaultCustomViews(),
   lastCustomView: 'custom1',
@@ -250,8 +264,6 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
   quadViewModes: ['active', 'front', 'top', 'custom1'],
   channel: 'rgb',
   roi: null,
-  motionPathVisible: true,
-  motionPathDots: 'small',
   gizmo3dState: 'universal',
   gizmo3dAxisMode: 'local',
   groundGridVisible: true,

@@ -70,6 +70,17 @@ export interface Palette {
 
 // ── sRGB ⇄ OKLab ⇄ OKLCH ──────────────────────────────────────────────
 
+/*
+ * The one `clamp01` that STAYS a copy.
+ *
+ * `@utils/lang` holds the canonical one and everything under `src/` now uses
+ * it. This file cannot: `packages/design-system` declares no dependencies and
+ * is consumed BY the app, so importing an app util would invert that direction
+ * and make a standalone package depend on the thing that depends on it.
+ *
+ * One line of duplication is the cheaper of the two costs. Written down so the
+ * next sweep does not have to rediscover why this one survived.
+ */
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /** sRGB transfer function (gamma → linear). */

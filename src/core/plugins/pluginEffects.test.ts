@@ -137,6 +137,65 @@ describe('compiling', () => {
   });
 });
 
+/**
+ * ★ A device loss invalidates every compiled pipeline, not just the suspect.
+ *
+ * THE BUG THIS PINS: `ready` means "a pipeline for this shader exists on the
+ * GPU". After a device loss that is false for all of them — but the state said
+ * otherwise, so `snapshotToFrameScene` kept emitting a pass for each `ready`
+ * effect and `pluginMaterial` asked the NEW device for a shader it had never
+ * compiled. Pipeline creation failed, nothing was drawn into the ping-pong
+ * target, and the target stayed cleared — reading as **the plugin effect erased
+ * the layer**.
+ *
+ * Reproduced in pixels by `plugin-identity`: blank, and byte-identical to
+ * `plugin-visible`, because the shader's contents never got as far as
+ * mattering. `plugin-control` renders correctly since it emits no plugin pass.
+ *
+ * The unattributable branch is the one that matters — a driver update, a
+ * sleep/wake, or the render-test harness recreating its device between scenes
+ * all land there, and it used to `return null` without touching any state.
+ */
+describe('★ a device loss invalidates compiled pipelines', () => {
+  beforeEach(() => registerEffects(PLUGIN, PLUGIN_NAME, [contribution()]));
+
+  it('returns a ready effect to pending when nothing was drawing', async () => {
+    expect(await compileEffect(ID, ok)).toBe('ready');
+
+    // Nobody was mid-draw: the unattributable path.
+    expect(noteDeviceLoss('device lost: destroyed')).toBeNull();
+
+    // `pending`, not `ready` — so it recompiles against the new device — and
+    // not `failed`, because nothing was wrong with the shader.
+    expect(effectById(ID)!.state).toBe('pending');
+    expect(effectById(ID)!.reason).toBe('');
+  });
+
+  it('still disables the suspect when one WAS drawing', async () => {
+    jest.spyOn(useUIStore.getState(), 'notify').mockImplementation(() => '');
+    expect(await compileEffect(ID, ok)).toBe('ready');
+
+    beginEffectDraw(ID);
+    expect(noteDeviceLoss('device lost')?.id).toBe(ID);
+
+    // Blame wins over invalidation for the effect that was drawing: `disabled`
+    // is a protection the user must lift, `pending` would silently retry it.
+    expect(effectById(ID)!.state).toBe('disabled');
+  });
+
+  it('leaves a failed effect alone — it has no pipeline to lose', async () => {
+    expect(await compileEffect(ID, broken)).toBe('failed');
+    const reason = effectById(ID)!.reason;
+
+    noteDeviceLoss('device lost');
+
+    // Resetting it to `pending` would discard the compile error the user needs
+    // to see, and hand a known-bad shader another attempt on every device reset.
+    expect(effectById(ID)!.state).toBe('failed');
+    expect(effectById(ID)!.reason).toBe(reason);
+  });
+});
+
 describe('★ attributing a device loss', () => {
   beforeEach(() => registerEffects(PLUGIN, PLUGIN_NAME, [contribution()]));
 

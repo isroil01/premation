@@ -26,6 +26,7 @@
  */
 
 import { cubicBezierEase } from '@motion/animation';
+import { clamp01 } from '@utils/lang';
 
 export type RangeBasedOn =
   | 'characters'
@@ -132,7 +133,6 @@ export interface SelectorWeight {
   y: number;
 }
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const clamp = (v: number, lo: number, hi: number): number =>
   v < lo ? lo : v > hi ? hi : v;
 

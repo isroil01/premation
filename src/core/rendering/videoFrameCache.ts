@@ -22,20 +22,25 @@
  * (mp4box or equivalent) — a subsystem, not a change. This gets real blended
  * pixels out of the decoder the app already has.
  *
- * KNOWN LIMIT — we do not know the source's frame rate. Nothing in the browser
- * reports it for a `<video>`: `requestVideoFrameCallback` is the only API that
- * exposes real frame times, and it does not fire at all for a detached, paused
- * element (measured — every probe timed out, paused AND playing). So callers
- * bracket on the COMPOSITION's frame rate instead. Consequences, stated plainly
- * because this is the kind of thing that otherwise becomes a silent lie:
- *   - source fps == comp fps (the common case: footage cut to the timeline)
- *     → exact, this is real Frame Mix.
- *   - source fps < comp fps (e.g. 24 in a 30 comp) → both bracket times can
- *     resolve to the same decoded frame, so the blend collapses to that frame.
- *     Degrades to today's nearest-frame behaviour; never a wrong image.
- *   - source fps > comp fps → brackets may straddle more than one source frame,
- *     so the mix reads slightly softer than AE's.
- * Getting this exact means the demuxer, or an ffprobe pass in `electron/`.
+ * FRAME RATE — RESOLVED 2026-07-30; this block used to read "KNOWN LIMIT — we
+ * do not know the source's frame rate" and it is kept, corrected, because that
+ * text outlived its truth by twelve days and was quoted as current behaviour by
+ * a later reader. `bracketFrames` takes `fps` as a PARAMETER; it never assumed
+ * the composition's rate, callers did.
+ *
+ * The caller now supplies the real one: `buildSnapshot` reads
+ * `footageSourceOf(node)?.fps ?? fps`, where the source rate comes from
+ * `mediaProbe.ts` (desktop + ffprobe) or Interpret Footage ▸ Conform, and the
+ * composition rate remains the fallback for the `elementOnly`/`none` probe
+ * tiers — the behaviour every pre-existing project already had. In those tiers
+ * the original consequences still apply: equal rates are exact Frame Mix, a
+ * slower source collapses both brackets onto one decoded frame, a faster source
+ * reads slightly softer than AE's.
+ *
+ * What is still true: nothing in the BROWSER reports a `<video>`'s rate —
+ * `requestVideoFrameCallback` never fires for a detached, paused element
+ * (measured, paused AND playing). That is why the probe lives in the main
+ * process rather than here.
  *
  * Budgeted like `frameCache`: frames are big and a long slow-motion shot would
  * otherwise pin every frame it ever touched.

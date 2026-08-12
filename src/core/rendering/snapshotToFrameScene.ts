@@ -538,6 +538,121 @@ export function extractSpatialEffects(
       });
     }
     if (e.type === 'motion-tile') spatial.push({ type: 'motion-tile', scale: n('scale') });
+    if (e.type === 'bevel-alpha' || e.type === 'bevel-edges') {
+      /*
+        Thickness arrives in PIXELS and the shaders work in UV, so it is scaled
+        by the layer box here — a bevel specified in pixels must not get
+        thicker when the same layer is used at a larger size.
+      */
+      const px = Math.max(1, layer.width || 1);
+      const py = Math.max(1, layer.height || 1);
+      spatial.push({
+        type: e.type,
+        thickness: n('thickness') / Math.min(px, py),
+        lightRad: (n('lightAngle') * Math.PI) / 180,
+        intensity: n('intensity') / 100,
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'arithmetic') {
+      // 0..255 → 0..1. Authored 8-bit because And/Or/Xor are only meaningful
+      // on integers; the shader re-quantises for those three operators.
+      spatial.push({
+        type: 'arithmetic',
+        operator: Math.round(n('operator')),
+        r: n('red') / 255,
+        g: n('green') / 255,
+        b: n('blue') / 255,
+        // Read as a BOOLEAN: effectNumber returns 0 for a checkbox param, so
+        // `n('clip') > 0.5` would be unconditionally false and the control
+        // would persist, keyframe and do nothing.
+        clip: e.params?.clip !== false,
+      });
+    }
+    if (e.type === 'sphere') {
+      // `aspect` lets the shader keep the silhouette CIRCULAR on a non-square
+      // layer — without it the sphere is an ellipse, because raw UV compresses
+      // x by w/h.
+      spatial.push({
+        type: 'sphere',
+        radius: n('radius') / 100,
+        rotXRad: (n('rotateX') * Math.PI) / 180,
+        rotYRad: (n('rotateY') * Math.PI) / 180,
+        rotZRad: (n('rotateZ') * Math.PI) / 180,
+        shading: n('shading') / 100,
+        aspect: Math.max(1, layer.width || 1) / Math.max(1, layer.height || 1),
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'cylinder') {
+      spatial.push({
+        type: 'cylinder',
+        radius: n('radius') / 100,
+        rotRad: (n('rotation') * Math.PI) / 180,
+        shading: n('shading') / 100,
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'spotlight') {
+      // From/To are offsets from rest (top-centre, layer centre), resolved here
+      // and converted to aspect-corrected units — the same treatment Bend's
+      // Top/Base get, and for the same reason: a cone measured in raw UV is an
+      // ellipse on a non-square layer.
+      const w = Math.max(1, layer.width || 1);
+      const h = Math.max(1, layer.height || 1);
+      const aspect = w / h;
+      const toQ = (pxX: number, pxY: number): { x: number; y: number } =>
+        ({ x: (pxX / w) * aspect, y: pxY / h });
+      const from = toQ(w / 2 + n('fromX'), 0 + n('fromY'));
+      const to = toQ(w / 2 + n('toX'), h / 2 + n('toY'));
+      spatial.push({
+        type: 'spotlight',
+        fromX: from.x, fromY: from.y,
+        toX: to.x, toY: to.y,
+        // The control is the FULL cone; the shader measures a half angle from
+        // the axis. Halving once here beats every reader of the uniform having
+        // to remember which one it holds.
+        coneHalfRad: (n('coneAngle') * Math.PI) / 360,
+        softness: n('edgeSoftness') / 100,
+        intensity: n('intensity') / 100,
+        ambient: n('ambient') / 100,
+        aspect,
+        lightOnly: Math.round(n('render')) === 1,
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'bend') {
+      /*
+        Top and Base are stored as OFFSETS from a rest position — the layer's
+        top-centre and bottom-centre — which is the convention every handled
+        effect uses (effectHandles.ts). Resolving rest here, once, is what lets
+        the params default to zero and survive a resize.
+
+        Converted to ASPECT-CORRECTED layer units, the space the shader bends
+        in: x scaled by w/h so a unit is the same distance on both axes. In raw
+        UV a bend line at any angle other than horizontal or vertical would
+        shear on a non-square layer.
+      */
+      const w = Math.max(1, layer.width || 1);
+      const h = Math.max(1, layer.height || 1);
+      const aspect = w / h;
+      // rest + offset, in px, then into units of the layer's height.
+      const topPxX = w / 2 + n('topX');
+      const topPxY = 0 + n('topY');
+      const basePxX = w / 2 + n('baseX');
+      const basePxY = h + n('baseY');
+      spatial.push({
+        type: 'bend',
+        angleRad: (n('amount') * Math.PI) / 180,
+        style: Math.round(n('style')),
+        aspect,
+        holdOutside: Math.round(n('outside')) === 1,
+        topX: (topPxX / w) * aspect,
+        topY: topPxY / h,
+        baseX: (basePxX / w) * aspect,
+        baseY: basePxY / h,
+      });
+    }
     if (e.type === 'fill') {
       spatial.push({ type: 'fill', color: c('color', n('opacity') / 100) });
     }

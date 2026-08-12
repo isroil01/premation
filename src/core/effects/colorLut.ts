@@ -43,8 +43,9 @@ export interface ChannelLut {
  * would have been the first to hit it; last run guarded that behaviourally,
  * and this replaces the guard with a shape where the bug cannot be written.
  */
-const LUT_BUILDERS: ReadonlyMap<EffectType, (effect: Effect) => ChannelLut> =
-  new Map<EffectType, (effect: Effect) => ChannelLut>([
+type LutBuilderEntry = readonly [EffectType, (effect: Effect) => ChannelLut];
+
+const LUT_BUILDER_ENTRIES: readonly LutBuilderEntry[] = [
     ['levels', (e) => uniform(levelsTable(
       effectNumber(e, 'inputBlack'),
       effectNumber(e, 'inputWhite'),
@@ -69,7 +70,17 @@ const LUT_BUILDERS: ReadonlyMap<EffectType, (effect: Effect) => ChannelLut> =
     // Nothing in it reads a second channel to decide what to do with the first,
     // so it renders on both backends with no bake, like the other four.
     ['lumetri', (e) => lumetriTables(e)],
-  ]);
+    // Both round-three additions qualify on the SHAPE rule above, and both are
+    // here rather than in `aeColor.ts` for the reason Lumetri is: they are
+    // grading controls that stay switched on for a whole comp, so the gap
+    // between "free on both backends" and "forces a CPU bake" is the gap
+    // between usable and not.
+    ['color-balance', (e) => colorBalanceTables(e)],
+    ['gamma-pedestal-gain', (e) => gammaPedestalGainTables(e)],
+];
+
+const LUT_BUILDERS: ReadonlyMap<EffectType, (effect: Effect) => ChannelLut> =
+  new Map(LUT_BUILDER_ENTRIES);
 
 export function isLutEffect(type: EffectType): boolean {
   return LUT_BUILDERS.has(type);
@@ -344,6 +355,139 @@ function exposureTable(stops: number, offset: number, gamma: number): Uint8Array
     t[i] = clamp255(Math.round(Math.pow(clamped, invGamma) * 255));
   }
   return t;
+}
+
+/**
+ * A midtone weight: 1 at mid-grey, falling to ~0 towards both ends.
+ *
+ * The companion to `toneWeight`, which only answers for the two ENDS. Colour
+ * Balance needs a third band centred at 0.5, and it has to fall off on both
+ * sides — reusing `toneWeight` with either edge would give a ramp that is still
+ * half-strength at the opposite end, so a midtone push would drag the blacks
+ * with it.
+ */
+function midWeight(x: number, width: number): number {
+  const d = (x - 0.5) / width;
+  return Math.exp(-d * d);
+}
+
+/**
+ * Colour Balance — independent RGB pushes in three tonal bands.
+ *
+ * Nine controls: shadows, midtones and highlights, each with a red, green and
+ * blue slider from −100 to 100. This is the classic three-way corrector, and
+ * what it does that Curves does not is let you warm the highlights while cooling
+ * the shadows in one control set — the single most common grade there is.
+ *
+ * Each band is an ADDITIVE push weighted by where the input sits, the same
+ * construction Lumetri's tone controls use above, so the three bands overlap
+ * smoothly instead of banding at their boundaries. Scaled by 0.5 so ±100 is a
+ * decisive correction rather than a clipped frame, matching the neighbouring
+ * effect's calibration.
+ *
+ * ── Why there is no Preserve Luminosity checkbox ────────────────────────────
+ *
+ * AE's Color Balance has one. It cannot be offered here, and quietly shipping a
+ * checkbox that did something else would be worse than leaving it out: the
+ * rescale divides by the luminance of the CORRECTED pixel, which reads all three
+ * channels, and a transfer table whose red output depends on green is not a
+ * per-channel table at all. Adding it would move this effect out of
+ * `LUT_BUILDERS` and onto the CPU bake path — the exact cost this placement
+ * exists to avoid. Anyone needing it can follow this with a Hue/Saturation
+ * lightness pull, or the effect belongs as a separate pixel pass in
+ * `aeColor.ts` beside Photo Filter, which pays that cost knowingly.
+ */
+function colorBalanceTables(effect: Effect): ChannelLut {
+  const build = (shadow: number, mid: number, high: number): Uint8Array => {
+    const s = shadow / 100;
+    const m = mid / 100;
+    const hi = high / 100;
+    const t = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x0 = i / 255;
+      let x = x0 + 0.5 * (
+        s * toneWeight(x0, 0, 0.35) +
+        m * midWeight(x0, 0.35) +
+        hi * toneWeight(x0, 1, 0.35)
+      );
+      x = x < 0 ? 0 : x > 1 ? 1 : x;
+      t[i] = clamp255(Math.round(x * 255));
+    }
+    return t;
+  };
+  return {
+    r: build(effectNumber(effect, 'shadowRed'), effectNumber(effect, 'midtoneRed'), effectNumber(effect, 'highlightRed')),
+    g: build(effectNumber(effect, 'shadowGreen'), effectNumber(effect, 'midtoneGreen'), effectNumber(effect, 'highlightGreen')),
+    b: build(effectNumber(effect, 'shadowBlue'), effectNumber(effect, 'midtoneBlue'), effectNumber(effect, 'highlightBlue')),
+  };
+}
+
+/**
+ * Gamma / Pedestal / Gain — the transfer function stated directly.
+ *
+ * Per channel, plus a master pass over all three:
+ *
+ *   out = pedestal + gain · in^(1/gamma)
+ *
+ *   gamma     the midtone bend. >1 lifts midtones, <1 crushes them.
+ *   gain      the multiplier — where white lands.
+ *   pedestal  an additive floor — where BLACK lands, and the only one of the
+ *             three that can lift a true zero off the bottom.
+ *
+ * Why it earns a place next to Levels, Curves and Exposure, which can each
+ * express parts of it: this is the control that names its parameters the way
+ * film and broadcast engineering does, so a value from a camera LUT spec or a
+ * grading note transfers to it directly instead of being re-derived as a curve.
+ * Cineon and telecine work is specified in exactly these terms.
+ *
+ * Order is fixed and not interchangeable — gamma bends the normalised input,
+ * gain scales the bent value, pedestal shifts the scaled result. A pedestal
+ * applied before the gain would be multiplied by it and would no longer be the
+ * black level anyone specified.
+ *
+ * The MASTER composes on top of the per-channel result rather than replacing
+ * it, so the two sets of controls stack the way the effect's four-group layout
+ * implies.
+ */
+function gammaPedestalGainTables(effect: Effect): ChannelLut {
+  const transfer = (gamma: number, pedestal: number, gain: number): ((x: number) => number) => {
+    // Guard the reciprocal exactly as `exposureTable` does: gamma 0 is reachable
+    // from the inspector and would otherwise make every entry NaN, which clamps
+    // to a black frame rather than to anything diagnosable.
+    const invGamma = gamma > 0.0001 ? 1 / gamma : 1;
+    return (x) => {
+      // Clamp BEFORE the pow — `Math.pow` of a negative base with a fractional
+      // exponent is NaN, and a negative pedestal upstream makes that reachable.
+      const base = x < 0 ? 0 : x > 1 ? 1 : x;
+      return pedestal + gain * Math.pow(base, invGamma);
+    };
+  };
+
+  const master = transfer(
+    effectNumber(effect, 'gamma'),
+    effectNumber(effect, 'pedestal'),
+    effectNumber(effect, 'gain'),
+  );
+
+  const build = (gammaKey: string, pedestalKey: string, gainKey: string): Uint8Array => {
+    const own = transfer(
+      effectNumber(effect, gammaKey),
+      effectNumber(effect, pedestalKey),
+      effectNumber(effect, gainKey),
+    );
+    const t = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = master(own(i / 255));
+      t[i] = clamp255(Math.round((x < 0 ? 0 : x > 1 ? 1 : x) * 255));
+    }
+    return t;
+  };
+
+  return {
+    r: build('redGamma', 'redPedestal', 'redGain'),
+    g: build('greenGamma', 'greenPedestal', 'greenGain'),
+    b: build('blueGamma', 'bluePedestal', 'blueGain'),
+  };
 }
 
 /**

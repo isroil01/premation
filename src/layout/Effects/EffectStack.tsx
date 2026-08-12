@@ -35,7 +35,7 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
  * banded, its actions revealed on hover.
  */
 
-import { useState as useLocalState } from 'react';
+import { useState as useLocalState, Fragment } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
@@ -103,6 +103,52 @@ function ParamLine({
         <div className={panel.paramLineBody}>{children}</div>
       </div>
       {below}
+    </div>
+  );
+}
+
+/**
+ * Split a param list into the sections AE draws.
+ *
+ * Consecutive params carrying the same `group` are ONE section; ungrouped
+ * params stay at top level. Contiguity is the rule (see EffectParamDef.group),
+ * so this is a single pass and a group interrupted by an ungrouped param
+ * legitimately becomes two sections rather than silently reordering the
+ * author's list.
+ */
+export function splitParamGroups(
+  params: ReadonlyArray<EffectParamDef>,
+): Array<{ group?: string; params: EffectParamDef[] }> {
+  const out: Array<{ group?: string; params: EffectParamDef[] }> = [];
+  for (const p of params) {
+    const last = out[out.length - 1];
+    if (last && last.group === p.group) last.params.push(p);
+    else out.push({ group: p.group, params: [p] });
+  }
+  return out;
+}
+
+/**
+ * One collapsible section of an effect's controls — AE's "▸ Output Cycle".
+ *
+ * Collapsed by DEFAULT. A grouped effect has groups precisely because it has
+ * too many controls to show at once; opening all five of Colorama's sections
+ * on selection would defeat the reason they were grouped.
+ */
+function ParamGroup({ name, children }: { name: string; children: React.ReactNode }): JSX.Element {
+  const [open, setOpen] = useLocalState(false);
+  return (
+    <div className={panel.paramGroup}>
+      <button
+        type="button"
+        className={panel.paramGroupHead}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name={open ? 'chevron-down' : 'chevron-right'} size="sm" />
+        <span>{name}</span>
+      </button>
+      {open ? <div className={panel.paramGroupBody}>{children}</div> : null}
     </div>
   );
 }
@@ -241,6 +287,51 @@ function EffectParamRow({
             <option key={s.id} value={s.id}>{s.name || s.id}</option>
           ))}
         </select>
+        </div>
+      </ParamLine>
+    );
+  }
+
+  if (param.type === 'enum') {
+    /*
+      A named choice stored as a NUMBER (see EffectParamDef). AE renders these
+      as a plain menu with no stopwatch — Echo Operator, Bend Style — because
+      interpolating BETWEEN two named modes is meaningless. A hold-keyframed
+      enum is a real thing in AE, but it belongs with hold interpolation, not
+      with a stopwatch that would linearly ramp "Add" into "Screen".
+
+      Falls back to the def's default rather than option[0] when the stored
+      value names no option: a project written by a build that had one more
+      mode must not silently become a DIFFERENT mode, and `default` is the one
+      value the effect is guaranteed to handle.
+    */
+    const opts = param.options ?? [];
+    const current = typeof value === 'number' ? value : Number(param.default);
+    const known = opts.some((o) => o.value === current);
+    return (
+      <ParamLine>
+        <div className={row.paramRow}>
+          <div style={{ width: 14 }} />
+          <span className={row.paramLabel}>{param.label}</span>
+          <select
+            value={known ? String(current) : String(param.default)}
+            onChange={(ev) => updateEffectParam(nodeId, effect.id, param.key, Number(ev.currentTarget.value))}
+            aria-label={label}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 20,
+              fontSize: 11,
+              background: 'var(--color-surface-0)',
+              color: 'var(--color-text-primary)',
+              border: '1px solid var(--color-border-subtle)',
+              borderRadius: 4,
+            }}
+          >
+            {opts.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </div>
       </ParamLine>
     );
@@ -560,9 +651,14 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
             {/* Accordion Body: Effect Parameters */}
             {!isCollapsed && !off && (
               <div className={panel.effectParamsBody}>
-                {def.params.map((p) => (
-                  <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
-                ))}
+                {splitParamGroups(def.params).map((section, si) => {
+                  const rows = section.params.map((p) => (
+                    <EffectParamRow key={p.key} nodeId={nodeId} effect={e} def={def} param={p} />
+                  ));
+                  return section.group
+                    ? <ParamGroup key={`g:${section.group}:${si}`} name={section.group}>{rows}</ParamGroup>
+                    : <Fragment key={`u:${si}`}>{rows}</Fragment>;
+                })}
               </div>
             )}
           </div>

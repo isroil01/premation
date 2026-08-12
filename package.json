@@ -46,12 +46,12 @@
     "verify-plugin-effect": "node packages/render-tests/scripts/verify-plugin-effect.mjs",
     "verify:fixtures": "node scripts/fixtures-hash.mjs",
     "feature-counts": "node scripts/featureCounts.cjs",
+    "icons:generate": "node scripts/generate-sharp-icons.mjs",
     "verify-plugin-chain": "node packages/render-tests/scripts/verify-plugin-chain.mjs",
     "verify-plugin-shaders": "node packages/render-tests/scripts/verify-plugin-shaders.mjs",
     "build-test-kit": "node scripts/build-test-kit-plugin.mjs"
   },
   "dependencies": {
-    "@phosphor-icons/react": "^2.1.10",
     "@radix-ui/react-dialog": "^1.1.19",
     "@radix-ui/react-popover": "^1.1.19",
     "@radix-ui/react-select": "^2.3.3",
@@ -75,6 +75,7 @@
     "better-sqlite3": "^11.10.0"
   },
   "devDependencies": {
+    "@material-symbols/svg-700": "^0.45.10",
     "@napi-rs/canvas": "^1.0.2",
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^6.0.0",

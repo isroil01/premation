@@ -41,7 +41,7 @@ async function waitForPluginEffects(timeoutMs = 8000): Promise<void> {
 }
 
 interface HarnessBridge {
-  config: { backends: BackendChoice[] };
+  config: { backends: BackendChoice[]; only?: string[] };
   /** Sends one rendered frame to main. Resolves when written. */
   frame: (payload: {
     sceneId: string;
@@ -299,6 +299,16 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
 async function main(): Promise<void> {
   try {
     const backends = window.harnessBridge.config.backends;
+    /*
+      Debug-only scene filter. Empty means every scene, which is what the gate
+      always runs — `run.mjs --scene` narrows the comparison but not the render,
+      so investigating one scene otherwise costs a full pass over all of them.
+      The MANIFEST is still written from the full set: it describes the suite,
+      not this run, and truncating it would make the runner report every
+      unrendered scene as missing.
+    */
+    const only = new Set(window.harnessBridge.config.only ?? []);
+    const toRender = only.size > 0 ? SCENES.filter((s) => only.has(s.id)) : SCENES;
     await window.harnessBridge.manifest(
       SCENES.map((s) => ({
         id: s.id,
@@ -325,7 +335,7 @@ async function main(): Promise<void> {
     // silently stopped testing its subject, which is the failure this whole
     // check exists for (see `buildSceneOrThrow`).
     const setupFailures: string[] = [];
-    for (const scene of SCENES) {
+    for (const scene of toRender) {
       try {
         buildSceneOrThrow(scene);
       } catch (err) {
@@ -340,8 +350,25 @@ async function main(): Promise<void> {
     }
 
     const failures: string[] = [];
-    for (const scene of SCENES) {
+    /*
+      Per-scene wall clock, reported at the end.
+
+      This run has taken anywhere from ~3 minutes to over 10 for the same
+      scenes, and there was no way to tell WHICH scene absorbed the difference —
+      the only output was the total, so every diagnosis started with a guess.
+      A run that is slow for a reason and a run that is slow everywhere are
+      different problems, and the summary below distinguishes them: if one
+      scene holds the whole excess it names it, and if the cost is spread the
+      per-scene mean says so.
+
+      Timings only, never a threshold. A wall-clock assertion in a correctness
+      gate is a test that fails on a loaded CI runner for no reason — the same
+      mistake `svgHybridImport`'s linearity check made.
+    */
+    const timings: Array<{ id: string; backend: string; ms: number }> = [];
+    for (const scene of toRender) {
       for (const backend of backends) {
+        const startedAt = Date.now();
         try {
           await renderScene(scene, backend);
         } catch (err) {
@@ -350,8 +377,20 @@ async function main(): Promise<void> {
           failures.push(`${scene.id}/${backend}: ${(err as Error)?.message ?? err}`);
           // eslint-disable-next-line no-console
           console.error(`[scene-fail] ${scene.id}/${backend}:`, err);
+        } finally {
+          // Recorded on the failure path too: a scene that took 40 seconds and
+          // then threw is the most interesting row in the table, and dropping
+          // it would hide exactly the case this exists for.
+          timings.push({ id: scene.id, backend, ms: Date.now() - startedAt });
         }
       }
+    }
+    if (timings.length) {
+      const total = timings.reduce((a, t) => a + t.ms, 0);
+      const slowest = [...timings].sort((a, b) => b.ms - a.ms).slice(0, 8);
+      console.log(`[harness] rendered ${timings.length} scene-backend pair(s) in ${(total / 1000).toFixed(1)}s `
+        + `(mean ${Math.round(total / timings.length)}ms). Slowest: `
+        + slowest.map((t) => `${t.id}/${t.backend} ${t.ms}ms`).join(', '));
     }
     if (failures.length) console.error(`[render-fails] ${failures.length}: ${failures.join(' | ')}`);
     await window.harnessBridge.done();

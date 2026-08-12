@@ -196,6 +196,41 @@ export const SET_MATTE_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/**
+ * The Perspective family all take one source texture and differ only in their
+ * uniform block, so they share a descriptor shape — declared once and named
+ * three times rather than copied, so a binding change cannot land on two of
+ * them and miss the third.
+ */
+const perspectiveMaterial = (shader: string): MaterialDescriptor => ({
+  shader,
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+});
+
+export const BEVEL_ALPHA_MATERIAL = perspectiveMaterial('bevel-alpha');
+export const BEVEL_EDGES_MATERIAL = perspectiveMaterial('bevel-edges');
+export const SPOTLIGHT_MATERIAL = perspectiveMaterial('spotlight');
+export const SPHERE_MATERIAL = perspectiveMaterial('sphere');
+/** Same one-texture binding shape; only the uniform block differs. */
+export const ARITHMETIC_MATERIAL = perspectiveMaterial('arithmetic');
+export const CYLINDER_MATERIAL = perspectiveMaterial('cylinder');
+
+/** Same binding shape as motion-tile: one source texture, warped in place. */
+export const BEND_MATERIAL: MaterialDescriptor = {
+  shader: 'bend',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 export const MOTION_TILE_MATERIAL: MaterialDescriptor = {
   shader: 'motion-tile',
   topology: 'triangle-list',

@@ -45,10 +45,8 @@ const TAPER_FLATTEN_PER_SEG = 8;
 const WAVE_FLATTEN_PER_SEG = 64;
 import { effectNumber } from '@core/effects/effects';
 import { layerIsBaked } from '@core/effects/effectBake';
+import { clamp01 } from '@utils/lang';
 
-function clamp01(n: number): number {
-  return n < 0 ? 0 : n > 1 ? 1 : n;
-}
 
 /** A Gaussian is visually dead by ~3σ, and `filter: blur(Npx)` uses σ = N. */
 const BLUR_EXTENT = 3;
@@ -328,7 +326,26 @@ export function fillStyleFor(
  *  A gradient `paint` overrides the solid colour — built in the layer's
  *  centred local space, so pass the layer's w/h at shape call sites. */
 export function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: Stroke, w = 100, h = 100): void {
-  ctx.globalAlpha *= clamp01(stroke.opacity);
+  /**
+   * A stroke with no stated opacity is OPAQUE — said here rather than implied.
+   *
+   * This line was `clamp01(stroke.opacity)` and depended on two unrelated
+   * leniencies cancelling out. `Stroke.opacity` is typed `number`, but a stroke
+   * rebuilt from a stored document can carry `undefined` at runtime — and
+   * `undefined` satisfies neither comparison in the local `clamp01`, so it came
+   * back untouched. `globalAlpha *= undefined` is NaN, and the Canvas2D spec
+   * IGNORES a non-finite assignment to `globalAlpha`, so the previous value
+   * stood and the stroke drew opaque. Right output, for two reasons nobody
+   * chose.
+   *
+   * It matters because it made an ordinary cleanup dangerous: normalising the
+   * ~17 hand-written `clamp01` copies onto a NaN-safe form maps `undefined` to
+   * 0 instead — alpha 0, stroke gone — which moved 112 render-test scenes and
+   * lost fidelity on 49. See `strokeOpacityGuard.test.ts` and EDITOR_REFERENCE
+   * §5. Stating the default here is what makes that cleanup safe.
+   */
+  const opacity = Number.isFinite(stroke.opacity) ? stroke.opacity : 1;
+  ctx.globalAlpha *= clamp01(opacity);
   ctx.strokeStyle =
     stroke.paint && stroke.paint.type !== 'solid'
       ? fillStyleFor(ctx, stroke.paint, stroke.color, w, h)

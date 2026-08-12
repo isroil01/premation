@@ -39,7 +39,8 @@ import { readNodeLight } from '@core/scene/light';
 import { readNodeParticle, resolveParticleConfig } from '@core/particles/particleSim';
 import { measureTextNodeSize, readMeasuredTextStyle } from '@core/text/measureText';
 import { readGeometry } from '@core/workspace/geometry';
-import { readEchoConfig } from '@core/effects/echo';
+import { readGhostSpec } from '@core/effects/temporalGhosts';
+import { readForceMotionBlur } from '@core/effects/forceMotionBlur';
 import { readPosterizeTimeFps } from '@core/effects/posterizeTime';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { resolveAudioSpectrum } from '@core/audio/audioSpectrum';
@@ -2281,8 +2282,20 @@ export function buildSnapshot(
       }
     }
 
-    // Motion blur: sub-frame transform samples for a moving, opted-in layer.
-    if (motionBlur?.enabled && readNodeMotionBlur(node) && moves(anim, node.id)) {
+    /*
+      Motion blur: sub-frame transform samples for a moving, opted-in layer.
+
+      Force Motion Blur overrides the two OPT-INS — the comp switch and the
+      layer switch — but not `moves`: sampling a static layer returns the same
+      transform every time, so forcing it there costs N draws for an identical
+      image. See forceMotionBlur.ts.
+    */
+    const forcedBlur = readForceMotionBlur(resolvedEffects);
+    const blurCfg = forcedBlur && motionBlur
+      ? { ...motionBlur, enabled: true, shutterAngle: forcedBlur.shutterAngle, samples: forcedBlur.samples }
+      : motionBlur;
+    const blurOptIn = forcedBlur ? true : (motionBlur?.enabled === true && readNodeMotionBlur(node));
+    if (blurCfg && blurOptIn && moves(anim, node.id)) {
       // 3D layers need a matrix per sample (see affineAt). The sub-frame world
       // position is the layer's world position plus its own local delta over
       // the shutter — the parent chain is treated as static across the
@@ -2310,7 +2323,10 @@ export function buildSnapshot(
             ).matrix;
           }
         : undefined;
-      const samples = sampleMotion(anim, node.id, base, ghost, t, motionBlur, remapOf(node.id), matrixAt);
+      // `blurCfg`, not `motionBlur` — otherwise the forced shutter and sample
+      // count are computed above and then thrown away, and Force Motion Blur
+      // becomes a switch with two controls that do nothing.
+      const samples = sampleMotion(anim, node.id, base, ghost, t, blurCfg, remapOf(node.id), matrixAt);
       if (samples.length > 1) layer.motionSamples = samples;
     }
 
@@ -2391,22 +2407,38 @@ export function buildSnapshot(
       if (gpuFx.length > 0) layer.effects = [...(layer.effects ?? []), ...gpuFx];
     }
 
-    // Echo (temporal): emit decaying ghost copies at PAST (or future) sampled
-    // transforms, behind the main layer. Deterministic — a pure function of the
-    // animation, so scrubbing is stable and no frame cache is needed — and it
-    // renders on both backends because the ghosts are ordinary render layers.
-    const echo = readEchoConfig(resolvedEffects);
-    if (echo && echo.count > 0 && echo.time !== 0) {
+    /*
+      Temporal ghosts (Echo, Wide Time): draw the layer at OTHER points in time.
+
+      Which times and how bright is the effects' business — `readGhostSpec` —
+      and this is the emission they share. Deterministic, a pure function of the
+      animation, so scrubbing is stable and no frame cache is needed; and it
+      renders on both backends because the ghosts are ordinary render layers.
+
+      One emission for both effects deliberately. The alternative is a second
+      copy of these forty lines, which is the shape CompositionPass already got
+      burned by — a duplicate that silently dropped whatever the original had
+      learned since.
+    */
+    const ghosts = readGhostSpec(resolvedEffects, fps);
+    /*
+      Composite In Front holds the ghosts back until after the layer itself is
+      emitted — z-order here IS emission order, and that operator is the only
+      thing separating it from Composite In Back. Flushed at the bottom of this
+      node's iteration; every other operator emits inline exactly as before.
+    */
+    const echoesInFront: RenderLayer[] = [];
+    if (ghosts) {
       const eLocalX = (a?.get('x') as number | undefined) ?? base.x;
       const eLocalY = (a?.get('y') as number | undefined) ?? base.y;
       const eLocalRot = (a?.get('rotation') as number | undefined) ?? base.rotation;
-      // Oldest first (farthest back), so nearer echoes paint over them and the
-      // current layer lands on top.
-      for (let k = echo.count; k >= 1; k--) {
-        const ti = t + k * echo.time;
-        if (ti < 0) continue;
-        const op = layer.opacity * echo.startIntensity * Math.pow(echo.decay, k - 1);
-        if (op <= 0.002) continue;
+      // Farthest first (readGhostSpec orders them), so nearer copies paint over
+      // more distant ones and the current layer lands on top.
+      ghosts.steps.forEach((step, k) => {
+        const ti = t + step.dt;
+        if (ti < 0) return;
+        const op = layer.opacity * step.opacity;
+        if (op <= 0.002) return;
         const gx = px + ((anim.sample(node.id, 'x', ti) ?? eLocalX) - eLocalX);
         const gy = py + ((anim.sample(node.id, 'y', ti) ?? eLocalY) - eLocalY);
         const grot = rot + ((anim.sample(node.id, 'rotation', ti) ?? eLocalRot) - eLocalRot);
@@ -2414,6 +2446,11 @@ export function buildSnapshot(
           ...layer,
           id: `${layer.id}__echo${k}`,
           opacity: op,
+          // AE's Echo Operator. The ghosts are ordinary layers, so "how do the
+          // copies combine" is their blend mode — no second compositing path.
+          // All five operators are fixed-function blends, so none of them drags
+          // the ghosts onto the advanced-blend (BLEND_COMBINE) route.
+          blend: ghosts.blend,
           // Ghosts don't cast/consume mattes or motion-blur individually.
           matte: undefined,
           isMatteSource: undefined,
@@ -2437,8 +2474,9 @@ export function buildSnapshot(
               })()
             : { x: gx, y: gy, rotation: grot }),
         };
-        emitLayer(ghost, node);
-      }
+        if (ghosts.inFront) echoesInFront.push(ghost);
+        else emitLayer(ghost, node);
+      });
     }
 
     // TRUE 3D extrusion: a 3D layer with extrusionDepth d > 0 is a real
@@ -2895,6 +2933,10 @@ export function buildSnapshot(
     } else {
       emitLayer(layer, node);
     }
+
+    // Echo ▸ Composite In Front: the ghosts held back above, now that the layer
+    // they trail is on the canvas. Empty for every other operator.
+    for (const ghost of echoesInFront) emitLayer(ghost, node);
   }
 
   // ── Real cast shadows: project each caster onto the planes behind it ──────

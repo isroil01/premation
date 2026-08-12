@@ -50,12 +50,6 @@ export function dbToGain(db: number): number {
   return Math.pow(10, db / 20);
 }
 
-/** Linear amplitude → decibels, floored at {@link MIN_LEVEL_DB}. */
-export function gainToDb(gain: number): number {
-  if (!(gain > 0)) return MIN_LEVEL_DB;
-  return Math.max(MIN_LEVEL_DB, 20 * Math.log10(gain));
-}
-
 /**
  * The legacy percent level (100 = unity) as decibels.
  *
@@ -116,19 +110,51 @@ export function buildParamRamp(
   durationSec: number,
   opts?: { animated?: boolean; hz?: number },
 ): RampPoint[] {
-  const animated = opts?.animated ?? isLevelAnimated(nodeId);
-  const first = { offsetSec: 0, gain: dbToGain(sampleLevelDb(nodeId, startCompSec, staticDb)) };
-  if (!animated || !(durationSec > 0)) return [first];
+  return buildRamp(
+    (compSec) => dbToGain(sampleLevelDb(nodeId, compSec, staticDb)),
+    startCompSec,
+    durationSec,
+    { animated: opts?.animated ?? isLevelAnimated(nodeId), hz: opts?.hz },
+  );
+}
+
+/**
+ * The scheduling half of {@link buildParamRamp}, with the level semantics gone.
+ *
+ * Everything except the dB conversion — the sample rate, the end pin, the
+ * single-point unanimated case — is a property of scheduling an AudioParam
+ * rather than of what the parameter MEANS. Audio-effect parameters need all of
+ * it and none of the decibels.
+ *
+ * Extracted rather than copied, deliberately. This module opens by saying
+ * effect parameters "are the same shape and should reuse `buildParamRamp`
+ * rather than growing a second scheduling path"; a second sampler with its own
+ * rate and its own end-pin rule IS that second path, and the two would drift on
+ * the day one of them fixed a rounding bug.
+ *
+ * `sampleAt` takes COMPOSITION time while the points it returns are offsets
+ * from the voice's start. Keeping those in different units is what lets a seek
+ * into the middle of a curve pick it up where the playhead is instead of
+ * restarting it.
+ */
+export function buildRamp(
+  sampleAt: (compSec: number) => number,
+  startCompSec: number,
+  durationSec: number,
+  opts?: { animated?: boolean; hz?: number },
+): RampPoint[] {
+  const first = { offsetSec: 0, gain: sampleAt(startCompSec) };
+  if (opts?.animated !== true || !(durationSec > 0)) return [first];
 
   const hz = opts?.hz ?? RAMP_HZ;
   const step = 1 / hz;
   const points: RampPoint[] = [first];
   for (let t = step; t < durationSec; t += step) {
-    points.push({ offsetSec: t, gain: dbToGain(sampleLevelDb(nodeId, startCompSec + t, staticDb)) });
+    points.push({ offsetSec: t, gain: sampleAt(startCompSec + t) });
   }
   // Always pin the end, so a curve that changes between the last sampled point
   // and the voice's end is not held flat through the tail.
-  const endGain = dbToGain(sampleLevelDb(nodeId, startCompSec + durationSec, staticDb));
+  const endGain = sampleAt(startCompSec + durationSec);
   const last = points[points.length - 1]!;
   if (Math.abs(last.offsetSec - durationSec) > 1e-6) points.push({ offsetSec: durationSec, gain: endGain });
   return points;

@@ -98,9 +98,11 @@ export function PluginsList({
    * unaffected and is still the fast path once a plugin is in.
    */
   canInstall = true,
+  onPublishPlugin,
 }: {
   compactActions?: boolean;
   canInstall?: boolean;
+  onPublishPlugin?: () => void;
 } = {}): JSX.Element {
   /*
     Re-render when a plugin starts, stops or crashes: the row shows status.
@@ -303,10 +305,34 @@ export function PluginsList({
           // search would show a page of a list that no longer exists.
           onChange={(e) => { setQuery(e.target.value); setOffset(0); }}
         />
+        {/*
+          Two DIFFERENT actions, both on the list on purpose.
+
+          Publish sends a package outward; Add installs one from this computer.
+          Add was briefly replaced by Publish, which left install reachable only
+          by dropping a file on the list — a real drop target (see `onDrop`
+          below) with no visible affordance, so it works only for someone who
+          already knows it is there. `installSurfaces.test.tsx` exists to keep
+          this action out of the manager modal for exactly that reason, and it
+          caught the removal.
+        */}
         {canInstall && <AddPluginButton compact={compactActions} />}
+        {onPublishPlugin && (
+          <button
+            type="button"
+            className={cn(styles.publishBtn, compactActions && styles.publishBtnCompact)}
+            onClick={onPublishPlugin}
+            title="Publish a custom plugin package"
+          >
+            <Icon name="plus" size="sm" />
+            {!compactActions && <span>Publish Plugin</span>}
+          </button>
+        )}
       </div>
 
+      <PersistFailureNotice />
       <StorageReconciledNotice />
+      <RestorableNotice />
       <RevocationStalenessNotice />
 
       <div className={styles.list}>
@@ -676,6 +702,73 @@ function StorageReconciledNotice(): JSX.Element | null {
           {' '}cleared from storage.
         </span>
       )}
+      <button type="button" className={styles.stateAction} onClick={() => setDismissed(true)}>
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A package that could not be written to this machine, said out loud NOW.
+ *
+ * `StorageReconciledNotice` above reports the same failure one boot too late:
+ * by then the plugin is already gone and the message is an apology. This is
+ * the same fact caught at the moment it happens, while the plugin is still
+ * running and the user can act — retry the install, free some space, or at
+ * least not be surprised tomorrow.
+ *
+ * It exists because that failure used to be discarded entirely: `put()` fired
+ * the write and threw away its result, so a plugin worked all session and
+ * vanished at the next start with nothing said anywhere. That is the exact
+ * shape of "I have to reinstall my plugins every time I reopen the app".
+ *
+ * Not dismissible. Nothing about the situation improves by being hidden, and
+ * it clears itself the moment a write succeeds.
+ */
+function PersistFailureNotice(): JSX.Element | null {
+  const message = usePluginStore((s) => s.persistError);
+  if (!message) return null;
+  return (
+    <div className={styles.state} role="alert">
+      <span className={styles.stateTitle}>Could not save to this machine.</span>
+      <span>{message} Check free disk space, then install it again.</span>
+    </div>
+  );
+}
+
+/**
+ * Plugins the ACCOUNT has that this machine does not.
+ *
+ * Offered, never installed automatically. Pulling packages onto a machine
+ * because an account elsewhere had them would run the permission consent
+ * screen past nobody, and "software appeared while I was not looking" is worse
+ * than the inconvenience it saves. So this is a list and a sentence; the
+ * install is still the user's click, through the normal path that verifies the
+ * publisher signature here.
+ *
+ * Hidden while offline. A reconcile that could not reach the account knows
+ * nothing about what is missing, and guessing would mean telling a user with a
+ * flaky connection that their plugins are gone.
+ */
+function RestorableNotice(): JSX.Element | null {
+  const sync = usePluginStore((s) => s.lastSync);
+  const [dismissed, setDismissed] = useState(false);
+  const restorable = sync?.restorable ?? [];
+  if (dismissed || sync?.offline || restorable.length === 0) return null;
+
+  return (
+    <div className={styles.state} role="status">
+      <span className={styles.stateTitle}>
+        {restorable.length === 1
+          ? 'One plugin from your account is not on this machine.'
+          : `${restorable.length} plugins from your account are not on this machine.`}
+      </span>
+      <span>
+        {restorable.map((r) => r.name).join(', ')}. Find them in Browse to install
+        again — they are re-downloaded and signature-checked here, the same as a
+        first install.
+      </span>
       <button type="button" className={styles.stateAction} onClick={() => setDismissed(true)}>
         Dismiss
       </button>

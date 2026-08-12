@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { Icon } from '@components/Icon';
 import { Logo } from '@components/Logo';
 import { AppMenuBar } from '@layout/Menu';
+import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { IconButton } from '@components/IconButton';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -54,6 +55,8 @@ export function TitleBar(): JSX.Element | null {
           </>
         )}
       </div>
+      {/* The indicator this bar has always had styles for and never rendered. */}
+      {isEditor && <ProjectStatus />}
       <div className={styles.right}>
         {isEditor && (
           <div className={styles.editorControls}>

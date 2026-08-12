@@ -153,6 +153,35 @@ export const shapeScenes: Scene[] = [
     graph.setStroke('z', { enabled: true, color: '#ffd166', width: 8, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
     graph.setPathOps('z', [{ id: 'z1', type: 'zigzag', amount: 16, detail: 5 }]);
   }),
+
+  /*
+    Wiggle Paths, because zigzag was the only path operator with pixels.
+
+    The whole family renders through one route, so one scene proves the ROUTE
+    works — but not that each operator's GEOMETRY does. That gap was measured
+    rather than assumed: the displacement was changed from normal-only to a real
+    2D one, moving every vertex of an outline like this, and the gate stayed
+    green because nothing rendered a wiggle.
+
+    A stroked rect for the same reason zigzag uses one: the operator moves the
+    OUTLINE, and a stroke is what makes an outline visible. A filled shape hides
+    most of the displacement inside itself.
+
+    `wigglesPerSecond` is left at 0 deliberately. The temporal half cross-fades
+    between noise fields, so a frame of an animating wiggle depends on the exact
+    phase — a golden of one would pin the time axis as much as the geometry, and
+    `pathOps.test.ts` already asserts the animation as an invariant rather than
+    as a picture.
+  */
+  scene('shape-path-op-wiggle', 'Wiggle Paths (roughen) on a stroked rect — 2D vertex displacement.', (graph) => {
+    graph.addNode(shapeNode('w', { x: 180, y: 140, rotation: 0, fill: '#22344f' }));
+    graph.setStroke('w', { enabled: true, color: '#ff00cc', width: 6, opacity: 1, align: 'center', dash: [], cap: 'butt', join: 'miter' });
+    // Correlation 40 — mid-range, where neighbours are neither independent nor
+    // locked together. At 0 the outline shreds into noise no reader could sanity
+    // check; at 100 every point moves alike, and the picture would survive the
+    // displacement collapsing back to one dimension.
+    graph.setPathOps('w', [{ id: 'w1', type: 'roughen', amount: 14, detail: 4, seed: 7, correlation: 40 }]);
+  }),
   // Was marked `known-divergent` against a Canvas2D oracle. Two things ended
   // that: the references were re-blessed from WebGL2 (the documented
   // `wouldMatchWhen`, already met), and the scene's `setPathOps` call was

@@ -6,8 +6,8 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packPluginEffect } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -765,6 +765,90 @@ export class CompositionPass extends RenderPass {
             maskTexture: matteTex,
           });
         }
+      } else if (effect.type === 'bevel-alpha' || effect.type === 'bevel-edges') {
+        // One branch for both: they differ only in WHICH edge they chisel, and
+        // that lives in the shader. `p1.xy` is the texel size the alpha
+        // gradient is sampled across — meaningless to Bevel Edges, which reads
+        // no neighbours, and harmless to pack for it.
+        cmds.add({
+          batchKey: effect.type, blend: 'normal',
+          material: effect.type === 'bevel-alpha' ? BEVEL_ALPHA_MATERIAL : BEVEL_EDGES_MATERIAL,
+          uniforms: packPerspective(
+            mvp, targetUv,
+            [effect.thickness, Math.cos(effect.lightRad), Math.sin(effect.lightRad), effect.intensity],
+            [1 / viewport.pixelSize.width, 1 / viewport.pixelSize.height, 0, 0],
+            fxBox,
+            effect.color,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'sphere') {
+        cmds.add({
+          batchKey: 'sphere', material: SPHERE_MATERIAL, blend: 'normal',
+          uniforms: packPerspective(
+            mvp, targetUv,
+            [effect.radius, effect.rotXRad, effect.rotYRad, effect.shading],
+            [effect.aspect, effect.rotZRad, 0, 0],
+            fxBox,
+            effect.color,
+          ),
+          // Clamped, not repeated: the shader wraps its own longitude with
+          // `fract`, so the sampled u never leaves [0,1) and the address mode
+          // is never reached. Repeating here would MASK a wrap bug instead of
+          // letting it show as a seam.
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'cylinder') {
+        cmds.add({
+          batchKey: 'cylinder', material: CYLINDER_MATERIAL, blend: 'normal',
+          uniforms: packPerspective(
+            mvp, targetUv,
+            [effect.radius, effect.rotRad, effect.shading, 0],
+            [0, 0, 0, 0],
+            fxBox,
+            effect.color,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'spotlight') {
+        cmds.add({
+          batchKey: 'spotlight', material: SPOTLIGHT_MATERIAL, blend: 'normal',
+          uniforms: packSpotlight(
+            mvp, targetUv,
+            effect.fromX, effect.fromY, effect.toX, effect.toY,
+            effect.coneHalfRad, effect.softness, effect.intensity, effect.ambient,
+            effect.aspect, effect.lightOnly,
+            fxBox,
+            effect.color,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'arithmetic') {
+        cmds.add({
+          batchKey: 'arithmetic', material: ARITHMETIC_MATERIAL, blend: 'normal',
+          uniforms: packArithmetic(mvp, targetUv, effect.operator, effect.r, effect.g, effect.b, effect.clip),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'bend') {
+        cmds.add({
+          batchKey: 'bend', material: BEND_MATERIAL, blend: 'normal',
+          uniforms: packBend(
+            mvp, targetUv,
+            effect.angleRad, effect.style, effect.aspect, effect.holdOutside ? 1 : 0,
+            effect.topX, effect.topY, effect.baseX, effect.baseY,
+            // The LAYER's box within the chain buffer. On the 2D route that
+            // buffer is SCREEN SPACE and the layer is a sub-rect of it, so
+            // bending against `targetUv` bends the whole screen — which is
+            // what it did. Same quantity the Beam branch resolves against,
+            // for the same reason.
+            fxBox,
+          ),
+          // Clamped, not repeated: the shader already returns transparent for
+          // samples off the layer, so the address mode never comes into play —
+          // and a repeat here would tile the layer into the empty region if the
+          // bounds check were ever relaxed.
+          texture: curTex, sampler: clampSampler(),
+        });
       } else if (effect.type === 'motion-tile') {
         cmds.add({
           batchKey: 'motiontile', material: MOTION_TILE_MATERIAL, blend: 'normal',
@@ -917,6 +1001,29 @@ export class CompositionPass extends RenderPass {
         set, and the NEXT device loss — possibly minutes later and caused by
         something else entirely — would be blamed on this effect.
       */
+      /*
+        FAIL-SAFE: an effect that produced no draw must not erase the layer.
+
+        Every branch above ends in `cmds.add(...)`, and the pass below CLEARS
+        its destination before executing them — so a step that added nothing
+        leaves a transparent target, `curTex` becomes that, and the layer is
+        gone. Not hypothetical; it has happened twice. Once when a duplicate
+        effects chain did not recognise a type (a plugin effect erased the
+        layer on both backends), and once when a WGSL validation error stopped
+        the pipeline being created at all (Bend / Sphere / Cylinder sampling in
+        non-uniform control flow — see wgslUniformControlFlow.test.ts).
+
+        Skipping the pass leaves `curTex` on the previous step's output, so a
+        broken effect degrades to a NO-OP. That is the right failure: the user
+        sees an effect that does nothing and can remove it, rather than watching
+        their artwork vanish with no clue which of ten stacked effects ate it.
+        The cost is one integer compare per effect per frame.
+
+        A backstop, not a licence — reaching here with no draw is still a bug,
+        and the guards above exist to catch the known causes before they ship.
+      */
+      if (cmds.length === 0) continue;
+
       const marker = effect.type === 'plugin' ? effect.onDraw : undefined;
       marker?.begin();
 

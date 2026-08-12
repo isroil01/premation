@@ -23,7 +23,7 @@ import { EmptyState } from '@components/EmptyState';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
 import { customConfirm } from '@components/Modal';
-import { useAssetStore, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
+import { isLibraryAsset, useAssetStore, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
 import { ParentControl } from '@layout/Inspector/ParentControl';
 import { PrecompControl } from '@layout/Inspector/PrecompControl';
 import { TextAnimatorControls } from '@layout/Inspector/TextAnimatorControls';
@@ -50,6 +50,7 @@ import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
 import { ActiveTemplateFields } from '@layout/Templates/TemplateFieldsPanel';
+import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
 import { useTemplateStore } from '@stores/templateStore';
 import { CompositingControls } from '@layout/Inspector/CompositingControls';
 import { PuppetControls } from '@layout/Inspector/PuppetControls';
@@ -83,10 +84,11 @@ import {
 import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
-import { TRANSITION_ITEMS, applyTransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
-import { SFX_ITEMS, insertSfxItem, type SfxCategory } from '@core/library/sfxLibrary';
+import { TRANSITION_ITEMS, applyTransitionItem, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
+import { SFX_ITEMS, insertSfxItem, sfxWaveform, type SfxItem, type SfxCategory } from '@core/library/sfxLibrary';
 import { LOTTIE_ITEMS, insertLottieItem, importLottieFile, type LottieCategory } from '@core/library/lottieLibrary';
 import { prepareLottiePreview, drawLottiePreview } from '@core/library/lottiePreview';
+import { LibraryBrowser, FavoriteStar } from './LibraryBrowser';
 import type { LottieJson } from '@core/lottie/lottieImport';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
@@ -531,6 +533,7 @@ export function AssetsPanel(): JSX.Element {
   const folders = useAssetStore((s) => s.folders);
   const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
   const removeAsset = useAssetStore((s) => s.removeAsset);
+  const removeAssets = useAssetStore((s) => s.removeAssets);
   const createFolder = useAssetStore((s) => s.createFolder);
   const renameFolder = useAssetStore((s) => s.renameFolder);
   const removeFolder = useAssetStore((s) => s.removeFolder);
@@ -555,6 +558,8 @@ export function AssetsPanel(): JSX.Element {
   // Multi-select: clicking asset rows toggles them into this set; the bulk bar
   // then adds them together.
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
+  /** Off by default: the shelf is the user's imports, not the app's output. */
+  const [showDerived, setShowDerived] = useState(false);
 
   /** Anchor for Shift-range selection — the last row clicked without Shift. */
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
@@ -676,6 +681,43 @@ export function AssetsPanel(): JSX.Element {
     if (ok) removeAsset(asset.id);
   };
 
+  /**
+   * Delete the whole selection.
+   *
+   * The panel has supported Ctrl- and Shift-click since it was written, so a
+   * user could always SELECT twenty files — there was just no way to act on
+   * that selection, and the only delete on offer removed the one row under the
+   * cursor. Selecting many and deleting one is the kind of gap that reads as
+   * the selection not having worked.
+   *
+   * Names are listed up to a point and then counted. A confirm that renders
+   * fifty filenames is a confirm nobody reads, and this is the dialog standing
+   * in front of an action with no undo.
+   */
+  const deleteSelectedAssets = async (): Promise<void> => {
+    const ids = [...selectedAssetIds];
+    if (ids.length === 0) return;
+    if (ids.length === 1) {
+      const only = assets.find((a) => a.id === ids[0]);
+      if (only) await deleteAsset(only);
+      return;
+    }
+    const names = ids
+      .map((id) => assets.find((a) => a.id === id)?.name)
+      .filter((n): n is string => Boolean(n));
+    const shown = names.slice(0, 5).map((n) => `• ${n}`).join('\n');
+    const rest = names.length - Math.min(names.length, 5);
+    const ok = await customConfirm(
+      `Delete ${ids.length} assets`,
+      `${shown}${rest > 0 ? `\n…and ${rest} more` : ''}\n\nThis removes them from the project. This can’t be undone.`,
+      { confirmLabel: `Delete ${ids.length}`, isDanger: true },
+    );
+    if (!ok) return;
+    removeAssets(ids);
+    setSelectedAssetIds(new Set());
+    setSelectionAnchor(null);
+  };
+
   const deleteFolder = async (folder: AssetFolder): Promise<void> => {
     const assetCount = assets.filter((a) => a.folderId === folder.id).length;
     const subCount = folders.filter((f) => f.parentId === folder.id).length;
@@ -703,10 +745,42 @@ export function AssetsPanel(): JSX.Element {
   const openAssetMenu = (asset: ImportedAsset, e: React.MouseEvent): void => {
     e.preventDefault();
     e.stopPropagation();
+    /*
+      Right-clicking INSIDE a selection acts on the selection; right-clicking
+      outside one replaces it with the row under the cursor first. That is what
+      every file manager does, and the alternative — a menu that silently
+      targets one row while twenty look selected — is how a user loses the
+      other nineteen without noticing.
+    */
+    const inSelection = selectedAssetIds.has(asset.id);
+    if (!inSelection) {
+      setSelectedAssetIds(new Set([asset.id]));
+      setSelectionAnchor(asset.id);
+    }
+    const count = inSelection ? selectedAssetIds.size : 1;
+    const many = count > 1;
     openContextMenu(e.clientX, e.clientY, [
-      { id: 'add', label: 'Add to Composition', onSelect: () => insertMedia(asset) },
+      {
+        id: 'add',
+        label: many ? `Add ${count} to Composition` : 'Add to Composition',
+        onSelect: () => {
+          if (!many) { insertMedia(asset); return; }
+          // In the panel's own row order, so what lands in the comp matches
+          // what the user sees rather than the order they happened to click.
+          for (const id of orderedAssetIds) {
+            if (!selectedAssetIds.has(id)) continue;
+            const a = assets.find((x) => x.id === id);
+            if (a) insertMedia(a);
+          }
+        },
+      },
       { id: 'sep-a', separator: true },
-      { id: 'delete', label: 'Delete', danger: true, onSelect: () => { void deleteAsset(asset); } },
+      {
+        id: 'delete',
+        label: many ? `Delete ${count} Assets` : 'Delete',
+        danger: true,
+        onSelect: () => { void (many ? deleteSelectedAssets() : deleteAsset(asset)); },
+      },
     ]);
   };
 
@@ -740,8 +814,26 @@ export function AssetsPanel(): JSX.Element {
   // away from one of them. A tree shows the structure and the contents at once.
   const childFolders = (parentId: string | null): AssetFolder[] =>
     folders.filter((f) => f.parentId === parentId);
+  /*
+   * What the shelf shows.
+   *
+   * The library means "media I brought in". Operations that duplicate or
+   * rasterize scene content — a plugin repeater, Rig Logo — still have to
+   * create real assets, because the layers that use them reference them by id
+   * and those bytes have to persist. But filing them as ordinary imports put a
+   * row on this shelf per generated copy, mixed in with the user's own
+   * footage, with nothing to tell them apart. `source: 'derived'` is that
+   * distinction; see `AssetSource`.
+   *
+   * Hidden rather than removed, and revealable rather than hidden outright:
+   * they are still assets, and a category of asset with no way to see or
+   * delete it would be a storage leak the user cannot reach.
+   */
+  const shelfAssets = showDerived ? assets : assets.filter(isLibraryAsset);
+  const derivedCount = assets.length - assets.filter(isLibraryAsset).length;
+
   const folderAssets = (folderId: string | null): ImportedAsset[] =>
-    assets.filter((a) => (a.folderId ?? null) === folderId);
+    shelfAssets.filter((a) => (a.folderId ?? null) === folderId);
 
   /** One rendered line. `depth` drives only the indent. */
   type AssetRow =
@@ -769,8 +861,8 @@ export function AssetsPanel(): JSX.Element {
   // thing a search must not do is answer "no results" because the result was
   // behind a disclosure triangle.
   const visibleAssets = searching
-    ? assets.filter((a) => a.name.toLowerCase().includes(q))
-    : assets;
+    ? shelfAssets.filter((a) => a.name.toLowerCase().includes(q))
+    : shelfAssets;
   const rows: AssetRow[] = [];
   if (searching) {
     for (const a of visibleAssets) rows.push({ kind: 'asset', key: a.id, depth: 0, asset: a });
@@ -812,6 +904,26 @@ export function AssetsPanel(): JSX.Element {
         <button type="button" className={styles.toolBtn} onClick={handleNewFolder} title="New folder">
           <Icon name="folder-plus" size="sm" /> New
         </button>
+        {/*
+          Only rendered when there is something to reveal. A permanent toggle
+          for a category most projects never produce spends toolbar width
+          explaining a concept the user has not met — and once they have met it,
+          the count is the part that makes it make sense.
+        */}
+        {derivedCount > 0 && (
+          <button
+            type="button"
+            className={showDerived ? styles.toolBtnPrimary : styles.toolBtn}
+            onClick={() => setShowDerived((v) => !v)}
+            title={
+              showDerived
+                ? 'Hide generated images (duplicates and rasterized copies)'
+                : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
+            }
+          >
+            <Icon name="sparkles" size="sm" /> {derivedCount}
+          </button>
+        )}
         <input
           type="file"
           ref={fileInputRef}
@@ -832,6 +944,39 @@ export function AssetsPanel(): JSX.Element {
         />
       </div>
 
+      {/*
+        The selection bar. Present only while something is selected.
+
+        This panel deliberately has no per-row delete — a destructive target
+        that sits permanently under the cursor eventually gets hit by accident,
+        which is why those were removed in favour of right-click. A bar that
+        appears only once a selection exists keeps that property: it is not
+        under any row, it cannot be reached without first selecting, and it
+        makes the count visible, which is the number the confirm is about.
+      */}
+      {selectedAssetIds.size > 0 && (
+        <div className={styles.assetSelectionBar}>
+          <span className={styles.assetSelectionCount}>
+            {selectedAssetIds.size} selected
+          </span>
+          <button
+            type="button"
+            className={styles.toolBtn}
+            onClick={() => { setSelectedAssetIds(new Set()); setSelectionAnchor(null); }}
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            className={styles.toolBtnDanger}
+            onClick={() => { void deleteSelectedAssets(); }}
+            title={`Delete ${selectedAssetIds.size} selected asset${selectedAssetIds.size === 1 ? '' : 's'} (Del)`}
+          >
+            <Icon name="trash" size="sm" /> Delete
+          </button>
+        </div>
+      )}
+
       {/* Column headings, as in Explorer's details view and AE's project panel.
           Rendered once above the list rather than repeated per row, which is
           what lets Type and Size line up into columns you can scan down. */}
@@ -841,7 +986,49 @@ export function AssetsPanel(): JSX.Element {
         <span className={styles.assetHeadSize}>Size</span>
       </div>
 
-      <div className={styles.body} style={{ padding: '2px 0' }}>
+      {/*
+        Del deletes the selection, Ctrl/Cmd+A takes all of it, Escape drops it.
+
+        `tabIndex` is what makes this reachable at all — the keys are bound
+        HERE rather than on the window because the app already binds Delete to
+        removing the selected LAYERS. A global handler would have to guess
+        which selection the user meant, and would guess wrong whenever both
+        have one; scoping it to the focused panel means the question never
+        arises.
+
+        `data-shortcut-claim` is what makes the binding actually FIRE.
+        `ShortcutManager` listens on window in the capture phase and stops
+        propagation on any chord it matches, so without this the handler below
+        is unreachable for Delete and Ctrl+A — correct code that never runs.
+        Only these three chords are claimed; everything else still reaches the
+        global command, so Space keeps playing from here.
+      */}
+      <div
+        className={styles.body}
+        style={{ padding: '2px 0' }}
+        tabIndex={0}
+        data-shortcut-claim="delete backspace Ctrl+a Meta+a"
+        onKeyDown={(e) => {
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (selectedAssetIds.size === 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            void deleteSelectedAssets();
+            return;
+          }
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedAssetIds(new Set(orderedAssetIds));
+            return;
+          }
+          if (e.key === 'Escape' && selectedAssetIds.size > 0) {
+            e.preventDefault();
+            setSelectedAssetIds(new Set());
+            setSelectionAnchor(null);
+          }
+        }}
+      >
         {isEmpty ? (
           <div className={styles.empty}>
             <p style={{ margin: 0, color: 'var(--color-text-tertiary)', fontSize: '11px' }}>
@@ -998,6 +1185,13 @@ export function PropertiesPanel(): JSX.Element {
         </div>
       )}
       <InspectorContent nodeId={primary} query={query} />
+      {/* An inserted Motion GFX element's own blanks — its text and colours.
+          Renders nothing unless the selection is inside one, and sits beside
+          the template fields below because it is the same idea scoped to one
+          element rather than the whole composition. */}
+      <div style={{ padding: '0 14px' }}>
+        <MographParamsSection />
+      </div>
       {/* Applied-template fields — the "fill in the blanks" surface. Shown only
           when a template is actually applied, so it costs nothing otherwise. */}
       <TemplateFieldsSection />
@@ -1663,41 +1857,38 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
         />
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ width: 3, height: 22, borderRadius: 2, background: item.color, flexShrink: 0 }} />
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
             <span style={{ fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</span>
             <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
               {item.cat} · {item.loop ? '∞ loop' : `${mographDuration(item).toFixed(1)}s`}
             </span>
           </span>
+          <FavoriteStar id={item.id} label={item.name} />
         </span>
       </span>
     </button>
   );
 }
 
+const MOGRAPH_CATEGORIES: readonly MographCategory[] =
+  ['lower-thirds', 'callouts', 'titles', 'data', 'shapes', 'loops'];
+
 function MotionGFXContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | MographCategory>('all');
-  const items = MOGRAPH_ITEMS.filter((m) => filter === 'all' || m.cat === filter);
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'lower-thirds', 'callouts', 'titles', 'data', 'shapes', 'loops'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f === 'lower-thirds' ? 'Lower 3rds' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
+    <LibraryBrowser
+      items={MOGRAPH_ITEMS}
+      categories={MOGRAPH_CATEGORIES}
+      categoryLabel={(c) => (c === 'lower-thirds' ? 'Lower 3rds' : c.charAt(0).toUpperCase() + c.slice(1))}
+      noun="preset"
+    >
+      {(items) => (
         <div className={styles.libList}>
           {items.map((item) => (
             <MographCard key={item.id} item={item} />
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} preset{items.length !== 1 ? 's' : ''}</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 
@@ -1706,10 +1897,58 @@ function MotionGFXContent(): JSX.Element {
 // selected layers at the playhead; otherwise a choreographed solid covers
 // the cut. Every write goes through the normal animation engine (undoable).
 
+/** A transition card that PLAYS ITS OWN RECIPE.
+ *
+ *  The card used to be two colour swatches, which made "Whip Pan" and "Cross
+ *  Fade" visually identical — you had to apply an item and undo it to find out
+ *  what it did. This replays the real recipe against an isolated engine, so the
+ *  card shows the move it will write. */
+function TransitionCard({ item, onApply }: { item: TransitionItem; onApply: () => void }): JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const player = createTransitionPlayer(canvas, item);
+    return () => player.stop();
+  }, [item]);
+
+  return (
+    <button
+      type="button"
+      className={styles.libMotionItem}
+      title={item.solidOnly
+        ? `${item.name} — inserts a choreographed solid at the playhead`
+        : `${item.name} — applies to the selected layers (or inserts a solid)`}
+      draggable
+      onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
+      onClick={onApply}>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+        <canvas
+          ref={canvasRef}
+          width={320}
+          height={180}
+          style={{ width: '100%', aspectRatio: '16 / 9', borderRadius: 6, background: '#101016', display: 'block' }}
+        />
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 3, height: 22, borderRadius: 2, background: item.a, flexShrink: 0 }} />
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{item.name}</span>
+            <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontFamily: 'var(--font-family-mono)' }}>
+              {item.cat} · {item.duration.toFixed(1)}s{item.solidOnly ? ' · solid' : ''}
+            </span>
+          </span>
+          <FavoriteStar id={item.id} label={item.name} />
+        </span>
+      </span>
+    </button>
+  );
+}
+
+const TRANSITION_CATEGORIES: readonly TransitionCategory[] =
+  ['fade', 'slide', 'zoom', 'whip', 'glitch', 'wipe'];
+
 function TransitionsContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | TransitionCategory>('all');
   const notify = useUIStore((s) => s.notify);
-  const items = TRANSITION_ITEMS.filter((t) => filter === 'all' || t.cat === filter);
   const apply = (id: string, name: string): void => {
     const result = applyTransitionItem(id);
     if (!result) {
@@ -1725,47 +1964,15 @@ function TransitionsContent(): JSX.Element {
     }
   };
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'fade', 'slide', 'zoom', 'whip', 'glitch', 'wipe'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
+    <LibraryBrowser items={TRANSITION_ITEMS} categories={TRANSITION_CATEGORIES} noun="transition">
+      {(items) => (
         <div className={styles.libList}>
           {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={styles.libMotionItem}
-              title={item.solidOnly
-                ? `${item.name} — inserts a choreographed solid at the playhead`
-                : `${item.name} — applies to the selected layers (or inserts a solid)`}
-              draggable
-              onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
-              onClick={() => apply(item.id, item.name)}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                <span style={{ display: 'flex', width: 28, height: 20, borderRadius: 4, overflow: 'hidden', flexShrink: 0 }}>
-                  <span style={{ flex: 1, background: item.a, opacity: 0.85 }} />
-                  <span style={{ flex: 1, background: item.b, opacity: 0.85 }} />
-                </span>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{item.name}</span>
-                  <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontFamily: 'var(--font-family-mono)' }}>
-                    {item.cat} · {item.duration.toFixed(1)}s{item.solidOnly ? ' · solid' : ''}
-                  </span>
-                </span>
-              </span>
-            </button>
+            <TransitionCard key={item.id} item={item} onApply={() => apply(item.id, item.name)} />
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} transition{items.length !== 1 ? 's' : ''}</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 
@@ -1773,11 +1980,64 @@ function TransitionsContent(): JSX.Element {
 // Deterministic synthesized SFX — every item renders a real WAV through the
 // normal asset pipeline and lands as a real audio layer at the playhead.
 
+/** The item's REAL peak envelope, not a decorative bar pattern.
+ *  Memoised per id: the synth is deterministic, so this is computed once and
+ *  the same shape is reused for the life of the session. */
+const waveformCache = new Map<string, number[]>();
+function sfxBars(id: string): number[] {
+  let bars = waveformCache.get(id);
+  if (!bars) {
+    bars = sfxWaveform(id, 26) ?? [];
+    waveformCache.set(id, bars);
+  }
+  return bars;
+}
+
+function SfxCard({ item, busy, onInsert }: { item: SfxItem; busy: string | null; onInsert: () => void }): JSX.Element {
+  const bars = sfxBars(item.id);
+  return (
+    <button
+      type="button"
+      className={styles.libMotionItem}
+      disabled={busy !== null}
+      style={busy === item.id ? { opacity: 0.6 } : undefined}
+      title={`${item.name} — synthesized ${item.duration.toFixed(2)}s WAV, added as an audio layer`}
+      draggable
+      onDragStart={(e) => setCanvasDrag(e, { kind: 'sfx', sfxId: item.id, name: item.name })}
+      onClick={onInsert}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+        {/* The envelope of the actual audio — a click reads as a spike, an
+            ambient pad as a slow swell. Every item used to draw the same
+            seven bars. */}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 1, height: 26, width: 72, flexShrink: 0 }} aria-hidden>
+          {bars.map((v, i) => (
+            <span key={i} style={{
+              flex: 1,
+              height: `${Math.max(8, v * 100)}%`,
+              borderRadius: 1,
+              background: item.color,
+              opacity: 0.45 + v * 0.55,
+              display: 'block',
+            }} />
+          ))}
+        </span>
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{busy === item.id ? 'Rendering…' : item.name}</span>
+          <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
+            {item.cat} · {item.duration.toFixed(2)}s
+          </span>
+        </span>
+        <FavoriteStar id={item.id} label={item.name} />
+      </span>
+    </button>
+  );
+}
+
+const SFX_CATEGORIES: readonly SfxCategory[] = ['click', 'whoosh', 'impact', 'ambient'];
+
 function SoundFXContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | SfxCategory>('all');
   const [busy, setBusy] = useState<string | null>(null);
   const notify = useUIStore((s) => s.notify);
-  const items = SFX_ITEMS.filter((s) => filter === 'all' || s.cat === filter);
   const insert = async (id: string, name: string): Promise<void> => {
     if (busy) return;
     setBusy(id);
@@ -1790,49 +2050,16 @@ function SoundFXContent(): JSX.Element {
     }
   };
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'click', 'whoosh', 'impact', 'ambient'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
+    <LibraryBrowser items={SFX_ITEMS} categories={SFX_CATEGORIES} noun="sound">
+      {(items) => (
         <div className={styles.libList}>
           {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={styles.libMotionItem}
-              disabled={busy !== null}
-              style={busy === item.id ? { opacity: 0.6 } : undefined}
-              title={`${item.name} — synthesized ${item.duration.toFixed(2)}s WAV, added as an audio layer`}
-              draggable
-              onDragStart={(e) => setCanvasDrag(e, { kind: 'sfx', sfxId: item.id, name: item.name })}
-              onClick={() => { void insert(item.id, item.name); }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 1.5, width: 24, height: 20, flexShrink: 0 }}>
-                  {[4, 7, 5, 9, 6, 8, 5].map((h, i) => (
-                    <span key={i} style={{ width: 2, height: `${h * 2}px`, borderRadius: 1,
-                      background: item.color, opacity: 0.7 + i * 0.04, display: 'block' }} />
-                  ))}
-                </span>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{busy === item.id ? 'Rendering…' : item.name}</span>
-                  <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
-                    {item.cat} · {item.duration.toFixed(2)}s
-                  </span>
-                </span>
-              </span>
-            </button>
+            <SfxCard key={item.id} item={item} busy={busy}
+              onInsert={() => { void insert(item.id, item.name); }} />
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} sound{items.length !== 1 ? 's' : ''} · synthesized offline</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 
@@ -1889,12 +2116,12 @@ function LottieCardPreview({ doc, playing }: { doc: LottieJson; playing: boolean
   return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />;
 }
 
+const LOTTIE_CATEGORIES: readonly LottieCategory[] = ['micro-ui', 'widgets', 'controls'];
+
 function LottieContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | LottieCategory>('all');
   const notify = useUIStore((s) => s.notify);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const items = LOTTIE_ITEMS.filter((l) => filter === 'all' || l.cat === filter);
 
   const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
@@ -1907,26 +2134,27 @@ function LottieContent(): JSX.Element {
     }
   };
 
+  const importButton = (
+    <div style={{ padding: '6px 8px 2px' }}>
+      <Button size="sm" variant="secondary" style={{ width: '100%', fontWeight: 600 }}
+        leftIcon={<Icon name="download" size="sm" />}
+        onClick={() => fileRef.current?.click()}>
+        Import .json / .lottie File…
+      </Button>
+      <input ref={fileRef} type="file" accept=".json,.lottie,application/json,application/x-lottie" style={{ display: 'none' }}
+        onChange={(e) => { void onPickFile(e); }} />
+    </div>
+  );
+
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'micro-ui', 'widgets', 'controls'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f === 'micro-ui' ? 'Micro UI' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
-        <div style={{ padding: '6px 8px 2px' }}>
-          <Button size="sm" variant="secondary" style={{ width: '100%', fontWeight: 600 }}
-            onClick={() => fileRef.current?.click()}>
-            📥 Import .json / .lottie File…
-          </Button>
-          <input ref={fileRef} type="file" accept=".json,.lottie,application/json,application/x-lottie" style={{ display: 'none' }}
-            onChange={(e) => { void onPickFile(e); }} />
-        </div>
+    <LibraryBrowser
+      items={LOTTIE_ITEMS}
+      categories={LOTTIE_CATEGORIES}
+      categoryLabel={(c) => (c === 'micro-ui' ? 'Micro UI' : c.charAt(0).toUpperCase() + c.slice(1))}
+      noun="animation"
+      toolbar={importButton}
+    >
+      {(items) => (
         <div className={styles.libGrid}>
           {items.map((item) => (
             <button
@@ -1948,14 +2176,16 @@ function LottieContent(): JSX.Element {
                 <LottieCardPreview doc={item.doc} playing={hovered === item.id} />
                 <span style={{ position: 'absolute', bottom: 2, right: 3, fontSize: '0.52rem', fontWeight: 800,
                   color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em' }}>LOTTIE</span>
+                <span className={styles.libChipStar}>
+                  <FavoriteStar id={item.id} label={item.name} />
+                </span>
               </span>
               <span className={styles.libChipLabel}>{item.name}</span>
             </button>
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} high-level UI animation{items.length !== 1 ? 's' : ''}</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 

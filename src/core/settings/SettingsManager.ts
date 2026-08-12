@@ -36,15 +36,6 @@ export function createLocalStorageBackend(key = 'motion-editor.settings'): Setti
   };
 }
 
-/** In-memory backend (tests / SSR / headless). */
-export function createMemoryBackend(): SettingsBackend {
-  let store: Record<string, unknown> | null = null;
-  return {
-    read: () => store,
-    write: (all) => { store = { ...all }; },
-  };
-}
-
 export type SettingsListener<T> = (value: T) => void;
 
 /** Trailing write delay. Long enough to swallow a drag, short enough to be safe. */

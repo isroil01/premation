@@ -21,6 +21,7 @@ import type { FillPaint } from '@core/paint/fill';
 import type { TemplateDefinition } from './templateTypes';
 import { mountPreview } from './previewController';
 import { liveKf } from './templates/builders';
+import { clamp01 } from '@utils/lang';
 
 /** Longest edge of a still thumbnail, in CSS px (rendered at 2× for crispness). */
 const THUMB_MAX = 176;
@@ -39,9 +40,16 @@ function getImage(src: string): HTMLImageElement | null {
   return img;
 }
 
-function clamp01(n: number): number {
-  return Math.min(1, Math.max(0, n));
-}
+/*
+ * `clamp01` is imported from `@utils/lang` now.
+ *
+ * The local copy differed only in what it did with NaN — it PASSED it through,
+ * where the shared one returns 0. That was never a deliberate difference, and
+ * the shared behaviour is the safer of the two here: a NaN offset reaching
+ * `addColorStop` throws, and a NaN alpha reaching `globalAlpha` is silently
+ * ignored, so a bad number upstream became either a crash or an invisible
+ * no-op. Clamping to 0 puts it in the picture instead.
+ */
 
 /** Build a Canvas2D paint for a resolved fill, in the layer's LOCAL centred box
  *  (w×h, origin at centre). */

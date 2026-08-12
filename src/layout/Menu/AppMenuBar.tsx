@@ -23,6 +23,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import { useAppMenuGroups } from './useAppMenuGroups';
+import { anchorMenuTo } from './menuAnchor';
 import { formatChord } from './formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import styles from './AppMenuBar.module.css';
@@ -55,8 +56,10 @@ export function AppMenuBar(): JSX.Element {
   }, [openGroup]);
 
   const openAt = (groupId: string, btn: HTMLElement): void => {
-    const r = btn.getBoundingClientRect();
-    setAnchor({ left: r.left, top: r.bottom + 2 });
+    // Shared with AppMenuButton: left-aligned under the group, clamped to the
+    // window — the rightmost groups (Window, Help) would otherwise open past
+    // the right edge on a narrow window.
+    setAnchor(anchorMenuTo(btn.getBoundingClientRect()));
     setOpenGroup(groupId);
   };
 

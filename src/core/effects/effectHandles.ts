@@ -119,9 +119,16 @@ const CORNER_PIN_HANDLES: readonly HandleSpec[] = [
  * centre handle on the layer's top-left and write offsets a half-box wrong, and
  * it would compile, render and look like a plausible overlay.
  */
-const CENTRE_HANDLE = (label: string): readonly HandleSpec[] => [
+const CENTRE_HANDLE = (
+  label: string,
+  // Offset names its pair `shiftX`/`shiftY`. It is still a point measured from
+  // the layer's middle, so it takes this same handle with different keys rather
+  // than a second, near-identical spec.
+  xKey = 'centerX',
+  yKey = 'centerY',
+): readonly HandleSpec[] => [
   {
-    id: 'centre', label, xKey: 'centerX', yKey: 'centerY', kind: 'centre',
+    id: 'centre', label, xKey, yKey, kind: 'centre',
     rest: (w, h) => ({ x: w / 2, y: h / 2 }),
   },
 ];
@@ -137,9 +144,43 @@ const CENTRE_HANDLE = (label: string): readonly HandleSpec[] => [
 export const EFFECT_HANDLES: Partial<Record<EffectType, readonly HandleSpec[]>> = {
   'bezier-warp': BEZIER_WARP_HANDLES,
   'corner-pin': CORNER_PIN_HANDLES,
+  /*
+    Bend's two points, which ARE the bend line — its position, its direction,
+    and the span the bend completes over. AE draws them as Top and Base and you
+    place them by dragging; aiming a bend by typing four numbers is exactly the
+    class of control this mechanism was extracted to rescue.
+
+    Rest is the layer's top-centre and bottom-centre, matching AE, so a fresh
+    Bend curls the layer from top to bottom.
+  */
+  bend: [
+    { id: 'top', label: 'Top', xKey: 'topX', yKey: 'topY', kind: 'vertex', rest: (w) => ({ x: w / 2, y: 0 }) },
+    { id: 'base', label: 'Base', xKey: 'baseX', yKey: 'baseY', kind: 'vertex', rest: (w, h) => ({ x: w / 2, y: h }) },
+  ],
+  /*
+    Spotlight's lamp and its aim point. Same reasoning as Bend's: the pair IS
+    the control, and placing a light by typing four numbers is why this class
+    of parameter goes unused. Rest puts the lamp on the top edge aiming at the
+    layer's middle, so a freshly applied Spotlight shines downward.
+  */
+  spotlight: [
+    { id: 'from', label: 'From', xKey: 'fromX', yKey: 'fromY', kind: 'vertex', rest: (w) => ({ x: w / 2, y: 0 }) },
+    { id: 'to', label: 'To', xKey: 'toX', yKey: 'toY', kind: 'vertex', rest: (w, h) => ({ x: w / 2, y: h / 2 }) },
+  ],
   bulge: CENTRE_HANDLE('Bulge Centre'),
   twirl: CENTRE_HANDLE('Twirl Centre'),
   spherize: CENTRE_HANDLE('Spherize Centre'),
+  // Round three. Only the effects whose centre is a POINT THE USER AIMS get a
+  // handle — dragging is how you place a mirror line or a clock-wipe pivot, and
+  // doing it by typing two numbers is the reason those controls go unused.
+  // Polar Coordinates is deliberately absent: its centre is not a parameter, it
+  // is always the layer's middle.
+  mirror: CENTRE_HANDLE('Reflection Centre'),
+  'radial-wipe': CENTRE_HANDLE('Wipe Centre'),
+  offset: CENTRE_HANDLE('Shift Centre To', 'shiftX', 'shiftY'),
+  // Liquify's brush is placed, not typed — a push is aimed at a feature, and
+  // finding it with two number fields is why this class of control goes unused.
+  liquify: CENTRE_HANDLE('Brush Centre'),
 };
 
 export function hasEffectHandles(type: string): boolean {

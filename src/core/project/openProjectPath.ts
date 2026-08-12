@@ -22,7 +22,7 @@
 import { getProjectManager } from '@core/services/coreServices';
 import type { ProjectRef } from '@core/project/ProjectManager';
 import { bumpScene } from '@stores/sceneStore';
-import { useHistoryStore } from '@stores/historyStore';
+import { baselineProjectHistory, afterProjectLoaded } from '@core/project/projectSession';
 
 /**
  * Open `path` and make it the current project. Returns the ref, or null when
@@ -37,8 +37,11 @@ export async function openProjectPath(path: string): Promise<ProjectRef | null> 
   if (!ref) return null;
   // Order matters: re-baseline history against the NEW document before the
   // viewport re-reads it, so nothing can record an edit against the old stack.
-  useHistoryStore.getState().reset();
-  useHistoryStore.getState().record('Open', true);
+  baselineProjectHistory('Open');
   bumpScene();
+  // And AFTER the bump, because `bumpScene` emits SceneGraphChanged, which the
+  // boot wiring turns straight back into markDirty(true) — so a freshly opened
+  // project used to arrive already flagged as having unsaved changes.
+  afterProjectLoaded();
   return ref;
 }

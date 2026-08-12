@@ -334,6 +334,24 @@ function PathOpCard({
             value={op.wigglesPerSecond ?? 0}
             min={0}
           />
+          {/*
+            Correlation is what makes this operator AE's Wiggle Paths rather
+            than AE's Roughen: how alike NEIGHBOURING points move. 0 shreds the
+            outline — and is the pre-existing behaviour, so stored projects are
+            unchanged — while higher values make it undulate like something with
+            stiffness. It was the one defining parameter the operator lacked
+            while already carrying the name.
+          */}
+          <ParamRow
+            nodeId={nodeId}
+            opId={op.id}
+            param="correlation"
+            label="Correlation"
+            value={op.correlation ?? 0}
+            min={0}
+            max={100}
+            unit="%"
+          />
           <div className={styles.paramRow}>
             <div />
             <span className={styles.paramLabel}>Random Seed</span>

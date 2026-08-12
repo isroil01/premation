@@ -902,17 +902,6 @@ function parseCapabilityList(raw: unknown, field: string, errors: string[]): str
 }
 
 /**
- * One line summarising a plugin's reach, for the manager list.
- *
- * "No permissions" is a real and good answer — a plugin that only registers
- * commands and shows its own panel needs nothing.
- */
-export function describePermissions(permissions: readonly PluginPermission[]): string {
-  if (permissions.length === 0) return 'Runs sandboxed. Asks for no access to your project.';
-  return permissions.map((p) => PERMISSIONS[p].label).join(' · ');
-}
-
-/**
  * One line summarising what a plugin adds — "6 commands · 1 panel".
  *
  * The point of declaring contributions is that this can be shown on a listing
@@ -940,15 +929,6 @@ export function describeContributions(contributes: PluginContributes): string {
  */
 export function activatesOnStartup(manifest: PluginManifest): boolean {
   return manifest.activationEvents.includes('onStartup');
-}
-
-/** Does `manifest` declare an activation event for this command / panel id? */
-export function activatesOnCommand(manifest: PluginManifest, commandId: string): boolean {
-  return manifest.activationEvents.includes(`onCommand:${commandId}`);
-}
-
-export function activatesOnPanel(manifest: PluginManifest, panelId: string): boolean {
-  return manifest.activationEvents.includes(`onPanel:${panelId}`);
 }
 
 /**

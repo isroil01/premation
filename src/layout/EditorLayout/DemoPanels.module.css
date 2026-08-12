@@ -257,6 +257,45 @@
   border-color: transparent;
 }
 
+/* Danger sibling of .toolBtn. Tinted rather than solid-filled: this button
+   appears next to Import and New, and a solid red block reads as the loudest
+   thing in the panel — which is the wrong emphasis for the action you least
+   want clicked by reflex. It commits to red on hover, once deliberately
+   approached. */
+.toolBtnDanger {
+  composes: toolBtn;
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+.toolBtnDanger:hover {
+  color: var(--color-primary-foreground);
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* Only rendered while a selection exists — see AssetsPanel. */
+.assetSelectionBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 4px 8px;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+}
+
+.assetSelectionCount {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 
 /* Folder rows share the asset-row look but with a folder glyph + open affordance. */
 
@@ -1020,4 +1059,99 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-secondary);
+}
+
+/* ── Library browsing chrome ─────────────────────────────────────────
+   Search, the favourites filter, per-card stars and the empty state — shared
+   by every section of the Library tab so the four of them browse the same way
+   instead of each growing its own category strip. */
+
+.libSearchRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* The star is a control INSIDE a card that is itself a button. It has to stay
+   hit-testable without inheriting the card's padding or stretching its row. */
+.libStar,
+.libStarFilter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The filter lives in the toolbar, not on a card — always visible. */
+.libStarFilter {
+  opacity: 1;
+  border: 1px solid var(--color-border);
+}
+
+.libStarOn {
+  composes: libStar;
+  opacity: 1;
+  color: var(--color-accent);
+}
+
+.libStarFilterOn {
+  composes: libStarFilter;
+  color: var(--color-accent);
+  background: var(--color-selected);
+  border-color: var(--color-accent);
+}
+
+/* An unstarred star stays hidden until the row is hovered or the button itself
+   is keyboard-focused — otherwise every row in the list carries a permanent
+   grey star, which reads as "already starred" and adds a column of noise. */
+.libMotionItem:hover .libStar,
+.libChip:hover .libStar,
+.libStar:focus-visible {
+  opacity: 1;
+}
+
+.libStar:hover,
+.libStarFilter:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.libStar:focus-visible,
+.libStarFilter:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+/* Grid tiles have no row to sit in, so their star overlays the thumbnail. */
+.libChipStar {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+}
+
+.libEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
 }

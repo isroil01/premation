@@ -16,6 +16,7 @@ import { audioEngine } from './AudioEngine';
 import { readAudioLayers } from './audioScene';
 import type { AudioLayerState } from './AudioEngine';
 import { buildParamRamp, applyRamp } from './audioParams';
+import { connectAudioEffects, hasBackwards, reverseBuffer, backwardsOffset } from './audioEffects';
 
 /** Standard export sample rate — 48 kHz is what AAC/most containers expect. */
 const EXPORT_SAMPLE_RATE = 48000;
@@ -163,9 +164,27 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
     const buffer = audioEngine.decodedBuffer(l.assetId);
     if (!buffer) continue; // decode failed; skip rather than fail the whole mix
     const source = ctx.createBufferSource();
-    source.buffer = buffer;
+    // Backwards is a buffer transform, applied before the graph exists — the
+    // same decision `startVoice` makes, through the same two helpers.
+    const reversed = hasBackwards(l.effects);
+    source.buffer = reversed ? reverseBuffer(ctx, buffer) : buffer;
     const gain = ctx.createGain();
-    source.connect(gain).connect(ctx.destination);
+    // `win.offset` is a position in the SOURCE buffer, so the comp time this
+    // window begins at is startSec + (offset - inSec) — the same conversion
+    // startVoice does when resuming mid-fade. Needed here before the chain,
+    // because keyframed effect parameters are scheduled from it.
+    const compStart = l.startSec + (win.offset - l.inSec);
+    // The SAME builder the live engine uses, on the offline context. Both take
+    // a `BaseAudioContext` precisely so this call cannot diverge from that one,
+    // and both hand it the voice window so an animated parameter is a curve
+    // rather than a value frozen at the voice's start.
+    const chain = connectAudioEffects(ctx, source, l.effects, {
+      nodeId: l.nodeId,
+      startCompSec: compStart,
+      durationSec: win.duration,
+      whenCtx: win.when,
+    });
+    chain.node.connect(gain).connect(ctx.destination);
 
     // The SAME curve builder the live engine uses, scheduled on the offline
     // context's clock. This is the seam where preview and export could drift
@@ -173,17 +192,32 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
     // that sounds right while scrubbing and renders differently is only
     // discoverable by exporting and listening to the whole file.
     //
-    // `win.offset` is a position in the SOURCE buffer, so the comp time this
-    // window begins at is startSec + (offset - inSec) — the same conversion
-    // startVoice does when resuming mid-fade.
-    const compStart = l.startSec + (win.offset - l.inSec);
+    // (`compStart` is computed above, because the effect chain schedules its
+    // own curves from the same window.)
     const ramp = buildParamRamp(l.nodeId, l.levelDb, compStart, win.duration, {
       animated: l.levelAnimated === true,
     });
     applyRamp(gain.gain, ramp, win.when);
 
     try {
-      source.start(win.when, win.offset, win.duration);
+      // Mirrored when the buffer is reversed — see `backwardsOffset` for the
+      // failure this prevents: the wrong span of the file, in time, silently.
+      const readAt = reversed
+        ? backwardsOffset(buffer.duration, win.offset, win.duration)
+        : win.offset;
+      source.start(win.when, readAt, win.duration);
+      /*
+        The chain's oscillators, on the render clock.
+
+        Offline has no "now", so both times are absolute. An oscillator left
+        unstarted here renders silence into the export while the live preview
+        plays it — the exact preview/export divergence this module exists to
+        prevent, and one that only an export and a careful listen would find.
+      */
+      for (const s of chain.sources) {
+        s.start(win.when);
+        s.stop(win.when + win.duration);
+      }
       voices++;
     } catch {
       /* offset past the buffer end etc. — skip this voice */

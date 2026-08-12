@@ -38,6 +38,7 @@ import type { AudioLayerState } from './AudioEngine';
 import { percentToDb, isLevelAnimated, AUDIO_LEVEL_DB_PROP } from './audioParams';
 import { readNodeLayerTime } from '@core/scene/layerTime';
 import { defaultAnimation } from '@motion/animation';
+import { readAudioEffects } from './audioEffects';
 
 interface CompRef {
   id: string;
@@ -162,6 +163,10 @@ export function readAudioVoices(node: SceneNode): AudioLayerState[] {
     nodeId: node.id, assetId: s.assetId, src: s.src,
     levelDb: s.levelDb, levelAnimated: isLevelAnimated(node.id),
     source: 'audio' as const,
+    // On the BASE, so every voice of a node shares one chain. Splitting a clip
+    // makes two voices of one layer; they must sound alike, and effects stored
+    // per-voice would let one half of a split drift from the other.
+    effects: readAudioEffects(node),
   };
 
   const timings = readAudioClipTimings(node.id);

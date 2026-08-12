@@ -32,10 +32,8 @@
  * this test exists to produce.
  */
 
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readSource } from '@/__testHelpers__/readSource';
 
-const read = (rel: string): string => readFileSync(resolve(__dirname, '../..', rel), 'utf8');
 
 /** Symbols that must not reappear, and where they used to live. */
 const BURIED: ReadonlyArray<{ symbol: string; file: string; why: string }> = [
@@ -60,14 +58,14 @@ describe('deleted half-built layout state stays deleted', () => {
   it.each(BURIED.map((b) => [b.symbol, b.file, b.why]))(
     '`%s` is gone from %s (%s)',
     (symbol, file) => {
-      expect(stripComments(read(file))).not.toMatch(new RegExp(`\\b${symbol}\\b`));
+      expect(stripComments(readSource(file))).not.toMatch(new RegExp(`\\b${symbol}\\b`));
     },
   );
 
   it("PlacementMode cannot express 'floating'", () => {
     // Stronger than an absence check: the state the renderer has no host for is
     // now unrepresentable rather than merely unused.
-    const src = read('stores/layoutStore.ts');
+    const src = readSource('stores/layoutStore.ts');
     const decl = /export type PlacementMode =([^;]+);/.exec(src)?.[1] ?? '';
     expect(decl).toContain("'docked'");
     expect(decl).toContain("'external'");
@@ -79,6 +77,6 @@ describe('deleted half-built layout state stays deleted', () => {
     // (it feeds Gizmo3D.getGizmoBasis); only the control was missing, so the
     // gizmo was stuck in 'local' with world/view unreachable. Deleting a
     // feature the engine already implements would have been the wrong call.
-    expect(read('layout/SceneControls/SceneControls.tsx')).toMatch(/setGizmo3dAxisMode/);
+    expect(readSource('layout/SceneControls/SceneControls.tsx')).toMatch(/setGizmo3dAxisMode/);
   });
 });

@@ -82,6 +82,29 @@ export interface PathOp {
   wigglesPerSecond?: number;
   /** Roughen only — decorrelates two layers that would otherwise wiggle alike. */
   seed?: number;
+  /**
+   * Roughen only — AE's Wiggle Paths **Correlation**, percent 0..100.
+   *
+   * How alike NEIGHBOURING points move. At 0 every point is independent and the
+   * outline shreds; at 100 every point shares one displacement magnitude and
+   * one direction, each still measured against its OWN normal — so a closed
+   * outline swells and slides as a whole rather than shredding, though it is
+   * not a rigid translation, since the normals differ around the path. The
+   * interesting range is the middle, where the outline behaves like something
+   * with stiffness — a rope, a flag, a hand-drawn line.
+   *
+   * This operator is surfaced to users as "Wiggle Paths" (see
+   * `PathOpControls`), and Correlation is the parameter that *defines* AE's
+   * Wiggle Paths — without it the operator was AE's **Roughen** wearing the
+   * other one's name. Adding it here rather than adding a second operator is
+   * deliberate: two entries both called Wiggle Paths would be the duplication,
+   * not the fix.
+   *
+   * **Defaults to 0**, which is exactly the previous behaviour, so every
+   * existing project renders identically. AE's own default is 50, but a default
+   * that re-shapes shipped work is not a default worth matching.
+   */
+  correlation?: number;
   /** Trim only — start of the visible range, percent 0..100. */
   start?: number;
   /** Trim only — end of the visible range, percent 0..100. */
@@ -138,7 +161,10 @@ export interface PathOp {
  * exist" to be stated, and the two would drift.
  */
 export const PATHOP_PARAMS = [
-  'amount', 'detail', 'wigglesPerSecond',
+  // `correlation` IS keyframeable — unlike `seed`. Animating it is meaningful:
+  // a path can start rigid and shred as it moves, which is a real effect.
+  // Animating a seed just scrubs through unrelated noise fields.
+  'amount', 'detail', 'wigglesPerSecond', 'correlation',
   'start', 'end', 'offset',
   'copies', 'offsetX', 'offsetY', 'offsetRotation', 'offsetScale', 'offsetOpacity',
   'anchorX', 'anchorY',
@@ -439,10 +465,40 @@ export function offsetPath(pts: readonly Pt[], closed: boolean, amount: number):
 }
 
 /**
- * Roughen — subdivide each edge `detail` times, then displace every point
- * along its normal by a DETERMINISTIC per-index hash scaled by `amount`
- * (stable across frames, so animating amount wobbles smoothly instead of
- * boiling). AE's Roughen Edges, the vector version. Pure.
+ * Roughen — subdivide each edge `detail` times, then displace every point by a
+ * DETERMINISTIC per-index hash scaled by `amount` (stable across frames, so
+ * animating amount wobbles smoothly instead of boiling). Surfaced as AE's
+ * Wiggle Paths. Pure.
+ *
+ * ── The displacement is 2D, and used not to be ──────────────────────────────
+ *
+ * Every point used to move along its NORMAL only: one scalar, one direction
+ * perpendicular to the outline. That is a legible operator but it is not what
+ * AE does, and the difference is visible rather than academic — a normal-only
+ * wiggle can only make an outline bulge and pinch, so its vertices stay at the
+ * same arc positions and the shape breathes in and out. AE's vertices also
+ * slide ALONG the path, which is what makes a wiggled outline read as hand-drawn
+ * rather than as a rippling membrane.
+ *
+ * So each point now takes TWO noise values: channel 0 is the signed MAGNITUDE,
+ * exactly as before, and channel 1 rotates the direction away from the normal.
+ * Separate channels of the same hash rather than two hashes, so `seed`, the
+ * time cross-fade and `correlation` all apply to both with no second copy of
+ * that machinery.
+ *
+ * ── Direction × magnitude, NOT two independent components ───────────────────
+ *
+ * The obvious construction — one noise value along the normal and another along
+ * the tangent — is wrong, and the suite already said so. Two independent
+ * components each bounded by `amount` put the corner of a square at
+ * `amount · √2`, which broke `never displaces further than Size, at any phase`:
+ * a user asking for 6 px of wiggle got 7.6. "Size is the most it can move" is a
+ * real contract and the more important one.
+ *
+ * Sampling a direction and a magnitude keeps it exactly: |displacement| is
+ * `|amount · channel0|`, which is the same bound — and the same per-point
+ * magnitude — the normal-only version had. What changed is only where that
+ * displacement points.
  */
 export function roughen(
   pts: readonly Pt[],
@@ -451,6 +507,12 @@ export function roughen(
   detail: number,
   phase = 0,
   seed = 0,
+  /**
+   * AE's Correlation, 0..100. See `PathOp.correlation`. Defaults to 0 — the
+   * behaviour before this parameter existed — so callers that never pass it are
+   * unaffected.
+   */
+  correlation = 0,
 ): Pt[] {
   const n = pts.length;
   if (n < 2 || amount === 0) return [...pts];
@@ -471,8 +533,13 @@ export function roughen(
   // scrub back to the same frame redraws the same shape. Mixing the time
   // bucket `k` and `seed` in here (rather than perturbing the index) keeps
   // neighbouring points uncorrelated at every instant.
-  const hash = (i: number, k: number): number => {
-    let h = (i + 1) * 374761393 + k * 668265263 + seed * 2246822519;
+  //
+  // `ch` selects the CHANNEL: 0 is the signed displacement magnitude, 1 the
+  // rotation of its direction away from the normal. Folded into the same mix
+  // rather than hashed separately, so both channels inherit the seed, the time
+  // cross-fade and correlation for free.
+  const hash = (i: number, k: number, ch = 0): number => {
+    let h = (i + 1) * 374761393 + k * 668265263 + seed * 2246822519 + ch * 2654435761;
     h = (h ^ (h >>> 13)) * 1274126177;
     return (((h ^ (h >>> 16)) >>> 0) / 4294967296) * 2 - 1;
   };
@@ -483,18 +550,53 @@ export function roughen(
   const k0 = Math.floor(phase);
   const frac = phase - k0;
   const smooth = frac * frac * (3 - 2 * frac);
-  const rnd = (i: number): number => {
-    if (smooth === 0) return hash(i, k0);
-    return hash(i, k0) + (hash(i, k0 + 1) - hash(i, k0)) * smooth;
+  const rnd = (i: number, ch = 0): number => {
+    if (smooth === 0) return hash(i, k0, ch);
+    return hash(i, k0, ch) + (hash(i, k0 + 1, ch) - hash(i, k0, ch)) * smooth;
   };
+  /**
+   * Correlation blends each point's own noise toward ONE path-wide value, so
+   * neighbours stop being independent. Index -1 is reserved for that shared
+   * value — it cannot collide with a real point index, and it rides the same
+   * time cross-fade, so a correlated wiggle animates as smoothly as a loose one.
+   *
+   * Applied per CHANNEL, each with its own shared value. Correlating only the
+   * magnitude would leave the direction fully random at correlation 100 — the
+   * control would visibly stop short of the effect it promises.
+   *
+   * At c = 1 every point takes the same magnitude AND the same rotation, so
+   * every displacement has the identical length while still pointing relative
+   * to that point's own frame.
+   */
+  const c = Math.max(0, Math.min(100, correlation)) / 100;
+  const sharedMag = rnd(-1, 0);
+  const sharedAng = rnd(-1, 1);
+  const disp = c === 0
+    ? (i: number, ch: number): number => rnd(i, ch)
+    : (i: number, ch: number): number => {
+      const own = rnd(i, ch);
+      return own + ((ch === 0 ? sharedMag : sharedAng) - own) * c;
+    };
   return dense.map((p, i) => {
     const prev = dense[(i - 1 + m) % m]!;
     const next = dense[(i + 1) % m]!;
     const dx = next.x - prev.x;
     const dy = next.y - prev.y;
     const len = Math.hypot(dx, dy) || 1;
-    const d = amount * rnd(i);
-    return { x: p.x + (-dy / len) * d, y: p.y + (dx / len) * d };
+    const nx = -dy / len;
+    const ny = dx / len;
+    // How far, and which way. The magnitude keeps the whole ±amount range
+    // (a signed value, so it still pushes in and out); the angle turns that
+    // displacement off the normal, over a full ±180° so no direction is
+    // unreachable.
+    const mag = amount * disp(i, 0);
+    const ang = disp(i, 1) * Math.PI;
+    const cos = Math.cos(ang);
+    const sin = Math.sin(ang);
+    return {
+      x: p.x + (nx * cos - ny * sin) * mag,
+      y: p.y + (nx * sin + ny * cos) * mag,
+    };
   });
 }
 
@@ -521,7 +623,11 @@ export function applyPathOp(pts: readonly Pt[], closed: boolean, op: PathOp, tim
     case 'offset':
       return offsetPath(pts, closed, op.amount);
     case 'roughen':
-      return roughen(pts, closed, op.amount, op.detail, timeSec * (op.wigglesPerSecond ?? 0), op.seed ?? 0);
+      return roughen(
+        pts, closed, op.amount, op.detail,
+        timeSec * (op.wigglesPerSecond ?? 0), op.seed ?? 0,
+        op.correlation ?? 0,
+      );
     default:
       return [...pts];
   }
@@ -577,6 +683,10 @@ function coercePathOp(raw: unknown): PathOp | null {
     detail: num(o.detail, d.detail),
     wigglesPerSecond: Math.max(0, num(o.wigglesPerSecond, 0)),
     seed: num(o.seed, 0),
+    // 0 = the pre-Correlation behaviour, so a stored op without the field is
+    // unchanged. AE defaults this to 50; matching that here would re-shape every
+    // Wiggle Paths already in a project.
+    correlation: Math.max(0, Math.min(100, num(o.correlation, 0))),
     start: num(o.start, 0),
     end: num(o.end, 100),
     offset: num(o.offset, 0),
