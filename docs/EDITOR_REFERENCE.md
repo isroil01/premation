@@ -1243,12 +1243,37 @@ opposite of the convention) and not the depth **slices** of a text extrusion
 (their normals are all +Z, so one-sided shading would black them out under a
 front light).
 
-Not yet implemented. Sized: the flag slot already exists — `eyeLit.w` is the
-lit flag, `0`/`1` today, and a third value costs no uniform-layout change — so
-the work is `packShade3D`, the `Shade3D`/`FrameScene` types, the twelve
-`abs(dot(…))` sites across the four 3D shade blocks in both WGSL and GLSL, the
-CPU twin in `lightShading.ts`, and an extension to `lightShaderParity.test.ts`.
-It will move every lit-3D golden, so it belongs in its own change.
+**Implemented 2026-08-12.** `eyeLit.w` carries it: 0 unlit, 1 lit two-sided,
+2 lit one-sided — a third value in the existing flag, so the shade tail's
+std140 layout is untouched and no other packer moves. Four shade blocks (WGSL
+and GLSL, `solid3d` plus the shared `*_SHADE3D_FN` pair) derive it once and
+apply it at all twelve lambert and specular terms; `shadeLayer` takes the same
+flag, so the per-quad CPU fallback cannot disagree with the per-fragment shader.
+
+Measured on the wall of a yawed box under a point light: **gain 0.40 with the
+light on the wall's own side, exactly `[0, 0, 0]` with it behind.** Two-sided
+returned the same magnitude for both, which is the defect stated as a number.
+
+Two things did not go as predicted, and both are worth recording.
+
+**No golden moved.** This was expected to move every lit-3D reference. It moved
+none — no committed scene combines an extrusion with a layer that accepts
+lights, because the lit-3D scenes are flat panels, whose front faces stay
+two-sided by design. So there is no regeneration commit, and the gate's silence
+here is a coverage gap rather than evidence of correctness.
+
+**A render scene for it was written and then removed.** It measured the same
+wall lit from either side and returned an identical 2.43x ratio for one-sided
+and two-sided builds: the sampling was dominated by the light's comp-wide wash
+rather than by the wall. Rather than tune a scene until it agreed, the claim is
+asserted where the quantity exists (`buildSnapshotExtrusion.test.ts`), and the
+pixel-level scene is left as unfinished work rather than shipped green.
+
+The defect that hunt turned up is why those assertions are shaped the way they
+are: the flag was first applied to the **wrong branch** — the text depth slices
+instead of the geometric faces — by a replace that matched the first occurrence.
+It typechecked, every existing test passed, and the render gate stayed green.
+Only asserting that the front face and the slices *stay* two-sided caught it.
 
 ### Fixed 2026-08-12 — a rounded card's front face floated inside its own outline
 

@@ -1832,6 +1832,20 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
 
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   if (obj.eyeLit.w < 0.5) { return baseRgb; }
+  /*
+    Two-sided or one-sided, from the lit flag.
+
+    eyeLit.w: 0 = unlit, 1 = lit TWO-SIDED, 2 = lit ONE-SIDED. Encoded in the
+    existing flag rather than a new uniform slot, so the shade tail's std140
+    layout is untouched.
+
+    Two-sided (abs) is right for the app's primitive — a 2D layer in space has
+    no inside, and a layer seen from behind should still light. It is wrong for
+    a face that BOUNDS A VOLUME: with abs(), a box lit hard from one side comes
+    out lit identically on both, which is what "it doesn't read as a solid"
+    actually was. Only an extrusion's walls and back cap set 2.
+  */
+  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
@@ -1857,7 +1871,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     // keep in step with the CPU here — see toShaderLights.
     let aim = vec3<f32>(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      lambert = abs(dot(N, aim));
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
       toLight = -aim;
     } else {
       let Lvec = posType.xyz - world;
@@ -1882,7 +1896,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
       }
       if (!skip && d > 1e-6) {
         toLight = Lvec / d;
-        lambert = abs(dot(N, toLight));
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
         if (lType == 2) {
           // Full 3D cone test: with a POI the aim has a z, which the old
           // 2D-only dot product could not express.
@@ -1901,7 +1915,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     if (specI > 0.0) {
       let V = normalize(obj.eyeLit.xyz - world);
       let H = normalize(toLight + V);
-      spec = spec + colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec = spec + colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
@@ -1958,6 +1972,8 @@ in vec3 vWorld;
 out vec4 frag;
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
+  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
+  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
@@ -1981,7 +1997,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     // 2D-angle fallback) and unit-length — see toShaderLights.
     vec3 aim = vec3(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      lambert = abs(dot(N, aim));
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
       toLight = -aim;
     } else {
       vec3 Lvec = posType.xyz - world;
@@ -2005,7 +2021,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
       }
       if (d > 1e-6) {
         toLight = Lvec / d;
-        lambert = abs(dot(N, toLight));
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
         if (lType == 2) {
           // Full 3D cone test: with a POI the aim has a z, which the old
           // 2D-only dot product could not express.
@@ -2023,7 +2039,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     if (specI > 0.0) {
       vec3 V = normalize(eyeLit.xyz - world);
       vec3 H = normalize(toLight + V);
-      spec += colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec += colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
@@ -2081,6 +2097,20 @@ struct Object {
 const WGSL_SHADE3D_FN = /* wgsl */ `
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   if (obj.eyeLit.w < 0.5) { return baseRgb; }
+  /*
+    Two-sided or one-sided, from the lit flag.
+
+    eyeLit.w: 0 = unlit, 1 = lit TWO-SIDED, 2 = lit ONE-SIDED. Encoded in the
+    existing flag rather than a new uniform slot, so the shade tail's std140
+    layout is untouched.
+
+    Two-sided (abs) is right for the app's primitive — a 2D layer in space has
+    no inside, and a layer seen from behind should still light. It is wrong for
+    a face that BOUNDS A VOLUME: with abs(), a box lit hard from one side comes
+    out lit identically on both, which is what "it doesn't read as a solid"
+    actually was. Only an extrusion's walls and back cap set 2.
+  */
+  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
@@ -2106,7 +2136,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     // keep in step with the CPU here — see toShaderLights.
     let aim = vec3<f32>(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      lambert = abs(dot(N, aim));
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
       toLight = -aim;
     } else {
       let Lvec = posType.xyz - world;
@@ -2131,7 +2161,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
       }
       if (!skip && d > 1e-6) {
         toLight = Lvec / d;
-        lambert = abs(dot(N, toLight));
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
         if (lType == 2) {
           // Full 3D cone test: with a POI the aim has a z, which the old
           // 2D-only dot product could not express.
@@ -2150,7 +2180,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     if (specI > 0.0) {
       let V = normalize(obj.eyeLit.xyz - world);
       let H = normalize(toLight + V);
-      spec = spec + colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec = spec + colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
@@ -2166,6 +2196,8 @@ const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; v
 const GLSL_SHADE3D_FN = /* glsl */ `
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
+  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
+  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
@@ -2189,7 +2221,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     // 2D-angle fallback) and unit-length — see toShaderLights.
     vec3 aim = vec3(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      lambert = abs(dot(N, aim));
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
       toLight = -aim;
     } else {
       vec3 Lvec = posType.xyz - world;
@@ -2213,7 +2245,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
       }
       if (d > 1e-6) {
         toLight = Lvec / d;
-        lambert = abs(dot(N, toLight));
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
         if (lType == 2) {
           // Full 3D cone test: with a POI the aim has a z, which the old
           // 2D-only dot product could not express.
@@ -2231,7 +2263,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     if (specI > 0.0) {
       vec3 V = normalize(eyeLit.xyz - world);
       vec3 H = normalize(toLight + V);
-      spec += colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec += colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));

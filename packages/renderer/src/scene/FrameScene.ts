@@ -419,6 +419,9 @@ export interface Renderable {
       metal?: number;
       /** Per-quad Lambert gain fallback (adapter-computed). */
       quadGain?: readonly [number, number, number];
+      /** Light this surface from one side — see `Shade3D.oneSided`. Set by an
+       *  extrusion's walls and back cap, which bound a volume. */
+      oneSided?: boolean;
     };
   };
 }

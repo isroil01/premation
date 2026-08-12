@@ -27,10 +27,9 @@
  * produce.
  */
 
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readSource } from '@/__testHelpers__/readSource';
+import { shadeLayer } from './lightShading';
 
-const read = (rel: string): string => readFileSync(resolve(__dirname, '../..', rel), 'utf8');
 
 const SHADING = 'core/scene/lightShading.ts';
 const LIGHT = 'core/scene/light.ts';
@@ -93,14 +92,14 @@ function lightReads(body: string): Set<string> {
  * to the falloff curve widens this set automatically.
  */
 function falloffReads(): Set<string> {
-  const src = read(LIGHT);
+  const src = readSource(LIGHT);
   const sig = /export function lightFalloffAt\([\s\S]*?light: \{([\s\S]*?)\}/.exec(src);
   if (!sig) throw new Error('lightShaderParity: cannot read `lightFalloffAt` parameter type');
   return new Set([...sig[1]!.matchAll(/([A-Za-z][A-Za-z0-9_]*)\??:/g)].map((m) => m[1]!));
 }
 
 describe('Light → ShaderLight field parity', () => {
-  const shading = read(SHADING);
+  const shading = readSource(SHADING);
 
   /**
    * Reads in a function, plus those of every helper it hands the WHOLE light to,
@@ -164,5 +163,65 @@ describe('Light → ShaderLight field parity', () => {
     // An exemption for a field nobody reads any more is dead weight that makes
     // the list look considered when it is stale.
     for (const field of CPU_ONLY.keys()) expect(cpu.has(field)).toBe(true);
+  });
+});
+
+/**
+ * One-sidedness must mean the same thing on both paths.
+ *
+ * `shadeLayer` is the per-quad CPU fallback for the SAME surface the shader
+ * lights per fragment, so a disagreement here is a face that changes brightness
+ * depending on which route it took — the exact class of defect this file was
+ * written for, and the one the light parameters had.
+ *
+ * Asserted on BEHAVIOUR rather than on the flag being plumbed, because plumbing
+ * a flag that one side ignores is indistinguishable from not plumbing it.
+ */
+describe('one-sided shading: CPU and GPU agree on what the flag means', () => {
+  /** A light straight in FRONT of the surface (−z), the common case. */
+  const frontLight = [{
+    type: 'point' as const, intensity: 100, color: '#ffffff', radius: 10000,
+    x: 0, y: 0, z: -500, shadows: false, darkness: 1, diffusion: 0,
+    angle: 0, cone: 45, coneFeather: 20, falloff: 'none' as const,
+    falloffDistance: 500, poi: null, shadowDarkness: 100, shadowDiffusion: 0,
+  }] as unknown as Parameters<typeof shadeLayer>[2];
+  const at = { x: 0, y: 0, z: 0 };
+
+  it('a FRONT-facing normal lights the same either way', () => {
+    // dot > 0, so max() and abs() agree — the flag must not change a surface
+    // that faces the light.
+    const two = shadeLayer([0, 0, -1], at, frontLight, undefined, false);
+    const one = shadeLayer([0, 0, -1], at, frontLight, undefined, true);
+    expect(one).toEqual(two);
+  });
+
+  it('a BACK-facing normal is lit two-sided and dark one-sided', () => {
+    const two = shadeLayer([0, 0, 1], at, frontLight, undefined, false);
+    const one = shadeLayer([0, 0, 1], at, frontLight, undefined, true);
+    expect(two![0]).toBeGreaterThan(0.1);
+    // Ambient-free point light behind the surface: one-sided clamps it out.
+    expect(one![0]).toBeLessThan(two![0]);
+  });
+
+  it('the shader reads the flag from eyeLit.w, and 2 means one-sided', () => {
+    // The encoding is load-bearing in two places that cannot see each other:
+    // `packShade3D` writes it, four shade blocks read it. Both are pinned so a
+    // change to either shows up here rather than as a lighting difference.
+    const uniforms = readSource('../packages/renderer/src/pipeline/uniforms.ts');
+    expect(uniforms).toMatch(/out\[o \+ 3\] = shade\.oneSided \? 2 : 1;/);
+    const shaders = readSource('../packages/renderer/src/shaders/builtin.ts');
+    // Every shade block derives it, and every lambert/specular term uses it.
+    expect((shaders.match(/twoSided = select\(1\.0, 0\.0, obj\.eyeLit\.w > 1\.5\)/g) ?? []).length).toBe(2);
+    expect((shaders.match(/twoSided = eyeLit\.w > 1\.5 \? 0\.0 : 1\.0/g) ?? []).length).toBe(2);
+    // 4 blocks x (aim + toLight + specular).
+    expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(12);
+  });
+
+  it('only an extrusion FACE asks for it', () => {
+    // Slices and the front face must not: their normals are +Z, so clamping
+    // would black them out under a front light.
+    const build = readSource('core/rendering/buildSnapshot.ts');
+    expect((build.match(/oneSided: true/g) ?? []).length).toBe(1);
+    expect((build.match(/sceneLights, undefined, true\)/g) ?? []).length).toBe(1);
   });
 });

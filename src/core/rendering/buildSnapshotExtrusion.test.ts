@@ -422,3 +422,76 @@ describe('buildSnapshot — 3D solids', () => {
   });
 });
 
+
+/**
+ * One-sided shading on the faces that bound a volume.
+ *
+ * ── Asserted on the GAIN, not on pixels ─────────────────────────────────────
+ *
+ * A render scene was written for this first and is not here, because it did not
+ * reproduce: the same two frames came out of a one-sided and a two-sided build,
+ * and the measurement turned out to be dominated by the light's comp-wide wash
+ * rather than by the wall. Rather than tune a scene until it agreed, the claim
+ * is made where the quantity actually exists. `lighting` IS the shaded result —
+ * the per-quad gain the affine path folds into the tint and the depth path
+ * carries as `quadGain` — so a wall that goes to zero here is a wall that goes
+ * black wherever it is drawn.
+ *
+ * The pixel-level scene is unfinished work, not a passing one: see §5.
+ */
+describe('buildSnapshot — extrusion faces light from one side', () => {
+  const lit = (lightX: number, id = 'box') => {
+    const g = new SceneGraph();
+    g.addNode(shape3D(id, { extrusionDepth: 150, rotationY: 38, acceptsLights: true }));
+    const L = whiteLight('L');
+    // whiteLight places itself at the comp centre; move it along x only, so the
+    // ONLY difference between the two cases is which side of the wall it is on.
+    (L.components[0] as unknown as { props: Record<string, unknown> }).props.x = lightX;
+    (L.components[0] as unknown as { props: Record<string, unknown> }).props.z = -260;
+    (L.components[0] as unknown as { props: Record<string, unknown> }).props.radius = 1400;
+    g.addNode(L);
+    return snap(g).layers;
+  };
+
+  it('a wall lit from its OWN side has a positive gain', () => {
+    const wall = lit(1100).find((l) => l.id === 'box::ext-r')!;
+    expect(wall.lighting![0]).toBeGreaterThan(0.2);
+  });
+
+  it('the same wall lit from BEHIND goes to zero', () => {
+    // Two-sided shading returns |dot(N, L)| here, which is the defect: the wall
+    // came out just as bright as when the light was on its own side, so a box
+    // lit hard from one side looked lit identically on both.
+    const wall = lit(-600).find((l) => l.id === 'box::ext-r')!;
+    expect(wall.lighting).toEqual([0, 0, 0]);
+  });
+
+  it('the flag rides to the GPU so the per-fragment path agrees', () => {
+    const wall = lit(1100).find((l) => l.id === 'box::ext-r')!;
+    expect(wall.shade3d?.oneSided).toBe(true);
+  });
+
+  it('the FRONT face stays two-sided — its normal points the other way', () => {
+    // planeNormalOf returns +Z, which is AWAY from the viewer, so the front
+    // face's outward direction is the negative of what the convention gives.
+    // Clamping it would black out the one face you always see.
+    const front = lit(1100).find((l) => l.id === 'box')!;
+    expect(front.shade3d?.oneSided ?? false).toBe(false);
+  });
+
+  it('TEXT depth slices stay two-sided — every slice normal is +Z', () => {
+    const g = new SceneGraph();
+    g.addNode({
+      id: 't', name: 't', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 400, y: 300 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        { id: 't_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'text', x: 400, y: 300, rotation: 0, width: 300, height: 80, z: 0, text: 'DEPTH', fontSize: 64, extrusionDepth: 60, acceptsLights: true } },
+        { id: 't_s', type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
+      ],
+    } as unknown as SceneNode);
+    g.addNode(whiteLight('L'));
+    const slice = snap(g).layers.find((l) => l.id.includes('::ext-slice-'));
+    expect(slice).toBeDefined();
+    expect(slice!.shade3d?.oneSided ?? false).toBe(false);
+  });
+});

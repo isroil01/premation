@@ -145,6 +145,22 @@ export interface Shade3D {
    * 1 tints it fully by the surface (metal).
    */
   metal?: number;
+  /**
+   * Light this surface from ONE side: `max(dot(N, L), 0)` instead of
+   * `abs(dot(N, L))`.
+   *
+   * Off by default, and that default is correct for the app's primitive — a 2D
+   * layer in space has no inside, and a layer seen from behind should still
+   * light. It is wrong for a face that BOUNDS A VOLUME: with `abs()` a box lit
+   * hard from one side comes out lit identically on both sides.
+   *
+   * Set only by an extrusion's synthesized WALLS and BACK CAP, whose normals
+   * point out of the solid. Not the front face — that is the layer itself, and
+   * its outward direction is −Z, the opposite of the convention `planeNormalOf`
+   * returns. Not text depth slices either: their normals are all +Z, so
+   * one-sided shading would black the whole stack out under a front light.
+   */
+  oneSided?: boolean;
   lights: ReadonlyArray<Shade3DLight>;
 }
 
@@ -159,7 +175,10 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
   out[o + 0] = shade.eye[0];
   out[o + 1] = shade.eye[1];
   out[o + 2] = shade.eye[2];
-  out[o + 3] = 1; // lit flag
+  // Lit flag: 1 = two-sided, 2 = one-sided. A third value in an existing slot
+  // rather than a new one, so the std140 layout of the shade tail is unchanged
+  // and no other packer or shader moves.
+  out[o + 3] = shade.oneSided ? 2 : 1;
   o += 4;
   const lights = shade.lights.filter((l) => l.gain > 0).slice(0, MAX_LIGHTS3D);
   out[o + 0] = lights.length;

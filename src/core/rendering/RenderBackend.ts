@@ -207,7 +207,14 @@ export interface RenderLayer {
    *  snapshot's `lights3d`/camera eye) to renderables that take the depth path,
    *  where the shader replaces the per-quad tint fold with real per-fragment
    *  Lambert + specular. */
-  shade3d?: { specular: number; shininess: number; metal?: number };
+  shade3d?: {
+    specular: number;
+    shininess: number;
+    metal?: number;
+    /** Light this surface from one side. Set only by an extrusion's walls and
+     *  back cap, which bound a volume — see `lightShading.ndotl`. */
+    oneSided?: boolean;
+  };
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */
   depth?: number;

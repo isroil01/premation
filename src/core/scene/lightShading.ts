@@ -73,6 +73,18 @@ function clampGain(v: number): number {
  * (column-major Matrix4 → column 2), normalised. Falls back to +Z when the
  * matrix is degenerate.
  */
+/**
+ * Lambert term, two-sided or one.
+ *
+ * `abs` is the app's default because its primitive is a 2D layer in space: a
+ * layer has no inside, and one seen from behind should still light. A face that
+ * BOUNDS A VOLUME is the exception, and clamping is the whole difference
+ * between a box lit from one side and a box lit identically on both.
+ */
+function ndotl(d: number, oneSided: boolean): number {
+  return oneSided ? Math.max(d, 0) : Math.abs(d);
+}
+
 export function planeNormalOf(world: ArrayLike<number>): readonly [number, number, number] {
   const x = world[8] ?? 0;
   const y = world[9] ?? 0;
@@ -190,6 +202,15 @@ export function shadeLayer(
   pos: { x: number; y: number; z: number },
   lights: ReadonlyArray<SceneLight>,
   material?: MaterialResponse,
+  /**
+   * Light from ONE side: `max(dot(N, L), 0)` rather than `abs(dot(N, L))`.
+   *
+   * The GPU twin reads the same flag off `eyeLit.w`, and the two MUST agree —
+   * this function is the per-quad fallback for the very same surface the shader
+   * lights per fragment, so a disagreement is a layer that changes brightness
+   * depending on which path it took.
+   */
+  oneSided = false,
 ): Rgb | null {
   if (lights.length === 0) return null;
   // Defaults chosen so an omitted `material` is a no-op: ambient 100 % passes
@@ -219,7 +240,7 @@ export function shadeLayer(
       const dx = Math.cos(light.angle * DEG);
       const dy = Math.sin(light.angle * DEG);
       const L = lightAim3D(light) ?? ([dx * Math.SQRT1_2, dy * Math.SQRT1_2, -Math.SQRT1_2] as const);
-      lambert = Math.abs(normal[0] * L[0] + normal[1] * L[1] + normal[2] * L[2]);
+      lambert = ndotl(normal[0] * L[0] + normal[1] * L[1] + normal[2] * L[2], oneSided);
     } else {
       const lx = light.x - pos.x;
       const ly = light.y - pos.y;
@@ -239,7 +260,7 @@ export function shadeLayer(
       const inv = d < 1e-9 ? 0 : 1 / d;
       lambert = d < 1e-9
         ? 1 // light exactly on the layer: full contribution
-        : Math.abs(normal[0] * lx * inv + normal[1] * ly * inv + normal[2] * lz * inv);
+        : ndotl(normal[0] * lx * inv + normal[1] * ly * inv + normal[2] * lz * inv, oneSided);
       if (light.type === 'spot' && d > 1e-9) {
         // Cone test. With a POI the aim is a real 3D direction; without one it
         // is the legacy comp-plane aim (z = 0), which is what every existing

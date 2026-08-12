@@ -923,6 +923,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         specular: layer.shade3d.specular,
         shininess: layer.shade3d.shininess,
         ...(layer.shade3d.metal ? { metal: layer.shade3d.metal } : {}),
+        ...(layer.shade3d.oneSided ? { oneSided: true } : {}),
         quadGain: layer.lighting,
       };
     } else if (out.color) {

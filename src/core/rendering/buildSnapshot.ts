@@ -2769,10 +2769,25 @@ export function buildSnapshot(
                 flatFacet: true,
               };
           if (extLit) {
-            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
+            /*
+              ONE-SIDED, and only here.
+
+              These faces bound a volume and are wound outward (extrusion.ts),
+              so a light behind a wall must not light it. Two-sided shading —
+              `abs(dot(N, L))`, which cannot tell a normal from its negation —
+              lit both walls of every pair identically, which is what "it
+              doesn't read as a solid" actually was.
+
+              Deliberately NOT applied to the front face (it is the layer
+              itself, and its outward direction is −Z, the opposite of the
+              convention `planeNormalOf` returns) nor to the text depth slices
+              above (their normals are all +Z, so clamping would black the whole
+              stack out under a front light).
+            */
+            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, undefined, true);
             if (lg) {
               faceLayer.lighting = lg;
-              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess };
+              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true };
             }
           } else {
             // An explicit per-face fill is taken literally — dimming a colour
