@@ -1009,47 +1009,56 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
-### Measured 2026-08-12 (evening) — both WebGPU debts have collapsed, and not by me
+### Retracted 2026-08-12 (evening) — "both WebGPU debts have collapsed" was a unit error
 
-The two open items from this branch's WebGPU work were re-measured against the
-current tree. Both are effectively gone, and concurrent shader work in another
-session is what closed them — recorded here because the ledger is worthless if
-it only credits the person writing it.
+The entry that stood here claimed `glass-grain` had fallen from **32.712 %** to
+**0.192 %** and that the map-reading divergences were resolved. It was wrong,
+and wrong in the way this document exists to catch: two different metrics read
+off two different tools and subtracted.
 
-| Scene | Was | Now | Class |
-|---|---|---|---|
-| `effect-compound-blur` | the "weaker blur at the bright end" | **0.000%** | pixel-exact |
-| `effect-turbulent-displace` | divergent | **0.000%** | pixel-exact |
-| `effect-displacement-map` | divergent | 0.790% | 548 px, **100% contour** |
-| `effect-displacement-map-layer` | divergent | 0.515% | 357 px, **100% contour** |
-| `glass-grain` | ceiling raised by hand to **32.712%** | **0.192%** | 133 px, 4 flat, max Δ 5/255 |
+- The **ratchet** (`comparator.mjs`) counts `pixelmatch` diffs:
+  `ratio = diffPixels / totalPixels`, flagging any pixel past a small numeric
+  threshold, sub-perceptual ones included.
+- **`analyze-gap.mjs`** counts only pixels past a *perceptual* threshold, then
+  classifies each as contour or flat.
 
-The two displacement remainders classify `coverage-only` with `flat` and
-`alphaOnly` both zero: the rasterizers drew the SAME contour and disagree only
-about sub-pixel coverage. That is the benign antialiasing class, not the
-colour-and-radius defect the map-reading investigation was chasing.
+Both print "percent of pixels differing" and they are not the same population.
+`glass-grain` is 0.32712 by the first and 0.192 % by the second **on the same
+frame**; nothing moved.
 
-**Both of my leads on that investigation were wrong.** Orientation was
-eliminated first (a horizontal greyscale ramp is invariant under V-flip and
-channel swap). Alpha — recorded as "the live lead", with a readback proposed as
-the next step — is eliminated too, and by inspection rather than measurement:
-the map is an opaque gradient (`#000000` → `#ffffff`, no layer opacity) and the
-subject sits inside it, so alpha is 1 everywhere the divergence was reported.
-Premultiplied rgb IS straight rgb at alpha 1, so the premultiplication the
-hypothesis rested on is a no-op exactly where the symptom lived. The readback
-would have cost a harness change and returned 1.0.
+The tell was there and got walked past: `light-ambient` has a ceiling of
+**0.63873** while `analyze-gap` reports **89.026 %** — and the gate had just
+said all 26 known divergences *held at their ceiling*. A frame cannot both
+exceed its ceiling and hold at it. That contradiction was visible in the same
+output as the numbers being compared, and it was noticed only when a second
+cluster was checked for a different reason.
 
-Two leads, both confidently recorded, both wrong on inspection. The correlation
-that generated them — "the only three scenes reading another layer as a map are
-the only three diverging this way" — was real and still produced nothing, which
-is the honest summary of that line of work.
+**What still stands**, because it needs no cross-tool comparison:
 
-**Not done:** the ceilings are stale — `glass-grain` at 32.712% would now hide a
-170× regression. They are deliberately NOT tightened here. Every number above
-was measured against a working tree holding ~235 uncommitted edits from another
-session, so a ceiling set against it would be pinned to a state nobody has
-committed, and would fail for whoever is mid-refactor without telling them why.
-Tighten once the tree is stable.
+| Scene | analyze-gap verdict |
+|---|---|
+| `effect-compound-blur`, `effect-turbulent-displace` | 0 pixels past the perceptual threshold |
+| `effect-displacement-map`, `-layer` | 0.790 % / 0.515 %, **100 % contour**, zero flat |
+
+That is a statement about perceptual difference only. `run.mjs` reports
+`effect-compound-blur` as NOT matching its committed reference, so pixels do
+differ; they differ sub-perceptually. Both facts are true and the earlier entry
+collapsed them into "pixel-exact", which the tool never said.
+
+**Also retracted:** the claim that another session's work closed these. No
+before/after was measured on a comparable metric, so the improvement itself is
+unestablished, let alone its cause.
+
+**What remains true and useful.** Alpha is still eliminated as the map-reading
+lead, by inspection rather than measurement: the map is an opaque gradient and
+the subject sits inside it, so alpha is 1 where the divergence was reported, and
+premultiplied rgb IS straight rgb at alpha 1. Both recorded leads on that
+investigation — orientation, then alpha — were wrong.
+
+The remaining flat-difference cluster, by `analyze-gap`'s measure, is
+`light-ambient`, `layer-styles`, `mask-feather`, `three-d-dof-visible`,
+`light-cast-shadow` and `light-spot`. All six are pre-existing baseline entries,
+none newly divergent. Their real ratchet standing is UNMEASURED here.
 
 ### Swept 2026-08-12 — the Renderable boundary is clean, and now stays that way
 
