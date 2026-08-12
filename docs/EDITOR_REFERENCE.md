@@ -901,6 +901,66 @@ hits in `.ts`/`.tsx` at all; and `aces` at 255 hits was pure substring noise —
 
 ---
 
+### Measured 2026-08-12 — sizing the GPU port of the CPU effect population
+
+The standing plan calls for moving the Canvas2D effects onto the GPU, and the
+first question is a ratio: month or quarter. `scripts/effectPortTriage.cjs`
+answers what can be answered exactly and refuses the rest.
+
+| | |
+|---|---|
+| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 145 |
+| already a pure `(data, w, h, …)` kernel | **92** (82%) |
+| need a whole-image reduction | **4** — `equalize`, `auto-levels`, `auto-contrast`, `auto-color` |
+| drawn with canvas ops, no pure kernel | **20** |
+
+The **112** confirms the figure every brief has been quoting; unlike the effect
+count, this one was right. Derived from the predicate rather than a copy of the
+list, and `unaccounted: 0` — every one of the 145 lands in exactly one bucket,
+so there is no silent third category rendering as a no-op.
+
+**The 82% is the finding that decides the answer.** The pixel work is already
+separated from the Canvas2D plumbing: `applyMedian` is four lines around
+`medianData(data, w, h, radius)`, `applyAutoLevels` is `applyInPlace(oc, w, h,
+d => autoLevelsData(d, …))`. A pure array kernel is the form a fragment shader
+is translated *from*, so for most of the population the port is a translation
+rather than an untangling. That is a month-shaped problem, not a quarter-shaped
+one — and it is a property of the code as it stands, not a plan.
+
+**Only 4 need more than a fragment shader.** A shader sees one pixel and its
+neighbours; it cannot see a histogram without a separate reduction pass. Those
+four are a different piece of work and should be scheduled as one. Every other
+kernel is per-pixel, neighbourhood or warp — and neighbourhood sampling is
+*easier* in a shader than on the CPU, which is the case shaders exist for.
+
+The **20** with no pure kernel are canvas draw calls, and they are not a
+homogeneous group: ten are procedural generators (`checkerboard`, `grid`,
+`circle`, `ellipse`, `radio-waves`, `lightning`, `beam`, `lens-flare`,
+`light-rays`, `light-sweep`), three are interior layer styles needing the alpha
+silhouette, and two — `numbers` and `timecode` — rasterize glyphs, which is the
+genuinely awkward corner. Worth noting against the stated priority of doing the
+light/glow/flare family first: `lens-flare`, `light-rays`, `light-sweep` and
+`beam` are all procedural generators, which are among the easiest shaders to
+write. The priority and the difficulty agree.
+
+**What this deliberately does not report: the mechanical-vs-hard split.** Three
+heuristics were tried and all three produced confident, wrong numbers —
+recorded in the script's header so a fourth attempt starts from them:
+
+- reading only the dispatch handler gave **94% mechanical**, because the
+  handlers are wrappers and the work is one call deeper;
+- `dx`/`dy` as a neighbourhood signal classified **Vignette** — a per-pixel
+  radial falloff — as neighbourhood sampling, since `dx` is as often a distance
+  from a centre as a tap offset;
+- negative-init loops caught **Median** and missed **Find Edges**, because a
+  3×3 Sobel indexes its neighbours directly with no tap loop to find.
+
+Two further false positives were caught only by hand-checking every flagged
+kernel: a body slice that ran past its own closing brace, and — the one worth
+remembering in this repo specifically — a match on the word "histogram" inside
+a **doc comment** describing a different effect. Signals get read from code with
+comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
+
 ### Fixed 2026-08-12 — four small ones, all the same shape
 
 Each was a declaration nothing honoured, and each is the kind of thing that
