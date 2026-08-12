@@ -60,6 +60,79 @@ export const SEAM_OVERLAP = 0.25;
 /** Quads per 90° corner arc on a rounded-rect extrusion. */
 export const ROUNDED_CORNER_SEGMENTS = 6;
 
+/**
+ * Depth between adjacent slices of a TEXT / complex-shape extrusion, in px.
+ *
+ * Such a body is not built from wall planes — its silhouette is a glyph or an
+ * arbitrary path, which this flat-quad model cannot turn into walls — so it is
+ * a stack of thin plates sliced along z. The gaps between plates are what you
+ * see when the object is yawed, and a gap of `step` in depth projects to
+ * `step · sin(yaw)` on screen. At 1.5 px that is 1.06 px at 45° of yaw, i.e.
+ * about the coarsest spacing that still stays sub-pixel through the rotations
+ * an extruded title actually gets.
+ *
+ * The value is unchanged; it was a bare literal, and naming it is what lets
+ * {@link MAX_EXTRUSION_SLICES} state the depth up to which it holds.
+ */
+export const EXTRUSION_SLICE_STEP_PX = 1.5;
+
+/**
+ * Ceiling on the number of slices one such extrusion may emit.
+ *
+ * ── What the old ceiling did ────────────────────────────────────────────────
+ *
+ * It was 45, written as a bare literal in a bulk commit with no stated reason —
+ * so the honest answer to "what was the cap for?" is that nothing records one.
+ * What it DID is precise, though, and is not what the shape of the code
+ * suggests: the stack always spanned the full depth, because `sliceStep` is
+ * `extrusionDepth / sliceCount`. Nothing was ever truncated. What saturated was
+ * the DENSITY — past 45 × 1.5 = 67.5 px of depth the same 45 plates simply
+ * moved further apart:
+ *
+ *     depth  40   → 27 slices, 1.48 px apart
+ *     depth  67.5 → 45 slices, 1.50 px      ← the ceiling binds here
+ *     depth 100   → 45 slices, 2.22 px
+ *     depth 300   → 45 slices, 6.67 px      ← 4.3 px gaps at 40° yaw: combing
+ *
+ * That is the "stair-stepping along the trailing edge at depth 300 where depth
+ * 40 is clean" report, and it is specifically a TEXT bug — a rect uses exact
+ * wall planes and never slices.
+ *
+ * ── Why 400, measured ───────────────────────────────────────────────────────
+ *
+ * A slice is a flat quad in the shared depth pass with no offscreen resolve of
+ * its own, and every slice of one layer shares a `contentHash`, so they share
+ * one rasterized texture. Slices are therefore MUCH cheaper than the
+ * effect-laden faces `faceEffects.ts` has to budget for. Single frame including
+ * readback, this machine, 2026-08-12:
+ *
+ *     slices    WebGL2    WebGPU
+ *        45      471 ms    102 ms
+ *       100      673 ms    104 ms
+ *       200      648 ms    129 ms
+ *       400      934 ms    154 ms
+ *
+ * ~1.3 ms per extra slice on WebGL2 and ~0.15 ms on WebGPU: a 9× increase in
+ * slice count costs 2× the frame on the slower backend, and only for a layer
+ * that actually asks for that depth.
+ *
+ * 400 × 1.5 px keeps the spacing at its intended 1.5 px all the way to **600 px
+ * of depth**, which covers any extrusion that fits in a normal comp. Past that
+ * the spacing widens again, but from a far better starting point — at depth
+ * 1200 it is 3 px, where the old ceiling gave 6.67 px at depth 300.
+ *
+ * ── What this is NOT ────────────────────────────────────────────────────────
+ *
+ * Still an approximation of a solid by a stack of plates. The real fix is to
+ * generate wall geometry from the glyph/path outline, exactly as the rect path
+ * already does from its own outline, which removes the density question
+ * entirely rather than pushing it out of range. That needs outline extraction
+ * for text and is a much larger change; this bounds the visible defect in the
+ * meantime, and the numbers above are what a proposal to do it should be
+ * measured against.
+ */
+export const MAX_EXTRUSION_SLICES = 400;
+
 export interface ExtrusionFace {
   /** Face-local centered px → layer-local centered px (column-major mat4). */
   m: Matrix4;
@@ -78,8 +151,36 @@ export interface ExtrusionFace {
 export type BevelStyle = 'angular' | 'concave' | 'convex';
 export const DEFAULT_BEVEL_STYLE: BevelStyle = 'angular';
 
+/**
+ * What {@link extrusionGeometry} produced: the faces, and whether it actually
+ * emitted a bevel.
+ *
+ * The second field exists because the caller cannot infer it. The bevel is
+ * honoured on a square-cornered rect and IGNORED on a rounded one and on an
+ * ellipse, each for a reason recorded at its own branch — but `buildSnapshot`
+ * was insetting the front face from `clampBevel(...)` regardless, so on a
+ * rounded layer it shrank the front face to meet a chamfer ring that had never
+ * been emitted. A rounded front face floated ~12 px inside the outline with the
+ * darker back cap showing through the ring-shaped gap.
+ *
+ * That is a contract failure, not a maths error: the decision was taken in one
+ * module and acted on in another that was never told. So it is reported
+ * ALONGSIDE the faces rather than recomputed by a second function — a predicate
+ * that re-derives "did this shape get a bevel?" from w/h/d/cornerRadius is the
+ * same coupling again, with an extra copy of the branch logic to keep in step.
+ */
+export interface ExtrusionGeometry {
+  faces: ExtrusionFace[];
+  /** Chamfer depth actually emitted, in px — CLAMPED, and 0 when no chamfer
+   *  ring was produced. This is the amount the caller must inset the front face
+   *  by, and nothing else is. */
+  bevel: number;
+}
+
 export interface ExtrusionOptions {
-  /** Chamfer depth in px (0 = no bevel). Clamped by {@link clampBevel}. */
+  /** Chamfer depth in px (0 = no bevel). Clamped by {@link clampBevel}, and
+   *  ignored entirely by the rounded-outline and ellipse branches — read
+   *  {@link ExtrusionGeometry.bevel} for what was actually emitted. */
   bevel?: number;
   /** Bevel profile (see {@link BevelStyle}). */
   bevelStyle?: BevelStyle;
@@ -180,9 +281,36 @@ function face(
  *   back   = T(0, 0, d) — w×h plane at z = d
  *   right  = T(+w/2, 0, d/2) · Ry(90°) — d×h plane; face-x → −z, so
  *                                                 x_f ∈ [−d/2, d/2] spans z ∈ [0, d]
- *   left   = T(−w/2, 0, d/2) · Ry(90°)
+ *   left   = T(−w/2, 0, d/2) · Ry(270°)
  *   top    = T(0, −h/2, d/2) · Rx(90°) — w×d plane; face-y → +z
- *   bottom = T(0, +h/2, d/2) · Rx(90°)
+ *   bottom = T(0, +h/2, d/2) · Rx(270°)
+ *
+ * ── The 180° on the far wall of each pair, and why it is not cosmetic ───────
+ *
+ * Left shared Ry(90°) with right, and bottom shared Rx(90°) with top. A quad's
+ * normal is its own +Z axis, so each pair came out with the SAME normal — and
+ * since the two walls of a pair sit on opposite sides of the body, one of every
+ * pair pointed INTO the solid. Every face of a box was wound as if the box had
+ * no far side.
+ *
+ * It stayed invisible because lighting is two-sided: `lightShading.ts` and the
+ * four `builtin.ts` shaders all take `abs(dot(N, L))`, which cannot tell a
+ * normal from its negation. So the wrong sign produced the SAME gain as the
+ * right one, and a box lit hard from one side came out lit identically on both
+ * — the thing that reads as "it doesn't look like a solid". Nothing in the
+ * suite could catch it either: every assertion about a wall was about where its
+ * corners land, and mirroring a quad in its own plane moves no corner.
+ *
+ * The bevel chamfer rings below were always wound correctly, and they are where
+ * the intended pattern is written down: `cfr` Ry(135°) against `cfl` Ry(225°),
+ * i.e. the far member of a pair is the near one plus 180°. The walls now follow
+ * the rings rather than the rings being the exception.
+ *
+ * Mirroring a wall flips its local x (or y) axis and nothing else: the plane is
+ * the same plane, covering the same pixels, and a wall is a flat solid quad
+ * with no content to be mirrored. Gradient sampling reads the matrix's
+ * TRANSLATION (`wallFillAt`), which does not move. So this changes no pixel
+ * today; it is what makes one-sided shading expressible at all.
  *
  * Ellipse walls: N chord strips. Strip i spans the perimeter chord from angle
  * θ_i to θ_{i+1} (semi-axes a = w/2, b = h/2); its matrix is
@@ -208,15 +336,15 @@ function face(
  * "angular" approximation that avoids separate mitred corner facets. Ellipse
  * bevel is deferred (the ring-inset maths is messy); an ellipse ignores bevel.
  */
-export function extrusionFaces(
+export function extrusionGeometry(
   w: number,
   h: number,
   d: number,
   shape: 'rect' | 'ellipse' = 'rect',
   segments: number = ELLIPSE_WALL_SEGMENTS,
   opts: ExtrusionOptions = {},
-): ExtrusionFace[] {
-  if (!(d > 0) || !(w > 0) || !(h > 0)) return [];
+): ExtrusionGeometry {
+  if (!(d > 0) || !(w > 0) || !(h > 0)) return { faces: [], bevel: 0 };
   if (shape === 'ellipse') {
     const faces: ExtrusionFace[] = [face(0, 0, d, 0, 0, 0, w, h, 'back', 'back')];
     const a = w / 2;
@@ -233,7 +361,9 @@ export function extrusionFaces(
       const phi = Math.atan2(dy, dx) / DEG;
       faces.push(face((x0 + x1) / 2, (y0 + y1) / 2, d / 2, 90, 0, phi, len, d, 'wall', `w${i}`));
     }
-    return faces;
+    // Ellipse bevel is deferred (the ring-inset maths is messy), so this branch
+    // emits no chamfer and reports none.
+    return { faces, bevel: 0 };
   }
 
   // Rounded rect: extrude the OUTLINE. Emitted before the bevel path because a
@@ -254,7 +384,18 @@ export function extrusionFaces(
       const phi = Math.atan2(dy, dx) / DEG;
       faces.push(face((p0.x + p1.x) / 2, (p0.y + p1.y) / 2, d / 2, 90, 0, phi, len, d, 'wall', `w${i}`));
     }
-    return faces;
+    // NO CHAMFER, and the caller is now told so.
+    //
+    // This branch returns before the bevel path below, deliberately — a bevel on
+    // a rounded corner is a torus section, which a flat-quad wall model cannot
+    // express, so a rounded layer takes the un-bevelled rounded body rather than
+    // silently drawing square corners. That decision was right and was never
+    // communicated: `buildSnapshot` computed its front-face inset from
+    // `clampBevel` unconditionally, so a rounded layer with a bevel set shrank
+    // its front face by 12 px to meet a chamfer ring that does not exist. What
+    // you saw was a rounded front face floating inside the outline with the
+    // darker back cap showing through the ring-shaped gap.
+    return { faces, bevel: 0 };
   }
 
   const segs = Math.max(1, Math.floor(opts.wallSegments ?? 1));
@@ -271,9 +412,9 @@ export function extrusionFaces(
     if (segs <= 1) {
       return [
         face(+w / 2, 0, d / 2, 0, 90, 0, wd, h, 'wall', 'r'),
-        face(-w / 2, 0, d / 2, 0, 90, 0, wd, h, 'wall', 'l'),
+        face(-w / 2, 0, d / 2, 0, 270, 0, wd, h, 'wall', 'l'),
         face(0, -h / 2, d / 2, 90, 0, 0, w, wd, 'wall', 't'),
-        face(0, +h / 2, d / 2, 90, 0, 0, w, wd, 'wall', 'b'),
+        face(0, +h / 2, d / 2, 270, 0, 0, w, wd, 'wall', 'b'),
       ];
     }
     const out: ExtrusionFace[] = [];
@@ -299,13 +440,13 @@ export function extrusionFaces(
     for (let i = 0; i < segs; i++) {
       const [cy, sh] = strip(h, i);
       out.push(face(+w / 2, cy, d / 2, 0, 90, 0, wd, sh, 'wall', `r${i}`));
-      out.push(face(-w / 2, cy, d / 2, 0, 90, 0, wd, sh, 'wall', `l${i}`));
+      out.push(face(-w / 2, cy, d / 2, 0, 270, 0, wd, sh, 'wall', `l${i}`));
     }
     // Top / bottom walls run along the box's WIDTH, so they split along x.
     for (let i = 0; i < segs; i++) {
       const [cx, sw] = strip(w, i);
       out.push(face(cx, -h / 2, d / 2, 90, 0, 0, sw, wd, 'wall', `t${i}`));
-      out.push(face(cx, +h / 2, d / 2, 90, 0, 0, sw, wd, 'wall', `b${i}`));
+      out.push(face(cx, +h / 2, d / 2, 270, 0, 0, sw, wd, 'wall', `b${i}`));
     }
     return out;
   };
@@ -313,7 +454,7 @@ export function extrusionFaces(
   const b = clampBevel(w, h, d, opts.bevel ?? 0);
   if (b <= 0) {
     // Unbevelled box: back cap + 4 full-depth walls.
-    return [face(0, 0, d, 0, 0, 0, w, h, 'back', 'back'), ...walls(d)];
+    return { faces: [face(0, 0, d, 0, 0, 0, w, h, 'back', 'back'), ...walls(d)], bevel: 0 };
   }
 
   // Bevelled rect. Inset caps (w−2b × h−2b), walls span z ∈ [b, d−b] (depth wd),
@@ -347,5 +488,27 @@ export function extrusionFaces(
     face(0, -h / 2 + b / 2, d - b / 2, 45, 0, 0, w, L, 'wall', 'cbt'),
     face(0, +h / 2 - b / 2, d - b / 2, 315, 0, 0, w, L, 'wall', 'cbb'),
   );
-  return faces;
+  // The ONLY branch that emits a chamfer, so the only one that reports a bevel.
+  // `b` is the CLAMPED value, not the requested one, so the caller's front-face
+  // inset matches the geometry even when the request was clamped down.
+  return { faces, bevel: b };
+}
+
+/**
+ * The faces alone, for callers with no interest in the bevel — hit-testing
+ * (`facePicking`) and the geometry tests.
+ *
+ * A thin reader over {@link extrusionGeometry} rather than a second
+ * implementation: the bevel report and the faces have to come from the same
+ * decision, which is the whole point of the change that introduced it.
+ */
+export function extrusionFaces(
+  w: number,
+  h: number,
+  d: number,
+  shape: 'rect' | 'ellipse' = 'rect',
+  segments: number = ELLIPSE_WALL_SEGMENTS,
+  opts: ExtrusionOptions = {},
+): ExtrusionFace[] {
+  return extrusionGeometry(w, h, d, shape, segments, opts).faces;
 }

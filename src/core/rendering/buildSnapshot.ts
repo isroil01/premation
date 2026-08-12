@@ -44,8 +44,9 @@ import { readPosterizeTimeFps } from '@core/effects/posterizeTime';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { resolveAudioSpectrum } from '@core/audio/audioSpectrum';
 import { readNodeMaterial } from '@core/scene/material';
-import { extrusionFaces, clampBevel, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS } from '@core/scene/extrusion';
+import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
+import { faceEffectsFor } from '@core/scene/faceEffects';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
 import { resolvePathOps, applyPathOpChain, shapeOutline, type PolyRun } from '@core/scene/pathOps';
@@ -60,6 +61,7 @@ import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
+import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides } from '@core/scene/compInstanceOverrides';
 import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
@@ -181,6 +183,13 @@ export interface SnapshotComp {
    * absurd nesting. Set by the renderer itself; callers never pass it.
    */
   compStack?: readonly string[];
+  /**
+   * INTERNAL — Essential Properties handed down by the comp instance whose
+   * recursive pass this is (see `compInstanceOverrides.ts`). Keyed by the
+   * referenced comp's OWN node ids, because this pass walks the real nodes
+   * rather than clones. Set by the renderer itself; callers never pass it.
+   */
+  compOverrides?: ReadonlyMap<string, number>;
 }
 
 /** Nesting cap for recursive composition rendering. */
@@ -420,7 +429,17 @@ function materializeForFrame(n: SceneNode): SceneNode {
     //     children that are already in the referenced comp's own space.
     ...(instanceSourceOf(n) !== null ? { __instanceSource: instanceSourceOf(n) } : {}),
     ...(isCompInstanceRoot(n) ? { __compInstanceRoot: true } : {}),
+    //   • `__overriddenProps` is the Essential Properties set. It MUST be named
+    //     here for the same reason as the two above: this list is a whitelist,
+    //     and a dropped field turns the override into a value that patches the
+    //     static prop and is then outvoted by the source's track every frame.
+    ...(overriddenPropsOf(n) ? { __overriddenProps: overriddenPropsOf(n) } : {}),
   } as SceneNode;
+}
+
+/** The Essential Properties set attached to a clone by `expandCompInstances`. */
+function overriddenPropsOf(n: SceneNode): ReadonlySet<string> | undefined {
+  return (n as unknown as { __overriddenProps?: ReadonlySet<string> }).__overriddenProps;
 }
 
 export function buildSnapshot(
@@ -448,9 +467,35 @@ export function buildSnapshot(
   // `comp` node and is rendered below by its own recursive pass, so that it
   // resolves ITS camera, its depth of field and its own 3D sort rather than
   // borrowing the host's.
+  // Essential Properties on a SEALED instance. A collapsed instance expands
+  // inline and its clones are patched by `expandCompInstances`; a sealed one is
+  // rendered by the recursive pass below, over the referenced comp's REAL
+  // nodes, where no clone exists to carry an override. So the owning instance
+  // hands its overrides down through `comp.compOverrides` and they are applied
+  // here — the same two halves (patch the Transform, mark the prop overridden),
+  // just keyed by the node's own id rather than by `__instanceSource`.
+  //
+  // Without this, overrides worked on collapsed instances and silently did
+  // nothing on sealed ones, which is the default. The test that caught it is
+  // `overrides a KEYFRAMED property` in compInstanceOverrides.test.ts.
+  const ownOverrides = comp.compOverrides;
+  const applyOwnOverrides = (n: SceneNode): SceneNode => {
+    if (!ownOverrides || ownOverrides.size === 0) return n;
+    const ovProps = overriddenPropsFor(ownOverrides, n.id);
+    if (!ovProps) return n;
+    return {
+      ...(n as unknown as Record<string, unknown>),
+      components: applyOverridesToComponents(n.components, ownOverrides, n.id),
+      __overriddenProps: ovProps,
+    } as unknown as SceneNode;
+  };
   const nodes = expandCompInstances(
     graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
-  ).map(materializeForFrame);
+  // AFTER `materializeForFrame`, never before: a graph node view exposes
+  // `transform` and friends through prototype getters, and the spread in
+  // `applyOwnOverrides` drops them — `readBase` then died on an undefined
+  // transform. A materialized node is a plain object, so the spread is safe.
+  ).map(materializeForFrame).map(applyOwnOverrides);
   const anySolo = nodes.some((n) => n.solo === true);
 
   const rawController = getTimelineController();
@@ -466,10 +511,31 @@ export function buildSnapshot(
   // Comp-instance id indirection: a clone samples the ORIGINAL node's
   // animation tracks and timeline clips. Real nodes map to themselves.
   const srcId = (id: string): string => instanceSourceOf(nodeById.get(id)) ?? id;
+  /**
+   * Essential Properties: props this clone overrides (see
+   * `compInstanceOverrides.ts`). Attached to the clone by `expandCompInstances`.
+   *
+   * This is the half that makes an override actually mean something. The static
+   * value is already patched onto the clone's Transform, but every consumer
+   * reads `a?.has(p) ? a.get(p) : base.p` — so on a KEYFRAMED layer the
+   * original's track would outvote the patch on every frame, silently, and the
+   * inspector control would look wired while changing nothing. Dropping the
+   * prop here is what makes the override REPLACE the animation, as AE does.
+   */
+  const overriddenOf = (id: string): ReadonlySet<string> | null =>
+    (nodeById.get(id) as unknown as { __overriddenProps?: ReadonlySet<string> })?.__overriddenProps ?? null;
   const anim: AnimationEngine = {
-    sample: (id, prop, tt) => rawAnim.sample(srcId(id), prop, tt),
-    evaluateNode: (id, tt) => rawAnim.evaluateNode(srcId(id), tt),
-    isAnimated: (id, prop) => rawAnim.isAnimated(srcId(id), prop),
+    sample: (id, prop, tt) =>
+      overriddenOf(id)?.has(prop) ? undefined : rawAnim.sample(srcId(id), prop, tt),
+    evaluateNode: (id, tt) => {
+      const values = rawAnim.evaluateNode(srcId(id), tt);
+      const ov = overriddenOf(id);
+      // `evaluateNode` builds a fresh Map per call, so deleting is safe here.
+      if (ov) for (const p of ov) values.delete(p);
+      return values;
+    },
+    isAnimated: (id, prop) =>
+      overriddenOf(id)?.has(prop) ? false : rawAnim.isAnimated(srcId(id), prop),
     timeSpan: (id) => rawAnim.timeSpan(srcId(id)),
     sampleData: (id: string, prop: string, tt: number) => rawAnim.sampleData(srcId(id), prop, tt),
   } as AnimationEngine;
@@ -1196,6 +1262,11 @@ export function buildSnapshot(
         width: size.width,
         height: size.height,
         rootId: ref,
+        // Essential Properties belong to THIS instance, so they must replace
+        // (never inherit) whatever the host pass was carrying — `...comp` would
+        // otherwise leak an outer instance's overrides into every comp nested
+        // below it, keyed by ids that happen to match.
+        compOverrides: readCompOverrides(node),
         // A nested comp contributes content, not a backdrop — its own
         // background must not paint over the host.
         transparent: true,
@@ -2453,8 +2524,8 @@ export function buildSnapshot(
         // Contour Volume Extrusion: For text and complex shapes, slice the
         // depth axis (z ∈ [1, extrusionDepth]) into continuous slices matching the exact
         // glyph/path silhouette so text extrudes as a solid 3D body without empty gaps.
-        const stepPx = 1.5;
-        const sliceCount = Math.min(45, Math.max(2, Math.ceil(extrusionDepth / stepPx)));
+        const stepPx = EXTRUSION_SLICE_STEP_PX;
+        const sliceCount = Math.min(MAX_EXTRUSION_SLICES, Math.max(2, Math.ceil(extrusionDepth / stepPx)));
         const sliceStep = extrusionDepth / sliceCount;
 
         // Emit BACK-TO-FRONT (i counts down), matching the geometric path and
@@ -2512,13 +2583,29 @@ export function buildSnapshot(
             // forced 45 full-viewport offscreen effect resolves PER FRAME.
             // Carrying `matte`/`motionSamples` also disqualified the slices from
             // the depth-tested 3D group, dropping them onto the painter path.
-            effects: undefined,
+            //
+            // `effects` is now DECIDED per effect rather than dropped wholesale
+            // (see faceEffects.ts): the shadow-casting and CPU-baked ones — the
+            // two populations that reason describes — are still kept off the
+            // slices, and everything else reaches them. Losing the whole list
+            // also lost depth of field, which arrives as an ordinary `blur`
+            // entry appended a few lines above, so an extruded body never
+            // defocused with the layer it belongs to.
+            effects: faceEffectsFor(layer.effects, { faceCount: sliceCount }),
             matte: undefined,
             isMatteSource: undefined,
             isAdjustment: undefined,
             motionSamples: undefined,
             deformedMesh: undefined,
             frameBlend: undefined,
+            // Same scrub as the geometric path's `common` below, and for the
+            // same reason: these sample the backdrop, so a slice carrying one
+            // leaves the depth group while its siblings stay in it. A slice
+            // stack splitting that way is worse than a box doing it — there are
+            // up to 400 of them.
+            glass: undefined,
+            backdropBlur: undefined,
+            preserveTransparency: undefined,
             fill: resolveFaceMaterial(faceMats, isBackCap ? 'back' : 'side', wallFill).fill,
           };
 
@@ -2543,8 +2630,6 @@ export function buildSnapshot(
         // exact 3D wall planes + optional bevel chamfer rings.
         const extShape = layer.kind === 'shape' && layer.primitive === 'ellipse' ? 'ellipse' : 'rect';
         const bevelRequested = Math.max(0, a?.get('bevelDepth') ?? d3.bevelDepth);
-        const bevel = extShape === 'rect' ? clampBevel(layerW, layerH, extrusionDepth, bevelRequested) : 0;
-        frontInset = bevel;
 
         // Corner radius drives the extruded OUTLINE too, so a rounded card
         // is a rounded solid rather than a rounded face on a square block.
@@ -2554,7 +2639,25 @@ export function buildSnapshot(
         // position. Only for a gradient: a solid fill is already exact at one
         // strip per side, and leaving it at 1 keeps that geometry untouched.
         const wallSegments = layer.fillPaint && layer.fillPaint.type !== 'solid' ? GRADIENT_WALL_SEGMENTS : 1;
-        for (const f of extrusionFaces(layerW, layerH, extrusionDepth, extShape, undefined, { bevel: bevelRequested, bevelStyle: d3.bevelStyle, cornerRadius: extCorner, wallSegments })) {
+        // Materialized rather than iterated lazily: the per-face effect decision
+        // needs to know how MANY faces there are before it can price a spatial
+        // effect (see SPATIAL_FACE_BUDGET), and a face cannot be told that by a
+        // loop it is already inside.
+        const extGeom = extrusionGeometry(layerW, layerH, extrusionDepth, extShape, undefined, { bevel: bevelRequested, bevelStyle: d3.bevelStyle, cornerRadius: extCorner, wallSegments });
+        const extFaces = extGeom.faces;
+        // The bevel the GEOMETRY emitted, not the one that was asked for.
+        //
+        // This was `clampBevel(layerW, layerH, extrusionDepth, bevelRequested)`,
+        // computed unconditionally for any rect — but the rounded-outline branch
+        // returns before the bevel path and emits no chamfer ring at all. So a
+        // rounded card with a bevel set had its front face shrunk by the full
+        // inset to meet a ring that was never drawn, leaving a rounded front
+        // face floating inside the outline with the darker back cap visible
+        // straight through the gap. Reading the emitted value cannot make that
+        // mistake, and does not require this module to know which shapes are
+        // rounded — which is the coupling that produced the bug.
+        frontInset = extGeom.bevel;
+        for (const f of extFaces) {
           const M = Matrix4Math.multiply(
             world3d as import('@motion/scene').Matrix4,
             f.m,
@@ -2567,6 +2670,15 @@ export function buildSnapshot(
           const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
           const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
           const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
+          // The layer's own effects, filtered for what a face may carry, plus
+          // the interior layer styles this particular face qualifies for. One
+          // decision, used by both branches below — they used to differ only by
+          // accident, and the back cap's `...layer` spread is exactly the kind
+          // of asymmetry that let a style reach one face and not the others.
+          const faceFx = faceEffectsFor(layer.effects, {
+            faceCount: extFaces.length,
+            extra: faceFxFor(f.suffix),
+          });
           const common = {
             id: `${layer.id}::ext-${f.suffix}`,
             x: O.x,
@@ -2597,12 +2709,35 @@ export function buildSnapshot(
             motionSamples: undefined,
             deformedMesh: undefined,
             frameBlend: undefined,
-            effects: undefined,
+            /*
+              Backdrop-sampling styles do not ride onto a synthesized face.
+
+              The back cap is built by spreading `...layer` while the walls are
+              built field-by-field, so anything outside this scrub list reached
+              the back cap ALONE. Glass and backdrop blur are the observed case
+              and were not the only candidates: both are excluded from the
+              depth-tested group (they read what is composited beneath, which
+              the depth pass cannot supply), so the object rendered its walls in
+              the depth group and its two caps on the affine painter path, and
+              the glass panel detached from the body.
+
+              Scrubbing them here is only half the answer, because the FRONT
+              face is the layer itself and legitimately keeps its glass. The
+              other half is `enforceExtrusionPathAgreement` in the snapshot
+              adapter, which keeps every face of one object on whichever path
+              the object as a whole takes. This half is what stops a wall and a
+              back cap disagreeing about what they are; that half is what stops
+              the object disagreeing with its own front face.
+            */
+            glass: undefined,
+            backdropBlur: undefined,
+            preserveTransparency: undefined,
+            effects: faceFx,
             lighting: undefined as RenderLayer['lighting'],
             shade3d: undefined as RenderLayer['shade3d'],
           };
           const faceLayer: RenderLayer = f.role === 'back'
-            ? { ...layer, ...common, effects: faceFxFor(f.suffix), fill: resolveFaceMaterial(faceMats, 'back', wallFill).fill }
+            ? { ...layer, ...common, fill: resolveFaceMaterial(faceMats, 'back', wallFill).fill }
             : {
                 id: common.id,
                 kind: 'shape',
@@ -2627,7 +2762,7 @@ export function buildSnapshot(
                 // own. (The back cap takes the branch above, which spreads
                 // `layer` and so already carries the layer's radius.)
                 primitive: 'rect',
-                effects: faceFxFor(f.suffix),
+                effects: faceFx,
                 // Facets of one body: they tile against each other, so SDF
                 // edge coverage would draw a dark hairline at every join —
                 // twenty of them around a cylinder. See RenderLayer.flatFacet.

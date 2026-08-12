@@ -88,6 +88,32 @@ export type RenderableEffect =
       mapLayerId?: string;
     }
   | {
+      type: 'apply-color-lut';
+      /** Texture key of the LUT STRIP (N slices of N×N, or N×1 for a 1D LUT). */
+      lutTextureKey: string;
+      /** Cube edge length, or the entry count for a 1D LUT. */
+      size: number;
+      is1d: boolean;
+      /** 0..1. Mixes toward the graded colour, so the control is a STRENGTH
+       *  rather than a switch — and matches what the Canvas2D path does. */
+      intensity: number;
+      domainMin: number;
+      domainMax: number;
+    }
+  | {
+      type: 'compound-blur';
+      /** Ceiling on the blur, in comp px. The map scales each pixel's radius
+       *  between 0 and this, so it is a maximum rather than an amount. */
+      maxRadiusPx: number;
+      /** Bright areas sharp instead of blurred. */
+      invert: boolean;
+      /** Renderable id of the layer whose LUMINANCE drives the radius. Unset or
+       *  unresolvable → the layer blurs by its own luminance, matching the
+       *  displacement-map fallback: visibly wrong and debuggable, rather than a
+       *  silent no-op that reads as the effect being broken. */
+      mapLayerId?: string;
+    }
+  | {
       type: 'set-matte';
       /** Renderable id of the layer supplying the coverage. Unset or
        *  unresolvable → the effect is a NO-OP, deliberately. Falling back to
@@ -238,6 +264,19 @@ export interface Renderable {
    * COMPOSES with `advancedBlend` rather than replacing it.
    */
   preserveTransparency?: boolean;
+  /**
+   * Force this renderable off the depth-tested 3D path.
+   *
+   * Not a property of the layer — a property of the OBJECT it belongs to. An
+   * extrusion is one solid spread across up to fourteen renderables, and
+   * `depthEligible3D` is asked one renderable at a time, so any exclusion that
+   * catches some faces and not others splits the body between the depth group
+   * and the affine painter path. The snapshot adapter sets this on every face of
+   * such an object so they stay together (`enforceExtrusionPathAgreement`).
+   *
+   * Written by the adapter only; nothing in the renderer sets it.
+   */
+  depthExempt?: boolean;
   /**
    * Frosted-glass backdrop blur radius in device px (0/undefined = off).
    *
@@ -392,6 +431,14 @@ export interface Renderable {
  */
 export function depthEligible3D(r: Renderable): boolean {
   if (!r.threeD) return false;
+  // Set by the snapshot adapter when this renderable belongs to an object whose
+  // OTHER parts are ineligible — an extrusion's faces, which are one solid
+  // spread across many renderables. Without it a per-renderable exclusion cuts
+  // the object in half: the excluded faces take the affine painter path while
+  // their siblings stay depth-tested, and the two halves visibly come apart.
+  // See `enforceExtrusionPathAgreement`. Checked FIRST so the exemption cannot
+  // be overtaken by a rule below it.
+  if (r.depthExempt) return false;
   if (r.matteSource || r.matte || r.adjustment || r.precomp) return false;
   if (r.advancedBlend && r.advancedBlend > 0) return false;
   // Reads the accumulated backdrop's alpha, which the depth pass cannot supply.

@@ -269,6 +269,47 @@ describe('buildSnapshot — 3D extrusion bevel', () => {
     expect(ids).toContain('box::ext-back');
     expect(ids.filter((i) => i.includes('::ext-c'))).toHaveLength(8);
   });
+
+  /**
+   * A ROUNDED layer with a bevel set: the inset must follow the geometry.
+   *
+   * The rounded-outline branch returns before the bevel path and emits no
+   * chamfer ring — while `buildSnapshot` insets the front face by
+   * `clampBevel(...)` for any rect. A rounded card with `bevelDepth: 12`
+   * therefore drew a front face 24 px narrower than its own outline, meeting a
+   * ring that did not exist, and the darker back cap showed through the
+   * ring-shaped gap between them.
+   *
+   * Asserted on the front face's SIZE rather than on the presence of chamfer
+   * ids: the missing ring was never the bug — declining to bevel a rounded
+   * corner is a deliberate, documented choice. The bug was the caller acting on
+   * a bevel that had not been emitted.
+   */
+  it('a ROUNDED layer with a bevel keeps its front face full-size', () => {
+    const g = new SceneGraph();
+    g.addNode(shape3D('card', { extrusionDepth: 40, bevelDepth: 12, cornerRadius: 20 }));
+    const layers = snap(g).layers;
+    const front = layers.find((l) => l.id === 'card')!;
+    expect([front.width, front.height]).toEqual([100, 60]);
+    // No chamfer ring was emitted, which is why there is nothing to inset to.
+    expect(layers.filter((l) => l.id.includes('::ext-c'))).toHaveLength(0);
+  });
+
+  it('a square-cornered layer with the same bevel still insets (no over-correction)', () => {
+    // The control for the case above: the fix must not have turned the inset
+    // off in general, only where the geometry declined to bevel.
+    const g = new SceneGraph();
+    g.addNode(shape3D('box', { extrusionDepth: 40, bevelDepth: 12, cornerRadius: 0 }));
+    const front = snap(g).layers.find((l) => l.id === 'box')!;
+    expect([front.width, front.height]).toEqual([100 - 24, 60 - 24]);
+  });
+
+  it('an ELLIPSE with a bevel keeps its front face full-size too', () => {
+    const g = new SceneGraph();
+    g.addNode(shape3D('disc', { extrusionDepth: 40, bevelDepth: 12, shapeType: 'ellipse' }));
+    const front = snap(g).layers.find((l) => l.id === 'disc')!;
+    expect([front.width, front.height]).toEqual([100, 60]);
+  });
 });
 
 describe('buildSnapshot — anchor-offset extrusion stays glued', () => {

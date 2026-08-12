@@ -600,6 +600,39 @@ async function main() {
     scenes, backends, 'verify-3d-styles.mjs', 'three-d-drop-shadow',
     'layer styles + depth of field on 3D layers (direction and extent, not presence)',
   );
+  /*
+    Plugin effects, and the reason they need a SEMANTIC gate of their own.
+
+    The golden pixels come from WebGL2, where a plugin effect is a deliberate
+    passthrough — so `plugin-visible`'s reference is, correctly, a picture in
+    which the shader changed nothing. That reference gates the failure this
+    scene family was written for (a plugin effect ERASING the layer, which it
+    did on both tiers) and cannot gate the other one: an effect that silently
+    does not run looks exactly like the golden.
+
+    Only the WebGPU verifier can tell those apart, by comparing against a
+    control rendered in the same run. Without this line it existed and nothing
+    called it, which is the same shape of hole as the effect itself had.
+  */
+  const pluginFail = await gateSemantics(
+    scenes, backends, 'verify-plugin-render.mjs', 'plugin-control',
+    'a plugin effect runs, and runs correctly (against a live control, not a golden)',
+  );
+  /*
+    Extrusion effect REACH, and why a reference cannot hold it.
+
+    Every synthesized face of an extrusion carried `effects: undefined`, so a
+    layer's whole stack applied to the front face alone. The references for
+    these scenes are blessed from our own output, so blessing them while that
+    was true would have certified front-face-only forever — and every symptom
+    reads as success from a single frame, because the front face is most of
+    what a solid shows. Only a comparison against the scene's own control says
+    which FACES the effect reached.
+  */
+  const extrusionFail = await gateSemantics(
+    scenes, backends, 'verify-extrusion.mjs', 'ext-fx-invert',
+    'an effect reaches every face of an extruded solid, not just the front',
+  );
 
   process.stdout.write('\n');
   process.stdout.write(dim('  GPU-parity dashboard (unified engine comparison against committed reference):\n'));
@@ -619,14 +652,16 @@ async function main() {
     if (backend !== GATE_BACKEND) await reportSecondaryBackend(scenes, backend);
   }
 
-  if (parityFail === 0 && fidelityFail === 0 && animFail === 0 && alphaFail === 0 && stylesFail === 0) {
+  if (parityFail === 0 && fidelityFail === 0 && animFail === 0 && alphaFail === 0 && stylesFail === 0
+    && pluginFail === 0 && extrusionFail === 0) {
     process.stdout.write(green(`\n✓ gate green — unified engine output matches golden expectations.\n`));
     process.exit(0);
   }
   process.stdout.write(
     red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}, ` +
       `properties that stopped animating: ${animFail}, ` +
-      `alpha semantics: ${alphaFail}, 3D-style semantics: ${stylesFail}.\n`) +
+      `alpha semantics: ${alphaFail}, 3D-style semantics: ${stylesFail}, ` +
+      `plugin effects: ${pluginFail}, extrusion face reach: ${extrusionFail}.\n`) +
       dim(`  artifacts: ${path.join(ARTIFACTS, 'diff')}\n`),
   );
   process.exit(1);

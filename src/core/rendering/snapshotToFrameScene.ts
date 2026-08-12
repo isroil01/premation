@@ -23,6 +23,7 @@ import { Matrix4Math } from '@motion/scene';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
 import { isLutEffect } from '@core/effects/colorLut';
+import { readCubeLutParam } from '@core/effects/cubeLut';
 import { readMatte } from '@core/effects/matte';
 import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
 import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
@@ -451,6 +452,49 @@ export function extractSpatialEffects(
       const mapRaw = effectParam(e, 'mapLayerId');
       const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
       spatial.push({ type: 'displacement-map', amount: n('amount'), ...(mapLayerId ? { mapLayerId } : {}) });
+    }
+    if (e.type === 'apply-color-lut') {
+      /*
+        Emitted only when the file actually parsed.
+
+        An unset or unreadable LUT is a layer with no grade, and the honest
+        render of that is the layer unchanged — so the entry is omitted rather
+        than emitted with an empty table for the renderer to skip. That also
+        keeps the effect list free of entries the pass would only discard, which
+        matters because `effectSpreadPx` and the batching walk it.
+      */
+      const cube = readCubeLutParam(e);
+      if (cube) {
+        spatial.push({
+          type: 'apply-color-lut',
+          // The SAME key MotionRendererBackend registers the strip under. Two
+          // spellings of one key is how a texture ends up uploaded and never
+          // sampled — see `lut:` vs `cubelut:` there for why they differ.
+          lutTextureKey: `cubelut:${layer.id}`,
+          size: cube.size1d > 0 ? cube.size1d : cube.size,
+          is1d: cube.size1d > 0,
+          intensity: n('intensity') / 100,
+          // One pair for all three channels; `.cube` allows a per-channel
+          // domain and files using one are vanishingly rare.
+          domainMin: cube.domainMin[0],
+          domainMax: cube.domainMax[0],
+        });
+      }
+    }
+    if (e.type === 'compound-blur') {
+      // Same unset rule and the same self-fallback as displacement-map above.
+      const mapRaw = effectParam(e, 'blurLayerId');
+      const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
+      spatial.push({
+        type: 'compound-blur',
+        maxRadiusPx: n('maxBlur'),
+        // Read as a BOOLEAN, not through `n()`: `effectNumber` returns 0 for a
+        // checkbox param, so `n('invert') > 0.5` would be unconditionally false
+        // and the control would persist, keyframe, and do nothing. Same reading
+        // as set-matte's `invert` below, which is the existing precedent.
+        invert: e.params?.invert === true,
+        ...(mapLayerId ? { mapLayerId } : {}),
+      });
     }
     if (e.type === 'set-matte') {
       // Same shape as displacement-map above — node id === renderable id. The
@@ -1173,8 +1217,84 @@ function gradientBackgroundRenderable(width: number, height: number): Renderable
   };
 }
 
+/**
+ * The synthesized faces of one extrusion take the SAME render path as the layer
+ * they belong to.
+ *
+ * ── The failure this closes ─────────────────────────────────────────────────
+ *
+ * `depthEligible3D` is asked per RENDERABLE, but an extrusion is one OBJECT
+ * spread across up to fourteen of them, and the predicate cannot see that. So a
+ * per-renderable exclusion cuts a solid in half: `CompositionPass.renderList`
+ * collects CONTIGUOUS runs of eligible renderables, so the excluded faces drop
+ * to the affine painter path — which has no depth state at all — while their
+ * siblings stay in the depth-tested group.
+ *
+ * Observed with glass. Glass and backdrop blur are excluded for a good reason
+ * (they read what is composited beneath, which the depth pass cannot supply),
+ * and they reached the front face and the back cap but not the four walls. The
+ * body went to the depth group, the caps went to the painter, and the glass
+ * panel visibly detached from the solid with its rim overlapping the top wall.
+ *
+ * ── Why this is a pass over the result, not a rule in the predicate ─────────
+ *
+ * The correct answer is not "make glass eligible" — it is not — but "do not
+ * split the object". That is a statement about a SET of renderables, which a
+ * per-renderable predicate cannot express whatever rules are added to it. So
+ * the agreement is enforced where the whole set exists, by asking the REAL
+ * `depthEligible3D` rather than by restating its rules. A future exclusion
+ * added to that predicate is therefore honoured here automatically, which is
+ * the property the glass case did not have.
+ *
+ * Faces are identified by the `::ext-` id convention `buildSnapshot` mints
+ * them with — the same convention that keeps them out of hit-testing and the
+ * timeline.
+ */
+const EXT_FACE_MARK = '::ext-';
+
+/** `foo::ext-r` → `foo`; anything else → itself. */
+function extrusionBaseId(id: string): string {
+  const at = id.indexOf(EXT_FACE_MARK);
+  return at < 0 ? id : id.slice(0, at);
+}
+
+function enforceExtrusionPathAgreement(renderables: Renderable[]): void {
+  // Recurse FIRST: a sealed precomp renders through its own list, so an
+  // extrusion inside one would otherwise be missed entirely — and a nested comp
+  // is exactly where nobody would think to look for a body that came apart.
+  for (const r of renderables) {
+    if (r.precomp) enforceExtrusionPathAgreement(r.precomp.renderables as Renderable[]);
+  }
+  // Three linear passes rather than a nested scan. The obvious version asks,
+  // for each renderable, whether any OTHER renderable is one of its faces —
+  // which is quadratic, and this runs on every frame of every scene including
+  // the overwhelming majority that contain no extrusion at all.
+  const owners = new Set<string>();
+  for (const r of renderables) {
+    if (r.id.includes(EXT_FACE_MARK)) owners.add(extrusionBaseId(r.id));
+  }
+  if (owners.size === 0) return;
+
+  const split = new Set<string>();
+  for (const r of renderables) {
+    const base = extrusionBaseId(r.id);
+    if (!owners.has(base)) continue;
+    if (!depthEligible3D(r)) split.add(base);
+  }
+  if (split.size === 0) return;
+
+  // Only ever sets the flag: the resolution of a disagreement is that the whole
+  // object leaves the depth group, never that an ineligible face is forced into
+  // it. Glass genuinely cannot be depth-tested — the fix is to stop the body
+  // splitting, not to pretend the exclusion was wrong.
+  for (const r of renderables) {
+    if (split.has(extrusionBaseId(r.id))) r.depthExempt = true;
+  }
+}
+
 export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   const renderables = flattenLayers(snapshot.layers, Mat3.identity(), 1);
+  enforceExtrusionPathAgreement(renderables);
   // Gradient background sits behind everything (solids stay on the flat
   // composition.background below, which also serves as the fallback plate).
   const bgPaint = snapshot.backgroundPaint;

@@ -1,0 +1,227 @@
+/**
+ * Extrusion family: does an effect reach the faces the extrusion synthesized?
+ *
+ * ── Why these are pairs measured by a verifier, not goldens ─────────────────
+ *
+ * The defect these are built against is REACH, not presence. `buildSnapshot`
+ * synthesized a back cap and side walls with `effects: undefined`, so a layer's
+ * whole effect stack landed on the front face alone — thirteen of fourteen
+ * renderables dropped it. Every symptom of that passes a presence check:
+ *
+ *   invert   the object visibly changes colour, because the front face is most
+ *            of what you see head-on. A golden blessed with the bug in place
+ *            certifies "the front face inverted" forever.
+ *   DOF      the far object visibly blurs, for the same reason. The frames the
+ *            diagnostic compared (DOF on vs off) were byte-identical only
+ *            because that scene's subject showed no front face at all — with
+ *            one in view, "something blurred" is true and useless.
+ *
+ * So each scene has a twin differing in exactly one property, and the assertion
+ * is about WHICH pixels of the object moved, not whether any did:
+ *
+ *   ext-fx-invert      what FRACTION of the object's own pixels the effect
+ *                      changed. Front-face-only lands near half; every face
+ *                      lands near all of them.
+ *   ext-dof-wall       how far the blur spreads at the WALL's outer silhouette
+ *                      edge — a scanline chosen to miss the front face entirely,
+ *                      so a front-face-only blur cannot register at all.
+ *
+ * Pairing also keeps the perspective projection out of the verifier: whatever
+ * the camera does to the solid it does identically to both frames, so the
+ * difference is the effect and nothing else.
+ */
+
+import { defineScene, node, type Scene } from '../sceneKit';
+
+const COMP = { width: 480, height: 360, background: '#0c0c12' };
+const SIZE = { w: 480, h: 360 };
+const CENTER = { x: 240, y: 180 };
+
+/** Camera shared by every scene here, matching the rest of the 3D family. */
+const CAM = { z: -1000, focalLength: 1000 };
+
+function scene(id: string, description: string, build: Scene['build']): Scene {
+  return defineScene({
+    id,
+    description,
+    size: SIZE,
+    comp: COMP,
+    fps: 30,
+    frames: [0],
+    gpuParity: 'expect-pass',
+    // No Canvas2D backend exists to act as an oracle for these (see
+    // EffectDef.gpuOnly's note), and the subject is a depth-tested 3D solid
+    // — the one thing the deleted backend never drew. GPU is the reference.
+    oracle: 'gpu',
+    build,
+  });
+}
+
+/**
+ * The subject: a rect extruded into a real solid, yawed and pitched so that a
+ * side wall, the front face and (at this yaw) nothing else are all in view with
+ * clean background on every side.
+ *
+ * The yaw is what makes the scenes measurable. Head-on, the walls project to
+ * zero width and no check can tell a front-face-only effect from a per-face
+ * one. At 35° the right-hand wall is several tens of px wide, which is wider
+ * than any blur kernel here and wide enough to hold a scanline of its own.
+ */
+function solid(graph: Parameters<Scene['build']>[0], extra: Record<string, unknown> = {}) {
+  graph.addNode(node('solid', {
+    kind: 'shape',
+    position: CENTER,
+    transform: {
+      width: 160,
+      height: 120,
+      shapeType: 'rect',
+      extrusionDepth: 120,
+      rotationY: 35,
+      rotationX: -18,
+      z: 0,
+      ...extra,
+    },
+    style: { fill: '#4a7fd0' },
+  }));
+}
+
+/**
+ * Colour reach: `invert` is the cleanest possible probe.
+ *
+ * It is a colour-matrix effect, so it costs nothing per face and cannot be
+ * confused with a spatial one; it moves every channel of every covered pixel by
+ * a large, unambiguous amount; and it is idempotent-free, so no face can look
+ * unchanged by coincidence. The brief's acceptance wording — "invert turns the
+ * whole solid navy, not just the front" — is this scene.
+ */
+function invertPair(): Scene[] {
+  const build = (on: boolean): Scene['build'] => (graph) => {
+    solid(graph);
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: CAM }));
+    if (on) graph.setEffects('solid', [{ id: 'fx', type: 'invert', params: { amount: 100 } }]);
+  };
+  return [
+    scene('ext-fx-invert', 'Invert on an extruded solid — every face must invert, not just the front.', build(true)),
+    scene('ext-fx-invert-off', 'The same solid with no effect — the control the reach is measured against.', build(false)),
+  ];
+}
+
+/**
+ * Depth-of-field reach, measured at the WALL.
+ *
+ * The subject sits far behind the focus plane, so DOF is a large blur. The
+ * front face and the walls carry different depths, so per-face DOF gives each
+ * its own radius — which is the whole reason an extruded object reads as
+ * spanning depth rather than as a postcard.
+ *
+ * `dofStrength`/`focusDistance`/`dofAperture` are the same numbers
+ * `three-d-dof-extent` uses, so the two scenes' extents are directly
+ * comparable and a regression in the DOF model itself moves both.
+ */
+function dofWallPair(): Scene[] {
+  const DOF = { dofStrength: 24, focusDistance: 1000, dofAperture: 40 };
+  const build = (dof: boolean): Scene['build'] => (graph) => {
+    // Deeper and yawed harder than the invert subject, with no pitch: the wall
+    // projects ~140 px wide and its outer edge is vertical, so the verifier can
+    // sample wall pixels far enough from the front face that a front-face-only
+    // blur cannot bleed into them. At the invert subject's 35°/−18° the wall is
+    // ~70 px and the whole of it sits within one blur radius of the front face,
+    // which would make "the wall changed" true for the wrong reason.
+    solid(graph, { z: 700, width: 140, height: 200, extrusionDepth: 200, rotationY: 45, rotationX: 0 });
+    graph.addNode(node('cam', {
+      kind: 'camera',
+      position: CENTER,
+      transform: { ...CAM, ...(dof ? DOF : {}) },
+    }));
+  };
+  return [
+    scene('ext-dof-wall', 'Depth of field on an extruded solid — the WALL must blur, not only the front face.', build(true)),
+    scene('ext-dof-wall-off', 'The same solid and camera with depth of field off — the sharp control.', build(false)),
+  ];
+}
+
+/**
+ * A rounded card with a bevel — the shape whose front face floated.
+ *
+ * The rounded-outline branch of `extrusionFaces` returns before the bevel path,
+ * so it emits no chamfer ring; `buildSnapshot` nonetheless shrank the front face
+ * by `clampBevel(...)` for any rect. The front face therefore met a ring that
+ * did not exist, and the darker back cap showed through the ring-shaped gap
+ * around it.
+ *
+ * Single scene, no twin: the failure is not a difference between two renders,
+ * it is a hole in one of them. A yaw and a pitch put the gap in view on two
+ * sides at once, and the fill is light against a dark comp so the back cap —
+ * the thing visible THROUGH the gap, at `EXTRUSION_BACK_GAIN` — reads as an
+ * obvious dark band rather than as a shading nuance.
+ */
+function roundedBevelScene(): Scene {
+  return scene(
+    'ext-rounded-bevel',
+    'A rounded card with a bevel — the front face must fill its own outline, with no ring-shaped gap.',
+    (graph) => {
+      graph.addNode(node('card', {
+        kind: 'shape',
+        position: CENTER,
+        transform: {
+          width: 220,
+          height: 150,
+          shapeType: 'rect',
+          cornerRadius: 28,
+          extrusionDepth: 60,
+          bevelDepth: 14,
+          rotationY: 28,
+          rotationX: -16,
+          z: 0,
+        },
+        style: { fill: '#7fb2f0' },
+      }));
+      graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: CAM }));
+    },
+  );
+}
+
+/**
+ * Deep extruded TEXT — the slice stack must stay solid, not comb.
+ *
+ * Text and complex shapes extrude as a stack of thin plates sliced along the
+ * depth axis, and the stack always spanned the full depth (`sliceStep =
+ * extrusionDepth / sliceCount`). What did not scale was the SPACING: the slice
+ * count was capped at 45, so past 45 × 1.5 = 67.5 px of depth the plates simply
+ * moved further apart — 6.7 px at depth 300, against 1.5 px at depth 40. Yawed,
+ * those gaps open into visible stair-stepping along the trailing edge.
+ *
+ * Both depths are rendered because the shallow one is the control that shows the
+ * stack was never broken, only under-sampled — and because a single deep scene
+ * would need someone to know what "correct" looks like, whereas the pair makes
+ * the claim comparative: at the same yaw, the deep body must be as solid as the
+ * shallow one.
+ */
+function sliceDensityScenes(): Scene[] {
+  const build = (depth: number): Scene['build'] => (graph) => {
+    graph.addNode(node('t', {
+      kind: 'text',
+      position: CENTER,
+      transform: {
+        width: 300, height: 90, text: 'DEPTH', fontSize: 64,
+        extrusionDepth: depth,
+        // Yawed hard: the gaps between plates project to `step · sin(yaw)`, so
+        // a face-on subject cannot show this defect at any spacing.
+        rotationY: 40, rotationX: -12, z: 0,
+      },
+      style: { fill: '#7fb2f0' },
+    }));
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: CAM }));
+  };
+  return [
+    scene('ext-text-depth-40', 'Extruded text at depth 40 — the shallow control, always solid.', build(40)),
+    scene('ext-text-depth-300', 'Extruded text at depth 300 — must be as solid as the shallow control, not combed.', build(300)),
+  ];
+}
+
+export const extrusionScenes: Scene[] = [
+  ...invertPair(),
+  ...dofWallPair(),
+  roundedBevelScene(),
+  ...sliceDensityScenes(),
+];
