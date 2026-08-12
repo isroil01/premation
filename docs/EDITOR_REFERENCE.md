@@ -1009,6 +1009,53 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
+### Built 2026-08-12 (evening) — simulation, phase 1: the seek architecture
+
+The one genuinely empty AE class in this audit, now started. What exists is the
+**subsystem core**, not a user-visible effect — stated plainly because this
+branch has already shipped one thing that was complete, tested and reachable by
+nothing.
+
+`SimulationCache` makes a history-dependent layer answer `stateAt(f)` the way
+every other layer here does. It holds exactly one invariant:
+
+> `stateAt(f)` does not depend on which frames were asked for before it.
+
+Scrub to 200, seek back to 10, play forward, export out of order — each must
+give bit-identical state to stepping from 0. Without it a preview and its export
+disagree, which `MOTION_FORMAT_FREEZE.md` treats as disqualifying.
+
+That invariant is what forbids the obvious design. A cache holding "the current
+state" and stepping it forward is correct for monotonic playback and wrong on
+the first backward seek — and since monotonic playback is also the common case,
+a test suite mirroring real usage would miss it. The access orders in the tests
+are therefore deliberately hostile, and the reference answer is always naive
+stepping from 0 with no cache at all.
+
+**The open design question resolved to a structural answer.** The scoping note
+asked "how far may a seek pre-roll before restarting is cheaper". Never:
+restarting means stepping from frame 0, frame 0's snapshot is pinned and never
+evicted, so the nearest snapshot at or before any frame is always at least as
+close as 0. The question presupposed a seek could land with nothing behind it,
+which pinning makes impossible.
+
+`bounceSim` is the proof case, chosen because collision is the cheapest thing a
+closed form cannot express: position at t depends on the bounce count, each
+bounce on the velocity at impact, each of those on the bounce before. The test
+asserts a bounce actually occurs rather than assuming it — without one the
+motion is ballistic and the whole subsystem is unnecessary.
+
+Both load-bearing mechanisms were falsified: letting `nearestSnapshotAt` pick a
+snapshot after the target fails 4 tests, and making `clone()` share typed-array
+buffers fails 8.
+
+**Not done, and not pretended otherwise:** no layer kind, no effect registry
+entry, no renderer path — all of which live in files another session is
+currently rewriting. Phase 1 is the seek machinery and its proof. GPU state
+(ping-pong targets, the right shape for a fluid or wave field) is deliberately
+absent: designing the seek layer around a texture round-trip before anything
+needed one would have been backwards.
+
 ### Retracted 2026-08-12 (evening) — "both WebGPU debts have collapsed" was a unit error
 
 The entry that stood here claimed `glass-grain` had fallen from **32.712 %** to
