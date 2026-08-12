@@ -1009,6 +1009,42 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
+### Fixed 2026-08-12 — this branch shipped its own dead control
+
+`exportPresets` and `importPresets` landed with a 14-test suite covering the
+round trip, overwrite-by-name, hostile files and version refusal. All 14 passed
+on a build where neither function had a caller anywhere in `src/` — no menu
+entry, no file picker, nothing. A user could not reach the feature at all.
+
+That is the same shape as `Command.isChecked`, `isPassthroughOnly` and
+`SelectionPass`, each recorded above as a control the code declared and nothing
+consumed. Those were inherited. This one was written here, in a branch whose
+running theme is finding exactly this, which is the part worth recording: a
+thorough test suite over the model is what made it *feel* finished. Tests over a
+model say nothing about whether anything reaches it.
+
+Now wired into the presets panel's settings menu, with the reachability tested
+by rendering the panel rather than by grepping for the import — a source-level
+check would have caught the original miss but passes on a menu item that renders
+disabled forever.
+
+Two smaller things came out of it, both recorded because the first was a wrong
+claim of mine that the tests caught:
+
+- **The Export entry disables itself when the bundle would be empty.** The first
+  implementation counted `listPresets().filter(p => !p.builtin)`, and the commit
+  message drafted for it asserted that this was broken because "only some
+  compiled-in presets carry the flag". Measured: **all 73 carry it**, so the
+  filter was correct and the claim was invented. The count was still moved to
+  `countUserPresets()`, which shares `readUserPresets` with the exporter — not
+  to fix a bug, but because the filter is only right for as long as every entry
+  in all five shipped arrays stays flagged.
+- **One test was removed for being vacuous.** It claimed to guard the
+  `input.value = ''` reset that lets a user re-pick the same file after fixing
+  it. It passed with the line deleted: jsdom never assigns a value to a file
+  input. The reset is still there and is still right; it is now recorded as
+  UNVERIFIED rather than covered by a test that measures nothing.
+
 ### Verified 2026-08-12 — time effects are four, not two, and all four run
 
 Listed as "2 of 145 (`echo`, `posterize-time`). Thin, heavily used." The count
