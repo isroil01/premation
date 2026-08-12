@@ -15,7 +15,7 @@
  *  5. Presets apply at the PLAYHEAD, not at time zero.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Panel } from '@components/Panel';
 import { BrowserTree, BrowserFolder, BrowserRow } from '@components/BrowserTree';
 import { Input } from '@components/Input';
@@ -27,9 +27,13 @@ import {
   deletePreset,
   presetFolder,
   saveCurrentAsPreset,
+  exportPresets,
+  importPresets,
+  countUserPresets,
   USER_PRESET_FOLDER,
   type AnimationPreset,
 } from '@core/animation/animationPresets';
+import { downloadBlob } from '@core/export/exportManager';
 import { hasTextComponent } from '@core/text/textAnimators';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -91,6 +95,7 @@ export function MotionPresetsPanel(): JSX.Element {
   const [sortOrder, setSortOrder] = useState<SortOrder>('default');
   const [saving, setSaving] = useState(false);
   const [saveName, setSaveName] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const presets = useMemo(() => listPresets(), [sceneRev]);
 
@@ -192,6 +197,42 @@ export function MotionPresetsPanel(): JSX.Element {
     setSaving(true);
   };
 
+  /** How many presets a bundle would actually carry. Asked of the exporter's
+   *  own reader rather than filtering `presets`, so this stays right if a
+   *  shipped preset array is ever added without the `builtin` flag. */
+  const userPresetCount = useMemo(() => countUserPresets(), [sceneRev]);
+
+  const doExport = (): void => {
+    const json = exportPresets();
+    downloadBlob(new Blob([json], { type: 'application/json' }), 'premation-presets.json');
+    notify({
+      level: 'success',
+      message: `Exported ${userPresetCount} preset${userPresetCount === 1 ? '' : 's'}`,
+      durationMs: 2000,
+    });
+  };
+
+  const doImport = async (file: File): Promise<void> => {
+    const r = importPresets(await file.text());
+    if (r.error) {
+      notify({ level: 'error', message: r.error, durationMs: 4000 });
+      return;
+    }
+    // Both halves are reported. An import that replaced six presets and said
+    // only "imported 6" reads as additive, and the user finds out it was not
+    // when a preset they had is gone.
+    const parts: string[] = [];
+    if (r.added.length) parts.push(`added ${r.added.length}`);
+    if (r.replaced.length) parts.push(`replaced ${r.replaced.length}`);
+    if (r.rejected) parts.push(`skipped ${r.rejected} unusable`);
+    notify({
+      level: r.rejected ? 'warning' : 'success',
+      message: `Presets: ${parts.join(', ')}`,
+      durationMs: r.rejected ? 4000 : 2500,
+    });
+    bumpScene();
+  };
+
   const sortItems: DropdownItem[] = [
     { type: 'label', label: 'Sort Presets By' },
     {
@@ -205,6 +246,26 @@ export function MotionPresetsPanel(): JSX.Element {
     {
       type: 'checkbox', id: 'desc', label: 'Alphabetical (Z-A)',
       checked: sortOrder === 'alphabetical-desc', onChange: () => setSortOrder('alphabetical-desc'),
+    },
+    { type: 'separator' },
+    { type: 'label', label: 'Share' },
+    {
+      type: 'item',
+      id: 'export',
+      label: 'Export Presets…',
+      icon: 'download',
+      // Built-ins ship with the app, so a library of only built-ins exports an
+      // empty bundle. Disabled with the reason rather than handing over a file
+      // that imports as "no usable presets".
+      disabled: userPresetCount === 0,
+      onSelect: doExport,
+    },
+    {
+      type: 'item',
+      id: 'import',
+      label: 'Import Presets…',
+      icon: 'upload',
+      onSelect: () => fileRef.current?.click(),
     },
   ];
 
@@ -247,6 +308,20 @@ export function MotionPresetsPanel(): JSX.Element {
               </button>
             }
             items={sortItems}
+          />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.currentTarget.files?.[0];
+              // Cleared before the import runs, so picking the SAME file twice
+              // fires `change` the second time. Without it a failed import
+              // cannot be retried after fixing the file.
+              e.currentTarget.value = '';
+              if (f) void doImport(f);
+            }}
           />
         </div>
         {saving && (

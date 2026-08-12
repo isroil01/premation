@@ -513,6 +513,23 @@ export function exportPresets(names?: readonly string[]): string {
 }
 
 /**
+ * How many presets {@link exportPresets} would actually write.
+ *
+ * Filtering `listPresets()` by `!p.builtin` gives the same answer today — all
+ * 73 compiled-in presets carry the flag, which was measured rather than
+ * assumed. But it gets there by a different route: `listPresets` concatenates
+ * five shipped arrays with the user's, so that filter is only correct for as
+ * long as every entry in all five stays flagged, and a new array added without
+ * the flag would silently be counted as the user's.
+ *
+ * This shares `readUserPresets` with `exportPresets` instead, so the count is
+ * correct by construction — it cannot disagree with the file.
+ */
+export function countUserPresets(): number {
+  return readUserPresets().filter((p) => !p.builtin).length;
+}
+
+/**
  * STRUCTURAL validity of one entry from an untrusted file.
  *
  * Deliberately shallow, and worth being explicit about: it checks that an entry
