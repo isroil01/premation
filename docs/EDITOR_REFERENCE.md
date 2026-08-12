@@ -1009,6 +1009,47 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
+### Swept 2026-08-12 — the Renderable boundary is clean, and now stays that way
+
+`Renderable` is the entire contract between the snapshot builder and the
+renderer, and the extrusion defect above was one field of it (`effects`) going
+unwritten on one path. So the whole interface was swept: 30 fields, checked
+against every producer.
+
+**No new defect.** Three fields looked unproduced and all three were explained:
+
+| Field | Why it looked dead | What it is |
+|---|---|---|
+| `depthExempt` | Detector matched only `field:` form | Written as `r.depthExempt = true` — an assignment, not a literal |
+| `maskId` | Nothing writes it | Read only by `MaskPass`, `enabled = false` by design |
+| `clip` | Nothing writes it | The other half of that pass's filter |
+
+`MaskPass` is deliberate scaffolding, not an oversight — its docstring says
+"enable + wire a masked material to activate", and `RenderGraph.ts` carries an
+optimization built specifically around it being permanently off (its target had
+been allocating ~8 MB of VRAM per frame for a pass that cannot run). Masking
+ships through `effectBake`, which reads `maskId` off the **effect**, not the
+renderable — which is why a repo-wide grep for `maskId` looks busy while the
+renderable field stays untouched.
+
+The sweep is now `renderableFieldCoverage.test.ts` rather than a one-off, so a
+field added to `Renderable` that nothing produces fails a test instead of
+shipping as a control with no effect.
+
+Two of the sweep's own bugs are pinned in it, because both are the failure mode
+this document keeps recording — a detector that is wrong in the direction of
+looking right:
+
+- It first reported `Renderable` as having **four** fields.
+  `indexOf('export interface Renderable')` matched `RenderableSdf`, declared
+  earlier in the same file. A prefix match returns a real interface with real
+  fields, so every count derived from it is wrong and nothing looks amiss.
+- It then reported `depthExempt` as never written, by matching literal syntax
+  and calling that production.
+
+Both were caught by checking a surprising result rather than reporting it. The
+first version of this entry would have claimed a dead pass and two dead fields.
+
 ### Fixed 2026-08-12 — this branch shipped its own dead control
 
 `exportPresets` and `importPresets` landed with a 14-test suite covering the
